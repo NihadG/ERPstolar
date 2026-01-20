@@ -8,6 +8,8 @@ import { collection, getDocs, doc, updateDoc } from 'firebase/firestore';
 import type { Organization, ModuleAccess } from '@/lib/types';
 import Link from 'next/link';
 
+export const dynamic = 'force-dynamic';
+
 const SUBSCRIPTION_PLANS = ['free', 'professional', 'enterprise'] as const;
 
 export default function AdminPage() {

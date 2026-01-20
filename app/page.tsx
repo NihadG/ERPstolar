@@ -19,6 +19,8 @@ import Toast from '@/components/ui/Toast';
 import LoadingOverlay from '@/components/ui/LoadingOverlay';
 import ModuleGuard from '@/components/auth/ModuleGuard';
 
+export const dynamic = 'force-dynamic';
+
 export default function Home() {
     const router = useRouter();
     const { user, organization, loading: authLoading, hasModule, firebaseUser } = useAuth();

@@ -5,6 +5,8 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { signUp, signInWithGoogle } from '@/lib/auth';
 
+export const dynamic = 'force-dynamic';
+
 export default function RegisterPage() {
     const router = useRouter();
     const [formData, setFormData] = useState({
