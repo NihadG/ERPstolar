@@ -1071,7 +1071,7 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
                     setCurrentOffer(null);
                 }}
                 title={isEditMode ? `Uredi Ponudu: ${currentOffer?.Offer_Number || ''}` : 'Nova Ponuda'}
-                size="fullscreen"
+                size="large"
                 footer={
                     <>
                         <button className="btn btn-secondary" onClick={() => {
