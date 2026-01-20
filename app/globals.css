@@ -79,6 +79,9 @@ body {
   position: sticky;
   top: 0;
   z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
 }
 
 .header-title {
@@ -2748,11 +2751,44 @@ body {
   box-shadow: 0 8px 20px rgba(102, 126, 234, 0.4);
 }
 
-/* Tab Lock Icon */
+/* Tab Lock Icon - Professional Locked Tab Styling */
 .tab-lock {
-  font-size: 14px !important;
-  color: var(--text-tertiary);
-  margin-left: 4px;
+  font-size: 12px !important;
+  color: rgba(255, 193, 7, 0.9);
+  margin-left: 6px;
+  padding: 2px 4px;
+  background: rgba(255, 193, 7, 0.15);
+  border-radius: 4px;
+}
+
+.tab:has(.tab-lock) {
+  opacity: 0.7;
+  position: relative;
+}
+
+.tab:has(.tab-lock):hover {
+  opacity: 0.85;
+}
+
+.tab:has(.tab-lock)::after {
+  content: 'Nadogradi plan';
+  position: absolute;
+  bottom: -28px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(0, 0, 0, 0.85);
+  color: white;
+  font-size: 11px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s;
+}
+
+.tab:has(.tab-lock):hover::after {
+  opacity: 1;
 }
 
 /* User Menu in Header */
@@ -2803,12 +2839,12 @@ body {
 .user-menu-dropdown {
   position: absolute;
   top: calc(100% + 8px);
-  right: 0;
-  min-width: 220px;
+  left: 0;
+  min-width: 240px;
   background: var(--background);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
-  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.15);
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
   z-index: 1000;
   display: none;
   overflow: hidden;
