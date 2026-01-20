@@ -1405,52 +1405,38 @@ html {
   color: var(--accent);
 }
 
-/* Product Details - ORGANIZED 2-ROW GRID */
+/* Product Details (when expanded/included) - Inline Compact */
 .offer-product-details {
-  display: grid;
-  grid-template-columns: 1fr;
-  gap: 10px;
-  padding: 12px;
-  border-top: 1px solid rgba(0, 0, 0, 0.06);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 10px 14px;
+  border-top: 1px solid rgba(0, 0, 0, 0.05);
   background: #fafbfc;
+  align-items: flex-end;
 }
 
-/* Row 1: Marža + Cijena Rada side by side */
-.offer-product-details>.form-group:first-child,
-.offer-product-details>.labor-cost-section {
-  display: inline-flex;
-}
-
-/* Force Row 1 to be horizontal */
-.offer-product-details {
-  display: grid;
-  grid-template-areas:
-    "row1"
-    "row2";
-  gap: 10px;
-}
-
-/* Marža field */
-.offer-product-details>.form-group:first-child {
+.offer-product-details .form-group {
   margin-bottom: 0;
+  flex: 0 0 auto;
 }
 
 .offer-product-details .form-group label {
   font-size: 9px;
   text-transform: uppercase;
-  letter-spacing: 0.3px;
+  letter-spacing: 0.2px;
   color: var(--text-tertiary);
-  margin-bottom: 3px;
+  margin-bottom: 2px;
   display: block;
 }
 
 .offer-product-details .form-group input {
-  padding: 6px 10px;
-  font-size: 13px;
+  padding: 6px 8px;
+  font-size: 12px;
   border-radius: 6px;
-  border: 1px solid rgba(0, 0, 0, 0.1);
+  border: 1px solid rgba(0, 0, 0, 0.08);
   background: white;
-  width: 80px;
+  width: 70px;
 }
 
 .offer-product-details .form-group input:focus {
@@ -1458,25 +1444,16 @@ html {
   box-shadow: 0 0 0 2px rgba(0, 113, 227, 0.1);
 }
 
-/* ===== ROW 1: Marža + Labor ===== */
-.offer-details-row-1 {
-  display: flex;
-  align-items: flex-end;
-  gap: 12px;
-  flex-wrap: wrap;
-}
-
-/* Labor Cost Section */
+/* Labor Cost Section - Inline */
 .labor-cost-section {
   display: flex;
   align-items: center;
-  gap: 10px;
-  background: rgba(52, 199, 89, 0.06);
-  padding: 8px 12px;
-  border-radius: 8px;
+  gap: 8px;
+  background: rgba(52, 199, 89, 0.08);
+  padding: 6px 10px;
+  border-radius: 6px;
   border: 1px solid rgba(52, 199, 89, 0.12);
   flex: 1;
-  min-width: 300px;
 }
 
 .labor-cost-section .section-label {
@@ -1485,12 +1462,11 @@ html {
   color: #34c759;
   text-transform: uppercase;
   white-space: nowrap;
-  margin-right: 4px;
 }
 
 .labor-inputs {
   display: flex;
-  gap: 10px;
+  gap: 6px;
   align-items: center;
   flex: 1;
 }
@@ -1498,98 +1474,68 @@ html {
 .labor-field {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 3px;
 }
 
 .labor-field label {
-  font-size: 10px;
-  color: var(--text-secondary);
+  font-size: 9px;
+  color: var(--text-tertiary);
   white-space: nowrap;
 }
 
 .labor-field input {
-  width: 55px;
-  padding: 5px 8px;
-  font-size: 13px;
-  border: 1px solid rgba(0, 0, 0, 0.1);
-  border-radius: 5px;
+  width: 50px;
+  padding: 4px 6px;
+  font-size: 12px;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 4px;
   background: white;
   text-align: center;
-}
-
-.labor-field input:focus {
-  border-color: #34c759;
-  outline: none;
 }
 
 .labor-total {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 6px 10px;
-  background: #34c759;
-  border-radius: 6px;
+  gap: 4px;
+  padding: 4px 8px;
+  background: rgba(52, 199, 89, 0.15);
+  border-radius: 4px;
   white-space: nowrap;
-  margin-left: auto;
 }
 
 .labor-total .label {
   font-size: 9px;
-  color: rgba(255, 255, 255, 0.8);
-  text-transform: uppercase;
+  color: #34c759;
 }
 
 .labor-total .value {
-  font-size: 13px;
-  font-weight: 700;
-  color: white;
-}
-
-/* ===== ROW 2: Dodaci + Extras Tags + Total ===== */
-.offer-details-row-2 {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
-}
-
-/* Dodaci Button */
-.offer-product-details>.form-group:last-of-type {
-  flex: 0 0 auto;
-}
-
-.offer-product-details>.form-group:last-of-type .btn {
-  padding: 6px 12px;
   font-size: 12px;
-  border-radius: 6px;
-  display: flex;
-  align-items: center;
-  gap: 4px;
+  font-weight: 700;
+  color: #34c759;
 }
 
-/* Extras Container */
+/* Extras Container - Inline */
 .offer-extras-container {
   display: flex;
   align-items: center;
   gap: 6px;
-  flex: 1;
 }
 
 .offer-extras-list {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: 4px;
 }
 
 .offer-extra-tag {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  padding: 4px 10px;
+  gap: 4px;
+  padding: 3px 8px;
   background: #fff4e5;
-  border: 1px solid rgba(255, 149, 0, 0.2);
-  border-radius: 14px;
-  font-size: 12px;
+  border: 1px solid rgba(255, 149, 0, 0.15);
+  border-radius: 12px;
+  font-size: 11px;
   color: var(--text-primary);
 }
 
@@ -1601,13 +1547,14 @@ html {
 .offer-extra-tag button {
   background: none;
   border: none;
-  padding: 2px;
+  padding: 1px;
   cursor: pointer;
   color: var(--text-tertiary);
   border-radius: 50%;
   display: flex;
   align-items: center;
   justify-content: center;
+  font-size: 12px;
 }
 
 .offer-extra-tag button:hover {
@@ -1615,27 +1562,27 @@ html {
   color: var(--error);
 }
 
-/* Product Total - Right aligned */
+/* Product Total - Compact Inline */
 .offer-product-total {
   display: flex;
   align-items: center;
   gap: 8px;
   margin-left: auto;
-  padding: 6px 14px;
-  background: var(--accent);
-  border-radius: 8px;
+  padding: 4px 10px;
+  background: rgba(0, 113, 227, 0.05);
+  border-radius: 6px;
 }
 
 .offer-product-total .label {
   font-size: 10px;
-  color: rgba(255, 255, 255, 0.8);
+  color: var(--text-tertiary);
   text-transform: uppercase;
 }
 
 .offer-product-total .value {
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 700;
-  color: white;
+  color: var(--accent);
 }
 
 /* Settings Panel */
@@ -2631,6 +2578,270 @@ html {
   font-size: 15px;
   font-weight: 700;
   color: white;
+}
+
+/* ============================================
+   COMPACT OFFER PRODUCT LAYOUT
+   ============================================ */
+.offer-product-details.compact-layout {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-light);
+}
+
+/* Pricing Row - Marža + Cijena Rada inline */
+.product-pricing-row {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+  align-items: flex-start;
+}
+
+.margin-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 80px;
+}
+
+.margin-field label {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-tertiary);
+  letter-spacing: 0.5px;
+}
+
+.margin-field input {
+  width: 80px;
+  padding: 8px 10px;
+  font-size: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: white;
+  text-align: center;
+}
+
+.margin-field input:focus {
+  border-color: var(--accent);
+  outline: none;
+}
+
+/* Labor Row - inline sa labelom */
+.labor-row {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 300px;
+  background: rgba(0, 113, 227, 0.04);
+  border: 1px solid rgba(0, 113, 227, 0.1);
+  border-radius: var(--radius-sm);
+  padding: 8px 12px;
+}
+
+.labor-label {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--accent);
+  letter-spacing: 0.5px;
+}
+
+.labor-inline-inputs {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.inline-field {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.inline-field span {
+  font-size: 11px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.inline-field input {
+  width: 50px;
+  padding: 5px 6px;
+  font-size: 13px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: white;
+  text-align: center;
+}
+
+.inline-field input:focus {
+  border-color: var(--accent);
+  outline: none;
+}
+
+.labor-total-badge {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  padding: 5px 10px;
+  background: var(--accent);
+  border-radius: 6px;
+  color: white;
+  font-size: 12px;
+}
+
+.labor-total-badge span {
+  opacity: 0.9;
+}
+
+.labor-total-badge strong {
+  font-weight: 700;
+}
+
+/* Extras Row - Dodaci + Ukupno */
+.product-extras-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.extras-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 1;
+  min-width: 200px;
+}
+
+.extras-section>label {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-tertiary);
+  letter-spacing: 0.5px;
+}
+
+.extras-inline {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.add-extra-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.add-extra-btn:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.add-extra-btn .material-icons-round {
+  font-size: 14px;
+}
+
+.extra-tag-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  background: white;
+  border: 1px solid var(--border-light);
+  border-radius: 14px;
+  font-size: 11px;
+}
+
+.extra-tag-inline .price {
+  color: var(--accent);
+  font-weight: 500;
+}
+
+.extra-tag-inline button {
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  color: var(--text-tertiary);
+  line-height: 1;
+  display: flex;
+}
+
+.extra-tag-inline button:hover {
+  color: var(--error);
+}
+
+.extra-tag-inline button .material-icons-round {
+  font-size: 12px;
+}
+
+/* Product Total Badge */
+.product-total-badge {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  background: linear-gradient(135deg, var(--accent) 0%, #764ba2 100%);
+  border-radius: 8px;
+  color: white;
+  white-space: nowrap;
+}
+
+.product-total-badge span {
+  font-size: 11px;
+  opacity: 0.9;
+  font-weight: 500;
+}
+
+.product-total-badge strong {
+  font-size: 16px;
+  font-weight: 700;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .product-pricing-row {
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .labor-row {
+    min-width: 100%;
+  }
+
+  .labor-inline-inputs {
+    flex-wrap: wrap;
+  }
+
+  .labor-total-badge {
+    margin-left: 0;
+    margin-top: 8px;
+  }
+
+  .product-extras-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .product-total-badge {
+    align-self: flex-end;
+  }
 }
 
 /* Summary Card */

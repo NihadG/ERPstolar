@@ -1159,12 +1159,11 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
                                             </div>
 
                                             {product.included && (
-                                                <div className="offer-product-details">
-                                                    {/* Row 1: Marža + Cijena rada */}
-                                                    <div className="offer-details-row-1">
-                                                        {/* Margin */}
-                                                        <div className="form-group">
-                                                            <label>Marža (KM)</label>
+                                                <div className="offer-product-details compact-layout">
+                                                    {/* Top row: Marža + Cijena rada inline */}
+                                                    <div className="product-pricing-row">
+                                                        <div className="margin-field">
+                                                            <label>MARŽA (KM)</label>
                                                             <input
                                                                 type="number"
                                                                 value={product.margin}
@@ -1174,12 +1173,11 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
                                                             />
                                                         </div>
 
-                                                        {/* Labor Cost Section */}
-                                                        <div className="labor-cost-section">
-                                                            <label className="section-label">Cijena rada</label>
-                                                            <div className="labor-inputs">
-                                                                <div className="labor-field">
-                                                                    <label>Radnici</label>
+                                                        <div className="labor-row">
+                                                            <label className="labor-label">CIJENA RADA</label>
+                                                            <div className="labor-inline-inputs">
+                                                                <div className="inline-field">
+                                                                    <span>Radnici</span>
                                                                     <input
                                                                         type="number"
                                                                         value={product.laborWorkers}
@@ -1192,8 +1190,8 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
                                                                         placeholder="0"
                                                                     />
                                                                 </div>
-                                                                <div className="labor-field">
-                                                                    <label>Dana</label>
+                                                                <div className="inline-field">
+                                                                    <span>Dana</span>
                                                                     <input
                                                                         type="number"
                                                                         value={product.laborDays}
@@ -1206,8 +1204,8 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
                                                                         placeholder="0"
                                                                     />
                                                                 </div>
-                                                                <div className="labor-field">
-                                                                    <label>Dnevnica</label>
+                                                                <div className="inline-field">
+                                                                    <span>Dnevnica (KM)</span>
                                                                     <input
                                                                         type="number"
                                                                         value={product.laborDailyRate}
@@ -1221,49 +1219,42 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
                                                                         placeholder="0"
                                                                     />
                                                                 </div>
-                                                                <div className="labor-total">
-                                                                    <span className="label">Ukupno:</span>
-                                                                    <span className="value">
-                                                                        {formatCurrency((product.laborWorkers || 0) * (product.laborDays || 0) * (product.laborDailyRate || 0))}
-                                                                    </span>
+                                                                <div className="labor-total-badge">
+                                                                    <span>Ukupno rad:</span>
+                                                                    <strong>{formatCurrency((product.laborWorkers || 0) * (product.laborDays || 0) * (product.laborDailyRate || 0))}</strong>
                                                                 </div>
                                                             </div>
                                                         </div>
                                                     </div>
 
-                                                    {/* Row 2: Dodaci + Extras + Total */}
-                                                    <div className="offer-details-row-2">
-                                                        {/* Add Extra Button */}
-                                                        <button
-                                                            type="button"
-                                                            className="btn btn-sm btn-secondary"
-                                                            onClick={() => openExtrasModal(index)}
-                                                        >
-                                                            <span className="material-icons-round" style={{ fontSize: '14px' }}>add</span>
-                                                            Usluga
-                                                        </button>
-
-                                                        {/* Extras Tags */}
-                                                        {product.extras.length > 0 && (
-                                                            <div className="offer-extras-container">
-                                                                <div className="offer-extras-list">
-                                                                    {product.extras.map((extra, ei) => (
-                                                                        <div key={ei} className="offer-extra-tag">
-                                                                            <span>{extra.name}</span>
-                                                                            <span className="price">{formatCurrency(extra.total)}</span>
-                                                                            <button type="button" onClick={() => removeExtra(index, ei)}>
-                                                                                <span className="material-icons-round" style={{ fontSize: '14px' }}>close</span>
-                                                                            </button>
-                                                                        </div>
-                                                                    ))}
-                                                                </div>
+                                                    {/* Bottom row: Dodaci + Ukupno */}
+                                                    <div className="product-extras-row">
+                                                        <div className="extras-section">
+                                                            <label>DODACI</label>
+                                                            <div className="extras-inline">
+                                                                <button
+                                                                    type="button"
+                                                                    className="add-extra-btn"
+                                                                    onClick={() => openExtrasModal(index)}
+                                                                >
+                                                                    <span className="material-icons-round">add</span>
+                                                                    Dodaj uslugu
+                                                                </button>
+                                                                {product.extras.map((extra, ei) => (
+                                                                    <div key={ei} className="extra-tag-inline">
+                                                                        <span>{extra.name}</span>
+                                                                        <span className="price">{formatCurrency(extra.total)}</span>
+                                                                        <button type="button" onClick={() => removeExtra(index, ei)}>
+                                                                            <span className="material-icons-round">close</span>
+                                                                        </button>
+                                                                    </div>
+                                                                ))}
                                                             </div>
-                                                        )}
+                                                        </div>
 
-                                                        {/* Product Total */}
-                                                        <div className="offer-product-total">
-                                                            <span className="label">Ukupno:</span>
-                                                            <span className="value">{formatCurrency(calculateProductTotal(product))}</span>
+                                                        <div className="product-total-badge">
+                                                            <span>UKUPNO:</span>
+                                                            <strong>{formatCurrency(calculateProductTotal(product))}</strong>
                                                         </div>
                                                     </div>
                                                 </div>
