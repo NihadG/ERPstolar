@@ -1281,11 +1281,13 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
                         {/* Right Column - Settings & Summary */}
                         {offerProducts.length > 0 && (
                             <div className="offer-form-right">
-                                {/* Settings */}
-                                <div className="offer-settings">
-                                    <h3>Postavke</h3>
-                                    <div className="offer-settings-grid">
-                                        <div className="form-group">
+                                {/* Settings - Compact */}
+                                <div className="offer-settings-compact">
+                                    <h4>Postavke</h4>
+
+                                    {/* Row 1: Transport + Vrijedi do */}
+                                    <div className="settings-row-2col">
+                                        <div className="setting-field">
                                             <label>Transport (KM)</label>
                                             <input
                                                 type="number"
@@ -1294,8 +1296,7 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
                                                 min="0"
                                             />
                                         </div>
-
-                                        <div className="form-group">
+                                        <div className="setting-field">
                                             <label>Vrijedi do</label>
                                             <input
                                                 type="date"
@@ -1303,42 +1304,41 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
                                                 onChange={(e) => setValidUntil(e.target.value)}
                                             />
                                         </div>
+                                    </div>
 
-                                        <div className="form-group">
-                                            <label className="checkbox-label">
-                                                <input
-                                                    type="checkbox"
-                                                    checked={onsiteAssembly}
-                                                    onChange={(e) => {
-                                                        setOnsiteAssembly(e.target.checked);
-                                                        if (!e.target.checked) setOnsiteDiscount(0);
-                                                    }}
-                                                />
-                                                Sklapanje kod klijenta
-                                            </label>
+                                    {/* Row 2: Checkboxes inline */}
+                                    <div className="settings-checkboxes">
+                                        <label className="setting-checkbox">
+                                            <input
+                                                type="checkbox"
+                                                checked={onsiteAssembly}
+                                                onChange={(e) => {
+                                                    setOnsiteAssembly(e.target.checked);
+                                                    if (!e.target.checked) setOnsiteDiscount(0);
+                                                }}
+                                            />
+                                            <span>Sklapanje kod klijenta</span>
                                             {onsiteAssembly && (
                                                 <input
                                                     type="number"
                                                     value={onsiteDiscount}
                                                     onChange={(e) => setOnsiteDiscount(parseFloat(e.target.value) || 0)}
                                                     min="0"
-                                                    placeholder="Popust (KM)"
-                                                    style={{ marginTop: '8px' }}
+                                                    placeholder="Popust"
+                                                    className="inline-discount"
                                                 />
                                             )}
-                                        </div>
+                                        </label>
 
-                                        <div className="form-group">
-                                            <label className="checkbox-label">
-                                                <input
-                                                    type="checkbox"
-                                                    checked={includePDV}
-                                                    onChange={(e) => setIncludePDV(e.target.checked)}
-                                                />
-                                                PDV
-                                            </label>
+                                        <label className="setting-checkbox">
+                                            <input
+                                                type="checkbox"
+                                                checked={includePDV}
+                                                onChange={(e) => setIncludePDV(e.target.checked)}
+                                            />
+                                            <span>PDV</span>
                                             {includePDV && (
-                                                <div className="pdv-rate">
+                                                <div className="inline-pdv">
                                                     <input
                                                         type="number"
                                                         value={pdvRate}
@@ -1349,17 +1349,18 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
                                                     <span>%</span>
                                                 </div>
                                             )}
-                                        </div>
+                                        </label>
+                                    </div>
 
-                                        <div className="form-group notes-group">
-                                            <label>Napomene</label>
-                                            <textarea
-                                                value={notes}
-                                                onChange={(e) => setNotes(e.target.value)}
-                                                rows={2}
-                                                placeholder="Dodatne napomene za ponudu..."
-                                            />
-                                        </div>
+                                    {/* Row 3: Notes */}
+                                    <div className="setting-notes">
+                                        <label>Napomene</label>
+                                        <textarea
+                                            value={notes}
+                                            onChange={(e) => setNotes(e.target.value)}
+                                            rows={2}
+                                            placeholder="Dodatne napomene za ponudu..."
+                                        />
                                     </div>
                                 </div>
 
