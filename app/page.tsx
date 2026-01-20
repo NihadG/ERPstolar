@@ -141,7 +141,10 @@ export default function Home() {
                 <div ref={userMenuRef} className={`user-menu ${userMenuOpen ? 'open' : ''}`}>
                     <button
                         className="user-menu-button"
-                        onClick={() => setUserMenuOpen(!userMenuOpen)}
+                        onClick={() => {
+                            setUserMenuOpen(!userMenuOpen);
+                            setDropdownOpen(false); // Close settings dropdown
+                        }}
                     >
                         <div className="user-avatar">{getUserInitials()}</div>
                         <span className="user-name">{user?.Name}</span>
@@ -198,7 +201,10 @@ export default function Home() {
                 <div ref={settingsDropdownRef} className={`tab-dropdown ${dropdownOpen ? 'open' : ''}`}>
                     <button
                         className={`tab tab-more ${isDropdownTab ? 'active' : ''}`}
-                        onClick={() => setDropdownOpen(!dropdownOpen)}
+                        onClick={() => {
+                            setDropdownOpen(!dropdownOpen);
+                            setUserMenuOpen(false); // Close user menu
+                        }}
                     >
                         <span className="material-icons-round">settings</span>
                         Podešavanja

@@ -58,6 +58,11 @@ body {
   color: var(--text-primary);
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;
+}
+
+html {
+  overflow-x: hidden;
 }
 
 /* ============================================
@@ -78,10 +83,11 @@ body {
   border-bottom: 1px solid var(--border-light);
   position: sticky;
   top: 0;
-  z-index: 100;
+  z-index: 1000;
   display: flex;
   align-items: center;
   justify-content: space-between;
+  overflow: visible;
 }
 
 .header-title {
@@ -2845,7 +2851,7 @@ body {
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
-  z-index: 1000;
+  z-index: 9999;
   display: none;
   overflow: hidden;
 }
