@@ -2581,266 +2581,286 @@ html {
 }
 
 /* ============================================
-   COMPACT OFFER PRODUCT LAYOUT
+   PRODUCT DETAILS CARD - New Design V2
    ============================================ */
-.offer-product-details.compact-layout {
+.product-details-card {
+  margin-top: 16px;
+  background: var(--background);
+  border-radius: 16px;
+  overflow: hidden;
+  border: 1px solid rgba(0, 0, 0, 0.04);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.03);
+}
+
+.product-details-card .card-body {
+  padding: 20px;
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  margin-top: 12px;
-  padding-top: 12px;
-  border-top: 1px solid var(--border-light);
+  gap: 20px;
 }
 
-/* Pricing Row - Marža + Cijena Rada inline */
-.product-pricing-row {
-  display: flex;
-  gap: 16px;
-  flex-wrap: wrap;
-  align-items: flex-start;
-}
-
-.margin-field {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  min-width: 80px;
-}
-
-.margin-field label {
-  font-size: 10px;
+/* Section Label - Shared */
+.product-details-card .section-label {
+  font-size: 11px;
   font-weight: 600;
-  color: var(--text-tertiary);
-  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-secondary);
+  margin-bottom: 8px;
+  display: block;
 }
 
-.margin-field input {
-  width: 80px;
-  padding: 8px 10px;
-  font-size: 14px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
+/* Data Container - Shared box style */
+.product-details-card .data-container {
+  background: var(--surface);
+  border: 1px solid var(--border-light);
+  border-radius: 12px;
+  padding: 16px;
+}
+
+/* Clean Input - Modern minimal style */
+.product-details-card .clean-input {
+  border: 1px solid transparent;
   background: white;
+  border-radius: 8px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-primary);
+  text-align: center;
+  padding: 8px 4px;
+  width: 100%;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
+  transition: all 0.2s;
+}
+
+.product-details-card .clean-input:focus {
+  border-color: var(--accent);
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(0, 113, 227, 0.1);
+}
+
+/* TOP GRID: Margin + Labor */
+.product-details-card .top-grid {
+  display: grid;
+  grid-template-columns: 120px 1fr;
+  gap: 16px;
+}
+
+/* Margin Box */
+.product-details-card .margin-box {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
   text-align: center;
 }
 
-.margin-field input:focus {
-  border-color: var(--accent);
-  outline: none;
+.product-details-card .margin-box .section-label {
+  text-align: center;
 }
 
-/* Labor Row - inline sa labelom */
-.labor-row {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  min-width: 300px;
-  background: rgba(0, 113, 227, 0.04);
-  border: 1px solid rgba(0, 113, 227, 0.1);
-  border-radius: var(--radius-sm);
-  padding: 8px 12px;
+.product-details-card .margin-input-wrapper {
+  position: relative;
 }
 
-.labor-label {
-  font-size: 10px;
-  font-weight: 600;
-  color: var(--accent);
-  letter-spacing: 0.5px;
-}
-
-.labor-inline-inputs {
-  display: flex;
-  gap: 12px;
-  align-items: center;
-  flex-wrap: wrap;
-}
-
-.inline-field {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-
-.inline-field span {
+.product-details-card .margin-suffix {
+  position: absolute;
+  right: 12px;
+  top: 50%;
+  transform: translateY(-50%);
   font-size: 11px;
   color: var(--text-secondary);
-  white-space: nowrap;
+  pointer-events: none;
 }
 
-.inline-field input {
-  width: 50px;
-  padding: 5px 6px;
-  font-size: 13px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: white;
-  text-align: center;
-}
-
-.inline-field input:focus {
-  border-color: var(--accent);
-  outline: none;
-}
-
-.labor-total-badge {
+/* Labor Box */
+.product-details-card .labor-box {
   display: flex;
+  flex-direction: column;
+}
+
+.product-details-card .labor-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr auto;
   align-items: center;
-  gap: 6px;
-  margin-left: auto;
-  padding: 5px 10px;
-  background: var(--accent);
-  border-radius: 6px;
-  color: white;
-  font-size: 12px;
+  gap: 12px;
 }
 
-.labor-total-badge span {
-  opacity: 0.9;
-}
-
-.labor-total-badge strong {
-  font-weight: 700;
-}
-
-/* Extras Row - Dodaci + Ukupno */
-.product-extras-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-end;
-  gap: 16px;
-  flex-wrap: wrap;
-}
-
-.extras-section {
+.product-details-card .labor-col {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  flex: 1;
-  min-width: 200px;
+  text-align: center;
 }
 
-.extras-section>label {
+.product-details-card .labor-col span {
   font-size: 10px;
-  font-weight: 600;
-  color: var(--text-tertiary);
-  letter-spacing: 0.5px;
+  color: var(--text-secondary);
+  font-weight: 500;
+  text-transform: uppercase;
 }
 
-.extras-inline {
+.product-details-card .labor-result {
   display: flex;
-  gap: 6px;
+  flex-direction: column;
+  align-items: flex-end;
+  justify-content: center;
+  padding-left: 12px;
+  border-left: 1px solid var(--border-light);
+  height: 100%;
+}
+
+.product-details-card .labor-result-val {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--accent);
+}
+
+.product-details-card .labor-result-label {
+  font-size: 10px;
+  color: var(--text-secondary);
+}
+
+/* EXTRAS SECTION */
+.product-details-card .extras-section-v2 {
+  display: flex;
+  flex-direction: column;
+}
+
+.product-details-card .extras-wrapper {
+  display: flex;
   flex-wrap: wrap;
+  gap: 8px;
   align-items: center;
 }
 
-.add-extra-btn {
+/* Chip - Extra item */
+.product-details-card .chip {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  padding: 5px 10px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 6px;
+  gap: 8px;
+  padding: 6px 6px 6px 12px;
+  background: white;
+  border: 1px solid var(--border-light);
+  border-radius: 20px;
+  font-size: 13px;
+  color: var(--text-primary);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.02);
+  transition: all 0.2s;
+}
+
+.product-details-card .chip:hover {
+  border-color: var(--text-secondary);
+}
+
+.product-details-card .chip-price {
+  font-weight: 600;
+  color: var(--accent);
   font-size: 12px;
-  color: var(--text-secondary);
+}
+
+.product-details-card .chip-remove {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--surface);
+  border: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   cursor: pointer;
+  color: var(--text-secondary);
+  padding: 0;
   transition: all 0.15s;
 }
 
-.add-extra-btn:hover {
-  background: var(--surface-hover);
-  color: var(--text-primary);
+.product-details-card .chip-remove:hover {
+  background: var(--error);
+  color: white;
 }
 
-.add-extra-btn .material-icons-round {
+.product-details-card .chip-remove .material-icons-round {
   font-size: 14px;
 }
 
-.extra-tag-inline {
-  display: inline-flex;
+/* Add Extra Button */
+.product-details-card .btn-add-extra {
+  background: transparent;
+  border: 1px dashed var(--text-secondary);
+  color: var(--text-secondary);
+  padding: 6px 12px;
+  border-radius: 20px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  display: flex;
   align-items: center;
   gap: 4px;
-  padding: 4px 8px;
-  background: white;
-  border: 1px solid var(--border-light);
-  border-radius: 14px;
-  font-size: 11px;
+  transition: all 0.15s;
 }
 
-.extra-tag-inline .price {
+.product-details-card .btn-add-extra:hover {
+  border-color: var(--accent);
   color: var(--accent);
-  font-weight: 500;
+  background: rgba(0, 113, 227, 0.05);
 }
 
-.extra-tag-inline button {
-  background: none;
-  border: none;
-  padding: 0;
-  cursor: pointer;
-  color: var(--text-tertiary);
-  line-height: 1;
-  display: flex;
-}
-
-.extra-tag-inline button:hover {
-  color: var(--error);
-}
-
-.extra-tag-inline button .material-icons-round {
-  font-size: 12px;
-}
-
-/* Product Total Badge */
-.product-total-badge {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 14px;
-  background: linear-gradient(135deg, var(--accent) 0%, #764ba2 100%);
-  border-radius: 8px;
-  color: white;
-  white-space: nowrap;
-}
-
-.product-total-badge span {
-  font-size: 11px;
-  opacity: 0.9;
-  font-weight: 500;
-}
-
-.product-total-badge strong {
+.product-details-card .btn-add-extra .material-icons-round {
   font-size: 16px;
-  font-weight: 700;
 }
 
-/* Responsive adjustments */
-@media (max-width: 768px) {
-  .product-pricing-row {
-    flex-direction: column;
-    gap: 12px;
+/* CARD FOOTER - Total */
+.product-details-card .card-footer {
+  background: var(--surface);
+  border-top: 1px solid var(--border-light);
+  padding: 14px 20px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.product-details-card .total-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+}
+
+.product-details-card .total-amount {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--text-primary);
+  letter-spacing: -0.5px;
+}
+
+/* RESPONSIVE */
+@media (max-width: 600px) {
+  .product-details-card .top-grid {
+    grid-template-columns: 1fr;
   }
 
-  .labor-row {
-    min-width: 100%;
+  .product-details-card .labor-grid {
+    grid-template-columns: 1fr 1fr 1fr;
   }
 
-  .labor-inline-inputs {
-    flex-wrap: wrap;
+  .product-details-card .labor-result {
+    grid-column: 1 / -1;
+    border-left: none;
+    border-top: 1px solid var(--border-light);
+    padding-left: 0;
+    padding-top: 12px;
+    margin-top: 4px;
+    align-items: center;
+    flex-direction: row;
+    justify-content: space-between;
+    width: 100%;
   }
 
-  .labor-total-badge {
-    margin-left: 0;
-    margin-top: 8px;
+  .product-details-card .labor-result-label {
+    order: 1;
   }
 
-  .product-extras-row {
-    flex-direction: column;
-    align-items: stretch;
-  }
-
-  .product-total-badge {
-    align-self: flex-end;
+  .product-details-card .labor-result-val {
+    order: 2;
   }
 }
 

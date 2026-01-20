@@ -1159,103 +1159,116 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
                                             </div>
 
                                             {product.included && (
-                                                <div className="offer-product-details compact-layout">
-                                                    {/* Top row: Marža + Cijena rada inline */}
-                                                    <div className="product-pricing-row">
-                                                        <div className="margin-field">
-                                                            <label>MARŽA (KM)</label>
-                                                            <input
-                                                                type="number"
-                                                                value={product.margin}
-                                                                onChange={(e) => updateProductMargin(index, parseFloat(e.target.value) || 0)}
-                                                                min="0"
-                                                                step="10"
-                                                            />
-                                                        </div>
-
-                                                        <div className="labor-row">
-                                                            <label className="labor-label">CIJENA RADA</label>
-                                                            <div className="labor-inline-inputs">
-                                                                <div className="inline-field">
-                                                                    <span>Radnici</span>
+                                                <div className="product-details-card">
+                                                    <div className="card-body">
+                                                        {/* ROW 1: MARŽA + TROŠKOVI RADA */}
+                                                        <div className="top-grid">
+                                                            {/* COLUMN 1: MARGIN */}
+                                                            <div className="margin-box data-container">
+                                                                <span className="section-label">Marža</span>
+                                                                <div className="margin-input-wrapper">
                                                                     <input
                                                                         type="number"
-                                                                        value={product.laborWorkers}
-                                                                        onChange={(e) => {
-                                                                            const updated = [...offerProducts];
-                                                                            updated[index].laborWorkers = parseInt(e.target.value) || 0;
-                                                                            setOfferProducts(updated);
-                                                                        }}
-                                                                        min="0"
-                                                                        placeholder="0"
-                                                                    />
-                                                                </div>
-                                                                <div className="inline-field">
-                                                                    <span>Dana</span>
-                                                                    <input
-                                                                        type="number"
-                                                                        value={product.laborDays}
-                                                                        onChange={(e) => {
-                                                                            const updated = [...offerProducts];
-                                                                            updated[index].laborDays = parseInt(e.target.value) || 0;
-                                                                            setOfferProducts(updated);
-                                                                        }}
-                                                                        min="0"
-                                                                        placeholder="0"
-                                                                    />
-                                                                </div>
-                                                                <div className="inline-field">
-                                                                    <span>Dnevnica (KM)</span>
-                                                                    <input
-                                                                        type="number"
-                                                                        value={product.laborDailyRate}
-                                                                        onChange={(e) => {
-                                                                            const updated = [...offerProducts];
-                                                                            updated[index].laborDailyRate = parseFloat(e.target.value) || 0;
-                                                                            setOfferProducts(updated);
-                                                                        }}
+                                                                        className="clean-input"
+                                                                        value={product.margin}
+                                                                        onChange={(e) => updateProductMargin(index, parseFloat(e.target.value) || 0)}
                                                                         min="0"
                                                                         step="10"
                                                                         placeholder="0"
                                                                     />
+                                                                    <span className="margin-suffix">KM</span>
                                                                 </div>
-                                                                <div className="labor-total-badge">
-                                                                    <span>Ukupno rad:</span>
-                                                                    <strong>{formatCurrency((product.laborWorkers || 0) * (product.laborDays || 0) * (product.laborDailyRate || 0))}</strong>
+                                                            </div>
+
+                                                            {/* COLUMN 2: LABOR */}
+                                                            <div className="labor-box data-container">
+                                                                <span className="section-label">Troškovi Rada</span>
+                                                                <div className="labor-grid">
+                                                                    <div className="labor-col">
+                                                                        <input
+                                                                            type="number"
+                                                                            className="clean-input"
+                                                                            value={product.laborWorkers}
+                                                                            onChange={(e) => {
+                                                                                const updated = [...offerProducts];
+                                                                                updated[index].laborWorkers = parseInt(e.target.value) || 0;
+                                                                                setOfferProducts(updated);
+                                                                            }}
+                                                                            min="0"
+                                                                            placeholder="0"
+                                                                        />
+                                                                        <span>Radnika</span>
+                                                                    </div>
+                                                                    <div className="labor-col">
+                                                                        <input
+                                                                            type="number"
+                                                                            className="clean-input"
+                                                                            value={product.laborDays}
+                                                                            onChange={(e) => {
+                                                                                const updated = [...offerProducts];
+                                                                                updated[index].laborDays = parseInt(e.target.value) || 0;
+                                                                                setOfferProducts(updated);
+                                                                            }}
+                                                                            min="0"
+                                                                            placeholder="0"
+                                                                        />
+                                                                        <span>Dana</span>
+                                                                    </div>
+                                                                    <div className="labor-col">
+                                                                        <input
+                                                                            type="number"
+                                                                            className="clean-input"
+                                                                            value={product.laborDailyRate}
+                                                                            onChange={(e) => {
+                                                                                const updated = [...offerProducts];
+                                                                                updated[index].laborDailyRate = parseFloat(e.target.value) || 0;
+                                                                                setOfferProducts(updated);
+                                                                            }}
+                                                                            min="0"
+                                                                            step="10"
+                                                                            placeholder="0"
+                                                                        />
+                                                                        <span>Dnevnica</span>
+                                                                    </div>
+                                                                    <div className="labor-result">
+                                                                        <span className="labor-result-val">
+                                                                            {formatCurrency((product.laborWorkers || 0) * (product.laborDays || 0) * (product.laborDailyRate || 0))}
+                                                                        </span>
+                                                                        <span className="labor-result-label">Ukupno rad</span>
+                                                                    </div>
                                                                 </div>
                                                             </div>
                                                         </div>
-                                                    </div>
 
-                                                    {/* Bottom row: Dodaci + Ukupno */}
-                                                    <div className="product-extras-row">
-                                                        <div className="extras-section">
-                                                            <label>DODACI</label>
-                                                            <div className="extras-inline">
+                                                        {/* ROW 2: EXTRAS */}
+                                                        <div className="extras-section-v2">
+                                                            <span className="section-label">Dodatne Usluge</span>
+                                                            <div className="extras-wrapper">
+                                                                {product.extras.map((extra, ei) => (
+                                                                    <div key={ei} className="chip">
+                                                                        <span>{extra.name}</span>
+                                                                        <span className="chip-price">{formatCurrency(extra.total)}</span>
+                                                                        <button className="chip-remove" type="button" onClick={() => removeExtra(index, ei)}>
+                                                                            <span className="material-icons-round">close</span>
+                                                                        </button>
+                                                                    </div>
+                                                                ))}
                                                                 <button
                                                                     type="button"
-                                                                    className="add-extra-btn"
+                                                                    className="btn-add-extra"
                                                                     onClick={() => openExtrasModal(index)}
                                                                 >
                                                                     <span className="material-icons-round">add</span>
                                                                     Dodaj uslugu
                                                                 </button>
-                                                                {product.extras.map((extra, ei) => (
-                                                                    <div key={ei} className="extra-tag-inline">
-                                                                        <span>{extra.name}</span>
-                                                                        <span className="price">{formatCurrency(extra.total)}</span>
-                                                                        <button type="button" onClick={() => removeExtra(index, ei)}>
-                                                                            <span className="material-icons-round">close</span>
-                                                                        </button>
-                                                                    </div>
-                                                                ))}
                                                             </div>
                                                         </div>
+                                                    </div>
 
-                                                        <div className="product-total-badge">
-                                                            <span>UKUPNO:</span>
-                                                            <strong>{formatCurrency(calculateProductTotal(product))}</strong>
-                                                        </div>
+                                                    {/* FOOTER: TOTAL */}
+                                                    <div className="card-footer">
+                                                        <span className="total-label">Ukupna cijena</span>
+                                                        <span className="total-amount">{formatCurrency(calculateProductTotal(product))}</span>
                                                     </div>
                                                 </div>
                                             )}
