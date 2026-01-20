@@ -9,6 +9,7 @@ import {
     deleteProduct,
     addMaterialToProduct,
     deleteProductMaterial,
+    updateProductMaterial,
     addGlassMaterialToProduct,
     updateGlassMaterial,
     addAluDoorMaterialToProduct,
@@ -55,6 +56,12 @@ export default function ProjectsTab({ projects, materials, onRefresh, showToast 
     const [aluDoorProductId, setAluDoorProductId] = useState('');
     const [editingGlassMaterial, setEditingGlassMaterial] = useState<ProductMaterial | null>(null);
     const [editingAluDoorMaterial, setEditingAluDoorMaterial] = useState<ProductMaterial | null>(null);
+
+    // Edit regular material modal
+    const [editMaterialModal, setEditMaterialModal] = useState(false);
+    const [editingMaterial, setEditingMaterial] = useState<ProductMaterial | null>(null);
+    const [editMaterialQty, setEditMaterialQty] = useState(0);
+    const [editMaterialPrice, setEditMaterialPrice] = useState(0);
 
     // Filter projects
     const filteredProjects = projects.filter(project => {
@@ -299,6 +306,33 @@ export default function ProjectsTab({ projects, materials, onRefresh, showToast 
         }
     }
 
+    // Open edit material modal for regular materials
+    function openEditMaterialModal(material: ProductMaterial) {
+        setEditingMaterial(material);
+        setEditMaterialQty(material.Quantity);
+        setEditMaterialPrice(material.Unit_Price);
+        setEditMaterialModal(true);
+    }
+
+    // Save edited material
+    async function handleSaveEditMaterial() {
+        if (!editingMaterial) return;
+
+        const result = await updateProductMaterial(editingMaterial.ID, {
+            Quantity: editMaterialQty,
+            Unit_Price: editMaterialPrice,
+            Total_Price: editMaterialQty * editMaterialPrice
+        });
+
+        if (result.success) {
+            showToast('Materijal uspješno ažuriran', 'success');
+            setEditMaterialModal(false);
+            onRefresh();
+        } else {
+            showToast(result.message, 'error');
+        }
+    }
+
     function getStatusClass(status: string): string {
         return 'status-' + status.toLowerCase()
             .replace(/\s+/g, '-')
@@ -465,6 +499,15 @@ export default function ProjectsTab({ projects, materials, onRefresh, showToast 
                                                                 className="icon-btn"
                                                                 onClick={() => openAluDoorModalForEdit(product.Product_ID, material)}
                                                                 title="Uredi alu vrata"
+                                                            >
+                                                                <span className="material-icons-round">edit</span>
+                                                            </button>
+                                                        )}
+                                                        {!isGlass && !isAluDoor && (
+                                                            <button
+                                                                className="icon-btn"
+                                                                onClick={() => openEditMaterialModal(material)}
+                                                                title="Uredi materijal"
                                                             >
                                                                 <span className="material-icons-round">edit</span>
                                                             </button>
@@ -723,6 +766,67 @@ export default function ProjectsTab({ projects, materials, onRefresh, showToast 
                 project={reportProject}
                 allMaterials={materials}
             />
+
+            {/* Edit Material Modal */}
+            <Modal
+                isOpen={editMaterialModal}
+                onClose={() => setEditMaterialModal(false)}
+                title="Uredi Materijal"
+                footer={
+                    <>
+                        <button className="btn btn-secondary" onClick={() => setEditMaterialModal(false)}>Otkaži</button>
+                        <button className="btn btn-primary" onClick={handleSaveEditMaterial}>Sačuvaj</button>
+                    </>
+                }
+            >
+                {editingMaterial && (
+                    <>
+                        <div className="form-group">
+                            <label>Materijal</label>
+                            <input
+                                type="text"
+                                value={editingMaterial.Material_Name}
+                                readOnly
+                                disabled
+                            />
+                        </div>
+                        <div className="form-row">
+                            <div className="form-group">
+                                <label>Količina *</label>
+                                <input
+                                    type="number"
+                                    step="0.01"
+                                    min="0"
+                                    value={editMaterialQty}
+                                    onChange={(e) => setEditMaterialQty(parseFloat(e.target.value) || 0)}
+                                />
+                            </div>
+                            <div className="form-group">
+                                <label>Jedinica</label>
+                                <input
+                                    type="text"
+                                    readOnly
+                                    disabled
+                                    value={editingMaterial.Unit || ''}
+                                />
+                            </div>
+                        </div>
+                        <div className="form-group">
+                            <label>Cijena po jedinici (KM)</label>
+                            <input
+                                type="number"
+                                step="0.01"
+                                min="0"
+                                value={editMaterialPrice}
+                                onChange={(e) => setEditMaterialPrice(parseFloat(e.target.value) || 0)}
+                            />
+                        </div>
+                        <div className="form-group">
+                            <label>Ukupno: <strong>{(editMaterialQty * editMaterialPrice).toFixed(2)} KM</strong></label>
+                        </div>
+                    </>
+                )}
+            </Modal>
         </div>
     );
 }
