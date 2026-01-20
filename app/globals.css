@@ -2712,56 +2712,100 @@ html {
   justify-content: center;
   min-height: 50vh;
   text-align: center;
-  padding: 40px;
-  background: var(--background);
-  border-radius: var(--radius-lg);
+  padding: 60px 40px;
+  margin: 24px;
+  background: rgba(255, 255, 255, 0.7);
+  backdrop-filter: blur(24px) saturate(180%);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  border-radius: 28px;
+  border: 1px solid rgba(255, 255, 255, 0.6);
+  box-shadow:
+    0 12px 48px rgba(0, 0, 0, 0.08),
+    0 4px 16px rgba(0, 0, 0, 0.04),
+    inset 0 1px 0 rgba(255, 255, 255, 0.9);
 }
 
 .module-locked .lock-icon {
-  width: 80px;
-  height: 80px;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  width: 88px;
+  height: 88px;
+  background: linear-gradient(145deg, rgba(102, 126, 234, 0.15) 0%, rgba(118, 75, 162, 0.15) 100%);
   border-radius: 50%;
   display: flex;
   align-items: center;
   justify-content: center;
-  margin-bottom: 24px;
+  margin-bottom: 28px;
+  border: 1px solid rgba(102, 126, 234, 0.2);
+  box-shadow:
+    0 8px 24px rgba(102, 126, 234, 0.15),
+    inset 0 1px 0 rgba(255, 255, 255, 0.5);
+  position: relative;
+}
+
+.module-locked .lock-icon::before {
+  content: '';
+  position: absolute;
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  background: linear-gradient(145deg, #667eea 0%, #764ba2 100%);
+  opacity: 0.9;
+  z-index: -1;
 }
 
 .module-locked .lock-icon .material-icons-round {
   font-size: 40px;
   color: white;
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.2));
 }
 
 .module-locked h2 {
-  font-size: 24px;
-  margin-bottom: 8px;
+  font-size: 26px;
+  font-weight: 700;
+  margin-bottom: 12px;
+  color: var(--text-primary);
+  letter-spacing: -0.5px;
 }
 
 .module-locked p {
   color: var(--text-secondary);
-  margin-bottom: 24px;
-  max-width: 400px;
+  margin-bottom: 32px;
+  max-width: 420px;
+  font-size: 15px;
+  line-height: 1.6;
 }
 
 .module-locked .upgrade-btn {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  padding: 14px 28px;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  gap: 10px;
+  padding: 16px 32px;
+  background: linear-gradient(145deg, #667eea 0%, #764ba2 100%);
   color: white;
   border: none;
-  border-radius: var(--radius-md);
+  border-radius: 16px;
   font-size: 15px;
   font-weight: 600;
   cursor: pointer;
-  transition: transform 0.2s, box-shadow 0.2s;
+  transition: all 0.3s ease;
+  text-decoration: none;
+  box-shadow:
+    0 4px 16px rgba(102, 126, 234, 0.35),
+    inset 0 1px 0 rgba(255, 255, 255, 0.2);
 }
 
 .module-locked .upgrade-btn:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 8px 20px rgba(102, 126, 234, 0.4);
+  transform: translateY(-3px);
+  box-shadow:
+    0 12px 28px rgba(102, 126, 234, 0.45),
+    inset 0 1px 0 rgba(255, 255, 255, 0.3);
+}
+
+.module-locked .upgrade-btn:active {
+  transform: translateY(-1px);
+}
+
+.module-locked .upgrade-btn .material-icons-round {
+  font-size: 20px;
 }
 
 /* Tab Lock Icon - Professional Locked Tab Styling */
