@@ -2705,61 +2705,205 @@ html {
 }
 
 /* Module Locked Overlay */
+/* Premium Fluent-style Module Locked Screen */
 .module-locked {
+  position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  min-height: 50vh;
-  text-align: center;
+  min-height: 60vh;
   padding: 60px 40px;
   margin: 24px;
-  background: rgba(255, 255, 255, 0.7);
-  backdrop-filter: blur(24px) saturate(180%);
-  -webkit-backdrop-filter: blur(24px) saturate(180%);
-  border-radius: 28px;
-  border: 1px solid rgba(255, 255, 255, 0.6);
+  background: linear-gradient(135deg, #f8f9ff 0%, #f0f4ff 50%, #fdf4ff 100%);
+  border-radius: 32px;
+  overflow: hidden;
+}
+
+/* Floating Glass Decorations - 3D Microsoft Fluent Style */
+.glass-decor {
+  position: absolute;
+  border-radius: 50%;
+  pointer-events: none;
+  animation: float 6s ease-in-out infinite;
+}
+
+.glass-decor-1 {
+  width: 180px;
+  height: 180px;
+  top: -40px;
+  right: 10%;
+  background: linear-gradient(145deg,
+      rgba(102, 126, 234, 0.4) 0%,
+      rgba(118, 75, 162, 0.2) 50%,
+      rgba(236, 72, 153, 0.3) 100%);
+  backdrop-filter: blur(40px);
+  -webkit-backdrop-filter: blur(40px);
+  border: 1px solid rgba(255, 255, 255, 0.4);
   box-shadow:
-    0 12px 48px rgba(0, 0, 0, 0.08),
-    0 4px 16px rgba(0, 0, 0, 0.04),
-    inset 0 1px 0 rgba(255, 255, 255, 0.9);
+    0 20px 60px rgba(102, 126, 234, 0.3),
+    inset 0 2px 4px rgba(255, 255, 255, 0.6),
+    inset 0 -2px 4px rgba(0, 0, 0, 0.05);
+  animation-delay: 0s;
+}
+
+.glass-decor-2 {
+  width: 120px;
+  height: 120px;
+  bottom: 15%;
+  left: 5%;
+  background: linear-gradient(145deg,
+      rgba(52, 211, 153, 0.35) 0%,
+      rgba(59, 130, 246, 0.25) 100%);
+  backdrop-filter: blur(30px);
+  -webkit-backdrop-filter: blur(30px);
+  border: 1px solid rgba(255, 255, 255, 0.5);
+  box-shadow:
+    0 15px 45px rgba(52, 211, 153, 0.25),
+    inset 0 2px 4px rgba(255, 255, 255, 0.7);
+  animation-delay: -2s;
+}
+
+.glass-decor-3 {
+  width: 80px;
+  height: 80px;
+  top: 30%;
+  left: 15%;
+  background: linear-gradient(145deg,
+      rgba(251, 146, 60, 0.35) 0%,
+      rgba(244, 63, 94, 0.25) 100%);
+  backdrop-filter: blur(25px);
+  -webkit-backdrop-filter: blur(25px);
+  border: 1px solid rgba(255, 255, 255, 0.5);
+  box-shadow:
+    0 12px 35px rgba(251, 146, 60, 0.2),
+    inset 0 2px 3px rgba(255, 255, 255, 0.6);
+  animation-delay: -4s;
+}
+
+@keyframes float {
+
+  0%,
+  100% {
+    transform: translateY(0) rotate(0deg);
+  }
+
+  50% {
+    transform: translateY(-20px) rotate(5deg);
+  }
+}
+
+/* Main Card - Premium Glass */
+.module-locked-card {
+  position: relative;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  padding: 48px 56px;
+  background: rgba(255, 255, 255, 0.75);
+  backdrop-filter: blur(40px) saturate(200%);
+  -webkit-backdrop-filter: blur(40px) saturate(200%);
+  border-radius: 28px;
+  border: 1px solid rgba(255, 255, 255, 0.8);
+  box-shadow:
+    0 25px 80px rgba(102, 126, 234, 0.15),
+    0 8px 32px rgba(0, 0, 0, 0.06),
+    inset 0 1px 0 rgba(255, 255, 255, 1),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.02);
+  max-width: 480px;
+}
+
+/* Lock Icon - 3D Glass Orb */
+.lock-icon-container {
+  position: relative;
+  margin-bottom: 32px;
+}
+
+.lock-icon-glow {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 140px;
+  height: 140px;
+  background: radial-gradient(circle,
+      rgba(102, 126, 234, 0.4) 0%,
+      rgba(118, 75, 162, 0.2) 40%,
+      transparent 70%);
+  border-radius: 50%;
+  filter: blur(20px);
+  animation: pulse 3s ease-in-out infinite;
+}
+
+@keyframes pulse {
+
+  0%,
+  100% {
+    opacity: 0.6;
+    transform: translate(-50%, -50%) scale(1);
+  }
+
+  50% {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1.1);
+  }
 }
 
 .module-locked .lock-icon {
-  width: 88px;
-  height: 88px;
-  background: linear-gradient(145deg, rgba(102, 126, 234, 0.15) 0%, rgba(118, 75, 162, 0.15) 100%);
-  border-radius: 50%;
+  position: relative;
+  width: 100px;
+  height: 100px;
+  background: linear-gradient(145deg,
+      rgba(255, 255, 255, 0.9) 0%,
+      rgba(255, 255, 255, 0.6) 100%);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border-radius: 28px;
   display: flex;
   align-items: center;
   justify-content: center;
-  margin-bottom: 28px;
-  border: 1px solid rgba(102, 126, 234, 0.2);
+  border: 1px solid rgba(255, 255, 255, 0.8);
   box-shadow:
-    0 8px 24px rgba(102, 126, 234, 0.15),
-    inset 0 1px 0 rgba(255, 255, 255, 0.5);
-  position: relative;
+    0 20px 50px rgba(102, 126, 234, 0.25),
+    0 8px 25px rgba(0, 0, 0, 0.08),
+    inset 0 2px 4px rgba(255, 255, 255, 1),
+    inset 0 -2px 4px rgba(102, 126, 234, 0.1);
+  transform: rotate(-5deg);
+  transition: transform 0.4s ease;
+}
+
+.module-locked .lock-icon:hover {
+  transform: rotate(0deg) scale(1.05);
 }
 
 .module-locked .lock-icon::before {
   content: '';
   position: absolute;
-  width: 100%;
-  height: 100%;
-  border-radius: 50%;
-  background: linear-gradient(145deg, #667eea 0%, #764ba2 100%);
-  opacity: 0.9;
-  z-index: -1;
+  top: 8px;
+  left: 8px;
+  right: 8px;
+  height: 40%;
+  background: linear-gradient(180deg,
+      rgba(255, 255, 255, 0.8) 0%,
+      transparent 100%);
+  border-radius: 20px 20px 40% 40%;
+  pointer-events: none;
 }
 
 .module-locked .lock-icon .material-icons-round {
-  font-size: 40px;
-  color: white;
-  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.2));
+  font-size: 44px;
+  background: linear-gradient(145deg, #667eea 0%, #764ba2 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  filter: drop-shadow(0 4px 8px rgba(102, 126, 234, 0.3));
 }
 
+/* Typography */
 .module-locked h2 {
-  font-size: 26px;
+  font-size: 28px;
   font-weight: 700;
   margin-bottom: 12px;
   color: var(--text-primary);
@@ -2769,43 +2913,90 @@ html {
 .module-locked p {
   color: var(--text-secondary);
   margin-bottom: 32px;
-  max-width: 420px;
+  max-width: 360px;
   font-size: 15px;
-  line-height: 1.6;
+  line-height: 1.7;
 }
 
+/* Premium Upgrade Button */
 .module-locked .upgrade-btn {
+  position: relative;
   display: inline-flex;
   align-items: center;
   gap: 10px;
-  padding: 16px 32px;
+  padding: 18px 36px;
   background: linear-gradient(145deg, #667eea 0%, #764ba2 100%);
   color: white;
   border: none;
-  border-radius: 16px;
+  border-radius: 18px;
   font-size: 15px;
   font-weight: 600;
   cursor: pointer;
-  transition: all 0.3s ease;
+  transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
   text-decoration: none;
+  overflow: hidden;
   box-shadow:
-    0 4px 16px rgba(102, 126, 234, 0.35),
-    inset 0 1px 0 rgba(255, 255, 255, 0.2);
+    0 8px 30px rgba(102, 126, 234, 0.4),
+    inset 0 1px 0 rgba(255, 255, 255, 0.25);
+}
+
+.module-locked .upgrade-btn .btn-glow {
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(90deg,
+      transparent 0%,
+      rgba(255, 255, 255, 0.3) 50%,
+      transparent 100%);
+  transition: left 0.6s ease;
+}
+
+.module-locked .upgrade-btn:hover .btn-glow {
+  left: 100%;
 }
 
 .module-locked .upgrade-btn:hover {
-  transform: translateY(-3px);
+  transform: translateY(-4px) scale(1.02);
   box-shadow:
-    0 12px 28px rgba(102, 126, 234, 0.45),
+    0 16px 45px rgba(102, 126, 234, 0.5),
     inset 0 1px 0 rgba(255, 255, 255, 0.3);
 }
 
 .module-locked .upgrade-btn:active {
-  transform: translateY(-1px);
+  transform: translateY(-2px) scale(1);
 }
 
 .module-locked .upgrade-btn .material-icons-round {
   font-size: 20px;
+}
+
+/* Plan Badge */
+.module-locked .plan-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 28px;
+  padding: 10px 20px;
+  background: rgba(255, 255, 255, 0.6);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.8);
+  border-radius: 30px;
+  font-size: 13px;
+  color: var(--text-secondary);
+  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.04);
+}
+
+.module-locked .plan-badge .material-icons-round {
+  font-size: 16px;
+  color: var(--accent);
+}
+
+.module-locked .plan-badge strong {
+  color: var(--accent);
+  font-weight: 600;
 }
 
 /* Tab Lock Icon - Professional Locked Tab Styling */

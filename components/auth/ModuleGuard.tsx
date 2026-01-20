@@ -25,23 +25,36 @@ export default function ModuleGuard({ children, module, moduleName }: ModuleGuar
     if (!hasModule(module)) {
         return (
             <div className="module-locked">
-                <div className="lock-icon">
-                    <span className="material-icons-round">lock</span>
-                </div>
-                <h2>{moduleName}</h2>
-                <p>
-                    Ovaj modul nije uključen u vaš trenutni plan.
-                    Nadogradite svoj plan da biste pristupili svim funkcijama.
-                </p>
-                <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', justifyContent: 'center' }}>
+                {/* Decorative floating glass elements */}
+                <div className="glass-decor glass-decor-1"></div>
+                <div className="glass-decor glass-decor-2"></div>
+                <div className="glass-decor glass-decor-3"></div>
+
+                <div className="module-locked-card">
+                    <div className="lock-icon-container">
+                        <div className="lock-icon-glow"></div>
+                        <div className="lock-icon">
+                            <span className="material-icons-round">lock</span>
+                        </div>
+                    </div>
+
+                    <h2>{moduleName}</h2>
+                    <p>
+                        Ovaj modul nije uključen u vaš trenutni plan.
+                        Nadogradite svoj plan da biste pristupili svim funkcijama.
+                    </p>
+
                     <Link href="/pricing" className="upgrade-btn">
-                        <span className="material-icons-round">upgrade</span>
-                        Pogledaj planove
+                        <span className="btn-glow"></span>
+                        <span className="material-icons-round">diamond</span>
+                        <span>Pogledaj planove</span>
                     </Link>
+
+                    <div className="plan-badge">
+                        <span className="material-icons-round">verified</span>
+                        Trenutni plan: <strong>{organization?.Subscription_Plan || 'Free'}</strong>
+                    </div>
                 </div>
-                <p style={{ fontSize: '13px', color: 'var(--text-tertiary)', marginTop: '24px' }}>
-                    Trenutni plan: <strong>{organization?.Subscription_Plan || 'Free'}</strong>
-                </p>
             </div>
         );
     }
