@@ -10,6 +10,12 @@ import Link from 'next/link';
 
 export const dynamic = 'force-dynamic';
 
+// SECURE ADMIN WHITELIST - Only these emails can access admin panel
+const ADMIN_EMAILS = [
+    'nihad.tae@gmail.com',
+    // Add more admin emails here if needed
+];
+
 const SUBSCRIPTION_PLANS = ['free', 'professional', 'enterprise'] as const;
 
 export default function AdminPage() {
@@ -20,8 +26,8 @@ export default function AdminPage() {
     const [saving, setSaving] = useState<string | null>(null);
     const [message, setMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
 
-    // Check if user is admin (you can customize this)
-    const isAdmin = user?.Email?.endsWith('@admin.com') || user?.Email === 'admin@admin.com';
+    // Secure admin check - only whitelisted emails
+    const isAdmin = user?.Email ? ADMIN_EMAILS.includes(user.Email.toLowerCase()) : false;
 
     useEffect(() => {
         if (!authLoading && !user) {

@@ -82,8 +82,15 @@ export function AuthProvider({ children }: AuthProviderProps) {
         return () => unsubscribe();
     }, []);
 
+    // SECURE ADMIN WHITELIST - admins have full access to all modules
+    const ADMIN_EMAILS = ['nihad.tae@gmail.com'];
+    const isSuperAdmin = user?.Email ? ADMIN_EMAILS.includes(user.Email.toLowerCase()) : false;
+
     // Check if user has access to a module
     const hasModule = (module: keyof ModuleAccess): boolean => {
+        // Super admins always have full access
+        if (isSuperAdmin) return true;
+
         if (!organization) return false;
 
         // Enterprise has all modules
