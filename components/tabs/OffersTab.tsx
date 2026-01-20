@@ -1406,6 +1406,7 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
                 isOpen={extrasModal}
                 onClose={() => setExtrasModal(false)}
                 title="Dodaj Uslugu/Dodatak"
+                zIndex={2000}
                 footer={
                     <>
                         <button className="btn btn-secondary" onClick={() => setExtrasModal(false)}>Otkaži</button>

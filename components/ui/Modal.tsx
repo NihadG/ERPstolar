@@ -9,9 +9,10 @@ interface ModalProps {
     children: ReactNode;
     footer?: ReactNode;
     size?: 'default' | 'large' | 'xl' | 'fullscreen';
+    zIndex?: number; // For nested modals
 }
 
-export default function Modal({ isOpen, onClose, title, children, footer, size = 'default' }: ModalProps) {
+export default function Modal({ isOpen, onClose, title, children, footer, size = 'default', zIndex }: ModalProps) {
     useEffect(() => {
         const handleEscape = (e: KeyboardEvent) => {
             if (e.key === 'Escape') onClose();
@@ -32,13 +33,20 @@ export default function Modal({ isOpen, onClose, title, children, footer, size =
         size === 'xl' ? 'modal-xl' :
             size === 'fullscreen' ? 'modal-fullscreen' : '';
 
+    const overlayStyle = zIndex ? { zIndex: zIndex } : {};
+    const modalStyle = zIndex ? { zIndex: zIndex + 1 } : {};
+
     return (
         <>
             <div
                 className={`modal-overlay ${isOpen ? 'active' : ''}`}
                 onClick={onClose}
+                style={overlayStyle}
             />
-            <div className={`modal ${sizeClass} ${isOpen ? 'active' : ''}`}>
+            <div
+                className={`modal ${sizeClass} ${isOpen ? 'active' : ''}`}
+                style={modalStyle}
+            >
                 {title && (
                     <div className="modal-header">
                         <h2>{title}</h2>

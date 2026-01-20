@@ -2585,11 +2585,11 @@ html {
    ============================================ */
 .product-details-card {
   margin-top: 16px;
-  background: var(--background);
-  border-radius: 16px;
+  background: white;
+  border-radius: 14px;
   overflow: hidden;
-  border: 1px solid rgba(0, 0, 0, 0.04);
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.03);
+  border: 1px solid var(--border-light);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
 }
 
 .product-details-card .card-body {
@@ -2614,8 +2614,19 @@ html {
 .product-details-card .data-container {
   background: var(--surface);
   border: 1px solid var(--border-light);
-  border-radius: 12px;
-  padding: 16px;
+  border-radius: 10px;
+  padding: 14px;
+}
+
+/* Margin box special styling */
+.product-details-card .margin-box.data-container {
+  background: linear-gradient(135deg, rgba(0, 113, 227, 0.04) 0%, rgba(0, 113, 227, 0.02) 100%);
+  border-color: rgba(0, 113, 227, 0.12);
+}
+
+/* Labor box special styling */
+.product-details-card .labor-box.data-container {
+  background: var(--surface);
 }
 
 /* Clean Input - Modern minimal style */
@@ -2810,26 +2821,27 @@ html {
 
 /* CARD FOOTER - Total */
 .product-details-card .card-footer {
-  background: var(--surface);
+  background: linear-gradient(135deg, rgba(0, 113, 227, 0.03) 0%, var(--surface) 100%);
   border-top: 1px solid var(--border-light);
-  padding: 14px 20px;
+  padding: 12px 20px;
   display: flex;
   justify-content: space-between;
   align-items: center;
 }
 
 .product-details-card .total-label {
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 600;
   color: var(--text-secondary);
   text-transform: uppercase;
+  letter-spacing: 0.03em;
 }
 
 .product-details-card .total-amount {
-  font-size: 20px;
+  font-size: 18px;
   font-weight: 700;
-  color: var(--text-primary);
-  letter-spacing: -0.5px;
+  color: var(--accent);
+  letter-spacing: -0.3px;
 }
 
 /* RESPONSIVE */
