@@ -13,15 +13,17 @@ const firebaseConfig = {
 
 // Only initialize Firebase in the browser
 let app: FirebaseApp | undefined;
-let db: Firestore | undefined;
-let auth: Auth | undefined;
+let _db: Firestore | undefined;
+let _auth: Auth | undefined;
 
 if (typeof window !== 'undefined') {
     app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0];
-    db = getFirestore(app);
-    auth = getAuth(app);
+    _db = getFirestore(app);
+    _auth = getAuth(app);
 }
 
-export { db, auth };
+// Export with type assertions - these will only be used in browser context
+// where they are guaranteed to be initialized
+export const db = _db as Firestore;
+export const auth = _auth as Auth;
 export default app;
-

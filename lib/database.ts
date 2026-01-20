@@ -31,6 +31,17 @@ import type {
 } from './types';
 
 // ============================================
+// HELPER: GET FIRESTORE WITH NULL CHECK
+// ============================================
+
+function getDb() {
+    if (!db) {
+        throw new Error('Firebase is not initialized. This can only be called in the browser.');
+    }
+    return db;
+}
+
+// ============================================
 // COLLECTION NAMES
 // ============================================
 

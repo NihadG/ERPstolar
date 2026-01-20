@@ -34,6 +34,10 @@ export default function AdminPage() {
     }, [authLoading, user, isAdmin, router]);
 
     async function loadOrganizations() {
+        if (!db) {
+            showMessage('Firebase nije inicijaliziran', 'error');
+            return;
+        }
         setLoading(true);
         try {
             const snapshot = await getDocs(collection(db, 'organizations'));
@@ -50,6 +54,10 @@ export default function AdminPage() {
     }
 
     async function updateOrganization(orgId: string, updates: Partial<Organization>) {
+        if (!db) {
+            showMessage('Firebase nije inicijaliziran', 'error');
+            return;
+        }
         setSaving(orgId);
         try {
             await updateDoc(doc(db, 'organizations', orgId), updates);

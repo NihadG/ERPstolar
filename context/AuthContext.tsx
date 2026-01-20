@@ -50,6 +50,12 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
     // Listen to Firebase auth state changes
     useEffect(() => {
+        // Only set up listener if auth is available (browser environment)
+        if (!auth) {
+            setLoading(false);
+            return;
+        }
+
         const unsubscribe = onAuthStateChanged(auth, async (fbUser) => {
             setFirebaseUser(fbUser);
 
