@@ -1336,101 +1336,107 @@ html {
   border-radius: 20px;
 }
 
-/* Product Cards */
+/* Product Cards - Ultra Compact */
 .offer-product-card {
   background: #f8f9fa;
-  border-radius: 16px;
-  margin-bottom: 12px;
+  border-radius: 10px;
+  margin-bottom: 8px;
   border: 2px solid transparent;
-  transition: all 0.2s ease;
+  transition: all 0.15s ease;
   overflow: hidden;
 }
 
 .offer-product-card.included {
   background: white;
   border-color: var(--accent);
-  box-shadow: 0 4px 16px rgba(0, 113, 227, 0.1);
+  box-shadow: 0 2px 8px rgba(0, 113, 227, 0.08);
 }
 
 .offer-product-card-header {
-  display: flex;
+  display: grid;
+  grid-template-columns: auto 1fr auto auto;
   align-items: center;
-  gap: 16px;
-  padding: 16px 20px;
+  gap: 12px;
+  padding: 10px 14px;
   cursor: pointer;
 }
 
 .offer-product-card-header input[type="checkbox"] {
-  width: 22px;
-  height: 22px;
+  width: 18px;
+  height: 18px;
   accent-color: var(--accent);
   cursor: pointer;
-  flex-shrink: 0;
 }
 
 .offer-product-info {
-  flex: 1;
   min-width: 0;
 }
 
 .offer-product-name {
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 600;
   color: var(--text-primary);
-  margin-bottom: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .offer-product-meta {
-  font-size: 13px;
+  font-size: 12px;
   color: var(--text-secondary);
 }
 
 .offer-product-cost {
   text-align: right;
-  flex-shrink: 0;
+  padding: 4px 8px;
+  background: rgba(0, 113, 227, 0.05);
+  border-radius: 6px;
 }
 
 .offer-product-cost .label {
-  font-size: 11px;
+  font-size: 9px;
   color: var(--text-tertiary);
   text-transform: uppercase;
-  letter-spacing: 0.5px;
 }
 
 .offer-product-cost .value {
-  font-size: 15px;
+  font-size: 13px;
   font-weight: 600;
-  color: var(--text-primary);
+  color: var(--accent);
 }
 
-/* Product Details (when expanded/included) */
+/* Product Details (when expanded/included) - Inline Compact */
 .offer-product-details {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 12px;
-  padding: 12px 16px;
-  border-top: 1px solid rgba(0, 0, 0, 0.06);
-  background: #f8f9fa;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 10px 14px;
+  border-top: 1px solid rgba(0, 0, 0, 0.05);
+  background: #fafbfc;
+  align-items: flex-end;
 }
 
 .offer-product-details .form-group {
   margin-bottom: 0;
+  flex: 0 0 auto;
 }
 
 .offer-product-details .form-group label {
-  font-size: 10px;
+  font-size: 9px;
   text-transform: uppercase;
-  letter-spacing: 0.3px;
+  letter-spacing: 0.2px;
   color: var(--text-tertiary);
-  margin-bottom: 4px;
+  margin-bottom: 2px;
+  display: block;
 }
 
 .offer-product-details .form-group input {
-  padding: 8px 10px;
-  font-size: 13px;
-  border-radius: 8px;
+  padding: 6px 8px;
+  font-size: 12px;
+  border-radius: 6px;
   border: 1px solid rgba(0, 0, 0, 0.08);
   background: white;
+  width: 70px;
 }
 
 .offer-product-details .form-group input:focus {
@@ -1438,91 +1444,98 @@ html {
   box-shadow: 0 0 0 2px rgba(0, 113, 227, 0.1);
 }
 
-/* Labor Cost Section */
+/* Labor Cost Section - Inline */
 .labor-cost-section {
-  grid-column: 1 / -1;
-  background: linear-gradient(135deg, #f0fff4 0%, #e8f5e9 100%);
-  padding: 12px;
-  border-radius: 8px;
-  border: 1px solid rgba(52, 199, 89, 0.15);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(52, 199, 89, 0.08);
+  padding: 6px 10px;
+  border-radius: 6px;
+  border: 1px solid rgba(52, 199, 89, 0.12);
+  flex: 1;
 }
 
 .labor-cost-section .section-label {
-  display: block;
-  font-size: 11px;
+  font-size: 9px;
   font-weight: 600;
   color: #34c759;
   text-transform: uppercase;
-  letter-spacing: 0.3px;
-  margin-bottom: 8px;
+  white-space: nowrap;
 }
 
 .labor-inputs {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr) auto;
-  gap: 10px;
-  align-items: end;
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex: 1;
+}
+
+.labor-field {
+  display: flex;
+  align-items: center;
+  gap: 3px;
 }
 
 .labor-field label {
-  display: block;
-  font-size: 10px;
+  font-size: 9px;
   color: var(--text-tertiary);
-  margin-bottom: 3px;
+  white-space: nowrap;
 }
 
 .labor-field input {
-  width: 100%;
-  padding: 6px 8px;
-  font-size: 13px;
+  width: 50px;
+  padding: 4px 6px;
+  font-size: 12px;
   border: 1px solid rgba(0, 0, 0, 0.08);
-  border-radius: 6px;
+  border-radius: 4px;
   background: white;
+  text-align: center;
 }
 
 .labor-total {
   display: flex;
-  flex-direction: row;
   align-items: center;
-  gap: 8px;
-  padding: 6px 10px;
+  gap: 4px;
+  padding: 4px 8px;
   background: rgba(52, 199, 89, 0.15);
-  border-radius: 6px;
+  border-radius: 4px;
+  white-space: nowrap;
 }
 
 .labor-total .label {
-  font-size: 10px;
-  color: var(--text-tertiary);
-  text-transform: uppercase;
+  font-size: 9px;
+  color: #34c759;
 }
 
 .labor-total .value {
-  font-size: 14px;
+  font-size: 12px;
   font-weight: 700;
   color: #34c759;
 }
 
-/* Extras Container */
+/* Extras Container - Inline */
 .offer-extras-container {
-  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .offer-extras-list {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 8px;
+  gap: 4px;
 }
 
 .offer-extra-tag {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  padding: 6px 10px;
+  gap: 4px;
+  padding: 3px 8px;
   background: #fff4e5;
-  border: 1px solid rgba(255, 149, 0, 0.2);
-  border-radius: 20px;
-  font-size: 12px;
+  border: 1px solid rgba(255, 149, 0, 0.15);
+  border-radius: 12px;
+  font-size: 11px;
   color: var(--text-primary);
 }
 
@@ -1534,13 +1547,14 @@ html {
 .offer-extra-tag button {
   background: none;
   border: none;
-  padding: 2px;
+  padding: 1px;
   cursor: pointer;
   color: var(--text-tertiary);
   border-radius: 50%;
   display: flex;
   align-items: center;
   justify-content: center;
+  font-size: 12px;
 }
 
 .offer-extra-tag button:hover {
@@ -1548,25 +1562,25 @@ html {
   color: var(--error);
 }
 
-/* Product Total */
+/* Product Total - Compact Inline */
 .offer-product-total {
-  grid-column: 1 / -1;
   display: flex;
-  justify-content: flex-end;
   align-items: center;
-  gap: 12px;
-  padding-top: 12px;
-  margin-top: 8px;
-  border-top: 1px dashed rgba(0, 0, 0, 0.1);
+  gap: 8px;
+  margin-left: auto;
+  padding: 4px 10px;
+  background: rgba(0, 113, 227, 0.05);
+  border-radius: 6px;
 }
 
 .offer-product-total .label {
-  font-size: 13px;
-  color: var(--text-secondary);
+  font-size: 10px;
+  color: var(--text-tertiary);
+  text-transform: uppercase;
 }
 
 .offer-product-total .value {
-  font-size: 18px;
+  font-size: 14px;
   font-weight: 700;
   color: var(--accent);
 }
