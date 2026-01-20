@@ -270,10 +270,15 @@ html {
   align-items: center;
   gap: 16px;
   margin-bottom: 24px;
-  padding: 16px 20px;
-  background: var(--background);
-  border-radius: var(--radius-lg);
-  box-shadow: 0 2px 8px var(--shadow);
+  padding: 18px 24px;
+  background: rgba(255, 255, 255, 0.75);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  border-radius: 20px;
+  border: 1px solid rgba(255, 255, 255, 0.6);
+  box-shadow:
+    0 4px 24px rgba(0, 0, 0, 0.06),
+    inset 0 1px 0 rgba(255, 255, 255, 0.8);
   flex-wrap: wrap;
 }
 
@@ -283,13 +288,20 @@ html {
 .search-box {
   display: flex;
   align-items: center;
-  background: var(--background);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  padding: 10px 14px;
-  gap: 10px;
+  background: rgba(0, 0, 0, 0.03);
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  border-radius: 14px;
+  padding: 12px 16px;
+  gap: 12px;
   flex: 1;
   max-width: 400px;
+  transition: all 0.25s ease;
+}
+
+.search-box:focus-within {
+  background: rgba(255, 255, 255, 0.9);
+  border-color: rgba(102, 126, 234, 0.3);
+  box-shadow: 0 0 0 4px rgba(102, 126, 234, 0.08);
 }
 
 .search-box input {
@@ -298,6 +310,11 @@ html {
   flex: 1;
   font-size: 14px;
   background: transparent;
+  color: var(--text-primary);
+}
+
+.search-box input::placeholder {
+  color: var(--text-tertiary);
 }
 
 .search-box .material-icons-round {
@@ -306,14 +323,24 @@ html {
 }
 
 .filter-select {
-  padding: 10px 14px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--background);
+  padding: 12px 16px;
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  border-radius: 14px;
+  background: rgba(0, 0, 0, 0.03);
   font-size: 14px;
   color: var(--text-primary);
   cursor: pointer;
   outline: none;
+  transition: all 0.25s ease;
+}
+
+.filter-select:focus {
+  border-color: rgba(102, 126, 234, 0.3);
+  box-shadow: 0 0 0 4px rgba(102, 126, 234, 0.08);
+}
+
+.filter-select:hover {
+  background: rgba(0, 0, 0, 0.05);
 }
 
 /* ============================================
