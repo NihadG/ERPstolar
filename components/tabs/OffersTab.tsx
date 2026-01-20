@@ -1098,291 +1098,295 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
                     </div>
                 ) : (
                     <div className="offer-form">
-                        {/* Project Selector */}
-                        <div className="offer-project-select">
-                            <label>Odaberi Projekat</label>
-                            <select
-                                value={selectedProjectId}
-                                onChange={(e) => loadProjectForOffer(e.target.value)}
-                            >
-                                <option value="">-- Odaberi projekat --</option>
-                                {projects.map(project => (
-                                    <option key={project.Project_ID} value={project.Project_ID}>
-                                        {project.Client_Name} ({project.products?.length || 0} proizvoda)
-                                    </option>
-                                ))}
-                            </select>
+                        {/* Left Column */}
+                        <div className="offer-form-left">
+                            {/* Project Selector */}
+                            <div className="offer-project-select">
+                                <label>Odaberi Projekat</label>
+                                <select
+                                    value={selectedProjectId}
+                                    onChange={(e) => loadProjectForOffer(e.target.value)}
+                                >
+                                    <option value="">-- Odaberi projekat --</option>
+                                    {projects.map(project => (
+                                        <option key={project.Project_ID} value={project.Project_ID}>
+                                            {project.Client_Name} ({project.products?.length || 0} proizvoda)
+                                        </option>
+                                    ))}
+                                </select>
+                            </div>
+
+                            {/* Client Info */}
+                            {selectedProject && (
+                                <div className="offer-client-info">
+                                    <div className="client-avatar">
+                                        {selectedProject.Client_Name?.charAt(0).toUpperCase() || '?'}
+                                    </div>
+                                    <div className="client-details">
+                                        <div className="client-name">{selectedProject.Client_Name}</div>
+                                        <div className="client-address">{selectedProject.Address || 'Adresa nije unesena'}</div>
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* Products */}
+                            {offerProducts.length > 0 && (
+                                <div className="offer-products-list">
+                                    <div className="offer-products-header">
+                                        <h3>Proizvodi</h3>
+                                        <span className="count">{offerProducts.filter(p => p.included).length} od {offerProducts.length}</span>
+                                    </div>
+
+                                    {offerProducts.map((product, index) => (
+                                        <div
+                                            key={product.Product_ID}
+                                            className={`offer-product-card ${product.included ? 'included' : ''}`}
+                                        >
+                                            <div className="offer-product-card-header">
+                                                <input
+                                                    type="checkbox"
+                                                    checked={product.included}
+                                                    onChange={(e) => toggleProductIncluded(index, e.target.checked)}
+                                                />
+                                                <div className="offer-product-info">
+                                                    <div className="offer-product-name">{product.Product_Name}</div>
+                                                    <div className="offer-product-meta">Količina: {product.Quantity}</div>
+                                                </div>
+                                                <div className="offer-product-cost">
+                                                    <div className="label">Materijal</div>
+                                                    <div className="value">{formatCurrency(product.Material_Cost)}</div>
+                                                </div>
+                                            </div>
+
+                                            {product.included && (
+                                                <div className="offer-product-details">
+                                                    {/* Margin */}
+                                                    <div className="form-group">
+                                                        <label>Marža (KM)</label>
+                                                        <input
+                                                            type="number"
+                                                            value={product.margin}
+                                                            onChange={(e) => updateProductMargin(index, parseFloat(e.target.value) || 0)}
+                                                            min="0"
+                                                            step="10"
+                                                        />
+                                                    </div>
+
+                                                    {/* Labor Cost Section */}
+                                                    <div className="labor-cost-section">
+                                                        <label className="section-label">Cijena rada</label>
+                                                        <div className="labor-inputs">
+                                                            <div className="labor-field">
+                                                                <label>Radnici</label>
+                                                                <input
+                                                                    type="number"
+                                                                    value={product.laborWorkers}
+                                                                    onChange={(e) => {
+                                                                        const updated = [...offerProducts];
+                                                                        updated[index].laborWorkers = parseInt(e.target.value) || 0;
+                                                                        setOfferProducts(updated);
+                                                                    }}
+                                                                    min="0"
+                                                                    placeholder="0"
+                                                                />
+                                                            </div>
+                                                            <div className="labor-field">
+                                                                <label>Dana</label>
+                                                                <input
+                                                                    type="number"
+                                                                    value={product.laborDays}
+                                                                    onChange={(e) => {
+                                                                        const updated = [...offerProducts];
+                                                                        updated[index].laborDays = parseInt(e.target.value) || 0;
+                                                                        setOfferProducts(updated);
+                                                                    }}
+                                                                    min="0"
+                                                                    placeholder="0"
+                                                                />
+                                                            </div>
+                                                            <div className="labor-field">
+                                                                <label>Dnevnica (KM)</label>
+                                                                <input
+                                                                    type="number"
+                                                                    value={product.laborDailyRate}
+                                                                    onChange={(e) => {
+                                                                        const updated = [...offerProducts];
+                                                                        updated[index].laborDailyRate = parseFloat(e.target.value) || 0;
+                                                                        setOfferProducts(updated);
+                                                                    }}
+                                                                    min="0"
+                                                                    step="10"
+                                                                    placeholder="0"
+                                                                />
+                                                            </div>
+                                                            <div className="labor-total">
+                                                                <span className="label">Ukupno rad:</span>
+                                                                <span className="value">
+                                                                    {formatCurrency((product.laborWorkers || 0) * (product.laborDays || 0) * (product.laborDailyRate || 0))}
+                                                                </span>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+
+                                                    {/* Add Extra Button */}
+                                                    <div className="form-group">
+                                                        <label>Dodaci</label>
+                                                        <button
+                                                            type="button"
+                                                            className="btn btn-sm btn-secondary"
+                                                            onClick={() => openExtrasModal(index)}
+                                                            style={{ width: '100%' }}
+                                                        >
+                                                            <span className="material-icons-round" style={{ fontSize: '16px' }}>add</span>
+                                                            Dodaj uslugu
+                                                        </button>
+                                                    </div>
+
+                                                    {/* Extras Tags */}
+                                                    {product.extras.length > 0 && (
+                                                        <div className="offer-extras-container">
+                                                            <div className="offer-extras-list">
+                                                                {product.extras.map((extra, ei) => (
+                                                                    <div key={ei} className="offer-extra-tag">
+                                                                        <span>{extra.name}</span>
+                                                                        <span className="price">{formatCurrency(extra.total)}</span>
+                                                                        <button type="button" onClick={() => removeExtra(index, ei)}>
+                                                                            <span className="material-icons-round" style={{ fontSize: '14px' }}>close</span>
+                                                                        </button>
+                                                                    </div>
+                                                                ))}
+                                                            </div>
+                                                        </div>
+                                                    )}
+
+                                                    {/* Product Total */}
+                                                    <div className="offer-product-total">
+                                                        <span className="label">Ukupno:</span>
+                                                        <span className="value">{formatCurrency(calculateProductTotal(product))}</span>
+                                                    </div>
+                                                </div>
+                                            )}
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
                         </div>
 
-                        {/* Client Info */}
-                        {selectedProject && (
-                            <div className="offer-client-info">
-                                <div className="client-avatar">
-                                    {selectedProject.Client_Name?.charAt(0).toUpperCase() || '?'}
-                                </div>
-                                <div className="client-details">
-                                    <div className="client-name">{selectedProject.Client_Name}</div>
-                                    <div className="client-address">{selectedProject.Address || 'Adresa nije unesena'}</div>
-                                </div>
-                            </div>
-                        )}
-
-                        {/* Products */}
+                        {/* Right Column - Settings & Summary */}
                         {offerProducts.length > 0 && (
-                            <div className="offer-products-list">
-                                <div className="offer-products-header">
-                                    <h3>Proizvodi</h3>
-                                    <span className="count">{offerProducts.filter(p => p.included).length} od {offerProducts.length}</span>
-                                </div>
-
-                                {offerProducts.map((product, index) => (
-                                    <div
-                                        key={product.Product_ID}
-                                        className={`offer-product-card ${product.included ? 'included' : ''}`}
-                                    >
-                                        <div className="offer-product-card-header">
-                                            <input
-                                                type="checkbox"
-                                                checked={product.included}
-                                                onChange={(e) => toggleProductIncluded(index, e.target.checked)}
-                                            />
-                                            <div className="offer-product-info">
-                                                <div className="offer-product-name">{product.Product_Name}</div>
-                                                <div className="offer-product-meta">Količina: {product.Quantity}</div>
-                                            </div>
-                                            <div className="offer-product-cost">
-                                                <div className="label">Materijal</div>
-                                                <div className="value">{formatCurrency(product.Material_Cost)}</div>
-                                            </div>
-                                        </div>
-
-                                        {product.included && (
-                                            <div className="offer-product-details">
-                                                {/* Margin */}
-                                                <div className="form-group">
-                                                    <label>Marža (KM)</label>
-                                                    <input
-                                                        type="number"
-                                                        value={product.margin}
-                                                        onChange={(e) => updateProductMargin(index, parseFloat(e.target.value) || 0)}
-                                                        min="0"
-                                                        step="10"
-                                                    />
-                                                </div>
-
-                                                {/* Labor Cost Section */}
-                                                <div className="labor-cost-section">
-                                                    <label className="section-label">Cijena rada</label>
-                                                    <div className="labor-inputs">
-                                                        <div className="labor-field">
-                                                            <label>Radnici</label>
-                                                            <input
-                                                                type="number"
-                                                                value={product.laborWorkers}
-                                                                onChange={(e) => {
-                                                                    const updated = [...offerProducts];
-                                                                    updated[index].laborWorkers = parseInt(e.target.value) || 0;
-                                                                    setOfferProducts(updated);
-                                                                }}
-                                                                min="0"
-                                                                placeholder="0"
-                                                            />
-                                                        </div>
-                                                        <div className="labor-field">
-                                                            <label>Dana</label>
-                                                            <input
-                                                                type="number"
-                                                                value={product.laborDays}
-                                                                onChange={(e) => {
-                                                                    const updated = [...offerProducts];
-                                                                    updated[index].laborDays = parseInt(e.target.value) || 0;
-                                                                    setOfferProducts(updated);
-                                                                }}
-                                                                min="0"
-                                                                placeholder="0"
-                                                            />
-                                                        </div>
-                                                        <div className="labor-field">
-                                                            <label>Dnevnica (KM)</label>
-                                                            <input
-                                                                type="number"
-                                                                value={product.laborDailyRate}
-                                                                onChange={(e) => {
-                                                                    const updated = [...offerProducts];
-                                                                    updated[index].laborDailyRate = parseFloat(e.target.value) || 0;
-                                                                    setOfferProducts(updated);
-                                                                }}
-                                                                min="0"
-                                                                step="10"
-                                                                placeholder="0"
-                                                            />
-                                                        </div>
-                                                        <div className="labor-total">
-                                                            <span className="label">Ukupno rad:</span>
-                                                            <span className="value">
-                                                                {formatCurrency((product.laborWorkers || 0) * (product.laborDays || 0) * (product.laborDailyRate || 0))}
-                                                            </span>
-                                                        </div>
-                                                    </div>
-                                                </div>
-
-                                                {/* Add Extra Button */}
-                                                <div className="form-group">
-                                                    <label>Dodaci</label>
-                                                    <button
-                                                        type="button"
-                                                        className="btn btn-sm btn-secondary"
-                                                        onClick={() => openExtrasModal(index)}
-                                                        style={{ width: '100%' }}
-                                                    >
-                                                        <span className="material-icons-round" style={{ fontSize: '16px' }}>add</span>
-                                                        Dodaj uslugu
-                                                    </button>
-                                                </div>
-
-                                                {/* Extras Tags */}
-                                                {product.extras.length > 0 && (
-                                                    <div className="offer-extras-container">
-                                                        <div className="offer-extras-list">
-                                                            {product.extras.map((extra, ei) => (
-                                                                <div key={ei} className="offer-extra-tag">
-                                                                    <span>{extra.name}</span>
-                                                                    <span className="price">{formatCurrency(extra.total)}</span>
-                                                                    <button type="button" onClick={() => removeExtra(index, ei)}>
-                                                                        <span className="material-icons-round" style={{ fontSize: '14px' }}>close</span>
-                                                                    </button>
-                                                                </div>
-                                                            ))}
-                                                        </div>
-                                                    </div>
-                                                )}
-
-                                                {/* Product Total */}
-                                                <div className="offer-product-total">
-                                                    <span className="label">Ukupno:</span>
-                                                    <span className="value">{formatCurrency(calculateProductTotal(product))}</span>
-                                                </div>
-                                            </div>
-                                        )}
-                                    </div>
-                                ))}
-                            </div>
-                        )}
-
-                        {/* Settings */}
-                        {offerProducts.length > 0 && (
-                            <div className="offer-settings">
-                                <h3>Postavke</h3>
-                                <div className="offer-settings-grid">
-                                    <div className="form-group">
-                                        <label>Transport (KM)</label>
-                                        <input
-                                            type="number"
-                                            value={transportCost}
-                                            onChange={(e) => setTransportCost(parseFloat(e.target.value) || 0)}
-                                            min="0"
-                                        />
-                                    </div>
-
-                                    <div className="form-group">
-                                        <label>Vrijedi do</label>
-                                        <input
-                                            type="date"
-                                            value={validUntil}
-                                            onChange={(e) => setValidUntil(e.target.value)}
-                                        />
-                                    </div>
-
-                                    <div className="form-group">
-                                        <label className="checkbox-label">
-                                            <input
-                                                type="checkbox"
-                                                checked={onsiteAssembly}
-                                                onChange={(e) => {
-                                                    setOnsiteAssembly(e.target.checked);
-                                                    if (!e.target.checked) setOnsiteDiscount(0);
-                                                }}
-                                            />
-                                            Sklapanje kod klijenta
-                                        </label>
-                                        {onsiteAssembly && (
+                            <div className="offer-form-right">
+                                {/* Settings */}
+                                <div className="offer-settings">
+                                    <h3>Postavke</h3>
+                                    <div className="offer-settings-grid">
+                                        <div className="form-group">
+                                            <label>Transport (KM)</label>
                                             <input
                                                 type="number"
-                                                value={onsiteDiscount}
-                                                onChange={(e) => setOnsiteDiscount(parseFloat(e.target.value) || 0)}
+                                                value={transportCost}
+                                                onChange={(e) => setTransportCost(parseFloat(e.target.value) || 0)}
                                                 min="0"
-                                                placeholder="Popust (KM)"
-                                                style={{ marginTop: '8px' }}
                                             />
-                                        )}
-                                    </div>
+                                        </div>
 
-                                    <div className="form-group">
-                                        <label className="checkbox-label">
+                                        <div className="form-group">
+                                            <label>Vrijedi do</label>
                                             <input
-                                                type="checkbox"
-                                                checked={includePDV}
-                                                onChange={(e) => setIncludePDV(e.target.checked)}
+                                                type="date"
+                                                value={validUntil}
+                                                onChange={(e) => setValidUntil(e.target.value)}
                                             />
-                                            PDV
-                                        </label>
-                                        {includePDV && (
-                                            <div className="pdv-rate">
+                                        </div>
+
+                                        <div className="form-group">
+                                            <label className="checkbox-label">
+                                                <input
+                                                    type="checkbox"
+                                                    checked={onsiteAssembly}
+                                                    onChange={(e) => {
+                                                        setOnsiteAssembly(e.target.checked);
+                                                        if (!e.target.checked) setOnsiteDiscount(0);
+                                                    }}
+                                                />
+                                                Sklapanje kod klijenta
+                                            </label>
+                                            {onsiteAssembly && (
                                                 <input
                                                     type="number"
-                                                    value={pdvRate}
-                                                    onChange={(e) => setPdvRate(parseFloat(e.target.value) || 0)}
+                                                    value={onsiteDiscount}
+                                                    onChange={(e) => setOnsiteDiscount(parseFloat(e.target.value) || 0)}
                                                     min="0"
-                                                    max="100"
+                                                    placeholder="Popust (KM)"
+                                                    style={{ marginTop: '8px' }}
                                                 />
-                                                <span>%</span>
-                                            </div>
-                                        )}
-                                    </div>
+                                            )}
+                                        </div>
 
-                                    <div className="form-group notes-group">
-                                        <label>Napomene</label>
-                                        <textarea
-                                            value={notes}
-                                            onChange={(e) => setNotes(e.target.value)}
-                                            rows={2}
-                                            placeholder="Dodatne napomene za ponudu..."
-                                        />
+                                        <div className="form-group">
+                                            <label className="checkbox-label">
+                                                <input
+                                                    type="checkbox"
+                                                    checked={includePDV}
+                                                    onChange={(e) => setIncludePDV(e.target.checked)}
+                                                />
+                                                PDV
+                                            </label>
+                                            {includePDV && (
+                                                <div className="pdv-rate">
+                                                    <input
+                                                        type="number"
+                                                        value={pdvRate}
+                                                        onChange={(e) => setPdvRate(parseFloat(e.target.value) || 0)}
+                                                        min="0"
+                                                        max="100"
+                                                    />
+                                                    <span>%</span>
+                                                </div>
+                                            )}
+                                        </div>
+
+                                        <div className="form-group notes-group">
+                                            <label>Napomene</label>
+                                            <textarea
+                                                value={notes}
+                                                onChange={(e) => setNotes(e.target.value)}
+                                                rows={2}
+                                                placeholder="Dodatne napomene za ponudu..."
+                                            />
+                                        </div>
                                     </div>
                                 </div>
-                            </div>
-                        )}
 
-                        {/* Summary */}
-                        {offerProducts.length > 0 && (
-                            <div className="offer-summary">
-                                <div className="offer-summary-rows">
-                                    <div className="offer-summary-row">
-                                        <span className="label">Proizvodi</span>
-                                        <span className="value">{formatCurrency(totals.subtotal)}</span>
-                                    </div>
-                                    {totals.transport > 0 && (
+                                {/* Summary */}
+                                <div className="offer-summary">
+                                    <div className="offer-summary-rows">
                                         <div className="offer-summary-row">
-                                            <span className="label">Transport</span>
-                                            <span className="value">{formatCurrency(totals.transport)}</span>
+                                            <span className="label">Proizvodi</span>
+                                            <span className="value">{formatCurrency(totals.subtotal)}</span>
                                         </div>
-                                    )}
-                                    {totals.discount > 0 && (
-                                        <div className="offer-summary-row discount">
-                                            <span className="label">Popust</span>
-                                            <span className="value">-{formatCurrency(totals.discount)}</span>
+                                        {totals.transport > 0 && (
+                                            <div className="offer-summary-row">
+                                                <span className="label">Transport</span>
+                                                <span className="value">{formatCurrency(totals.transport)}</span>
+                                            </div>
+                                        )}
+                                        {totals.discount > 0 && (
+                                            <div className="offer-summary-row discount">
+                                                <span className="label">Popust</span>
+                                                <span className="value">-{formatCurrency(totals.discount)}</span>
+                                            </div>
+                                        )}
+                                        {includePDV && totals.pdvAmount > 0 && (
+                                            <div className="offer-summary-row pdv">
+                                                <span className="label">PDV ({pdvRate}%)</span>
+                                                <span className="value">{formatCurrency(totals.pdvAmount)}</span>
+                                            </div>
+                                        )}
+                                        <div className="offer-summary-divider" />
+                                        <div className="offer-summary-row total">
+                                            <span className="label">UKUPNO</span>
+                                            <span className="value">{formatCurrency(totals.total)}</span>
                                         </div>
-                                    )}
-                                    {includePDV && totals.pdvAmount > 0 && (
-                                        <div className="offer-summary-row pdv">
-                                            <span className="label">PDV ({pdvRate}%)</span>
-                                            <span className="value">{formatCurrency(totals.pdvAmount)}</span>
-                                        </div>
-                                    )}
-                                    <div className="offer-summary-divider" />
-                                    <div className="offer-summary-row total">
-                                        <span className="label">UKUPNO</span>
-                                        <span className="value">{formatCurrency(totals.total)}</span>
                                     </div>
                                 </div>
                             </div>
@@ -1681,6 +1685,6 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
                     </p>
                 </div>
             </Modal>
-        </div>
+        </div >
     );
 }

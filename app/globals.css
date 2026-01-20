@@ -1220,15 +1220,22 @@ html {
 }
 
 /* Left Column - Project & Products */
-.offer-form>*:not(.offer-summary):not(.offer-settings) {
-  grid-column: 1;
+.offer-form-left {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
 }
 
 /* Right Column - Settings & Summary */
-.offer-settings,
-.offer-summary {
-  grid-column: 2;
-  grid-row: span 2;
+.offer-form-right {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  position: sticky;
+  top: 0;
+  align-self: start;
+  max-height: calc(100vh - 200px);
+  overflow-y: auto;
 }
 
 /* Project Selector */
@@ -1574,8 +1581,6 @@ html {
   border-radius: 16px;
   padding: 20px;
   height: fit-content;
-  position: sticky;
-  top: 0;
 }
 
 .offer-settings h3 {
@@ -1652,8 +1657,6 @@ html {
   padding: 20px;
   color: white;
   height: fit-content;
-  position: sticky;
-  top: 200px;
 }
 
 .offer-summary-rows {
@@ -1748,15 +1751,10 @@ html {
     gap: 24px;
   }
 
-  .offer-settings,
-  .offer-summary {
-    grid-column: 1;
-    grid-row: auto;
+  .offer-form-right {
     position: static;
-  }
-
-  .offer-summary {
-    order: 99;
+    max-height: none;
+    overflow-y: visible;
   }
 
   .offer-product-details {
