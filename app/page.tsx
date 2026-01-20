@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { getAllData } from '@/lib/database';
 import { signOut } from '@/lib/auth';
@@ -43,6 +43,27 @@ export default function Home() {
         glassItems: [],
         aluDoorItems: [],
     });
+
+    // Refs for click-outside detection
+    const userMenuRef = useRef<HTMLDivElement>(null);
+    const settingsDropdownRef = useRef<HTMLDivElement>(null);
+
+    // Close dropdowns when clicking outside
+    useEffect(() => {
+        function handleClickOutside(event: MouseEvent) {
+            // Close user menu if clicking outside
+            if (userMenuRef.current && !userMenuRef.current.contains(event.target as Node)) {
+                setUserMenuOpen(false);
+            }
+            // Close settings dropdown if clicking outside
+            if (settingsDropdownRef.current && !settingsDropdownRef.current.contains(event.target as Node)) {
+                setDropdownOpen(false);
+            }
+        }
+
+        document.addEventListener('mousedown', handleClickOutside);
+        return () => document.removeEventListener('mousedown', handleClickOutside);
+    }, []);
 
     // Redirect to login if not authenticated
     useEffect(() => {
@@ -117,7 +138,7 @@ export default function Home() {
                 </h1>
 
                 {/* User Menu */}
-                <div className={`user-menu ${userMenuOpen ? 'open' : ''}`}>
+                <div ref={userMenuRef} className={`user-menu ${userMenuOpen ? 'open' : ''}`}>
                     <button
                         className="user-menu-button"
                         onClick={() => setUserMenuOpen(!userMenuOpen)}
@@ -174,7 +195,7 @@ export default function Home() {
                 </button>
 
                 {/* Settings Dropdown */}
-                <div className={`tab-dropdown ${dropdownOpen ? 'open' : ''}`}>
+                <div ref={settingsDropdownRef} className={`tab-dropdown ${dropdownOpen ? 'open' : ''}`}>
                     <button
                         className={`tab tab-more ${isDropdownTab ? 'active' : ''}`}
                         onClick={() => setDropdownOpen(!dropdownOpen)}
