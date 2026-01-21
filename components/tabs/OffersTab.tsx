@@ -73,28 +73,30 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
     const [includePDV, setIncludePDV] = useState(true);
     const [pdvRate, setPdvRate] = useState(17);
 
-    // Company Settings Modal State
-    const [companyModal, setCompanyModal] = useState(false);
+    // Company Info (read from Settings page, stored in localStorage)
     const [companyInfo, setCompanyInfo] = useState({
         name: 'Vaša Firma',
         address: 'Ulica i broj, Grad',
         phone: '+387 XX XXX XXX',
         email: 'info@firma.ba',
-        idNumber: 'ID: xxxxxxxxxx',
-        pdvNumber: 'PDV: xxxxxxxxxx'
+        idNumber: '',
+        pdvNumber: '',
+        website: '',
+        logoBase64: ''
     });
 
-    // Load company info from localStorage on mount
-    useState(() => {
+    // Load company info from localStorage on mount (read-only, managed in Settings)
+    useMemo(() => {
         if (typeof window !== 'undefined') {
             const saved = localStorage.getItem('companyInfo');
             if (saved) {
                 try {
-                    setCompanyInfo(JSON.parse(saved));
+                    const parsed = JSON.parse(saved);
+                    setCompanyInfo(prev => ({ ...prev, ...parsed }));
                 } catch (e) { /* ignore */ }
             }
         }
-    });
+    }, []);
 
     const filteredOffers = offers.filter(offer => {
         const matchesSearch = offer.Offer_Number?.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -216,13 +218,6 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
         const total = baseTotal + pdvAmount;
 
         return { subtotal, transport, discount, pdvAmount, total };
-    }
-
-    // Save company info to localStorage
-    function saveCompanyInfo() {
-        localStorage.setItem('companyInfo', JSON.stringify(companyInfo));
-        setCompanyModal(false);
-        showToast('Podaci firme sačuvani', 'success');
     }
 
     // ============================================
@@ -498,7 +493,19 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
                         border-bottom: 1px solid rgba(0, 0, 0, 0.06);
                     }
                     
-                    .company-info h1 {
+                    .company-info {
+                        display: flex;
+                        align-items: flex-start;
+                        gap: 16px;
+                    }
+                    
+                    .company-logo {
+                        width: 80px;
+                        height: 50px;
+                        object-fit: contain;
+                    }
+                    
+                    .company-details h1 {
                         font-size: 28px;
                         font-weight: 600;
                         letter-spacing: -0.5px;
@@ -506,7 +513,7 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
                         margin-bottom: 8px;
                     }
                     
-                    .company-info p {
+                    .company-details p {
                         font-size: 12px;
                         color: #86868b;
                         margin-bottom: 2px;
@@ -820,11 +827,13 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
                 <div class="document">
                     <div class="header">
                         <div class="company-info">
-                            <h1>${companyInfo.name}</h1>
-                            <p>${companyInfo.address}</p>
-                            <p>${companyInfo.phone}</p>
-                            <p>${companyInfo.email}</p>
-                            <p style="font-size: 10px; margin-top: 4px; color: #a1a1a6;">${companyInfo.idNumber} | ${companyInfo.pdvNumber}</p>
+                            ${companyInfo.logoBase64 ? `<img class="company-logo" src="${companyInfo.logoBase64}" alt="Logo" />` : ''}
+                            <div class="company-details">
+                                <h1>${companyInfo.name}</h1>
+                                <p>${companyInfo.address}</p>
+                                <p>${companyInfo.phone} ${companyInfo.email ? '· ' + companyInfo.email : ''}</p>
+                                ${companyInfo.idNumber || companyInfo.pdvNumber ? `<p style="font-size: 10px; margin-top: 4px; color: #a1a1a6;">${[companyInfo.idNumber ? 'ID: ' + companyInfo.idNumber : '', companyInfo.pdvNumber ? 'PDV: ' + companyInfo.pdvNumber : ''].filter(Boolean).join(' | ')}</p>` : ''}
+                            </div>
                         </div>
                         <div class="document-badge">
                             <div class="badge">Ponuda</div>
@@ -978,14 +987,6 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
                 <button className="btn btn-primary" onClick={openCreateModal}>
                     <span className="material-icons-round">add</span>
                     Nova Ponuda
-                </button>
-                <button
-                    className="icon-btn"
-                    onClick={() => setCompanyModal(true)}
-                    title="Podaci firme"
-                    style={{ marginLeft: '8px' }}
-                >
-                    <span className="material-icons-round">settings</span>
                 </button>
             </div>
 
@@ -1615,83 +1616,6 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
                         )}
                     </div>
                 )}
-            </Modal>
-
-            {/* Company Settings Modal */}
-            <Modal
-                isOpen={companyModal}
-                onClose={() => setCompanyModal(false)}
-                title="Podaci Firme"
-                footer={
-                    <>
-                        <button className="btn btn-secondary" onClick={() => setCompanyModal(false)}>Otkaži</button>
-                        <button className="btn btn-primary" onClick={saveCompanyInfo}>Sačuvaj</button>
-                    </>
-                }
-            >
-                <div style={{ display: 'grid', gap: '16px' }}>
-                    <div className="form-group" style={{ margin: 0 }}>
-                        <label>Naziv firme</label>
-                        <input
-                            type="text"
-                            value={companyInfo.name}
-                            onChange={(e) => setCompanyInfo({ ...companyInfo, name: e.target.value })}
-                            placeholder="Naziv vaše firme"
-                        />
-                    </div>
-                    <div className="form-group" style={{ margin: 0 }}>
-                        <label>Adresa</label>
-                        <input
-                            type="text"
-                            value={companyInfo.address}
-                            onChange={(e) => setCompanyInfo({ ...companyInfo, address: e.target.value })}
-                            placeholder="Ulica i broj, Grad"
-                        />
-                    </div>
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
-                        <div className="form-group" style={{ margin: 0 }}>
-                            <label>Telefon</label>
-                            <input
-                                type="text"
-                                value={companyInfo.phone}
-                                onChange={(e) => setCompanyInfo({ ...companyInfo, phone: e.target.value })}
-                                placeholder="+387 XX XXX XXX"
-                            />
-                        </div>
-                        <div className="form-group" style={{ margin: 0 }}>
-                            <label>Email</label>
-                            <input
-                                type="email"
-                                value={companyInfo.email}
-                                onChange={(e) => setCompanyInfo({ ...companyInfo, email: e.target.value })}
-                                placeholder="info@firma.ba"
-                            />
-                        </div>
-                    </div>
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
-                        <div className="form-group" style={{ margin: 0 }}>
-                            <label>ID broj</label>
-                            <input
-                                type="text"
-                                value={companyInfo.idNumber}
-                                onChange={(e) => setCompanyInfo({ ...companyInfo, idNumber: e.target.value })}
-                                placeholder="ID: xxxxxxxxxx"
-                            />
-                        </div>
-                        <div className="form-group" style={{ margin: 0 }}>
-                            <label>PDV broj</label>
-                            <input
-                                type="text"
-                                value={companyInfo.pdvNumber}
-                                onChange={(e) => setCompanyInfo({ ...companyInfo, pdvNumber: e.target.value })}
-                                placeholder="PDV: xxxxxxxxxx"
-                            />
-                        </div>
-                    </div>
-                    <p style={{ fontSize: '12px', color: 'var(--text-tertiary)' }}>
-                        Ovi podaci se koriste za prikaz na ponudama. Čuvaju se lokalno u vašem browseru.
-                    </p>
-                </div>
             </Modal>
         </div >
     );

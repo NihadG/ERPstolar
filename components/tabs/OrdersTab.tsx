@@ -34,6 +34,31 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
     const [editMode, setEditMode] = useState(false);
     const [editedQuantities, setEditedQuantities] = useState<Record<string, number>>({});
 
+    // Company Info (read from Settings page)
+    const [companyInfo, setCompanyInfo] = useState({
+        name: 'Vaša Firma',
+        address: 'Ulica i broj, Grad',
+        phone: '+387 XX XXX XXX',
+        email: 'info@firma.ba',
+        idNumber: '',
+        pdvNumber: '',
+        website: '',
+        logoBase64: ''
+    });
+
+    // Load company info from localStorage on mount
+    useMemo(() => {
+        if (typeof window !== 'undefined') {
+            const saved = localStorage.getItem('companyInfo');
+            if (saved) {
+                try {
+                    const parsed = JSON.parse(saved);
+                    setCompanyInfo(prev => ({ ...prev, ...parsed }));
+                } catch (e) { /* ignore */ }
+            }
+        }
+    }, []);
+
     const filteredOrders = orders.filter(order => {
         const matchesSearch = order.Order_Number?.toLowerCase().includes(searchTerm.toLowerCase()) ||
             order.Supplier_Name?.toLowerCase().includes(searchTerm.toLowerCase());
@@ -526,8 +551,10 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
                     * { box-sizing: border-box; margin: 0; padding: 0; }
                     body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; padding: 40px; color: #1d1d1f; }
                     .header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 32px; padding-bottom: 24px; border-bottom: 2px solid #1d1d1f; }
-                    .logo { font-size: 24px; font-weight: 700; }
-                    .logo-placeholder { width: 120px; height: 40px; background: #f5f5f7; border-radius: 8px; display: flex; align-items: center; justify-content: center; color: #86868b; font-size: 12px; }
+                    .company-info { display: flex; align-items: flex-start; gap: 16px; }
+                    .company-logo { width: 80px; height: 50px; object-fit: contain; }
+                    .company-details h1 { font-size: 20px; font-weight: 700; margin-bottom: 4px; }
+                    .company-details p { font-size: 12px; color: #86868b; margin-bottom: 2px; }
                     .order-info { text-align: right; font-size: 14px; }
                     .order-number { font-size: 18px; font-weight: 600; }
                     .supplier-section { background: #f5f5f7; padding: 16px; border-radius: 12px; margin-bottom: 24px; }
@@ -540,8 +567,13 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
             </head>
             <body>
                 <div class="header">
-                    <div>
-                        <div class="logo-placeholder">Vaš Logo</div>
+                    <div class="company-info">
+                        ${companyInfo.logoBase64 ? `<img class="company-logo" src="${companyInfo.logoBase64}" alt="Logo" />` : ''}
+                        <div class="company-details">
+                            <h1>${companyInfo.name}</h1>
+                            <p>${companyInfo.address}</p>
+                            <p>${companyInfo.phone} ${companyInfo.email ? '· ' + companyInfo.email : ''}</p>
+                        </div>
                     </div>
                     <div class="order-info">
                         <div class="order-number">Narudžba: ${currentOrder.Order_Number}</div>
