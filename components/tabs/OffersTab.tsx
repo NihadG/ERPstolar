@@ -680,7 +680,7 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
                     .products-section th:nth-child(5) { width: 140px; text-align: right; }
                     
                     .products-section td {
-                        padding: 32px 14px;
+                        padding: 40px 14px;
                         border-bottom: 1px solid #e8e8e8;
                         vertical-align: middle;
                         text-align: left;
