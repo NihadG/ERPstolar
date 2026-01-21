@@ -468,7 +468,36 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
     // ============================================
 
     function handlePrintOffer(offer: Offer) {
-        const products = (offer.products || []).filter(p => p.Included);
+        // Calculate prices dynamically (in case stored values are 0)
+        const productsWithPrices = (offer.products || []).filter(p => p.Included).map(p => {
+            const materialCost = p.Material_Cost || 0;
+            const margin = p.Margin || 0;
+            const extrasTotal = (p.extras || []).reduce((sum: number, e: any) => sum + (e.Total || e.total || 0), 0);
+            // Check for labor fields (may be stored with different key names)
+            const laborWorkers = (p as any).Labor_Workers || (p as any).laborWorkers || 0;
+            const laborDays = (p as any).Labor_Days || (p as any).laborDays || 0;
+            const laborRate = (p as any).Labor_Daily_Rate || (p as any).laborDailyRate || 0;
+            const laborTotal = laborWorkers * laborDays * laborRate;
+
+            const sellingPrice = materialCost + margin + extrasTotal + laborTotal;
+            const totalPrice = sellingPrice * (p.Quantity || 1);
+
+            return {
+                ...p,
+                Selling_Price: sellingPrice || p.Selling_Price || 0,
+                Total_Price: totalPrice || p.Total_Price || 0
+            };
+        });
+
+        // Recalculate subtotal
+        const calculatedSubtotal = productsWithPrices.reduce((sum, p) => sum + p.Total_Price, 0);
+        const subtotal = calculatedSubtotal || offer.Subtotal || 0;
+        const transport = offer.Transport_Cost || 0;
+        const discount = offer.Onsite_Assembly ? (offer.Onsite_Discount || 0) : 0;
+        const baseTotal = subtotal + transport - discount;
+        const total = baseTotal || offer.Total || 0;
+
+        const products = productsWithPrices;
 
         const printContent = `
             <!DOCTYPE html>
@@ -647,30 +676,35 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
                     th:nth-child(4), td:nth-child(4) { text-align: right; }
                     
                     td {
-                        padding: 16px;
-                        border-bottom: 1px solid rgba(0, 0, 0, 0.03);
+                        padding: 20px 16px;
+                        border-bottom: 1px solid rgba(0, 0, 0, 0.06);
                         vertical-align: middle;
                         text-align: left;
+                        font-size: 14px;
                     }
                     
                     tr:last-child td { border-bottom: none; }
                     
                     .product-name {
-                        font-weight: 500;
+                        font-weight: 600;
                         color: #1d1d1f;
+                        font-size: 15px;
                     }
                     
                     .product-qty {
                         color: #86868b;
+                        font-weight: 500;
                     }
                     
                     .product-price {
                         color: #1d1d1f;
+                        font-weight: 500;
                     }
                     
                     .product-total {
-                        font-weight: 600;
+                        font-weight: 700;
                         color: #1d1d1f;
+                        font-size: 15px;
                     }
                     
                     .totals-card {
@@ -979,29 +1013,29 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
                                         <div class="totals-card">
                                             <div class="totals-row">
                                                 <span class="label">Međuzbroj</span>
-                                                <span class="value">${formatCurrency(offer.Subtotal)}</span>
+                                                <span class="value">${formatCurrency(subtotal)}</span>
                                             </div>
-                                            ${(offer.Transport_Cost || 0) > 0 ? `
+                                            ${transport > 0 ? `
                                                 <div class="totals-row">
                                                     <span class="label">Transport</span>
-                                                    <span class="value">${formatCurrency(offer.Transport_Cost)}</span>
+                                                    <span class="value">${formatCurrency(transport)}</span>
                                                 </div>
                                             ` : ''}
                                             ${offer.Onsite_Assembly ? `
                                                 <div class="totals-row discount">
                                                     <span class="label">Popust (sklapanje na licu mjesta)</span>
-                                                    <span class="value">-${formatCurrency(offer.Onsite_Discount)}</span>
+                                                    <span class="value">-${formatCurrency(discount)}</span>
                                                 </div>
                                             ` : ''}
                                             ${includePDV ? `
                                                 <div class="totals-row">
                                                     <span class="label">PDV (${pdvRate}%)</span>
-                                                    <span class="value">${formatCurrency((offer.Total || 0) * pdvRate / (100 + pdvRate))}</span>
+                                                    <span class="value">${formatCurrency(total * pdvRate / 100)}</span>
                                                 </div>
                                             ` : ''}
                                             <div class="totals-row total">
                                                 <span class="label">Ukupno${includePDV ? ' (sa PDV)' : ''}</span>
-                                                <span class="value">${formatCurrency(offer.Total)}</span>
+                                                <span class="value">${formatCurrency(includePDV ? total * (1 + pdvRate / 100) : total)}</span>
                                             </div>
                                         </div>
                                     </div>
