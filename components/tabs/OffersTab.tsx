@@ -771,6 +771,8 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
                         gap: 32px;
                         margin-bottom: 32px;
                         align-items: flex-start;
+                        page-break-inside: avoid;
+                        break-inside: avoid;
                     }
                     
                     /* Notes */
