@@ -587,6 +587,7 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
                         border-radius: 16px;
                         padding: 24px;
                         margin-bottom: 32px;
+                        text-align: left;
                     }
                     
                     .client-card .label {
@@ -613,6 +614,7 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
                     /* Products Table */
                     .products-section {
                         margin-bottom: 32px;
+                        text-align: left;
                     }
                     
                     .products-section h3 {
@@ -648,6 +650,7 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
                         padding: 16px;
                         border-bottom: 1px solid rgba(0, 0, 0, 0.03);
                         vertical-align: middle;
+                        text-align: left;
                     }
                     
                     tr:last-child td { border-bottom: none; }
@@ -764,6 +767,7 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
                     /* Terms */
                     .terms-section {
                         margin-bottom: 40px;
+                        text-align: left;
                     }
                     
                     .terms-section h4 {
@@ -882,13 +886,16 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
                         border-collapse: collapse;
                     }
                     
-                    .print-table thead td,
-                    .print-table tfoot td {
+                    .print-table > thead td,
+                    .print-table > tfoot td,
+                    .print-table > tbody td {
                         padding: 0;
+                        text-align: left;
                     }
                     
-                    .print-table tbody td {
+                    .print-table > tbody > tr > td {
                         vertical-align: top;
+                        text-align: left;
                     }
                     
                     .print-header-content {
