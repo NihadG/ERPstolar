@@ -469,7 +469,8 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
 
     function handlePrintOffer(offer: Offer) {
         // Calculate prices dynamically (in case stored values are 0)
-        const productsWithPrices = (offer.products || []).filter(p => p.Included).map(p => {
+        // Note: Include all products, filter only if Included is explicitly false
+        const productsWithPrices = (offer.products || []).filter(p => p.Included !== false).map(p => {
             const materialCost = p.Material_Cost || 0;
             const margin = p.Margin || 0;
             const extrasTotal = (p.extras || []).reduce((sum: number, e: any) => sum + (e.Total || e.total || 0), 0);
