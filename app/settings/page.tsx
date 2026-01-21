@@ -24,6 +24,7 @@ interface AppSettings {
     pdvRate: number;
     offerValidityDays: number;
     defaultOfferNote: string;
+    offerTerms: string;
 }
 
 const DEFAULT_COMPANY: CompanyInfo = {
@@ -42,7 +43,8 @@ const DEFAULT_SETTINGS: AppSettings = {
     currency: 'KM',
     pdvRate: 17,
     offerValidityDays: 14,
-    defaultOfferNote: 'Hvala na povjerenju!'
+    defaultOfferNote: 'Hvala na povjerenju!',
+    offerTerms: 'Plaćanje: Avansno ili po dogovoru\nRok isporuke: Po dogovoru nakon potvrde'
 };
 
 export default function SettingsPage() {
@@ -363,8 +365,19 @@ export default function SettingsPage() {
                                         value={appSettings.defaultOfferNote}
                                         onChange={(e) => setAppSettings({ ...appSettings, defaultOfferNote: e.target.value })}
                                         placeholder="Hvala na povjerenju!"
-                                        rows={3}
+                                        rows={2}
                                     />
+                                </div>
+
+                                <div className="form-group full-width">
+                                    <label>Uslovi ponude (svaki uslov u novom redu)</label>
+                                    <textarea
+                                        value={appSettings.offerTerms}
+                                        onChange={(e) => setAppSettings({ ...appSettings, offerTerms: e.target.value })}
+                                        placeholder="Plaćanje: Avansno ili po dogovoru&#10;Rok isporuke: Po dogovoru nakon potvrde"
+                                        rows={4}
+                                    />
+                                    <span className="form-hint">Ovi uslovi će se prikazati na svakoj ponudi ispod tabele cijena.</span>
                                 </div>
                             </div>
                         </section>
@@ -638,6 +651,12 @@ export default function SettingsPage() {
                 .form-group textarea {
                     resize: vertical;
                     min-height: 80px;
+                }
+
+                .form-hint {
+                    font-size: 12px;
+                    color: var(--text-tertiary);
+                    margin-top: 4px;
                 }
 
                 .settings-actions {

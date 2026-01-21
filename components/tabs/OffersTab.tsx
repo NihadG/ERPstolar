@@ -99,6 +99,28 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
         }
     }, []);
 
+    // App Settings (read from Settings page, stored in localStorage)
+    const [appSettings, setAppSettings] = useState({
+        currency: 'KM',
+        pdvRate: 17,
+        offerValidityDays: 14,
+        defaultOfferNote: 'Hvala na povjerenju!',
+        offerTerms: 'Plaćanje: Avansno ili po dogovoru\nRok isporuke: Po dogovoru nakon potvrde'
+    });
+
+    // Load app settings from localStorage on mount
+    useMemo(() => {
+        if (typeof window !== 'undefined') {
+            const saved = localStorage.getItem('appSettings');
+            if (saved) {
+                try {
+                    const parsed = JSON.parse(saved);
+                    setAppSettings(prev => ({ ...prev, ...parsed }));
+                } catch (e) { /* ignore */ }
+            }
+        }
+    }, []);
+
     const filteredOffers = offers.filter(offer => {
         const matchesSearch = offer.Offer_Number?.toLowerCase().includes(searchTerm.toLowerCase()) ||
             offer.Client_Name?.toLowerCase().includes(searchTerm.toLowerCase());
@@ -648,16 +670,14 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
                         color: #1d1d1f;
                     }
                     
-                    /* Totals Card - Liquid Glass Effect */
                     .totals-card {
                         background: linear-gradient(135deg, rgba(0, 113, 227, 0.08) 0%, rgba(0, 113, 227, 0.03) 100%);
                         backdrop-filter: blur(10px);
                         border: 1px solid rgba(0, 113, 227, 0.1);
                         border-radius: 14px;
                         padding: 18px 20px;
-                        margin-left: auto;
                         width: 280px;
-                        margin-bottom: 24px;
+                        flex-shrink: 0;
                     }
                     
                     .totals-row {
@@ -710,13 +730,21 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
                         letter-spacing: -0.3px;
                     }
                     
+                    /* Summary Row - Notes + Totals side by side */
+                    .summary-row {
+                        display: flex;
+                        gap: 32px;
+                        margin-bottom: 32px;
+                        align-items: flex-start;
+                    }
+                    
                     /* Notes */
                     .notes-card {
+                        flex: 1;
                         background: linear-gradient(135deg, rgba(255, 149, 0, 0.08) 0%, rgba(255, 149, 0, 0.03) 100%);
                         border: 1px solid rgba(255, 149, 0, 0.12);
                         border-radius: 16px;
                         padding: 20px 24px;
-                        margin-bottom: 32px;
                     }
                     
                     .notes-card h4 {
@@ -884,49 +912,49 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
                         </table>
                     </div>
 
-                    <div class="totals-card">
-                        <div class="totals-row">
-                            <span class="label">Međuzbroj</span>
-                            <span class="value">${formatCurrency(offer.Subtotal)}</span>
-                        </div>
-                        ${(offer.Transport_Cost || 0) > 0 ? `
+                    <div class="summary-row">
+                        ${offer.Notes ? `
+                            <div class="notes-card">
+                                <h4>Napomena</h4>
+                                <p>${offer.Notes}</p>
+                            </div>
+                        ` : '<div style="flex:1;"></div>'}
+                        <div class="totals-card">
                             <div class="totals-row">
-                                <span class="label">Transport</span>
-                                <span class="value">${formatCurrency(offer.Transport_Cost)}</span>
+                                <span class="label">Međuzbroj</span>
+                                <span class="value">${formatCurrency(offer.Subtotal)}</span>
                             </div>
-                        ` : ''}
-                        ${offer.Onsite_Assembly ? `
-                            <div class="totals-row discount">
-                                <span class="label">Popust (sklapanje na licu mjesta)</span>
-                                <span class="value">-${formatCurrency(offer.Onsite_Discount)}</span>
+                            ${(offer.Transport_Cost || 0) > 0 ? `
+                                <div class="totals-row">
+                                    <span class="label">Transport</span>
+                                    <span class="value">${formatCurrency(offer.Transport_Cost)}</span>
+                                </div>
+                            ` : ''}
+                            ${offer.Onsite_Assembly ? `
+                                <div class="totals-row discount">
+                                    <span class="label">Popust (sklapanje na licu mjesta)</span>
+                                    <span class="value">-${formatCurrency(offer.Onsite_Discount)}</span>
+                                </div>
+                            ` : ''}
+                            ${includePDV ? `
+                                <div class="totals-row">
+                                    <span class="label">PDV (${pdvRate}%)</span>
+                                    <span class="value">${formatCurrency((offer.Total || 0) * pdvRate / (100 + pdvRate))}</span>
+                                </div>
+                            ` : ''}
+                            <div class="totals-row total">
+                                <span class="label">Ukupno${includePDV ? ' (sa PDV)' : ''}</span>
+                                <span class="value">${formatCurrency(offer.Total)}</span>
                             </div>
-                        ` : ''}
-                        ${includePDV ? `
-                            <div class="totals-row">
-                                <span class="label">PDV (${pdvRate}%)</span>
-                                <span class="value">${formatCurrency((offer.Total || 0) * pdvRate / (100 + pdvRate))}</span>
-                            </div>
-                        ` : ''}
-                        <div class="totals-row total">
-                            <span class="label">Ukupno${includePDV ? ' (sa PDV)' : ''}</span>
-                            <span class="value">${formatCurrency(offer.Total)}</span>
                         </div>
                     </div>
-
-                    ${offer.Notes ? `
-                        <div class="notes-card">
-                            <h4>Napomena</h4>
-                            <p>${offer.Notes}</p>
-                        </div>
-                    ` : ''}
 
                     <div class="terms-section">
                         <h4>Uslovi</h4>
                         <ul>
                             <li>Ponuda vrijedi do: <strong>${formatDate(offer.Valid_Until)}</strong></li>
-                            <li>Plaćanje: Avansno ili po dogovoru</li>
-                            <li>Rok isporuke: Po dogovoru nakon potvrde</li>
-                            <li>Cijene su u KM</li>
+                            ${appSettings.offerTerms.split('\n').filter(Boolean).map(term => `<li>${term}</li>`).join('')}
+                            <li>Cijene su u ${appSettings.currency}</li>
                         </ul>
                     </div>
 
