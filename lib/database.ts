@@ -105,6 +105,8 @@ export async function getAllData(): Promise<AppState> {
             orderItemsSnap,
             glassItemsSnap,
             aluDoorItemsSnap,
+            offerProductsSnap,
+            offerExtrasSnap,
         ] = await Promise.all([
             getDocs(collection(db, COLLECTIONS.PROJECTS)),
             getDocs(collection(db, COLLECTIONS.PRODUCTS)),
@@ -117,6 +119,8 @@ export async function getAllData(): Promise<AppState> {
             getDocs(collection(db, COLLECTIONS.ORDER_ITEMS)),
             getDocs(collection(db, COLLECTIONS.GLASS_ITEMS)),
             getDocs(collection(db, COLLECTIONS.ALU_DOOR_ITEMS)),
+            getDocs(collection(db, COLLECTIONS.OFFER_PRODUCTS)),
+            getDocs(collection(db, COLLECTIONS.OFFER_EXTRAS)),
         ]);
 
         const projects = projectsSnap.docs.map(doc => ({ ...doc.data() } as Project));
@@ -130,6 +134,8 @@ export async function getAllData(): Promise<AppState> {
         const orderItems = orderItemsSnap.docs.map(doc => ({ ...doc.data() } as OrderItem));
         const glassItems = glassItemsSnap.docs.map(doc => ({ ...doc.data() } as GlassItem));
         const aluDoorItems = aluDoorItemsSnap.docs.map(doc => ({ ...doc.data() } as AluDoorItem));
+        const offerProducts = offerProductsSnap.docs.map(doc => ({ ...doc.data() } as OfferProduct));
+        const offerExtras = offerExtrasSnap.docs.map(doc => ({ ...doc.data() } as OfferExtra));
 
         // Attach glass items and alu door items to product materials
         productMaterials.forEach(pm => {
@@ -145,12 +151,18 @@ export async function getAllData(): Promise<AppState> {
             });
         });
 
-        // Add client info to offers
+        // Add client info and products to offers
         offers.forEach(offer => {
             const project = projects.find(p => p.Project_ID === offer.Project_ID);
             if (project) {
                 offer.Client_Name = project.Client_Name;
             }
+            // Attach offer products with their extras
+            const prods = offerProducts.filter(op => op.Offer_ID === offer.Offer_ID);
+            prods.forEach(prod => {
+                (prod as any).extras = offerExtras.filter(e => e.Offer_Product_ID === prod.ID);
+            });
+            (offer as any).products = prods;
         });
 
         // Attach items to orders
