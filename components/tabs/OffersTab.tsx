@@ -854,125 +854,179 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
                             border-radius: 0;
                         }
                         
+                        /* Repeating header on each page */
+                        .print-table {
+                            width: 100%;
+                        }
+                        
+                        .print-table thead {
+                            display: table-header-group;
+                        }
+                        
+                        .print-table tfoot {
+                            display: table-footer-group;
+                        }
+                        
+                        .print-header-row td {
+                            padding-bottom: 20px;
+                        }
+                        
                         @page {
-                            margin: 20mm;
+                            margin: 15mm;
                         }
                     }
-                </style>
+                    
+                    /* Print Table Structure */
+                    .print-table {
+                        width: 100%;
+                        border-collapse: collapse;
+                    }
+                    
+                    .print-table thead td,
+                    .print-table tfoot td {
+                        padding: 0;
+                    }
+                    
+                    .print-table tbody td {
+                        vertical-align: top;
+                    }
+                    
+                    .print-header-content {
+                        display: flex;
+                        justify-content: space-between;
+                        align-items: flex-start;
+                        padding-bottom: 24px;
+                        border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+                        margin-bottom: 16px;
+                    }
+            </style>
             </head>
             <body>
-                <div class="document">
-                    <div class="header">
-                        <div class="company-info">
-                            ${companyInfo.logoBase64 ? `<img class="company-logo" src="${companyInfo.logoBase64}" alt="${companyInfo.name}" />` : ''}
-                            ${(!companyInfo.logoBase64 || !companyInfo.hideNameWhenLogo) ? `<h1 class="company-name">${companyInfo.name}</h1>` : ''}
-                            <div class="company-details">
-                                <p>${companyInfo.address}</p>
-                                <p>${[companyInfo.phone, companyInfo.email].filter(Boolean).join(' · ')}</p>
-                                ${companyInfo.idNumber || companyInfo.pdvNumber ? `<p style="margin-top: 4px; font-size: 10px; color: #a1a1a6;">${[companyInfo.idNumber ? 'ID: ' + companyInfo.idNumber : '', companyInfo.pdvNumber ? 'PDV: ' + companyInfo.pdvNumber : ''].filter(Boolean).join(' | ')}</p>` : ''}
-                            </div>
-                        </div>
-                        <div class="document-badge">
-                            <div class="badge">Ponuda</div>
-                            <div class="number">${offer.Offer_Number}</div>
-                            <div class="date">${formatDate(offer.Created_Date)}</div>
-                        </div>
-                    </div>
-
-                    <div class="client-card">
-                        <div class="label">Kupac</div>
-                        <div class="name">${offer.Client_Name || '-'}</div>
-                        ${(offer as any).Client_Address ? `<div class="contact" style="margin-bottom: 2px;">${(offer as any).Client_Address}</div>` : ''}
-                        <div class="contact">${[offer.Client_Phone, offer.Client_Email].filter(Boolean).join(' · ') || '-'}</div>
-                    </div>
-
-                    <div class="products-section">
-                        <h3>Proizvodi</h3>
-                        <table>
-                            <thead>
-                                <tr>
-                                    <th style="width: 40px">#</th>
-                                    <th>Naziv</th>
-                                    <th>Količina</th>
-                                    <th>Cijena</th>
-                                    <th>Ukupno</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                ${products.map((p, i) => `
-                                    <tr>
-                                        <td>${i + 1}</td>
-                                        <td class="product-name">${p.Product_Name}</td>
-                                        <td class="product-qty">${p.Quantity}</td>
-                                        <td class="product-price">${formatCurrency(p.Selling_Price)}</td>
-                                        <td class="product-total">${formatCurrency(p.Total_Price)}</td>
-                                    </tr>
-                                `).join('')}
-                            </tbody>
-                        </table>
-                    </div>
-
-                    <div class="summary-row">
-                        ${offer.Notes ? `
-                            <div class="notes-card">
-                                <h4>Napomena</h4>
-                                <p>${offer.Notes}</p>
-                            </div>
-                        ` : '<div style="flex:1;"></div>'}
-                        <div class="totals-card">
-                            <div class="totals-row">
-                                <span class="label">Međuzbroj</span>
-                                <span class="value">${formatCurrency(offer.Subtotal)}</span>
-                            </div>
-                            ${(offer.Transport_Cost || 0) > 0 ? `
-                                <div class="totals-row">
-                                    <span class="label">Transport</span>
-                                    <span class="value">${formatCurrency(offer.Transport_Cost)}</span>
+                <table class="print-table">
+                    <thead>
+                        <tr class="print-header-row">
+                            <td>
+                                <div class="print-header-content">
+                                    <div class="company-info">
+                                        ${companyInfo.logoBase64 ? `<img class="company-logo" src="${companyInfo.logoBase64}" alt="${companyInfo.name}" />` : ''}
+                                        ${(!companyInfo.logoBase64 || !companyInfo.hideNameWhenLogo) ? `<h1 class="company-name">${companyInfo.name}</h1>` : ''}
+                                        <div class="company-details">
+                                            <p>${companyInfo.address}</p>
+                                            <p>${[companyInfo.phone, companyInfo.email].filter(Boolean).join(' · ')}</p>
+                                            ${companyInfo.idNumber || companyInfo.pdvNumber ? `<p style="margin-top: 4px; font-size: 10px; color: #a1a1a6;">${[companyInfo.idNumber ? 'ID: ' + companyInfo.idNumber : '', companyInfo.pdvNumber ? 'PDV: ' + companyInfo.pdvNumber : ''].filter(Boolean).join(' | ')}</p>` : ''}
+                                        </div>
+                                    </div>
+                                    <div class="document-badge">
+                                        <div class="badge">Ponuda</div>
+                                        <div class="number">${offer.Offer_Number}</div>
+                                        <div class="date">${formatDate(offer.Created_Date)}</div>
+                                    </div>
                                 </div>
-                            ` : ''}
-                            ${offer.Onsite_Assembly ? `
-                                <div class="totals-row discount">
-                                    <span class="label">Popust (sklapanje na licu mjesta)</span>
-                                    <span class="value">-${formatCurrency(offer.Onsite_Discount)}</span>
+                            </td>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>
+                                <div class="document">
+                                    <div class="client-card">
+                                        <div class="label">Kupac</div>
+                                        <div class="name">${offer.Client_Name || '-'}</div>
+                                        ${(offer as any).Client_Address ? `<div class="contact" style="margin-bottom: 2px;">${(offer as any).Client_Address}</div>` : ''}
+                                        <div class="contact">${[offer.Client_Phone, offer.Client_Email].filter(Boolean).join(' · ') || '-'}</div>
+                                    </div>
+
+                                    <div class="products-section">
+                                        <h3>Proizvodi</h3>
+                                        <table>
+                                            <thead>
+                                                <tr>
+                                                    <th style="width: 40px">#</th>
+                                                    <th>Naziv</th>
+                                                    <th>Količina</th>
+                                                    <th>Cijena</th>
+                                                    <th>Ukupno</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                ${products.map((p, i) => `
+                                                    <tr>
+                                                        <td>${i + 1}</td>
+                                                        <td class="product-name">${p.Product_Name}</td>
+                                                        <td class="product-qty">${p.Quantity}</td>
+                                                        <td class="product-price">${formatCurrency(p.Selling_Price)}</td>
+                                                        <td class="product-total">${formatCurrency(p.Total_Price)}</td>
+                                                    </tr>
+                                                `).join('')}
+                                            </tbody>
+                                        </table>
+                                    </div>
+
+                                    <div class="summary-row">
+                                        ${offer.Notes ? `
+                                            <div class="notes-card">
+                                                <h4>Napomena</h4>
+                                                <p>${offer.Notes}</p>
+                                            </div>
+                                        ` : '<div style="flex:1;"></div>'}
+                                        <div class="totals-card">
+                                            <div class="totals-row">
+                                                <span class="label">Međuzbroj</span>
+                                                <span class="value">${formatCurrency(offer.Subtotal)}</span>
+                                            </div>
+                                            ${(offer.Transport_Cost || 0) > 0 ? `
+                                                <div class="totals-row">
+                                                    <span class="label">Transport</span>
+                                                    <span class="value">${formatCurrency(offer.Transport_Cost)}</span>
+                                                </div>
+                                            ` : ''}
+                                            ${offer.Onsite_Assembly ? `
+                                                <div class="totals-row discount">
+                                                    <span class="label">Popust (sklapanje na licu mjesta)</span>
+                                                    <span class="value">-${formatCurrency(offer.Onsite_Discount)}</span>
+                                                </div>
+                                            ` : ''}
+                                            ${includePDV ? `
+                                                <div class="totals-row">
+                                                    <span class="label">PDV (${pdvRate}%)</span>
+                                                    <span class="value">${formatCurrency((offer.Total || 0) * pdvRate / (100 + pdvRate))}</span>
+                                                </div>
+                                            ` : ''}
+                                            <div class="totals-row total">
+                                                <span class="label">Ukupno${includePDV ? ' (sa PDV)' : ''}</span>
+                                                <span class="value">${formatCurrency(offer.Total)}</span>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div class="terms-section">
+                                        <h4>Uslovi</h4>
+                                        <ul>
+                                            <li>Ponuda vrijedi do: <strong>${formatDate(offer.Valid_Until)}</strong></li>
+                                            ${appSettings.offerTerms.split('\\n').filter(Boolean).map(term => `<li>${term}</li>`).join('')}
+                                            <li>Cijene su u ${appSettings.currency}</li>
+                                        </ul>
+                                    </div>
+
+                                    <div class="signatures">
+                                        <div class="signature-block">
+                                            <div class="signature-line"></div>
+                                            <div class="signature-label">Ponuđač</div>
+                                        </div>
+                                        <div class="signature-block">
+                                            <div class="signature-line"></div>
+                                            <div class="signature-label">Naručilac</div>
+                                        </div>
+                                    </div>
+
+                                    <div class="footer">
+                                        <p>Hvala na povjerenju</p>
+                                    </div>
                                 </div>
-                            ` : ''}
-                            ${includePDV ? `
-                                <div class="totals-row">
-                                    <span class="label">PDV (${pdvRate}%)</span>
-                                    <span class="value">${formatCurrency((offer.Total || 0) * pdvRate / (100 + pdvRate))}</span>
-                                </div>
-                            ` : ''}
-                            <div class="totals-row total">
-                                <span class="label">Ukupno${includePDV ? ' (sa PDV)' : ''}</span>
-                                <span class="value">${formatCurrency(offer.Total)}</span>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div class="terms-section">
-                        <h4>Uslovi</h4>
-                        <ul>
-                            <li>Ponuda vrijedi do: <strong>${formatDate(offer.Valid_Until)}</strong></li>
-                            ${appSettings.offerTerms.split('\n').filter(Boolean).map(term => `<li>${term}</li>`).join('')}
-                            <li>Cijene su u ${appSettings.currency}</li>
-                        </ul>
-                    </div>
-
-                    <div class="signatures">
-                        <div class="signature-block">
-                            <div class="signature-line"></div>
-                            <div class="signature-label">Ponuđač</div>
-                        </div>
-                        <div class="signature-block">
-                            <div class="signature-line"></div>
-                            <div class="signature-label">Naručilac</div>
-                        </div>
-                    </div>
-
-                    <div class="footer">
-                        <p>Hvala na povjerenju</p>
-                    </div>
-                </div>
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
             </body>
             </html>
         `;
