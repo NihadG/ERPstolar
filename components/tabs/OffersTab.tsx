@@ -643,17 +643,17 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
                     
                     /* Products Table */
                     .products-section {
-                        margin-bottom: 40px;
+                        margin-bottom: 48px;
                         text-align: left;
                     }
                     
                     .products-section h3 {
-                        font-size: 12px;
+                        font-size: 13px;
                         font-weight: 600;
                         color: #1d1d1f;
                         text-transform: uppercase;
-                        letter-spacing: 1px;
-                        margin-bottom: 20px;
+                        letter-spacing: 1.5px;
+                        margin-bottom: 24px;
                     }
                     
                     .products-section table {
@@ -663,42 +663,44 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
                     }
                     
                     .products-section th {
-                        font-size: 11px;
+                        font-size: 12px;
                         font-weight: 600;
-                        color: #86868b;
+                        color: #6e6e73;
                         text-transform: uppercase;
-                        letter-spacing: 0.5px;
-                        padding: 14px 12px;
-                        border-bottom: 2px solid rgba(0, 0, 0, 0.08);
+                        letter-spacing: 0.8px;
+                        padding: 16px 14px;
+                        border-bottom: 2px solid #e5e5e7;
                         text-align: left;
                     }
                     
-                    .products-section th:first-child { width: 40px; text-align: center; }
+                    .products-section th:first-child { width: 50px; text-align: center; }
                     .products-section th:nth-child(2) { width: auto; }
-                    .products-section th:nth-child(3) { width: 90px; text-align: center; }
-                    .products-section th:nth-child(4) { width: 110px; text-align: right; }
-                    .products-section th:nth-child(5) { width: 120px; text-align: right; }
+                    .products-section th:nth-child(3) { width: 100px; text-align: center; }
+                    .products-section th:nth-child(4) { width: 130px; text-align: right; }
+                    .products-section th:nth-child(5) { width: 140px; text-align: right; }
                     
                     .products-section td {
-                        padding: 18px 12px;
-                        border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+                        padding: 24px 14px;
+                        border-bottom: 1px solid #f0f0f0;
                         vertical-align: middle;
                         text-align: left;
-                        font-size: 14px;
+                        font-size: 15px;
                         color: #1d1d1f;
+                        letter-spacing: -0.2px;
                     }
                     
-                    .products-section td:first-child { text-align: center; color: #86868b; font-size: 13px; }
-                    .products-section td:nth-child(3) { text-align: center; color: #86868b; }
-                    .products-section td:nth-child(4) { text-align: right; }
-                    .products-section td:nth-child(5) { text-align: right; font-weight: 600; }
+                    .products-section td:first-child { text-align: center; color: #8e8e93; font-size: 14px; font-weight: 500; }
+                    .products-section td:nth-child(3) { text-align: center; color: #6e6e73; font-weight: 500; }
+                    .products-section td:nth-child(4) { text-align: right; font-weight: 500; }
+                    .products-section td:nth-child(5) { text-align: right; font-weight: 700; font-size: 16px; }
                     
                     .products-section tr:last-child td { border-bottom: none; }
                     
                     .products-section .product-name {
-                        font-weight: 500;
-                        font-size: 15px;
+                        font-weight: 600;
+                        font-size: 16px;
                         color: #1d1d1f;
+                        letter-spacing: -0.3px;
                     }
                     
                     .totals-card {
@@ -998,12 +1000,13 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
                                     </div>
 
                                     <div class="summary-row">
-                                        ${offer.Notes ? `
-                                            <div class="notes-card">
-                                                <h4>Napomena</h4>
-                                                <p>${offer.Notes}</p>
-                                            </div>
-                                        ` : '<div style="flex:1;"></div>'}
+                                        <div class="notes-card">
+                                            <h4>Napomena</h4>
+                                            <p>Ponuda vrijedi do: <strong>${formatDate(offer.Valid_Until)}</strong></p>
+                                            <p>Plaćanje: Avansno ili po dogovoru</p>
+                                            <p>Rok isporuke: Po dogovoru nakon potvrde</p>
+                                            ${offer.Notes ? `<p style="margin-top: 12px;">${offer.Notes}</p>` : ''}
+                                        </div>
                                         <div class="totals-card">
                                             <div class="totals-row">
                                                 <span class="label">Međuzbroj</span>
@@ -1034,14 +1037,7 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
                                         </div>
                                     </div>
 
-                                    <div class="terms-section">
-                                        <h4>Uslovi</h4>
-                                        <ul>
-                                            <li>Ponuda vrijedi do: <strong>${formatDate(offer.Valid_Until)}</strong></li>
-                                            ${appSettings.offerTerms.split('\\n').filter(Boolean).map(term => `<li>${term}</li>`).join('')}
-                                            <li>Cijene su u ${appSettings.currency}</li>
-                                        </ul>
-                                    </div>
+
 
                                     <div class="signatures">
                                         <div class="signature-block">
