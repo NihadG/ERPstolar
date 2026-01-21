@@ -43,7 +43,8 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
         idNumber: '',
         pdvNumber: '',
         website: '',
-        logoBase64: ''
+        logoBase64: '',
+        hideNameWhenLogo: false
     });
 
     // Load company info from localStorage on mount
@@ -551,10 +552,10 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
                     * { box-sizing: border-box; margin: 0; padding: 0; }
                     body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; padding: 40px; color: #1d1d1f; }
                     .header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 32px; padding-bottom: 24px; border-bottom: 2px solid #1d1d1f; }
-                    .company-info { display: flex; align-items: flex-start; gap: 16px; }
-                    .company-logo { width: 80px; height: 50px; object-fit: contain; }
-                    .company-details h1 { font-size: 20px; font-weight: 700; margin-bottom: 4px; }
-                    .company-details p { font-size: 12px; color: #86868b; margin-bottom: 2px; }
+                    .company-info { display: flex; flex-direction: column; gap: 6px; }
+                    .company-logo { max-width: 180px; max-height: 60px; width: auto; height: auto; object-fit: contain; }
+                    .company-name { font-size: 20px; font-weight: 700; letter-spacing: -0.3px; color: #1d1d1f; margin: 0; }
+                    .company-details p { font-size: 11px; color: #86868b; margin: 0 0 2px 0; }
                     .order-info { text-align: right; font-size: 14px; }
                     .order-number { font-size: 18px; font-weight: 600; }
                     .supplier-section { background: #f5f5f7; padding: 16px; border-radius: 12px; margin-bottom: 24px; }
@@ -568,11 +569,11 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
             <body>
                 <div class="header">
                     <div class="company-info">
-                        ${companyInfo.logoBase64 ? `<img class="company-logo" src="${companyInfo.logoBase64}" alt="Logo" />` : ''}
+                        ${companyInfo.logoBase64 ? `<img class="company-logo" src="${companyInfo.logoBase64}" alt="${companyInfo.name}" />` : ''}
+                        ${(!companyInfo.logoBase64 || !companyInfo.hideNameWhenLogo) ? `<h1 class="company-name">${companyInfo.name}</h1>` : ''}
                         <div class="company-details">
-                            <h1>${companyInfo.name}</h1>
                             <p>${companyInfo.address}</p>
-                            <p>${companyInfo.phone} ${companyInfo.email ? '· ' + companyInfo.email : ''}</p>
+                            <p>${[companyInfo.phone, companyInfo.email].filter(Boolean).join(' · ')}</p>
                         </div>
                     </div>
                     <div class="order-info">

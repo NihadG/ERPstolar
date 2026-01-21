@@ -16,6 +16,7 @@ interface CompanyInfo {
     pdvNumber: string;
     website: string;
     logoBase64: string;
+    hideNameWhenLogo: boolean;
 }
 
 interface AppSettings {
@@ -33,7 +34,8 @@ const DEFAULT_COMPANY: CompanyInfo = {
     idNumber: '',
     pdvNumber: '',
     website: '',
-    logoBase64: ''
+    logoBase64: '',
+    hideNameWhenLogo: false
 };
 
 const DEFAULT_SETTINGS: AppSettings = {
@@ -225,6 +227,18 @@ export default function SettingsPage() {
                                     )}
                                     <span className="logo-hint">PNG, JPG ili SVG. Maks. 500KB.</span>
                                 </div>
+                                {companyInfo.logoBase64 && (
+                                    <div className="logo-option">
+                                        <label className="toggle-label">
+                                            <input
+                                                type="checkbox"
+                                                checked={companyInfo.hideNameWhenLogo}
+                                                onChange={(e) => setCompanyInfo({ ...companyInfo, hideNameWhenLogo: e.target.checked })}
+                                            />
+                                            <span>Sakrij naziv firme kada ima logo</span>
+                                        </label>
+                                    </div>
+                                )}
                             </div>
 
                             <div className="form-grid">
@@ -555,6 +569,29 @@ export default function SettingsPage() {
                 .logo-hint {
                     font-size: 12px;
                     color: var(--text-tertiary);
+                }
+
+                .logo-option {
+                    width: 100%;
+                    margin-top: 12px;
+                    padding-top: 12px;
+                    border-top: 1px solid var(--border-light);
+                }
+
+                .toggle-label {
+                    display: flex;
+                    align-items: center;
+                    gap: 10px;
+                    cursor: pointer;
+                    font-size: 13px;
+                    color: var(--text-secondary);
+                }
+
+                .toggle-label input[type="checkbox"] {
+                    width: 18px;
+                    height: 18px;
+                    accent-color: var(--accent);
+                    cursor: pointer;
                 }
 
                 .form-grid {

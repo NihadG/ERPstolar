@@ -82,7 +82,8 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
         idNumber: '',
         pdvNumber: '',
         website: '',
-        logoBase64: ''
+        logoBase64: '',
+        hideNameWhenLogo: false
     });
 
     // Load company info from localStorage on mount (read-only, managed in Settings)
@@ -495,28 +496,36 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
                     
                     .company-info {
                         display: flex;
-                        align-items: flex-start;
-                        gap: 16px;
+                        flex-direction: column;
+                        gap: 8px;
                     }
                     
                     .company-logo {
-                        width: 80px;
-                        height: 50px;
+                        max-width: 180px;
+                        max-height: 60px;
+                        width: auto;
+                        height: auto;
                         object-fit: contain;
                     }
                     
-                    .company-details h1 {
-                        font-size: 28px;
-                        font-weight: 600;
-                        letter-spacing: -0.5px;
+                    .company-name {
+                        font-size: 22px;
+                        font-weight: 700;
+                        letter-spacing: -0.3px;
                         color: #1d1d1f;
-                        margin-bottom: 8px;
+                        margin: 0;
+                    }
+                    
+                    .company-details {
+                        display: flex;
+                        flex-direction: column;
+                        gap: 2px;
                     }
                     
                     .company-details p {
-                        font-size: 12px;
+                        font-size: 11px;
                         color: #86868b;
-                        margin-bottom: 2px;
+                        margin: 0;
                     }
                     
                     .document-badge {
@@ -827,12 +836,12 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
                 <div class="document">
                     <div class="header">
                         <div class="company-info">
-                            ${companyInfo.logoBase64 ? `<img class="company-logo" src="${companyInfo.logoBase64}" alt="Logo" />` : ''}
+                            ${companyInfo.logoBase64 ? `<img class="company-logo" src="${companyInfo.logoBase64}" alt="${companyInfo.name}" />` : ''}
+                            ${(!companyInfo.logoBase64 || !companyInfo.hideNameWhenLogo) ? `<h1 class="company-name">${companyInfo.name}</h1>` : ''}
                             <div class="company-details">
-                                <h1>${companyInfo.name}</h1>
                                 <p>${companyInfo.address}</p>
-                                <p>${companyInfo.phone} ${companyInfo.email ? '· ' + companyInfo.email : ''}</p>
-                                ${companyInfo.idNumber || companyInfo.pdvNumber ? `<p style="font-size: 10px; margin-top: 4px; color: #a1a1a6;">${[companyInfo.idNumber ? 'ID: ' + companyInfo.idNumber : '', companyInfo.pdvNumber ? 'PDV: ' + companyInfo.pdvNumber : ''].filter(Boolean).join(' | ')}</p>` : ''}
+                                <p>${[companyInfo.phone, companyInfo.email].filter(Boolean).join(' · ')}</p>
+                                ${companyInfo.idNumber || companyInfo.pdvNumber ? `<p style="margin-top: 4px; font-size: 10px; color: #a1a1a6;">${[companyInfo.idNumber ? 'ID: ' + companyInfo.idNumber : '', companyInfo.pdvNumber ? 'PDV: ' + companyInfo.pdvNumber : ''].filter(Boolean).join(' | ')}</p>` : ''}
                             </div>
                         </div>
                         <div class="document-badge">
