@@ -680,27 +680,28 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
                     .products-section th:nth-child(5) { width: 140px; text-align: right; }
                     
                     .products-section td {
-                        padding: 24px 14px;
-                        border-bottom: 1px solid #f0f0f0;
+                        padding: 32px 14px;
+                        border-bottom: 1px solid #e8e8e8;
                         vertical-align: middle;
                         text-align: left;
                         font-size: 15px;
-                        color: #1d1d1f;
-                        letter-spacing: -0.2px;
+                        color: #3d3d3d;
+                        font-weight: 400;
+                        letter-spacing: -0.1px;
                     }
                     
-                    .products-section td:first-child { text-align: center; color: #8e8e93; font-size: 14px; font-weight: 500; }
-                    .products-section td:nth-child(3) { text-align: center; color: #6e6e73; font-weight: 500; }
-                    .products-section td:nth-child(4) { text-align: right; font-weight: 500; }
-                    .products-section td:nth-child(5) { text-align: right; font-weight: 700; font-size: 16px; }
+                    .products-section td:first-child { text-align: center; color: #6e6e73; font-size: 14px; }
+                    .products-section td:nth-child(3) { text-align: center; color: #5a5a5a; }
+                    .products-section td:nth-child(4) { text-align: right; color: #3d3d3d; }
+                    .products-section td:nth-child(5) { text-align: right; color: #1d1d1f; font-size: 16px; }
                     
                     .products-section tr:last-child td { border-bottom: none; }
                     
                     .products-section .product-name {
-                        font-weight: 600;
+                        font-weight: 500;
                         font-size: 16px;
-                        color: #1d1d1f;
-                        letter-spacing: -0.3px;
+                        color: #2d2d2d;
+                        letter-spacing: -0.2px;
                     }
                     
                     .totals-card {
