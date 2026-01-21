@@ -507,7 +507,7 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
                 <meta charset="UTF-8">
                 <title>Ponuda ${offer.Offer_Number}</title>
                 <style>
-                    @import url('https://fonts.googleapis.com/css2?family=SF+Pro+Display:wght@300;400;500;600;700&display=swap');
+                    @import url('https://fonts.googleapis.com/css2?family=Google+Sans:wght@400;500;700&display=swap');
                     
                     * { margin: 0; padding: 0; box-sizing: border-box; }
                     
@@ -699,6 +699,7 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
                     .products-section tr:last-child td { border-bottom: none; }
                     
                     .products-section .product-name {
+                        font-family: 'Google Sans', 'Roboto', sans-serif;
                         font-weight: 500;
                         font-size: 16px;
                         color: #2d2d2d;
