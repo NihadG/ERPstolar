@@ -2,7 +2,7 @@
 
 import { useState, useMemo } from 'react';
 import type { Offer, Project, OfferProduct, Product } from '@/lib/types';
-import { getOffer, createOfferWithProducts, deleteOffer, updateOfferStatus, saveOffer } from '@/lib/database';
+import { getOffer, createOfferWithProducts, deleteOffer, updateOfferStatus, saveOffer, updateOfferWithProducts } from '@/lib/database';
 import Modal from '@/components/ui/Modal';
 import { OFFER_STATUSES } from '@/lib/types';
 
@@ -330,12 +330,12 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
         let result;
 
         if (isEditMode && currentOffer) {
-            // Update existing offer
-            result = await saveOffer({
+            // Update existing offer with all products
+            result = await updateOfferWithProducts({
                 ...offerData,
                 Offer_ID: currentOffer.Offer_ID,
                 Offer_Number: currentOffer.Offer_Number,
-            } as any);
+            });
 
             if (result.success) {
                 showToast('Ponuda ažurirana', 'success');

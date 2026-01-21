@@ -647,14 +647,15 @@ export async function createOfferWithProducts(offerData: any): Promise<{ success
             return { success: false, message: 'Označite barem jedan proizvod' };
         }
 
-        // Calculate subtotal including extras
+        // Calculate subtotal including extras and labor
         let subtotal = 0;
         includedProducts.forEach((p: any) => {
             const materialCost = parseFloat(p.Material_Cost) || 0;
             const margin = parseFloat(p.Margin) || 0;
             const extrasTotal = (p.Extras || []).reduce((sum: number, e: any) => sum + (parseFloat(e.total) || 0), 0);
+            const laborTotal = (parseFloat(p.Labor_Workers) || 0) * (parseFloat(p.Labor_Days) || 0) * (parseFloat(p.Labor_Daily_Rate) || 0);
             const quantity = parseFloat(p.Quantity) || 1;
-            subtotal += (materialCost + margin + extrasTotal) * quantity;
+            subtotal += (materialCost + margin + extrasTotal + laborTotal) * quantity;
         });
 
         const transportCost = parseFloat(offerData.Transport_Cost) || 0;
@@ -691,8 +692,9 @@ export async function createOfferWithProducts(offerData: any): Promise<{ success
             const materialCost = parseFloat(product.Material_Cost) || 0;
             const margin = parseFloat(product.Margin) || 0;
             const extrasTotal = (product.Extras || []).reduce((sum: number, e: any) => sum + (parseFloat(e.total) || 0), 0);
+            const laborTotal = (parseFloat(product.Labor_Workers) || 0) * (parseFloat(product.Labor_Days) || 0) * (parseFloat(product.Labor_Daily_Rate) || 0);
             const quantity = parseFloat(product.Quantity) || 1;
-            const sellingPrice = materialCost + margin + extrasTotal;
+            const sellingPrice = materialCost + margin + extrasTotal + laborTotal;
             const totalPrice = sellingPrice * quantity;
 
             const offerProduct: OfferProduct = {
@@ -757,6 +759,130 @@ export async function saveOffer(data: Partial<Offer>): Promise<{ success: boolea
     } catch (error) {
         console.error('saveOffer error:', error);
         return { success: false, message: 'Greška pri spremanju ponude' };
+    }
+}
+
+export async function updateOfferWithProducts(offerData: any): Promise<{ success: boolean; message: string }> {
+    try {
+        const offerId = offerData.Offer_ID;
+        if (!offerId) {
+            return { success: false, message: 'Offer_ID nije definisan' };
+        }
+
+        // Find existing offer
+        const offerQ = query(collection(db, COLLECTIONS.OFFERS), where('Offer_ID', '==', offerId));
+        const offerSnap = await getDocs(offerQ);
+        if (offerSnap.empty) {
+            return { success: false, message: 'Ponuda nije pronađena' };
+        }
+
+        const products = offerData.products || [];
+        const includedProducts = products.filter((p: any) => p.Included);
+
+        // Calculate subtotal including extras and labor
+        let subtotal = 0;
+        includedProducts.forEach((p: any) => {
+            const materialCost = parseFloat(p.Material_Cost) || 0;
+            const margin = parseFloat(p.Margin) || 0;
+            const extrasTotal = (p.Extras || []).reduce((sum: number, e: any) => sum + (parseFloat(e.total) || 0), 0);
+            const laborTotal = (parseFloat(p.Labor_Workers) || 0) * (parseFloat(p.Labor_Days) || 0) * (parseFloat(p.Labor_Daily_Rate) || 0);
+            const quantity = parseFloat(p.Quantity) || 1;
+            subtotal += (materialCost + margin + extrasTotal + laborTotal) * quantity;
+        });
+
+        const transportCost = parseFloat(offerData.Transport_Cost) || 0;
+        const discount = offerData.Onsite_Assembly ? (parseFloat(offerData.Onsite_Discount) || 0) : 0;
+        const total = subtotal + transportCost - discount;
+
+        // Parse valid until date
+        let validUntil = offerData.Valid_Until;
+        if (validUntil && !validUntil.includes('T')) {
+            validUntil = new Date(validUntil).toISOString();
+        }
+
+        // Update offer document
+        await updateDoc(offerSnap.docs[0].ref, {
+            Transport_Cost: transportCost,
+            Onsite_Assembly: offerData.Onsite_Assembly || false,
+            Onsite_Discount: offerData.Onsite_Discount || 0,
+            Valid_Until: validUntil,
+            Notes: offerData.Notes || '',
+            Subtotal: subtotal,
+            Total: total,
+        });
+
+        // Delete existing offer products and their extras
+        const productsQ = query(collection(db, COLLECTIONS.OFFER_PRODUCTS), where('Offer_ID', '==', offerId));
+        const productsSnap = await getDocs(productsQ);
+
+        for (const productDoc of productsSnap.docs) {
+            const productData = productDoc.data();
+            // Delete extras for this product
+            const extrasQ = query(collection(db, COLLECTIONS.OFFER_EXTRAS), where('Offer_Product_ID', '==', productData.ID));
+            const extrasSnap = await getDocs(extrasQ);
+            for (const extraDoc of extrasSnap.docs) {
+                await deleteDoc(extraDoc.ref);
+            }
+            // Delete the product
+            await deleteDoc(productDoc.ref);
+        }
+
+        // Re-create products with new calculations
+        for (const product of products) {
+            const productId = generateUUID();
+            const materialCost = parseFloat(product.Material_Cost) || 0;
+            const margin = parseFloat(product.Margin) || 0;
+            const extrasTotal = (product.Extras || []).reduce((sum: number, e: any) => sum + (parseFloat(e.total) || 0), 0);
+            const laborTotal = (parseFloat(product.Labor_Workers) || 0) * (parseFloat(product.Labor_Days) || 0) * (parseFloat(product.Labor_Daily_Rate) || 0);
+            const quantity = parseFloat(product.Quantity) || 1;
+            const sellingPrice = materialCost + margin + extrasTotal + laborTotal;
+            const totalPrice = sellingPrice * quantity;
+
+            const offerProduct: OfferProduct = {
+                ID: productId,
+                Offer_ID: offerId,
+                Product_ID: product.Product_ID,
+                Product_Name: product.Product_Name,
+                Quantity: quantity,
+                Included: product.Included === true,
+                Material_Cost: materialCost,
+                Margin: margin,
+                Margin_Type: 'Fixed',
+                LED_Meters: 0,
+                LED_Price: 0,
+                LED_Total: 0,
+                Grouting: false,
+                Grouting_Price: 0,
+                Sink_Faucet: false,
+                Sink_Faucet_Price: 0,
+                Transport_Share: 0,
+                Discount_Share: 0,
+                Selling_Price: sellingPrice,
+                Total_Price: totalPrice,
+            };
+
+            await addDoc(collection(db, COLLECTIONS.OFFER_PRODUCTS), offerProduct);
+
+            // Add extras for this product
+            for (const extra of product.Extras || []) {
+                const extraDoc: OfferExtra = {
+                    ID: generateUUID(),
+                    Offer_Product_ID: productId,
+                    Name: extra.name,
+                    Quantity: parseFloat(extra.qty) || 1,
+                    Unit: extra.unit || 'kom',
+                    Unit_Price: parseFloat(extra.price) || 0,
+                    Total: parseFloat(extra.total) || 0,
+                };
+
+                await addDoc(collection(db, COLLECTIONS.OFFER_EXTRAS), extraDoc);
+            }
+        }
+
+        return { success: true, message: 'Ponuda ažurirana' };
+    } catch (error) {
+        console.error('updateOfferWithProducts error:', error);
+        return { success: false, message: 'Greška pri ažuriranju ponude' };
     }
 }
 
