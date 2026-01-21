@@ -642,69 +642,62 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
                     
                     /* Products Table */
                     .products-section {
-                        margin-bottom: 32px;
+                        margin-bottom: 40px;
                         text-align: left;
                     }
                     
                     .products-section h3 {
+                        font-size: 12px;
+                        font-weight: 600;
+                        color: #1d1d1f;
+                        text-transform: uppercase;
+                        letter-spacing: 1px;
+                        margin-bottom: 20px;
+                    }
+                    
+                    .products-section table {
+                        width: 100%;
+                        border-collapse: collapse;
+                        table-layout: fixed;
+                    }
+                    
+                    .products-section th {
                         font-size: 11px;
-                        font-weight: 500;
+                        font-weight: 600;
                         color: #86868b;
                         text-transform: uppercase;
                         letter-spacing: 0.5px;
-                        margin-bottom: 16px;
-                    }
-                    
-                    table {
-                        width: 100%;
-                        border-collapse: collapse;
-                    }
-                    
-                    th {
-                        font-size: 11px;
-                        font-weight: 500;
-                        color: #86868b;
-                        text-transform: uppercase;
-                        letter-spacing: 0.3px;
-                        padding: 12px 16px;
-                        border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+                        padding: 14px 12px;
+                        border-bottom: 2px solid rgba(0, 0, 0, 0.08);
                         text-align: left;
                     }
                     
-                    th:last-child, td:last-child { text-align: right; }
-                    th:nth-child(3), td:nth-child(3),
-                    th:nth-child(4), td:nth-child(4) { text-align: right; }
+                    .products-section th:first-child { width: 40px; text-align: center; }
+                    .products-section th:nth-child(2) { width: auto; }
+                    .products-section th:nth-child(3) { width: 90px; text-align: center; }
+                    .products-section th:nth-child(4) { width: 110px; text-align: right; }
+                    .products-section th:nth-child(5) { width: 120px; text-align: right; }
                     
-                    td {
-                        padding: 20px 16px;
-                        border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+                    .products-section td {
+                        padding: 18px 12px;
+                        border-bottom: 1px solid rgba(0, 0, 0, 0.05);
                         vertical-align: middle;
                         text-align: left;
                         font-size: 14px;
-                    }
-                    
-                    tr:last-child td { border-bottom: none; }
-                    
-                    .product-name {
-                        font-weight: 600;
                         color: #1d1d1f;
-                        font-size: 15px;
                     }
                     
-                    .product-qty {
-                        color: #86868b;
+                    .products-section td:first-child { text-align: center; color: #86868b; font-size: 13px; }
+                    .products-section td:nth-child(3) { text-align: center; color: #86868b; }
+                    .products-section td:nth-child(4) { text-align: right; }
+                    .products-section td:nth-child(5) { text-align: right; font-weight: 600; }
+                    
+                    .products-section tr:last-child td { border-bottom: none; }
+                    
+                    .products-section .product-name {
                         font-weight: 500;
-                    }
-                    
-                    .product-price {
-                        color: #1d1d1f;
-                        font-weight: 500;
-                    }
-                    
-                    .product-total {
-                        font-weight: 700;
-                        color: #1d1d1f;
                         font-size: 15px;
+                        color: #1d1d1f;
                     }
                     
                     .totals-card {
@@ -982,7 +975,7 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
                                         <table>
                                             <thead>
                                                 <tr>
-                                                    <th style="width: 40px">#</th>
+                                                    <th>#</th>
                                                     <th>Naziv</th>
                                                     <th>Količina</th>
                                                     <th>Cijena</th>
