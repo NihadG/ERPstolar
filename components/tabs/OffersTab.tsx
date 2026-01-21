@@ -680,14 +680,15 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
                     .products-section th:nth-child(5) { width: 140px; text-align: right; }
                     
                     .products-section td {
-                        padding: 60px 14px;
+                        padding: 28px 14px;
+                        line-height: 2.5;
                         border-bottom: 1px solid #e8e8e8;
                         vertical-align: middle;
                         text-align: left;
                         font-size: 15px;
                         color: #3d3d3d;
                         font-weight: 400;
-                        letter-spacing: -0.1px;
+                        letter-spacing: 0px;
                     }
                     
                     .products-section td:first-child { text-align: center; color: #6e6e73; font-size: 14px; }
@@ -701,7 +702,7 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
                         font-weight: 500;
                         font-size: 16px;
                         color: #2d2d2d;
-                        letter-spacing: -0.2px;
+                        letter-spacing: 0.3px;
                     }
                     
                     .totals-card {
