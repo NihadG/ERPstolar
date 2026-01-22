@@ -716,8 +716,8 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                     display: flex;
                     flex-direction: column;
                     overflow-y: auto;
-                    padding: 16px;
-                    gap: 12px;
+                    padding: 20px;
+                    gap: 16px;
                 }
 
                 .sb-step {
@@ -725,13 +725,14 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                     border: 1px solid transparent;
                     border-radius: 12px;
                     overflow: hidden;
-                    transition: all 0.2s;
+                    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
                 }
 
                 .sb-step.active {
                     background: white;
                     border-color: var(--accent);
-                    box-shadow: 0 4px 12px rgba(0,0,0,0.05);
+                    box-shadow: 0 4px 12px rgba(0, 113, 227, 0.1);
+                    transform: scale(1.01);
                 }
 
                 .sb-step.disabled {
@@ -743,8 +744,8 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                     width: 100%;
                     display: flex;
                     align-items: center;
-                    gap: 12px;
-                    padding: 12px;
+                    gap: 16px;
+                    padding: 16px;
                     background: none;
                     border: none;
                     text-align: left;
@@ -752,14 +753,15 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                 }
 
                 .sb-icon {
-                    width: 32px;
-                    height: 32px;
+                    width: 40px;
+                    height: 40px;
                     background: var(--surface-hover);
-                    border-radius: 8px;
+                    border-radius: 10px;
                     display: flex;
                     align-items: center;
                     justify-content: center;
                     color: var(--text-secondary);
+                    transition: all 0.2s;
                 }
 
                 .sb-step.active .sb-icon {
@@ -773,22 +775,40 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                 }
 
                 .sb-info { flex: 1; }
-                .sb-label { display: block; font-size: 10px; color: var(--text-secondary); text-transform: uppercase; font-weight: 600; }
-                .sb-title { display: block; font-size: 14px; font-weight: 600; color: var(--text-primary); }
+                .sb-label { 
+                    display: block; 
+                    font-size: 11px; 
+                    color: var(--text-secondary); 
+                    text-transform: uppercase; 
+                    font-weight: 700; 
+                    letter-spacing: 0.5px;
+                    margin-bottom: 2px;
+                }
+                .sb-title { 
+                    display: block; 
+                    font-size: 15px; 
+                    font-weight: 600; 
+                    color: var(--text-primary); 
+                }
 
                 .sb-badge {
                     background: var(--surface-hover);
-                    padding: 2px 8px;
-                    border-radius: 10px;
-                    font-size: 12px;
-                    font-weight: 600;
+                    padding: 4px 10px;
+                    border-radius: 12px;
+                    font-size: 13px;
+                    font-weight: 700;
+                    color: var(--text-primary);
+                }
+                .sb-step.active .sb-badge {
+                    background: #f0f7ff;
+                    color: var(--accent);
                 }
 
                 .sb-content {
-                    padding: 0 12px 12px 12px;
-                    border-top: 1px solid rgba(0,0,0,0.05);
+                    padding: 0 16px 16px 16px;
+                    border-top: 1px solid rgba(0,0,0,0.03);
                     margin-top: 4px;
-                    animation: slideDown 0.2s ease;
+                    animation: slideDown 0.3s ease;
                 }
 
                 @keyframes slideDown {
@@ -797,19 +817,19 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                 }
 
                 .sb-list {
-                    max-height: 200px;
+                    max-height: 240px;
                     overflow-y: auto;
-                    margin-top: 12px;
+                    margin-top: 16px;
                     display: flex;
                     flex-direction: column;
-                    gap: 2px;
+                    gap: 4px;
                 }
                 
                 .sb-item {
                     display: flex;
                     align-items: center;
-                    gap: 10px;
-                    padding: 8px;
+                    gap: 12px;
+                    padding: 12px;
                     border-radius: 8px;
                     cursor: pointer;
                     transition: background 0.1s;
@@ -818,59 +838,66 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                 .sb-item:hover { background: var(--surface-hover); }
                 .sb-item.selected { background: rgba(0, 113, 227, 0.08); }
                 
-                .check-icon { font-size: 18px; color: var(--text-secondary); }
+                .check-icon { font-size: 22px; color: var(--border); transition: color 0.2s; }
                 .sb-item.selected .check-icon { color: var(--accent); }
 
-                .item-name { font-size: 13px; font-weight: 500; }
-                .item-sub { font-size: 11px; color: var(--text-secondary); }
+                .item-name { font-size: 14px; font-weight: 500; }
+                .item-sub { font-size: 12px; color: var(--text-secondary); margin-top: 2px; }
 
                 .sb-next-btn {
                     width: 100%;
-                    margin-top: 12px;
-                    padding: 10px;
+                    margin-top: 16px;
+                    padding: 12px;
                     background: var(--text-primary);
                     color: white;
                     border: none;
-                    border-radius: 8px;
-                    font-size: 13px;
+                    border-radius: 10px;
+                    font-size: 14px;
                     font-weight: 600;
                     cursor: pointer;
                     display: flex;
                     align-items: center;
                     justify-content: center;
                     gap: 8px;
+                    transition: transform 0.1s;
                 }
                 
-                .sb-next-btn:hover { background: black; }
+                .sb-next-btn:hover { background: black; transform: translateY(-1px); }
 
                 /* PRODUCTS STEP EXTRAS */
-                .sb-toolbar { display: flex; justify-content: space-between; margin-top: 8px; }
-                .text-btn { background: none; border: none; font-size: 11px; font-weight: 600; color: var(--accent); cursor: pointer; }
+                .sb-toolbar { display: flex; justify-content: space-between; align-items: center; margin-top: 8px; margin-bottom: 8px; }
+                .text-btn { background: none; border: none; font-size: 12px; font-weight: 600; color: var(--accent); cursor: pointer; padding: 4px 8px; border-radius: 4px; }
+                .text-btn:hover { background: rgba(0, 113, 227, 0.05); }
                 .text-btn.danger { color: var(--danger); }
+                .text-btn.danger:hover { background: rgba(255, 59, 48, 0.05); }
                 
                 .sb-search {
                     display: flex;
                     align-items: center;
-                    gap: 8px;
+                    gap: 10px;
                     background: var(--surface-hover);
-                    padding: 6px 10px;
-                    border-radius: 6px;
-                    margin-top: 8px;
+                    padding: 10px 12px;
+                    border-radius: 8px;
+                    border: 1px solid transparent;
+                    transition: border-color 0.2s;
                 }
-                .sb-search input { border: none; background: none; font-size: 12px; width: 100%; outline: none; }
+                .sb-search:focus-within { border-color: var(--accent); background: white; }
+                .sb-search input { border: none; background: none; font-size: 13px; width: 100%; outline: none; }
 
                 /* PROCESSES STEP EXTRAS */
-                .sb-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
-                .sb-chip { display: flex; align-items: center; gap: 4px; padding: 4px 8px; background: var(--accent); color: white; border-radius: 6px; font-size: 11px; }
-                .sb-chip button { background: none; border: none; color: white; cursor: pointer; font-size: 10px; }
+                .sb-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+                .sb-chip { display: flex; align-items: center; gap: 6px; padding: 6px 10px; background: var(--accent); color: white; border-radius: 20px; font-size: 12px; font-weight: 500; }
+                .sb-chip button { background: none; border: none; color: white; cursor: pointer; font-size: 14px; display: flex; align-items: center; opacity: 0.8; }
+                .sb-chip button:hover { opacity: 1; }
                 
-                .sb-add-row { display: flex; gap: 6px; margin-top: 8px; }
-                .sb-add-row input { flex: 1; padding: 6px; border: 1px solid var(--border); border-radius: 6px; font-size: 12px; }
-                .sb-add-row button { width: 28px; background: var(--accent); color: white; border: none; border-radius: 6px; cursor: pointer; }
+                .sb-add-row { display: flex; gap: 8px; margin-top: 12px; }
+                .sb-add-row input { flex: 1; padding: 10px; border: 1px solid var(--border); border-radius: 8px; font-size: 13px; }
+                .sb-add-row button { width: 40px; background: var(--accent); color: white; border: none; border-radius: 8px; cursor: pointer; font-size: 20px; display: flex; align-items: center; justify-content: center; }
 
                 /* DETAILS STEP EXTRAS */
-                .sb-form label { display: block; font-size: 11px; font-weight: 600; margin: 10px 0 4px 0; color: var(--text-secondary); }
-                .sb-form input, .sb-form textarea { width: 100%; padding: 8px; border: 1px solid var(--border); border-radius: 6px; font-size: 13px; font-family: inherit; }
+                .sb-form label { display: block; font-size: 12px; font-weight: 600; margin: 16px 0 6px 0; color: var(--text-secondary); }
+                .sb-form input, .sb-form textarea { width: 100%; padding: 12px; border: 1px solid var(--border); border-radius: 8px; font-size: 14px; font-family: inherit; background: var(--surface); transition: border-color 0.2s; }
+                .sb-form input:focus, .sb-form textarea:focus { border-color: var(--accent); background: white; outline: none; }
 
                 /* RESULT AREA */
                 .wo-result-area {
