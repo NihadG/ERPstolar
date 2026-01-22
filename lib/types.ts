@@ -213,7 +213,7 @@ export interface WorkOrder {
     Created_Date: string;
     Due_Date: string;
     Status: string;
-    Production_Step: string;
+    Production_Steps: string[]; // Changed from single step to array of steps
     Notes: string;
     Completed_Date?: string;
     items?: WorkOrderItem[];
@@ -228,8 +228,12 @@ export interface WorkOrderItem {
     Project_Name: string;
     Quantity: number;
     Status: string;
-    Worker_ID?: string;
-    Worker_Name?: string;
+    // Process assignments: { 'Rezanje': { Worker_ID: '...', Status: 'U toku' }, ... }
+    Process_Assignments?: Record<string, {
+        Worker_ID?: string;
+        Worker_Name?: string;
+        Status: string; // 'Na čekanju' | 'U toku' | 'Završeno'
+    }>;
 }
 
 // ============================================

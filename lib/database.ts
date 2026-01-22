@@ -1934,7 +1934,7 @@ export async function getWorkOrder(workOrderId: string): Promise<WorkOrder | nul
 }
 
 export async function createWorkOrder(data: {
-    Production_Step: string;
+    Production_Steps: string[];
     Due_Date?: string;
     Notes?: string;
     items: {
@@ -1943,8 +1943,10 @@ export async function createWorkOrder(data: {
         Project_ID: string;
         Project_Name: string;
         Quantity: number;
-        Worker_ID?: string;
-        Worker_Name?: string;
+        Process_Assignments?: Record<string, {
+            Worker_ID?: string;
+            Worker_Name?: string;
+        }>;
     }[];
 }): Promise<{ success: boolean; data?: { Work_Order_ID: string; Work_Order_Number: string }; message: string }> {
     try {
@@ -1957,14 +1959,25 @@ export async function createWorkOrder(data: {
             Created_Date: new Date().toISOString(),
             Due_Date: data.Due_Date || '',
             Status: 'Nacrt',
-            Production_Step: data.Production_Step,
+            Production_Steps: data.Production_Steps,
             Notes: data.Notes || '',
         };
 
         await addDoc(collection(db, COLLECTIONS.WORK_ORDERS), workOrder);
 
-        // Add items
+        // Add items with process assignments
         for (const item of data.items) {
+            const processAssignments: Record<string, any> = {};
+
+            // Initialize all processes with status
+            data.Production_Steps.forEach(proc => {
+                processAssignments[proc] = {
+                    Status: 'Na čekanju',
+                    Worker_ID: item.Process_Assignments?.[proc]?.Worker_ID,
+                    Worker_Name: item.Process_Assignments?.[proc]?.Worker_Name,
+                };
+            });
+
             const workOrderItem: WorkOrderItem = {
                 ID: generateUUID(),
                 Work_Order_ID: workOrderId,
@@ -1974,8 +1987,7 @@ export async function createWorkOrder(data: {
                 Project_Name: item.Project_Name,
                 Quantity: item.Quantity,
                 Status: 'Na čekanju',
-                Worker_ID: item.Worker_ID,
-                Worker_Name: item.Worker_Name,
+                Process_Assignments: processAssignments,
             };
             await addDoc(collection(db, COLLECTIONS.WORK_ORDER_ITEMS), workOrderItem);
         }
@@ -2149,7 +2161,7 @@ export async function startWorkOrder(workOrderId: string): Promise<{ success: bo
             const productQ = query(collection(db, COLLECTIONS.PRODUCTS), where('Product_ID', '==', item.Product_ID));
             const productSnap = await getDocs(productQ);
             if (!productSnap.empty) {
-                await updateDoc(productSnap.docs[0].ref, { Status: wo.Production_Step });
+                await updateDoc(productSnap.docs[0].ref, { Status: wo.Production_Steps[0] });
             }
 
             // Update project to "U proizvodnji" if not already
