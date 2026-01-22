@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import type { WorkOrder, Project, Worker } from '@/lib/types';
 import { createWorkOrder, deleteWorkOrder, startWorkOrder, getWorkOrder } from '@/lib/database';
 import Modal from '@/components/ui/Modal';
@@ -38,13 +38,8 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
     const [productSearch, setProductSearch] = useState('');
     const [selectedProjectIds, setSelectedProjectIds] = useState<string[]>([]);
 
-    // Collapsible sections state
-    const [expandedSections, setExpandedSections] = useState({
-        projects: true,
-        products: true,
-        processes: false,
-        details: false
-    });
+    // Strict Step Control
+    const [activeStep, setActiveStep] = useState<'projects' | 'products' | 'processes' | 'details'>('projects');
 
     // View Modal
     const [viewModal, setViewModal] = useState(false);
@@ -92,7 +87,7 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
         { id: 'projects', label: 'Projekti', done: selectedProjectIds.length > 0 },
         { id: 'products', label: 'Proizvodi', done: selectedProducts.length > 0 },
         { id: 'processes', label: 'Procesi', done: selectedProcesses.length > 0 },
-        { id: 'workers', label: 'Radnici', done: selectedProducts.some(p => Object.values(p.assignments).some(v => v)) }
+        { id: 'details', label: 'Detalji', done: !!dueDate }
     ];
     const completedSteps = progressSteps.filter(s => s.done).length;
 
@@ -118,12 +113,8 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
         setNotes('');
         setProductSearch('');
         setSelectedProjectIds([]);
-        setExpandedSections({ projects: true, products: true, processes: false, details: false });
+        setActiveStep('projects');
         setCreateModal(true);
-    }
-
-    function toggleSection(section: keyof typeof expandedSections) {
-        setExpandedSections(prev => ({ ...prev, [section]: !prev[section] }));
     }
 
     function toggleProcess(process: string) {
@@ -277,6 +268,20 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
         }
     }
 
+    // Auto-advance logic (only when first selection is made)
+    useEffect(() => {
+        if (activeStep === 'projects' && selectedProjectIds.length > 0) {
+            // Optional: Don't auto-advance instantly to allow multiple selections, 
+            // but we provide a clear button to do so.
+        }
+    }, [selectedProjectIds]);
+
+    function goToNextStep() {
+        if (activeStep === 'projects') setActiveStep('products');
+        else if (activeStep === 'products') setActiveStep('processes');
+        else if (activeStep === 'processes') setActiveStep('details');
+    }
+
     async function openViewModal(workOrderId: string) {
         const wo = await getWorkOrder(workOrderId);
         if (wo) {
@@ -311,7 +316,6 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
     const pendingOrders = filteredWorkOrders.filter(wo => wo.Status === 'Nacrt' || wo.Status === 'Dodijeljeno');
     const completedOrders = filteredWorkOrders.filter(wo => wo.Status === 'Završeno');
 
-    // Calculate assignment stats
     const totalAssignments = selectedProducts.length * selectedProcesses.length;
     const filledAssignments = selectedProducts.reduce((acc, p) =>
         acc + Object.values(p.assignments).filter(v => v).length, 0
@@ -355,7 +359,7 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                 </div>
             )}
 
-            {/* ========== CREATE MODAL - COMPLETE REDESIGN ========== */}
+            {/* ========== CREATE MODAL - REFINED SEQUENTIAL LAYOUT ========== */}
             <Modal
                 isOpen={createModal}
                 onClose={() => setCreateModal(false)}
@@ -364,1211 +368,641 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                 footer={null}
             >
                 <div className="wo-creator">
-                    {/* Progress Header */}
-                    <div className="wo-progress-header">
-                        <div className="progress-steps">
-                            {progressSteps.map((step, idx) => (
-                                <div key={step.id} className={`progress-step ${step.done ? 'done' : ''}`}>
-                                    <div className="step-indicator">
-                                        {step.done ? (
-                                            <span className="material-icons-round">check</span>
-                                        ) : (
-                                            <span>{idx + 1}</span>
-                                        )}
-                                    </div>
-                                    <span className="step-label">{step.label}</span>
-                                </div>
-                            ))}
+                    {/* Header with Stats */}
+                    <div className="wo-header">
+                        <div className="header-breadcrumbs">
+                            <h2 className="modal-title">Kreiranje Naloga</h2>
+                            <span className="divider">/</span>
+                            <span className="current-step-name">
+                                {activeStep === 'projects' ? 'Odabir Projekata' :
+                                    activeStep === 'products' ? 'Odabir Proizvoda' :
+                                        activeStep === 'processes' ? 'Definisanje Procesa' : 'Detalji Naloga'}
+                            </span>
                         </div>
-                        <div className="progress-bar">
-                            <div className="progress-fill" style={{ width: `${(completedSteps / 4) * 100}%` }} />
+                        <div className="compact-progress">
+                            <div className={`cp-step ${completedSteps >= 1 ? 'active' : ''}`} />
+                            <div className={`cp-step ${completedSteps >= 2 ? 'active' : ''}`} />
+                            <div className={`cp-step ${completedSteps >= 3 ? 'active' : ''}`} />
+                            <div className={`cp-step ${completedSteps >= 4 ? 'active' : ''}`} />
+                            <span className="cp-text">{Math.round((completedSteps / 4) * 100)}%</span>
                         </div>
                     </div>
 
-                    {/* Main Content Area */}
-                    <div className="wo-main-content">
-                        {/* Left Column - Selection */}
-                        <div className="wo-selection-panel">
-                            {/* Section: Projects */}
-                            <div className={`wo-section ${expandedSections.projects ? 'expanded' : ''}`}>
-                                <button className="section-toggle" onClick={() => toggleSection('projects')}>
-                                    <div className="section-title">
+                    <div className="wo-body">
+                        {/* LEFT: STRICT SEQUENTIAL SIDEBAR */}
+                        <div className="wo-sidebar">
+                            {/* Step 1: Projects */}
+                            <div className={`sb-step ${activeStep === 'projects' ? 'active' : ''} ${selectedProjectIds.length > 0 ? 'completed' : ''}`}>
+                                <button className="sb-header" onClick={() => setActiveStep('projects')}>
+                                    <div className="sb-icon">
                                         <span className="material-icons-round">folder</span>
-                                        <span>Projekti</span>
-                                        {selectedProjectIds.length > 0 && (
-                                            <span className="count-badge">{selectedProjectIds.length}</span>
-                                        )}
                                     </div>
-                                    <span className="material-icons-round chevron">
-                                        {expandedSections.projects ? 'expand_less' : 'expand_more'}
-                                    </span>
+                                    <div className="sb-info">
+                                        <span className="sb-label">Korak 1</span>
+                                        <span className="sb-title">Projekti</span>
+                                    </div>
+                                    {selectedProjectIds.length > 0 && (
+                                        <span className="sb-badge">{selectedProjectIds.length}</span>
+                                    )}
                                 </button>
-                                {expandedSections.projects && (
-                                    <div className="section-content">
-                                        <div className="projects-grid">
+                                {activeStep === 'projects' && (
+                                    <div className="sb-content">
+                                        <div className="sb-list">
                                             {projects.map(project => {
                                                 const isSelected = selectedProjectIds.includes(project.Project_ID);
-                                                const productCount = (project.products || []).length;
                                                 return (
                                                     <div
                                                         key={project.Project_ID}
-                                                        className={`project-card ${isSelected ? 'selected' : ''}`}
+                                                        className={`sb-item ${isSelected ? 'selected' : ''}`}
                                                         onClick={() => toggleProjectSelection(project.Project_ID)}
                                                     >
-                                                        <div className="project-check">
-                                                            <span className="material-icons-round">
-                                                                {isSelected ? 'check_circle' : 'radio_button_unchecked'}
-                                                            </span>
-                                                        </div>
-                                                        <div className="project-info">
-                                                            <div className="project-name">{project.Client_Name}</div>
-                                                            <div className="project-meta">{productCount} proizvoda</div>
-                                                        </div>
+                                                        <span className="material-icons-round check-icon">
+                                                            {isSelected ? 'check_circle' : 'radio_button_unchecked'}
+                                                        </span>
+                                                        <span className="item-name">{project.Client_Name}</span>
                                                     </div>
                                                 );
                                             })}
                                         </div>
                                         {selectedProjectIds.length > 0 && (
-                                            <button className="clear-all-btn" onClick={() => {
-                                                setSelectedProjectIds([]);
-                                                setSelectedProducts([]);
-                                            }}>
-                                                <span className="material-icons-round">close</span>
-                                                Poništi odabir
+                                            <button className="sb-next-btn" onClick={goToNextStep}>
+                                                Dalje <span className="material-icons-round">arrow_forward</span>
                                             </button>
                                         )}
                                     </div>
                                 )}
                             </div>
 
-                            {/* Section: Products */}
-                            <div className={`wo-section ${expandedSections.products ? 'expanded' : ''}`}>
-                                <button className="section-toggle" onClick={() => toggleSection('products')}>
-                                    <div className="section-title">
+                            {/* Step 2: Products */}
+                            <div className={`sb-step ${activeStep === 'products' ? 'active' : ''} ${selectedProducts.length > 0 ? 'completed' : ''} ${selectedProjectIds.length === 0 ? 'disabled' : ''}`}>
+                                <button className="sb-header" onClick={() => selectedProjectIds.length > 0 && setActiveStep('products')}>
+                                    <div className="sb-icon">
                                         <span className="material-icons-round">inventory_2</span>
-                                        <span>Proizvodi</span>
-                                        {selectedProducts.length > 0 && (
-                                            <span className="count-badge">{selectedProducts.length}</span>
-                                        )}
                                     </div>
-                                    <span className="material-icons-round chevron">
-                                        {expandedSections.products ? 'expand_less' : 'expand_more'}
-                                    </span>
+                                    <div className="sb-info">
+                                        <span className="sb-label">Korak 2</span>
+                                        <span className="sb-title">Proizvodi</span>
+                                    </div>
+                                    {selectedProducts.length > 0 && (
+                                        <span className="sb-badge">{selectedProducts.length}</span>
+                                    )}
                                 </button>
-                                {expandedSections.products && (
-                                    <div className="section-content">
-                                        {selectedProjectIds.length === 0 ? (
-                                            <div className="empty-section">
-                                                <span className="material-icons-round">arrow_upward</span>
-                                                <p>Prvo odaberite projekat</p>
-                                            </div>
-                                        ) : (
-                                            <>
-                                                <div className="products-toolbar">
-                                                    <div className="search-input">
-                                                        <span className="material-icons-round">search</span>
-                                                        <input
-                                                            type="text"
-                                                            placeholder="Pretraži proizvode..."
-                                                            value={productSearch}
-                                                            onChange={(e) => setProductSearch(e.target.value)}
-                                                        />
-                                                        {productSearch && (
-                                                            <button onClick={() => setProductSearch('')}>
-                                                                <span className="material-icons-round">close</span>
-                                                            </button>
-                                                        )}
+                                {activeStep === 'products' && (
+                                    <div className="sb-content">
+                                        <div className="sb-toolbar">
+                                            <button className="text-btn" onClick={selectAllProducts}>Odaberi sve</button>
+                                            {selectedProducts.length > 0 && (
+                                                <button className="text-btn danger" onClick={() => setSelectedProducts([])}>Poništi</button>
+                                            )}
+                                        </div>
+                                        <div className="sb-search">
+                                            <span className="material-icons-round">search</span>
+                                            <input
+                                                placeholder="Pretraži..."
+                                                value={productSearch}
+                                                onChange={(e) => setProductSearch(e.target.value)}
+                                            />
+                                        </div>
+                                        <div className="sb-list">
+                                            {eligibleProducts.map(product => {
+                                                const isSelected = selectedProducts.some(p => p.Product_ID === product.Product_ID);
+                                                return (
+                                                    <div
+                                                        key={product.Product_ID}
+                                                        className={`sb-item ${isSelected ? 'selected' : ''}`}
+                                                        onClick={() => toggleProduct(product)}
+                                                    >
+                                                        <span className="material-icons-round check-icon">
+                                                            {isSelected ? 'check_box' : 'check_box_outline_blank'}
+                                                        </span>
+                                                        <div className="item-details">
+                                                            <div className="item-name">{product.Product_Name}</div>
+                                                            <div className="item-sub">{product.Project_Name}</div>
+                                                        </div>
                                                     </div>
-                                                    <button className="select-all-btn" onClick={selectAllProducts}>
-                                                        Odaberi sve ({eligibleProducts.length})
-                                                    </button>
-                                                </div>
-                                                <div className="products-list">
-                                                    {eligibleProducts.map(product => {
-                                                        const isSelected = selectedProducts.some(p => p.Product_ID === product.Product_ID);
-                                                        return (
-                                                            <div
-                                                                key={product.Product_ID}
-                                                                className={`product-row ${isSelected ? 'selected' : ''}`}
-                                                                onClick={() => toggleProduct(product)}
-                                                            >
-                                                                <span className="material-icons-round checkbox">
-                                                                    {isSelected ? 'check_box' : 'check_box_outline_blank'}
-                                                                </span>
-                                                                <div className="product-details">
-                                                                    <div className="product-name">{product.Product_Name}</div>
-                                                                    <div className="product-project">{product.Project_Name}</div>
-                                                                </div>
-                                                                <div className="product-qty">×{product.Quantity}</div>
-                                                            </div>
-                                                        );
-                                                    })}
-                                                </div>
-                                            </>
+                                                );
+                                            })}
+                                        </div>
+                                        {selectedProducts.length > 0 && (
+                                            <button className="sb-next-btn" onClick={goToNextStep}>
+                                                Dalje <span className="material-icons-round">arrow_forward</span>
+                                            </button>
                                         )}
                                     </div>
                                 )}
                             </div>
 
-                            {/* Section: Processes */}
-                            <div className={`wo-section ${expandedSections.processes ? 'expanded' : ''}`}>
-                                <button className="section-toggle" onClick={() => toggleSection('processes')}>
-                                    <div className="section-title">
+                            {/* Step 3: Processes */}
+                            <div className={`sb-step ${activeStep === 'processes' ? 'active' : ''} ${selectedProcesses.length > 0 ? 'completed' : ''}`}>
+                                <button className="sb-header" onClick={() => setActiveStep('processes')}>
+                                    <div className="sb-icon">
                                         <span className="material-icons-round">engineering</span>
-                                        <span>Procesi</span>
-                                        <span className="count-badge">{selectedProcesses.length}</span>
                                     </div>
-                                    <span className="material-icons-round chevron">
-                                        {expandedSections.processes ? 'expand_less' : 'expand_more'}
-                                    </span>
+                                    <div className="sb-info">
+                                        <span className="sb-label">Korak 3</span>
+                                        <span className="sb-title">Procesi</span>
+                                    </div>
+                                    <span className="sb-badge">{selectedProcesses.length}</span>
                                 </button>
-                                {expandedSections.processes && (
-                                    <div className="section-content">
-                                        <div className="processes-chips">
+                                {activeStep === 'processes' && (
+                                    <div className="sb-content">
+                                        <div className="sb-chips">
                                             {selectedProcesses.map(proc => (
-                                                <div key={proc} className="process-chip">
+                                                <div key={proc} className="sb-chip">
                                                     <span>{proc}</span>
-                                                    <button onClick={() => toggleProcess(proc)}>
-                                                        <span className="material-icons-round">close</span>
-                                                    </button>
+                                                    <button onClick={() => toggleProcess(proc)}>✕</button>
                                                 </div>
                                             ))}
                                         </div>
-                                        <div className="add-process-row">
+                                        <div className="sb-add-row">
                                             <input
-                                                type="text"
                                                 placeholder="Novi proces..."
                                                 value={customProcessInput}
                                                 onChange={(e) => setCustomProcessInput(e.target.value)}
                                                 onKeyPress={(e) => e.key === 'Enter' && addCustomProcess()}
                                             />
-                                            <button onClick={addCustomProcess}>
-                                                <span className="material-icons-round">add</span>
-                                            </button>
+                                            <button onClick={addCustomProcess}>+</button>
                                         </div>
+                                        <button className="sb-next-btn" onClick={goToNextStep}>
+                                            Pregled Detalja <span className="material-icons-round">arrow_forward</span>
+                                        </button>
                                     </div>
                                 )}
                             </div>
 
-                            {/* Section: Details */}
-                            <div className={`wo-section ${expandedSections.details ? 'expanded' : ''}`}>
-                                <button className="section-toggle" onClick={() => toggleSection('details')}>
-                                    <div className="section-title">
-                                        <span className="material-icons-round">info</span>
-                                        <span>Detalji</span>
+                            {/* Step 4: Details */}
+                            <div className={`sb-step ${activeStep === 'details' ? 'active' : ''} ${dueDate ? 'completed' : ''}`}>
+                                <button className="sb-header" onClick={() => setActiveStep('details')}>
+                                    <div className="sb-icon">
+                                        <span className="material-icons-round">event_note</span>
                                     </div>
-                                    <span className="material-icons-round chevron">
-                                        {expandedSections.details ? 'expand_less' : 'expand_more'}
-                                    </span>
+                                    <div className="sb-info">
+                                        <span className="sb-label">Korak 4</span>
+                                        <span className="sb-title">Ostalo</span>
+                                    </div>
                                 </button>
-                                {expandedSections.details && (
-                                    <div className="section-content">
-                                        <div className="form-row">
+                                {activeStep === 'details' && (
+                                    <div className="sb-content">
+                                        <div className="sb-form">
                                             <label>Rok završetka</label>
-                                            <input
-                                                type="date"
-                                                value={dueDate}
-                                                onChange={(e) => setDueDate(e.target.value)}
-                                            />
-                                        </div>
-                                        <div className="form-row">
+                                            <input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
                                             <label>Napomena</label>
-                                            <textarea
-                                                rows={3}
-                                                value={notes}
-                                                onChange={(e) => setNotes(e.target.value)}
-                                                placeholder="Opciona napomena..."
-                                            />
+                                            <textarea rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} />
                                         </div>
                                     </div>
                                 )}
                             </div>
                         </div>
 
-                        {/* Right Column - Worker Assignments */}
-                        <div className="wo-assignments-panel">
-                            <div className="assignments-header">
-                                <div>
-                                    <h3>Dodjela radnika</h3>
-                                    <p className="assignments-stats">
-                                        {filledAssignments} / {totalAssignments} dodijeljeno
-                                    </p>
+                        {/* RIGHT: RESULT / MATRIX AREA */}
+                        <div className="wo-result-area">
+                            <div className="result-header">
+                                <div className="result-title">
+                                    <h3>Pregled i Dodjela</h3>
+                                    <p>{selectedProducts.length} proizvoda, {selectedProcesses.length} procesa</p>
                                 </div>
                                 {selectedProducts.length > 0 && (
-                                    <select
-                                        className="bulk-assign-select"
-                                        onChange={(e) => e.target.value && assignOneWorkerToAll(e.target.value)}
-                                        value=""
-                                    >
-                                        <option value="">Dodijeli jednog radnika svima...</option>
-                                        {workers.map(w => (
-                                            <option key={w.Worker_ID} value={w.Worker_ID}>{w.Name}</option>
-                                        ))}
-                                    </select>
+                                    <div className="result-actions">
+                                        <select
+                                            className="bulk-select"
+                                            onChange={(e) => e.target.value && assignOneWorkerToAll(e.target.value)}
+                                            value=""
+                                        >
+                                            <option value="">Dodijeli jednog radnika svima...</option>
+                                            {workers.map(w => (
+                                                <option key={w.Worker_ID} value={w.Worker_ID}>{w.Name}</option>
+                                            ))}
+                                        </select>
+                                    </div>
                                 )}
                             </div>
 
-                            {selectedProducts.length === 0 ? (
-                                <div className="assignments-empty">
-                                    <span className="material-icons-round">group_add</span>
-                                    <h4>Nema odabranih proizvoda</h4>
-                                    <p>Odaberite projekte i proizvode sa lijeve strane da biste mogli dodijeliti radnike.</p>
-                                </div>
-                            ) : (
-                                <div className="assignments-matrix">
-                                    {/* Matrix Header */}
-                                    <div className="matrix-header">
-                                        <div className="matrix-corner">Proizvod</div>
-                                        {selectedProcesses.map(proc => (
-                                            <div key={proc} className="matrix-process-header">
-                                                <span>{proc}</span>
-                                                <select
-                                                    className="header-assign"
-                                                    onChange={(e) => e.target.value && assignWorkerToAll(proc, e.target.value)}
-                                                    value=""
-                                                    title={`Dodijeli svima za ${proc}`}
-                                                >
-                                                    <option value="">—</option>
-                                                    {workers.map(w => (
-                                                        <option key={w.Worker_ID} value={w.Worker_ID}>{w.Name}</option>
-                                                    ))}
-                                                </select>
-                                            </div>
-                                        ))}
+                            <div className="result-content">
+                                {selectedProducts.length === 0 ? (
+                                    <div className="wo-empty-placeholder">
+                                        <div className="placeholder-icon">
+                                            <span className="material-icons-round">arrow_back</span>
+                                        </div>
+                                        <h3>Započnite sa izborom</h3>
+                                        <p>Pratite korake u lijevom meniju da biste kreirali radni nalog.</p>
                                     </div>
-
-                                    {/* Matrix Rows */}
-                                    <div className="matrix-body">
-                                        {selectedProducts.map(product => (
-                                            <div key={product.Product_ID} className="matrix-row">
-                                                <div className="matrix-product-cell">
-                                                    <div className="product-info">
-                                                        <span className="product-name">{product.Product_Name}</span>
-                                                        <span className="product-project">{product.Project_Name}</span>
-                                                    </div>
-                                                    <div className="product-actions">
-                                                        <select
-                                                            className="row-assign"
-                                                            onChange={(e) => e.target.value && assignWorkerToProduct(product.Product_ID, e.target.value)}
-                                                            value=""
-                                                            title="Dodijeli jednog radnika svim procesima"
-                                                        >
-                                                            <option value="">Svi</option>
-                                                            {workers.map(w => (
-                                                                <option key={w.Worker_ID} value={w.Worker_ID}>{w.Name}</option>
-                                                            ))}
-                                                        </select>
-                                                        <button
-                                                            className="remove-btn"
-                                                            onClick={() => toggleProduct(product)}
-                                                            title="Ukloni proizvod"
-                                                        >
-                                                            <span className="material-icons-round">close</span>
-                                                        </button>
-                                                    </div>
+                                ) : (
+                                    <div className="modern-matrix">
+                                        <div className="mm-header">
+                                            <div className="mm-cell product-col">Proizvod</div>
+                                            {selectedProcesses.map(proc => (
+                                                <div key={proc} className="mm-cell process-col">
+                                                    <span>{proc}</span>
+                                                    <select
+                                                        onChange={(e) => e.target.value && assignWorkerToAll(proc, e.target.value)}
+                                                        value=""
+                                                        title="Svi..."
+                                                    >
+                                                        <option value="">▼</option>
+                                                        {workers.map(w => (
+                                                            <option key={w.Worker_ID} value={w.Worker_ID}>{w.Name}</option>
+                                                        ))}
+                                                    </select>
                                                 </div>
-                                                {selectedProcesses.map(proc => (
-                                                    <div key={proc} className="matrix-cell">
-                                                        <select
-                                                            value={product.assignments[proc] || ''}
-                                                            onChange={(e) => assignWorker(product.Product_ID, proc, e.target.value)}
-                                                            className={product.assignments[proc] ? 'assigned' : ''}
-                                                        >
-                                                            <option value="">—</option>
-                                                            {workers.map(w => (
-                                                                <option key={w.Worker_ID} value={w.Worker_ID}>{w.Name}</option>
-                                                            ))}
-                                                        </select>
+                                            ))}
+                                        </div>
+                                        <div className="mm-body">
+                                            {selectedProducts.map(product => (
+                                                <div key={product.Product_ID} className="mm-row">
+                                                    <div className="mm-cell product-col">
+                                                        <span className="p-name">{product.Product_Name}</span>
+                                                        <span className="p-sub">{product.Project_Name}</span>
                                                     </div>
-                                                ))}
-                                            </div>
-                                        ))}
+                                                    {selectedProcesses.map(proc => (
+                                                        <div key={proc} className="mm-cell process-col">
+                                                            <select
+                                                                value={product.assignments[proc] || ''}
+                                                                onChange={(e) => assignWorker(product.Product_ID, proc, e.target.value)}
+                                                                className={product.assignments[proc] ? 'assigned' : ''}
+                                                            >
+                                                                <option value="">—</option>
+                                                                {workers.map(w => (
+                                                                    <option key={w.Worker_ID} value={w.Worker_ID}>{w.Name}</option>
+                                                                ))}
+                                                            </select>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            ))}
+                                        </div>
                                     </div>
-                                </div>
-                            )}
-                        </div>
-                    </div>
+                                )}
+                            </div>
 
-                    {/* Footer */}
-                    <div className="wo-footer">
-                        <div className="footer-summary">
-                            <span className="summary-item">
-                                <span className="material-icons-round">folder</span>
-                                {selectedProjectIds.length} projekata
-                            </span>
-                            <span className="summary-item">
-                                <span className="material-icons-round">inventory_2</span>
-                                {selectedProducts.length} proizvoda
-                            </span>
-                            <span className="summary-item">
-                                <span className="material-icons-round">engineering</span>
-                                {selectedProcesses.length} procesa
-                            </span>
-                        </div>
-                        <div className="footer-actions">
-                            <button className="btn-cancel" onClick={() => setCreateModal(false)}>
-                                Odustani
-                            </button>
-                            <button
-                                className="btn-create"
-                                onClick={handleCreateWorkOrder}
-                                disabled={selectedProducts.length === 0 || selectedProcesses.length === 0}
-                            >
-                                <span className="material-icons-round">add_task</span>
-                                Kreiraj radni nalog
-                            </button>
+                            <div className="wo-footer-actions">
+                                <button className="btn-ghost" onClick={() => setCreateModal(false)}>Odustani</button>
+                                <button className="btn-primary-lg" onClick={handleCreateWorkOrder} disabled={selectedProducts.length === 0}>
+                                    <span className="material-icons-round">check_circle</span>
+                                    Kreiraj Nalog
+                                </button>
+                            </div>
                         </div>
                     </div>
                 </div>
             </Modal>
 
-            {/* View Modal */}
-            <Modal isOpen={viewModal} onClose={() => setViewModal(false)} title={currentWorkOrder?.Work_Order_Number || ''} size="large">
-                {currentWorkOrder && (
-                    <div>
-                        <p>Procesi: {currentWorkOrder.Production_Steps?.join(' → ')}</p>
-                        <p>Proizvoda: {currentWorkOrder.items?.length || 0}</p>
-                    </div>
-                )}
-            </Modal>
-
             <style jsx>{`
+                /* ... existing styles for main tab ... */
                 .orders-sections {
                     display: flex;
                     flex-direction: column;
                     gap: 24px;
                 }
 
-                /* ========== WORK ORDER CREATOR STYLES ========== */
+                /* ========== NEW MODAL LAYOUT ========== */
                 .wo-creator {
                     display: flex;
                     flex-direction: column;
                     height: 100%;
-                    background: var(--surface);
+                    background: #f8f9fa;
                 }
 
-                /* Progress Header */
-                .wo-progress-header {
+                .wo-header {
+                    display: flex;
+                    justify-content: space-between;
+                    align-items: center;
                     padding: 16px 24px;
-                    background: var(--surface-hover);
+                    background: white;
                     border-bottom: 1px solid var(--border);
                 }
 
-                .progress-steps {
-                    display: flex;
-                    justify-content: center;
-                    gap: 48px;
-                    margin-bottom: 12px;
+                .modal-title {
+                    font-size: 18px;
+                    font-weight: 700;
+                    margin: 0;
                 }
 
-                .progress-step {
+                .header-breadcrumbs {
                     display: flex;
-                    flex-direction: column;
+                    align-items: center;
+                    gap: 10px;
+                }
+
+                .divider { color: var(--text-secondary); }
+                .current-step-name { color: var(--accent); font-weight: 500; font-size: 14px; }
+
+                .compact-progress {
+                    display: flex;
                     align-items: center;
                     gap: 6px;
                 }
 
-                .step-indicator {
-                    width: 32px;
-                    height: 32px;
-                    border-radius: 50%;
-                    background: var(--border);
-                    display: flex;
-                    align-items: center;
-                    justify-content: center;
-                    font-size: 14px;
-                    font-weight: 600;
-                    color: var(--text-secondary);
-                    transition: all 0.3s;
-                }
-
-                .progress-step.done .step-indicator {
-                    background: var(--accent);
-                    color: white;
-                }
-
-                .step-label {
-                    font-size: 12px;
-                    color: var(--text-secondary);
-                    font-weight: 500;
-                }
-
-                .progress-step.done .step-label {
-                    color: var(--accent);
-                }
-
-                .progress-bar {
+                .cp-step {
+                    width: 30px;
                     height: 4px;
-                    background: var(--border);
+                    background: #e0e0e0;
                     border-radius: 2px;
-                    overflow: hidden;
                 }
 
-                .progress-fill {
-                    height: 100%;
-                    background: linear-gradient(90deg, var(--accent), #34c759);
-                    border-radius: 2px;
-                    transition: width 0.4s ease;
-                }
+                .cp-step.active { background: var(--success); }
+                .cp-text { font-size: 12px; font-weight: 600; margin-left: 8px; color: var(--text-secondary); }
 
-                /* Main Content */
-                .wo-main-content {
+                .wo-body {
                     flex: 1;
                     display: grid;
-                    grid-template-columns: 380px 1fr;
+                    grid-template-columns: 320px 1fr;
                     overflow: hidden;
                 }
 
-                /* Selection Panel */
-                .wo-selection-panel {
-                    background: var(--surface-hover);
+                /* SIDEBAR STYLES */
+                .wo-sidebar {
+                    background: white;
                     border-right: 1px solid var(--border);
+                    display: flex;
+                    flex-direction: column;
                     overflow-y: auto;
-                }
-
-                .wo-section {
-                    border-bottom: 1px solid var(--border);
-                }
-
-                .section-toggle {
-                    width: 100%;
-                    display: flex;
-                    justify-content: space-between;
-                    align-items: center;
-                    padding: 14px 20px;
-                    background: none;
-                    border: none;
-                    cursor: pointer;
-                    transition: background 0.2s;
-                }
-
-                .section-toggle:hover {
-                    background: rgba(0, 0, 0, 0.03);
-                }
-
-                .section-title {
-                    display: flex;
-                    align-items: center;
-                    gap: 10px;
-                    font-size: 14px;
-                    font-weight: 600;
-                }
-
-                .section-title .material-icons-round {
-                    font-size: 20px;
-                    color: var(--accent);
-                }
-
-                .count-badge {
-                    background: var(--accent);
-                    color: white;
-                    font-size: 11px;
-                    padding: 2px 8px;
-                    border-radius: 10px;
-                    font-weight: 600;
-                }
-
-                .chevron {
-                    color: var(--text-secondary);
-                    transition: transform 0.2s;
-                }
-
-                .wo-section.expanded .chevron {
-                    transform: rotate(180deg);
-                }
-
-                .section-content {
-                    padding: 0 20px 20px 20px;
-                }
-
-                /* Projects Grid */
-                .projects-grid {
-                    display: grid;
-                    grid-template-columns: repeat(2, 1fr);
-                    gap: 10px;
-                }
-
-                .project-card {
-                    display: flex;
-                    align-items: center;
-                    gap: 10px;
-                    padding: 12px;
-                    background: var(--surface);
-                    border: 1px solid var(--border);
-                    border-radius: 10px;
-                    cursor: pointer;
-                    transition: all 0.2s;
-                }
-
-                .project-card:hover {
-                    border-color: var(--accent);
-                }
-
-                .project-card.selected {
-                    border-color: var(--accent);
-                    background: rgba(0, 113, 227, 0.08);
-                }
-
-                .project-card.selected .project-check .material-icons-round {
-                    color: var(--accent);
-                }
-
-                .project-name {
-                    font-size: 13px;
-                    font-weight: 600;
-                }
-
-                .project-meta {
-                    font-size: 11px;
-                    color: var(--text-secondary);
-                }
-
-                .clear-all-btn {
-                    display: flex;
-                    align-items: center;
-                    gap: 6px;
-                    margin-top: 12px;
-                    padding: 8px 12px;
-                    background: none;
-                    border: 1px solid var(--border);
-                    border-radius: 6px;
-                    color: var(--text-secondary);
-                    font-size: 12px;
-                    cursor: pointer;
-                    transition: all 0.2s;
-                }
-
-                .clear-all-btn:hover {
-                    border-color: var(--danger);
-                    color: var(--danger);
-                }
-
-                /* Products */
-                .empty-section {
-                    display: flex;
-                    flex-direction: column;
-                    align-items: center;
-                    padding: 32px;
-                    color: var(--text-secondary);
-                    text-align: center;
-                }
-
-                .empty-section .material-icons-round {
-                    font-size: 32px;
-                    opacity: 0.4;
-                    margin-bottom: 8px;
-                }
-
-                .products-toolbar {
-                    display: flex;
-                    gap: 10px;
-                    margin-bottom: 12px;
-                }
-
-                .search-input {
-                    flex: 1;
-                    display: flex;
-                    align-items: center;
-                    gap: 8px;
-                    padding: 8px 12px;
-                    background: var(--surface);
-                    border: 1px solid var(--border);
-                    border-radius: 8px;
-                }
-
-                .search-input input {
-                    flex: 1;
-                    border: none;
-                    background: none;
-                    outline: none;
-                    font-size: 13px;
-                }
-
-                .search-input button {
-                    background: none;
-                    border: none;
-                    padding: 0;
-                    cursor: pointer;
-                    color: var(--text-secondary);
-                }
-
-                .select-all-btn {
-                    padding: 8px 12px;
-                    background: var(--accent);
-                    color: white;
-                    border: none;
-                    border-radius: 8px;
-                    font-size: 12px;
-                    font-weight: 500;
-                    cursor: pointer;
-                    white-space: nowrap;
-                }
-
-                .products-list {
-                    max-height: 280px;
-                    overflow-y: auto;
-                    border: 1px solid var(--border);
-                    border-radius: 8px;
-                    background: var(--surface);
-                }
-
-                .product-row {
-                    display: flex;
-                    align-items: center;
-                    gap: 10px;
-                    padding: 10px 12px;
-                    border-bottom: 1px solid var(--border);
-                    cursor: pointer;
-                    transition: background 0.15s;
-                }
-
-                .product-row:last-child {
-                    border-bottom: none;
-                }
-
-                .product-row:hover {
-                    background: var(--surface-hover);
-                }
-
-                .product-row.selected {
-                    background: rgba(0, 113, 227, 0.05);
-                }
-
-                .product-row .checkbox {
-                    font-size: 20px;
-                    color: var(--text-secondary);
-                }
-
-                .product-row.selected .checkbox {
-                    color: var(--accent);
-                }
-
-                .product-details {
-                    flex: 1;
-                    min-width: 0;
-                }
-
-                .product-details .product-name {
-                    font-size: 13px;
-                    font-weight: 500;
-                    white-space: nowrap;
-                    overflow: hidden;
-                    text-overflow: ellipsis;
-                }
-
-                .product-details .product-project {
-                    font-size: 11px;
-                    color: var(--text-secondary);
-                }
-
-                .product-qty {
-                    font-size: 12px;
-                    color: var(--text-secondary);
-                    font-weight: 500;
-                }
-
-                /* Processes */
-                .processes-chips {
-                    display: flex;
-                    flex-wrap: wrap;
-                    gap: 8px;
-                    margin-bottom: 12px;
-                }
-
-                .process-chip {
-                    display: flex;
-                    align-items: center;
-                    gap: 6px;
-                    padding: 6px 10px;
-                    background: var(--accent);
-                    color: white;
-                    border-radius: 20px;
-                    font-size: 12px;
-                    font-weight: 500;
-                }
-
-                .process-chip button {
-                    background: none;
-                    border: none;
-                    color: white;
-                    opacity: 0.7;
-                    cursor: pointer;
-                    padding: 0;
-                    display: flex;
-                }
-
-                .process-chip button:hover {
-                    opacity: 1;
-                }
-
-                .add-process-row {
-                    display: flex;
-                    gap: 8px;
-                }
-
-                .add-process-row input {
-                    flex: 1;
-                    padding: 10px 12px;
-                    border: 1px solid var(--border);
-                    border-radius: 8px;
-                    background: var(--surface);
-                    font-size: 13px;
-                }
-
-                .add-process-row button {
-                    width: 40px;
-                    background: var(--accent);
-                    color: white;
-                    border: none;
-                    border-radius: 8px;
-                    cursor: pointer;
-                    display: flex;
-                    align-items: center;
-                    justify-content: center;
-                }
-
-                /* Form Fields */
-                .form-row {
-                    margin-bottom: 16px;
-                }
-
-                .form-row:last-child {
-                    margin-bottom: 0;
-                }
-
-                .form-row label {
-                    display: block;
-                    margin-bottom: 6px;
-                    font-size: 13px;
-                    font-weight: 500;
-                }
-
-                .form-row input,
-                .form-row textarea {
-                    width: 100%;
-                    padding: 10px 12px;
-                    border: 1px solid var(--border);
-                    border-radius: 8px;
-                    background: var(--surface);
-                    font-size: 14px;
-                    font-family: inherit;
-                }
-
-                /* Assignments Panel */
-                .wo-assignments-panel {
-                    display: flex;
-                    flex-direction: column;
-                    overflow: hidden;
-                    padding: 20px;
-                }
-
-                .assignments-header {
-                    display: flex;
-                    justify-content: space-between;
-                    align-items: center;
-                    margin-bottom: 16px;
-                    padding-bottom: 16px;
-                    border-bottom: 1px solid var(--border);
-                }
-
-                .assignments-header h3 {
-                    margin: 0 0 4px 0;
-                    font-size: 18px;
-                }
-
-                .assignments-stats {
-                    font-size: 13px;
-                    color: var(--text-secondary);
-                }
-
-                .bulk-assign-select {
-                    padding: 8px 12px;
-                    border: 1px solid var(--accent);
-                    border-radius: 8px;
-                    background: var(--surface);
-                    color: var(--accent);
-                    font-size: 13px;
-                    cursor: pointer;
-                }
-
-                .assignments-empty {
-                    flex: 1;
-                    display: flex;
-                    flex-direction: column;
-                    align-items: center;
-                    justify-content: center;
-                    text-align: center;
-                    color: var(--text-secondary);
-                }
-
-                .assignments-empty .material-icons-round {
-                    font-size: 64px;
-                    opacity: 0.3;
-                    margin-bottom: 16px;
-                }
-
-                .assignments-empty h4 {
-                    margin: 0 0 8px 0;
-                    font-size: 16px;
-                    color: var(--text-primary);
-                }
-
-                /* Matrix View */
-                .assignments-matrix {
-                    flex: 1;
-                    display: flex;
-                    flex-direction: column;
-                    border: 1px solid var(--border);
-                    border-radius: 12px;
-                    overflow: hidden;
-                }
-
-                .matrix-header {
-                    display: flex;
-                    background: var(--surface-hover);
-                    border-bottom: 1px solid var(--border);
-                    position: sticky;
-                    top: 0;
-                    z-index: 10;
-                }
-
-                .matrix-corner {
-                    min-width: 200px;
-                    padding: 12px 16px;
-                    font-size: 12px;
-                    font-weight: 600;
-                    text-transform: uppercase;
-                    letter-spacing: 0.5px;
-                    color: var(--text-secondary);
-                    border-right: 1px solid var(--border);
-                }
-
-                .matrix-process-header {
-                    flex: 1;
-                    min-width: 120px;
-                    padding: 8px 12px;
-                    display: flex;
-                    flex-direction: column;
-                    align-items: center;
-                    gap: 6px;
-                    border-right: 1px solid var(--border);
-                }
-
-                .matrix-process-header:last-child {
-                    border-right: none;
-                }
-
-                .matrix-process-header span {
-                    font-size: 12px;
-                    font-weight: 600;
-                }
-
-                .header-assign {
-                    width: 100%;
-                    padding: 4px;
-                    border: 1px solid var(--border);
-                    border-radius: 4px;
-                    font-size: 10px;
-                    background: var(--surface);
-                    cursor: pointer;
-                }
-
-                .matrix-body {
-                    flex: 1;
-                    overflow-y: auto;
-                }
-
-                .matrix-row {
-                    display: flex;
-                    border-bottom: 1px solid var(--border);
-                }
-
-                .matrix-row:last-child {
-                    border-bottom: none;
-                }
-
-                .matrix-row:hover {
-                    background: rgba(0, 113, 227, 0.02);
-                }
-
-                .matrix-product-cell {
-                    min-width: 200px;
-                    padding: 10px 12px;
-                    display: flex;
-                    align-items: center;
-                    justify-content: space-between;
-                    gap: 8px;
-                    border-right: 1px solid var(--border);
-                    background: var(--surface);
-                }
-
-                .matrix-product-cell .product-info {
-                    flex: 1;
-                    min-width: 0;
-                }
-
-                .matrix-product-cell .product-name {
-                    font-size: 13px;
-                    font-weight: 500;
-                    white-space: nowrap;
-                    overflow: hidden;
-                    text-overflow: ellipsis;
-                    display: block;
-                }
-
-                .matrix-product-cell .product-project {
-                    font-size: 10px;
-                    color: var(--text-secondary);
-                }
-
-                .product-actions {
-                    display: flex;
-                    align-items: center;
-                    gap: 4px;
-                }
-
-                .row-assign {
-                    padding: 4px;
-                    border: 1px solid var(--border);
-                    border-radius: 4px;
-                    font-size: 10px;
-                    background: var(--surface-hover);
-                    cursor: pointer;
-                }
-
-                .remove-btn {
-                    background: none;
-                    border: none;
-                    color: var(--text-secondary);
-                    cursor: pointer;
-                    padding: 2px;
-                    display: flex;
-                }
-
-                .remove-btn:hover {
-                    color: var(--danger);
-                }
-
-                .matrix-cell {
-                    flex: 1;
-                    min-width: 120px;
-                    padding: 8px;
-                    display: flex;
-                    align-items: center;
-                    justify-content: center;
-                    border-right: 1px solid var(--border);
-                }
-
-                .matrix-cell:last-child {
-                    border-right: none;
-                }
-
-                .matrix-cell select {
-                    width: 100%;
-                    padding: 6px 8px;
-                    border: 1px solid var(--border);
-                    border-radius: 6px;
-                    font-size: 12px;
-                    background: var(--surface);
-                    cursor: pointer;
-                    transition: all 0.2s;
-                }
-
-                .matrix-cell select.assigned {
-                    background: rgba(52, 199, 89, 0.1);
-                    border-color: var(--success);
-                }
-
-                /* Footer */
-                .wo-footer {
-                    display: flex;
-                    justify-content: space-between;
-                    align-items: center;
-                    padding: 16px 24px;
-                    background: var(--surface);
-                    border-top: 1px solid var(--border);
-                }
-
-                .footer-summary {
-                    display: flex;
-                    gap: 24px;
-                }
-
-                .summary-item {
-                    display: flex;
-                    align-items: center;
-                    gap: 6px;
-                    font-size: 13px;
-                    color: var(--text-secondary);
-                }
-
-                .summary-item .material-icons-round {
-                    font-size: 18px;
-                }
-
-                .footer-actions {
-                    display: flex;
+                    padding: 16px;
                     gap: 12px;
                 }
 
-                .btn-cancel {
-                    padding: 10px 20px;
-                    background: none;
-                    border: 1px solid var(--border);
-                    border-radius: 8px;
-                    font-size: 14px;
-                    cursor: pointer;
+                .sb-step {
+                    background: var(--surface);
+                    border: 1px solid transparent;
+                    border-radius: 12px;
+                    overflow: hidden;
                     transition: all 0.2s;
                 }
 
-                .btn-cancel:hover {
-                    border-color: var(--text-secondary);
+                .sb-step.active {
+                    background: white;
+                    border-color: var(--accent);
+                    box-shadow: 0 4px 12px rgba(0,0,0,0.05);
                 }
 
-                .btn-create {
+                .sb-step.disabled {
+                    opacity: 0.5;
+                    pointer-events: none;
+                }
+
+                .sb-header {
+                    width: 100%;
                     display: flex;
                     align-items: center;
-                    gap: 8px;
-                    padding: 10px 24px;
+                    gap: 12px;
+                    padding: 12px;
+                    background: none;
+                    border: none;
+                    text-align: left;
+                    cursor: pointer;
+                }
+
+                .sb-icon {
+                    width: 32px;
+                    height: 32px;
+                    background: var(--surface-hover);
+                    border-radius: 8px;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    color: var(--text-secondary);
+                }
+
+                .sb-step.active .sb-icon {
                     background: var(--accent);
+                    color: white;
+                }
+
+                .sb-step.completed .sb-icon {
+                    background: var(--success);
+                    color: white;
+                }
+
+                .sb-info { flex: 1; }
+                .sb-label { display: block; font-size: 10px; color: var(--text-secondary); text-transform: uppercase; font-weight: 600; }
+                .sb-title { display: block; font-size: 14px; font-weight: 600; color: var(--text-primary); }
+
+                .sb-badge {
+                    background: var(--surface-hover);
+                    padding: 2px 8px;
+                    border-radius: 10px;
+                    font-size: 12px;
+                    font-weight: 600;
+                }
+
+                .sb-content {
+                    padding: 0 12px 12px 12px;
+                    border-top: 1px solid rgba(0,0,0,0.05);
+                    margin-top: 4px;
+                    animation: slideDown 0.2s ease;
+                }
+
+                @keyframes slideDown {
+                    from { opacity: 0; transform: translateY(-10px); }
+                    to { opacity: 1; transform: translateY(0); }
+                }
+
+                .sb-list {
+                    max-height: 200px;
+                    overflow-y: auto;
+                    margin-top: 12px;
+                    display: flex;
+                    flex-direction: column;
+                    gap: 2px;
+                }
+                
+                .sb-item {
+                    display: flex;
+                    align-items: center;
+                    gap: 10px;
+                    padding: 8px;
+                    border-radius: 8px;
+                    cursor: pointer;
+                    transition: background 0.1s;
+                }
+
+                .sb-item:hover { background: var(--surface-hover); }
+                .sb-item.selected { background: rgba(0, 113, 227, 0.08); }
+                
+                .check-icon { font-size: 18px; color: var(--text-secondary); }
+                .sb-item.selected .check-icon { color: var(--accent); }
+
+                .item-name { font-size: 13px; font-weight: 500; }
+                .item-sub { font-size: 11px; color: var(--text-secondary); }
+
+                .sb-next-btn {
+                    width: 100%;
+                    margin-top: 12px;
+                    padding: 10px;
+                    background: var(--text-primary);
                     color: white;
                     border: none;
                     border-radius: 8px;
-                    font-size: 14px;
+                    font-size: 13px;
                     font-weight: 600;
                     cursor: pointer;
-                    transition: all 0.2s;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    gap: 8px;
                 }
-
-                .btn-create:hover:not(:disabled) {
-                    background: #005bb5;
-                }
-
-                .btn-create:disabled {
-                    opacity: 0.5;
-                    cursor: not-allowed;
-                }
-
-                /* ========== RESPONSIVE BREAKPOINTS ========== */
                 
-                /* Tablet */
-                @media (max-width: 1200px) {
-                    .wo-main-content {
-                        grid-template-columns: 320px 1fr;
-                    }
+                .sb-next-btn:hover { background: black; }
 
-                    .projects-grid {
-                        grid-template-columns: 1fr;
-                    }
+                /* PRODUCTS STEP EXTRAS */
+                .sb-toolbar { display: flex; justify-content: space-between; margin-top: 8px; }
+                .text-btn { background: none; border: none; font-size: 11px; font-weight: 600; color: var(--accent); cursor: pointer; }
+                .text-btn.danger { color: var(--danger); }
+                
+                .sb-search {
+                    display: flex;
+                    align-items: center;
+                    gap: 8px;
+                    background: var(--surface-hover);
+                    padding: 6px 10px;
+                    border-radius: 6px;
+                    margin-top: 8px;
+                }
+                .sb-search input { border: none; background: none; font-size: 12px; width: 100%; outline: none; }
 
-                    .matrix-corner {
-                        min-width: 160px;
-                    }
+                /* PROCESSES STEP EXTRAS */
+                .sb-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+                .sb-chip { display: flex; align-items: center; gap: 4px; padding: 4px 8px; background: var(--accent); color: white; border-radius: 6px; font-size: 11px; }
+                .sb-chip button { background: none; border: none; color: white; cursor: pointer; font-size: 10px; }
+                
+                .sb-add-row { display: flex; gap: 6px; margin-top: 8px; }
+                .sb-add-row input { flex: 1; padding: 6px; border: 1px solid var(--border); border-radius: 6px; font-size: 12px; }
+                .sb-add-row button { width: 28px; background: var(--accent); color: white; border: none; border-radius: 6px; cursor: pointer; }
 
-                    .matrix-process-header,
-                    .matrix-cell {
-                        min-width: 100px;
-                    }
+                /* DETAILS STEP EXTRAS */
+                .sb-form label { display: block; font-size: 11px; font-weight: 600; margin: 10px 0 4px 0; color: var(--text-secondary); }
+                .sb-form input, .sb-form textarea { width: 100%; padding: 8px; border: 1px solid var(--border); border-radius: 6px; font-size: 13px; font-family: inherit; }
+
+                /* RESULT AREA */
+                .wo-result-area {
+                    background: #f8f9fa;
+                    display: flex;
+                    flex-direction: column;
+                    padding: 24px;
                 }
 
-                /* Tablet Portrait & Large Mobile */
+                .result-header {
+                    display: flex;
+                    justify-content: space-between;
+                    align-items: center;
+                    margin-bottom: 20px;
+                }
+                
+                .result-title h3 { margin: 0; font-size: 20px; }
+                .result-title p { margin: 4px 0 0 0; font-size: 13px; color: var(--text-secondary); }
+
+                .bulk-select {
+                    padding: 8px 12px;
+                    border: 1px solid var(--border);
+                    border-radius: 8px;
+                    background: white;
+                    font-size: 13px;
+                    cursor: pointer;
+                    box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+                }
+
+                .result-content { flex: 1; overflow: hidden; display: flex; flex-direction: column; }
+
+                .wo-empty-placeholder {
+                    flex: 1;
+                    display: flex;
+                    flex-direction: column;
+                    align-items: center;
+                    justify-content: center;
+                    text-align: center;
+                    opacity: 0.6;
+                }
+                .placeholder-icon {
+                    width: 64px;
+                    height: 64px;
+                    background: #e0e0e0;
+                    border-radius: 50%;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    margin-bottom: 16px;
+                }
+
+                /* MODERN MATRIX */
+                .modern-matrix {
+                    background: white;
+                    border-radius: 12px;
+                    box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+                    display: flex;
+                    flex-direction: column;
+                    overflow: hidden;
+                    height: 100%;
+                    border: 1px solid var(--border);
+                }
+
+                .mm-header {
+                    display: flex;
+                    background: #f1f3f5;
+                    border-bottom: 1px solid var(--border);
+                }
+
+                .mm-cell { flex: 1; padding: 12px; display: flex; align-items: center; overflow: hidden; }
+                .product-col { flex: 0 0 200px; font-weight: 600; color: var(--text-secondary); font-size: 12px; text-transform: uppercase; border-right: 1px solid var(--border); }
+                .process-col { display: flex; flex-direction: column; gap: 4px; justify-content: center; border-right: 1px solid var(--border); min-width: 100px; }
+                
+                .process-col span { font-size: 12px; font-weight: 600; }
+                .process-col select { width: 100%; font-size: 10px; padding: 2px; border: 1px solid var(--border); background: white; border-radius: 4px; }
+
+                .mm-body { overflow-y: auto; flex: 1; }
+                .mm-row { display: flex; border-bottom: 1px solid var(--border); }
+                .mm-row:hover { background: #f8f9fa; }
+
+                .mm-row .product-col { display: flex; flex-direction: column; align-items: flex-start; justify-content: center; }
+                .p-name { font-size: 13px; font-weight: 500; }
+                .p-sub { font-size: 10px; color: var(--text-secondary); }
+
+                .mm-row .process-col select {
+                    width: 100%;
+                    padding: 6px;
+                    border: 1px solid var(--border);
+                    border-radius: 6px;
+                    font-size: 12px;
+                    background: white;
+                }
+                .mm-row .process-col select.assigned {
+                    background: #e6fcf5;
+                    border-color: var(--success);
+                    color: #087f5b;
+                }
+
+                .wo-footer-actions {
+                    padding-top: 20px;
+                    display: flex;
+                    justify-content: flex-end;
+                    gap: 12px;
+                }
+
+                .btn-ghost { padding: 12px 24px; background: none; border: 1px solid transparent; font-weight: 600; cursor: pointer; color: var(--text-secondary); }
+                .btn-primary-lg { 
+                    padding: 12px 32px; 
+                    background: var(--accent); 
+                    color: white; 
+                    border: none; 
+                    border-radius: 8px; 
+                    font-weight: 600; 
+                    display: flex; 
+                    align-items: center; 
+                    gap: 8px; 
+                    cursor: pointer; 
+                    box-shadow: 0 4px 12px rgba(0, 113, 227, 0.2); 
+                }
+                .btn-primary-lg:disabled { opacity: 0.5; cursor: not-allowed; box-shadow: none; }
+
                 @media (max-width: 900px) {
-                    .wo-main-content {
-                        grid-template-columns: 1fr;
-                        grid-template-rows: auto 1fr;
-                    }
-
-                    .wo-selection-panel {
-                        border-right: none;
-                        border-bottom: 1px solid var(--border);
-                        max-height: 40vh;
-                    }
-
-                    .progress-steps {
-                        gap: 24px;
-                    }
-
-                    .step-label {
-                        display: none;
-                    }
-
-                    .footer-summary {
-                        display: none;
-                    }
-                }
-
-                /* Mobile */
-                @media (max-width: 600px) {
-                    .wo-progress-header {
-                        padding: 12px 16px;
-                    }
-
-                    .progress-steps {
-                        gap: 16px;
-                    }
-
-                    .step-indicator {
-                        width: 28px;
-                        height: 28px;
-                        font-size: 12px;
-                    }
-
-                    .section-toggle {
-                        padding: 12px 16px;
-                    }
-
-                    .section-content {
-                        padding: 0 16px 16px 16px;
-                    }
-
-                    .wo-assignments-panel {
-                        padding: 16px;
-                    }
-
-                    .assignments-header {
-                        flex-direction: column;
-                        align-items: flex-start;
-                        gap: 12px;
-                    }
-
-                    .bulk-assign-select {
-                        width: 100%;
-                    }
-
-                    .matrix-corner {
-                        min-width: 120px;
-                        font-size: 10px;
-                    }
-
-                    .matrix-process-header,
-                    .matrix-cell {
-                        min-width: 80px;
-                    }
-
-                    .wo-footer {
-                        padding: 12px 16px;
-                    }
-
-                    .footer-actions {
-                        flex: 1;
-                    }
-
-                    .btn-cancel {
-                        flex: 1;
-                        padding: 10px 12px;
-                    }
-
-                    .btn-create {
-                        flex: 2;
-                        padding: 10px 16px;
-                        justify-content: center;
-                    }
+                    .wo-body { grid-template-columns: 1fr; grid-template-rows: auto 1fr; }
+                    .wo-sidebar { max-height: 40vh; border-right: none; border-bottom: 1px solid var(--border); }
+                    .product-col { flex: 0 0 140px; }
                 }
             `}</style>
         </div>
     );
 }
 
+// ... OrderSection component remains the same ...
 function OrderSection({ title, icon, color, orders, onView, onDelete, onStart, getStatusClass, formatDate }: any) {
     return (
         <div className="order-section">
@@ -1689,3 +1123,4 @@ function OrderSection({ title, icon, color, orders, onView, onDelete, onStart, g
         </div>
     );
 }
+
