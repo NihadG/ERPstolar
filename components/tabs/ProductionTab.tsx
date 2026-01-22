@@ -2,7 +2,7 @@
 
 import { useState, useMemo } from 'react';
 import type { WorkOrder, WorkOrderItem, Project, Worker } from '@/lib/types';
-import { createWorkOrder, deleteWorkOrder, startWorkOrder, updateWorkOrderStatus, completeWorkOrderItem, getWorkOrder } from '@/lib/database';
+import { createWorkOrder, deleteWorkOrder, startWorkOrder, updateWorkOrderStatus, completeWorkOrderItem, getWorkOrder, assignWorkerToItem } from '@/lib/database';
 import Modal from '@/components/ui/Modal';
 import { WORK_ORDER_STATUSES, PRODUCTION_STEPS } from '@/lib/types';
 
@@ -14,17 +14,26 @@ interface ProductionTabProps {
     showToast: (message: string, type: 'success' | 'error' | 'info') => void;
 }
 
+interface SelectedProduct {
+    Product_ID: string;
+    Product_Name: string;
+    Project_ID: string;
+    Project_Name: string;
+    Quantity: number;
+    Status: string;
+    Worker_ID?: string;
+    Worker_Name?: string;
+}
+
 export default function ProductionTab({ workOrders, projects, workers, onRefresh, showToast }: ProductionTabProps) {
     const [searchTerm, setSearchTerm] = useState('');
     const [statusFilter, setStatusFilter] = useState('');
 
-    // Create Work Order Wizard
-    const [wizardModal, setWizardModal] = useState(false);
-    const [wizardStep, setWizardStep] = useState(1);
-    const [selectedProjectIds, setSelectedProjectIds] = useState<Set<string>>(new Set());
-    const [selectedProductIds, setSelectedProductIds] = useState<Set<string>>(new Set());
-    const [selectedWorkerId, setSelectedWorkerId] = useState('');
+    // Create Work Order Modal
+    const [createModal, setCreateModal] = useState(false);
     const [selectedProductionStep, setSelectedProductionStep] = useState('Rezanje');
+    const [selectedProducts, setSelectedProducts] = useState<SelectedProduct[]>([]);
+    const [globalWorkerId, setGlobalWorkerId] = useState('');
     const [dueDate, setDueDate] = useState('');
     const [notes, setNotes] = useState('');
 
@@ -38,51 +47,32 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
         return matchesSearch && matchesStatus;
     });
 
-    // Get products that need the selected production step
-    const availableProducts = useMemo(() => {
-        if (selectedProjectIds.size === 0) return [];
-        const products: any[] = [];
-
-        // Status that can receive each production step
+    // Get products eligible for selected production step
+    const eligibleProducts = useMemo(() => {
         const eligibleStatuses: Record<string, string[]> = {
             'Rezanje': ['Na čekanju', 'Materijali naručeni', 'Materijali spremni'],
             'Kantiranje': ['Rezanje'],
             'Bušenje': ['Kantiranje'],
             'Sklapanje': ['Bušenje'],
         };
-
         const eligible = eligibleStatuses[selectedProductionStep] || [];
 
+        const products: SelectedProduct[] = [];
         projects.forEach(project => {
-            if (selectedProjectIds.has(project.Project_ID)) {
-                (project.products || []).forEach(product => {
-                    // Check if product status is eligible for this step
-                    if (eligible.includes(product.Status)) {
-                        products.push({
-                            ...product,
-                            Project_Name: project.Client_Name,
-                            Project_ID: project.Project_ID,
-                        });
-                    }
-                });
-            }
+            (project.products || []).forEach(product => {
+                if (eligible.includes(product.Status)) {
+                    products.push({
+                        Product_ID: product.Product_ID,
+                        Product_Name: product.Name,
+                        Project_ID: project.Project_ID,
+                        Project_Name: project.Client_Name,
+                        Quantity: product.Quantity || 1,
+                        Status: product.Status,
+                    });
+                }
+            });
         });
         return products;
-    }, [selectedProjectIds, projects, selectedProductionStep]);
-
-    // Projects with eligible products
-    const projectsWithProducts = useMemo(() => {
-        const eligibleStatuses: Record<string, string[]> = {
-            'Rezanje': ['Na čekanju', 'Materijali naručeni', 'Materijali spremni'],
-            'Kantiranje': ['Rezanje'],
-            'Bušenje': ['Kantiranje'],
-            'Sklapanje': ['Bušenje'],
-        };
-        const eligible = eligibleStatuses[selectedProductionStep] || [];
-
-        return projects.filter(p =>
-            (p.products || []).some(prod => eligible.includes(prod.Status))
-        );
     }, [projects, selectedProductionStep]);
 
     function getStatusClass(status: string): string {
@@ -101,78 +91,69 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
         return date.toLocaleDateString('hr-HR');
     }
 
-    function openWizard() {
-        setWizardStep(1);
-        setSelectedProjectIds(new Set());
-        setSelectedProductIds(new Set());
-        setSelectedWorkerId('');
+    function openCreateModal() {
         setSelectedProductionStep('Rezanje');
+        setSelectedProducts([]);
+        setGlobalWorkerId('');
         setDueDate('');
         setNotes('');
-        setWizardModal(true);
+        setCreateModal(true);
     }
 
-    function toggleProject(projectId: string) {
-        const newSelected = new Set(selectedProjectIds);
-        if (newSelected.has(projectId)) {
-            newSelected.delete(projectId);
+    function toggleProduct(product: SelectedProduct) {
+        const exists = selectedProducts.find(p => p.Product_ID === product.Product_ID);
+        if (exists) {
+            setSelectedProducts(selectedProducts.filter(p => p.Product_ID !== product.Product_ID));
         } else {
-            newSelected.add(projectId);
+            setSelectedProducts([...selectedProducts, { ...product }]);
         }
-        setSelectedProjectIds(newSelected);
-        setSelectedProductIds(new Set());
-    }
-
-    function toggleProduct(productId: string) {
-        const newSelected = new Set(selectedProductIds);
-        if (newSelected.has(productId)) {
-            newSelected.delete(productId);
-        } else {
-            newSelected.add(productId);
-        }
-        setSelectedProductIds(newSelected);
     }
 
     function selectAllProducts() {
-        setSelectedProductIds(new Set(availableProducts.map(p => p.Product_ID)));
+        setSelectedProducts(eligibleProducts.map(p => ({ ...p })));
     }
 
-    function nextStep() {
-        if (wizardStep === 1 && selectedProjectIds.size === 0) {
-            showToast('Odaberite barem jedan projekat', 'error');
-            return;
-        }
-        if (wizardStep === 2 && selectedProductIds.size === 0) {
-            showToast('Odaberite barem jedan proizvod', 'error');
-            return;
-        }
-        setWizardStep(wizardStep + 1);
+    function clearSelection() {
+        setSelectedProducts([]);
     }
 
-    function prevStep() {
-        setWizardStep(wizardStep - 1);
+    function assignGlobalWorker() {
+        if (!globalWorkerId) return;
+        const worker = workers.find(w => w.Worker_ID === globalWorkerId);
+        if (!worker) return;
+
+        setSelectedProducts(selectedProducts.map(p => ({
+            ...p,
+            Worker_ID: globalWorkerId,
+            Worker_Name: worker.Name,
+        })));
+        showToast(`Radnik ${worker.Name} dodijeljen svim proizvodima`, 'success');
+    }
+
+    function assignWorkerToProduct(productId: string, workerId: string) {
+        const worker = workers.find(w => w.Worker_ID === workerId);
+        setSelectedProducts(selectedProducts.map(p =>
+            p.Product_ID === productId
+                ? { ...p, Worker_ID: workerId, Worker_Name: worker?.Name }
+                : p
+        ));
     }
 
     async function handleCreateWorkOrder() {
-        if (selectedProductIds.size === 0) {
+        if (selectedProducts.length === 0) {
             showToast('Odaberite barem jedan proizvod', 'error');
             return;
         }
 
-        const worker = workers.find(w => w.Worker_ID === selectedWorkerId);
-
-        const items = Array.from(selectedProductIds).map(productId => {
-            const product = availableProducts.find(p => p.Product_ID === productId);
-            return {
-                Product_ID: productId,
-                Product_Name: product?.Name || '',
-                Project_ID: product?.Project_ID || '',
-                Project_Name: product?.Project_Name || '',
-                Quantity: product?.Quantity || 1,
-                Worker_ID: selectedWorkerId || undefined,
-                Worker_Name: worker?.Name || undefined,
-            };
-        });
+        const items = selectedProducts.map(p => ({
+            Product_ID: p.Product_ID,
+            Product_Name: p.Product_Name,
+            Project_ID: p.Project_ID,
+            Project_Name: p.Project_Name,
+            Quantity: p.Quantity,
+            Worker_ID: p.Worker_ID,
+            Worker_Name: p.Worker_Name,
+        }));
 
         const result = await createWorkOrder({
             Production_Step: selectedProductionStep,
@@ -183,7 +164,7 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
 
         if (result.success) {
             showToast(`Radni nalog ${result.data?.Work_Order_Number} kreiran`, 'success');
-            setWizardModal(false);
+            setCreateModal(false);
             onRefresh();
         } else {
             showToast(result.message, 'error');
@@ -228,11 +209,9 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
         if (result.success) {
             showToast('Stavka završena', 'success');
             onRefresh();
-            // Refresh current work order
             const updated = await getWorkOrder(currentWorkOrder.Work_Order_ID);
             setCurrentWorkOrder(updated);
 
-            // Check if all items are done
             if (updated?.items?.every(i => i.Status === 'Završeno')) {
                 await updateWorkOrderStatus(currentWorkOrder.Work_Order_ID, 'Završeno');
                 onRefresh();
@@ -256,8 +235,14 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
         setViewModal(false);
     }
 
+    // Group work orders by status for better overview
+    const activeOrders = filteredWorkOrders.filter(wo => wo.Status === 'U toku');
+    const pendingOrders = filteredWorkOrders.filter(wo => wo.Status === 'Nacrt' || wo.Status === 'Dodijeljeno');
+    const completedOrders = filteredWorkOrders.filter(wo => wo.Status === 'Završeno');
+
     return (
-        <div className="tab-content active" id="production-content">
+        <div className="tab-content active">
+            {/* Header */}
             <div className="content-header">
                 <div className="search-box">
                     <span className="material-icons-round">search</span>
@@ -278,346 +263,264 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                         <option key={status} value={status}>{status}</option>
                     ))}
                 </select>
-                <button className="btn btn-primary" onClick={openWizard}>
+                <button className="btn btn-primary" onClick={openCreateModal}>
                     <span className="material-icons-round">add</span>
                     Novi Radni Nalog
                 </button>
             </div>
 
-            <div className="orders-list">
-                {filteredWorkOrders.length === 0 ? (
-                    <div className="empty-state">
-                        <span className="material-icons-round">engineering</span>
-                        <h3>Nema radnih naloga</h3>
-                        <p>Kreirajte prvi radni nalog klikom na "Novi Radni Nalog"</p>
-                    </div>
-                ) : (
-                    filteredWorkOrders.map(wo => {
-                        const itemCount = wo.items?.length || 0;
-                        const completedCount = wo.items?.filter(i => i.Status === 'Završeno').length || 0;
-                        const progress = itemCount > 0 ? Math.round((completedCount / itemCount) * 100) : 0;
-                        const showProgress = wo.Status === 'U toku' || wo.Status === 'Dodijeljeno';
-
-                        return (
-                            <div key={wo.Work_Order_ID} className="order-card" onClick={() => openViewModal(wo.Work_Order_ID)} style={{ cursor: 'pointer' }}>
-                                <div className="order-card-main" style={{ flex: 1 }}>
-                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px' }}>
-                                        <div>
-                                            <div style={{ fontWeight: 600, fontSize: '16px', color: 'var(--accent)' }}>{wo.Work_Order_Number}</div>
-                                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '4px', color: 'var(--text-secondary)', fontSize: '13px' }}>
-                                                <span className="material-icons-round" style={{ fontSize: '16px' }}>construction</span>
-                                                {wo.Production_Step}
-                                            </div>
-                                        </div>
-                                        <span className={`status-badge ${getStatusClass(wo.Status)}`}>
-                                            {wo.Status || 'Nacrt'}
-                                        </span>
-                                    </div>
-                                    <div style={{ display: 'flex', gap: '16px', fontSize: '13px', color: 'var(--text-secondary)', marginBottom: showProgress ? '12px' : '0' }}>
-                                        <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                                            <span className="material-icons-round" style={{ fontSize: '16px' }}>calendar_today</span>
-                                            {formatDate(wo.Created_Date)}
-                                        </span>
-                                        <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                                            <span className="material-icons-round" style={{ fontSize: '16px' }}>inventory_2</span>
-                                            {itemCount} proizvoda
-                                        </span>
-                                    </div>
-                                    {showProgress && (
-                                        <div style={{ position: 'relative' }}>
-                                            <div style={{
-                                                height: '6px',
-                                                background: 'var(--border)',
-                                                borderRadius: '3px',
-                                                overflow: 'hidden'
-                                            }}>
-                                                <div style={{
-                                                    width: `${progress}%`,
-                                                    height: '100%',
-                                                    background: progress === 100 ? 'var(--success)' : 'var(--accent)',
-                                                    borderRadius: '3px',
-                                                    transition: 'width 0.3s ease'
-                                                }} />
-                                            </div>
-                                            <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '4px' }}>
-                                                {completedCount}/{itemCount} završeno
-                                            </div>
-                                        </div>
-                                    )}
-                                </div>
-                                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '8px', minWidth: '120px' }}>
-                                    <div style={{ display: 'flex', gap: '6px' }} onClick={(e) => e.stopPropagation()}>
-                                        {wo.Status === 'Nacrt' && (
-                                            <button
-                                                className="btn btn-sm btn-primary"
-                                                onClick={() => handleStartWorkOrder(wo.Work_Order_ID)}
-                                            >
-                                                <span className="material-icons-round">play_arrow</span>
-                                            </button>
-                                        )}
-                                        <button className="icon-btn danger" onClick={() => handleDeleteWorkOrder(wo.Work_Order_ID)}>
-                                            <span className="material-icons-round">delete</span>
-                                        </button>
-                                    </div>
-                                </div>
+            {/* Work Orders Grid */}
+            {filteredWorkOrders.length === 0 ? (
+                <div className="empty-state">
+                    <span className="material-icons-round">engineering</span>
+                    <h3>Nema radnih naloga</h3>
+                    <p>Kreirajte prvi radni nalog klikom na "Novi Radni Nalog"</p>
+                </div>
+            ) : (
+                <div className="production-grid">
+                    {/* Active Orders Section */}
+                    {activeOrders.length > 0 && (
+                        <div className="production-section">
+                            <h3 className="section-title">
+                                <span className="material-icons-round" style={{ color: 'var(--accent)' }}>play_circle</span>
+                                U toku ({activeOrders.length})
+                            </h3>
+                            <div className="work-orders-list">
+                                {activeOrders.map(wo => (
+                                    <WorkOrderCard
+                                        key={wo.Work_Order_ID}
+                                        workOrder={wo}
+                                        onView={() => openViewModal(wo.Work_Order_ID)}
+                                        onDelete={() => handleDeleteWorkOrder(wo.Work_Order_ID)}
+                                        onStart={() => handleStartWorkOrder(wo.Work_Order_ID)}
+                                        getStatusClass={getStatusClass}
+                                        formatDate={formatDate}
+                                    />
+                                ))}
                             </div>
-                        );
-                    })
-                )}
-            </div>
+                        </div>
+                    )}
 
-            {/* Work Order Creation Modal */}
+                    {/* Pending Orders Section */}
+                    {pendingOrders.length > 0 && (
+                        <div className="production-section">
+                            <h3 className="section-title">
+                                <span className="material-icons-round" style={{ color: 'var(--warning)' }}>schedule</span>
+                                Na čekanju ({pendingOrders.length})
+                            </h3>
+                            <div className="work-orders-list">
+                                {pendingOrders.map(wo => (
+                                    <WorkOrderCard
+                                        key={wo.Work_Order_ID}
+                                        workOrder={wo}
+                                        onView={() => openViewModal(wo.Work_Order_ID)}
+                                        onDelete={() => handleDeleteWorkOrder(wo.Work_Order_ID)}
+                                        onStart={() => handleStartWorkOrder(wo.Work_Order_ID)}
+                                        getStatusClass={getStatusClass}
+                                        formatDate={formatDate}
+                                    />
+                                ))}
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Completed Orders Section */}
+                    {completedOrders.length > 0 && (
+                        <div className="production-section">
+                            <h3 className="section-title">
+                                <span className="material-icons-round" style={{ color: 'var(--success)' }}>check_circle</span>
+                                Završeno ({completedOrders.length})
+                            </h3>
+                            <div className="work-orders-list">
+                                {completedOrders.map(wo => (
+                                    <WorkOrderCard
+                                        key={wo.Work_Order_ID}
+                                        workOrder={wo}
+                                        onView={() => openViewModal(wo.Work_Order_ID)}
+                                        onDelete={() => handleDeleteWorkOrder(wo.Work_Order_ID)}
+                                        onStart={() => { }}
+                                        getStatusClass={getStatusClass}
+                                        formatDate={formatDate}
+                                    />
+                                ))}
+                            </div>
+                        </div>
+                    )}
+                </div>
+            )}
+
+            {/* Create Work Order Modal */}
             <Modal
-                isOpen={wizardModal}
-                onClose={() => setWizardModal(false)}
-                title=""
-                size="fullscreen"
-                footer={null}
-            >
-                <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-                    {/* Header */}
-                    <div style={{
-                        display: 'flex',
-                        justifyContent: 'space-between',
-                        alignItems: 'center',
-                        padding: '16px 24px',
-                        borderBottom: '1px solid var(--border)',
-                        background: 'var(--surface)'
-                    }}>
-                        <h2 style={{ margin: 0, fontSize: '20px', fontWeight: 600 }}>Novi Radni Nalog</h2>
+                isOpen={createModal}
+                onClose={() => setCreateModal(false)}
+                title="Novi Radni Nalog"
+                size="large"
+                footer={
+                    <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
+                        <button className="btn" onClick={() => setCreateModal(false)}>Odustani</button>
                         <button
-                            className="icon-btn"
-                            onClick={() => setWizardModal(false)}
+                            className="btn btn-primary"
+                            onClick={handleCreateWorkOrder}
+                            disabled={selectedProducts.length === 0}
                         >
-                            <span className="material-icons-round">close</span>
+                            <span className="material-icons-round">add</span>
+                            Kreiraj ({selectedProducts.length})
                         </button>
                     </div>
-
-                    {/* Content - Sidebar + Main */}
-                    <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
-                        {/* Sidebar */}
-                        <div style={{
-                            width: '400px',
-                            minWidth: '400px',
-                            borderRight: '1px solid var(--border)',
-                            display: 'flex',
-                            flexDirection: 'column',
-                            background: 'var(--surface)',
-                            overflow: 'hidden'
-                        }}>
-                            {/* Production Step Selection */}
-                            <div style={{ padding: '16px', borderBottom: '1px solid var(--border)' }}>
-                                <label style={{ display: 'block', marginBottom: '8px', fontWeight: 500, fontSize: '14px' }}>
-                                    Proizvodni korak
-                                </label>
-                                <select
-                                    className="filter-select"
-                                    value={selectedProductionStep}
-                                    onChange={(e) => {
-                                        setSelectedProductionStep(e.target.value);
-                                        setSelectedProjectIds(new Set());
-                                        setSelectedProductIds(new Set());
+                }
+            >
+                <div className="create-work-order-form">
+                    {/* Step Selection */}
+                    <div className="form-section">
+                        <label className="form-label">Proizvodni korak</label>
+                        <div className="step-buttons">
+                            {PRODUCTION_STEPS.map(step => (
+                                <button
+                                    key={step}
+                                    className={`step-btn ${selectedProductionStep === step ? 'active' : ''}`}
+                                    onClick={() => {
+                                        setSelectedProductionStep(step);
+                                        setSelectedProducts([]);
                                     }}
-                                    style={{ width: '100%' }}
                                 >
-                                    {PRODUCTION_STEPS.map(step => (
-                                        <option key={step} value={step}>{step}</option>
-                                    ))}
-                                </select>
-                            </div>
+                                    <span className="material-icons-round">
+                                        {step === 'Rezanje' ? 'content_cut' :
+                                            step === 'Kantiranje' ? 'border_style' :
+                                                step === 'Bušenje' ? 'architecture' : 'handyman'}
+                                    </span>
+                                    {step}
+                                </button>
+                            ))}
+                        </div>
+                    </div>
 
-                            {/* Projects Panel */}
-                            <div style={{
-                                flex: '0 0 auto',
-                                maxHeight: '40%',
-                                display: 'flex',
-                                flexDirection: 'column',
-                                borderBottom: '1px solid var(--border)',
-                            }}>
-                                <div style={{ padding: '12px 16px', fontWeight: 600, fontSize: '14px', background: 'var(--surface-hover)' }}>
-                                    1. Odaberi projekte ({selectedProjectIds.size})
-                                </div>
-                                <div style={{ flex: 1, overflow: 'auto', padding: '8px' }}>
-                                    {projectsWithProducts.length === 0 ? (
-                                        <div style={{ padding: '16px', textAlign: 'center', color: 'var(--text-secondary)' }}>
-                                            Nema projekata sa proizvodima za ovaj korak
-                                        </div>
-                                    ) : (
-                                        projectsWithProducts.map(project => (
-                                            <label
-                                                key={project.Project_ID}
-                                                style={{
-                                                    display: 'flex',
-                                                    alignItems: 'center',
-                                                    gap: '10px',
-                                                    padding: '10px 12px',
-                                                    borderRadius: '8px',
-                                                    cursor: 'pointer',
-                                                    background: selectedProjectIds.has(project.Project_ID) ? 'var(--accent-light)' : 'transparent',
-                                                }}
-                                            >
-                                                <input
-                                                    type="checkbox"
-                                                    checked={selectedProjectIds.has(project.Project_ID)}
-                                                    onChange={() => toggleProject(project.Project_ID)}
-                                                />
-                                                <div>
-                                                    <div style={{ fontWeight: 500 }}>{project.Client_Name}</div>
-                                                    <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
-                                                        {(project.products || []).length} proizvoda
-                                                    </div>
-                                                </div>
-                                            </label>
-                                        ))
-                                    )}
-                                </div>
-                            </div>
-
-                            {/* Products Panel */}
-                            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-                                <div style={{
-                                    padding: '12px 16px',
-                                    fontWeight: 600,
-                                    fontSize: '14px',
-                                    background: 'var(--surface-hover)',
-                                    display: 'flex',
-                                    justifyContent: 'space-between',
-                                    alignItems: 'center'
-                                }}>
-                                    <span>2. Odaberi proizvode ({selectedProductIds.size})</span>
-                                    {availableProducts.length > 0 && (
-                                        <button
-                                            className="btn btn-sm"
-                                            onClick={selectAllProducts}
-                                            style={{ fontSize: '12px' }}
-                                        >
-                                            Odaberi sve
-                                        </button>
-                                    )}
-                                </div>
-                                <div style={{ flex: 1, overflow: 'auto', padding: '8px' }}>
-                                    {availableProducts.length === 0 ? (
-                                        <div style={{ padding: '16px', textAlign: 'center', color: 'var(--text-secondary)' }}>
-                                            {selectedProjectIds.size === 0 ? 'Prvo odaberite projekte' : 'Nema proizvoda za odabrani korak'}
-                                        </div>
-                                    ) : (
-                                        availableProducts.map(product => (
-                                            <label
-                                                key={product.Product_ID}
-                                                style={{
-                                                    display: 'flex',
-                                                    alignItems: 'center',
-                                                    gap: '10px',
-                                                    padding: '10px 12px',
-                                                    borderRadius: '8px',
-                                                    cursor: 'pointer',
-                                                    background: selectedProductIds.has(product.Product_ID) ? 'var(--accent-light)' : 'transparent',
-                                                }}
-                                            >
-                                                <input
-                                                    type="checkbox"
-                                                    checked={selectedProductIds.has(product.Product_ID)}
-                                                    onChange={() => toggleProduct(product.Product_ID)}
-                                                />
-                                                <div style={{ flex: 1 }}>
-                                                    <div style={{ fontWeight: 500 }}>{product.Name}</div>
-                                                    <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
-                                                        {product.Project_Name} • {product.Quantity} kom • Status: {product.Status}
-                                                    </div>
-                                                </div>
-                                            </label>
-                                        ))
-                                    )}
-                                </div>
+                    {/* Product Selection */}
+                    <div className="form-section">
+                        <div className="form-header">
+                            <label className="form-label">Odaberi proizvode za {selectedProductionStep.toLowerCase()}</label>
+                            <div className="form-actions">
+                                <button className="btn btn-sm" onClick={selectAllProducts}>Odaberi sve</button>
+                                <button className="btn btn-sm" onClick={clearSelection}>Poništi</button>
                             </div>
                         </div>
 
-                        {/* Main Content */}
-                        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-                            <div style={{ flex: 1, overflow: 'auto', padding: '24px' }}>
-                                <h3 style={{ marginBottom: '16px' }}>3. Dodatne postavke</h3>
-
-                                <div style={{ display: 'grid', gap: '16px', maxWidth: '500px' }}>
-                                    <div>
-                                        <label style={{ display: 'block', marginBottom: '6px', fontWeight: 500 }}>
-                                            Dodijeli radnika (opciono)
-                                        </label>
-                                        <select
-                                            className="filter-select"
-                                            value={selectedWorkerId}
-                                            onChange={(e) => setSelectedWorkerId(e.target.value)}
-                                            style={{ width: '100%' }}
+                        {eligibleProducts.length === 0 ? (
+                            <div className="empty-products">
+                                <span className="material-icons-round">inbox</span>
+                                <p>Nema proizvoda spremnih za {selectedProductionStep.toLowerCase()}</p>
+                            </div>
+                        ) : (
+                            <div className="products-grid">
+                                {eligibleProducts.map(product => {
+                                    const isSelected = selectedProducts.some(p => p.Product_ID === product.Product_ID);
+                                    return (
+                                        <div
+                                            key={product.Product_ID}
+                                            className={`product-card ${isSelected ? 'selected' : ''}`}
+                                            onClick={() => toggleProduct(product)}
                                         >
-                                            <option value="">-- Bez radnika --</option>
+                                            <div className="product-checkbox">
+                                                <span className="material-icons-round">
+                                                    {isSelected ? 'check_box' : 'check_box_outline_blank'}
+                                                </span>
+                                            </div>
+                                            <div className="product-info">
+                                                <div className="product-name">{product.Product_Name}</div>
+                                                <div className="product-meta">
+                                                    {product.Project_Name} • {product.Quantity} kom
+                                                </div>
+                                            </div>
+                                            <span className={`status-badge small ${getStatusClass(product.Status)}`}>
+                                                {product.Status}
+                                            </span>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        )}
+                    </div>
+
+                    {/* Worker Assignment */}
+                    {selectedProducts.length > 0 && (
+                        <div className="form-section">
+                            <label className="form-label">Dodjela radnika</label>
+
+                            {/* Global Worker Assignment */}
+                            <div className="global-worker-row">
+                                <select
+                                    className="filter-select"
+                                    value={globalWorkerId}
+                                    onChange={(e) => setGlobalWorkerId(e.target.value)}
+                                >
+                                    <option value="">-- Odaberi radnika --</option>
+                                    {workers.map(worker => (
+                                        <option key={worker.Worker_ID} value={worker.Worker_ID}>
+                                            {worker.Name} ({worker.Role})
+                                        </option>
+                                    ))}
+                                </select>
+                                <button
+                                    className="btn btn-primary"
+                                    onClick={assignGlobalWorker}
+                                    disabled={!globalWorkerId}
+                                >
+                                    <span className="material-icons-round">group_add</span>
+                                    Dodijeli svima
+                                </button>
+                            </div>
+
+                            {/* Individual Worker Assignment */}
+                            <div className="worker-assignments">
+                                {selectedProducts.map(product => (
+                                    <div key={product.Product_ID} className="worker-row">
+                                        <div className="worker-product-info">
+                                            <span className="product-name">{product.Product_Name}</span>
+                                            <span className="project-name">{product.Project_Name}</span>
+                                        </div>
+                                        <select
+                                            className="worker-select"
+                                            value={product.Worker_ID || ''}
+                                            onChange={(e) => assignWorkerToProduct(product.Product_ID, e.target.value)}
+                                        >
+                                            <option value="">Bez radnika</option>
                                             {workers.map(worker => (
                                                 <option key={worker.Worker_ID} value={worker.Worker_ID}>
-                                                    {worker.Name} ({worker.Role})
+                                                    {worker.Name}
                                                 </option>
                                             ))}
                                         </select>
-                                    </div>
-
-                                    <div>
-                                        <label style={{ display: 'block', marginBottom: '6px', fontWeight: 500 }}>
-                                            Rok završetka (opciono)
-                                        </label>
-                                        <input
-                                            type="date"
-                                            value={dueDate}
-                                            onChange={(e) => setDueDate(e.target.value)}
-                                            style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid var(--border)' }}
-                                        />
-                                    </div>
-
-                                    <div>
-                                        <label style={{ display: 'block', marginBottom: '6px', fontWeight: 500 }}>
-                                            Napomena
-                                        </label>
-                                        <textarea
-                                            value={notes}
-                                            onChange={(e) => setNotes(e.target.value)}
-                                            placeholder="Unesite napomenu..."
-                                            rows={3}
-                                            style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid var(--border)', resize: 'vertical' }}
-                                        />
-                                    </div>
-                                </div>
-
-                                {/* Summary */}
-                                <div style={{ marginTop: '32px', padding: '16px', background: 'var(--surface-hover)', borderRadius: '12px' }}>
-                                    <h4 style={{ marginBottom: '12px' }}>Pregled radnog naloga</h4>
-                                    <div style={{ display: 'grid', gap: '8px', fontSize: '14px' }}>
-                                        <div><strong>Korak:</strong> {selectedProductionStep}</div>
-                                        <div><strong>Projekata:</strong> {selectedProjectIds.size}</div>
-                                        <div><strong>Proizvoda:</strong> {selectedProductIds.size}</div>
-                                        {selectedWorkerId && (
-                                            <div><strong>Radnik:</strong> {workers.find(w => w.Worker_ID === selectedWorkerId)?.Name}</div>
+                                        {product.Worker_Name && (
+                                            <span className="assigned-badge">
+                                                <span className="material-icons-round">person</span>
+                                                {product.Worker_Name}
+                                            </span>
                                         )}
-                                        {dueDate && <div><strong>Rok:</strong> {formatDate(dueDate)}</div>}
                                     </div>
-                                </div>
+                                ))}
                             </div>
+                        </div>
+                    )}
 
-                            {/* Footer */}
-                            <div style={{
-                                padding: '16px 24px',
-                                borderTop: '1px solid var(--border)',
-                                display: 'flex',
-                                justifyContent: 'flex-end',
-                                gap: '12px'
-                            }}>
-                                <button className="btn" onClick={() => setWizardModal(false)}>
-                                    Odustani
-                                </button>
-                                <button
-                                    className="btn btn-primary"
-                                    onClick={handleCreateWorkOrder}
-                                    disabled={selectedProductIds.size === 0}
-                                >
-                                    <span className="material-icons-round">add</span>
-                                    Kreiraj Radni Nalog
-                                </button>
-                            </div>
+                    {/* Additional Options */}
+                    <div className="form-section form-row">
+                        <div className="form-group">
+                            <label className="form-label">Rok završetka</label>
+                            <input
+                                type="date"
+                                className="form-input"
+                                value={dueDate}
+                                onChange={(e) => setDueDate(e.target.value)}
+                            />
+                        </div>
+                        <div className="form-group" style={{ flex: 2 }}>
+                            <label className="form-label">Napomena</label>
+                            <input
+                                type="text"
+                                className="form-input"
+                                value={notes}
+                                onChange={(e) => setNotes(e.target.value)}
+                                placeholder="Opciona napomena..."
+                            />
                         </div>
                     </div>
                 </div>
@@ -627,71 +530,118 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
             <Modal
                 isOpen={viewModal}
                 onClose={() => setViewModal(false)}
-                title={`Radni nalog: ${currentWorkOrder?.Work_Order_Number || ''}`}
+                title={currentWorkOrder?.Work_Order_Number || ''}
                 size="large"
                 footer={
-                    <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
-                        {currentWorkOrder?.Status === 'Nacrt' && (
-                            <button className="btn btn-primary" onClick={() => handleStartWorkOrder(currentWorkOrder.Work_Order_ID)}>
-                                <span className="material-icons-round">play_arrow</span>
-                                Pokreni
-                            </button>
-                        )}
-                        {currentWorkOrder?.Status === 'U toku' && (
-                            <button className="btn btn-success" onClick={handleCompleteAllItems}>
-                                <span className="material-icons-round">done_all</span>
-                                Završi sve
-                            </button>
-                        )}
-                        <button className="btn" onClick={() => setViewModal(false)}>Zatvori</button>
+                    <div style={{ display: 'flex', gap: '12px', justifyContent: 'space-between', width: '100%' }}>
+                        <div>
+                            {currentWorkOrder?.Status === 'Završeno' && (
+                                <span className="status-badge status-zavrseno" style={{ fontSize: '14px' }}>
+                                    <span className="material-icons-round" style={{ fontSize: '16px' }}>check_circle</span>
+                                    Završeno
+                                </span>
+                            )}
+                        </div>
+                        <div style={{ display: 'flex', gap: '12px' }}>
+                            {currentWorkOrder?.Status === 'Nacrt' && (
+                                <button className="btn btn-primary" onClick={() => handleStartWorkOrder(currentWorkOrder.Work_Order_ID)}>
+                                    <span className="material-icons-round">play_arrow</span>
+                                    Pokreni proizvodnju
+                                </button>
+                            )}
+                            {currentWorkOrder?.Status === 'U toku' && (
+                                <button className="btn btn-success" onClick={handleCompleteAllItems}>
+                                    <span className="material-icons-round">done_all</span>
+                                    Završi sve
+                                </button>
+                            )}
+                            <button className="btn" onClick={() => setViewModal(false)}>Zatvori</button>
+                        </div>
                     </div>
                 }
             >
                 {currentWorkOrder && (
-                    <div>
-                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '16px', marginBottom: '24px' }}>
-                            <div style={{ padding: '16px', background: 'var(--surface-hover)', borderRadius: '12px' }}>
-                                <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '4px' }}>Status</div>
-                                <span className={`status-badge ${getStatusClass(currentWorkOrder.Status)}`}>
-                                    {currentWorkOrder.Status}
-                                </span>
+                    <div className="work-order-details">
+                        {/* Info Cards */}
+                        <div className="info-cards">
+                            <div className="info-card">
+                                <span className="material-icons-round">construction</span>
+                                <div>
+                                    <div className="info-label">Korak</div>
+                                    <div className="info-value">{currentWorkOrder.Production_Step}</div>
+                                </div>
                             </div>
-                            <div style={{ padding: '16px', background: 'var(--surface-hover)', borderRadius: '12px' }}>
-                                <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '4px' }}>Korak</div>
-                                <div style={{ fontWeight: 600 }}>{currentWorkOrder.Production_Step}</div>
+                            <div className="info-card">
+                                <span className="material-icons-round">calendar_today</span>
+                                <div>
+                                    <div className="info-label">Kreirano</div>
+                                    <div className="info-value">{formatDate(currentWorkOrder.Created_Date)}</div>
+                                </div>
                             </div>
-                            <div style={{ padding: '16px', background: 'var(--surface-hover)', borderRadius: '12px' }}>
-                                <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '4px' }}>Kreirano</div>
-                                <div style={{ fontWeight: 600 }}>{formatDate(currentWorkOrder.Created_Date)}</div>
+                            <div className="info-card">
+                                <span className="material-icons-round">inventory_2</span>
+                                <div>
+                                    <div className="info-label">Proizvoda</div>
+                                    <div className="info-value">{currentWorkOrder.items?.length || 0}</div>
+                                </div>
                             </div>
+                            {currentWorkOrder.Due_Date && (
+                                <div className="info-card">
+                                    <span className="material-icons-round">event</span>
+                                    <div>
+                                        <div className="info-label">Rok</div>
+                                        <div className="info-value">{formatDate(currentWorkOrder.Due_Date)}</div>
+                                    </div>
+                                </div>
+                            )}
                         </div>
 
-                        <h4 style={{ marginBottom: '12px' }}>Proizvodi ({currentWorkOrder.items?.length || 0})</h4>
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                            {(currentWorkOrder.items || []).map(item => (
-                                <div
-                                    key={item.ID}
-                                    style={{
-                                        display: 'flex',
-                                        alignItems: 'center',
-                                        justifyContent: 'space-between',
-                                        padding: '12px 16px',
-                                        background: item.Status === 'Završeno' ? 'rgba(52, 199, 89, 0.1)' : 'var(--surface-hover)',
-                                        borderRadius: '8px',
-                                        border: item.Status === 'Završeno' ? '1px solid var(--success)' : '1px solid var(--border)',
-                                    }}
-                                >
-                                    <div>
-                                        <div style={{ fontWeight: 500 }}>{item.Product_Name}</div>
-                                        <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
-                                            {item.Project_Name} • {item.Quantity} kom
-                                            {item.Worker_Name && ` • Radnik: ${item.Worker_Name}`}
+                        {/* Progress */}
+                        {currentWorkOrder.Status === 'U toku' && (
+                            <div className="progress-section">
+                                <div className="progress-header">
+                                    <span>Napredak</span>
+                                    <span>
+                                        {currentWorkOrder.items?.filter(i => i.Status === 'Završeno').length || 0} / {currentWorkOrder.items?.length || 0}
+                                    </span>
+                                </div>
+                                <div className="progress-bar">
+                                    <div
+                                        className="progress-fill"
+                                        style={{
+                                            width: `${((currentWorkOrder.items?.filter(i => i.Status === 'Završeno').length || 0) / (currentWorkOrder.items?.length || 1)) * 100}%`
+                                        }}
+                                    />
+                                </div>
+                            </div>
+                        )}
+
+                        {/* Items List */}
+                        <div className="items-section">
+                            <h4>Proizvodi</h4>
+                            <div className="items-list">
+                                {(currentWorkOrder.items || []).map(item => (
+                                    <div
+                                        key={item.ID}
+                                        className={`item-row ${item.Status === 'Završeno' ? 'completed' : ''}`}
+                                    >
+                                        <div className="item-status-icon">
+                                            <span className="material-icons-round">
+                                                {item.Status === 'Završeno' ? 'check_circle' : 'radio_button_unchecked'}
+                                            </span>
                                         </div>
-                                    </div>
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                                        <span className={`status-badge ${getStatusClass(item.Status)}`}>
-                                            {item.Status}
-                                        </span>
+                                        <div className="item-info">
+                                            <div className="item-name">{item.Product_Name}</div>
+                                            <div className="item-meta">
+                                                {item.Project_Name} • {item.Quantity} kom
+                                                {item.Worker_Name && (
+                                                    <span className="worker-badge">
+                                                        <span className="material-icons-round">person</span>
+                                                        {item.Worker_Name}
+                                                    </span>
+                                                )}
+                                            </div>
+                                        </div>
                                         {item.Status !== 'Završeno' && currentWorkOrder.Status === 'U toku' && (
                                             <button
                                                 className="btn btn-sm btn-success"
@@ -702,18 +652,621 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                                             </button>
                                         )}
                                     </div>
-                                </div>
-                            ))}
+                                ))}
+                            </div>
                         </div>
 
                         {currentWorkOrder.Notes && (
-                            <div style={{ marginTop: '24px', padding: '16px', background: 'rgba(255, 149, 0, 0.1)', borderRadius: '12px', borderLeft: '3px solid var(--warning)' }}>
-                                <strong>Napomena:</strong> {currentWorkOrder.Notes}
+                            <div className="notes-section">
+                                <span className="material-icons-round">notes</span>
+                                <span>{currentWorkOrder.Notes}</span>
                             </div>
                         )}
                     </div>
                 )}
             </Modal>
+
+            <style jsx>{`
+                .production-grid {
+                    display: flex;
+                    flex-direction: column;
+                    gap: 32px;
+                }
+                
+                .production-section {
+                    display: flex;
+                    flex-direction: column;
+                    gap: 16px;
+                }
+                
+                .section-title {
+                    display: flex;
+                    align-items: center;
+                    gap: 8px;
+                    font-size: 16px;
+                    font-weight: 600;
+                    color: var(--text);
+                    margin: 0;
+                }
+                
+                .work-orders-list {
+                    display: grid;
+                    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+                    gap: 16px;
+                }
+                
+                .create-work-order-form {
+                    display: flex;
+                    flex-direction: column;
+                    gap: 24px;
+                }
+                
+                .form-section {
+                    display: flex;
+                    flex-direction: column;
+                    gap: 12px;
+                }
+                
+                .form-label {
+                    font-weight: 600;
+                    font-size: 14px;
+                    color: var(--text);
+                }
+                
+                .form-header {
+                    display: flex;
+                    justify-content: space-between;
+                    align-items: center;
+                }
+                
+                .form-actions {
+                    display: flex;
+                    gap: 8px;
+                }
+                
+                .step-buttons {
+                    display: flex;
+                    gap: 8px;
+                    flex-wrap: wrap;
+                }
+                
+                .step-btn {
+                    display: flex;
+                    align-items: center;
+                    gap: 8px;
+                    padding: 12px 20px;
+                    border: 2px solid var(--border);
+                    border-radius: 12px;
+                    background: var(--surface);
+                    color: var(--text-secondary);
+                    font-weight: 500;
+                    cursor: pointer;
+                    transition: all 0.2s ease;
+                }
+                
+                .step-btn:hover {
+                    border-color: var(--accent);
+                    color: var(--accent);
+                }
+                
+                .step-btn.active {
+                    border-color: var(--accent);
+                    background: var(--accent);
+                    color: white;
+                }
+                
+                .empty-products {
+                    display: flex;
+                    flex-direction: column;
+                    align-items: center;
+                    justify-content: center;
+                    padding: 48px;
+                    background: var(--surface-hover);
+                    border-radius: 16px;
+                    color: var(--text-secondary);
+                    gap: 8px;
+                }
+                
+                .empty-products .material-icons-round {
+                    font-size: 48px;
+                    opacity: 0.5;
+                }
+                
+                .products-grid {
+                    display: flex;
+                    flex-direction: column;
+                    gap: 8px;
+                    max-height: 300px;
+                    overflow-y: auto;
+                    padding: 4px;
+                }
+                
+                .product-card {
+                    display: flex;
+                    align-items: center;
+                    gap: 12px;
+                    padding: 12px 16px;
+                    background: var(--surface);
+                    border: 2px solid var(--border);
+                    border-radius: 12px;
+                    cursor: pointer;
+                    transition: all 0.2s ease;
+                }
+                
+                .product-card:hover {
+                    border-color: var(--accent);
+                }
+                
+                .product-card.selected {
+                    border-color: var(--accent);
+                    background: rgba(0, 113, 227, 0.05);
+                }
+                
+                .product-checkbox .material-icons-round {
+                    color: var(--text-secondary);
+                    font-size: 24px;
+                }
+                
+                .product-card.selected .product-checkbox .material-icons-round {
+                    color: var(--accent);
+                }
+                
+                .product-info {
+                    flex: 1;
+                }
+                
+                .product-name {
+                    font-weight: 500;
+                    color: var(--text);
+                }
+                
+                .product-meta {
+                    font-size: 13px;
+                    color: var(--text-secondary);
+                }
+                
+                .status-badge.small {
+                    font-size: 11px;
+                    padding: 4px 8px;
+                }
+                
+                .global-worker-row {
+                    display: flex;
+                    gap: 12px;
+                    align-items: center;
+                    padding: 16px;
+                    background: var(--surface-hover);
+                    border-radius: 12px;
+                }
+                
+                .global-worker-row .filter-select {
+                    flex: 1;
+                }
+                
+                .worker-assignments {
+                    display: flex;
+                    flex-direction: column;
+                    gap: 8px;
+                    max-height: 200px;
+                    overflow-y: auto;
+                }
+                
+                .worker-row {
+                    display: flex;
+                    align-items: center;
+                    gap: 12px;
+                    padding: 10px 12px;
+                    background: var(--surface);
+                    border: 1px solid var(--border);
+                    border-radius: 8px;
+                }
+                
+                .worker-product-info {
+                    flex: 1;
+                    display: flex;
+                    flex-direction: column;
+                    gap: 2px;
+                }
+                
+                .worker-product-info .product-name {
+                    font-weight: 500;
+                    font-size: 14px;
+                }
+                
+                .worker-product-info .project-name {
+                    font-size: 12px;
+                    color: var(--text-secondary);
+                }
+                
+                .worker-select {
+                    padding: 6px 10px;
+                    border: 1px solid var(--border);
+                    border-radius: 6px;
+                    background: var(--surface);
+                    font-size: 13px;
+                    min-width: 150px;
+                }
+                
+                .assigned-badge {
+                    display: flex;
+                    align-items: center;
+                    gap: 4px;
+                    padding: 4px 10px;
+                    background: var(--accent);
+                    color: white;
+                    border-radius: 20px;
+                    font-size: 12px;
+                    font-weight: 500;
+                }
+                
+                .assigned-badge .material-icons-round {
+                    font-size: 14px;
+                }
+                
+                .form-row {
+                    flex-direction: row;
+                    gap: 16px;
+                }
+                
+                .form-group {
+                    display: flex;
+                    flex-direction: column;
+                    gap: 6px;
+                    flex: 1;
+                }
+                
+                .form-input {
+                    padding: 10px 14px;
+                    border: 1px solid var(--border);
+                    border-radius: 8px;
+                    background: var(--surface);
+                    font-size: 14px;
+                    color: var(--text);
+                }
+                
+                .form-input:focus {
+                    outline: none;
+                    border-color: var(--accent);
+                }
+                
+                /* View Modal Styles */
+                .work-order-details {
+                    display: flex;
+                    flex-direction: column;
+                    gap: 24px;
+                }
+                
+                .info-cards {
+                    display: grid;
+                    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+                    gap: 12px;
+                }
+                
+                .info-card {
+                    display: flex;
+                    align-items: center;
+                    gap: 12px;
+                    padding: 16px;
+                    background: var(--surface-hover);
+                    border-radius: 12px;
+                }
+                
+                .info-card .material-icons-round {
+                    font-size: 24px;
+                    color: var(--accent);
+                }
+                
+                .info-label {
+                    font-size: 12px;
+                    color: var(--text-secondary);
+                }
+                
+                .info-value {
+                    font-weight: 600;
+                    font-size: 16px;
+                    color: var(--text);
+                }
+                
+                .progress-section {
+                    display: flex;
+                    flex-direction: column;
+                    gap: 8px;
+                }
+                
+                .progress-header {
+                    display: flex;
+                    justify-content: space-between;
+                    font-size: 14px;
+                    font-weight: 500;
+                }
+                
+                .progress-bar {
+                    height: 8px;
+                    background: var(--border);
+                    border-radius: 4px;
+                    overflow: hidden;
+                }
+                
+                .progress-fill {
+                    height: 100%;
+                    background: var(--accent);
+                    border-radius: 4px;
+                    transition: width 0.3s ease;
+                }
+                
+                .items-section h4 {
+                    margin: 0 0 12px 0;
+                    font-size: 14px;
+                    font-weight: 600;
+                }
+                
+                .items-list {
+                    display: flex;
+                    flex-direction: column;
+                    gap: 8px;
+                }
+                
+                .item-row {
+                    display: flex;
+                    align-items: center;
+                    gap: 12px;
+                    padding: 12px 16px;
+                    background: var(--surface);
+                    border: 1px solid var(--border);
+                    border-radius: 10px;
+                }
+                
+                .item-row.completed {
+                    background: rgba(52, 199, 89, 0.08);
+                    border-color: var(--success);
+                }
+                
+                .item-status-icon .material-icons-round {
+                    font-size: 24px;
+                    color: var(--text-secondary);
+                }
+                
+                .item-row.completed .item-status-icon .material-icons-round {
+                    color: var(--success);
+                }
+                
+                .item-info {
+                    flex: 1;
+                }
+                
+                .item-name {
+                    font-weight: 500;
+                }
+                
+                .item-meta {
+                    display: flex;
+                    align-items: center;
+                    gap: 8px;
+                    font-size: 13px;
+                    color: var(--text-secondary);
+                }
+                
+                .worker-badge {
+                    display: inline-flex;
+                    align-items: center;
+                    gap: 4px;
+                    padding: 2px 8px;
+                    background: var(--accent-light);
+                    color: var(--accent);
+                    border-radius: 12px;
+                    font-size: 12px;
+                }
+                
+                .worker-badge .material-icons-round {
+                    font-size: 14px;
+                }
+                
+                .notes-section {
+                    display: flex;
+                    align-items: flex-start;
+                    gap: 12px;
+                    padding: 16px;
+                    background: rgba(255, 149, 0, 0.1);
+                    border-left: 3px solid var(--warning);
+                    border-radius: 8px;
+                    font-size: 14px;
+                }
+                
+                .notes-section .material-icons-round {
+                    color: var(--warning);
+                }
+                
+                @media (max-width: 768px) {
+                    .form-row {
+                        flex-direction: column;
+                    }
+                    
+                    .global-worker-row {
+                        flex-direction: column;
+                    }
+                    
+                    .step-buttons {
+                        display: grid;
+                        grid-template-columns: 1fr 1fr;
+                    }
+                    
+                    .info-cards {
+                        grid-template-columns: 1fr 1fr;
+                    }
+                }
+            `}</style>
+        </div>
+    );
+}
+
+// Work Order Card Component
+function WorkOrderCard({
+    workOrder,
+    onView,
+    onDelete,
+    onStart,
+    getStatusClass,
+    formatDate
+}: {
+    workOrder: WorkOrder;
+    onView: () => void;
+    onDelete: () => void;
+    onStart: () => void;
+    getStatusClass: (status: string) => string;
+    formatDate: (date: string) => string;
+}) {
+    const itemCount = workOrder.items?.length || 0;
+    const completedCount = workOrder.items?.filter(i => i.Status === 'Završeno').length || 0;
+    const progress = itemCount > 0 ? Math.round((completedCount / itemCount) * 100) : 0;
+
+    return (
+        <div className="work-order-card" onClick={onView}>
+            <div className="card-header">
+                <div className="card-title">{workOrder.Work_Order_Number}</div>
+                <span className={`status-badge ${getStatusClass(workOrder.Status)}`}>
+                    {workOrder.Status}
+                </span>
+            </div>
+
+            <div className="card-step">
+                <span className="material-icons-round">construction</span>
+                {workOrder.Production_Step}
+            </div>
+
+            <div className="card-meta">
+                <span>
+                    <span className="material-icons-round">calendar_today</span>
+                    {formatDate(workOrder.Created_Date)}
+                </span>
+                <span>
+                    <span className="material-icons-round">inventory_2</span>
+                    {itemCount} proizvoda
+                </span>
+            </div>
+
+            {workOrder.Status === 'U toku' && (
+                <div className="card-progress">
+                    <div className="progress-track">
+                        <div className="progress-bar" style={{ width: `${progress}%` }} />
+                    </div>
+                    <span className="progress-text">{completedCount}/{itemCount}</span>
+                </div>
+            )}
+
+            <div className="card-actions" onClick={(e) => e.stopPropagation()}>
+                {workOrder.Status === 'Nacrt' && (
+                    <button className="btn btn-sm btn-primary" onClick={onStart}>
+                        <span className="material-icons-round">play_arrow</span>
+                        Pokreni
+                    </button>
+                )}
+                <button className="icon-btn sm danger" onClick={onDelete}>
+                    <span className="material-icons-round">delete</span>
+                </button>
+            </div>
+
+            <style jsx>{`
+                .work-order-card {
+                    display: flex;
+                    flex-direction: column;
+                    gap: 12px;
+                    padding: 20px;
+                    background: var(--surface);
+                    border: 1px solid var(--border);
+                    border-radius: 16px;
+                    cursor: pointer;
+                    transition: all 0.2s ease;
+                }
+                
+                .work-order-card:hover {
+                    border-color: var(--accent);
+                    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
+                    transform: translateY(-2px);
+                }
+                
+                .card-header {
+                    display: flex;
+                    justify-content: space-between;
+                    align-items: center;
+                }
+                
+                .card-title {
+                    font-weight: 600;
+                    font-size: 16px;
+                    color: var(--accent);
+                }
+                
+                .card-step {
+                    display: flex;
+                    align-items: center;
+                    gap: 8px;
+                    font-weight: 500;
+                    color: var(--text);
+                }
+                
+                .card-step .material-icons-round {
+                    font-size: 18px;
+                    color: var(--text-secondary);
+                }
+                
+                .card-meta {
+                    display: flex;
+                    gap: 16px;
+                    font-size: 13px;
+                    color: var(--text-secondary);
+                }
+                
+                .card-meta span {
+                    display: flex;
+                    align-items: center;
+                    gap: 4px;
+                }
+                
+                .card-meta .material-icons-round {
+                    font-size: 16px;
+                }
+                
+                .card-progress {
+                    display: flex;
+                    align-items: center;
+                    gap: 12px;
+                }
+                
+                .progress-track {
+                    flex: 1;
+                    height: 6px;
+                    background: var(--border);
+                    border-radius: 3px;
+                    overflow: hidden;
+                }
+                
+                .progress-bar {
+                    height: 100%;
+                    background: var(--accent);
+                    border-radius: 3px;
+                    transition: width 0.3s ease;
+                }
+                
+                .progress-text {
+                    font-size: 12px;
+                    font-weight: 500;
+                    color: var(--text-secondary);
+                }
+                
+                .card-actions {
+                    display: flex;
+                    gap: 8px;
+                    margin-top: 4px;
+                }
+                
+                .icon-btn.sm {
+                    padding: 6px;
+                }
+                
+                .icon-btn.sm .material-icons-round {
+                    font-size: 18px;
+                }
+            `}</style>
         </div>
     );
 }
