@@ -4728,69 +4728,13 @@ html {
 /* ============================================
    PRINT STYLES - Global Print Isolation
    ============================================
-   These styles ensure that when printing, ONLY the 
-   print-document element is visible. Everything else
-   (app UI, modals, headers) is completely hidden.
+   When printing, we need to:
+   1. Hide all app UI (header, tabs, modal chrome)
+   2. Show ONLY the .print-document element
+   3. Use position:fixed to break out of any hidden parents
    ============================================ */
 
 @media print {
-
-  /* Hide EVERYTHING by default */
-  body * {
-    visibility: hidden !important;
-  }
-
-  /* Reset body for pure white background */
-  body {
-    margin: 0 !important;
-    padding: 0 !important;
-    background: white !important;
-    overflow: visible !important;
-  }
-
-  html {
-    overflow: visible !important;
-  }
-
-  /* Hide specific app elements completely */
-  .app,
-  .header,
-  .tabs,
-  .content,
-  .content-header,
-  .modal-overlay,
-  .modal-backdrop,
-  .modal-container,
-  .modal-header,
-  .modal-footer,
-  .no-print,
-  .print-controls,
-  nav,
-  footer,
-  aside {
-    display: none !important;
-    visibility: hidden !important;
-  }
-
-  /* The print-document and ALL its children should be visible */
-  .print-document,
-  .print-document * {
-    visibility: visible !important;
-  }
-
-  /* Position print document to fill the page */
-  .print-document {
-    position: absolute !important;
-    left: 0 !important;
-    top: 0 !important;
-    width: 100% !important;
-    margin: 0 !important;
-    padding: 0 !important;
-    box-shadow: none !important;
-    background: white !important;
-    z-index: 999999 !important;
-    display: block !important;
-  }
 
   /* Page setup */
   @page {
@@ -4798,14 +4742,108 @@ html {
     margin: 0;
   }
 
-  /* Ensure tables print correctly */
+  /* Reset html/body */
+  html,
+  body {
+    margin: 0 !important;
+    padding: 0 !important;
+    background: white !important;
+    overflow: visible !important;
+    height: auto !important;
+    width: 100% !important;
+  }
+
+  /* Hide ALL app elements */
+  .app,
+  .header,
+  .tabs,
+  .content,
+  nav,
+  aside,
+  footer {
+    display: none !important;
+  }
+
+  /* Hide modal chrome but NOT its content */
+  .modal-overlay {
+    background: transparent !important;
+    position: static !important;
+    display: block !important;
+    overflow: visible !important;
+    padding: 0 !important;
+  }
+
+  .modal {
+    background: transparent !important;
+    box-shadow: none !important;
+    border: none !important;
+    max-width: none !important;
+    max-height: none !important;
+    width: 100% !important;
+    height: auto !important;
+    position: static !important;
+    overflow: visible !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    border-radius: 0 !important;
+  }
+
+  .modal-header,
+  .modal-footer,
+  .modal-close,
+  .no-print,
+  .print-controls {
+    display: none !important;
+  }
+
+  .modal-body {
+    padding: 0 !important;
+    margin: 0 !important;
+    max-height: none !important;
+    overflow: visible !important;
+  }
+
+  /* Print document - FIXED position to break out of any container */
+  .print-document {
+    display: block !important;
+    visibility: visible !important;
+    position: fixed !important;
+    left: 0 !important;
+    top: 0 !important;
+    width: 210mm !important;
+    min-height: 297mm !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    background: white !important;
+    z-index: 999999 !important;
+    box-shadow: none !important;
+    overflow: visible !important;
+  }
+
+  /* Ensure all print-document children are visible */
+  .print-document * {
+    visibility: visible !important;
+  }
+
+  /* Table print handling */
+  .print-layout-table {
+    width: 100% !important;
+  }
+
+  .running-header {
+    display: table-header-group !important;
+  }
+
+  .running-footer {
+    display: table-footer-group !important;
+  }
+
   table {
     page-break-inside: auto !important;
   }
 
   tr {
     page-break-inside: avoid !important;
-    page-break-after: auto !important;
   }
 
   thead {
@@ -4816,13 +4854,16 @@ html {
     display: table-footer-group !important;
   }
 
-  /* Hide scrollbars */
-  *::-webkit-scrollbar {
-    display: none !important;
+  /* Section breaks */
+  .avoid-break {
+    page-break-inside: avoid !important;
   }
 
-  * {
-    -ms-overflow-style: none !important;
-    scrollbar-width: none !important;
+  .section-title {
+    page-break-after: avoid !important;
+  }
+
+  .signature-area {
+    page-break-inside: avoid !important;
   }
 }
