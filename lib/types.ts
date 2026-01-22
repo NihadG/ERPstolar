@@ -234,6 +234,7 @@ export interface WorkOrderItem {
         Worker_Name?: string;
         Status: string; // 'Na čekanju' | 'U toku' | 'Završeno'
     }>;
+    materials?: ProductMaterial[]; // Materials for this product (for print template)
 }
 
 // ============================================

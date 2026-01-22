@@ -2182,3 +2182,67 @@ export async function startWorkOrder(workOrderId: string): Promise<{ success: bo
     }
 }
 
+export async function updateWorkOrder(workOrderId: string, updates: Partial<WorkOrder>): Promise<{ success: boolean; message: string; data?: WorkOrder }> {
+    try {
+        const db = getDb();
+        const q = query(collection(db, COLLECTIONS.WORK_ORDERS), where('Work_Order_ID', '==', workOrderId));
+        const snapshot = await getDocs(q);
+
+        if (snapshot.empty) {
+            return { success: false, message: 'Radni nalog nije pronađen' };
+        }
+
+        // Update work order main document
+        const woRef = snapshot.docs[0].ref;
+        const updateData: any = {};
+
+        if (updates.Status) updateData.Status = updates.Status;
+        if (updates.Due_Date) updateData.Due_Date = updates.Due_Date;
+        if (updates.Notes !== undefined) updateData.Notes = updates.Notes;
+
+        if (updates.Status === 'Završeno' && !updates.Completed_Date) {
+            updateData.Completed_Date = new Date().toISOString();
+        }
+
+        if (Object.keys(updateData).length > 0) {
+            await updateDoc(woRef, updateData);
+        }
+
+        // Update items if provided
+        if (updates.items && Array.isArray(updates.items)) {
+            const itemsQ = query(collection(db, COLLECTIONS.WORK_ORDER_ITEMS), where('Work_Order_ID', '==', workOrderId));
+            const itemsSnap = await getDocs(itemsQ);
+
+            // Create a map of existing items
+            const existingItems = new Map();
+            itemsSnap.docs.forEach(doc => {
+                const data = doc.data();
+                existingItems.set(data.ID, { ref: doc.ref, data });
+            });
+
+            // Update each item
+            for (const item of updates.items) {
+                const existingItem = existingItems.get(item.ID);
+                if (existingItem) {
+                    const itemUpdateData: any = {};
+
+                    if (item.Status) itemUpdateData.Status = item.Status;
+                    if (item.Process_Assignments) itemUpdateData.Process_Assignments = item.Process_Assignments;
+
+                    if (Object.keys(itemUpdateData).length > 0) {
+                        await updateDoc(existingItem.ref, itemUpdateData);
+                    }
+                }
+            }
+        }
+
+        // Fetch updated work order
+        const updatedWO = await getWorkOrder(workOrderId);
+
+        return { success: true, message: 'Radni nalog ažuriran', data: updatedWO || undefined };
+    } catch (error) {
+        console.error('updateWorkOrder error:', error);
+        return { success: false, message: 'Greška pri ažuriranju radnog naloga' };
+    }
+}
+

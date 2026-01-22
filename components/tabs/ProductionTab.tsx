@@ -2,8 +2,10 @@
 
 import { useState, useMemo, useEffect } from 'react';
 import type { WorkOrder, Project, Worker } from '@/lib/types';
-import { createWorkOrder, deleteWorkOrder, startWorkOrder, getWorkOrder } from '@/lib/database';
+import { createWorkOrder, deleteWorkOrder, startWorkOrder, getWorkOrder, updateWorkOrder } from '@/lib/database';
 import Modal from '@/components/ui/Modal';
+import WorkOrderViewModal from '@/components/ui/WorkOrderViewModal';
+import WorkOrderPrintTemplate from '@/components/ui/WorkOrderPrintTemplate';
 import { WORK_ORDER_STATUSES, PRODUCTION_STEPS } from '@/lib/types';
 
 interface ProductionTabProps {
@@ -44,6 +46,9 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
     // View Modal
     const [viewModal, setViewModal] = useState(false);
     const [currentWorkOrder, setCurrentWorkOrder] = useState<WorkOrder | null>(null);
+
+    // Print Modal
+    const [printModal, setPrintModal] = useState(false);
 
     const filteredWorkOrders = workOrders.filter(wo => {
         const matchesSearch = wo.Work_Order_Number?.toLowerCase().includes(searchTerm.toLowerCase());
@@ -226,16 +231,36 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
         }
     }
 
-    // View/Edit/Delete existing logic...
+    // View/Edit/Delete/Print logic
     async function openViewModal(workOrderId: string) {
         const wo = await getWorkOrder(workOrderId);
         if (wo) { setCurrentWorkOrder(wo); setViewModal(true); }
     }
+
+    async function handleUpdateWorkOrder(workOrderId: string, updates: any) {
+        const res = await updateWorkOrder(workOrderId, updates);
+        if (res.success) {
+            showToast(res.message, 'success');
+            onRefresh();
+            // Refresh current work order
+            if (res.data) setCurrentWorkOrder(res.data);
+        } else {
+            showToast(res.message, 'error');
+        }
+    }
+
+    function handlePrintWorkOrder() {
+        if (!currentWorkOrder) return;
+        setViewModal(false);
+        setPrintModal(true);
+    }
+
     async function handleDeleteWorkOrder(workOrderId: string) {
         if (!confirm('Obriši radni nalog?')) return;
         const res = await deleteWorkOrder(workOrderId);
         if (res.success) { showToast(res.message, 'success'); onRefresh(); } else showToast(res.message, 'error');
     }
+
     async function handleStartWorkOrder(workOrderId: string) {
         const res = await startWorkOrder(workOrderId);
         if (res.success) { showToast('Nalog pokrenut', 'success'); onRefresh(); setViewModal(false); } else showToast(res.message, 'error');
@@ -449,6 +474,27 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                         )}
                     </div>
                 </div>
+            </Modal>
+
+            {/* ========== WORK ORDER VIEW/EDIT MODAL ========== */}
+            <WorkOrderViewModal
+                isOpen={viewModal}
+                onClose={() => setViewModal(false)}
+                workOrder={currentWorkOrder}
+                workers={workers}
+                onUpdate={handleUpdateWorkOrder}
+                onPrint={handlePrintWorkOrder}
+            />
+
+            {/* ========== PRINT TEMPLATE MODAL ========== */}
+            <Modal
+                isOpen={printModal}
+                onClose={() => setPrintModal(false)}
+                title="Printaj Radni Nalog"
+                size="xl"
+                footer={<button className="btn btn-secondary" onClick={() => setPrintModal(false)}>Zatvori</button>}
+            >
+                {currentWorkOrder && <WorkOrderPrintTemplate workOrder={currentWorkOrder} />}
             </Modal>
 
             <style jsx>{`
