@@ -207,6 +207,31 @@ export interface Task {
     Completed_Date: string;
 }
 
+export interface WorkOrder {
+    Work_Order_ID: string;
+    Work_Order_Number: string;
+    Created_Date: string;
+    Due_Date: string;
+    Status: string;
+    Production_Step: string;
+    Notes: string;
+    Completed_Date?: string;
+    items?: WorkOrderItem[];
+}
+
+export interface WorkOrderItem {
+    ID: string;
+    Work_Order_ID: string;
+    Product_ID: string;
+    Product_Name: string;
+    Project_ID: string;
+    Project_Name: string;
+    Quantity: number;
+    Status: string;
+    Worker_ID?: string;
+    Worker_Name?: string;
+}
+
 // ============================================
 // CONSTANTS
 // ============================================
@@ -219,6 +244,8 @@ export const ORDER_STATUSES = ['Nacrt', 'Poslano', 'Potvrđeno', 'Isporučeno', 
 export const MATERIAL_CATEGORIES = ['Ploča', 'Kanttraka', 'Okovi', 'Vijci', 'Šarke', 'Ladičari', 'Ručke', 'LED', 'Staklo', 'Alu vrata', 'Ostalo'];
 export const PRODUCTION_MODES = ['PreCut', 'InHouse'];
 export const WORKER_ROLES = ['Rezač', 'Kantiranje', 'Bušenje', 'Montaža', 'Instalacija', 'Opći'];
+export const WORK_ORDER_STATUSES = ['Nacrt', 'Dodijeljeno', 'U toku', 'Završeno', 'Otkazano'];
+export const PRODUCTION_STEPS = ['Rezanje', 'Kantiranje', 'Bušenje', 'Sklapanje'];
 
 // ============================================
 // APP STATE TYPE
@@ -232,6 +259,7 @@ export interface AppState {
     workers: Worker[];
     offers: Offer[];
     orders: Order[];
+    workOrders: WorkOrder[];
     productMaterials: ProductMaterial[];
     glassItems: GlassItem[];
     aluDoorItems: AluDoorItem[];

@@ -12,6 +12,7 @@ import { PROJECT_STATUSES, PRODUCT_STATUSES, MATERIAL_CATEGORIES } from '@/lib/t
 import ProjectsTab from '@/components/tabs/ProjectsTab';
 import OffersTab from '@/components/tabs/OffersTab';
 import OrdersTab from '@/components/tabs/OrdersTab';
+import ProductionTab from '@/components/tabs/ProductionTab';
 import MaterialsTab from '@/components/tabs/MaterialsTab';
 import WorkersTab from '@/components/tabs/WorkersTab';
 import SuppliersTab from '@/components/tabs/SuppliersTab';
@@ -39,6 +40,7 @@ export default function Home() {
         workers: [],
         offers: [],
         orders: [],
+        workOrders: [],
         productMaterials: [],
         glassItems: [],
         aluDoorItems: [],
@@ -196,6 +198,13 @@ export default function Home() {
                     Narudžbe
                     {!hasModule('orders') && <span className="material-icons-round tab-lock">lock</span>}
                 </button>
+                <button
+                    className={`tab ${activeTab === 'production' ? 'active' : ''}`}
+                    onClick={() => handleTabClick('production')}
+                >
+                    <span className="material-icons-round">engineering</span>
+                    Proizvodnja
+                </button>
 
                 {/* Settings Dropdown */}
                 <div ref={settingsDropdownRef} className={`tab-dropdown ${dropdownOpen ? 'open' : ''}`}>
@@ -269,6 +278,16 @@ export default function Home() {
                             showToast={showToast}
                         />
                     </ModuleGuard>
+                )}
+
+                {activeTab === 'production' && (
+                    <ProductionTab
+                        workOrders={appState.workOrders}
+                        projects={appState.projects}
+                        workers={appState.workers}
+                        onRefresh={loadData}
+                        showToast={showToast}
+                    />
                 )}
 
                 {activeTab === 'materials' && (

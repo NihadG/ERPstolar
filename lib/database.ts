@@ -27,6 +27,8 @@ import type {
     OrderItem,
     Supplier,
     Worker,
+    WorkOrder,
+    WorkOrderItem,
     AppState,
 } from './types';
 
@@ -59,6 +61,8 @@ const COLLECTIONS = {
     ORDER_ITEMS: 'order_items',
     SUPPLIERS: 'suppliers',
     WORKERS: 'workers',
+    WORK_ORDERS: 'work_orders',
+    WORK_ORDER_ITEMS: 'work_order_items',
 };
 
 // ============================================
@@ -107,6 +111,8 @@ export async function getAllData(): Promise<AppState> {
             aluDoorItemsSnap,
             offerProductsSnap,
             offerExtrasSnap,
+            workOrdersSnap,
+            workOrderItemsSnap,
         ] = await Promise.all([
             getDocs(collection(db, COLLECTIONS.PROJECTS)),
             getDocs(collection(db, COLLECTIONS.PRODUCTS)),
@@ -121,6 +127,8 @@ export async function getAllData(): Promise<AppState> {
             getDocs(collection(db, COLLECTIONS.ALU_DOOR_ITEMS)),
             getDocs(collection(db, COLLECTIONS.OFFER_PRODUCTS)),
             getDocs(collection(db, COLLECTIONS.OFFER_EXTRAS)),
+            getDocs(collection(db, COLLECTIONS.WORK_ORDERS)),
+            getDocs(collection(db, COLLECTIONS.WORK_ORDER_ITEMS)),
         ]);
 
         const projects = projectsSnap.docs.map(doc => ({ ...doc.data() } as Project));
@@ -136,6 +144,8 @@ export async function getAllData(): Promise<AppState> {
         const aluDoorItems = aluDoorItemsSnap.docs.map(doc => ({ ...doc.data() } as AluDoorItem));
         const offerProducts = offerProductsSnap.docs.map(doc => ({ ...doc.data() } as OfferProduct));
         const offerExtras = offerExtrasSnap.docs.map(doc => ({ ...doc.data() } as OfferExtra));
+        const workOrders = workOrdersSnap.docs.map(doc => ({ ...doc.data() } as WorkOrder));
+        const workOrderItems = workOrderItemsSnap.docs.map(doc => ({ ...doc.data() } as WorkOrderItem));
 
         // Attach glass items and alu door items to product materials
         productMaterials.forEach(pm => {
@@ -170,6 +180,11 @@ export async function getAllData(): Promise<AppState> {
             order.items = orderItems.filter(item => item.Order_ID === order.Order_ID);
         });
 
+        // Attach items to work orders
+        workOrders.forEach(wo => {
+            wo.items = workOrderItems.filter(item => item.Work_Order_ID === wo.Work_Order_ID);
+        });
+
         return {
             projects,
             products,
@@ -178,6 +193,7 @@ export async function getAllData(): Promise<AppState> {
             workers,
             offers,
             orders,
+            workOrders,
             productMaterials,
             glassItems,
             aluDoorItems,
@@ -192,6 +208,7 @@ export async function getAllData(): Promise<AppState> {
             workers: [],
             offers: [],
             orders: [],
+            workOrders: [],
             productMaterials: [],
             glassItems: [],
             aluDoorItems: [],
@@ -1872,3 +1889,284 @@ export async function deleteAluDoorItemsByMaterial(productMaterialId: string): P
     snapshot.docs.forEach(doc => batch.delete(doc.ref));
     await batch.commit();
 }
+
+// ============================================
+// WORK ORDERS CRUD
+// ============================================
+
+export function generateWorkOrderNumber(): string {
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const day = String(now.getDate()).padStart(2, '0');
+    const random = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
+    return `RN-${year}${month}${day}-${random}`;
+}
+
+export async function getWorkOrders(): Promise<WorkOrder[]> {
+    const [workOrdersSnap, itemsSnap] = await Promise.all([
+        getDocs(collection(db, COLLECTIONS.WORK_ORDERS)),
+        getDocs(collection(db, COLLECTIONS.WORK_ORDER_ITEMS)),
+    ]);
+
+    const items = itemsSnap.docs.map(doc => ({ ...doc.data() } as WorkOrderItem));
+    const workOrders = workOrdersSnap.docs.map(doc => {
+        const wo = { ...doc.data() } as WorkOrder;
+        wo.items = items.filter(i => i.Work_Order_ID === wo.Work_Order_ID);
+        return wo;
+    });
+
+    return workOrders;
+}
+
+export async function getWorkOrder(workOrderId: string): Promise<WorkOrder | null> {
+    const [woSnap, itemsSnap] = await Promise.all([
+        getDocs(query(collection(db, COLLECTIONS.WORK_ORDERS), where('Work_Order_ID', '==', workOrderId))),
+        getDocs(query(collection(db, COLLECTIONS.WORK_ORDER_ITEMS), where('Work_Order_ID', '==', workOrderId))),
+    ]);
+
+    if (woSnap.empty) return null;
+
+    const workOrder = woSnap.docs[0].data() as WorkOrder;
+    workOrder.items = itemsSnap.docs.map(doc => ({ ...doc.data() } as WorkOrderItem));
+
+    return workOrder;
+}
+
+export async function createWorkOrder(data: {
+    Production_Step: string;
+    Due_Date?: string;
+    Notes?: string;
+    items: {
+        Product_ID: string;
+        Product_Name: string;
+        Project_ID: string;
+        Project_Name: string;
+        Quantity: number;
+        Worker_ID?: string;
+        Worker_Name?: string;
+    }[];
+}): Promise<{ success: boolean; data?: { Work_Order_ID: string; Work_Order_Number: string }; message: string }> {
+    try {
+        const workOrderId = generateUUID();
+        const workOrderNumber = generateWorkOrderNumber();
+
+        const workOrder: WorkOrder = {
+            Work_Order_ID: workOrderId,
+            Work_Order_Number: workOrderNumber,
+            Created_Date: new Date().toISOString(),
+            Due_Date: data.Due_Date || '',
+            Status: 'Nacrt',
+            Production_Step: data.Production_Step,
+            Notes: data.Notes || '',
+        };
+
+        await addDoc(collection(db, COLLECTIONS.WORK_ORDERS), workOrder);
+
+        // Add items
+        for (const item of data.items) {
+            const workOrderItem: WorkOrderItem = {
+                ID: generateUUID(),
+                Work_Order_ID: workOrderId,
+                Product_ID: item.Product_ID,
+                Product_Name: item.Product_Name,
+                Project_ID: item.Project_ID,
+                Project_Name: item.Project_Name,
+                Quantity: item.Quantity,
+                Status: 'Na čekanju',
+                Worker_ID: item.Worker_ID,
+                Worker_Name: item.Worker_Name,
+            };
+            await addDoc(collection(db, COLLECTIONS.WORK_ORDER_ITEMS), workOrderItem);
+        }
+
+        return { success: true, data: { Work_Order_ID: workOrderId, Work_Order_Number: workOrderNumber }, message: 'Radni nalog kreiran' };
+    } catch (error) {
+        console.error('createWorkOrder error:', error);
+        return { success: false, message: 'Greška pri kreiranju radnog naloga' };
+    }
+}
+
+export async function updateWorkOrderStatus(workOrderId: string, status: string): Promise<{ success: boolean; message: string }> {
+    try {
+        const q = query(collection(db, COLLECTIONS.WORK_ORDERS), where('Work_Order_ID', '==', workOrderId));
+        const snapshot = await getDocs(q);
+
+        if (snapshot.empty) {
+            return { success: false, message: 'Radni nalog nije pronađen' };
+        }
+
+        const updateData: any = { Status: status };
+        if (status === 'Završeno') {
+            updateData.Completed_Date = new Date().toISOString();
+        }
+
+        await updateDoc(snapshot.docs[0].ref, updateData);
+        return { success: true, message: 'Status ažuriran' };
+    } catch (error) {
+        console.error('updateWorkOrderStatus error:', error);
+        return { success: false, message: 'Greška pri ažuriranju statusa' };
+    }
+}
+
+export async function updateWorkOrderItemStatus(itemId: string, status: string): Promise<{ success: boolean; message: string }> {
+    try {
+        const q = query(collection(db, COLLECTIONS.WORK_ORDER_ITEMS), where('ID', '==', itemId));
+        const snapshot = await getDocs(q);
+
+        if (snapshot.empty) {
+            return { success: false, message: 'Stavka nije pronađena' };
+        }
+
+        await updateDoc(snapshot.docs[0].ref, { Status: status });
+        return { success: true, message: 'Status stavke ažuriran' };
+    } catch (error) {
+        console.error('updateWorkOrderItemStatus error:', error);
+        return { success: false, message: 'Greška pri ažuriranju statusa stavke' };
+    }
+}
+
+export async function assignWorkerToItem(itemId: string, workerId: string, workerName: string): Promise<{ success: boolean; message: string }> {
+    try {
+        const q = query(collection(db, COLLECTIONS.WORK_ORDER_ITEMS), where('ID', '==', itemId));
+        const snapshot = await getDocs(q);
+
+        if (snapshot.empty) {
+            return { success: false, message: 'Stavka nije pronađena' };
+        }
+
+        await updateDoc(snapshot.docs[0].ref, { Worker_ID: workerId, Worker_Name: workerName });
+        return { success: true, message: 'Radnik dodijeljen' };
+    } catch (error) {
+        console.error('assignWorkerToItem error:', error);
+        return { success: false, message: 'Greška pri dodjeljivanju radnika' };
+    }
+}
+
+export async function completeWorkOrderItem(itemId: string, productionStep: string): Promise<{ success: boolean; message: string }> {
+    try {
+        // Update item status
+        const itemQ = query(collection(db, COLLECTIONS.WORK_ORDER_ITEMS), where('ID', '==', itemId));
+        const itemSnap = await getDocs(itemQ);
+
+        if (itemSnap.empty) {
+            return { success: false, message: 'Stavka nije pronađena' };
+        }
+
+        const item = itemSnap.docs[0].data() as WorkOrderItem;
+        await updateDoc(itemSnap.docs[0].ref, { Status: 'Završeno' });
+
+        // Update product status based on production step
+        const productQ = query(collection(db, COLLECTIONS.PRODUCTS), where('Product_ID', '==', item.Product_ID));
+        const productSnap = await getDocs(productQ);
+
+        if (!productSnap.empty) {
+            // Determine next status based on production step
+            const statusMap: Record<string, string> = {
+                'Rezanje': 'Kantiranje',
+                'Kantiranje': 'Bušenje',
+                'Bušenje': 'Sklapanje',
+                'Sklapanje': 'Spremno',
+            };
+            const nextStatus = statusMap[productionStep] || 'Spremno';
+            await updateDoc(productSnap.docs[0].ref, { Status: nextStatus });
+
+            // Check if all products in project are done
+            const projectId = item.Project_ID;
+            const allProductsQ = query(collection(db, COLLECTIONS.PRODUCTS), where('Project_ID', '==', projectId));
+            const allProductsSnap = await getDocs(allProductsQ);
+
+            const allDone = allProductsSnap.docs.every(doc => {
+                const status = doc.data().Status;
+                return status === 'Spremno' || status === 'Instalirano';
+            });
+
+            if (allDone) {
+                const projectQ = query(collection(db, COLLECTIONS.PROJECTS), where('Project_ID', '==', projectId));
+                const projectSnap = await getDocs(projectQ);
+                if (!projectSnap.empty) {
+                    await updateDoc(projectSnap.docs[0].ref, { Status: 'Završeno' });
+                }
+            }
+        }
+
+        return { success: true, message: 'Stavka završena, status proizvoda ažuriran' };
+    } catch (error) {
+        console.error('completeWorkOrderItem error:', error);
+        return { success: false, message: 'Greška pri završavanju stavke' };
+    }
+}
+
+export async function deleteWorkOrder(workOrderId: string): Promise<{ success: boolean; message: string }> {
+    try {
+        // Delete items first
+        const itemsQ = query(collection(db, COLLECTIONS.WORK_ORDER_ITEMS), where('Work_Order_ID', '==', workOrderId));
+        const itemsSnap = await getDocs(itemsQ);
+
+        const batch = writeBatch(db);
+        itemsSnap.docs.forEach(doc => batch.delete(doc.ref));
+
+        // Delete work order
+        const woQ = query(collection(db, COLLECTIONS.WORK_ORDERS), where('Work_Order_ID', '==', workOrderId));
+        const woSnap = await getDocs(woQ);
+        if (!woSnap.empty) {
+            batch.delete(woSnap.docs[0].ref);
+        }
+
+        await batch.commit();
+        return { success: true, message: 'Radni nalog obrisan' };
+    } catch (error) {
+        console.error('deleteWorkOrder error:', error);
+        return { success: false, message: 'Greška pri brisanju radnog naloga' };
+    }
+}
+
+export async function startWorkOrder(workOrderId: string): Promise<{ success: boolean; message: string }> {
+    try {
+        const q = query(collection(db, COLLECTIONS.WORK_ORDERS), where('Work_Order_ID', '==', workOrderId));
+        const snapshot = await getDocs(q);
+
+        if (snapshot.empty) {
+            return { success: false, message: 'Radni nalog nije pronađen' };
+        }
+
+        await updateDoc(snapshot.docs[0].ref, { Status: 'U toku' });
+
+        // Update all items to "U toku"
+        const itemsQ = query(collection(db, COLLECTIONS.WORK_ORDER_ITEMS), where('Work_Order_ID', '==', workOrderId));
+        const itemsSnap = await getDocs(itemsQ);
+
+        for (const itemDoc of itemsSnap.docs) {
+            if (itemDoc.data().Status === 'Na čekanju') {
+                await updateDoc(itemDoc.ref, { Status: 'U toku' });
+            }
+        }
+
+        // Update products to production step status
+        const wo = snapshot.docs[0].data() as WorkOrder;
+        for (const itemDoc of itemsSnap.docs) {
+            const item = itemDoc.data() as WorkOrderItem;
+            const productQ = query(collection(db, COLLECTIONS.PRODUCTS), where('Product_ID', '==', item.Product_ID));
+            const productSnap = await getDocs(productQ);
+            if (!productSnap.empty) {
+                await updateDoc(productSnap.docs[0].ref, { Status: wo.Production_Step });
+            }
+
+            // Update project to "U proizvodnji" if not already
+            const projectQ = query(collection(db, COLLECTIONS.PROJECTS), where('Project_ID', '==', item.Project_ID));
+            const projectSnap = await getDocs(projectQ);
+            if (!projectSnap.empty) {
+                const currentStatus = projectSnap.docs[0].data().Status;
+                if (currentStatus === 'Odobreno' || currentStatus === 'Nacrt') {
+                    await updateDoc(projectSnap.docs[0].ref, { Status: 'U proizvodnji' });
+                }
+            }
+        }
+
+        return { success: true, message: 'Radni nalog pokrenut' };
+    } catch (error) {
+        console.error('startWorkOrder error:', error);
+        return { success: false, message: 'Greška pri pokretanju radnog naloga' };
+    }
+}
+
