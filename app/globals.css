@@ -4724,3 +4724,105 @@ html {
   color: var(--text-secondary);
   font-size: 14px;
 }
+
+/* ============================================
+   PRINT STYLES - Global Print Isolation
+   ============================================
+   These styles ensure that when printing, ONLY the 
+   print-document element is visible. Everything else
+   (app UI, modals, headers) is completely hidden.
+   ============================================ */
+
+@media print {
+
+  /* Hide EVERYTHING by default */
+  body * {
+    visibility: hidden !important;
+  }
+
+  /* Reset body for pure white background */
+  body {
+    margin: 0 !important;
+    padding: 0 !important;
+    background: white !important;
+    overflow: visible !important;
+  }
+
+  html {
+    overflow: visible !important;
+  }
+
+  /* Hide specific app elements completely */
+  .app,
+  .header,
+  .tabs,
+  .content,
+  .content-header,
+  .modal-overlay,
+  .modal-backdrop,
+  .modal-container,
+  .modal-header,
+  .modal-footer,
+  .no-print,
+  .print-controls,
+  nav,
+  footer,
+  aside {
+    display: none !important;
+    visibility: hidden !important;
+  }
+
+  /* The print-document and ALL its children should be visible */
+  .print-document,
+  .print-document * {
+    visibility: visible !important;
+  }
+
+  /* Position print document to fill the page */
+  .print-document {
+    position: absolute !important;
+    left: 0 !important;
+    top: 0 !important;
+    width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    box-shadow: none !important;
+    background: white !important;
+    z-index: 999999 !important;
+    display: block !important;
+  }
+
+  /* Page setup */
+  @page {
+    size: A4 portrait;
+    margin: 0;
+  }
+
+  /* Ensure tables print correctly */
+  table {
+    page-break-inside: auto !important;
+  }
+
+  tr {
+    page-break-inside: avoid !important;
+    page-break-after: auto !important;
+  }
+
+  thead {
+    display: table-header-group !important;
+  }
+
+  tfoot {
+    display: table-footer-group !important;
+  }
+
+  /* Hide scrollbars */
+  *::-webkit-scrollbar {
+    display: none !important;
+  }
+
+  * {
+    -ms-overflow-style: none !important;
+    scrollbar-width: none !important;
+  }
+}
