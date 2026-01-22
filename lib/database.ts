@@ -614,30 +614,48 @@ export async function getOffers(): Promise<Offer[]> {
 }
 
 export async function getOffer(offerId: string): Promise<Offer | null> {
-    const q = query(collection(db, COLLECTIONS.OFFERS), where('Offer_ID', '==', offerId));
-    const snapshot = await getDocs(q);
-    if (snapshot.empty) return null;
+    // Fetch offer, products, extras, and project in parallel for better performance
+    const [offerSnap, productsSnap, extrasSnap] = await Promise.all([
+        getDocs(query(collection(db, COLLECTIONS.OFFERS), where('Offer_ID', '==', offerId))),
+        getDocs(query(collection(db, COLLECTIONS.OFFER_PRODUCTS), where('Offer_ID', '==', offerId))),
+        getDocs(collection(db, COLLECTIONS.OFFER_EXTRAS)),
+    ]);
 
-    const offer = snapshot.docs[0].data() as Offer;
-    offer.products = await getOfferProducts(offerId);
+    if (offerSnap.empty) return null;
 
-    const project = await getProject(offer.Project_ID);
-    if (project) {
-        offer.Client_Name = project.Client_Name;
+    const offer = offerSnap.docs[0].data() as Offer;
+
+    // Get products and attach extras directly from already-fetched data
+    const allExtras = extrasSnap.docs.map(doc => ({ ...doc.data() } as OfferExtra));
+    const products = productsSnap.docs.map(doc => {
+        const product = { ...doc.data() } as OfferProduct;
+        product.extras = allExtras.filter(e => e.Offer_Product_ID === product.ID);
+        return product;
+    });
+    offer.products = products;
+
+    // Fetch project for client name (just the project, not its products)
+    const projectSnap = await getDocs(query(collection(db, COLLECTIONS.PROJECTS), where('Project_ID', '==', offer.Project_ID)));
+    if (!projectSnap.empty) {
+        offer.Client_Name = projectSnap.docs[0].data().Client_Name;
     }
 
     return offer;
 }
 
 export async function getOfferProducts(offerId: string): Promise<OfferProduct[]> {
-    const q = query(collection(db, COLLECTIONS.OFFER_PRODUCTS), where('Offer_ID', '==', offerId));
-    const snapshot = await getDocs(q);
+    // Fetch products and all extras in parallel
+    const [productsSnap, extrasSnap] = await Promise.all([
+        getDocs(query(collection(db, COLLECTIONS.OFFER_PRODUCTS), where('Offer_ID', '==', offerId))),
+        getDocs(collection(db, COLLECTIONS.OFFER_EXTRAS)),
+    ]);
 
-    const products = snapshot.docs.map(doc => ({ ...doc.data() } as OfferProduct));
-
-    for (const product of products) {
-        product.extras = await getOfferProductExtras(product.ID);
-    }
+    const allExtras = extrasSnap.docs.map(doc => ({ ...doc.data() } as OfferExtra));
+    const products = productsSnap.docs.map(doc => {
+        const product = { ...doc.data() } as OfferProduct;
+        product.extras = allExtras.filter(e => e.Offer_Product_ID === product.ID);
+        return product;
+    });
 
     return products;
 }
