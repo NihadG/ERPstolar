@@ -503,15 +503,30 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                 .btn-nav:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
                 .btn-nav .material-icons-round { font-size: 14px; }
 
-                /* Body - Maximized */
-                .wizard-body { flex: 1; overflow-y: auto; padding: 20px; display: flex; justify-content: center; align-items: flex-start; }
-                .wizard-step { width: 100%; max-width: 1200px; display: flex; flex-direction: column; height: 100%; }
-                .step-page-header { margin-bottom: 20px; text-align: left; }
+                /* Body - NO SCROLL (individual steps manage their own) */
+                .wizard-body { 
+                    flex: 1; 
+                    overflow: hidden; 
+                    padding: 20px; 
+                    display: flex; 
+                    justify-content: center; 
+                    align-items: flex-start; 
+                }
+                .wizard-step { 
+                    width: 100%; 
+                    max-width: 1200px; 
+                    display: flex; 
+                    flex-direction: column; 
+                    height: 100%; 
+                    overflow: hidden;
+                }
+                .step-page-header { margin-bottom: 20px; text-align: left; flex-shrink: 0; }
                 .step-page-header h3 { font-size: 20px; margin: 0; font-weight: 700; color: var(--text-primary); }
                 .step-page-header p { font-size: 14px; color: var(--text-secondary); margin: 6px 0 0 0; }
                 .text-center { text-align: center; }
 
                 /* Step 1: Projects Grid */
+                .step-projects { overflow-y: auto; }
                 .wz-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 16px; }
                 .wz-card { 
                     padding: 20px; 
@@ -534,8 +549,9 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                 .card-sub { font-size: 13px; color: var(--text-secondary); }
 
                 /* Step 2: Products List */
-                .step-products { height: 100%; display: flex; flex-direction: column; }
+                .step-products { display: flex; flex-direction: column; overflow: hidden; }
                 .step-toolbar { 
+                    flex-shrink: 0;
                     display: flex; 
                     justify-content: space-between; 
                     align-items: center; 
@@ -545,7 +561,6 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                     border-radius: 10px; 
                     box-shadow: 0 1px 3px rgba(0,0,0,0.08);
                 }
-                .step-toolbar.sticky { position: sticky; top: 0; z-index: 10; }
                 .tb-left { display: flex; align-items: center; gap: 12px; }
                 .tb-left h3 { font-size: 16px; margin: 0; font-weight: 600; }
                 .tb-stats { 
@@ -556,7 +571,7 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                     padding: 4px 12px; 
                     border-radius: 12px; 
                 }
-                .tb-right { display: flex; align-items: center; gap: 12px; }
+                .tb-right { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
                 .search-input { 
                     background: #f5f5f7; 
                     padding: 8px 12px; 
@@ -593,7 +608,14 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                 .btn-text.danger { color: var(--danger); }
                 .btn-text.danger:hover { background: rgba(220,53,69,0.08); }
                 
-                .wz-list-scroll { flex: 1; overflow-y: auto; background: white; border-radius: 12px; border: 1px solid #e0e0e0; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+                .wz-list-scroll { 
+                    flex: 1; 
+                    overflow-y: auto; 
+                    background: white; 
+                    border-radius: 12px; 
+                    border: 1px solid #e0e0e0; 
+                    box-shadow: 0 1px 3px rgba(0,0,0,0.08); 
+                }
                 .wz-list { display: flex; flex-direction: column; }
                 .wz-list-item { 
                     padding: 14px 20px; 
@@ -622,7 +644,7 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                 }
 
                 /* Step 3: Processes */
-                .step-processes { display: flex; flex-direction: column; align-items: center; padding: 40px 20px; }
+                .step-processes { display: flex; flex-direction: column; align-items: center; padding: 40px 20px; overflow-y: auto; }
                 .process-tags { 
                     display: flex; 
                     flex-wrap: wrap; 
@@ -684,8 +706,9 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                 .add-process-row button:hover { background: #0056b3; transform: scale(1.02); }
 
                 /* Step 4: Matrix View */
-                .step-details { height: 100%; display: flex; flex-direction: column; }
+                .step-details { display: flex; flex-direction: column; overflow: hidden; }
                 .details-top { 
+                    flex-shrink: 0;
                     padding: 16px 20px; 
                     background: white; 
                     border: 1px solid #e0e0e0; 
@@ -785,6 +808,78 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                     background: #f0fff4; 
                     color: #006400; 
                     font-weight: 600;
+                }
+
+                /* TABLET RESPONSIVE (768px - 1024px) */
+                @media (max-width: 1024px) and (min-width: 768px) {
+                    /* Header adjustments */
+                    .wizard-header { 
+                        grid-template-columns: 80px 1fr 80px; 
+                        padding: 8px 12px; 
+                    }
+                    .step-title { font-size: 10px; }
+                    .btn-nav { padding: 5px 12px; font-size: 11px; height: 28px; }
+                    
+                    /* Body padding */
+                    .wizard-body { padding: 16px; }
+                    
+                    /* Step 1: Projects Grid */
+                    .wz-grid { grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }
+                    .wz-card { padding: 16px; gap: 12px; }
+                    .wz-card .material-icons-round { font-size: 24px; }
+                    .card-title { font-size: 14px; }
+                    
+                    /* Step 2: Products */
+                    .step-toolbar { flex-wrap: wrap; gap: 12px; padding: 10px 12px; }
+                    .tb-left { flex-wrap: wrap; }
+                    .tb-right { width: 100%; justify-content: space-between; }
+                    .search-input { width: 100%; max-width: 100%; }
+                    
+                    /* Step 3: Processes */
+                    .step-processes { padding: 30px 16px; }
+                    .process-tag { padding: 10px 16px; font-size: 13px; }
+                    .add-process-row { max-width: 100%; }
+                    
+                    /* Step 4: Matrix */
+                    .details-top { flex-direction: column; gap: 12px; padding: 12px 16px; }
+                    .m-col.product { width: 200px; }
+                    .m-col.process { min-width: 140px; }
+                    .m-col.process span { font-size: 10px; }
+                    .m-col.process select { padding: 6px 10px; font-size: 12px; }
+                }
+
+                /* MOBILE RESPONSIVE (< 768px) */
+                @media (max-width: 767px) {
+                    .wizard-header { 
+                        grid-template-columns: 60px 1fr 60px; 
+                        padding: 6px 10px; 
+                        height: 50px;
+                    }
+                    .step-title { display: none; }
+                    .step-line { width: 10px; }
+                    .btn-nav { padding: 4px 10px; font-size: 10px; height: 26px; }
+                    .btn-nav .material-icons-round { font-size: 12px; }
+                    
+                    .wizard-body { padding: 12px; }
+                    .step-page-header h3 { font-size: 18px; }
+                    .step-page-header p { font-size: 13px; }
+                    
+                    /* Projects */
+                    .wz-grid { grid-template-columns: 1fr; gap: 10px; }
+                    
+                    /* Products */
+                    .step-toolbar { flex-direction: column; gap: 10px; align-items: stretch; }
+                    .tb-left, .tb-right { width: 100%; }
+                    .search-input { width: 100%; }
+                    
+                    /* Processes */
+                    .step-processes { padding: 20px 12px; }
+                    .add-process-row { flex-direction: column; }
+                    
+                    /* Matrix */
+                    .details-top { flex-direction: column; padding: 10px 12px; }
+                    .m-col.product { width: 150px; font-size: 12px; }
+                    .m-col.process { min-width: 120px; }
                 }
             `}</style>
         </div>
