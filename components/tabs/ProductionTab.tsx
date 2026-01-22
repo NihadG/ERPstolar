@@ -14,34 +14,28 @@ interface ProductionTabProps {
     showToast: (message: string, type: 'success' | 'error' | 'info') => void;
 }
 
-interface ProductRow {
+interface ProductSelection {
     Product_ID: string;
     Product_Name: string;
     Project_ID: string;
     Project_Name: string;
     Quantity: number;
     Status: string;
-}
-
-interface ProcessAssignment {
-    Worker_ID?: string;
-    Worker_Name?: string;
+    assignments: Record<string, string>; // process -> worker_id
 }
 
 export default function ProductionTab({ workOrders, projects, workers, onRefresh, showToast }: ProductionTabProps) {
     const [searchTerm, setSearchTerm] = useState('');
     const [statusFilter, setStatusFilter] = useState('');
 
-    // Create Work Order State
+    // Create Modal State
     const [createModal, setCreateModal] = useState(false);
-    const [step, setStep] = useState(1); // 1: Select Processes, 2: Select Products, 3: Assign Workers
     const [selectedProcesses, setSelectedProcesses] = useState<string[]>([]);
-    const [selectedProducts, setSelectedProducts] = useState<ProductRow[]>([]);
-    const [assignments, setAssignments] = useState<Record<string, Record<string, ProcessAssignment>>>({});
+    const [selectedProducts, setSelectedProducts] = useState<ProductSelection[]>([]);
     const [dueDate, setDueDate] = useState('');
     const [notes, setNotes] = useState('');
 
-    // View Work Order State
+    // View Modal
     const [viewModal, setViewModal] = useState(false);
     const [currentWorkOrder, setCurrentWorkOrder] = useState<WorkOrder | null>(null);
 
@@ -51,11 +45,9 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
         return matchesSearch && matchesStatus;
     });
 
-    // Get eligible products based on selected processes
     const eligibleProducts = useMemo(() => {
         if (selectedProcesses.length === 0) return [];
 
-        const products: ProductRow[] = [];
         const eligibilityMap: Record<string, string[]> = {
             'Rezanje': ['Na čekanju', 'Materijali naručeni', 'Materijali spremni'],
             'Kantiranje': ['Rezanje'],
@@ -63,13 +55,13 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
             'Sklapanje': ['Bušenje'],
         };
 
-        // Find earliest process in selection
         const processOrder = ['Rezanje', 'Kantiranje', 'Bušenje', 'Sklapanje'];
         const earliestProcess = selectedProcesses.sort((a, b) =>
             processOrder.indexOf(a) - processOrder.indexOf(b)
         )[0];
 
         const eligibleStatuses = eligibilityMap[earliestProcess] || [];
+        const products: any[] = [];
 
         projects.forEach(project => {
             (project.products || []).forEach(product => {
@@ -100,15 +92,12 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
 
     function formatDate(dateString: string): string {
         if (!dateString) return '-';
-        const date = new Date(dateString);
-        return date.toLocaleDateString('hr-HR');
+        return new Date(dateString).toLocaleDateString('hr-HR');
     }
 
     function openCreateModal() {
-        setStep(1);
-        setSelectedProcesses([]);
+        setSelectedProcesses(['Rezanje']);
         setSelectedProducts([]);
-        setAssignments({});
         setDueDate('');
         setNotes('');
         setCreateModal(true);
@@ -122,92 +111,62 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
         }
     }
 
-    function toggleProduct(product: ProductRow) {
-        const isSelected = selectedProducts.some(p => p.Product_ID === product.Product_ID);
-        if (isSelected) {
+    function toggleProduct(product: any) {
+        const exists = selectedProducts.find(p => p.Product_ID === product.Product_ID);
+        if (exists) {
             setSelectedProducts(selectedProducts.filter(p => p.Product_ID !== product.Product_ID));
-            // Remove assignments for this product
-            const newAssignments = { ...assignments };
-            delete newAssignments[product.Product_ID];
-            setAssignments(newAssignments);
         } else {
-            setSelectedProducts([...selectedProducts, product]);
-            // Initialize assignments for this product
-            const newAssignments = { ...assignments };
-            newAssignments[product.Product_ID] = {};
+            const newProduct: ProductSelection = {
+                ...product,
+                assignments: {},
+            };
             selectedProcesses.forEach(proc => {
-                newAssignments[product.Product_ID][proc] = {};
+                newProduct.assignments[proc] = '';
             });
-            setAssignments(newAssignments);
+            setSelectedProducts([...selectedProducts, newProduct]);
         }
     }
 
     function selectAllProducts() {
-        setSelectedProducts([...eligibleProducts]);
-        const newAssignments: Record<string, Record<string, ProcessAssignment>> = {};
-        eligibleProducts.forEach(product => {
-            newAssignments[product.Product_ID] = {};
-            selectedProcesses.forEach(proc => {
-                newAssignments[product.Product_ID][proc] = {};
-            });
-        });
-        setAssignments(newAssignments);
+        const newProducts: ProductSelection[] = eligibleProducts.map(p => ({
+            ...p,
+            assignments: selectedProcesses.reduce((acc, proc) => ({ ...acc, [proc]: '' }), {}),
+        }));
+        setSelectedProducts(newProducts);
     }
 
     function assignWorker(productId: string, process: string, workerId: string) {
-        const worker = workers.find(w => w.Worker_ID === workerId);
-        const newAssignments = { ...assignments };
-        if (!newAssignments[productId]) newAssignments[productId] = {};
-        newAssignments[productId][process] = {
-            Worker_ID: workerId || undefined,
-            Worker_Name: worker?.Name,
-        };
-        setAssignments(newAssignments);
+        setSelectedProducts(selectedProducts.map(p => {
+            if (p.Product_ID === productId) {
+                return { ...p, assignments: { ...p.assignments, [process]: workerId } };
+            }
+            return p;
+        }));
     }
 
-    function assignWorkerToAllProducts(process: string, workerId: string) {
+    function assignWorkerToAll(process: string, workerId: string) {
+        setSelectedProducts(selectedProducts.map(p => ({
+            ...p,
+            assignments: { ...p.assignments, [process]: workerId },
+        })));
         const worker = workers.find(w => w.Worker_ID === workerId);
-        const newAssignments = { ...assignments };
-        selectedProducts.forEach(product => {
-            if (!newAssignments[product.Product_ID]) newAssignments[product.Product_ID] = {};
-            newAssignments[product.Product_ID][process] = {
-                Worker_ID: workerId || undefined,
-                Worker_Name: worker?.Name,
-            };
-        });
-        setAssignments(newAssignments);
         showToast(`${worker?.Name} dodijeljen za ${process} svim proizvodima`, 'success');
     }
 
-    function assignWorkerToAllProcesses(productId: string, workerId: string) {
+    function assignWorkerToProduct(productId: string, workerId: string) {
+        setSelectedProducts(selectedProducts.map(p => {
+            if (p.Product_ID === productId) {
+                const newAssignments = { ...p.assignments };
+                selectedProcesses.forEach(proc => {
+                    newAssignments[proc] = workerId;
+                });
+                return { ...p, assignments: newAssignments };
+            }
+            return p;
+        }));
         const worker = workers.find(w => w.Worker_ID === workerId);
-        const newAssignments = { ...assignments };
-        if (!newAssignments[productId]) newAssignments[productId] = {};
-        selectedProcesses.forEach(proc => {
-            newAssignments[productId][proc] = {
-                Worker_ID: workerId || undefined,
-                Worker_Name: worker?.Name,
-            };
-        });
-        setAssignments(newAssignments);
         const product = selectedProducts.find(p => p.Product_ID === productId);
-        showToast(`${worker?.Name} dodijeljen za sve procese proizvoda ${product?.Product_Name}`, 'success');
-    }
-
-    function assignWorkerToEverything(workerId: string) {
-        const worker = workers.find(w => w.Worker_ID === workerId);
-        const newAssignments = { ...assignments };
-        selectedProducts.forEach(product => {
-            if (!newAssignments[product.Product_ID]) newAssignments[product.Product_ID] = {};
-            selectedProcesses.forEach(proc => {
-                newAssignments[product.Product_ID][proc] = {
-                    Worker_ID: workerId || undefined,
-                    Worker_Name: worker?.Name,
-                };
-            });
-        });
-        setAssignments(newAssignments);
-        showToast(`${worker?.Name} dodijeljen svim procesima i proizvodima`, 'success');
+        showToast(`${worker?.Name} dodijeljen svim procesima proizvoda ${product?.Product_Name}`, 'success');
     }
 
     async function handleCreateWorkOrder() {
@@ -216,14 +175,20 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
             return;
         }
 
-        // Build items with process assignments
-        const items = selectedProducts.map(product => ({
-            Product_ID: product.Product_ID,
-            Product_Name: product.Product_Name,
-            Project_ID: product.Project_ID,
-            Project_Name: product.Project_Name,
-            Quantity: product.Quantity,
-            Process_Assignments: assignments[product.Product_ID] || {},
+        const items = selectedProducts.map(p => ({
+            Product_ID: p.Product_ID,
+            Product_Name: p.Product_Name,
+            Project_ID: p.Project_ID,
+            Project_Name: p.Project_Name,
+            Quantity: p.Quantity,
+            Process_Assignments: Object.entries(p.assignments).reduce((acc, [proc, workerId]) => {
+                const worker = workers.find(w => w.Worker_ID === workerId);
+                acc[proc] = {
+                    Worker_ID: workerId || undefined,
+                    Worker_Name: worker?.Name,
+                };
+                return acc;
+            }, {} as any),
         }));
 
         const result = await createWorkOrder({
@@ -307,26 +272,14 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                     <p>Kreirajte prvi radni nalog klikom na "Novi Radni Nalog"</p>
                 </div>
             ) : (
-                <div className="production-grid">
-                    {activeOrders.length > 0 && (
-                        <WorkOrderSection title="U toku" icon="play_circle" color="var(--accent)" orders={activeOrders}
-                            onView={openViewModal} onDelete={handleDeleteWorkOrder} onStart={handleStartWorkOrder}
-                            getStatusClass={getStatusClass} formatDate={formatDate} />
-                    )}
-                    {pendingOrders.length > 0 && (
-                        <WorkOrderSection title="Na čekanju" icon="schedule" color="var(--warning)" orders={pendingOrders}
-                            onView={openViewModal} onDelete={handleDeleteWorkOrder} onStart={handleStartWorkOrder}
-                            getStatusClass={getStatusClass} formatDate={formatDate} />
-                    )}
-                    {completedOrders.length > 0 && (
-                        <WorkOrderSection title="Završeno" icon="check_circle" color="var(--success)" orders={completedOrders}
-                            onView={openViewModal} onDelete={handleDeleteWorkOrder} onStart={() => { }}
-                            getStatusClass={getStatusClass} formatDate={formatDate} />
-                    )}
+                <div className="orders-sections">
+                    {activeOrders.length > 0 && <OrderSection title="U toku" icon="play_circle" color="#0071e3" orders={activeOrders} onView={openViewModal} onDelete={handleDeleteWorkOrder} onStart={handleStartWorkOrder} getStatusClass={getStatusClass} formatDate={formatDate} />}
+                    {pendingOrders.length > 0 && <OrderSection title="Na čekanju" icon="schedule" color="#ff9500" orders={pendingOrders} onView={openViewModal} onDelete={handleDeleteWorkOrder} onStart={handleStartWorkOrder} getStatusClass={getStatusClass} formatDate={formatDate} />}
+                    {completedOrders.length > 0 && <OrderSection title="Završeno" icon="check_circle" color="#34c759" orders={completedOrders} onView={openViewModal} onDelete={handleDeleteWorkOrder} onStart={() => { }} getStatusClass={getStatusClass} formatDate={formatDate} />}
                 </div>
             )}
 
-            {/* Create Work Order Modal */}
+            {/* Create Modal - NEW LAYOUT */}
             <Modal
                 isOpen={createModal}
                 onClose={() => setCreateModal(false)}
@@ -334,239 +287,160 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                 size="fullscreen"
                 footer={null}
             >
-                <div className="wizard-container">
-                    {/* Progress Steps */}
-                    <div className="wizard-progress">
-                        <div className={`progress-step ${step >= 1 ? 'active' : ''} ${step > 1 ? 'completed' : ''}`}>
-                            <div className="step-number">1</div>
-                            <div className="step-label">Odaberi procese</div>
+                <div className="create-layout">
+                    {/* Sidebar */}
+                    <div className="sidebar">
+                        {/* Processes */}
+                        <div className="sidebar-section">
+                            <h4>Proizvodni koraci</h4>
+                            <div className="process-pills">
+                                {PRODUCTION_STEPS.map(proc => (
+                                    <button
+                                        key={proc}
+                                        className={`process-pill ${selectedProcesses.includes(proc) ? 'active' : ''}`}
+                                        onClick={() => toggleProcess(proc)}
+                                    >
+                                        <span className="material-icons-round">
+                                            {proc === 'Rezanje' ? 'content_cut' : proc === 'Kantiranje' ? 'border_style' : proc === 'Bušenje' ? 'architecture' : 'handyman'}
+                                        </span>
+                                        {proc}
+                                        {selectedProcesses.includes(proc) && <span className="material-icons-round check">check</span>}
+                                    </button>
+                                ))}
+                            </div>
                         </div>
-                        <div className="progress-line" />
-                        <div className={`progress-step ${step >= 2 ? 'active' : ''} ${step > 2 ? 'completed' : ''}`}>
-                            <div className="step-number">2</div>
-                            <div className="step-label">Odaberi proizvode</div>
+
+                        {/* Products List */}
+                        <div className="sidebar-section products-section">
+                            <div className="section-header">
+                                <h4>Proizvodi ({selectedProducts.length})</h4>
+                                {eligibleProducts.length > 0 && (
+                                    <button className="link-btn" onClick={selectAllProducts}>Odaberi sve</button>
+                                )}
+                            </div>
+                            <div className="products-list">
+                                {eligibleProducts.length === 0 ? (
+                                    <div className="empty-message">
+                                        {selectedProcesses.length === 0 ? 'Odaberi proizvodni korak' : 'Nema dostupnih proizvoda'}
+                                    </div>
+                                ) : (
+                                    eligibleProducts.map(product => {
+                                        const isSelected = selectedProducts.some(p => p.Product_ID === product.Product_ID);
+                                        return (
+                                            <div
+                                                key={product.Product_ID}
+                                                className={`product-item ${isSelected ? 'selected' : ''}`}
+                                                onClick={() => toggleProduct(product)}
+                                            >
+                                                <span className="material-icons-round checkbox">
+                                                    {isSelected ? 'check_box' : 'check_box_outline_blank'}
+                                                </span>
+                                                <div className="product-content">
+                                                    <div className="product-name">{product.Product_Name}</div>
+                                                    <div className="product-meta">{product.Project_Name}</div>
+                                                </div>
+                                            </div>
+                                        );
+                                    })
+                                )}
+                            </div>
                         </div>
-                        <div className="progress-line" />
-                        <div className={`progress-step ${step >= 3 ? 'active' : ''}`}>
-                            <div className="step-number">3</div>
-                            <div className="step-label">Dodijeli radnike</div>
+
+                        {/* Options */}
+                        <div className="sidebar-section">
+                            <h4>Opcije</h4>
+                            <div className="form-field">
+                                <label>Rok završetka</label>
+                                <input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
+                            </div>
+                            <div className="form-field">
+                                <label>Napomena</label>
+                                <textarea rows={3} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Opciona napomena..." />
+                            </div>
                         </div>
                     </div>
 
-                    {/* Step Content */}
-                    <div className="wizard-content">
-                        {step === 1 && (
-                            <div className="step-panel">
-                                <h3>Koje proizvodne korake želiš uključiti u radni nalog?</h3>
-                                <p className="step-description">Odaberi jedan ili više procesa. Možeš odabrati cio tok (npr. Rezanje → Kantiranje → Bušenje).</p>
-                                <div className="process-grid">
-                                    {PRODUCTION_STEPS.map((process, idx) => (
-                                        <div
-                                            key={process}
-                                            className={`process-card ${selectedProcesses.includes(process) ? 'selected' : ''}`}
-                                            onClick={() => toggleProcess(process)}
-                                        >
-                                            <span className="material-icons-round process-icon">
-                                                {process === 'Rezanje' ? 'content_cut' :
-                                                    process === 'Kantiranje' ? 'border_style' :
-                                                        process === 'Bušenje' ? 'architecture' : 'handyman'}
-                                            </span>
-                                            <div className="process-name">{process}</div>
-                                            <div className="process-order">Korak {idx + 1}</div>
-                                            {selectedProcesses.includes(process) && (
-                                                <span className="material-icons-round checkmark">check_circle</span>
-                                            )}
-                                        </div>
-                                    ))}
-                                </div>
+                    {/* Main Area - Assignments */}
+                    <div className="main-area">
+                        <div className="assignments-header">
+                            <h3>Dodjela radnika <span className="count">{selectedProducts.length} proizvoda × {selectedProcesses.length} procesa</span></h3>
+                        </div>
+
+                        {selectedProducts.length === 0 ? (
+                            <div className="empty-assignments">
+                                <span className="material-icons-round">person_add</span>
+                                <p>Odaberi proizvode sa lijeve strane</p>
                             </div>
-                        )}
-
-                        {step === 2 && (
-                            <div className="step-panel">
-                                <div className="step-header">
-                                    <div>
-                                        <h3>Odaberi proizvode za obradu</h3>
-                                        <p className="step-description">
-                                            Prikazuju se proizvodi spremni za: <strong>{selectedProcesses.join(' → ')}</strong>
-                                        </p>
-                                    </div>
-                                    <button className="btn btn-sm" onClick={selectAllProducts}>
-                                        Odaberi sve ({eligibleProducts.length})
-                                    </button>
-                                </div>
-
-                                {eligibleProducts.length === 0 ? (
-                                    <div className="empty-products">
-                                        <span className="material-icons-round">inbox</span>
-                                        <p>Nema proizvoda spremnih za odabrane procese</p>
-                                    </div>
-                                ) : (
-                                    <div className="products-list">
-                                        {eligibleProducts.map(product => {
-                                            const isSelected = selectedProducts.some(p => p.Product_ID === product.Product_ID);
-                                            return (
-                                                <div
-                                                    key={product.Product_ID}
-                                                    className={`product-item ${isSelected ? 'selected' : ''}`}
-                                                    onClick={() => toggleProduct(product)}
-                                                >
-                                                    <span className="material-icons-round checkbox-icon">
-                                                        {isSelected ? 'check_box' : 'check_box_outline_blank'}
-                                                    </span>
-                                                    <div className="product-details">
-                                                        <div className="product-name">{product.Product_Name}</div>
-                                                        <div className="product-meta">
-                                                            {product.Project_Name} • {product.Quantity} kom
-                                                        </div>
-                                                    </div>
-                                                    <span className={`status-badge small ${getStatusClass(product.Status)}`}>
-                                                        {product.Status}
-                                                    </span>
-                                                </div>
-                                            );
-                                        })}
-                                    </div>
-                                )}
-                            </div>
-                        )}
-
-                        {step === 3 && (
-                            <div className="step-panel">
-                                <div className="step-header">
-                                    <div>
-                                        <h3>Dodijeli radnike</h3>
-                                        <p className="step-description">Dodijeli radnike procesima i proizvodima. Možeš dodjeljivati globalno ili individualno.</p>
-                                    </div>
-                                    <div className="global-assign">
-                                        <select
-                                            className="worker-select"
-                                            onChange={(e) => e.target.value && assignWorkerToEverything(e.target.value)}
-                                            value=""
-                                        >
-                                            <option value="">Dodijeli jednom radniku sve...</option>
-                                            {workers.map(w => (
-                                                <option key={w.Worker_ID} value={w.Worker_ID}>{w.Name}</option>
-                                            ))}
-                                        </select>
-                                    </div>
-                                </div>
-
-                                {/* Assignment Matrix */}
-                                <div className="assignment-matrix">
-                                    <div className="matrix-header">
-                                        <div className="header-cell product-col">Proizvod</div>
-                                        {selectedProcesses.map(proc => (
-                                            <div key={proc} className="header-cell process-col">
-                                                <div>{proc}</div>
-                                                <select
-                                                    className="worker-select mini"
-                                                    onChange={(e) => e.target.value && assignWorkerToAllProducts(proc, e.target.value)}
-                                                    value=""
-                                                    onClick={(e) => e.stopPropagation()}
-                                                >
-                                                    <option value="">Dodijeli svima</option>
-                                                    {workers.map(w => (
-                                                        <option key={w.Worker_ID} value={w.Worker_ID}>{w.Name}</option>
-                                                    ))}
-                                                </select>
+                        ) : (
+                            <div className="assignments-grid">
+                                {selectedProducts.map(product => (
+                                    <div key={product.Product_ID} className="product-assignment-card">
+                                        <div className="card-header">
+                                            <div className="product-title">
+                                                <strong>{product.Product_Name}</strong>
+                                                <span className="project-badge">{product.Project_Name}</span>
                                             </div>
-                                        ))}
-                                        <div className="header-cell actions-col">Akcije</div>
-                                    </div>
-
-                                    <div className="matrix-body">
-                                        {selectedProducts.map(product => (
-                                            <div key={product.Product_ID} className="matrix-row">
-                                                <div className="matrix-cell product-col">
-                                                    <div className="product-name-cell">{product.Product_Name}</div>
-                                                    <div className="product-meta-cell">{product.Project_Name}</div>
-                                                </div>
-                                                {selectedProcesses.map(proc => (
-                                                    <div key={proc} className="matrix-cell process-col">
-                                                        <select
-                                                            className="worker-select"
-                                                            value={assignments[product.Product_ID]?.[proc]?.Worker_ID || ''}
-                                                            onChange={(e) => assignWorker(product.Product_ID, proc, e.target.value)}
-                                                        >
-                                                            <option value="">-- Bez radnika --</option>
-                                                            {workers.map(w => (
-                                                                <option key={w.Worker_ID} value={w.Worker_ID}>{w.Name}</option>
-                                                            ))}
-                                                        </select>
-                                                    </div>
+                                            <select
+                                                className="quick-assign"
+                                                onChange={(e) => e.target.value && assignWorkerToProduct(product.Product_ID, e.target.value)}
+                                                value=""
+                                            >
+                                                <option value="">Dodijeli svim procesima...</option>
+                                                {workers.map(w => (
+                                                    <option key={w.Worker_ID} value={w.Worker_ID}>{w.Name}</option>
                                                 ))}
-                                                <div className="matrix-cell actions-col">
+                                            </select>
+                                        </div>
+                                        <div className="process-assignments">
+                                            {selectedProcesses.map(proc => (
+                                                <div key={proc} className="process-row">
+                                                    <div className="process-label">
+                                                        <span className="material-icons-round">
+                                                            {proc === 'Rezanje' ? 'content_cut' : proc === 'Kantiranje' ? 'border_style' : proc === 'Bušenje' ? 'architecture' : 'handyman'}
+                                                        </span>
+                                                        {proc}
+                                                    </div>
                                                     <select
-                                                        className="worker-select mini"
-                                                        onChange={(e) => e.target.value && assignWorkerToAllProcesses(product.Product_ID, e.target.value)}
-                                                        value=""
+                                                        value={product.assignments[proc] || ''}
+                                                        onChange={(e) => assignWorker(product.Product_ID, proc, e.target.value)}
+                                                        className="worker-select"
                                                     >
-                                                        <option value="">Dodijeli svim procesima</option>
+                                                        <option value="">-- Odaberi radnika --</option>
                                                         {workers.map(w => (
                                                             <option key={w.Worker_ID} value={w.Worker_ID}>{w.Name}</option>
                                                         ))}
                                                     </select>
+                                                    {product.assignments[proc] && (
+                                                        <span className="assigned-indicator">
+                                                            {workers.find(w => w.Worker_ID === product.assignments[proc])?.Name}
+                                                        </span>
+                                                    )}
                                                 </div>
-                                            </div>
-                                        ))}
-                                    </div>
-                                </div>
-
-                                {/* Additional Options */}
-                                <div className="additional-options">
-                                    <div className="form-row">
-                                        <div className="form-group">
-                                            <label>Rok završetka</label>
-                                            <input type="date" className="form-input" value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
-                                        </div>
-                                        <div className="form-group" style={{ flex: 2 }}>
-                                            <label>Napomena</label>
-                                            <input type="text" className="form-input" value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Opciona napomena..." />
+                                            ))}
                                         </div>
                                     </div>
-                                </div>
+                                ))}
                             </div>
                         )}
                     </div>
 
-                    {/* Navigation Footer */}
-                    <div className="wizard-footer">
+                    {/* Footer */}
+                    <div className="create-footer">
                         <button className="btn" onClick={() => setCreateModal(false)}>Odustani</button>
-                        <div className="footer-actions">
-                            {step > 1 && (
-                                <button className="btn" onClick={() => setStep(step - 1)}>
-                                    <span className="material-icons-round">arrow_back</span>
-                                    Nazad
-                                </button>
-                            )}
-                            {step < 3 ? (
-                                <button
-                                    className="btn btn-primary"
-                                    onClick={() => setStep(step + 1)}
-                                    disabled={step === 1 && selectedProcesses.length === 0 || step === 2 && selectedProducts.length === 0}
-                                >
-                                    Dalje
-                                    <span className="material-icons-round">arrow_forward</span>
-                                </button>
-                            ) : (
-                                <button className="btn btn-primary" onClick={handleCreateWorkOrder}>
-                                    <span className="material-icons-round">check</span>
-                                    Kreiraj radni nalog
-                                </button>
-                            )}
-                        </div>
+                        <button
+                            className="btn btn-primary btn-lg"
+                            onClick={handleCreateWorkOrder}
+                            disabled={selectedProducts.length === 0 || selectedProcesses.length === 0}
+                        >
+                            <span className="material-icons-round">add_task</span>
+                            Kreiraj radni nalog
+                        </button>
                     </div>
                 </div>
             </Modal>
 
-            {/* View Work Order Modal - TODO: Update to show new structure */}
-            <Modal
-                isOpen={viewModal}
-                onClose={() => setViewModal(false)}
-                title={currentWorkOrder?.Work_Order_Number || ''}
-                size="large"
-            >
+            {/* View Modal */}
+            <Modal isOpen={viewModal} onClose={() => setViewModal(false)} title={currentWorkOrder?.Work_Order_Number || ''} size="large">
                 {currentWorkOrder && (
                     <div>
                         <p>Procesi: {currentWorkOrder.Production_Steps?.join(' → ')}</p>
@@ -576,179 +450,130 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
             </Modal>
 
             <style jsx>{`
-                .production-grid {
+                .orders-sections {
                     display: flex;
                     flex-direction: column;
-                    gap: 32px;
+                    gap: 24px;
                 }
 
-                .wizard-container {
-                    display: flex;
-                    flex-direction: column;
+                /* CREATE MODAL LAYOUT */
+                .create-layout {
+                    display: grid;
+                    grid-template-columns: 360px 1fr;
+                    grid-template-rows: 1fr auto;
                     height: 100%;
+                    gap: 0;
                 }
 
-                .wizard-progress {
-                    display: flex;
-                    align-items: center;
-                    justify-content: center;
-                    padding: 32px;
+                .sidebar {
+                    grid-row: 1 / 2;
                     background: var(--surface-hover);
+                    border-right: 1px solid var(--border);
+                    overflow-y: auto;
+                    display: flex;
+                    flex-direction: column;
+                }
+
+                .sidebar-section {
+                    padding: 20px;
                     border-bottom: 1px solid var(--border);
                 }
 
-                .progress-step {
+                .sidebar-section h4 {
+                    margin: 0 0 16px 0;
+                    font-size: 14px;
+                    font-weight: 600;
+                    text-transform: uppercase;
+                    letter-spacing: 0.5px;
+                    color: var(--text-secondary);
+                }
+
+                .process-pills {
                     display: flex;
                     flex-direction: column;
-                    align-items: center;
                     gap: 8px;
-                    opacity: 0.5;
-                    transition: all 0.3s ease;
                 }
 
-                .progress-step.active {
-                    opacity: 1;
-                }
-
-                .progress-step.completed .step-number {
-                    background: var(--success);
-                    border-color: var(--success);
-                }
-
-                .step-number {
-                    width: 40px;
-                    height: 40px;
-                    border-radius: 50%;
-                    border: 2px solid var(--border);
-                    background: var(--surface);
+                .process-pill {
+                    position: relative;
                     display: flex;
                     align-items: center;
-                    justify-content: center;
-                    font-weight: 600;
-                    font-size: 16px;
-                    transition: all 0.3s ease;
+                    gap: 10px;
+                    padding: 12px 16px;
+                    border: 2px solid var(--border);
+                    border-radius: 10px;
+                    background: var(--surface);
+                    cursor: pointer;
+                    transition: all 0.2s;
+                    font-weight: 500;
+                    font-size: 14px;
                 }
 
-                .progress-step.active .step-number {
-                    background: var(--accent);
+                .process-pill:hover {
                     border-color: var(--accent);
+                }
+
+                .process-pill.active {
+                    border-color: var(--accent);
+                    background: var(--accent);
                     color: white;
                 }
 
-                .step-label {
-                    font-size: 14px;
-                    font-weight: 500;
-                    color: var(--text-secondary);
+                .process-pill .material-icons-round {
+                    font-size: 20px;
                 }
 
-                .progress-step.active .step-label {
-                    color: var(--text);
+                .process-pill .check {
+                    margin-left: auto;
+                    font-size: 18px;
                 }
 
-                .progress-line {
-                    width: 120px;
-                    height: 2px;
-                    background: var(--border);
-                    margin: 0 16px;
-                }
-
-                .wizard-content {
+                .products-section {
                     flex: 1;
-                    overflow-y: auto;
-                    padding: 32px;
+                    display: flex;
+                    flex-direction: column;
+                    min-height: 0;
                 }
 
-                .step-panel {
-                    max-width: 1000px;
-                    margin: 0 auto;
-                }
-
-                .step-panel h3 {
-                    font-size: 24px;
-                    margin-bottom: 8px;
-                }
-
-                .step-description {
-                    color: var(--text-secondary);
-                    margin-bottom: 32px;
-                }
-
-                .step-header {
+                .section-header {
                     display: flex;
                     justify-content: space-between;
-                    align-items: flex-start;
-                    margin-bottom: 24px;
+                    align-items: center;
+                    margin-bottom: 16px;
                 }
 
-                .process-grid {
-                    display: grid;
-                    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-                    gap: 16px;
-                }
-
-                .process-card {
-                    position: relative;
-                    padding: 32px 24px;
-                    border: 2px solid var(--border);
-                    border-radius: 16px;
-                    background: var(--surface);
+                .link-btn {
+                    background: none;
+                    border: none;
+                    color: var(--accent);
                     cursor: pointer;
-                    transition: all 0.2s ease;
-                    text-align: center;
-                }
-
-                .process-card:hover {
-                    border-color: var(--accent);
-                    transform: translateY(-2px);
-                    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
-                }
-
-                .process-card.selected {
-                    border-color: var(--accent);
-                    background: rgba(0, 113, 227, 0.05);
-                }
-
-                .process-icon {
-                    font-size: 48px;
-                    color: var(--accent);
-                    margin-bottom: 12px;
-                }
-
-                .process-name {
-                    font-weight: 600;
-                    font-size: 18px;
-                    margin-bottom: 4px;
-                }
-
-                .process-order {
                     font-size: 13px;
-                    color: var(--text-secondary);
+                    font-weight: 500;
                 }
 
-                .checkmark {
-                    position: absolute;
-                    top: 12px;
-                    right: 12px;
-                    color: var(--accent);
-                    font-size: 24px;
+                .link-btn:hover {
+                    text-decoration: underline;
                 }
 
                 .products-list {
+                    flex: 1;
+                    overflow-y: auto;
                     display: flex;
                     flex-direction: column;
-                    gap: 8px;
+                    gap: 6px;
+                    min-height: 0;
                 }
 
                 .product-item {
                     display: flex;
                     align-items: center;
-                    gap: 16px;
-                    padding: 16px 20px;
-                    border: 2px solid var(--border);
-                    border-radius: 12px;
+                    gap: 12px;
+                    padding: 10px 12px;
                     background: var(--surface);
+                    border: 1px solid var(--border);
+                    border-radius: 8px;
                     cursor: pointer;
-                    transition: all 0.2s ease;
+                    transition: all 0.15s;
                 }
 
                 .product-item:hover {
@@ -757,122 +582,199 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
 
                 .product-item.selected {
                     border-color: var(--accent);
-                    background: rgba(0, 113, 227, 0.05);
+                    background: rgba(0, 113, 227, 0.08);
                 }
 
-                .checkbox-icon {
-                    font-size: 24px;
+                .product-item .checkbox {
+                    font-size: 20px;
                     color: var(--text-secondary);
                 }
 
-                .product-item.selected .checkbox-icon {
+                .product-item.selected .checkbox {
                     color: var(--accent);
                 }
 
-                .product-details {
+                .product-content {
                     flex: 1;
+                    min-width: 0;
                 }
 
                 .product-name {
                     font-weight: 500;
-                    font-size: 15px;
+                    font-size: 14px;
+                    white-space: nowrap;
+                    overflow: hidden;
+                    text-overflow: ellipsis;
                 }
 
                 .product-meta {
-                    font-size: 13px;
+                    font-size: 12px;
                     color: var(--text-secondary);
+                    white-space: nowrap;
+                    overflow: hidden;
+                    text-overflow: ellipsis;
                 }
 
-                .status-badge.small {
-                    font-size: 11px;
-                    padding: 4px 10px;
-                }
-
-                .empty-products {
-                    padding: 64px;
+                .empty-message {
+                    padding: 32px;
                     text-align: center;
                     color: var(--text-secondary);
+                    font-size: 13px;
                 }
 
-                .empty-products .material-icons-round {
+                .form-field {
+                    margin-bottom: 16px;
+                }
+
+                .form-field:last-child {
+                    margin-bottom: 0;
+                }
+
+                .form-field label {
+                    display: block;
+                    margin-bottom: 6px;
+                    font-size: 13px;
+                    font-weight: 500;
+                }
+
+                .form-field input,
+                .form-field textarea {
+                    width: 100%;
+                    padding: 10px 12px;
+                    border: 1px solid var(--border);
+                    border-radius: 8px;
+                    background: var(--surface);
+                    font-size: 14px;
+                    font-family: inherit;
+                }
+
+                .form-field input:focus,
+                .form-field textarea:focus {
+                    outline: none;
+                    border-color: var(--accent);
+                }
+
+                .form-field textarea {
+                    resize: vertical;
+                }
+
+                .main-area {
+                    grid-row: 1 / 2;
+                    padding: 24px;
+                    overflow-y: auto;
+                }
+
+                .assignments-header {
+                    margin-bottom: 24px;
+                }
+
+                .assignments-header h3 {
+                    margin: 0;
+                    font-size: 20px;
+                    font-weight: 600;
+                }
+
+                .assignments-header .count {
+                    font-weight: 400;
+                    color: var(--text-secondary);
+                    font-size: 16px;
+                }
+
+                .empty-assignments {
+                    display: flex;
+                    flex-direction: column;
+                    align-items: center;
+                    justify-content: center;
+                    padding: 80px 20px;
+                    color: var(--text-secondary);
+                }
+
+                .empty-assignments .material-icons-round {
                     font-size: 64px;
                     opacity: 0.3;
                     margin-bottom: 16px;
                 }
 
-                .global-assign {
-                    display: flex;
-                    align-items: center;
-                    gap: 12px;
+                .assignments-grid {
+                    display: grid;
+                    grid-template-columns: repeat(auto-fill, minmax(400px, 1fr));
+                    gap: 16px;
                 }
 
-                .assignment-matrix {
+                .product-assignment-card {
                     background: var(--surface);
                     border: 1px solid var(--border);
                     border-radius: 12px;
-                    overflow: hidden;
-                    margin-bottom: 24px;
+                    padding: 16px;
                 }
 
-                .matrix-header {
-                    display: grid;
-                    grid-template-columns: 250px repeat(var(--process-count, 1), 1fr) 200px;
-                    background: var(--surface-hover);
-                    border-bottom: 2px solid var(--border);
-                    font-weight: 600;
-                    font-size: 13px;
-                }
-
-                .matrix-body {
-                    max-height: 400px;
-                    overflow-y: auto;
-                }
-
-                .matrix-row {
-                    display: grid;
-                    grid-template-columns: 250px repeat(var(--process-count, 1), 1fr) 200px;
+                .card-header {
+                    display: flex;
+                    justify-content: space-between;
+                    align-items: flex-start;
+                    gap: 12px;
+                    margin-bottom: 16px;
+                    padding-bottom: 12px;
                     border-bottom: 1px solid var(--border);
                 }
 
-                .matrix-row:last-child {
-                    border-bottom: none;
-                }
-
-                .matrix-row:hover {
-                    background: var(--surface-hover);
-                }
-
-                .header-cell, .matrix-cell {
-                    padding: 16px;
+                .product-title {
                     display: flex;
                     flex-direction: column;
-                    gap: 8px;
-                    align-items: flex-start;
+                    gap: 4px;
+                    flex: 1;
                 }
 
-                .header-cell {
-                    justify-content: center;
+                .product-title strong {
+                    font-size: 15px;
                 }
 
-                .product-col {
-                    border-right: 1px solid var(--border);
-                }
-
-                .process-col {
-                    border-right: 1px solid var(--border);
-                }
-
-                .product-name-cell {
-                    font-weight: 500;
-                }
-
-                .product-meta-cell {
+                .project-badge {
                     font-size: 12px;
                     color: var(--text-secondary);
                 }
 
+                .quick-assign {
+                    padding: 6px 10px;
+                    border: 1px solid var(--border);
+                    border-radius: 6px;
+                    background: var(--surface-hover);
+                    font-size: 12px;
+                    cursor: pointer;
+                }
+
+                .quick-assign:focus {
+                    outline: none;
+                    border-color: var(--accent);
+                }
+
+                .process-assignments {
+                    display: flex;
+                    flex-direction: column;
+                    gap: 12px;
+                }
+
+                .process-row {
+                    display: grid;
+                    grid-template-columns: 140px 1fr auto;
+                    align-items: center;
+                    gap: 12px;
+                }
+
+                .process-label {
+                    display: flex;
+                    align-items: center;
+                    gap: 8px;
+                    font-weight: 500;
+                    font-size: 13px;
+                }
+
+                .process-label .material-icons-round {
+                    font-size: 18px;
+                    color: var(--accent);
+                }
+
                 .worker-select {
-                    width: 100%;
                     padding: 8px 12px;
                     border: 1px solid var(--border);
                     border-radius: 8px;
@@ -880,68 +782,53 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                     font-size: 13px;
                 }
 
-                .worker-select.mini {
-                    font-size: 12px;
-                    padding: 6px 10px;
-                }
-
                 .worker-select:focus {
                     outline: none;
                     border-color: var(--accent);
                 }
 
-                .additional-options {
-                    padding: 24px;
-                    background: var(--surface-hover);
-                    border-radius: 12px;
-                }
-
-                .form-row {
-                    display: flex;
-                    gap: 16px;
-                }
-
-                .form-group {
-                    flex: 1;
-                    display: flex;
-                    flex-direction: column;
-                    gap: 8px;
-                }
-
-                .form-group label {
+                .assigned-indicator {
+                    font-size: 12px;
+                    color: var(--success);
                     font-weight: 500;
-                    font-size: 14px;
                 }
 
-                .form-input {
-                    padding: 10px 14px;
-                    border: 1px solid var(--border);
-                    border-radius: 8px;
-                    background: var(--surface);
-                    font-size: 14px;
-                }
-
-                .form-input:focus {
-                    outline: none;
-                    border-color: var(--accent);
-                }
-
-                .wizard-footer {
+                .create-footer {
+                    grid-column: 1 / -1;
+                    grid-row: 2 / 3;
                     display: flex;
                     justify-content: space-between;
-                    padding: 20px 32px;
+                    padding: 16px 24px;
                     border-top: 1px solid var(--border);
                     background: var(--surface);
                 }
 
-                .footer-actions {
-                    display: flex;
-                    gap: 12px;
+                .btn-lg {
+                    padding: 12px 24px;
+                    font-size: 15px;
                 }
 
-                @media (max-width: 1024px) {
-                    .matrix-header, .matrix-row {
-                        grid-template-columns: 200px repeat(var(--process-count, 1), 150px) 180px;
+                @media (max-width: 1200px) {
+                    .create-layout {
+                        grid-template-columns: 320px 1fr;
+                    }
+
+                    .assignments-grid {
+                        grid-template-columns: 1fr;
+                    }
+                }
+
+                @media (max-width: 768px) {
+                    .create-layout {
+                        grid-template-columns: 1fr;
+                        grid-template-rows: auto 1fr auto;
+                    }
+
+                    .sidebar {
+                        grid-row: auto;
+                        border-right: none;
+                        border-bottom: 1px solid var(--border);
+                        max-height: 40vh;
                     }
                 }
             `}</style>
@@ -949,32 +836,47 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
     );
 }
 
-// Work Order Section Component
-function WorkOrderSection({ title, icon, color, orders, onView, onDelete, onStart, getStatusClass, formatDate }: any) {
+function OrderSection({ title, icon, color, orders, onView, onDelete, onStart, getStatusClass, formatDate }: any) {
     return (
-        <div className="production-section">
-            <h3 className="section-title">
-                <span className="material-icons-round" style={{ color }}>{icon}</span>
-                {title} ({orders.length})
-            </h3>
-            <div className="work-orders-grid">
-                {orders.map((wo: WorkOrder) => (
-                    <WorkOrderCard
-                        key={wo.Work_Order_ID}
-                        workOrder={wo}
-                        onView={() => onView(wo.Work_Order_ID)}
-                        onDelete={() => onDelete(wo.Work_Order_ID)}
-                        onStart={() => onStart(wo.Work_Order_ID)}
-                        getStatusClass={getStatusClass}
-                        formatDate={formatDate}
-                    />
+        <div className="order-section">
+            <div className="section-title" style={{ color }}>
+                <span className="material-icons-round">{icon}</span>
+                {title} <span className="badge">{orders.length}</span>
+            </div>
+            <div className="orders-grid">
+                {orders.map((wo: any) => (
+                    <div key={wo.Work_Order_ID} className="order-card" onClick={() => onView(wo.Work_Order_ID)}>
+                        <div className="order-header">
+                            <strong>{wo.Work_Order_Number}</strong>
+                            <span className={`status-badge ${getStatusClass(wo.Status)}`}>{wo.Status}</span>
+                        </div>
+                        <div className="order-processes">
+                            <span className="material-icons-round">engineering</span>
+                            {wo.Production_Steps?.join(' → ') || 'N/A'}
+                        </div>
+                        <div className="order-meta">
+                            <span><span className="material-icons-round">calendar_today</span>{formatDate(wo.Created_Date)}</span>
+                            <span><span className="material-icons-round">inventory_2</span>{wo.items?.length || 0} proizvoda</span>
+                        </div>
+                        <div className="order-actions" onClick={(e) => e.stopPropagation()}>
+                            {wo.Status === 'Nacrt' && (
+                                <button className="btn btn-sm btn-primary" onClick={() => onStart(wo.Work_Order_ID)}>
+                                    <span className="material-icons-round">play_arrow</span>
+                                    Pokreni
+                                </button>
+                            )}
+                            <button className="icon-btn sm danger" onClick={() => onDelete(wo.Work_Order_ID)}>
+                                <span className="material-icons-round">delete</span>
+                            </button>
+                        </div>
+                    </div>
                 ))}
             </div>
             <style jsx>{`
-                .production-section {
+                .order-section {
                     display: flex;
                     flex-direction: column;
-                    gap: 16px;
+                    gap: 12px;
                 }
                 .section-title {
                     display: flex;
@@ -982,121 +884,73 @@ function WorkOrderSection({ title, icon, color, orders, onView, onDelete, onStar
                     gap: 8px;
                     font-size: 16px;
                     font-weight: 600;
-                    margin: 0;
                 }
-                .work-orders-grid {
+                .section-title .badge {
+                    background: var(--surface-hover);
+                    padding: 2px 10px;
+                    border-radius: 12px;
+                    font-size: 13px;
+                    font-weight: 500;
+                }
+                .orders-grid {
                     display: grid;
                     grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
-                    gap: 16px;
+                    gap: 12px;
                 }
-            `}</style>
-        </div>
-    );
-}
-
-// Work Order Card Component
-function WorkOrderCard({ workOrder, onView, onDelete, onStart, getStatusClass, formatDate }: any) {
-    const itemCount = workOrder.items?.length || 0;
-
-    return (
-        <div className="work-order-card" onClick={onView}>
-            <div className="card-header">
-                <div className="card-title">{workOrder.Work_Order_Number}</div>
-                <span className={`status-badge ${getStatusClass(workOrder.Status)}`}>
-                    {workOrder.Status}
-                </span>
-            </div>
-
-            <div className="card-processes">
-                <span className="material-icons-round">engineering</span>
-                {workOrder.Production_Steps?.join(' → ') || workOrder.Production_Step}
-            </div>
-
-            <div className="card-meta">
-                <span>
-                    <span className="material-icons-round">calendar_today</span>
-                    {formatDate(workOrder.Created_Date)}
-                </span>
-                <span>
-                    <span className="material-icons-round">inventory_2</span>
-                    {itemCount} proizvoda
-                </span>
-            </div>
-
-            <div className="card-actions" onClick={(e) => e.stopPropagation()}>
-                {workOrder.Status === 'Nacrt' && (
-                    <button className="btn btn-sm btn-primary" onClick={onStart}>
-                        <span className="material-icons-round">play_arrow</span>
-                        Pokreni
-                    </button>
-                )}
-                <button className="icon-btn sm danger" onClick={onDelete}>
-                    <span className="material-icons-round">delete</span>
-                </button>
-            </div>
-
-            <style jsx>{`
-                .work-order-card {
+                .order-card {
+                    padding: 16px;
+                    background: var(--surface);
+                    border: 1px solid var(--border);
+                    border-radius: 12px;
+                    cursor: pointer;
+                    transition: all 0.2s;
                     display: flex;
                     flex-direction: column;
                     gap: 12px;
-                    padding: 20px;
-                    background: var(--surface);
-                    border: 1px solid var(--border);
-                    border-radius: 16px;
-                    cursor: pointer;
-                    transition: all 0.2s ease;
                 }
-                .work-order-card:hover {
+                .order-card:hover {
                     border-color: var(--accent);
-                    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
-                    transform: translateY(-2px);
+                    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
+                    transform: translateY(-1px);
                 }
-                .card-header {
+                .order-header {
                     display: flex;
                     justify-content: space-between;
                     align-items: center;
                 }
-                .card-title {
-                    font-weight: 600;
-                    font-size: 16px;
-                    color: var(--accent);
-                }
-                .card-processes {
+                .order-processes {
                     display: flex;
                     align-items: center;
-                    gap: 8px;
-                    font-weight: 500;
-                    color: var(--text);
-                }
-                .card-processes .material-icons-round {
-                    font-size: 18px;
-                    color: var(--text-secondary);
-                }
-                .card-meta {
-                    display: flex;
-                    gap: 16px;
+                    gap: 6px;
                     font-size: 13px;
                     color: var(--text-secondary);
                 }
-                .card-meta span {
+                .order-processes .material-icons-round {
+                    font-size: 16px;
+                }
+                .order-meta {
+                    display: flex;
+                    gap: 16px;
+                    font-size: 12px;
+                    color: var(--text-secondary);
+                }
+                .order-meta span {
                     display: flex;
                     align-items: center;
                     gap: 4px;
                 }
-                .card-meta .material-icons-round {
-                    font-size: 16px;
+                .order-meta .material-icons-round {
+                    font-size: 14px;
                 }
-                .card-actions {
+                .order-actions {
                     display: flex;
                     gap: 8px;
-                    margin-top: 4px;
                 }
                 .icon-btn.sm {
                     padding: 6px;
                 }
                 .icon-btn.sm .material-icons-round {
-                    font-size: 18px;
+                    font-size: 16px;
                 }
             `}</style>
         </div>
