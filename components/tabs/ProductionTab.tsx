@@ -52,7 +52,6 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
         let products: any[] = [];
 
         projects.forEach(project => {
-            // If projects are selected, only show products from those projects
             if (selectedProjectIds.length > 0 && !selectedProjectIds.includes(project.Project_ID)) {
                 return;
             }
@@ -109,7 +108,6 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
         if (selectedProcesses.includes(process)) {
             const newProcesses = selectedProcesses.filter(p => p !== process);
             setSelectedProcesses(newProcesses);
-            // Remove assignment from products
             setSelectedProducts(selectedProducts.map(p => {
                 const newAssignments = { ...p.assignments };
                 delete newAssignments[process];
@@ -117,7 +115,6 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
             }));
         } else {
             setSelectedProcesses([...selectedProcesses, process]);
-            // Add empty assignment to products
             setSelectedProducts(selectedProducts.map(p => ({
                 ...p,
                 assignments: { ...p.assignments, [process]: '' }
@@ -133,7 +130,6 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
             return;
         }
         setSelectedProcesses([...selectedProcesses, proc]);
-        // Add to products
         setSelectedProducts(selectedProducts.map(p => ({
             ...p,
             assignments: { ...p.assignments, [proc]: '' }
@@ -144,7 +140,6 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
     function toggleProjectSelection(projectId: string) {
         if (selectedProjectIds.includes(projectId)) {
             setSelectedProjectIds(selectedProjectIds.filter(id => id !== projectId));
-            // Also remove products belonging to this project from selection
             setSelectedProducts(selectedProducts.filter(p => p.Project_ID !== projectId));
         } else {
             setSelectedProjectIds([...selectedProjectIds, projectId]);
@@ -320,7 +315,7 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                 </div>
             )}
 
-            {/* Create Modal - NEW LAYOUT */}
+            {/* Create Modal - RECONSTRUCTED LAYOUT */}
             <Modal
                 isOpen={createModal}
                 onClose={() => setCreateModal(false)}
@@ -331,133 +326,151 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                 <div className="create-layout">
                     {/* Sidebar */}
                     <div className="sidebar">
-                        {/* Step 1: Projects */}
-                        <div className="sidebar-section">
-                            <div className="section-header">
-                                <h4>1. Odaberi Projekte ({selectedProjectIds.length})</h4>
-                                {selectedProjectIds.length > 0 && (
-                                    <button className="link-btn" onClick={() => {
-                                        setSelectedProjectIds([]);
-                                        setSelectedProducts([]);
-                                    }}>Očisti</button>
-                                )}
-                            </div>
-                            <div className="projects-selection-list">
-                                {projects.map(project => {
-                                    const isSelected = selectedProjectIds.includes(project.Project_ID);
-                                    return (
-                                        <div
-                                            key={project.Project_ID}
-                                            className={`project-selection-item ${isSelected ? 'active' : ''}`}
-                                            onClick={() => toggleProjectSelection(project.Project_ID)}
-                                        >
-                                            <span className="material-icons-round">
-                                                {isSelected ? 'check_circle' : 'radio_button_unchecked'}
-                                            </span>
-                                            <div className="project-info">
-                                                <div className="project-name">{project.Client_Name}</div>
-                                                <div className="project-count">{(project.products || []).length} proizvoda</div>
-                                            </div>
-                                        </div>
-                                    );
-                                })}
-                            </div>
-                        </div>
-
-                        {/* Step 2: Products */}
-                        <div className="sidebar-section products-section">
-                            <div className="section-header">
-                                <h4>2. Odaberi Proizvode ({selectedProducts.length})</h4>
-                                {eligibleProducts.length > 0 && (
-                                    <button className="link-btn" onClick={selectAllProducts}>Odaberi sve</button>
-                                )}
-                            </div>
-
-                            <div className="search-input-wrapper">
-                                <span className="material-icons-round">search</span>
-                                <input
-                                    type="text"
-                                    placeholder="Pretraži proizvode..."
-                                    value={productSearch}
-                                    onChange={(e) => setProductSearch(e.target.value)}
-                                    className="search-input"
-                                />
-                                {productSearch && (
-                                    <button className="clear-btn" onClick={() => setProductSearch('')}>
-                                        <span className="material-icons-round">close</span>
-                                    </button>
-                                )}
-                            </div>
-
-                            <div className="products-list">
-                                {selectedProjectIds.length === 0 ? (
-                                    <div className="empty-message">Prvo odaberi projekat</div>
-                                ) : eligibleProducts.length === 0 ? (
-                                    <div className="empty-message">Nema dostupnih proizvoda</div>
-                                ) : (
-                                    eligibleProducts.map(product => {
-                                        const isSelected = selectedProducts.some(p => p.Product_ID === product.Product_ID);
-                                        return (
-                                            <div
-                                                key={product.Product_ID}
-                                                className={`product-item ${isSelected ? 'selected' : ''}`}
-                                                onClick={() => toggleProduct(product)}
-                                            >
-                                                <span className="material-icons-round checkbox">
-                                                    {isSelected ? 'check_box' : 'check_box_outline_blank'}
-                                                </span>
-                                                <div className="product-content">
-                                                    <div className="product-name">{product.Product_Name}</div>
-                                                    <div className="product-meta">{product.Project_Name} • {product.Status}</div>
+                        <div className="sidebar-steps">
+                            {/* Step 1: Projects */}
+                            <div className="step-box">
+                                <div className="step-header">
+                                    <div className="step-badge">1</div>
+                                    <span className="material-icons-round">folder</span>
+                                    <h4>Projekti</h4>
+                                    {selectedProjectIds.length > 0 && (
+                                        <button className="clear-link" onClick={() => {
+                                            setSelectedProjectIds([]);
+                                            setSelectedProducts([]);
+                                        }}>Resetuj</button>
+                                    )}
+                                </div>
+                                <div className="step-body no-padding">
+                                    <div className="projects-mini-list">
+                                        {projects.map(project => {
+                                            const isSelected = selectedProjectIds.includes(project.Project_ID);
+                                            return (
+                                                <div
+                                                    key={project.Project_ID}
+                                                    className={`mini-project-item ${isSelected ? 'active' : ''}`}
+                                                    onClick={() => toggleProjectSelection(project.Project_ID)}
+                                                >
+                                                    <span className="material-icons-round">
+                                                        {isSelected ? 'check_circle' : 'radio_button_unchecked'}
+                                                    </span>
+                                                    <div className="item-txt">
+                                                        <div className="main">{project.Client_Name}</div>
+                                                        <div className="sub">{(project.products || []).length} proizvoda</div>
+                                                    </div>
                                                 </div>
-                                            </div>
-                                        );
-                                    })
-                                )}
-                            </div>
-                        </div>
-
-                        {/* Step 3: Processes */}
-                        <div className="sidebar-section">
-                            <h4>3. Proizvodni Procesi</h4>
-                            <div className="process-pills">
-                                {selectedProcesses.map(proc => (
-                                    <div key={proc} className="process-pill active">
-                                        <span className="material-icons-round">
-                                            {proc === 'Rezanje' ? 'content_cut' : proc === 'Kantiranje' ? 'border_style' : proc === 'Bušenje' ? 'architecture' : proc === 'Sklapanje' ? 'handyman' : 'settings'}
-                                        </span>
-                                        {proc}
-                                        <button className="remove-proc" onClick={() => toggleProcess(proc)}>
-                                            <span className="material-icons-round">close</span>
-                                        </button>
+                                            );
+                                        })}
                                     </div>
-                                ))}
-
-                                <div className="add-custom-process">
-                                    <input
-                                        type="text"
-                                        placeholder="Dodaj novi proces..."
-                                        value={customProcessInput}
-                                        onChange={(e) => setCustomProcessInput(e.target.value)}
-                                        onKeyPress={(e) => e.key === 'Enter' && addCustomProcess()}
-                                    />
-                                    <button onClick={addCustomProcess}>
-                                        <span className="material-icons-round">add</span>
-                                    </button>
                                 </div>
                             </div>
-                        </div>
 
-                        {/* Options */}
-                        <div className="sidebar-section">
-                            <h4>Opcije</h4>
-                            <div className="form-field">
-                                <label>Rok završetka</label>
-                                <input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
+                            {/* Step 2: Products */}
+                            <div className="step-box products-step">
+                                <div className="step-header">
+                                    <div className="step-badge">2</div>
+                                    <span className="material-icons-round">inventory_2</span>
+                                    <h4>Proizvodi ({selectedProducts.length})</h4>
+                                    {eligibleProducts.length > 0 && (
+                                        <button className="clear-link" onClick={selectAllProducts}>Svi</button>
+                                    )}
+                                </div>
+                                <div className="step-body">
+                                    <div className="modern-search">
+                                        <span className="material-icons-round">search</span>
+                                        <input
+                                            type="text"
+                                            placeholder="Pretraži..."
+                                            value={productSearch}
+                                            onChange={(e) => setProductSearch(e.target.value)}
+                                        />
+                                        {productSearch && (
+                                            <button className="clear-btn-search" onClick={() => setProductSearch('')}>
+                                                <span className="material-icons-round">close</span>
+                                            </button>
+                                        )}
+                                    </div>
+                                    <div className="mini-products-list">
+                                        {selectedProjectIds.length === 0 ? (
+                                            <div className="empty-hint">Izaberi projekat iznad</div>
+                                        ) : eligibleProducts.length === 0 ? (
+                                            <div className="empty-hint">Nema proizvoda</div>
+                                        ) : (
+                                            eligibleProducts.map(product => {
+                                                const isSelected = selectedProducts.some(p => p.Product_ID === product.Product_ID);
+                                                return (
+                                                    <div
+                                                        key={product.Product_ID}
+                                                        className={`mini-product-item ${isSelected ? 'active' : ''}`}
+                                                        onClick={() => toggleProduct(product)}
+                                                    >
+                                                        <span className="material-icons-round">
+                                                            {isSelected ? 'check_box' : 'check_box_outline_blank'}
+                                                        </span>
+                                                        <div className="item-txt">
+                                                            <div className="main">{product.Product_Name}</div>
+                                                            <div className="sub">{product.Project_Name}</div>
+                                                        </div>
+                                                    </div>
+                                                );
+                                            })
+                                        )}
+                                    </div>
+                                </div>
                             </div>
-                            <div className="form-field">
-                                <label>Napomena</label>
-                                <textarea rows={3} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Opciona napomena..." />
+
+                            {/* Step 3: Processes */}
+                            <div className="step-box">
+                                <div className="step-header">
+                                    <div className="step-badge">3</div>
+                                    <span className="material-icons-round">engineering</span>
+                                    <h4>Procesi</h4>
+                                </div>
+                                <div className="step-body">
+                                    <div className="compact-pills">
+                                        {selectedProcesses.map(proc => (
+                                            <div key={proc} className="compact-pill">
+                                                <span>{proc}</span>
+                                                <button onClick={() => toggleProcess(proc)}>
+                                                    <span className="material-icons-round">close</span>
+                                                </button>
+                                            </div>
+                                        ))}
+                                        <div className="add-mini-proc">
+                                            <input
+                                                type="text"
+                                                placeholder="Dodaj..."
+                                                value={customProcessInput}
+                                                onChange={(e) => setCustomProcessInput(e.target.value)}
+                                                onKeyPress={(e) => e.key === 'Enter' && addCustomProcess()}
+                                            />
+                                            <button onClick={addCustomProcess}>+</button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* Step 4: Details */}
+                            <div className="step-box">
+                                <div className="step-header">
+                                    <div className="step-badge">4</div>
+                                    <span className="material-icons-round">event_note</span>
+                                    <h4>Ostalo</h4>
+                                </div>
+                                <div className="step-body row-gap">
+                                    <div className="field-group">
+                                        <label>Rok završetka</label>
+                                        <input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
+                                    </div>
+                                    <div className="field-group">
+                                        <label>Napomena</label>
+                                        <textarea
+                                            rows={2}
+                                            value={notes}
+                                            onChange={(e) => setNotes(e.target.value)}
+                                            placeholder="..."
+                                        />
+                                    </div>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -595,387 +608,258 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                     gap: 24px;
                 }
 
-                /* CREATE MODAL LAYOUT */
+                /* CREATE MODAL LAYOUT REDESIGN */
                 .create-layout {
                     display: grid;
-                    grid-template-columns: 360px 1fr;
+                    grid-template-columns: 320px 1fr;
                     grid-template-rows: 1fr auto;
                     height: 100%;
-                    gap: 0;
+                    background: var(--surface);
                 }
 
                 .sidebar {
                     grid-row: 1 / 2;
                     background: var(--surface-hover);
                     border-right: 1px solid var(--border);
-                    overflow-y: auto;
                     display: flex;
                     flex-direction: column;
+                    overflow: hidden;
+                    z-index: 10;
                 }
 
-                .sidebar-section {
-                    padding: 20px;
+                .sidebar-steps {
+                    flex: 1;
+                    padding: 16px;
+                    display: flex;
+                    flex-direction: column;
+                    gap: 16px;
+                    overflow-y: auto;
+                }
+
+                .step-box {
+                    background: var(--surface);
+                    border: 1px solid var(--border);
+                    border-radius: 12px;
+                    overflow: hidden;
+                    box-shadow: 0 1px 2px rgba(0,0,0,0.03);
+                }
+
+                .step-header {
+                    display: flex;
+                    align-items: center;
+                    gap: 10px;
+                    padding: 10px 12px;
+                    background: var(--surface-hover);
                     border-bottom: 1px solid var(--border);
                 }
 
-                .sidebar-section h4 {
-                    margin: 0 0 16px 0;
-                    font-size: 14px;
+                .step-badge {
+                    width: 18px;
+                    height: 18px;
+                    background: var(--accent);
+                    color: white;
+                    border-radius: 50%;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    font-size: 10px;
+                    font-weight: 700;
+                }
+
+                .step-header h4 {
+                    margin: 0;
+                    font-size: 13px;
                     font-weight: 600;
-                    text-transform: uppercase;
-                    letter-spacing: 0.5px;
-                    color: var(--text-secondary);
-                }
-
-                .process-pills {
-                    display: flex;
-                    flex-direction: column;
-                    gap: 8px;
-                }
-
-                .process-pill {
-                    position: relative;
-                    display: flex;
-                    align-items: center;
-                    gap: 10px;
-                    padding: 12px 16px;
-                    border: 2px solid var(--border);
-                    border-radius: 10px;
-                    background: var(--surface);
-                    cursor: pointer;
-                    transition: all 0.2s;
-                    font-weight: 500;
-                    font-size: 14px;
-                }
-
-                .process-pill:hover {
-                    border-color: var(--accent);
-                }
-
-                .process-pill.active {
-                    border-color: var(--accent);
-                    background: var(--accent);
-                    color: white;
-                }
-
-                .process-pill .material-icons-round {
-                    font-size: 20px;
-                }
-
-                .process-pill .check {
-                    margin-left: auto;
-                    font-size: 18px;
-                }
-
-                .products-section {
                     flex: 1;
-                    display: flex;
-                    flex-direction: column;
-                    min-height: 0;
-                }
-
-                .section-header {
-                    display: flex;
-                    justify-content: space-between;
-                    align-items: center;
-                    margin-bottom: 16px;
-                }
-
-                .link-btn {
-                    background: none;
-                    border: none;
-                    color: var(--accent);
-                    cursor: pointer;
-                    font-size: 13px;
-                    font-weight: 500;
-                }
-
-                .link-btn:hover {
-                    text-decoration: underline;
-                }
-
-                .filter-controls {
-                    display: flex;
-                    flex-direction: column;
-                    gap: 10px;
-                    margin-bottom: 12px;
-                }
-
-                .projects-selection-list {
-                    display: flex;
-                    flex-direction: column;
-                    gap: 6px;
-                    max-height: 200px;
-                    overflow-y: auto;
-                    padding-right: 4px;
-                }
-
-                .project-selection-item {
-                    display: flex;
-                    align-items: center;
-                    gap: 10px;
-                    padding: 8px 12px;
-                    background: var(--surface);
-                    border: 1px solid var(--border);
-                    border-radius: 8px;
-                    cursor: pointer;
-                    transition: all 0.2s;
-                }
-
-                .project-selection-item:hover {
-                    border-color: var(--accent);
-                }
-
-                .project-selection-item.active {
-                    background: rgba(0, 113, 227, 0.08);
-                    border-color: var(--accent);
-                }
-
-                .project-selection-item.active .material-icons-round {
-                    color: var(--accent);
-                }
-
-                .project-info {
-                    flex: 1;
-                    min-width: 0;
-                }
-
-                .project-info .project-name {
-                    font-weight: 500;
-                    font-size: 13px;
-                    white-space: nowrap;
-                    overflow: hidden;
-                    text-overflow: ellipsis;
-                }
-
-                .project-info .project-count {
-                    font-size: 11px;
-                    color: var(--text-secondary);
-                }
-
-                .add-custom-process {
-                    display: flex;
-                    gap: 8px;
-                    margin-top: 8px;
-                }
-
-                .add-custom-process input {
-                    flex: 1;
-                    padding: 8px 12px;
-                    border: 1px solid var(--border);
-                    border-radius: 6px;
-                    font-size: 13px;
-                    background: var(--surface);
-                }
-
-                .add-custom-process button {
-                    background: var(--accent);
-                    color: white;
-                    border: none;
-                    border-radius: 6px;
-                    width: 34px;
-                    height: 34px;
-                    display: flex;
-                    align-items: center;
-                    justify-content: center;
-                    cursor: pointer;
-                }
-
-                .process-pill .remove-proc {
-                    background: none;
-                    border: none;
-                    color: white;
-                    opacity: 0.7;
-                    cursor: pointer;
-                    display: flex;
-                    align-items: center;
-                    margin-left: 4px;
-                    padding: 0;
-                }
-
-                .process-pill .remove-proc:hover {
-                    opacity: 1;
-                }
-
-                .process-pill .remove-proc .material-icons-round {
-                    font-size: 14px;
-                }
-
-                .search-input-wrapper {
-                    position: relative;
-                    display: flex;
-                    align-items: center;
-                    background: var(--surface);
-                    border: 1px solid var(--border);
-                    border-radius: 8px;
-                    padding: 8px 12px;
-                    transition: border-color 0.2s;
-                    margin-bottom: 12px;
-                }
-
-                .search-input-wrapper:focus-within {
-                    border-color: var(--accent);
-                }
-
-                .search-input-wrapper .material-icons-round {
-                    font-size: 18px;
-                    color: var(--text-secondary);
-                    margin-right: 8px;
-                }
-
-                .search-input {
-                    flex: 1;
-                    border: none;
-                    background: transparent;
-                    outline: none;
-                    font-size: 13px;
-                    font-family: inherit;
-                }
-
-                .clear-btn {
-                    display: flex;
-                    align-items: center;
-                    justify-content: center;
-                    background: none;
-                    border: none;
-                    cursor: pointer;
-                    padding: 2px;
-                    color: var(--text-secondary);
-                    transition: color 0.2s;
-                }
-
-                .clear-btn:hover {
                     color: var(--text-primary);
                 }
 
-                .clear-btn .material-icons-round {
-                    font-size: 16px;
-                }
-
-                .project-filter {
-                    width: 100%;
-                    padding: 8px 12px;
-                    border: 1px solid var(--border);
-                    border-radius: 8px;
-                    background: var(--surface);
-                    font-size: 13px;
-                    font-family: inherit;
+                .clear-link {
+                    background: none;
+                    border: none;
+                    color: var(--accent);
+                    font-size: 10px;
+                    font-weight: 500;
                     cursor: pointer;
-                    transition: border-color 0.2s;
+                    padding: 4px;
                 }
 
-                .project-filter:focus {
-                    outline: none;
-                    border-color: var(--accent);
+                .step-body {
+                    padding: 12px;
                 }
 
-                .products-list {
-                    flex: 1;
-                    overflow-y: auto;
+                .step-body.no-padding {
+                    padding: 0;
+                }
+
+                .step-body.row-gap {
                     display: flex;
                     flex-direction: column;
-                    gap: 6px;
-                    min-height: 0;
+                    gap: 10px;
                 }
 
-                .product-item {
+                .projects-mini-list, .mini-products-list {
+                    max-height: 160px;
+                    overflow-y: auto;
+                }
+
+                .mini-project-item, .mini-product-item {
                     display: flex;
                     align-items: center;
-                    gap: 12px;
-                    padding: 10px 12px;
-                    background: var(--surface);
-                    border: 1px solid var(--border);
-                    border-radius: 8px;
+                    gap: 10px;
+                    padding: 8px 12px;
+                    border-bottom: 1px solid var(--border);
                     cursor: pointer;
-                    transition: all 0.15s;
+                    transition: background 0.2s;
                 }
 
-                .product-item:hover {
-                    border-color: var(--accent);
+                .mini-project-item:last-child, .mini-product-item:last-child {
+                    border-bottom: none;
                 }
 
-                .product-item.selected {
-                    border-color: var(--accent);
-                    background: rgba(0, 113, 227, 0.08);
+                .mini-project-item:hover, .mini-product-item:hover {
+                    background: var(--surface-hover);
                 }
 
-                .product-item .checkbox {
-                    font-size: 20px;
-                    color: var(--text-secondary);
+                .mini-project-item.active, .mini-product-item.active {
+                    background: rgba(0, 113, 227, 0.05);
                 }
 
-                .product-item.selected .checkbox {
+                .mini-project-item.active .material-icons-round,
+                .mini-product-item.active .material-icons-round {
                     color: var(--accent);
                 }
 
-                .product-content {
-                    flex: 1;
-                    min-width: 0;
-                }
-
-                .product-name {
-                    font-weight: 500;
-                    font-size: 14px;
-                    white-space: nowrap;
-                    overflow: hidden;
-                    text-overflow: ellipsis;
-                }
-
-                .product-meta {
+                .item-txt .main {
                     font-size: 12px;
-                    color: var(--text-secondary);
+                    font-weight: 500;
                     white-space: nowrap;
                     overflow: hidden;
                     text-overflow: ellipsis;
                 }
 
-                .empty-message {
-                    padding: 32px;
-                    text-align: center;
+                .item-txt .sub {
+                    font-size: 10px;
                     color: var(--text-secondary);
-                    font-size: 13px;
                 }
 
-                .form-field {
-                    margin-bottom: 16px;
-                }
-
-                .form-field:last-child {
-                    margin-bottom: 0;
-                }
-
-                .form-field label {
-                    display: block;
-                    margin-bottom: 6px;
-                    font-size: 13px;
-                    font-weight: 500;
-                }
-
-                .form-field input,
-                .form-field textarea {
-                    width: 100%;
-                    padding: 10px 12px;
+                .modern-search {
+                    display: flex;
+                    align-items: center;
+                    gap: 8px;
+                    padding: 6px 10px;
+                    background: var(--surface-hover);
                     border: 1px solid var(--border);
-                    border-radius: 8px;
-                    background: var(--surface);
-                    font-size: 14px;
+                    border-radius: 6px;
+                    margin-bottom: 10px;
+                }
+
+                .modern-search input {
+                    flex: 1;
+                    border: none;
+                    background: none;
+                    outline: none;
+                    font-size: 12px;
                     font-family: inherit;
                 }
 
-                .form-field input:focus,
-                .form-field textarea:focus {
-                    outline: none;
-                    border-color: var(--accent);
+                .clear-btn-search {
+                    background: none;
+                    border: none;
+                    cursor: pointer;
+                    padding: 0;
+                    display: flex;
+                    color: var(--text-secondary);
                 }
 
-                .form-field textarea {
-                    resize: vertical;
+                .empty-hint {
+                    text-align: center;
+                    padding: 16px;
+                    font-size: 11px;
+                    color: var(--text-secondary);
+                    font-style: italic;
+                }
+
+                .compact-pills {
+                    display: flex;
+                    flex-wrap: wrap;
+                    gap: 6px;
+                }
+
+                .compact-pill {
+                    display: flex;
+                    align-items: center;
+                    gap: 4px;
+                    padding: 4px 8px;
+                    background: var(--accent);
+                    color: white;
+                    border-radius: 6px;
+                    font-size: 10px;
+                    font-weight: 500;
+                }
+
+                .compact-pill button {
+                    background: none;
+                    border: none;
+                    color: white;
+                    display: flex;
+                    padding: 0;
+                    cursor: pointer;
+                    opacity: 0.8;
+                }
+
+                .add-mini-proc {
+                    display: flex;
+                    gap: 4px;
+                    flex: 1;
+                }
+
+                .add-mini-proc input {
+                    flex: 1;
+                    padding: 4px 8px;
+                    border: 1px solid var(--border);
+                    border-radius: 6px;
+                    font-size: 11px;
+                    background: var(--surface-hover);
+                }
+
+                .add-mini-proc button {
+                    background: var(--accent);
+                    color: white;
+                    border: none;
+                    border-radius: 6px;
+                    width: 22px;
+                    height: 22px;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    cursor: pointer;
+                    font-weight: bold;
+                }
+
+                .field-group label {
+                    font-size: 11px;
+                    font-weight: 600;
+                    color: var(--text-secondary);
+                    display: block;
+                    margin-bottom: 4px;
+                }
+
+                .field-group input, .field-group textarea {
+                    width: 100%;
+                    padding: 8px;
+                    border: 1px solid var(--border);
+                    border-radius: 8px;
+                    font-size: 12px;
+                    font-family: inherit;
+                    background: var(--surface-hover);
                 }
 
                 .main-area {
                     grid-row: 1 / 2;
                     padding: 24px;
                     overflow-y: auto;
+                    background: var(--surface);
                 }
 
                 .assignments-header {
@@ -983,139 +867,77 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                     justify-content: space-between;
                     align-items: center;
                     margin-bottom: 24px;
-                    padding-bottom: 20px;
+                    padding-bottom: 16px;
                     border-bottom: 1px solid var(--border);
                 }
 
                 .assignments-header h3 {
                     margin: 0;
-                    font-size: 20px;
+                    font-size: 18px;
                     font-weight: 600;
                 }
 
                 .assignments-header .subtitle {
-                    margin: 4px 0 0 0;
                     color: var(--text-secondary);
-                    font-size: 14px;
+                    font-size: 13px;
+                    margin-top: 2px;
                 }
 
                 .global-assign {
-                    padding: 8px 12px;
+                    padding: 6px 12px;
                     border: 1px solid var(--accent);
                     border-radius: 8px;
                     background: var(--surface);
                     color: var(--accent);
+                    font-size: 13px;
                     font-weight: 500;
                     cursor: pointer;
                 }
 
-                .empty-assignments {
-                    display: flex;
-                    flex-direction: column;
-                    align-items: center;
-                    justify-content: center;
-                    padding: 80px 20px;
-                    color: var(--text-secondary);
-                    text-align: center;
-                }
-
-                .empty-assignments .material-icons-round {
-                    font-size: 64px;
-                    opacity: 0.3;
-                    margin-bottom: 16px;
-                }
-
-                .empty-assignments .hint {
-                    font-size: 13px;
-                    margin-top: 8px;
-                    opacity: 0.7;
-                }
-
                 .assignments-grid {
                     display: grid;
-                    grid-template-columns: repeat(auto-fill, minmax(380px, 1fr));
-                    gap: 20px;
-                    padding-bottom: 40px;
+                    grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+                    gap: 16px;
                 }
 
                 .product-assignment-card {
                     background: var(--surface);
                     border: 1px solid var(--border);
                     border-radius: 12px;
-                    padding: 0;
-                    overflow: hidden;
                     display: flex;
                     flex-direction: column;
-                    transition: all 0.2s;
+                    overflow: hidden;
+                    transition: border-color 0.2s;
                 }
 
                 .product-assignment-card:hover {
                     border-color: var(--accent);
-                    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
                 }
 
                 .card-header {
+                    padding: 12px;
+                    background: var(--surface-hover);
+                    border-bottom: 1px solid var(--border);
                     display: flex;
                     justify-content: space-between;
                     align-items: center;
-                    padding: 12px 16px;
-                    background: var(--surface-hover);
-                    border-bottom: 1px solid var(--border);
-                }
-
-                .product-title {
-                    display: flex;
-                    flex-direction: column;
-                    gap: 2px;
-                    flex: 1;
-                    min-width: 0;
                 }
 
                 .product-title strong {
-                    font-size: 14px;
-                    white-space: nowrap;
-                    overflow: hidden;
-                    text-overflow: ellipsis;
+                    font-size: 13px;
+                    display: block;
                 }
 
                 .project-badge {
-                    font-size: 11px;
+                    font-size: 10px;
                     color: var(--text-secondary);
-                }
-
-                .card-actions {
-                    display: flex;
-                    align-items: center;
-                    gap: 8px;
-                }
-
-                .quick-assign {
-                    padding: 4px 8px;
-                    border: 1px solid var(--border);
-                    border-radius: 6px;
-                    background: var(--surface);
-                    font-size: 11px;
-                    cursor: pointer;
-                }
-
-                .remove-product {
-                    background: none;
-                    border: none;
-                    color: var(--text-secondary);
-                    cursor: pointer;
-                    display: flex;
-                    padding: 2px;
-                }
-
-                .remove-product:hover {
-                    color: var(--danger);
                 }
 
                 .process-assignments {
-                    padding: 12px 16px;
+                    padding: 12px;
                     display: flex;
                     flex-direction: column;
-                    gap: 8px;
+                    gap: 10px;
                 }
 
                 .process-row {
@@ -1123,45 +945,30 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                     justify-content: space-between;
                     align-items: center;
                     gap: 12px;
-                    padding: 4px 0;
                 }
 
                 .process-label {
                     display: flex;
                     align-items: center;
                     gap: 8px;
-                    font-size: 13px;
+                    font-size: 12px;
                     font-weight: 500;
                     flex: 1;
                 }
 
-                .process-label .material-icons-round {
-                    font-size: 18px;
-                    color: var(--accent);
-                    opacity: 0.8;
-                }
-
                 .worker-selection-wrapper {
                     position: relative;
-                    display: flex;
-                    align-items: center;
-                    width: 180px;
+                    width: 160px;
                 }
 
                 .worker-select {
                     width: 100%;
-                    padding: 6px 10px;
+                    padding: 5px 8px;
                     border: 1px solid var(--border);
-                    border-radius: 8px;
+                    border-radius: 6px;
+                    font-size: 11px;
                     background: var(--surface);
-                    font-size: 12px;
                     cursor: pointer;
-                    transition: all 0.2s;
-                }
-
-                .worker-select:focus {
-                    outline: none;
-                    border-color: var(--accent);
                 }
 
                 .worker-select.assigned {
@@ -1169,82 +976,19 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                     background: rgba(52, 199, 89, 0.05);
                 }
 
-                .check-mark {
-                    position: absolute;
-                    right: 8px;
-                    font-size: 16px;
-                    color: var(--success);
-                    pointer-events: none;
-                }
-
                 .create-footer {
                     grid-column: 1 / -1;
-                    grid-row: 2 / 3;
-                    display: flex;
-                    justify-content: space-between;
-                    align-items: center;
                     padding: 16px 24px;
                     border-top: 1px solid var(--border);
                     background: var(--surface);
-                }
-
-                .footer-right {
                     display: flex;
-                    gap: 12px;
+                    justify-content: space-between;
+                    align-items: center;
                 }
 
-                .btn-ghost {
-                    background: none;
-                    border: 1px solid transparent;
-                    color: var(--text-secondary);
-                }
-
-                .btn-ghost:hover {
-                    color: var(--danger);
-                }
-
-                .btn-secondary {
-                    background: var(--surface-hover);
-                    border: 1px solid var(--border);
-                    color: var(--text-primary);
-                }
-
-                @media (max-width: 1200px) {
+                @media (max-width: 1000px) {
                     .create-layout {
-                        grid-template-columns: 320px 1fr;
-                    }
-
-                    .assignments-grid {
-                        grid-template-columns: 1fr;
-                    }
-                }
-
-                .btn-lg {
-                    padding: 12px 24px;
-                    font-size: 15px;
-                }
-
-                @media (max-width: 1200px) {
-                    .create-layout {
-                        grid-template-columns: 320px 1fr;
-                    }
-
-                    .assignments-grid {
-                        grid-template-columns: 1fr;
-                    }
-                }
-
-                @media (max-width: 768px) {
-                    .create-layout {
-                        grid-template-columns: 1fr;
-                        grid-template-rows: auto 1fr auto;
-                    }
-
-                    .sidebar {
-                        grid-row: auto;
-                        border-right: none;
-                        border-bottom: 1px solid var(--border);
-                        max-height: 40vh;
+                        grid-template-columns: 280px 1fr;
                     }
                 }
             `}</style>
