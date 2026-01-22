@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import type { WorkOrder } from '@/lib/types';
 
 interface WorkOrderPrintTemplateProps {
@@ -11,6 +11,7 @@ interface WorkOrderPrintTemplateProps {
 export default function WorkOrderPrintTemplate({ workOrder, companyName = 'ERP Stolarija' }: WorkOrderPrintTemplateProps) {
     const [showMaterials, setShowMaterials] = useState(true);
     const [showProcesses, setShowProcesses] = useState(false);
+    const printRef = useRef<HTMLDivElement>(null);
 
     function formatDate(dateString: string): string {
         if (!dateString) return '-';
@@ -18,7 +19,180 @@ export default function WorkOrderPrintTemplate({ workOrder, companyName = 'ERP S
     }
 
     function handlePrint() {
-        window.print();
+        if (!printRef.current) return;
+
+        // Get the print content HTML
+        const printContent = printRef.current.innerHTML;
+
+        // Get the styles from the current document
+        const styles = Array.from(document.querySelectorAll('style, link[rel="stylesheet"]'))
+            .map(el => el.outerHTML)
+            .join('\n');
+
+        // Create a hidden iframe for printing
+        const iframe = document.createElement('iframe');
+        iframe.style.position = 'absolute';
+        iframe.style.top = '-9999px';
+        iframe.style.left = '-9999px';
+        iframe.style.width = '210mm';
+        iframe.style.height = '297mm';
+        document.body.appendChild(iframe);
+
+        const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
+        if (!iframeDoc) {
+            document.body.removeChild(iframe);
+            return;
+        }
+
+        // Write the complete HTML document to the iframe
+        iframeDoc.open();
+        iframeDoc.write(`
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <meta charset="utf-8">
+                <title>Radni Nalog - ${workOrder.Work_Order_Number}</title>
+                <style>
+                    @page {
+                        size: A4 portrait;
+                        margin: 0;
+                    }
+                    * {
+                        box-sizing: border-box;
+                        margin: 0;
+                        padding: 0;
+                    }
+                    body {
+                        font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+                        font-size: 10pt;
+                        color: #222;
+                        line-height: 1.4;
+                        background: white;
+                        margin: 0;
+                        padding: 0;
+                    }
+                    .print-document {
+                        width: 210mm;
+                        min-height: 297mm;
+                        padding: 0;
+                        margin: 0;
+                        background: white;
+                    }
+                    .print-layout-table {
+                        width: 100%;
+                        border-collapse: collapse;
+                    }
+                    .running-header { display: table-header-group; }
+                    .running-footer { display: table-footer-group; }
+                    .page-header {
+                        display: flex;
+                        justify-content: space-between;
+                        align-items: flex-end;
+                        padding: 15mm 15mm 8mm 15mm;
+                        border-bottom: 2pt solid #1a1a1a;
+                        margin-bottom: 6mm;
+                    }
+                    .brand-name { font-size: 18pt; font-weight: 700; color: #1a1a1a; }
+                    .doc-type { font-size: 9pt; font-weight: 600; color: #666; text-transform: uppercase; letter-spacing: 2px; margin-top: 2mm; }
+                    .header-meta { text-align: right; }
+                    .meta-row { display: flex; justify-content: flex-end; gap: 8px; margin-bottom: 2px; }
+                    .meta-label { font-size: 8pt; color: #888; }
+                    .meta-value { font-size: 9pt; font-weight: 600; color: #333; min-width: 80px; text-align: right; }
+                    .meta-value.highlight { color: #d63031; font-weight: 700; }
+                    .page-footer {
+                        display: flex;
+                        justify-content: space-between;
+                        padding: 6mm 15mm 10mm 15mm;
+                        border-top: 1pt solid #ddd;
+                        margin-top: 6mm;
+                        font-size: 8pt;
+                        color: #888;
+                    }
+                    .content-cell { padding: 0 15mm; vertical-align: top; }
+                    .notes-banner {
+                        background: #fffde7;
+                        border: 1pt solid #ffc107;
+                        border-radius: 4px;
+                        padding: 8px 12px;
+                        margin-bottom: 6mm;
+                        font-size: 9pt;
+                    }
+                    .notes-banner strong { color: #f57c00; margin-right: 6px; }
+                    .summary-bar {
+                        display: flex;
+                        gap: 20px;
+                        padding: 10px 16px;
+                        background: #f5f6f7;
+                        border-radius: 6px;
+                        margin-bottom: 6mm;
+                    }
+                    .summary-item { display: flex; gap: 6px; align-items: center; }
+                    .summary-label { font-size: 8pt; color: #666; }
+                    .summary-value { font-size: 9pt; font-weight: 600; color: #333; }
+                    .section { margin-bottom: 8mm; }
+                    .section-title {
+                        font-size: 10pt;
+                        font-weight: 700;
+                        color: #1a1a1a;
+                        padding-bottom: 3mm;
+                        margin-bottom: 3mm;
+                        border-bottom: 1pt solid #333;
+                    }
+                    .data-table { width: 100%; border-collapse: collapse; font-size: 9pt; }
+                    .data-table th {
+                        background: #f0f0f0;
+                        font-weight: 600;
+                        text-align: left;
+                        padding: 8px 10px;
+                        border: 0.5pt solid #ccc;
+                        font-size: 8pt;
+                        text-transform: uppercase;
+                        color: #555;
+                    }
+                    .data-table td { padding: 8px 10px; border: 0.5pt solid #ddd; vertical-align: top; }
+                    .data-table .col-num { width: 30px; text-align: center; color: #888; }
+                    .data-table .col-name { font-weight: 500; }
+                    .data-table .col-project { color: #666; width: 140px; }
+                    .data-table .col-qty { width: 80px; text-align: center; font-weight: 600; }
+                    .data-table .col-process { text-align: center; width: 80px; font-size: 8pt; }
+                    .product-main-row { background: #fafafa; }
+                    .product-main-row td { border-bottom: none; }
+                    .materials-row td { background: #fff; border-top: none; padding-top: 0; padding-bottom: 10px; }
+                    .materials-list { padding-left: 20px; }
+                    .materials-label { font-size: 8pt; color: #888; font-weight: 600; margin-bottom: 4px; text-transform: uppercase; }
+                    .materials-list ul { margin: 0; padding-left: 16px; }
+                    .materials-list li { font-size: 8pt; color: #555; margin-bottom: 2px; }
+                    .materials-list .supplier { color: #999; font-style: italic; }
+                    .signature-area { margin-top: 15mm; padding-top: 10mm; }
+                    .signature-row { display: flex; justify-content: space-between; gap: 20mm; }
+                    .signature-block { flex: 1; text-align: center; }
+                    .signature-line { border-bottom: 1pt solid #333; height: 15mm; }
+                    .signature-label { font-size: 8pt; color: #666; margin-top: 3mm; text-transform: uppercase; }
+                    .avoid-break { page-break-inside: avoid; }
+                    @media print {
+                        body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+                    }
+                </style>
+            </head>
+            <body>
+                <div class="print-document">
+                    ${printContent}
+                </div>
+            </body>
+            </html>
+        `);
+        iframeDoc.close();
+
+        // Wait for styles to load, then print
+        setTimeout(() => {
+            iframe.contentWindow?.focus();
+            iframe.contentWindow?.print();
+
+            // Clean up after print dialog closes
+            setTimeout(() => {
+                document.body.removeChild(iframe);
+            }, 1000);
+        }, 250);
     }
 
     const totalProducts = workOrder.items?.length || 0;
@@ -58,7 +232,7 @@ export default function WorkOrderPrintTemplate({ workOrder, companyName = 'ERP S
             </div>
 
             {/* ====== PRINT DOCUMENT ====== */}
-            <div className="print-document">
+            <div className="print-document" ref={printRef}>
                 {/* Running Header (repeats on every page via CSS table-header-group) */}
                 <table className="print-layout-table">
                     <thead className="running-header">
