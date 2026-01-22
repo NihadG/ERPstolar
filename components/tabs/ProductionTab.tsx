@@ -34,6 +34,8 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
     const [selectedProducts, setSelectedProducts] = useState<ProductSelection[]>([]);
     const [dueDate, setDueDate] = useState('');
     const [notes, setNotes] = useState('');
+    const [productSearch, setProductSearch] = useState('');
+    const [projectFilter, setProjectFilter] = useState('');
 
     // View Modal
     const [viewModal, setViewModal] = useState(false);
@@ -61,7 +63,7 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
         )[0];
 
         const eligibleStatuses = eligibilityMap[earliestProcess] || [];
-        const products: any[] = [];
+        let products: any[] = [];
 
         projects.forEach(project => {
             (project.products || []).forEach(product => {
@@ -77,8 +79,22 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                 }
             });
         });
+
+        // Apply filtering
+        if (projectFilter) {
+            products = products.filter(p => p.Project_ID === projectFilter);
+        }
+
+        if (productSearch.trim()) {
+            const search = productSearch.toLowerCase();
+            products = products.filter(p =>
+                p.Product_Name.toLowerCase().includes(search) ||
+                p.Project_Name.toLowerCase().includes(search)
+            );
+        }
+
         return products;
-    }, [projects, selectedProcesses]);
+    }, [projects, selectedProcesses, projectFilter, productSearch]);
 
     function getStatusClass(status: string): string {
         return 'status-' + status.toLowerCase()
@@ -100,6 +116,8 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
         setSelectedProducts([]);
         setDueDate('');
         setNotes('');
+        setProductSearch('');
+        setProjectFilter('');
         setCreateModal(true);
     }
 
@@ -184,8 +202,9 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
             Process_Assignments: Object.entries(p.assignments).reduce((acc, [proc, workerId]) => {
                 const worker = workers.find(w => w.Worker_ID === workerId);
                 acc[proc] = {
-                    Worker_ID: workerId || undefined,
-                    Worker_Name: worker?.Name,
+                    Status: 'Na čekanju',
+                    ...(workerId && { Worker_ID: workerId }),
+                    ...(worker && { Worker_Name: worker.Name }),
                 };
                 return acc;
             }, {} as any),
@@ -317,6 +336,36 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                                 {eligibleProducts.length > 0 && (
                                     <button className="link-btn" onClick={selectAllProducts}>Odaberi sve</button>
                                 )}
+                            </div>
+                            {/* Filters */}
+                            <div className="filter-controls">
+                                <div className="search-input-wrapper">
+                                    <span className="material-icons-round">search</span>
+                                    <input
+                                        type="text"
+                                        placeholder="Pretraži proizvode..."
+                                        value={productSearch}
+                                        onChange={(e) => setProductSearch(e.target.value)}
+                                        className="search-input"
+                                    />
+                                    {productSearch && (
+                                        <button className="clear-btn" onClick={() => setProductSearch('')}>
+                                            <span className="material-icons-round">close</span>
+                                        </button>
+                                    )}
+                                </div>
+                                <select
+                                    className="project-filter"
+                                    value={projectFilter}
+                                    onChange={(e) => setProjectFilter(e.target.value)}
+                                >
+                                    <option value="">Svi projekti</option>
+                                    {projects.map(proj => (
+                                        <option key={proj.Project_ID} value={proj.Project_ID}>
+                                            {proj.Client_Name}
+                                        </option>
+                                    ))}
+                                </select>
                             </div>
                             <div className="products-list">
                                 {eligibleProducts.length === 0 ? (
@@ -553,6 +602,80 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
 
                 .link-btn:hover {
                     text-decoration: underline;
+                }
+
+                .filter-controls {
+                    display: flex;
+                    flex-direction: column;
+                    gap: 10px;
+                    margin-bottom: 12px;
+                }
+
+                .search-input-wrapper {
+                    position: relative;
+                    display: flex;
+                    align-items: center;
+                    background: var(--surface);
+                    border: 1px solid var(--border);
+                    border-radius: 8px;
+                    padding: 8px 12px;
+                    transition: border-color 0.2s;
+                }
+
+                .search-input-wrapper:focus-within {
+                    border-color: var(--accent);
+                }
+
+                .search-input-wrapper .material-icons-round {
+                    font-size: 18px;
+                    color: var(--text-secondary);
+                    margin-right: 8px;
+                }
+
+                .search-input {
+                    flex: 1;
+                    border: none;
+                    background: transparent;
+                    outline: none;
+                    font-size: 13px;
+                    font-family: inherit;
+                }
+
+                .clear-btn {
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    background: none;
+                    border: none;
+                    cursor: pointer;
+                    padding: 2px;
+                    color: var(--text-secondary);
+                    transition: color 0.2s;
+                }
+
+                .clear-btn:hover {
+                    color: var(--text-primary);
+                }
+
+                .clear-btn .material-icons-round {
+                    font-size: 16px;
+                }
+
+                .project-filter {
+                    width: 100%;
+                    padding: 8px 12px;
+                    border: 1px solid var(--border);
+                    border-radius: 8px;
+                    background: var(--surface);
+                    font-size: 13px;
+                    font-family: inherit;
+                    cursor: pointer;
+                    transition: border-color 0.2s;
+                }
+
+                .project-filter:focus {
+                    outline: none;
+                    border-color: var(--accent);
                 }
 
                 .products-list {
