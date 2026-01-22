@@ -407,27 +407,31 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                                 </button>
                                 {activeStep === 'projects' && (
                                     <div className="sb-content">
-                                        <div className="sb-list">
-                                            {projects.map(project => {
-                                                const isSelected = selectedProjectIds.includes(project.Project_ID);
-                                                return (
-                                                    <div
-                                                        key={project.Project_ID}
-                                                        className={`sb-item ${isSelected ? 'selected' : ''}`}
-                                                        onClick={() => toggleProjectSelection(project.Project_ID)}
-                                                    >
-                                                        <span className="material-icons-round check-icon">
-                                                            {isSelected ? 'check_circle' : 'radio_button_unchecked'}
-                                                        </span>
-                                                        <span className="item-name">{project.Client_Name}</span>
-                                                    </div>
-                                                );
-                                            })}
+                                        <div className="sb-scroll-area">
+                                            <div className="sb-list">
+                                                {projects.map(project => {
+                                                    const isSelected = selectedProjectIds.includes(project.Project_ID);
+                                                    return (
+                                                        <div
+                                                            key={project.Project_ID}
+                                                            className={`sb-item ${isSelected ? 'selected' : ''}`}
+                                                            onClick={() => toggleProjectSelection(project.Project_ID)}
+                                                        >
+                                                            <span className="material-icons-round check-icon">
+                                                                {isSelected ? 'check_circle' : 'radio_button_unchecked'}
+                                                            </span>
+                                                            <span className="item-name">{project.Client_Name}</span>
+                                                        </div>
+                                                    );
+                                                })}
+                                            </div>
                                         </div>
                                         {selectedProjectIds.length > 0 && (
-                                            <button className="sb-next-btn" onClick={goToNextStep}>
-                                                Dalje <span className="material-icons-round">arrow_forward</span>
-                                            </button>
+                                            <div className="sb-actions">
+                                                <button className="sb-next-btn" onClick={goToNextStep}>
+                                                    Dalje <span className="material-icons-round">arrow_forward</span>
+                                                </button>
+                                            </div>
                                         )}
                                     </div>
                                 )}
@@ -455,38 +459,44 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                                                 <button className="text-btn danger" onClick={() => setSelectedProducts([])}>Poništi</button>
                                             )}
                                         </div>
-                                        <div className="sb-search">
-                                            <span className="material-icons-round">search</span>
-                                            <input
-                                                placeholder="Pretraži..."
-                                                value={productSearch}
-                                                onChange={(e) => setProductSearch(e.target.value)}
-                                            />
+                                        <div className="sb-search-container">
+                                            <div className="sb-search">
+                                                <span className="material-icons-round">search</span>
+                                                <input
+                                                    placeholder="Pretraži..."
+                                                    value={productSearch}
+                                                    onChange={(e) => setProductSearch(e.target.value)}
+                                                />
+                                            </div>
                                         </div>
-                                        <div className="sb-list">
-                                            {eligibleProducts.map(product => {
-                                                const isSelected = selectedProducts.some(p => p.Product_ID === product.Product_ID);
-                                                return (
-                                                    <div
-                                                        key={product.Product_ID}
-                                                        className={`sb-item ${isSelected ? 'selected' : ''}`}
-                                                        onClick={() => toggleProduct(product)}
-                                                    >
-                                                        <span className="material-icons-round check-icon">
-                                                            {isSelected ? 'check_box' : 'check_box_outline_blank'}
-                                                        </span>
-                                                        <div className="item-details">
-                                                            <div className="item-name">{product.Product_Name}</div>
-                                                            <div className="item-sub">{product.Project_Name}</div>
+                                        <div className="sb-scroll-area">
+                                            <div className="sb-list">
+                                                {eligibleProducts.map(product => {
+                                                    const isSelected = selectedProducts.some(p => p.Product_ID === product.Product_ID);
+                                                    return (
+                                                        <div
+                                                            key={product.Product_ID}
+                                                            className={`sb-item ${isSelected ? 'selected' : ''}`}
+                                                            onClick={() => toggleProduct(product)}
+                                                        >
+                                                            <span className="material-icons-round check-icon">
+                                                                {isSelected ? 'check_box' : 'check_box_outline_blank'}
+                                                            </span>
+                                                            <div className="item-details">
+                                                                <div className="item-name">{product.Product_Name}</div>
+                                                                <div className="item-sub">{product.Project_Name}</div>
+                                                            </div>
                                                         </div>
-                                                    </div>
-                                                );
-                                            })}
+                                                    );
+                                                })}
+                                            </div>
                                         </div>
                                         {selectedProducts.length > 0 && (
-                                            <button className="sb-next-btn" onClick={goToNextStep}>
-                                                Dalje <span className="material-icons-round">arrow_forward</span>
-                                            </button>
+                                            <div className="sb-actions">
+                                                <button className="sb-next-btn" onClick={goToNextStep}>
+                                                    Dalje <span className="material-icons-round">arrow_forward</span>
+                                                </button>
+                                            </div>
                                         )}
                                     </div>
                                 )}
@@ -506,26 +516,30 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                                 </button>
                                 {activeStep === 'processes' && (
                                     <div className="sb-content">
-                                        <div className="sb-chips">
-                                            {selectedProcesses.map(proc => (
-                                                <div key={proc} className="sb-chip">
-                                                    <span>{proc}</span>
-                                                    <button onClick={() => toggleProcess(proc)}>✕</button>
-                                                </div>
-                                            ))}
+                                        <div className="sb-scroll-area">
+                                            <div className="sb-chips">
+                                                {selectedProcesses.map(proc => (
+                                                    <div key={proc} className="sb-chip">
+                                                        <span>{proc}</span>
+                                                        <button onClick={() => toggleProcess(proc)}>✕</button>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                            <div className="sb-add-row">
+                                                <input
+                                                    placeholder="Novi proces..."
+                                                    value={customProcessInput}
+                                                    onChange={(e) => setCustomProcessInput(e.target.value)}
+                                                    onKeyPress={(e) => e.key === 'Enter' && addCustomProcess()}
+                                                />
+                                                <button onClick={addCustomProcess}>+</button>
+                                            </div>
                                         </div>
-                                        <div className="sb-add-row">
-                                            <input
-                                                placeholder="Novi proces..."
-                                                value={customProcessInput}
-                                                onChange={(e) => setCustomProcessInput(e.target.value)}
-                                                onKeyPress={(e) => e.key === 'Enter' && addCustomProcess()}
-                                            />
-                                            <button onClick={addCustomProcess}>+</button>
+                                        <div className="sb-actions">
+                                            <button className="sb-next-btn" onClick={goToNextStep}>
+                                                Pregled Detalja <span className="material-icons-round">arrow_forward</span>
+                                            </button>
                                         </div>
-                                        <button className="sb-next-btn" onClick={goToNextStep}>
-                                            Pregled Detalja <span className="material-icons-round">arrow_forward</span>
-                                        </button>
                                     </div>
                                 )}
                             </div>
@@ -543,11 +557,17 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                                 </button>
                                 {activeStep === 'details' && (
                                     <div className="sb-content">
-                                        <div className="sb-form">
-                                            <label>Rok završetka</label>
-                                            <input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
-                                            <label>Napomena</label>
-                                            <textarea rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} />
+                                        <div className="sb-scroll-area">
+                                            <div className="sb-form">
+                                                <div className="sb-form-group">
+                                                    <label>Rok završetka</label>
+                                                    <input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
+                                                </div>
+                                                <div className="sb-form-group">
+                                                    <label>Napomena</label>
+                                                    <textarea rows={3} value={notes} onChange={(e) => setNotes(e.target.value)} />
+                                                </div>
+                                            </div>
                                         </div>
                                     </div>
                                 )}
@@ -715,29 +735,30 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                     border-right: 1px solid var(--border);
                     display: flex;
                     flex-direction: column;
-                    overflow-y: auto;
-                    padding: 20px;
-                    gap: 16px;
+                    overflow: hidden; /* Disable overall scroll */
+                    padding: 0; /* Remove padding to flush with edges */
                 }
 
                 .sb-step {
-                    background: var(--surface);
-                    border: 1px solid transparent;
-                    border-radius: 12px;
+                    background: white;
+                    border-bottom: 1px solid var(--border);
+                    display: flex;
+                    flex-direction: column;
+                    flex-shrink: 0; /* Header mode */
+                    transition: all 0.3s ease;
                     overflow: hidden;
-                    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
                 }
 
                 .sb-step.active {
-                    background: white;
-                    border-color: var(--accent);
-                    box-shadow: 0 4px 12px rgba(0, 113, 227, 0.1);
-                    transform: scale(1.01);
+                    flex: 1; /* Grow to fill space */
+                    background: #f8f9fa;
+                    box-shadow: inset 0 2px 6px rgba(0,0,0,0.02);
                 }
 
                 .sb-step.disabled {
-                    opacity: 0.5;
+                    opacity: 0.6;
                     pointer-events: none;
+                    background: #fafafa;
                 }
 
                 .sb-header {
@@ -745,28 +766,38 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                     display: flex;
                     align-items: center;
                     gap: 16px;
-                    padding: 16px;
-                    background: none;
+                    padding: 18px 24px;
+                    background: white;
                     border: none;
                     text-align: left;
                     cursor: pointer;
+                    transition: background 0.2s;
+                }
+                
+                .sb-step.active .sb-header {
+                    background: #f8f9fa;
+                    border-bottom: 1px solid var(--border);
                 }
 
                 .sb-icon {
-                    width: 40px;
-                    height: 40px;
+                    width: 36px;
+                    height: 36px;
                     background: var(--surface-hover);
-                    border-radius: 10px;
+                    border-radius: 8px;
                     display: flex;
                     align-items: center;
                     justify-content: center;
                     color: var(--text-secondary);
                     transition: all 0.2s;
+                    flex-shrink: 0;
                 }
 
                 .sb-step.active .sb-icon {
                     background: var(--accent);
                     color: white;
+                    width: 42px;
+                    height: 42px;
+                    box-shadow: 0 2px 8px rgba(0, 113, 227, 0.2);
                 }
 
                 .sb-step.completed .sb-icon {
@@ -774,7 +805,7 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                     color: white;
                 }
 
-                .sb-info { flex: 1; }
+                .sb-info { flex: 1; min-width: 0; }
                 .sb-label { 
                     display: block; 
                     font-size: 11px; 
@@ -789,75 +820,104 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                     font-size: 15px; 
                     font-weight: 600; 
                     color: var(--text-primary); 
+                    white-space: nowrap;
+                    overflow: hidden;
+                    text-overflow: ellipsis;
                 }
 
                 .sb-badge {
                     background: var(--surface-hover);
                     padding: 4px 10px;
                     border-radius: 12px;
-                    font-size: 13px;
+                    font-size: 12px;
                     font-weight: 700;
                     color: var(--text-primary);
                 }
                 .sb-step.active .sb-badge {
-                    background: #f0f7ff;
+                    background: white;
                     color: var(--accent);
+                    box-shadow: 0 1px 2px rgba(0,0,0,0.05);
                 }
 
                 .sb-content {
-                    padding: 0 16px 16px 16px;
-                    border-top: 1px solid rgba(0,0,0,0.03);
-                    margin-top: 4px;
-                    animation: slideDown 0.3s ease;
+                    flex: 1; /* Fill remaining space in the step */
+                    overflow: hidden; /* Clip for inner scroll */
+                    display: flex;
+                    flex-direction: column;
+                    padding: 0; /* Inner padding handled by children */
+                    animation: fadeIn 0.3s ease;
+                }
+                
+                @keyframes fadeIn {
+                    from { opacity: 0; }
+                    to { opacity: 1; }
                 }
 
-                @keyframes slideDown {
-                    from { opacity: 0; transform: translateY(-10px); }
-                    to { opacity: 1; transform: translateY(0); }
+                /* WRAPPER FOR SCROLLABLE CONTENT */
+                .sb-scroll-area {
+                    flex: 1;
+                    overflow-y: auto;
+                    padding: 20px;
                 }
 
                 .sb-list {
-                    max-height: 240px;
-                    overflow-y: auto;
-                    margin-top: 16px;
                     display: flex;
                     flex-direction: column;
-                    gap: 4px;
+                    gap: 6px;
                 }
                 
                 .sb-item {
                     display: flex;
                     align-items: center;
                     gap: 12px;
-                    padding: 12px;
-                    border-radius: 8px;
+                    padding: 14px;
+                    border-radius: 10px;
                     cursor: pointer;
-                    transition: background 0.1s;
+                    transition: all 0.2s;
+                    border: 1px solid transparent;
+                    background: white;
+                    box-shadow: 0 1px 2px rgba(0,0,0,0.02);
                 }
 
-                .sb-item:hover { background: var(--surface-hover); }
-                .sb-item.selected { background: rgba(0, 113, 227, 0.08); }
+                .sb-item:hover { 
+                    border-color: var(--accent);
+                    transform: translateY(-1px);
+                    box-shadow: 0 4px 12px rgba(0,0,0,0.05);
+                    z-index: 1;
+                }
                 
-                .check-icon { font-size: 22px; color: var(--border); transition: color 0.2s; }
+                .sb-item.selected { 
+                    background: #f0f7ff;
+                    border-color: var(--accent);
+                }
+                
+                .check-icon { font-size: 24px; color: var(--border); transition: color 0.2s; }
                 .sb-item.selected .check-icon { color: var(--accent); }
 
-                .item-name { font-size: 14px; font-weight: 500; }
+                .item-name { font-size: 14px; font-weight: 600; color: var(--text-primary); }
                 .item-sub { font-size: 12px; color: var(--text-secondary); margin-top: 2px; }
+                
+                /* FIXED BOTTOM BAR IN STEP */
+                .sb-actions {
+                    padding: 16px 24px;
+                    background: white;
+                    border-top: 1px solid var(--border);
+                    display: flex;
+                    align-items: center;
+                    justify-content: space-between;
+                }
 
                 .sb-next-btn {
-                    width: 100%;
-                    margin-top: 16px;
-                    padding: 12px;
+                    padding: 10px 20px;
                     background: var(--text-primary);
                     color: white;
                     border: none;
-                    border-radius: 10px;
-                    font-size: 14px;
+                    border-radius: 8px;
+                    font-size: 13px;
                     font-weight: 600;
                     cursor: pointer;
                     display: flex;
                     align-items: center;
-                    justify-content: center;
                     gap: 8px;
                     transition: transform 0.1s;
                 }
@@ -865,39 +925,45 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                 .sb-next-btn:hover { background: black; transform: translateY(-1px); }
 
                 /* PRODUCTS STEP EXTRAS */
-                .sb-toolbar { display: flex; justify-content: space-between; align-items: center; margin-top: 8px; margin-bottom: 8px; }
-                .text-btn { background: none; border: none; font-size: 12px; font-weight: 600; color: var(--accent); cursor: pointer; padding: 4px 8px; border-radius: 4px; }
+                .sb-toolbar { padding: 0 24px 12px 24px; display: flex; justify-content: space-between; align-items: center; background: #f8f9fa; border-bottom: 1px solid var(--border); }
+                .text-btn { background: none; border: none; font-size: 12px; font-weight: 600; color: var(--accent); cursor: pointer; padding: 6px 10px; border-radius: 6px; }
                 .text-btn:hover { background: rgba(0, 113, 227, 0.05); }
                 .text-btn.danger { color: var(--danger); }
                 .text-btn.danger:hover { background: rgba(255, 59, 48, 0.05); }
                 
+                .sb-search-container {
+                    padding: 16px 24px 12px 24px;
+                    background: #f8f9fa;
+                }
+
                 .sb-search {
                     display: flex;
                     align-items: center;
                     gap: 10px;
-                    background: var(--surface-hover);
+                    background: white;
                     padding: 10px 12px;
                     border-radius: 8px;
-                    border: 1px solid transparent;
+                    border: 1px solid var(--border);
                     transition: border-color 0.2s;
                 }
-                .sb-search:focus-within { border-color: var(--accent); background: white; }
+                .sb-search:focus-within { border-color: var(--accent); }
                 .sb-search input { border: none; background: none; font-size: 13px; width: 100%; outline: none; }
 
                 /* PROCESSES STEP EXTRAS */
-                .sb-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
-                .sb-chip { display: flex; align-items: center; gap: 6px; padding: 6px 10px; background: var(--accent); color: white; border-radius: 20px; font-size: 12px; font-weight: 500; }
-                .sb-chip button { background: none; border: none; color: white; cursor: pointer; font-size: 14px; display: flex; align-items: center; opacity: 0.8; }
-                .sb-chip button:hover { opacity: 1; }
+                .sb-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 20px; }
+                .sb-chip { display: flex; align-items: center; gap: 6px; padding: 8px 12px; background: white; color: var(--text-primary); border: 1px solid var(--border); border-radius: 20px; font-size: 13px; font-weight: 500; }
+                .sb-chip button { background: none; border: none; color: var(--text-secondary); cursor: pointer; font-size: 16px; display: flex; align-items: center; }
+                .sb-chip button:hover { color: var(--danger); }
                 
-                .sb-add-row { display: flex; gap: 8px; margin-top: 12px; }
-                .sb-add-row input { flex: 1; padding: 10px; border: 1px solid var(--border); border-radius: 8px; font-size: 13px; }
-                .sb-add-row button { width: 40px; background: var(--accent); color: white; border: none; border-radius: 8px; cursor: pointer; font-size: 20px; display: flex; align-items: center; justify-content: center; }
+                .sb-add-row { display: flex; gap: 8px; }
+                .sb-add-row input { flex: 1; padding: 12px; border: 1px solid var(--border); border-radius: 8px; font-size: 14px; }
+                .sb-add-row button { width: 48px; background: var(--accent); color: white; border: none; border-radius: 8px; cursor: pointer; font-size: 24px; display: flex; align-items: center; justify-content: center; }
 
                 /* DETAILS STEP EXTRAS */
-                .sb-form label { display: block; font-size: 12px; font-weight: 600; margin: 16px 0 6px 0; color: var(--text-secondary); }
-                .sb-form input, .sb-form textarea { width: 100%; padding: 12px; border: 1px solid var(--border); border-radius: 8px; font-size: 14px; font-family: inherit; background: var(--surface); transition: border-color 0.2s; }
-                .sb-form input:focus, .sb-form textarea:focus { border-color: var(--accent); background: white; outline: none; }
+                .sb-form label { display: block; font-size: 12px; font-weight: 600; margin: 0 0 8px 0; color: var(--text-secondary); }
+                .sb-form-group { margin-bottom: 20px; }
+                .sb-form input, .sb-form textarea { width: 100%; padding: 12px; border: 1px solid var(--border); border-radius: 8px; font-size: 14px; font-family: inherit; background: white; transition: border-color 0.2s; }
+                .sb-form input:focus, .sb-form textarea:focus { border-color: var(--accent); outline: none; }
 
                 /* RESULT AREA */
                 .wo-result-area {
