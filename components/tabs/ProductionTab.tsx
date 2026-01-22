@@ -30,12 +30,13 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
 
     // Create Modal State
     const [createModal, setCreateModal] = useState(false);
-    const [selectedProcesses, setSelectedProcesses] = useState<string[]>([]);
+    const [selectedProcesses, setSelectedProcesses] = useState<string[]>(['Rezanje', 'Kantiranje', 'Bušenje', 'Sklapanje']);
+    const [customProcessInput, setCustomProcessInput] = useState('');
     const [selectedProducts, setSelectedProducts] = useState<ProductSelection[]>([]);
     const [dueDate, setDueDate] = useState('');
     const [notes, setNotes] = useState('');
     const [productSearch, setProductSearch] = useState('');
-    const [projectFilter, setProjectFilter] = useState('');
+    const [selectedProjectIds, setSelectedProjectIds] = useState<string[]>([]);
 
     // View Modal
     const [viewModal, setViewModal] = useState(false);
@@ -48,42 +49,25 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
     });
 
     const eligibleProducts = useMemo(() => {
-        if (selectedProcesses.length === 0) return [];
-
-        const eligibilityMap: Record<string, string[]> = {
-            'Rezanje': ['Na čekanju', 'Materijali naručeni', 'Materijali spremni'],
-            'Kantiranje': ['Rezanje'],
-            'Bušenje': ['Kantiranje'],
-            'Sklapanje': ['Bušenje'],
-        };
-
-        const processOrder = ['Rezanje', 'Kantiranje', 'Bušenje', 'Sklapanje'];
-        const earliestProcess = selectedProcesses.sort((a, b) =>
-            processOrder.indexOf(a) - processOrder.indexOf(b)
-        )[0];
-
-        const eligibleStatuses = eligibilityMap[earliestProcess] || [];
         let products: any[] = [];
 
         projects.forEach(project => {
+            // If projects are selected, only show products from those projects
+            if (selectedProjectIds.length > 0 && !selectedProjectIds.includes(project.Project_ID)) {
+                return;
+            }
+
             (project.products || []).forEach(product => {
-                if (eligibleStatuses.includes(product.Status)) {
-                    products.push({
-                        Product_ID: product.Product_ID,
-                        Product_Name: product.Name,
-                        Project_ID: project.Project_ID,
-                        Project_Name: project.Client_Name,
-                        Quantity: product.Quantity || 1,
-                        Status: product.Status,
-                    });
-                }
+                products.push({
+                    Product_ID: product.Product_ID,
+                    Product_Name: product.Name,
+                    Project_ID: project.Project_ID,
+                    Project_Name: project.Client_Name,
+                    Quantity: product.Quantity || 1,
+                    Status: product.Status,
+                });
             });
         });
-
-        // Apply filtering
-        if (projectFilter) {
-            products = products.filter(p => p.Project_ID === projectFilter);
-        }
 
         if (productSearch.trim()) {
             const search = productSearch.toLowerCase();
@@ -94,7 +78,7 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
         }
 
         return products;
-    }, [projects, selectedProcesses, projectFilter, productSearch]);
+    }, [projects, selectedProjectIds, productSearch]);
 
     function getStatusClass(status: string): string {
         return 'status-' + status.toLowerCase()
@@ -112,20 +96,58 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
     }
 
     function openCreateModal() {
-        setSelectedProcesses(['Rezanje']);
+        setSelectedProcesses(['Rezanje', 'Kantiranje', 'Bušenje', 'Sklapanje']);
         setSelectedProducts([]);
         setDueDate('');
         setNotes('');
         setProductSearch('');
-        setProjectFilter('');
+        setSelectedProjectIds([]);
         setCreateModal(true);
     }
 
     function toggleProcess(process: string) {
         if (selectedProcesses.includes(process)) {
-            setSelectedProcesses(selectedProcesses.filter(p => p !== process));
+            const newProcesses = selectedProcesses.filter(p => p !== process);
+            setSelectedProcesses(newProcesses);
+            // Remove assignment from products
+            setSelectedProducts(selectedProducts.map(p => {
+                const newAssignments = { ...p.assignments };
+                delete newAssignments[process];
+                return { ...p, assignments: newAssignments };
+            }));
         } else {
             setSelectedProcesses([...selectedProcesses, process]);
+            // Add empty assignment to products
+            setSelectedProducts(selectedProducts.map(p => ({
+                ...p,
+                assignments: { ...p.assignments, [process]: '' }
+            })));
+        }
+    }
+
+    function addCustomProcess() {
+        const proc = customProcessInput.trim();
+        if (!proc) return;
+        if (selectedProcesses.includes(proc)) {
+            showToast('Proces već postoji', 'error');
+            return;
+        }
+        setSelectedProcesses([...selectedProcesses, proc]);
+        // Add to products
+        setSelectedProducts(selectedProducts.map(p => ({
+            ...p,
+            assignments: { ...p.assignments, [proc]: '' }
+        })));
+        setCustomProcessInput('');
+    }
+
+    function toggleProjectSelection(projectId: string) {
+        if (selectedProjectIds.includes(projectId)) {
+            setSelectedProjectIds(selectedProjectIds.filter(id => id !== projectId));
+            // Also remove products belonging to this project from selection
+            setSelectedProducts(selectedProducts.filter(p => p.Project_ID !== projectId));
+        } else {
+            setSelectedProjectIds([...selectedProjectIds, projectId]);
         }
     }
 
@@ -309,69 +331,69 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                 <div className="create-layout">
                     {/* Sidebar */}
                     <div className="sidebar">
-                        {/* Processes */}
+                        {/* Step 1: Projects */}
                         <div className="sidebar-section">
-                            <h4>Proizvodni koraci</h4>
-                            <div className="process-pills">
-                                {PRODUCTION_STEPS.map(proc => (
-                                    <button
-                                        key={proc}
-                                        className={`process-pill ${selectedProcesses.includes(proc) ? 'active' : ''}`}
-                                        onClick={() => toggleProcess(proc)}
-                                    >
-                                        <span className="material-icons-round">
-                                            {proc === 'Rezanje' ? 'content_cut' : proc === 'Kantiranje' ? 'border_style' : proc === 'Bušenje' ? 'architecture' : 'handyman'}
-                                        </span>
-                                        {proc}
-                                        {selectedProcesses.includes(proc) && <span className="material-icons-round check">check</span>}
-                                    </button>
-                                ))}
+                            <div className="section-header">
+                                <h4>1. Odaberi Projekte ({selectedProjectIds.length})</h4>
+                                {selectedProjectIds.length > 0 && (
+                                    <button className="link-btn" onClick={() => {
+                                        setSelectedProjectIds([]);
+                                        setSelectedProducts([]);
+                                    }}>Očisti</button>
+                                )}
+                            </div>
+                            <div className="projects-selection-list">
+                                {projects.map(project => {
+                                    const isSelected = selectedProjectIds.includes(project.Project_ID);
+                                    return (
+                                        <div
+                                            key={project.Project_ID}
+                                            className={`project-selection-item ${isSelected ? 'active' : ''}`}
+                                            onClick={() => toggleProjectSelection(project.Project_ID)}
+                                        >
+                                            <span className="material-icons-round">
+                                                {isSelected ? 'check_circle' : 'radio_button_unchecked'}
+                                            </span>
+                                            <div className="project-info">
+                                                <div className="project-name">{project.Client_Name}</div>
+                                                <div className="project-count">{(project.products || []).length} proizvoda</div>
+                                            </div>
+                                        </div>
+                                    );
+                                })}
                             </div>
                         </div>
 
-                        {/* Products List */}
+                        {/* Step 2: Products */}
                         <div className="sidebar-section products-section">
                             <div className="section-header">
-                                <h4>Proizvodi ({selectedProducts.length})</h4>
+                                <h4>2. Odaberi Proizvode ({selectedProducts.length})</h4>
                                 {eligibleProducts.length > 0 && (
                                     <button className="link-btn" onClick={selectAllProducts}>Odaberi sve</button>
                                 )}
                             </div>
-                            {/* Filters */}
-                            <div className="filter-controls">
-                                <div className="search-input-wrapper">
-                                    <span className="material-icons-round">search</span>
-                                    <input
-                                        type="text"
-                                        placeholder="Pretraži proizvode..."
-                                        value={productSearch}
-                                        onChange={(e) => setProductSearch(e.target.value)}
-                                        className="search-input"
-                                    />
-                                    {productSearch && (
-                                        <button className="clear-btn" onClick={() => setProductSearch('')}>
-                                            <span className="material-icons-round">close</span>
-                                        </button>
-                                    )}
-                                </div>
-                                <select
-                                    className="project-filter"
-                                    value={projectFilter}
-                                    onChange={(e) => setProjectFilter(e.target.value)}
-                                >
-                                    <option value="">Svi projekti</option>
-                                    {projects.map(proj => (
-                                        <option key={proj.Project_ID} value={proj.Project_ID}>
-                                            {proj.Client_Name}
-                                        </option>
-                                    ))}
-                                </select>
+
+                            <div className="search-input-wrapper">
+                                <span className="material-icons-round">search</span>
+                                <input
+                                    type="text"
+                                    placeholder="Pretraži proizvode..."
+                                    value={productSearch}
+                                    onChange={(e) => setProductSearch(e.target.value)}
+                                    className="search-input"
+                                />
+                                {productSearch && (
+                                    <button className="clear-btn" onClick={() => setProductSearch('')}>
+                                        <span className="material-icons-round">close</span>
+                                    </button>
+                                )}
                             </div>
+
                             <div className="products-list">
-                                {eligibleProducts.length === 0 ? (
-                                    <div className="empty-message">
-                                        {selectedProcesses.length === 0 ? 'Odaberi proizvodni korak' : 'Nema dostupnih proizvoda'}
-                                    </div>
+                                {selectedProjectIds.length === 0 ? (
+                                    <div className="empty-message">Prvo odaberi projekat</div>
+                                ) : eligibleProducts.length === 0 ? (
+                                    <div className="empty-message">Nema dostupnih proizvoda</div>
                                 ) : (
                                     eligibleProducts.map(product => {
                                         const isSelected = selectedProducts.some(p => p.Product_ID === product.Product_ID);
@@ -386,12 +408,43 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                                                 </span>
                                                 <div className="product-content">
                                                     <div className="product-name">{product.Product_Name}</div>
-                                                    <div className="product-meta">{product.Project_Name}</div>
+                                                    <div className="product-meta">{product.Project_Name} • {product.Status}</div>
                                                 </div>
                                             </div>
                                         );
                                     })
                                 )}
+                            </div>
+                        </div>
+
+                        {/* Step 3: Processes */}
+                        <div className="sidebar-section">
+                            <h4>3. Proizvodni Procesi</h4>
+                            <div className="process-pills">
+                                {selectedProcesses.map(proc => (
+                                    <div key={proc} className="process-pill active">
+                                        <span className="material-icons-round">
+                                            {proc === 'Rezanje' ? 'content_cut' : proc === 'Kantiranje' ? 'border_style' : proc === 'Bušenje' ? 'architecture' : proc === 'Sklapanje' ? 'handyman' : 'settings'}
+                                        </span>
+                                        {proc}
+                                        <button className="remove-proc" onClick={() => toggleProcess(proc)}>
+                                            <span className="material-icons-round">close</span>
+                                        </button>
+                                    </div>
+                                ))}
+
+                                <div className="add-custom-process">
+                                    <input
+                                        type="text"
+                                        placeholder="Dodaj novi proces..."
+                                        value={customProcessInput}
+                                        onChange={(e) => setCustomProcessInput(e.target.value)}
+                                        onKeyPress={(e) => e.key === 'Enter' && addCustomProcess()}
+                                    />
+                                    <button onClick={addCustomProcess}>
+                                        <span className="material-icons-round">add</span>
+                                    </button>
+                                </div>
                             </div>
                         </div>
 
@@ -412,13 +465,36 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                     {/* Main Area - Assignments */}
                     <div className="main-area">
                         <div className="assignments-header">
-                            <h3>Dodjela radnika <span className="count">{selectedProducts.length} proizvoda × {selectedProcesses.length} procesa</span></h3>
+                            <div className="header-info">
+                                <h3>Dodjela radnika</h3>
+                                <p className="subtitle">{selectedProducts.length} proizvoda × {selectedProcesses.length} procesa</p>
+                            </div>
+
+                            {selectedProducts.length > 0 && (
+                                <div className="header-actions">
+                                    <select
+                                        className="global-assign"
+                                        onChange={(e) => {
+                                            if (e.target.value) {
+                                                selectedProcesses.forEach(proc => assignWorkerToAll(proc, e.target.value));
+                                            }
+                                        }}
+                                        value=""
+                                    >
+                                        <option value="">Dodijeli sve svima...</option>
+                                        {workers.map(w => (
+                                            <option key={w.Worker_ID} value={w.Worker_ID}>{w.Name}</option>
+                                        ))}
+                                    </select>
+                                </div>
+                            )}
                         </div>
 
                         {selectedProducts.length === 0 ? (
                             <div className="empty-assignments">
                                 <span className="material-icons-round">person_add</span>
-                                <p>Odaberi proizvode sa lijeve strane</p>
+                                <p>Odaberi projekte i proizvode sa lijeve strane</p>
+                                <div className="hint">Prvo izaberi projekat, pa onda proizvode.</div>
                             </div>
                         ) : (
                             <div className="assignments-grid">
@@ -429,41 +505,46 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                                                 <strong>{product.Product_Name}</strong>
                                                 <span className="project-badge">{product.Project_Name}</span>
                                             </div>
-                                            <select
-                                                className="quick-assign"
-                                                onChange={(e) => e.target.value && assignWorkerToProduct(product.Product_ID, e.target.value)}
-                                                value=""
-                                            >
-                                                <option value="">Dodijeli svim procesima...</option>
-                                                {workers.map(w => (
-                                                    <option key={w.Worker_ID} value={w.Worker_ID}>{w.Name}</option>
-                                                ))}
-                                            </select>
+                                            <div className="card-actions">
+                                                <select
+                                                    className="quick-assign"
+                                                    onChange={(e) => e.target.value && assignWorkerToProduct(product.Product_ID, e.target.value)}
+                                                    value=""
+                                                >
+                                                    <option value="">Svi procesi...</option>
+                                                    {workers.map(w => (
+                                                        <option key={w.Worker_ID} value={w.Worker_ID}>{w.Name}</option>
+                                                    ))}
+                                                </select>
+                                                <button className="remove-product" onClick={() => toggleProduct(product)}>
+                                                    <span className="material-icons-round">close</span>
+                                                </button>
+                                            </div>
                                         </div>
                                         <div className="process-assignments">
                                             {selectedProcesses.map(proc => (
                                                 <div key={proc} className="process-row">
                                                     <div className="process-label">
                                                         <span className="material-icons-round">
-                                                            {proc === 'Rezanje' ? 'content_cut' : proc === 'Kantiranje' ? 'border_style' : proc === 'Bušenje' ? 'architecture' : 'handyman'}
+                                                            {proc === 'Rezanje' ? 'content_cut' : proc === 'Kantiranje' ? 'border_style' : proc === 'Bušenje' ? 'architecture' : proc === 'Sklapanje' ? 'handyman' : 'settings'}
                                                         </span>
-                                                        {proc}
+                                                        <span className="name">{proc}</span>
                                                     </div>
-                                                    <select
-                                                        value={product.assignments[proc] || ''}
-                                                        onChange={(e) => assignWorker(product.Product_ID, proc, e.target.value)}
-                                                        className="worker-select"
-                                                    >
-                                                        <option value="">-- Odaberi radnika --</option>
-                                                        {workers.map(w => (
-                                                            <option key={w.Worker_ID} value={w.Worker_ID}>{w.Name}</option>
-                                                        ))}
-                                                    </select>
-                                                    {product.assignments[proc] && (
-                                                        <span className="assigned-indicator">
-                                                            {workers.find(w => w.Worker_ID === product.assignments[proc])?.Name}
-                                                        </span>
-                                                    )}
+                                                    <div className="worker-selection-wrapper">
+                                                        <select
+                                                            value={product.assignments[proc] || ''}
+                                                            onChange={(e) => assignWorker(product.Product_ID, proc, e.target.value)}
+                                                            className={`worker-select ${product.assignments[proc] ? 'assigned' : ''}`}
+                                                        >
+                                                            <option value="">Odaberi radnika</option>
+                                                            {workers.map(w => (
+                                                                <option key={w.Worker_ID} value={w.Worker_ID}>{w.Name}</option>
+                                                            ))}
+                                                        </select>
+                                                        {product.assignments[proc] && (
+                                                            <span className="check-mark material-icons-round">check_circle</span>
+                                                        )}
+                                                    </div>
                                                 </div>
                                             ))}
                                         </div>
@@ -475,15 +556,24 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
 
                     {/* Footer */}
                     <div className="create-footer">
-                        <button className="btn" onClick={() => setCreateModal(false)}>Odustani</button>
-                        <button
-                            className="btn btn-primary btn-lg"
-                            onClick={handleCreateWorkOrder}
-                            disabled={selectedProducts.length === 0 || selectedProcesses.length === 0}
-                        >
-                            <span className="material-icons-round">add_task</span>
-                            Kreiraj radni nalog
-                        </button>
+                        <div className="footer-left">
+                            {selectedProducts.length > 0 && (
+                                <button className="btn btn-ghost" onClick={() => setSelectedProducts([])}>
+                                    Očisti sve proizvode
+                                </button>
+                            )}
+                        </div>
+                        <div className="footer-right">
+                            <button className="btn btn-secondary" onClick={() => setCreateModal(false)}>Odustani</button>
+                            <button
+                                className="btn btn-primary btn-lg"
+                                onClick={handleCreateWorkOrder}
+                                disabled={selectedProducts.length === 0 || selectedProcesses.length === 0}
+                            >
+                                <span className="material-icons-round">add_task</span>
+                                Kreiraj radni nalog
+                            </button>
+                        </div>
                     </div>
                 </div>
             </Modal>
@@ -611,6 +701,106 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                     margin-bottom: 12px;
                 }
 
+                .projects-selection-list {
+                    display: flex;
+                    flex-direction: column;
+                    gap: 6px;
+                    max-height: 200px;
+                    overflow-y: auto;
+                    padding-right: 4px;
+                }
+
+                .project-selection-item {
+                    display: flex;
+                    align-items: center;
+                    gap: 10px;
+                    padding: 8px 12px;
+                    background: var(--surface);
+                    border: 1px solid var(--border);
+                    border-radius: 8px;
+                    cursor: pointer;
+                    transition: all 0.2s;
+                }
+
+                .project-selection-item:hover {
+                    border-color: var(--accent);
+                }
+
+                .project-selection-item.active {
+                    background: rgba(0, 113, 227, 0.08);
+                    border-color: var(--accent);
+                }
+
+                .project-selection-item.active .material-icons-round {
+                    color: var(--accent);
+                }
+
+                .project-info {
+                    flex: 1;
+                    min-width: 0;
+                }
+
+                .project-info .project-name {
+                    font-weight: 500;
+                    font-size: 13px;
+                    white-space: nowrap;
+                    overflow: hidden;
+                    text-overflow: ellipsis;
+                }
+
+                .project-info .project-count {
+                    font-size: 11px;
+                    color: var(--text-secondary);
+                }
+
+                .add-custom-process {
+                    display: flex;
+                    gap: 8px;
+                    margin-top: 8px;
+                }
+
+                .add-custom-process input {
+                    flex: 1;
+                    padding: 8px 12px;
+                    border: 1px solid var(--border);
+                    border-radius: 6px;
+                    font-size: 13px;
+                    background: var(--surface);
+                }
+
+                .add-custom-process button {
+                    background: var(--accent);
+                    color: white;
+                    border: none;
+                    border-radius: 6px;
+                    width: 34px;
+                    height: 34px;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    cursor: pointer;
+                }
+
+                .process-pill .remove-proc {
+                    background: none;
+                    border: none;
+                    color: white;
+                    opacity: 0.7;
+                    cursor: pointer;
+                    display: flex;
+                    align-items: center;
+                    margin-left: 4px;
+                    padding: 0;
+                }
+
+                .process-pill .remove-proc:hover {
+                    opacity: 1;
+                }
+
+                .process-pill .remove-proc .material-icons-round {
+                    font-size: 14px;
+                }
+
                 .search-input-wrapper {
                     position: relative;
                     display: flex;
@@ -620,6 +810,7 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                     border-radius: 8px;
                     padding: 8px 12px;
                     transition: border-color 0.2s;
+                    margin-bottom: 12px;
                 }
 
                 .search-input-wrapper:focus-within {
@@ -788,7 +979,12 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                 }
 
                 .assignments-header {
+                    display: flex;
+                    justify-content: space-between;
+                    align-items: center;
                     margin-bottom: 24px;
+                    padding-bottom: 20px;
+                    border-bottom: 1px solid var(--border);
                 }
 
                 .assignments-header h3 {
@@ -797,10 +993,20 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                     font-weight: 600;
                 }
 
-                .assignments-header .count {
-                    font-weight: 400;
+                .assignments-header .subtitle {
+                    margin: 4px 0 0 0;
                     color: var(--text-secondary);
-                    font-size: 16px;
+                    font-size: 14px;
+                }
+
+                .global-assign {
+                    padding: 8px 12px;
+                    border: 1px solid var(--accent);
+                    border-radius: 8px;
+                    background: var(--surface);
+                    color: var(--accent);
+                    font-weight: 500;
+                    cursor: pointer;
                 }
 
                 .empty-assignments {
@@ -810,6 +1016,7 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                     justify-content: center;
                     padding: 80px 20px;
                     color: var(--text-secondary);
+                    text-align: center;
                 }
 
                 .empty-assignments .material-icons-round {
@@ -818,91 +1025,138 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                     margin-bottom: 16px;
                 }
 
+                .empty-assignments .hint {
+                    font-size: 13px;
+                    margin-top: 8px;
+                    opacity: 0.7;
+                }
+
                 .assignments-grid {
                     display: grid;
-                    grid-template-columns: repeat(auto-fill, minmax(400px, 1fr));
-                    gap: 16px;
+                    grid-template-columns: repeat(auto-fill, minmax(380px, 1fr));
+                    gap: 20px;
+                    padding-bottom: 40px;
                 }
 
                 .product-assignment-card {
                     background: var(--surface);
                     border: 1px solid var(--border);
                     border-radius: 12px;
-                    padding: 16px;
+                    padding: 0;
+                    overflow: hidden;
+                    display: flex;
+                    flex-direction: column;
+                    transition: all 0.2s;
+                }
+
+                .product-assignment-card:hover {
+                    border-color: var(--accent);
+                    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
                 }
 
                 .card-header {
                     display: flex;
                     justify-content: space-between;
-                    align-items: flex-start;
-                    gap: 12px;
-                    margin-bottom: 16px;
-                    padding-bottom: 12px;
+                    align-items: center;
+                    padding: 12px 16px;
+                    background: var(--surface-hover);
                     border-bottom: 1px solid var(--border);
                 }
 
                 .product-title {
                     display: flex;
                     flex-direction: column;
-                    gap: 4px;
+                    gap: 2px;
                     flex: 1;
+                    min-width: 0;
                 }
 
                 .product-title strong {
-                    font-size: 15px;
+                    font-size: 14px;
+                    white-space: nowrap;
+                    overflow: hidden;
+                    text-overflow: ellipsis;
                 }
 
                 .project-badge {
-                    font-size: 12px;
+                    font-size: 11px;
                     color: var(--text-secondary);
                 }
 
+                .card-actions {
+                    display: flex;
+                    align-items: center;
+                    gap: 8px;
+                }
+
                 .quick-assign {
-                    padding: 6px 10px;
+                    padding: 4px 8px;
                     border: 1px solid var(--border);
                     border-radius: 6px;
-                    background: var(--surface-hover);
-                    font-size: 12px;
+                    background: var(--surface);
+                    font-size: 11px;
                     cursor: pointer;
                 }
 
-                .quick-assign:focus {
-                    outline: none;
-                    border-color: var(--accent);
+                .remove-product {
+                    background: none;
+                    border: none;
+                    color: var(--text-secondary);
+                    cursor: pointer;
+                    display: flex;
+                    padding: 2px;
+                }
+
+                .remove-product:hover {
+                    color: var(--danger);
                 }
 
                 .process-assignments {
+                    padding: 12px 16px;
                     display: flex;
                     flex-direction: column;
-                    gap: 12px;
+                    gap: 8px;
                 }
 
                 .process-row {
-                    display: grid;
-                    grid-template-columns: 140px 1fr auto;
+                    display: flex;
+                    justify-content: space-between;
                     align-items: center;
                     gap: 12px;
+                    padding: 4px 0;
                 }
 
                 .process-label {
                     display: flex;
                     align-items: center;
                     gap: 8px;
-                    font-weight: 500;
                     font-size: 13px;
+                    font-weight: 500;
+                    flex: 1;
                 }
 
                 .process-label .material-icons-round {
                     font-size: 18px;
                     color: var(--accent);
+                    opacity: 0.8;
+                }
+
+                .worker-selection-wrapper {
+                    position: relative;
+                    display: flex;
+                    align-items: center;
+                    width: 180px;
                 }
 
                 .worker-select {
-                    padding: 8px 12px;
+                    width: 100%;
+                    padding: 6px 10px;
                     border: 1px solid var(--border);
                     border-radius: 8px;
                     background: var(--surface);
-                    font-size: 13px;
+                    font-size: 12px;
+                    cursor: pointer;
+                    transition: all 0.2s;
                 }
 
                 .worker-select:focus {
@@ -910,10 +1164,17 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                     border-color: var(--accent);
                 }
 
-                .assigned-indicator {
-                    font-size: 12px;
+                .worker-select.assigned {
+                    border-color: var(--success);
+                    background: rgba(52, 199, 89, 0.05);
+                }
+
+                .check-mark {
+                    position: absolute;
+                    right: 8px;
+                    font-size: 16px;
                     color: var(--success);
-                    font-weight: 500;
+                    pointer-events: none;
                 }
 
                 .create-footer {
@@ -921,9 +1182,41 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                     grid-row: 2 / 3;
                     display: flex;
                     justify-content: space-between;
+                    align-items: center;
                     padding: 16px 24px;
                     border-top: 1px solid var(--border);
                     background: var(--surface);
+                }
+
+                .footer-right {
+                    display: flex;
+                    gap: 12px;
+                }
+
+                .btn-ghost {
+                    background: none;
+                    border: 1px solid transparent;
+                    color: var(--text-secondary);
+                }
+
+                .btn-ghost:hover {
+                    color: var(--danger);
+                }
+
+                .btn-secondary {
+                    background: var(--surface-hover);
+                    border: 1px solid var(--border);
+                    color: var(--text-primary);
+                }
+
+                @media (max-width: 1200px) {
+                    .create-layout {
+                        grid-template-columns: 320px 1fr;
+                    }
+
+                    .assignments-grid {
+                        grid-template-columns: 1fr;
+                    }
                 }
 
                 .btn-lg {
