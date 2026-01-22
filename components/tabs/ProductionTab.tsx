@@ -735,8 +735,9 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                     border-right: 1px solid var(--border);
                     display: flex;
                     flex-direction: column;
-                    overflow: hidden; /* Disable overall scroll */
-                    padding: 0; /* Remove padding to flush with edges */
+                    overflow: hidden;
+                    padding: 0;
+                    height: 100%; /* Critical: provides height context for flex children */
                 }
 
                 .sb-step {
@@ -744,15 +745,18 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                     border-bottom: 1px solid var(--border);
                     display: flex;
                     flex-direction: column;
-                    flex-shrink: 0; /* Header mode */
+                    flex-shrink: 1; /* Allow shrinking when another is active */
+                    flex-grow: 0;
                     transition: all 0.3s ease;
                     overflow: hidden;
+                    min-height: 0; /* Critical for flex shrinking */
                 }
 
                 .sb-step.active {
-                    flex: 1; /* Grow to fill space */
+                    flex-grow: 1; /* Grow to fill space */
+                    flex-shrink: 0; /* Don't shrink when active */
                     background: #f8f9fa;
-                    box-shadow: inset 0 2px 6px rgba(0,0,0,0.02);
+                    min-height: 200px; /* Minimum usable height */
                 }
 
                 .sb-step.disabled {
@@ -857,7 +861,8 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                 .sb-scroll-area {
                     flex: 1;
                     overflow-y: auto;
-                    padding: 20px;
+                    padding: 16px 20px;
+                    min-height: 0; /* Critical: allows flex child to scroll */
                 }
 
                 .sb-list {
