@@ -22,7 +22,7 @@ export default function WorkOrderPrintTemplate({ workOrder, companyName = 'ERP S
     }
 
     return (
-        <>
+        <div className="print-wrapper">
             {/* Print Controls (hidden when printing) */}
             <div className="print-controls no-print">
                 <h3>Opcije Printa</h3>
@@ -50,401 +50,419 @@ export default function WorkOrderPrintTemplate({ workOrder, companyName = 'ERP S
                 </button>
             </div>
 
-            {/* Print Template */}
-            <div className="print-template">
-                {/* Header */}
-                <div className="print-header">
-                    <div className="header-left">
-                        <h1>{companyName}</h1>
-                        <p className="header-subtitle">Radni Nalog</p>
-                    </div>
-                    <div className="header-right">
-                        <div className="header-info">
-                            <span className="info-label">Broj naloga:</span>
-                            <span className="info-value">{workOrder.Work_Order_Number}</span>
+            {/* A4 Page Container */}
+            <div className="page-container">
+                <div className="print-content">
+                    {/* Header Section */}
+                    <div className="doc-header">
+                        <div className="company-section">
+                            <h1 className="company-name">{companyName}</h1>
+                            <div className="company-details">
+                                <p>Adresa bb</p>
+                                <p>75000 Tuzla</p>
+                                <p>Tel: +387 61 123 456</p>
+                            </div>
                         </div>
-                        <div className="header-info">
-                            <span className="info-label">Datum izdavanja:</span>
-                            <span className="info-value">{formatDate(workOrder.Created_Date)}</span>
-                        </div>
-                        <div className="header-info">
-                            <span className="info-label">Očekivani završetak:</span>
-                            <span className="info-value">{formatDate(workOrder.Due_Date)}</span>
+                        <div className="doc-meta">
+                            <div className="doc-title-box">
+                                <h2>RADNI NALOG</h2>
+                                <span className="doc-number">#{workOrder.Work_Order_Number}</span>
+                            </div>
+                            <div className="meta-grid">
+                                <div className="meta-item">
+                                    <span className="label">Datum izdavanja:</span>
+                                    <span className="value">{formatDate(workOrder.Created_Date)}</span>
+                                </div>
+                                <div className="meta-item">
+                                    <span className="label">Rok isporuke:</span>
+                                    <span className="value">{formatDate(workOrder.Due_Date)}</span>
+                                </div>
+                                <div className="meta-item">
+                                    <span className="label">Status:</span>
+                                    <span className="value status">{workOrder.Status}</span>
+                                </div>
+                            </div>
                         </div>
                     </div>
-                </div>
 
-                {/* Notes (if present) */}
-                {workOrder.Notes && (
-                    <div className="print-notes">
-                        <strong>Napomena:</strong> {workOrder.Notes}
+                    <div className="divider-line"></div>
+
+                    {/* Client / Project Info */}
+                    <div className="client-section">
+                        <div className="section-title">PODACI O NALOGU</div>
+                        {/* We can use first item to get project info since all items usually belong to same project context in this view 
+                             or if mixed, display general info. Assumption: Work Order is usually per project or clients are mixed. 
+                             Based on current types, items have Project Info. Let's list unique projects if multiple. 
+                         */}
+                        <div className="client-grid">
+                            <div className="client-item">
+                                <span className="label">Klijent / Projekat:</span>
+                                <span className="value">
+                                    {Array.from(new Set(workOrder.items?.map(i => i.Project_Name))).join(', ') || 'Generalno'}
+                                </span>
+                            </div>
+                            {workOrder.Notes && (
+                                <div className="client-item full-width">
+                                    <span className="label">Napomena:</span>
+                                    <span className="value note-text">{workOrder.Notes}</span>
+                                </div>
+                            )}
+                        </div>
                     </div>
-                )}
 
-                {/* Main Products Table with Nested Materials */}
-                <table className="print-table">
-                    <thead>
-                        <tr>
-                            <th className="col-rb">RB</th>
-                            <th className="col-product">Proizvod / Materijal</th>
-                            <th className="col-qty">Količina</th>
-                            {!showMaterials && <th className="col-project">Projekat</th>}
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {workOrder.items?.map((item, index) => (
-                            <>
-                                {/* Product Row */}
-                                <tr key={item.ID} className="product-row">
-                                    <td className="col-rb">{index + 1}</td>
-                                    <td className="col-product">
-                                        <strong>{item.Product_Name}</strong>
-                                    </td>
-                                    <td className="col-qty">{item.Quantity} kom</td>
-                                    {!showMaterials && <td className="col-project">{item.Project_Name}</td>}
-                                </tr>
-
-                                {/* Materials Sub-Rows (Nested) */}
-                                {showMaterials && item.materials && item.materials.length > 0 && (
-                                    <>
-                                        <tr className="materials-header">
-                                            <td colSpan={4}>
-                                                <div className="materials-title">
-                                                    <span className="material-icons-round">inventory_2</span>
-                                                    Materijali (Projekat: {item.Project_Name})
-                                                </div>
-                                            </td>
-                                        </tr>
-                                        {item.materials.map((material: any, mIdx: number) => (
-                                            <tr key={`${item.ID}-mat-${mIdx}`} className="material-row">
-                                                <td className="col-rb"></td>
-                                                <td className="col-product material-indent">
-                                                    • {material.Material_Name}
-                                                    {material.Supplier && ` (${material.Supplier})`}
-                                                </td>
-                                                <td className="col-qty">
-                                                    {material.Quantity} {material.Unit}
-                                                </td>
-                                                <td className="col-project"></td>
-                                            </tr>
-                                        ))}
-                                    </>
-                                )}
-                            </>
-                        ))}
-                    </tbody>
-                </table>
-
-                {/* Optional Processes Section */}
-                {showProcesses && (
-                    <div className="processes-section">
-                        <h3>Procesi</h3>
-                        <table className="process-table">
+                    {/* Main Items Table */}
+                    <div className="table-section">
+                        <table className="doc-table">
                             <thead>
                                 <tr>
-                                    <th>Proizvod</th>
-                                    {workOrder.Production_Steps.map(step => (
-                                        <th key={step}>{step}</th>
-                                    ))}
+                                    <th className="w-rb">#</th>
+                                    <th className="w-product">PROIZVOD / OBRADA</th>
+                                    <th className="w-qty text-right">KOLIČINA</th>
                                 </tr>
                             </thead>
                             <tbody>
-                                {workOrder.items?.map(item => (
-                                    <tr key={item.ID}>
-                                        <td><strong>{item.Product_Name}</strong></td>
-                                        {workOrder.Production_Steps.map(process => {
-                                            const assignment = item.Process_Assignments?.[process];
-                                            return (
-                                                <td key={process}>
-                                                    {assignment?.Worker_Name ? (
-                                                        <div className="worker-assignment">
-                                                            <span className="worker-icon">👤</span>
-                                                            {assignment.Worker_Name}
-                                                        </div>
-                                                    ) : (
-                                                        <span className="not-assigned">—</span>
-                                                    )}
-                                                </td>
-                                            );
-                                        })}
-                                    </tr>
+                                {workOrder.items?.map((item, index) => (
+                                    <>
+                                        <tr key={item.ID} className="row-product">
+                                            <td className="w-rb">{index + 1}</td>
+                                            <td className="w-product">
+                                                <div className="product-name">{item.Product_Name}</div>
+                                                <div className="product-sub">{item.Project_Name}</div>
+                                            </td>
+                                            <td className="w-qty text-right">{item.Quantity} kom</td>
+                                        </tr>
+                                        {showMaterials && item.materials && item.materials.length > 0 && (
+                                            <>
+                                                <tr className="row-materials-header">
+                                                    <td></td>
+                                                    <td colSpan={2} className="mat-header-cell">
+                                                        <span>MATERIJALI I DIJELOVI</span>
+                                                    </td>
+                                                </tr>
+                                                {item.materials.map((mat, mIdx) => (
+                                                    <tr key={`${item.ID}-mat-${mIdx}`} className="row-material">
+                                                        <td></td>
+                                                        <td className="mat-name">
+                                                            • {mat.Material_Name}
+                                                            {mat.Supplier && <span className="supplier-hint">({mat.Supplier})</span>}
+                                                        </td>
+                                                        <td className="text-right mat-qty">
+                                                            {mat.Quantity} {mat.Unit}
+                                                        </td>
+                                                    </tr>
+                                                ))}
+                                                <tr className="spacer-row"><td colSpan={3}></td></tr>
+                                            </>
+                                        )}
+                                    </>
                                 ))}
                             </tbody>
                         </table>
                     </div>
-                )}
 
-                {/* Signature Section */}
-                <div className="signature-section">
-                    <div className="signature-box">
-                        <div className="signature-label">Izdao:</div>
-                        <div className="signature-line">_______________________</div>
-                    </div>
-                    <div className="signature-box">
-                        <div className="signature-label">Primio:</div>
-                        <div className="signature-line">_______________________</div>
-                    </div>
-                    <div className="signature-box">
-                        <div className="signature-label">Datum:</div>
-                        <div className="signature-line">_______________________</div>
+                    {/* Worker Processes Section (Optional) */}
+                    {showProcesses && (
+                        <div className="processes-section">
+                            <div className="section-title">PROCESI I ZADUŽENJA</div>
+                            <table className="doc-table processes-table">
+                                <thead>
+                                    <tr>
+                                        <th>PROIZVOD</th>
+                                        {workOrder.Production_Steps.map(step => (
+                                            <th key={step} className="text-center">{step.toUpperCase()}</th>
+                                        ))}
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {workOrder.items?.map(item => (
+                                        <tr key={`proc-${item.ID}`}>
+                                            <td className="proc-prod-name">{item.Product_Name}</td>
+                                            {workOrder.Production_Steps.map(step => {
+                                                const assignment = item.Process_Assignments?.[step];
+                                                return (
+                                                    <td key={step} className="text-center">
+                                                        {assignment?.Worker_Name ? (
+                                                            <span className="assigned-worker">{assignment.Worker_Name}</span>
+                                                        ) : (
+                                                            <span className="no-assign">—</span>
+                                                        )}
+                                                    </td>
+                                                );
+                                            })}
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    )}
+
+                    {/* Footer / Signatures */}
+                    <div className="doc-footer">
+                        <div className="signatures-grid">
+                            <div className="sig-box">
+                                <span className="sig-label">Izdao:</span>
+                                <div className="sig-line"></div>
+                            </div>
+                            <div className="sig-box">
+                                <span className="sig-label">Primio:</span>
+                                <div className="sig-line"></div>
+                            </div>
+                            <div className="sig-box">
+                                <span className="sig-label">Datum:</span>
+                                <div className="sig-line"></div>
+                            </div>
+                        </div>
+                        <div className="footer-info">
+                            <p>Dokument generisan sistemski.</p>
+                            <p>{new Date().toLocaleString('hr-HR')}</p>
+                        </div>
                     </div>
                 </div>
             </div>
 
             <style jsx>{`
-                /* Print Controls (hidden when printing) */
-                .print-controls {
-                    background: #f8f9fa;
+                /* WEB UI STYLES */
+                .print-wrapper {
+                    display: flex;
+                    flex-direction: column;
+                    align-items: center;
+                    background: #f0f2f5;
                     padding: 20px;
-                    border-radius: 12px;
-                    margin-bottom: 20px;
+                    min-height: 100%;
                 }
-                .print-controls h3 {
-                    margin: 0 0 16px 0;
-                    font-size: 16px;
-                }
-                .controls-row {
+                
+                .print-controls {
+                    background: white;
+                    padding: 16px 24px;
+                    border-radius: 8px;
+                    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+                    margin-bottom: 24px;
+                    width: 100%;
+                    max-width: 210mm;
                     display: flex;
-                    gap: 24px;
-                    margin-bottom: 16px;
-                }
-                .checkbox-label {
-                    display: flex;
+                    justify-content: space-between;
                     align-items: center;
-                    gap: 8px;
-                    font-size: 14px;
-                    font-weight: 600;
-                    cursor: pointer;
                 }
-                .checkbox-label input[type="checkbox"] {
-                    width: 18px;
-                    height: 18px;
-                    cursor: pointer;
-                }
-                .print-btn {
-                    display: flex;
-                    align-items: center;
-                    gap: 8px;
+                .print-controls h3 { margin: 0; font-size: 16px; color: #333; }
+                .controls-row { display: flex; gap: 20px; }
+                .checkbox-label { display: flex; align-items: center; gap: 8px; font-size: 14px; cursor: pointer; }
+                .print-btn { display: flex; align-items: center; gap: 8px; padding: 8px 20px; }
+
+                /* A4 PAGE CONTAINER for Screen Preview */
+                .page-container {
+                    background: white;
+                    width: 210mm;
+                    min-height: 297mm;
+                    padding: 15mm 15mm;
+                    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+                    position: relative;
                 }
 
-                /* Print Template */
-                .print-template {
-                    background: white;
-                    padding: 40px;
-                    max-width: 210mm; /* A4 width */
-                    margin: 0 auto;
-                    box-shadow: 0 0 20px rgba(0,0,0,0.1);
+                /* PRINT DOCUMENT STYLES */
+                .print-content {
+                    font-family: 'Segoe UI', 'Roboto', Helvetica, Arial, sans-serif;
+                    color: black;
                 }
 
                 /* Header */
-                .print-header {
+                .doc-header {
                     display: flex;
                     justify-content: space-between;
-                    align-items: flex-start;
-                    margin-bottom: 30px;
-                    padding-bottom: 20px;
-                    border-bottom: 3px solid #333;
+                    margin-bottom: 20px;
                 }
-                .header-left h1 {
-                    margin: 0;
-                    font-size: 28px;
-                    font-weight: 700;
-                    color: #333;
-                }
-                .header-subtitle {
-                    margin: 4px 0 0 0;
-                    font-size: 14px;
-                    color: #666;
+                .company-name {
+                    font-size: 24px;
+                    font-weight: 800;
+                    margin: 0 0 8px 0;
                     text-transform: uppercase;
+                    letter-spacing: 0.5px;
+                }
+                .company-details p {
+                    margin: 2px 0;
+                    font-size: 12px;
+                    color: #444;
+                }
+                
+                .doc-meta { text-align: right; }
+                .doc-title-box {
+                    border: 2px solid black;
+                    padding: 8px 16px;
+                    display: inline-block;
+                    margin-bottom: 12px;
+                    text-align: center;
+                }
+                .doc-title-box h2 {
+                    margin: 0;
+                    font-size: 16px;
+                    font-weight: 700;
+                    letter-spacing: 2px;
+                }
+                .doc-number {
+                    display: block;
+                    font-size: 14px;
+                    font-weight: 600;
+                    margin-top: 4px;
+                }
+                .meta-grid { display: flex; flex-direction: column; gap: 4px; align-items: flex-end; }
+                .meta-item { font-size: 12px; }
+                .meta-item .label { font-weight: 600; margin-right: 8px; }
+
+                .divider-line {
+                    height: 2px;
+                    background: black;
+                    margin-bottom: 20px;
+                }
+
+                /* Sections */
+                .section-title {
+                    font-size: 12px;
+                    font-weight: 700;
+                    text-transform: uppercase;
+                    border-bottom: 1px solid #999;
+                    padding-bottom: 4px;
+                    margin-bottom: 12px;
                     letter-spacing: 1px;
                 }
-                .header-right {
-                    text-align: right;
-                }
-                .header-info {
-                    display: flex;
-                    gap: 12px;
-                    margin-bottom: 6px;
-                }
-                .info-label {
-                    font-size: 12px;
-                    color: #666;
-                    font-weight: 600;
-                }
-                .info-value {
-                    font-size: 12px;
-                    font-weight: 700;
-                    color: #333;
-                }
 
-                /* Notes */
-                .print-notes {
-                    background: #fff3cd;
-                    padding: 12px 16px;
-                    border-left: 4px solid #ffc107;
-                    margin-bottom: 20px;
-                    font-size: 13px;
-                }
-                .print-notes strong {
-                    margin-right: 8px;
-                }
+                /* Client Section */
+                .client-section { margin-bottom: 30px; }
+                .client-grid { display: flex; flex-wrap: wrap; gap: 20px; }
+                .client-item { display: flex; flex-direction: column; min-width: 200px; }
+                .client-item.full-width { width: 100%; margin-top: 8px; }
+                .client-item .label { font-size: 11px; color: #555; text-transform: uppercase; font-weight: 600; margin-bottom: 4px; }
+                .client-item .value { font-size: 14px; font-weight: 600; }
+                .note-text { font-style: italic; font-weight: 400; background: #f0f0f0; padding: 6px 10px; border-radius: 4px; display: block; border: 1px solid #ddd; }
 
-                /* Main Table */
-                .print-table {
-                    width: 100%;
-                    border-collapse: collapse;
-                    margin-bottom: 30px;
-                    font-size: 12px;
-                }
-                .print-table thead {
-                    background: #f0f1f3;
-                }
-                .print-table th {
-                    padding: 12px 10px;
+                /* Tables */
+                .table-section { margin-bottom: 30px; }
+                .doc-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+                .doc-table th {
                     text-align: left;
                     font-weight: 700;
-                    border: 1px solid #ddd;
+                    border-bottom: 2px solid black;
+                    padding: 8px 4px;
                     text-transform: uppercase;
                     font-size: 11px;
                 }
-                .print-table td {
-                    padding: 10px;
-                    border: 1px solid #ddd;
+                .doc-table td {
+                    padding: 8px 4px;
+                    vertical-align: top;
                 }
-                .col-rb {
-                    width: 50px;
-                    text-align: center;
-                }
-                .col-product {
-                    width: auto;
-                }
-                .col-qty {
-                    width: 120px;
-                    text-align: center;
-                }
-                .col-project {
-                    width: 200px;
-                }
+                .text-right { text-align: right; }
+                .text-center { text-align: center; }
 
-                /* Product Rows */
-                .product-row {
-                    background: #fafbfc;
-                    font-weight: 600;
+                /* Column Widths */
+                .w-rb { width: 40px; }
+                .w-qty { width: 100px; }
+                
+                /* Product Row */
+                .row-product td {
+                    border-bottom: 1px solid #ddd;
+                    padding-top: 12px;
+                    padding-bottom: 12px;
                 }
-                .product-row td {
-                    border-top: 2px solid #333;
-                }
+                .product-name { font-weight: 700; font-size: 13px; }
+                .product-sub { font-size: 11px; color: #666; margin-top: 2px; }
+                .w-qty { font-weight: 700; }
 
-                /* Materials Section */
-                .materials-header td {
-                    background: #e8f4ff;
-                    border: none;
-                    padding: 8px 10px;
-                }
-                .materials-title {
-                    display: flex;
-                    align-items: center;
-                    gap: 6px;
-                    font-weight: 600;
-                    font-size: 11px;
-                    color: var(--accent);
-                }
-                .materials-title .material-icons-round {
-                    font-size: 16px;
-                }
-                .material-row {
-                    background: #f9f9f9;
-                }
-                .material-row td {
-                    border-top: none;
-                }
-                .material-indent {
-                    padding-left: 30px;
-                    font-weight: 400;
-                    color: #555;
-                }
-
-                /* Processes Section */
-                .processes-section {
-                    margin-top: 30px;
-                }
-                .processes-section h3 {
-                    margin: 0 0 12px 0;
-                    font-size: 16px;
+                /* Materials Rows */
+                .row-materials-header td { padding-top: 8px; padding-bottom: 2px; }
+                .mat-header-cell {
+                    font-size: 10px;
                     font-weight: 700;
+                    color: #666;
+                    text-transform: uppercase;
+                    letter-spacing: 0.5px;
                 }
-                .process-table {
-                    width: 100%;
-                    border-collapse: collapse;
+                .row-material td {
+                    padding: 4px 4px;
+                    color: #444;
                     font-size: 11px;
                 }
-                .process-table th,
-                .process-table td {
-                    padding: 8px;
-                    border: 1px solid #ddd;
-                    text-align: center;
-                }
-                .process-table th {
-                    background: #f0f1f3;
-                    font-weight: 700;
-                }
-                .worker-assignment {
-                    display: flex;
-                    align-items: center;
-                    justify-content: center;
-                    gap: 4px;
-                    font-weight: 600;
-                }
-                .worker-icon {
-                    font-size: 14px;
-                }
-                .not-assigned {
-                    color: #999;
-                }
+                .mat-name { padding-left: 20px; }
+                .supplier-hint { color: #888; font-size: 10px; font-style: italic; }
+                .mat-qty { font-family: monospace; }
+                .spacer-row td { height: 16px; border-bottom: 1px solid #eee; }
 
-                /* Signature Section */
-                .signature-section {
+                /* Process Table */
+                .processes-table th { border: 1px solid #ccc; background: #f9f9f9; }
+                .processes-table td { border: 1px solid #ccc; padding: 6px; }
+                .proc-prod-name { font-weight: 600; }
+                .assigned-worker { font-weight: 600; }
+                .no-assign { color: #ccc; }
+
+                /* Footer */
+                .doc-footer {
                     margin-top: 60px;
+                    page-break-inside: avoid;
+                }
+                .signatures-grid {
                     display: grid;
-                    grid-template-columns: repeat(3, 1fr);
-                    gap: 30px;
-                }
-                .signature-box {
-                    text-align: center;
-                }
-                .signature-label {
-                    font-size: 12px;
-                    font-weight: 600;
+                    grid-template-columns: 1fr 1fr 1fr;
+                    gap: 40px;
                     margin-bottom: 30px;
                 }
-                .signature-line {
-                    border-bottom: 2px solid #333;
-                    padding-top: 20px;
+                .sig-box { display: flex; flex-direction: column; }
+                .sig-label { font-size: 11px; font-weight: 600; margin-bottom: 40px; text-transform: uppercase; }
+                .sig-line { border-bottom: 1px solid black; }
+                
+                .footer-info {
+                    border-top: 1px solid #ddd;
+                    padding-top: 8px;
+                    display: flex;
+                    justify-content: space-between;
+                    font-size: 10px;
+                    color: #888;
                 }
 
-                /* Print-specific styles */
+                /* PRINT MEDIA QUERIES */
                 @media print {
-                    .no-print {
-                        display: none !important;
-                    }
-                    .print-template {
-                        box-shadow: none;
-                        padding: 20mm;
-                    }
                     @page {
                         size: A4 portrait;
-                        margin: 15mm;
+                        margin: 0; /* Control margins manually in container if needed, or let standard print margins work */
                     }
-                    .print-table,
-                    .process-table {
-                        page-break-inside: avoid;
+                    
+                    body {
+                        background: white;
+                        margin: 0;
+                        padding: 0;
+                        -webkit-print-color-adjust: exact;
+                        print-color-adjust: exact;
                     }
-                    .product-row {
-                        page-break-inside: avoid;
-                        page-break-after: avoid;
+
+                    .print-wrapper {
+                        background: white;
+                        padding: 0;
+                        display: block;
                     }
+
+                    .print-controls { display: none !important; }
+
+                    .page-container {
+                        width: 100%;
+                        height: auto;
+                        box-shadow: none;
+                        padding: 15mm 20mm; /* Standard A4 margins */
+                        margin: 0;
+                    }
+
+                    .note-text {
+                        background: none !important;
+                        border: 1px solid #ccc !important;
+                    }
+                    
+                    /* Break avoidance */
+                    .row-product, .section-title, .doc-header { page-break-inside: avoid; }
+                    .table-section { page-break-inside: auto; }
+                    tr { page-break-inside: avoid; }
+                    
+                    /* Ensure black text */
+                    * { color: black !important; }
+                    .supplier-hint { color: #555 !important; }
+                    .section-title { border-bottom-color: black !important; }
+                    .product-sub, .company-details p { color: #333 !important; }
                 }
             `}</style>
-        </>
+        </div>
     );
 }
