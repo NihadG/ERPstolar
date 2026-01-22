@@ -272,28 +272,51 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
             {/* ========== FULL-SCREEN WIZARD MODAL ========== */}
             <Modal isOpen={createModal} onClose={() => setCreateModal(false)} title="Novi Radni Nalog" size="fullscreen" footer={null}>
                 <div className="wizard-container">
-                    {/* PROGRESS HEADER */}
+                    {/* COMPACT HEADER WITH NAVIGATION */}
                     <div className="wizard-header">
-                        <div className="steps-indicator">
+                        <div className="header-left">
+                            {activeStep > 0 && (
+                                <button className="btn-nav back" onClick={handleBack}>
+                                    <span className="material-icons-round">arrow_back</span>
+                                    Nazad
+                                </button>
+                            )}
+                        </div>
+
+                        <div className="steps-indicator compact">
                             {steps.map((step, index) => (
                                 <div key={step.id} className={`step-item ${index <= activeStep ? 'active' : ''} ${index === activeStep ? 'current' : ''}`}>
                                     <div className="step-circle">{index + 1}</div>
-                                    <div className="step-label">
-                                        <span className="step-title">{step.title}</span>
-                                        <span className="step-sub">{step.subtitle}</span>
-                                    </div>
+                                    <span className="step-title">{step.title}</span>
                                     {index < steps.length - 1 && <div className="step-line" />}
                                 </div>
                             ))}
                         </div>
+
+                        <div className="header-right">
+                            {activeStep === 3 ? (
+                                <button className="btn-nav finish" onClick={handleCreateWorkOrder}>
+                                    Kreiraj
+                                    <span className="material-icons-round">check</span>
+                                </button>
+                            ) : (
+                                <button className="btn-nav next" onClick={handleNext} disabled={!canGoNext}>
+                                    Dalje
+                                    <span className="material-icons-round">arrow_forward</span>
+                                </button>
+                            )}
+                        </div>
                     </div>
 
-                    {/* CONTENT BODY */}
+                    {/* CONTENT BODY - MAXIMIZED */}
                     <div className="wizard-body">
                         {/* STEP 1: PROJECTS */}
                         {activeStep === 0 && (
                             <div className="wizard-step step-projects">
-                                <h3>Odaberite projekat</h3>
+                                <div className="step-page-header">
+                                    <h3>Odaberite projekat</h3>
+                                    <p>Za koji projekat kreirate nalog?</p>
+                                </div>
                                 <div className="wz-grid">
                                     {projects.map(proj => (
                                         <div key={proj.Project_ID}
@@ -317,10 +340,10 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                         {/* STEP 2: PRODUCTS */}
                         {activeStep === 1 && (
                             <div className="wizard-step step-products">
-                                <div className="step-toolbar">
+                                <div className="step-toolbar sticky">
                                     <div className="tb-left">
                                         <h3>Odaberite proizvode</h3>
-                                        <div className="tb-stats">{selectedProducts.length} odabrano</div>
+                                        <span className="tb-stats">{selectedProducts.length} odabrano</span>
                                     </div>
                                     <div className="tb-right">
                                         <div className="search-input">
@@ -331,21 +354,23 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                                         {selectedProducts.length > 0 && <button className="btn-text danger" onClick={() => setSelectedProducts([])}>Poništi</button>}
                                     </div>
                                 </div>
-                                <div className="wz-list">
-                                    {eligibleProducts.map(prod => (
-                                        <div key={prod.Product_ID}
-                                            className={`wz-list-item ${selectedProducts.some(p => p.Product_ID === prod.Product_ID) ? 'selected' : ''}`}
-                                            onClick={() => toggleProduct(prod)}>
-                                            <span className="material-icons-round icon-check">
-                                                {selectedProducts.some(p => p.Product_ID === prod.Product_ID) ? 'check_box' : 'check_box_outline_blank'}
-                                            </span>
-                                            <div className="li-content">
-                                                <span className="li-title">{prod.Product_Name}</span>
-                                                <span className="li-sub">{prod.Project_Name}</span>
+                                <div className="wz-list-scroll">
+                                    <div className="wz-list">
+                                        {eligibleProducts.map(prod => (
+                                            <div key={prod.Product_ID}
+                                                className={`wz-list-item ${selectedProducts.some(p => p.Product_ID === prod.Product_ID) ? 'selected' : ''}`}
+                                                onClick={() => toggleProduct(prod)}>
+                                                <span className="material-icons-round icon-check">
+                                                    {selectedProducts.some(p => p.Product_ID === prod.Product_ID) ? 'check_box' : 'check_box_outline_blank'}
+                                                </span>
+                                                <div className="li-content">
+                                                    <span className="li-title">{prod.Product_Name}</span>
+                                                    <span className="li-sub">{prod.Project_Name}</span>
+                                                </div>
+                                                <span className="li-qty">{prod.Quantity} kom</span>
                                             </div>
-                                            <span className="li-qty">{prod.Quantity} kom</span>
-                                        </div>
-                                    ))}
+                                        ))}
+                                    </div>
                                 </div>
                             </div>
                         )}
@@ -353,8 +378,10 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                         {/* STEP 3: PROCESSES */}
                         {activeStep === 2 && (
                             <div className="wizard-step step-processes">
-                                <h3>Definišite redoslijed procesa</h3>
-                                <p className="step-desc">Ovi procesi će biti kreirani za svaki odabrani proizvod.</p>
+                                <div className="step-page-header text-center">
+                                    <h3>Definišite procese</h3>
+                                    <p>Ovi procesi će biti primijenjeni na sve odabrane proizvode.</p>
+                                </div>
                                 <div className="process-tags">
                                     {selectedProcesses.map(proc => (
                                         <div key={proc} className="process-tag">
@@ -385,7 +412,7 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                                     </div>
                                 </div>
 
-                                <div className="matrix-wrapper">
+                                <div className="matrix-wrapper full-height">
                                     <div className="mw-header">
                                         <div className="m-col product">Proizvod</div>
                                         {selectedProcesses.map(proc => (
@@ -421,128 +448,101 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                             </div>
                         )}
                     </div>
-
-                    {/* FOOTER ACTIONS */}
-                    <div className="wizard-footer">
-                        {activeStep > 0 ? (
-                            <button className="btn-back" onClick={handleBack}>Nazad</button>
-                        ) : <div></div>}
-
-                        <div className="right-actions">
-                            <span className="step-counter">Korak {activeStep + 1} od 4</span>
-                            {activeStep === 3 ? (
-                                <button className="btn-next finish" onClick={handleCreateWorkOrder}>
-                                    Kreiraj Nalog <span className="material-icons-round">check</span>
-                                </button>
-                            ) : (
-                                <button className="btn-next" onClick={handleNext} disabled={!canGoNext}>
-                                    Dalje <span className="material-icons-round">arrow_forward</span>
-                                </button>
-                            )}
-                        </div>
-                    </div>
                 </div>
             </Modal>
 
             <style jsx>{`
                 /* Wizard Layout */
-                .wizard-container { display: flex; flex-direction: column; height: 100%; background: #f5f5f7; }
+                .wizard-container { display: flex; flex-direction: column; height: 100vh; background: #f5f5f7; overflow: hidden; }
                 
-                /* Header */
-                .wizard-header { background: white; padding: 20px 40px; border-bottom: 1px solid var(--border); }
-                .steps-indicator { display: flex; align-items: center; justify-content: space-between; max-width: 800px; margin: 0 auto; width: 100%; }
-                .step-item { display: flex; align-items: center; gap: 12px; opacity: 0.4; transition: all 0.3s; position: relative; flex: 1; }
+                /* COMPACT HEADER */
+                .wizard-header { 
+                    flex-shrink: 0;
+                    background: white; 
+                    padding: 8px 16px; 
+                    border-bottom: 1px solid var(--border); 
+                    display: grid;
+                    grid-template-columns: 100px 1fr 100px;
+                    align-items: center;
+                    height: 56px;
+                }
+                
+                .header-center { display: flex; justify-content: center; }
+                .header-right { display: flex; justify-content: flex-end; }
+                
+                .steps-indicator { display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; }
+                .step-item { display: flex; align-items: center; gap: 6px; opacity: 0.4; transition: all 0.3s; }
                 .step-item.active { opacity: 1; }
-                .step-circle { width: 32px; height: 32px; border-radius: 50%; background: #e0e0e0; color: white; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 14px; transition: all 0.3s; }
+                .step-circle { width: 24px; height: 24px; border-radius: 50%; background: #e0e0e0; color: white; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 11px; }
                 .step-item.active .step-circle { background: var(--accent); }
-                .step-item.current .step-circle { transform: scale(1.1); box-shadow: 0 0 0 4px rgba(0,113,227,0.1); }
-                .step-label { display: flex; flex-direction: column; }
-                .step-title { font-weight: 600; font-size: 14px; color: var(--text-primary); }
-                .step-sub { font-size: 11px; color: var(--text-secondary); }
-                .step-line { height: 2px; background: #e0e0e0; flex: 1; margin: 0 16px; border-radius: 2px; }
+                .step-item.current .step-circle { transform: scale(1.1); box-shadow: 0 0 0 2px rgba(0,113,227,0.1); }
+                .step-title { font-weight: 600; font-size: 11px; color: var(--text-primary); white-space: nowrap; }
+                .step-line { width: 20px; height: 2px; background: #e0e0e0; border-radius: 2px; }
                 .step-item.active .step-line { background: var(--accent); }
 
-                /* Body */
-                .wizard-body { flex: 1; overflow-y: auto; padding: 40px; display: flex; justify-content: center; }
-                .wizard-step { width: 100%; max-width: 1000px; animation: slideIn 0.3s ease; }
-                @keyframes slideIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
-                
+                /* NAV BUTTONS */
+                .btn-nav {
+                    padding: 6px 16px;
+                    border-radius: 16px;
+                    font-size: 12px;
+                    font-weight: 600;
+                    display: flex;
+                    align-items: center;
+                    gap: 6px;
+                    border: none;
+                    cursor: pointer;
+                    transition: all 0.2s;
+                    height: 32px;
+                }
+                .btn-nav.back { background: #f0f0f0; color: #333; }
+                .btn-nav.back:hover { background: #e0e0e0; }
+                .btn-nav.next { background: black; color: white; }
+                .btn-nav.next:hover { background: #333; transform: translateX(2px); }
+                .btn-nav.finish { background: var(--success); color: white; }
+                .btn-nav:disabled { opacity: 0.5; cursor: not-allowed; }
+                .btn-nav .material-icons-round { font-size: 14px; }
+
+                /* Body - Maximized */
+                .wizard-body { flex: 1; overflow-y: auto; padding: 20px; display: flex; justify-content: center; align-items: flex-start; }
+                .wizard-step { width: 100%; max-width: 1200px; display: flex; flex-direction: column; height: 100%; }
+                .step-page-header { margin-bottom: 20px; text-align: left; }
+                .step-page-header h3 { font-size: 18px; margin: 0; }
+                .step-page-header p { font-size: 13px; color: var(--text-secondary); margin: 4px 0 0 0; }
+                .text-center { text-align: center; }
+
                 /* Step 1: Projects Box */
-                .wz-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; margin-top: 24px; }
-                .wz-card { background: white; padding: 20px; border-radius: 12px; border: 2px solid transparent; box-shadow: 0 2px 8px rgba(0,0,0,0.05); cursor: pointer; display: flex; gap: 16px; align-items: center; transition: all 0.2s; }
-                .wz-card:hover { transform: translateY(-2px); box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
-                .wz-card.selected { border-color: var(--accent); background: #f0f7ff; }
-                .wz-card .material-icons-round { font-size: 24px; color: #ccc; }
-                .wz-card.selected .material-icons-round { color: var(--accent); }
-                .card-title { font-weight: 600; font-size: 16px; display: block; }
-                .card-sub { font-size: 13px; color: var(--text-secondary); }
+                .wz-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; }
+                .wz-card { padding: 16px; border-radius: 10px; border: 1px solid var(--border); background: white; cursor: pointer; display: flex; gap: 12px; align-items: center; transition: all 0.2s; }
+                .wz-card:hover { border-color: var(--accent); transform: translateY(-1px); }
+                .wz-card.selected { border-color: var(--accent); background: #f0f7ff; box-shadow: 0 2px 8px rgba(0, 113, 227, 0.1); }
+                .card-title { font-size: 14px; }
+                .card-sub { font-size: 12px; }
 
                 /* Step 2: List */
-                .step-toolbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; }
-                .search-input { background: white; padding: 8px 12px; border-radius: 8px; display: flex; align-items: center; gap: 8px; border: 1px solid var(--border); width: 300px; }
-                .search-input input { border: none; outline: none; width: 100%; font-size: 14px; }
-                .btn-text { background: none; border: none; font-weight: 600; color: var(--accent); cursor: pointer; font-size: 14px; }
-                .btn-text.danger { color: var(--danger); margin-left: 16px; }
-                .wz-list { background: white; border-radius: 12px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.05); }
-                .wz-list-item { padding: 16px 24px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 16px; cursor: pointer; transition: background 0.1s; }
-                .wz-list-item:hover { background: #f9f9f9; }
-                .wz-list-item.selected { background: #f0f7ff; }
-                .wz-list-item .icon-check { font-size: 20px; color: #ccc; }
-                .wz-list-item.selected .icon-check { color: var(--accent); }
-                .li-content { flex: 1; }
-                .li-title { display: block; font-weight: 600; font-size: 14px; }
-                .li-sub { font-size: 12px; color: var(--text-secondary); }
-                .li-qty { font-weight: 600; background: #eee; padding: 2px 8px; border-radius: 6px; font-size: 12px; }
+                .step-products { height: 100%; }
+                .step-toolbar.sticky { position: sticky; top: 0; z-index: 10; background: #f5f5f7; padding-bottom: 12px; display: flex; justify-content: space-between; align-items: center; }
+                .tb-left h3 { font-size: 16px; margin: 0; }
+                .tb-stats { font-size: 12px; color: var(--text-secondary); font-weight: 500; margin-left: 8px; background: white; padding: 2px 8px; border-radius: 10px; }
+                .search-input { padding: 6px 10px; width: 240px; }
+                .wz-list-scroll { flex: 1; overflow-y: auto; background: white; border-radius: 12px; border: 1px solid var(--border); }
+                .wz-list { display: flex; flex-direction: column; }
+                .wz-list-item { padding: 10px 16px; border-bottom: 1px solid #f0f0f0; }
 
                 /* Step 3: Processes */
-                .step-processes { text-align: center; max-width: 600px; margin: 0 auto; }
-                .step-desc { color: var(--text-secondary); margin-bottom: 32px; }
-                .process-tags { display: flex; flex-wrap: wrap; gap: 12px; justify-content: center; margin-bottom: 32px; }
-                .process-tag { background: white; padding: 10px 20px; border-radius: 30px; border: 1px solid var(--border); font-weight: 600; display: flex; align-items: center; gap: 8px; font-size: 15px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
-                .process-tag button { background: var(--border); width: 20px; height: 20px; border-radius: 50%; border: none; display: flex; align-items: center; justify-content: center; cursor: pointer; font-size: 10px; color: #666; }
-                .process-tag button:hover { background: var(--danger); color: white; }
-                .add-process-row { display: flex; gap: 12px; }
-                .add-process-row input { flex: 1; padding: 12px 20px; border-radius: 30px; border: 1px solid var(--border); outline: none; transition: border 0.2s; }
-                .add-process-row input:focus { border-color: var(--accent); }
-                .add-process-row button { padding: 0 24px; border-radius: 30px; border: none; background: var(--accent); color: white; font-weight: 600; cursor: pointer; }
+                .step-processes { align-items: center; }
+                .process-tags { gap: 8px; margin: 24px 0; }
+                .process-tag { padding: 8px 16px; font-size: 13px; }
 
                 /* Step 4: Matrix */
-                .details-top { display: flex; gap: 24px; margin-bottom: 24px; background: white; padding: 20px; border-radius: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
-                .input-group label { display: block; font-size: 11px; font-weight: 700; color: var(--text-secondary); text-transform: uppercase; margin-bottom: 6px; }
-                .input-group input { width: 100%; padding: 10px; border: 1px solid var(--border); border-radius: 6px; font-size: 14px; }
-                .input-group.full { flex: 1; }
+                .step-details { height: 100%; }
+                .details-top { padding: 12px 16px; background: white; border: 1px solid var(--border); display: flex; gap: 16px; margin-bottom: 12px; }
+                .input-group label { font-size: 10px; margin-bottom: 4px; }
+                .input-group input { padding: 6px 10px; font-size: 13px; }
                 
-                .matrix-wrapper { background: white; border-radius: 12px; border: 1px solid var(--border); overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.05); }
-                .mw-header { display: flex; background: #f8f9fa; border-bottom: 1px solid var(--border); font-weight: 600; font-size: 13px; }
-                .mw-body { max-height: 400px; overflow-y: auto; }
-                .m-row { display: flex; border-bottom: 1px solid var(--border); transition: background 0.1s; }
-                .m-row:hover { background: #fcfcfc; }
-                .m-col { padding: 12px; border-right: 1px solid var(--border); display: flex; align-items: center; }
-                .m-col.product { width: 250px; flex-shrink: 0; flex-direction: column; align-items: flex-start; justify-content: center; }
-                .m-col.product strong { font-size: 13px; }
-                .m-col.product small { font-size: 11px; color: var(--text-secondary); }
-                .m-col.process { flex: 1; min-width: 140px; justify-content: center; flex-direction: column; gap: 4px; }
-                .m-col.process select { width: 100%; padding: 6px; border: 1px solid var(--border); border-radius: 6px; font-size: 12px; background: white; }
-                .m-col.process select.filled { border-color: var(--success); background: #f0fff4; color: #006400; }
-
-                /* Footer */
-                .wizard-footer { background: white; padding: 20px 40px; border-top: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; }
-                .btn-back { background: #e0e0e0; border: none; padding: 12px 24px; border-radius: 8px; font-weight: 600; color: #333; cursor: pointer; }
-                .right-actions { display: flex; align-items: center; gap: 20px; }
-                .step-counter { font-size: 13px; color: var(--text-secondary); font-weight: 500; }
-                .btn-next { background: black; color: white; border: none; padding: 12px 32px; border-radius: 8px; font-weight: 600; display: flex; align-items: center; gap: 8px; cursor: pointer; transition: transform 0.1s; }
-                .btn-next:hover { transform: translateY(-1px); }
-                .btn-next:disabled { opacity: 0.5; cursor: not-allowed; }
-                .btn-next.finish { background: var(--success); }
-
-                /* Response Breakpoints */
-                @media (max-width: 768px) {
-                    .wizard-header { padding: 16px; }
-                    .wizard-body { padding: 16px; }
-                    .step-label { display: none; }
-                    .details-top { flex-direction: column; }
-                    .m-col.product { width: 140px; }
-                }
+                .matrix-wrapper.full-height { flex: 1; display: flex; flex-direction: column; background: white; border-radius: 12px; border: 1px solid var(--border); overflow: hidden; }
+                .mw-header { padding: 0; background: #f8f9fa; }
+                .mw-body { flex: 1; overflow-y: auto; }
+                .m-col { padding: 8px 12px; font-size: 12px; }
             `}</style>
         </div>
     );
