@@ -386,20 +386,40 @@ export default function ProjectsTab({ projects, materials, onRefresh, showToast 
                     filteredProjects.map(project => (
                         <div key={project.Project_ID} className="project-card">
                             <div className="project-header" onClick={() => toggleProject(project.Project_ID)}>
-                                <button className={`expand-btn ${expandedProjects.has(project.Project_ID) ? 'expanded' : ''}`}>
-                                    <span className="material-icons-round">chevron_right</span>
-                                </button>
-                                <div className="project-info">
-                                    <div className="project-name">{project.Client_Name}</div>
-                                    <div className="project-client">{project.Address}</div>
+                                <div className="expand-btn-wrapper">
+                                    <button className={`expand-btn ${expandedProjects.has(project.Project_ID) ? 'expanded' : ''}`}>
+                                        <span className="material-icons-round">chevron_right</span>
+                                    </button>
                                 </div>
-                                <div className="project-meta">
-                                    <span className={`status-badge ${getStatusClass(project.Status)}`}>
-                                        {project.Status}
-                                    </span>
-                                    <span className="mode-badge">
-                                        {project.Production_Mode === 'PreCut' ? 'Gotovi elementi' : 'Vlastita obrada'}
-                                    </span>
+                                <div className="project-info-main">
+                                    <div className="project-name">
+                                        <span className="material-icons-round" style={{ fontSize: '20px', color: 'var(--accent)' }}>folder</span>
+                                        {project.Client_Name}
+                                    </div>
+                                    <div className="project-stats-desktop" style={{ fontSize: '12px', color: 'var(--text-tertiary)', marginTop: '4px', paddingLeft: '28px' }}>
+                                        {project.products?.length || 0} proizvoda • {formatCurrency(project.products?.reduce((sum, p) => sum + (p.Material_Cost || 0), 0) || 0)}
+                                    </div>
+                                </div>
+                                <div className="project-client-info">
+                                    <div className="client-detail">
+                                        <span className="material-icons-round" style={{ fontSize: '14px' }}>place</span>
+                                        {project.Address}
+                                    </div>
+                                    {project.Client_Phone && (
+                                        <div className="client-detail">
+                                            <span className="material-icons-round" style={{ fontSize: '14px' }}>phone</span>
+                                            {project.Client_Phone}
+                                        </div>
+                                    )}
+                                </div>
+                                <span className={`status-badge ${getStatusClass(project.Status)} project-status-badge`}>
+                                    {project.Status}
+                                </span>
+                                <span className="mode-badge project-mode-badge">
+                                    {project.Production_Mode === 'PreCut' ? 'Gotovi elementi' : 'Vlastita obrada'}
+                                </span>
+                                <div className="project-deadline" style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
+                                    {project.Deadline ? new Date(project.Deadline).toLocaleDateString('bs-BA') : '-'}
                                 </div>
                                 <div className="project-actions" onClick={(e) => e.stopPropagation()}>
                                     <button className="icon-btn" onClick={() => {
@@ -427,100 +447,125 @@ export default function ProjectsTab({ projects, materials, onRefresh, showToast 
                                     </button>
                                 </div>
 
-                                {project.products?.map(product => (
-                                    <div key={product.Product_ID} className="product-card">
-                                        <div className="product-header" onClick={() => toggleProduct(product.Product_ID)}>
-                                            <button className={`expand-btn ${expandedProducts.has(product.Product_ID) ? 'expanded' : ''}`}>
-                                                <span className="material-icons-round">chevron_right</span>
-                                            </button>
-                                            <div className="product-info">
-                                                <div className="product-name">{product.Name}</div>
-                                                <div className="product-dims">
-                                                    {product.Width && product.Height && product.Depth
-                                                        ? `${product.Width} × ${product.Height} × ${product.Depth} mm`
-                                                        : 'Dimenzije nisu unesene'}
-                                                    {product.Quantity > 1 && ` • ${product.Quantity} kom`}
+                                <div className="products-grid">
+                                    {project.products?.map(product => (
+                                        <div key={product.Product_ID} className="product-card">
+                                            <div className="product-header" onClick={() => toggleProduct(product.Product_ID)}>
+                                                <div className="product-expand-wrapper">
+                                                    <button className={`expand-btn ${expandedProducts.has(product.Product_ID) ? 'expanded' : ''}`}>
+                                                        <span className="material-icons-round">chevron_right</span>
+                                                    </button>
+                                                </div>
+                                                <div className="product-info-main">
+                                                    <div className="product-name">{product.Name}</div>
+                                                    {product.Notes && <div style={{ fontSize: '12px', color: 'var(--text-tertiary)' }}>{product.Notes}</div>}
+                                                </div>
+                                                <div className="product-dims-info">
+                                                    {product.Width && product.Height && product.Depth ? (
+                                                        <span>{product.Width} × {product.Height} × {product.Depth}</span>
+                                                    ) : (
+                                                        <span style={{ fontStyle: 'italic', opacity: 0.7 }}>Nema dimenzija</span>
+                                                    )}
+                                                </div>
+                                                <span className={`status-badge ${getStatusClass(product.Status)} product-status-desktop`}>
+                                                    {product.Status}
+                                                </span>
+                                                <div className="product-cost-badge">{formatCurrency(product.Material_Cost || 0)}</div>
+                                                <div className="product-qty-badge" style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-secondary)', textAlign: 'center' }}>
+                                                    {product.Quantity} kom
+                                                </div>
+                                                <div className="product-actions" onClick={(e) => e.stopPropagation()}>
+                                                    <button className="icon-btn" onClick={() => openProductModal(project.Project_ID, product)}>
+                                                        <span className="material-icons-round">edit</span>
+                                                    </button>
+                                                    <button className="icon-btn danger" onClick={() => handleDeleteProduct(product.Product_ID)}>
+                                                        <span className="material-icons-round">delete</span>
+                                                    </button>
                                                 </div>
                                             </div>
-                                            <span className={`status-badge ${getStatusClass(product.Status)}`}>
-                                                {product.Status}
-                                            </span>
-                                            <div className="product-cost">{formatCurrency(product.Material_Cost || 0)}</div>
-                                            <div className="project-actions" onClick={(e) => e.stopPropagation()}>
-                                                <button className="icon-btn" onClick={() => openProductModal(project.Project_ID, product)}>
-                                                    <span className="material-icons-round">edit</span>
-                                                </button>
-                                                <button className="icon-btn danger" onClick={() => handleDeleteProduct(product.Product_ID)}>
-                                                    <span className="material-icons-round">delete</span>
-                                                </button>
+
+                                            {/* Materials Section */}
+                                            <div className={`product-materials ${expandedProducts.has(product.Product_ID) ? 'expanded' : ''}`}>
+                                                <div className="materials-header" style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '12px' }}>
+                                                    <h5 style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-secondary)' }}>Materijali ({product.materials?.length || 0})</h5>
+                                                    <button className="btn btn-sm btn-secondary" onClick={() => openMaterialModal(product.Product_ID)}>
+                                                        <span className="material-icons-round">add</span>
+                                                        Dodaj materijal
+                                                    </button>
+                                                </div>
+
+                                                <div className="materials-table-header">
+                                                    <div>Naziv</div>
+                                                    <div>Količina</div>
+                                                    <div>Cijena</div>
+                                                    <div>Ukupno</div>
+                                                    <div>Status</div>
+                                                    <div style={{ textAlign: 'right' }}>Akcije</div>
+                                                </div>
+
+                                                <div className="materials-list">
+                                                    {product.materials?.map(material => {
+                                                        const isGlass = material.glassItems && material.glassItems.length > 0;
+                                                        const isAluDoor = material.aluDoorItems && material.aluDoorItems.length > 0;
+                                                        const glassCount = isGlass ? material.glassItems!.reduce((sum, gi) => sum + (gi.Qty || 1), 0) : 0;
+                                                        const aluDoorCount = isAluDoor ? material.aluDoorItems!.reduce((sum, ai) => sum + (ai.Qty || 1), 0) : 0;
+
+                                                        return (
+                                                            <div key={material.ID} className="material-row">
+                                                                <div className="material-name-cell">
+                                                                    {material.Material_Name}
+                                                                    {isGlass && <span className="material-type-tag material-type-glass">Staklo: {glassCount}</span>}
+                                                                    {isAluDoor && <span className="material-type-tag material-type-alu">Alu: {aluDoorCount}</span>}
+                                                                    {!isGlass && !isAluDoor && <span className="material-type-tag material-type-std">Standard</span>}
+                                                                </div>
+                                                                <div>{material.Quantity} {material.Unit}</div>
+                                                                <div>{formatCurrency(material.Unit_Price)}</div>
+                                                                <div style={{ fontWeight: 600 }}>{formatCurrency(material.Total_Price)}</div>
+                                                                <div>
+                                                                    <span className={`status-badge ${getStatusClass(material.Status)}`}>
+                                                                        {material.Status}
+                                                                    </span>
+                                                                </div>
+                                                                <div className="material-actions">
+                                                                    {isGlass && (
+                                                                        <button
+                                                                            className="icon-btn"
+                                                                            onClick={() => openGlassModalForEdit(product.Product_ID, material)}
+                                                                            title="Uredi staklo"
+                                                                        >
+                                                                            <span className="material-icons-round">edit</span>
+                                                                        </button>
+                                                                    )}
+                                                                    {isAluDoor && (
+                                                                        <button
+                                                                            className="icon-btn"
+                                                                            onClick={() => openAluDoorModalForEdit(product.Product_ID, material)}
+                                                                            title="Uredi alu vrata"
+                                                                        >
+                                                                            <span className="material-icons-round">edit</span>
+                                                                        </button>
+                                                                    )}
+                                                                    {!isGlass && !isAluDoor && (
+                                                                        <button
+                                                                            className="icon-btn"
+                                                                            onClick={() => openEditMaterialModal(material)}
+                                                                            title="Uredi materijal"
+                                                                        >
+                                                                            <span className="material-icons-round">edit</span>
+                                                                        </button>
+                                                                    )}
+                                                                    <button className="icon-btn danger" onClick={() => handleDeleteMaterial(material.ID)}>
+                                                                        <span className="material-icons-round">delete</span>
+                                                                    </button>
+                                                                </div>
+                                                            </div>
+                                                        );
+                                                    })}
+                                                </div>
                                             </div>
                                         </div>
-
-                                        {/* Materials Section */}
-                                        <div className={`product-materials ${expandedProducts.has(product.Product_ID) ? 'expanded' : ''}`}>
-                                            <div className="materials-header">
-                                                <h5>Materijali ({product.materials?.length || 0})</h5>
-                                                <button className="btn btn-sm btn-secondary" onClick={() => openMaterialModal(product.Product_ID)}>
-                                                    <span className="material-icons-round">add</span>
-                                                    Dodaj materijal
-                                                </button>
-                                            </div>
-
-                                            {product.materials?.map(material => {
-                                                const isGlass = material.glassItems && material.glassItems.length > 0;
-                                                const isAluDoor = material.aluDoorItems && material.aluDoorItems.length > 0;
-                                                const glassCount = isGlass ? material.glassItems!.reduce((sum, gi) => sum + (gi.Qty || 1), 0) : 0;
-                                                const aluDoorCount = isAluDoor ? material.aluDoorItems!.reduce((sum, ai) => sum + (ai.Qty || 1), 0) : 0;
-
-                                                return (
-                                                    <div key={material.ID} className="material-row">
-                                                        <div className="material-name">
-                                                            {material.Material_Name}
-                                                            {isGlass && <span className="material-indicator glass">🪟 {glassCount} kom</span>}
-                                                            {isAluDoor && <span className="material-indicator alu-door">🚪 {aluDoorCount} kom</span>}
-                                                        </div>
-                                                        <div className="material-qty">{material.Quantity} {material.Unit}</div>
-                                                        <div className="material-price">{formatCurrency(material.Unit_Price)}</div>
-                                                        <div className="material-total">{formatCurrency(material.Total_Price)}</div>
-                                                        <span className={`status-badge ${getStatusClass(material.Status)}`}>
-                                                            {material.Status}
-                                                        </span>
-                                                        {isGlass && (
-                                                            <button
-                                                                className="icon-btn"
-                                                                onClick={() => openGlassModalForEdit(product.Product_ID, material)}
-                                                                title="Uredi staklo"
-                                                            >
-                                                                <span className="material-icons-round">edit</span>
-                                                            </button>
-                                                        )}
-                                                        {isAluDoor && (
-                                                            <button
-                                                                className="icon-btn"
-                                                                onClick={() => openAluDoorModalForEdit(product.Product_ID, material)}
-                                                                title="Uredi alu vrata"
-                                                            >
-                                                                <span className="material-icons-round">edit</span>
-                                                            </button>
-                                                        )}
-                                                        {!isGlass && !isAluDoor && (
-                                                            <button
-                                                                className="icon-btn"
-                                                                onClick={() => openEditMaterialModal(material)}
-                                                                title="Uredi materijal"
-                                                            >
-                                                                <span className="material-icons-round">edit</span>
-                                                            </button>
-                                                        )}
-                                                        <button className="icon-btn danger" onClick={() => handleDeleteMaterial(material.ID)}>
-                                                            <span className="material-icons-round">delete</span>
-                                                        </button>
-                                                    </div>
-                                                );
-                                            })}
-                                        </div>
-                                    </div>
-                                ))}
+                                    ))}
+                                </div>
                             </div>
                         </div>
                     ))

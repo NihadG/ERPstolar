@@ -414,240 +414,138 @@ html {
 /* ============================================
    PROJECT CARDS - IMPROVED
    ============================================ */
-.projects-list,
-.offers-list,
-.orders-list,
-.materials-list,
-.workers-list,
-.suppliers-list {
+/* ============================================
+   PROJECT CARDS - REDESIGNED GRID SYSTEM
+   ============================================ */
+.projects-list {
   display: flex;
   flex-direction: column;
   gap: 16px;
 }
 
-/* PROJECT LEVEL - Clean card without heavy effects */
+/* PROJECT LEVEL */
 .project-card {
   background: #ffffff;
   border-radius: 16px;
   overflow: hidden;
   box-shadow: 0 2px 12px rgba(0, 0, 0, 0.06);
   border: 1px solid rgba(0, 0, 0, 0.06);
-  transition: box-shadow 0.2s ease, transform 0.2s ease;
+  transition: all 0.2s ease;
 }
 
 .project-card:hover {
-  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.1);
-  transform: translateY(-1px);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
+  border-color: rgba(0, 0, 0, 0.1);
 }
 
 .project-header {
-  display: flex;
+  display: grid;
+  grid-template-columns: 48px 2fr 1.5fr 120px 120px 1fr 140px;
+  /* Updated grid */
   align-items: center;
-  padding: 20px 24px;
+  padding: 16px 24px;
   gap: 16px;
   cursor: pointer;
-  transition: background 0.15s;
+  background: white;
+  min-height: 80px;
 }
 
 .project-header:hover {
   background: var(--surface);
 }
 
-.expand-btn {
-  background: var(--surface);
-  border: none;
-  cursor: pointer;
-  color: var(--text-secondary);
-  padding: 8px;
+/* Mobile responsive project header */
+@media (max-width: 1100px) {
+  .project-header {
+    grid-template-columns: 48px 1fr 1fr auto;
+    grid-template-areas:
+      "expand name status actions"
+      "expand client mode actions";
+    gap: 8px 16px;
+  }
+
+  .expand-btn-wrapper {
+    grid-area: expand;
+  }
+
+  .project-info-main {
+    grid-area: name;
+  }
+
+  .project-client-info {
+    grid-area: client;
+  }
+
+  .project-status-badge {
+    grid-area: status;
+    justify-self: start;
+  }
+
+  .project-mode-badge {
+    grid-area: mode;
+    justify-self: start;
+  }
+
+  .project-actions {
+    grid-area: actions;
+    justify-self: end;
+  }
+
+  /* Hide extra stats on smaller screens in the header row */
+  .project-stats-desktop {
+    display: none;
+  }
+}
+
+@media (max-width: 600px) {
+  .project-header {
+    grid-template-columns: 48px 1fr auto;
+    grid-template-areas:
+      "expand name actions"
+      "expand status actions";
+  }
+
+  .project-client-info,
+  .project-mode-badge {
+    display: none;
+  }
+}
+
+.expand-btn-wrapper {
   display: flex;
-  border-radius: var(--radius-sm);
-  transition: all 0.2s;
-}
-
-.expand-btn:hover {
-  background: var(--accent-light);
-  color: var(--accent);
-}
-
-.expand-btn.expanded {
-  transform: rotate(90deg);
-  background: var(--accent);
-  color: white;
-}
-
-.project-info {
-  flex: 1;
-  min-width: 0;
+  align-items: center;
+  justify-content: center;
 }
 
 .project-name {
   font-weight: 600;
-  font-size: 17px;
-  margin-bottom: 4px;
+  font-size: 16px;
   color: var(--text-primary);
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
-.project-client {
+.project-client-info {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
   font-size: 13px;
   color: var(--text-secondary);
+}
+
+.client-detail {
   display: flex;
   align-items: center;
   gap: 6px;
 }
 
-.project-client::before {
-  content: '📍';
-  font-size: 12px;
-}
-
-.project-meta {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
-}
-
-.project-actions {
-  display: flex;
-  gap: 4px;
-}
-
-.icon-btn {
-  background: none;
-  border: none;
-  padding: 6px;
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  color: var(--text-secondary);
-  transition: var(--transition);
-}
-
-.icon-btn:hover {
-  background: var(--surface-hover);
-  color: var(--text-primary);
-}
-
-.icon-btn.danger:hover {
-  background: var(--error-bg);
-  color: var(--error);
-}
-
-/* ============================================
-   STATUS BADGES
-   ============================================ */
-.status-badge {
-  padding: 4px 10px;
-  border-radius: 20px;
-  font-size: 12px;
-  font-weight: 500;
-  white-space: nowrap;
-}
-
-.status-nacrt {
-  background: #e8e8ed;
-  color: #6e6e73;
-}
-
-.status-ponudeno {
-  background: #fff3cd;
-  color: #856404;
-}
-
-.status-odobreno {
-  background: #d4edda;
-  color: #155724;
-}
-
-.status-u-proizvodnji {
-  background: #cce5ff;
-  color: #004085;
-}
-
-.status-sklapanje {
-  background: #d1ecf1;
-  color: #0c5460;
-}
-
-.status-montaza {
-  background: #e2d5f1;
-  color: #5a3d7a;
-}
-
-.status-zavrseno {
-  background: #c3e6cb;
-  color: #155724;
-}
-
-.status-otkazano {
-  background: #f8d7da;
-  color: #721c24;
-}
-
-.status-na-cekanju {
-  background: #e8e8ed;
-  color: #6e6e73;
-}
-
-.status-materijali-naruceni {
-  background: #fff3cd;
-  color: #856404;
-}
-
-.status-materijali-spremni {
-  background: #d4edda;
-  color: #155724;
-}
-
-.status-nije-naruceno {
-  background: #f8d7da;
-  color: #721c24;
-}
-
-.status-naruceno {
-  background: #fff3cd;
-  color: #856404;
-}
-
-.status-primljeno {
-  background: #d4edda;
-  color: #155724;
-}
-
-.status-poslano {
-  background: #cce5ff;
-  color: #004085;
-}
-
-.status-prihvaceno {
-  background: #c3e6cb;
-  color: #155724;
-}
-
-.status-odbijeno {
-  background: #f8d7da;
-  color: #721c24;
-}
-
-.mode-badge {
-  padding: 4px 10px;
-  border-radius: 20px;
-  font-size: 12px;
-  font-weight: 500;
-  background: var(--accent-light);
-  color: var(--accent);
-}
-
-/* ============================================
-   PRODUCTS & MATERIALS (NESTED) - IMPROVED
-   ============================================ */
-/* PRODUCTS CONTAINER - Clear nested section */
+/* PRODUCTS CONTAINER */
 .project-products {
   display: none;
-  padding: 20px;
-  margin: 8px 12px 12px 12px;
-  background: #f3f5f8;
-  border-radius: 16px;
-  border: 1px solid rgba(0, 0, 0, 0.04);
+  background: #f8f9fa;
+  border-top: 1px solid var(--border-light);
+  padding: 20px 24px;
 }
 
 .project-products.expanded {
@@ -655,88 +553,47 @@ html {
   animation: slideDown 0.25s ease-out;
 }
 
-@keyframes slideDown {
-  from {
-    opacity: 0;
-    transform: translateY(-8px);
-  }
-
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-@keyframes fadeIn {
-  from {
-    opacity: 0;
-    transform: translateY(-4px);
-  }
-
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
 .products-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 4px 16px 4px;
   margin-bottom: 16px;
-  border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border-light);
 }
 
-.products-header h4 {
-  font-size: 14px;
-  font-weight: 700;
-  color: var(--text-primary);
+.products-grid {
   display: flex;
-  align-items: center;
-  gap: 10px;
+  flex-direction: column;
+  gap: 12px;
 }
 
-.products-header h4::before {
-  content: '';
-  display: inline-block;
-  width: 8px;
-  height: 8px;
-  background: var(--accent);
-  border-radius: 50%;
-}
-
-/* PRODUCT LEVEL - Clean glass card */
+/* PRODUCT CARD / ROW */
 .product-card {
-  background: rgba(255, 255, 255, 0.55);
-  backdrop-filter: blur(16px) saturate(150%);
-  -webkit-backdrop-filter: blur(16px) saturate(150%);
-  border-radius: 16px;
-  margin-bottom: 10px;
-  border: 1px solid rgba(255, 255, 255, 0.7);
-  box-shadow:
-    0 2px 12px rgba(0, 0, 0, 0.04),
-    inset 0 1px 0 rgba(255, 255, 255, 0.6);
+  background: white;
+  border: 1px solid var(--border-light);
+  border-radius: 12px;
   overflow: hidden;
-  transition: all 0.25s ease;
+  position: relative;
 }
 
-.product-card:last-child {
-  margin-bottom: 0;
-}
-
-.product-card:hover {
-  background: rgba(255, 255, 255, 0.75);
-  box-shadow:
-    0 4px 20px rgba(0, 0, 0, 0.08),
-    inset 0 1px 0 rgba(255, 255, 255, 0.8);
-  transform: scale(1.01);
+.product-card::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 4px;
+  background: var(--accent);
+  opacity: 0.5;
 }
 
 .product-header {
-  display: flex;
+  display: grid;
+  grid-template-columns: 40px 2fr 1fr 100px 100px 1rem 120px;
+  /* Grid for product row */
   align-items: center;
-  padding: 16px 20px;
+  padding: 12px 20px;
   gap: 16px;
   cursor: pointer;
   transition: background 0.15s;
@@ -746,59 +603,172 @@ html {
   background: var(--surface);
 }
 
-.product-info {
-  flex: 1;
-  min-width: 0;
+/* Mobile product header */
+@media (max-width: 900px) {
+  .product-header {
+    grid-template-columns: 40px 1fr auto;
+    grid-template-areas:
+      "expand name actions"
+      "expand dims cost";
+    gap: 4px 12px;
+  }
+
+  .product-expand-wrapper {
+    grid-area: expand;
+  }
+
+  .product-info-main {
+    grid-area: name;
+  }
+
+  .product-dims-info {
+    grid-area: dims;
+  }
+
+  .product-cost-badge {
+    grid-area: cost;
+    justify-self: end;
+  }
+
+  .product-actions {
+    grid-area: actions;
+    justify-self: end;
+  }
+
+  .product-status-desktop {
+    display: none;
+  }
 }
 
 .product-name {
   font-weight: 600;
   font-size: 15px;
   color: var(--text-primary);
-  margin-bottom: 4px;
 }
 
-.product-dims {
+.product-dims-info {
   font-size: 13px;
   color: var(--text-secondary);
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
+  font-family: 'SF Mono', 'Roboto Mono', monospace;
 }
 
-.product-cost {
-  font-weight: 700;
+.product-cost-badge {
+  font-weight: 600;
+  font-size: 14px;
   color: var(--accent);
-  font-size: 16px;
-  padding: 8px 16px;
   background: var(--accent-light);
-  border-radius: var(--radius-md);
-  white-space: nowrap;
+  padding: 4px 10px;
+  border-radius: 6px;
+  text-align: center;
 }
 
-/* MATERIALS CONTAINER - Deepest nested section */
+/* MATERIALS CONTAINER */
 .product-materials {
   display: none;
-  padding: 16px;
-  margin: 8px 12px 12px 12px;
-  background: #f0f2f5;
-  border-radius: 12px;
-  border: 1px solid rgba(0, 0, 0, 0.04);
+  background: white;
+  padding: 0 20px 20px 60px;
+  /* Indented */
 }
 
 .product-materials.expanded {
   display: block;
-  animation: fadeIn 0.2s ease-out;
 }
 
-.materials-header {
+.materials-table-header {
+  display: grid;
+  grid-template-columns: 2fr 100px 120px 120px 120px 100px;
+  padding: 8px 16px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-tertiary);
+  text-transform: uppercase;
+  border-bottom: 1px solid var(--border-light);
+  margin-bottom: 8px;
+}
+
+.material-row {
+  display: grid;
+  grid-template-columns: 2fr 100px 120px 120px 120px 100px;
+  align-items: center;
+  padding: 10px 16px;
+  font-size: 14px;
+  border-bottom: 1px solid var(--border-light);
+  transition: background 0.15s;
+}
+
+.material-row:last-child {
+  border-bottom: none;
+}
+
+.material-row:hover {
+  background: var(--surface);
+}
+
+/* Mobile materials */
+@media (max-width: 900px) {
+  .product-materials {
+    padding: 10px;
+  }
+
+  .materials-table-header {
+    display: none;
+  }
+
+  .material-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 12px;
+    background: var(--surface);
+    border-radius: 8px;
+    margin-bottom: 8px;
+    border: none;
+  }
+
+  .material-name-cell {
+    width: 100%;
+    font-weight: 500;
+    margin-bottom: 4px;
+  }
+}
+
+.material-name-cell {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  padding: 0 4px 12px 4px;
-  margin-bottom: 12px;
-  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+  gap: 8px;
+  font-weight: 500;
+}
+
+.material-type-tag {
+  font-size: 11px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  text-transform: uppercase;
+  font-weight: 700;
+}
+
+.material-type-glass {
+  background: #e3f2fd;
+  color: #1565c0;
+}
+
+.material-type-alu {
+  background: #ffebee;
+  color: #c62828;
+}
+
+.material-type-std {
+  background: #f5f5f5;
+  color: #616161;
+}
+
+.material-actions {
+  display: flex;
+  gap: 4px;
+  justify-content: flex-end;
+}
+
+border-bottom: 1px solid rgba(0, 0, 0, 0.06);
 }
 
 .materials-header h5 {
@@ -860,159 +830,7 @@ html {
   min-width: 0;
 }
 
-.material-indicator {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 3px 8px;
-  border-radius: 12px;
-  font-size: 11px;
-  font-weight: 500;
-  white-space: nowrap;
-}
 
-.material-indicator.glass {
-  background: #e3f2fd;
-  color: #1976d2;
-}
-
-.material-indicator.alu-door {
-  background: #fff3e0;
-  color: #e65100;
-}
-
-.material-qty {
-  color: var(--text-secondary);
-  white-space: nowrap;
-}
-
-.material-price {
-  color: var(--text-secondary);
-  white-space: nowrap;
-}
-
-.material-total {
-  font-weight: 600;
-  color: var(--text-primary);
-  white-space: nowrap;
-}
-
-/* Responsive material rows */
-@media (max-width: 768px) {
-  .product-materials {
-    padding: 12px;
-    margin: 8px;
-  }
-
-  .materials-header {
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 12px;
-  }
-
-  .material-row {
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 8px;
-    padding: 14px;
-  }
-
-  .material-name {
-    font-size: 14px;
-    width: 100%;
-  }
-
-  .material-row-details {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-    width: 100%;
-  }
-
-  .material-qty,
-  .material-price,
-  .material-total {
-    font-size: 12px;
-    padding: 4px 8px;
-    background: #f5f5f5;
-    border-radius: 6px;
-  }
-
-  .material-row .status-badge {
-    order: -1;
-    margin-bottom: 4px;
-  }
-
-  .material-row .icon-btn {
-    padding: 8px;
-  }
-
-  .material-row>.icon-btn:last-child {
-    margin-left: auto;
-  }
-}
-
-/* Product header responsive */
-@media (max-width: 768px) {
-  .product-header {
-    flex-wrap: wrap;
-    gap: 12px;
-    padding: 14px 16px;
-  }
-
-  .product-info {
-    flex: 1 1 100%;
-    order: 2;
-  }
-
-  .expand-btn {
-    order: 1;
-  }
-
-  .product-cost {
-    order: 3;
-    padding: 6px 12px;
-    font-size: 14px;
-  }
-
-  .project-actions {
-    order: 4;
-    margin-left: auto;
-  }
-
-  .product-header .status-badge {
-    order: 5;
-    flex: 1 1 100%;
-    width: fit-content;
-    margin-top: 4px;
-  }
-}
-
-/* Project header responsive */
-@media (max-width: 768px) {
-  .project-header {
-    flex-wrap: wrap;
-    padding: 14px 16px;
-    gap: 12px;
-  }
-
-  .project-info {
-    flex: 1 1 calc(100% - 50px);
-    order: 2;
-  }
-
-  .project-meta {
-    flex: 1 1 100%;
-    order: 4;
-    margin-top: 4px;
-  }
-
-  .project-actions {
-    order: 3;
-  }
-}
-
-/* Empty states */
 .empty-state {
   text-align: center;
   padding: 60px 20px;
