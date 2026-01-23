@@ -10,6 +10,7 @@ import { PROJECT_STATUSES, PRODUCT_STATUSES, MATERIAL_CATEGORIES } from '@/lib/t
 
 // Components
 import ProjectsTab from '@/components/tabs/ProjectsTab';
+import OverviewTab from '@/components/tabs/OverviewTab';
 import OffersTab from '@/components/tabs/OffersTab';
 import OrdersTab from '@/components/tabs/OrdersTab';
 import ProductionTab from '@/components/tabs/ProductionTab';
@@ -139,13 +140,56 @@ export default function Home() {
                     Furniture Production
                 </h1>
 
-                {/* User Menu */}
+                {/* Tab Navigation - Moved to Header */}
+                <nav className="tabs">
+                    <button
+                        className={`tab ${activeTab === 'projects' ? 'active' : ''}`}
+                        onClick={() => handleTabClick('projects')}
+                    >
+                        <span className="material-icons-round">folder</span>
+                        Projekti
+                    </button>
+                    <button
+                        className={`tab ${activeTab === 'overview' ? 'active' : ''}`}
+                        onClick={() => handleTabClick('overview')}
+                    >
+                        <span className="material-icons-round">dashboard</span>
+                        Pregled
+                    </button>
+                    <button
+                        className={`tab ${activeTab === 'offers' ? 'active' : ''}`}
+                        onClick={() => handleTabClick('offers')}
+                    >
+                        <span className="material-icons-round">request_quote</span>
+                        Ponude
+                        {!hasModule('offers') && <span className="material-icons-round tab-lock">lock</span>}
+                    </button>
+                    <button
+                        className={`tab ${activeTab === 'orders' ? 'active' : ''}`}
+                        onClick={() => handleTabClick('orders')}
+                    >
+                        <span className="material-icons-round">local_shipping</span>
+                        Narudžbe
+                        {!hasModule('orders') && <span className="material-icons-round tab-lock">lock</span>}
+                    </button>
+                    <button
+                        className={`tab ${activeTab === 'production' ? 'active' : ''}`}
+                        onClick={() => handleTabClick('production')}
+                    >
+                        <span className="material-icons-round">engineering</span>
+                        Proizvodnja
+                    </button>
+
+                    {/* Settings Dropdown removed and moved to User Menu */}
+                </nav>
+
+                {/* User Menu - Genius Style */}
                 <div ref={userMenuRef} className={`user-menu ${userMenuOpen ? 'open' : ''}`}>
                     <button
                         className="user-menu-button"
                         onClick={() => {
                             setUserMenuOpen(!userMenuOpen);
-                            setDropdownOpen(false); // Close settings dropdown
+                            setDropdownOpen(false);
                         }}
                     >
                         <div className="user-avatar">{getUserInitials()}</div>
@@ -157,14 +201,46 @@ export default function Home() {
                             <div className="org-name">{organization?.Name}</div>
                             <div className="user-email">{user?.Email}</div>
                         </div>
+
+                        <div className="menu-group-label" style={{ padding: '8px 16px 4px', fontSize: '11px', color: '#888', fontWeight: 600, textTransform: 'uppercase' }}>
+                            Upravljanje
+                        </div>
+
+                        <button
+                            className={`user-menu-item ${activeTab === 'materials' ? 'active' : ''}`}
+                            onClick={() => { handleTabClick('materials'); setUserMenuOpen(false); }}
+                        >
+                            <span className="material-icons-round">inventory_2</span>
+                            Materijali
+                        </button>
+                        <button
+                            className={`user-menu-item ${activeTab === 'workers' ? 'active' : ''}`}
+                            onClick={() => { handleTabClick('workers'); setUserMenuOpen(false); }}
+                        >
+                            <span className="material-icons-round">people</span>
+                            Radnici
+                        </button>
+                        <button
+                            className={`user-menu-item ${activeTab === 'suppliers' ? 'active' : ''}`}
+                            onClick={() => { handleTabClick('suppliers'); setUserMenuOpen(false); }}
+                        >
+                            <span className="material-icons-round">store</span>
+                            Dobavljači
+                        </button>
+
+                        <div className="menu-divider" style={{ height: '1px', background: '#f0f0f0', margin: '4px 0' }}></div>
+
                         <button className="user-menu-item" onClick={() => router.push('/settings')}>
                             <span className="material-icons-round">settings</span>
-                            Postavke
+                            Postavke Profila
                         </button>
                         <button className="user-menu-item" onClick={() => router.push('/pricing')}>
                             <span className="material-icons-round">diamond</span>
                             Plan: {organization?.Subscription_Plan || 'Free'}
                         </button>
+
+                        <div className="menu-divider" style={{ height: '1px', background: '#f0f0f0', margin: '4px 0' }}></div>
+
                         <button className="user-menu-item danger" onClick={handleLogout}>
                             <span className="material-icons-round">logout</span>
                             Odjava
@@ -173,77 +249,7 @@ export default function Home() {
                 </div>
             </header>
 
-            {/* Tab Navigation */}
-            <nav className="tabs">
-                <button
-                    className={`tab ${activeTab === 'projects' ? 'active' : ''}`}
-                    onClick={() => handleTabClick('projects')}
-                >
-                    <span className="material-icons-round">folder</span>
-                    Projekti
-                </button>
-                <button
-                    className={`tab ${activeTab === 'offers' ? 'active' : ''}`}
-                    onClick={() => handleTabClick('offers')}
-                >
-                    <span className="material-icons-round">request_quote</span>
-                    Ponude
-                    {!hasModule('offers') && <span className="material-icons-round tab-lock">lock</span>}
-                </button>
-                <button
-                    className={`tab ${activeTab === 'orders' ? 'active' : ''}`}
-                    onClick={() => handleTabClick('orders')}
-                >
-                    <span className="material-icons-round">local_shipping</span>
-                    Narudžbe
-                    {!hasModule('orders') && <span className="material-icons-round tab-lock">lock</span>}
-                </button>
-                <button
-                    className={`tab ${activeTab === 'production' ? 'active' : ''}`}
-                    onClick={() => handleTabClick('production')}
-                >
-                    <span className="material-icons-round">engineering</span>
-                    Proizvodnja
-                </button>
 
-                {/* Settings Dropdown */}
-                <div ref={settingsDropdownRef} className={`tab-dropdown ${dropdownOpen ? 'open' : ''}`}>
-                    <button
-                        className={`tab tab-more ${isDropdownTab ? 'active' : ''}`}
-                        onClick={() => {
-                            setDropdownOpen(!dropdownOpen);
-                            setUserMenuOpen(false); // Close user menu
-                        }}
-                    >
-                        <span className="material-icons-round">settings</span>
-                        Podešavanja
-                        <span className="material-icons-round dropdown-arrow">expand_more</span>
-                    </button>
-                    <div className="tab-dropdown-menu">
-                        <button
-                            className={`tab-dropdown-item ${activeTab === 'materials' ? 'active' : ''}`}
-                            onClick={() => handleTabClick('materials')}
-                        >
-                            <span className="material-icons-round">inventory_2</span>
-                            Materijali
-                        </button>
-                        <button
-                            className={`tab-dropdown-item ${activeTab === 'workers' ? 'active' : ''}`}
-                            onClick={() => handleTabClick('workers')}
-                        >
-                            <span className="material-icons-round">people</span>
-                            Radnici
-                        </button>
-                        <button
-                            className={`tab-dropdown-item ${activeTab === 'suppliers' ? 'active' : ''}`}
-                            onClick={() => handleTabClick('suppliers')}
-                        >
-                            <span className="material-icons-round">store</span>
-                            Dobavljači
-                        </button>
-                    </div>
-                </div>
-            </nav>
 
             {/* Tab Content */}
             <main className="content">
@@ -251,7 +257,16 @@ export default function Home() {
                     <ProjectsTab
                         projects={appState.projects}
                         materials={appState.materials}
+                        workOrders={appState.workOrders}
                         onRefresh={loadData}
+                        showToast={showToast}
+                    />
+                )}
+
+                {activeTab === 'overview' && (
+                    <OverviewTab
+                        projects={appState.projects}
+                        workOrders={appState.workOrders}
                         showToast={showToast}
                     />
                 )}

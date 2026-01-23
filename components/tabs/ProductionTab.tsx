@@ -29,6 +29,52 @@ interface ProductSelection {
 export default function ProductionTab({ workOrders, projects, workers, onRefresh, showToast }: ProductionTabProps) {
     const [searchTerm, setSearchTerm] = useState('');
     const [statusFilter, setStatusFilter] = useState('');
+    const [projectSearch, setProjectSearch] = useState('');
+
+    const sortedProjects = useMemo(() => {
+        let filtered = projects;
+
+        // 1. Search Filter
+        if (projectSearch.trim()) {
+            const search = projectSearch.toLowerCase();
+            filtered = filtered.filter(p => p.Client_Name.toLowerCase().includes(search));
+        }
+
+        // 2. Sorting Logic
+        return [...filtered].sort((a, b) => {
+            // Helper to get stats
+            const getStats = (p: Project) => {
+                const products = p.products || [];
+                const allFinished = products.length > 0 && products.every(prod => prod.Status === 'Spremno' || prod.Status === 'Instalirano');
+
+                let readyMaterials = 0;
+                let totalMaterials = 0;
+
+                products.forEach(prod => {
+                    (prod.materials || []).forEach(mat => {
+                        totalMaterials++;
+                        // Consider 'Primljeno', 'U upotrebi', 'Instalirano' as ready/available
+                        if (['Primljeno', 'U upotrebi', 'Instalirano'].includes(mat.Status)) {
+                            readyMaterials++;
+                        }
+                    });
+                });
+
+                return { allFinished, readyMaterials };
+            };
+
+            const statsA = getStats(a);
+            const statsB = getStats(b);
+
+            // Priority 1: Projects that are NOT fully finished come first
+            if (statsA.allFinished !== statsB.allFinished) {
+                return statsA.allFinished ? 1 : -1; // Finished projects go to bottom
+            }
+
+            // Priority 2: More ready materials comes first
+            return statsB.readyMaterials - statsA.readyMaterials;
+        });
+    }, [projects, projectSearch]);
 
     // Create Modal State
     const [createModal, setCreateModal] = useState(false);
@@ -342,22 +388,39 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                                     <h3>Odaberite projekat</h3>
                                     <p>Za koji projekat kreirate nalog?</p>
                                 </div>
+
+                                <div className="project-search-container">
+                                    <div className="search-input">
+                                        <span className="material-icons-round">search</span>
+                                        <input
+                                            placeholder="Pretraži projekte..."
+                                            value={projectSearch}
+                                            onChange={e => setProjectSearch(e.target.value)}
+                                            autoFocus
+                                        />
+                                    </div>
+                                </div>
+
                                 <div className="wz-grid">
-                                    {projects.map(proj => (
-                                        <div key={proj.Project_ID}
-                                            className={`wz-card ${selectedProjectIds.includes(proj.Project_ID) ? 'selected' : ''}`}
-                                            onClick={() => toggleProjectSelection(proj.Project_ID)}>
-                                            <div className="card-check">
-                                                <span className="material-icons-round">
-                                                    {selectedProjectIds.includes(proj.Project_ID) ? 'check_circle' : 'radio_button_unchecked'}
-                                                </span>
+                                    {sortedProjects.map(proj => {
+                                        return (
+                                            <div key={proj.Project_ID}
+                                                className={`wz-card ${selectedProjectIds.includes(proj.Project_ID) ? 'selected' : ''}`}
+                                                onClick={() => toggleProjectSelection(proj.Project_ID)}>
+                                                <div className="card-check">
+                                                    <span className="material-icons-round">
+                                                        {selectedProjectIds.includes(proj.Project_ID) ? 'check_circle' : 'radio_button_unchecked'}
+                                                    </span>
+                                                </div>
+                                                <div className="card-info">
+                                                    <span className="card-title">{proj.Client_Name}</span>
+                                                    <div className="card-badges">
+                                                        <span className="card-badge">{proj.products?.length || 0} proizvoda</span>
+                                                    </div>
+                                                </div>
                                             </div>
-                                            <div className="card-info">
-                                                <span className="card-title">{proj.Client_Name}</span>
-                                                <span className="card-sub">{proj.products?.length || 0} proizvoda</span>
-                                            </div>
-                                        </div>
-                                    ))}
+                                        )
+                                    })}
                                 </div>
                             </div>
                         )}
@@ -572,8 +635,9 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                 .text-center { text-align: center; }
 
                 /* Step 1: Projects Grid */
-                .step-projects { overflow-y: auto; }
-                .wz-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 16px; }
+                .step-projects { overflow-y: auto; padding-bottom: 20px; }
+                .project-search-container { margin-bottom: 24px; display: flex; justify-content: center; }
+                .wz-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; }
                 .wz-card { 
                     padding: 20px; 
                     border-radius: 12px; 
@@ -582,17 +646,30 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                     cursor: pointer; 
                     display: flex; 
                     gap: 16px; 
-                    align-items: center; 
+                    align-items: flex-start; 
                     transition: all 0.2s; 
                     box-shadow: 0 1px 3px rgba(0,0,0,0.08);
                 }
                 .wz-card:hover { border-color: var(--accent); transform: translateY(-2px); box-shadow: 0 4px 12px rgba(0,0,0,0.12); }
                 .wz-card.selected { border-color: var(--accent); background: #f0f7ff; box-shadow: 0 4px 12px rgba(0, 113, 227, 0.15); }
-                .wz-card .material-icons-round { font-size: 28px; color: #ccc; transition: color 0.2s; }
+                .wz-card .material-icons-round { font-size: 24px; color: #ccc; transition: color 0.2s; }
                 .wz-card.selected .material-icons-round { color: var(--accent); }
-                .card-info { display: flex; flex-direction: column; gap: 4px; }
-                .card-title { font-size: 15px; font-weight: 600; color: var(--text-primary); display: block; }
-                .card-sub { font-size: 13px; color: var(--text-secondary); }
+                .card-info { display: flex; flex-direction: column; gap: 8px; flex: 1; }
+                .card-title { font-size: 16px; font-weight: 600; color: var(--text-primary); display: block; line-height: 1.3; }
+                
+                .card-badges { display: flex; flex-wrap: wrap; gap: 6px; }
+                .card-badge { 
+                    display: inline-flex; 
+                    align-items: center; 
+                    gap: 4px;
+                    font-size: 11px; 
+                    color: var(--text-secondary); 
+                    background: #f0f0f0; 
+                    padding: 2px 8px; 
+                    border-radius: 6px; 
+                    font-weight: 600;
+                }
+                .card-badge.success { background: #d3f9d8; color: #155724; }
 
                 /* Step 2: Products List */
                 .step-products { display: flex; flex-direction: column; overflow: hidden; }
@@ -932,7 +1009,6 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
     );
 }
 
-// ... OrderSection remains existing code ...
 function OrderSection({ title, icon, color, orders, onView, onDelete, onStart, getStatusClass, formatDate }: any) {
     return (
         <div className="order-section">
@@ -1053,3 +1129,4 @@ function OrderSection({ title, icon, color, orders, onView, onDelete, onStart, g
         </div>
     );
 }
+

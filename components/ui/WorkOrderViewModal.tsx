@@ -325,6 +325,7 @@ export default function WorkOrderViewModal({ isOpen, onClose, workOrder, workers
                                     const assignment = item.Process_Assignments?.[process];
                                     return (
                                         <div key={process} className="matrix-col process-col">
+                                            <span className="mobile-process-label">{process}</span>
                                             {isEditMode ? (
                                                 <>
                                                     <select
@@ -350,7 +351,7 @@ export default function WorkOrderViewModal({ isOpen, onClose, workOrder, workers
                                                     </select>
                                                 </>
                                             ) : (
-                                                <>
+                                                <div className="process-content">
                                                     <span className={`status-badge ${getStatusClass(assignment?.Status || 'Na čekanju')}`}>
                                                         {assignment?.Status || 'Na čekanju'}
                                                     </span>
@@ -360,7 +361,7 @@ export default function WorkOrderViewModal({ isOpen, onClose, workOrder, workers
                                                             {assignment.Worker_Name}
                                                         </span>
                                                     )}
-                                                </>
+                                                </div>
                                             )}
                                         </div>
                                     );
@@ -523,6 +524,10 @@ export default function WorkOrderViewModal({ isOpen, onClose, workOrder, workers
                     justify-content: flex-end;
                 }
                 
+                /* Default State - Hidden on Desktop */
+                .mobile-process-label { display: none; }
+                .process-content { display: flex; flex-direction: column; gap: 4px; align-items: center; }
+
                 @media (max-width: 1024px) {
                     .info-row { grid-template-columns: 1fr 1fr; }
                     .bulk-edit-toolbar { flex-direction: column; align-items: stretch; }
@@ -531,10 +536,88 @@ export default function WorkOrderViewModal({ isOpen, onClose, workOrder, workers
                 }
                 
                 @media (max-width: 768px) {
-                    .info-row { grid-template-columns: 1fr; }
-                    .matrix-row { flex-direction: column; }
-                    .matrix-col { border-right: none; border-bottom: 1px solid #e8e8e8; }
-                    .product-col { width: 100%; }
+                    .work-order-view { gap: 16px; }
+                    
+                    /* Info Panel Mobile */
+                    .info-row { grid-template-columns: 1fr; gap: 12px; }
+                    .info-panel { padding: 16px; }
+                    
+                    /* Matrix Mobile - Card View */
+                    .matrix-header { display: none; }
+                    .products-matrix { background: transparent; border: none; }
+                    .matrix-body { max-height: none; overflow: visible; display: flex; flex-direction: column; gap: 12px; }
+                    
+                    .matrix-row {
+                        flex-direction: column;
+                        background: white;
+                        border: 1px solid #e0e0e0;
+                        border-radius: 12px;
+                        padding: 16px;
+                        box-shadow: 0 2px 8px rgba(0,0,0,0.02);
+                    }
+                    
+                    .product-col {
+                        width: 100%;
+                        border-right: none;
+                        border-bottom: 1px solid #f0f0f0;
+                        padding: 0 0 12px 0;
+                        margin-bottom: 12px;
+                        background: transparent;
+                        flex-direction: row;
+                        justify-content: space-between;
+                        align-items: center;
+                        flex-wrap: wrap;
+                    }
+                    
+                    .product-col strong { font-size: 16px; width: 100%; margin-bottom: 4px; }
+                    
+                    .matrix-col {
+                        padding: 0;
+                        border: none;
+                    }
+                    
+                    .process-col {
+                        flex-direction: row;
+                        align-items: center;
+                        justify-content: space-between;
+                        padding: 8px 0;
+                        border-bottom: 1px solid #f9f9f9;
+                        min-width: 0;
+                        gap: 12px;
+                    }
+                    
+                    .process-col:last-child { border-bottom: none; }
+                    
+                    .mobile-process-label {
+                        display: block;
+                        font-size: 13px;
+                        font-weight: 600;
+                        color: var(--text-secondary);
+                        min-width: 100px;
+                    }
+                    
+                    .process-content {
+                        align-items: flex-end;
+                    }
+                    
+                    .status-select, .worker-select {
+                        width: 100%;
+                        max-width: 200px;
+                    }
+
+                    /* Edit Mode Mobile Adjustments */
+                    .checkbox-col {
+                        position: absolute;
+                        top: 16px;
+                        right: 16px;
+                        width: auto;
+                        padding: 0;
+                    }
+                    
+                    .matrix-row { position: relative; }
+                    
+                    /* Hide checkbox column in normal flow if absolute positioned */
+                    .matrix-col.checkbox-col { border: none; }
                 }
             `}</style>
         </Modal>
