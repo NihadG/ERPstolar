@@ -1,498 +1,199 @@
-/* OrdersTab Mobile Responsive Styles */
-/* Targets wizard modal elements by class name */
+/* ==================== ORDERS TAB - MINIMAL REDESIGN ==================== */
 
-/* ==================== WIZARD BASE STYLES ==================== */
-.wizard-container {
+/* CONTAINER */
+.orders-list {
     display: flex;
     flex-direction: column;
-    height: 100%;
-    background: var(--bg);
+    gap: 12px;
+    padding: 16px 0;
 }
 
-.wizard-header {
-    display: grid;
-    grid-template-columns: 120px 1fr 120px;
-    align-items: center;
-    padding: 12px 20px;
-    border-bottom: 1px solid var(--border);
-    background: var(--surface);
-    height: 60px;
-    flex-shrink: 0;
-}
-
-.wizard-nav-left,
-.wizard-nav-right {
-    display: flex;
-    align-items: center;
-}
-
-.wizard-nav-right {
-    justify-content: flex-end;
-}
-
-.wizard-nav-btn {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-}
-
-.wizard-stepper {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 8px;
-}
-
-.step-item {
-    display: flex;
-    align-items: center;
-}
-
-.step-circle {
-    width: 28px;
-    height: 28px;
-    border-radius: 50%;
-    background: var(--border);
-    color: var(--text-secondary);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 13px;
-    font-weight: 600;
-    transition: all 0.2s ease;
-}
-
-.step-item.active .step-circle {
-    background: var(--accent);
-    color: white;
-}
-
-.step-line {
-    width: 20px;
-    height: 2px;
-    background: var(--border);
-    margin-left: 6px;
-    transition: all 0.2s ease;
-}
-
-.step-line.active {
-    background: var(--accent);
-}
-
-.wizard-body {
-    flex: 1;
-    overflow-y: auto;
-    padding: 24px;
-    background: var(--bg);
-    -webkit-overflow-scrolling: touch;
-}
-
-.wizard-step-container {
-    margin: 0 auto;
-}
-
-.step-header {
-    text-align: center;
-    margin-bottom: 32px;
-}
-
-.step-header h3 {
-    margin: 0 0 8px 0;
-    font-size: 24px;
-    font-weight: 600;
-}
-
-.step-header p {
-    margin: 0;
-    color: var(--text-secondary);
-    font-size: 15px;
-}
-
-.step-header-row {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 24px;
-}
-
-
-
-.total-price {
-    color: var(--accent);
-    font-weight: 700;
-    font-size: 16px;
-}
-
-.danger-text {
-    color: var(--error) !important;
-}
-
-/* GRIDS */
-.wizard-grid {
-    display: grid;
-    gap: 16px;
-}
-
-.projects-grid {
-    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-    max-width: 1000px;
-}
-
-.suppliers-grid {
-    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-    gap: 20px;
-    max-width: 800px;
-}
-
-/* CARDS */
-.wizard-card {
-    background: white;
-    border: 1px solid var(--border);
-    border-radius: 16px;
-    cursor: pointer;
-    transition: all 0.2s ease;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
-}
-
-.wizard-card.selected {
-    background: var(--accent-light);
-    border-color: var(--accent);
-    box-shadow: 0 4px 12px rgba(0, 113, 227, 0.15);
-}
-
-.project-card {
-    padding: 20px;
-    display: flex;
-    align-items: center;
-    gap: 16px;
-}
-
-.check-icon {
-    font-size: 28px;
-    color: var(--text-tertiary);
-}
-
-.wizard-card.selected .check-icon {
-    color: var(--accent);
-}
-
-.supplier-card {
-    padding: 24px;
-    text-align: center;
-    position: relative;
-}
-
-.supplier-avatar {
-    width: 56px;
-    height: 56px;
-    border-radius: 50%;
-    background: var(--bg);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    margin: 0 auto 16px;
-}
-
-.wizard-card.selected .supplier-avatar {
-    background: var(--accent);
-}
-
-.supplier-avatar span {
-    color: var(--accent);
-    font-size: 28px;
-}
-
-.wizard-card.selected .supplier-avatar span {
-    color: white;
-}
-
-.supplier-name {
-    font-weight: 600;
-    font-size: 16px;
-}
-
-.supplier-contact {
-    font-size: 13px;
-    color: var(--text-secondary);
-    margin-top: 6px;
-}
-
-.check-badge {
-    position: absolute;
-    top: 12px;
-    right: 12px;
-    color: var(--accent);
-    font-size: 22px;
-}
-
-/* LISTS */
-.wizard-list-container {
-    background: white;
-    border-radius: 16px;
-    border: 1px solid var(--border);
-    overflow: hidden;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
-    max-width: 900px;
-    margin: 0 auto;
-}
-
-.wizard-list-item {
-    padding: 16px 20px;
-    background: transparent;
-    border-bottom: 1px solid var(--border-light);
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    gap: 16px;
-    transition: background 0.15s ease;
-}
-
-.wizard-list-item:last-child {
-    border-bottom: none;
-}
-
-.wizard-list-item.selected {
-    background: var(--accent-light);
-}
-
-.wizard-list-item.selected .check-icon {
-    color: var(--accent);
-}
-
-.item-title {
-    font-weight: 500;
-    font-size: 15px;
-}
-
-.item-subtitle {
-    font-size: 13px;
-    color: var(--text-secondary);
-    margin-top: 2px;
-}
-
-.item-badge {
-    background: var(--bg);
-    padding: 6px 12px;
-    border-radius: 8px;
-    font-size: 13px;
-    font-weight: 500;
-    color: var(--text-secondary);
-}
-
-.item-meta {
-    text-align: right;
-}
-
-.item-qty {
-    font-size: 14px;
-    color: var(--text-secondary);
-}
-
-.item-price {
-    font-weight: 700;
-    color: var(--accent);
-    font-size: 15px;
-    margin-top: 2px;
-}
-
-
-
-/* ==================== REDESIGNED ORDER CARD (MATCHING PROJECTS) ==================== */
+/* ORDER CARD */
 .order-card {
-    background: #ffffff;
-    border-radius: 16px;
+    background: #fff;
+    border-radius: 12px;
+    border: 1px solid #e5e5e7;
     overflow: hidden;
-    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.06);
-    border: 1px solid rgba(0, 0, 0, 0.06);
-    transition: box-shadow 0.2s ease, transform 0.2s ease;
-    display: flex;
-    flex-direction: column;
+    transition: box-shadow 0.2s, border-color 0.2s;
 }
 
 .order-card:hover {
-    box-shadow: 0 6px 24px rgba(0, 0, 0, 0.1);
-    transform: translateY(-1px);
-    border-color: rgba(0, 0, 0, 0.06);
-    /* Maintain original border color interaction or match projects */
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.06);
 }
 
 .order-card.expanded {
-    box-shadow: 0 8px 30px rgba(0, 0, 0, 0.12);
-    transform: translateY(-2px);
     border-color: var(--accent);
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.08);
 }
 
-/* HEADER LAYOUT */
+/* HEADER */
 .order-header {
     display: flex;
     align-items: center;
-    padding: 20px 24px;
-    gap: 16px;
+    gap: 12px;
+    padding: 16px;
     cursor: pointer;
     transition: background 0.15s;
-    background: white;
 }
 
 .order-header:hover {
-    background: var(--surface);
+    background: #fafafa;
 }
 
-/* LEFT SIDE EXPAND BTN (Reusing global .expand-btn if possible, but defining here to be safe) */
-/* Global .expand-btn should handle this, but ensures overrides if needed */
+/* EXPAND BUTTON */
+.expand-btn {
+    width: 32px;
+    height: 32px;
+    border: none;
+    background: #f5f5f7;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: all 0.2s;
+    flex-shrink: 0;
+}
 
+.expand-btn:hover {
+    background: #e8e8ed;
+}
+
+.expand-btn .material-icons-round {
+    font-size: 20px;
+    color: #6e6e73;
+    transition: transform 0.2s;
+}
+
+.expand-btn.expanded .material-icons-round {
+    transform: rotate(90deg);
+    color: var(--accent);
+}
+
+/* MAIN INFO */
 .order-main-info {
     flex: 1;
     min-width: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
 }
 
-.order-title-section {
+.order-title-row {
     display: flex;
     align-items: center;
-    gap: 12px;
-    flex-wrap: wrap;
+    gap: 10px;
+    margin-bottom: 4px;
 }
 
 .order-number {
     font-weight: 600;
-    font-size: 18px;
-    color: var(--text-primary);
+    font-size: 15px;
+    color: #1d1d1f;
 }
 
-.order-badges {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-}
-
-/* DETAILS ROW (Like project-details) */
-.order-details-row {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    flex-wrap: wrap;
-    font-size: 13px;
-    color: var(--text-secondary);
-}
-
-.order-client {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-}
-
-.order-summary {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-}
-
-.summary-item {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-}
-
-.summary-item .material-icons-round {
-    font-size: 16px;
-    color: var(--text-tertiary);
-}
-
-.summary-divider {
-    color: var(--text-tertiary);
-}
-
-.summary-cost {
-    font-weight: 600;
-    color: var(--accent);
-    font-family: monospace;
+.order-project {
     font-size: 14px;
-}
-
-/* ACTIONS SIDE */
-.order-actions {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-}
-
-/* QUICK STATUS MINI SELECT */
-.quick-status-wrapper {
-    position: relative;
-    /* Wrapper to help with click propogation handling if needed */
-}
-
-.status-select-mini {
-    padding: 6px 24px 6px 10px;
-    /* Space for arrow */
-    border-radius: 20px;
-    font-size: 12px;
-    font-weight: 600;
-    border: none;
-    cursor: pointer;
-    outline: none;
-    appearance: none;
-    transition: all 0.2s;
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='%236e6e73' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
-    background-repeat: no-repeat;
-    background-position: right 4px center;
-    background-size: 14px;
-}
-
-.status-select-mini:hover {
-    opacity: 0.8;
-}
-
-/* Status colors map to global status classes usually, but ensuring select has backgrounds */
-.status-select-mini.Nacrt {
-    background-color: #e8e8ed;
     color: #6e6e73;
 }
 
-.status-select-mini.Poslano {
-    background-color: #cce5ff;
-    color: #004085;
+.order-meta {
+    display: flex;
+    align-items: center;
+    gap: 10px;
 }
 
-.status-select-mini.Djelomično.primljeno {
-    background-color: #fff3cd;
-    color: #856404;
+.order-date {
+    font-size: 13px;
+    color: #86868b;
 }
 
-.status-select-mini.Primljeno {
-    background-color: #d4edda;
-    color: #155724;
+/* STATUS BADGES */
+.status-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 3px 10px;
+    border-radius: 12px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
 }
 
-
-/* PROGRESS BAR */
-.order-progress-mini {
-    margin: 0;
-    height: 3px;
-    background: transparent;
+.status-nacrt {
+    background: #f5f5f7;
+    color: #6e6e73;
 }
 
-.progress-bar-bg {
-    height: 100%;
-    background: #f0f0f0;
-    overflow: hidden;
+.status-poslano {
+    background: #e3f2fd;
+    color: #1976d2;
 }
 
-.progress-bar-fill {
-    height: 100%;
-    transition: width 0.3s ease;
+.status-potvrđeno {
+    background: #fff3e0;
+    color: #f57c00;
 }
 
+.status-isporučeno {
+    background: #e8f5e9;
+    color: #43a047;
+}
 
-/* EXPANDED CONTENT AREA */
-.order-expanded-content {
+.status-primljeno {
+    background: #e8f5e9;
+    color: #2e7d32;
+}
+
+.status-djelomično {
+    background: #fff8e1;
+    color: #ff8f00;
+}
+
+/* QUICK RECEIVE BUTTON */
+.btn-receive-all {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 14px;
+    border: none;
+    background: linear-gradient(135deg, #34c759, #30b350);
+    color: #fff;
+    font-size: 13px;
+    font-weight: 600;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.2s;
+    flex-shrink: 0;
+}
+
+.btn-receive-all:hover {
+    background: linear-gradient(135deg, #30b350, #28a745);
+    transform: scale(1.02);
+}
+
+.btn-receive-all .material-icons-round {
+    font-size: 18px;
+}
+
+/* ALL RECEIVED BADGE */
+.all-received-badge {
+    width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #34c759;
+    flex-shrink: 0;
+}
+
+.all-received-badge .material-icons-round {
+    font-size: 24px;
+}
+
+/* EXPANDED CONTENT */
+.order-expanded {
+    border-top: 1px solid #e5e5e7;
+    padding: 16px;
     background: #fafafa;
-    /* Slightly different bg for expanded area */
-    border-top: 1px solid var(--border-light);
-    padding: 24px;
-    animation: slideDown 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+    animation: slideDown 0.2s ease;
 }
 
 @keyframes slideDown {
@@ -507,94 +208,125 @@
     }
 }
 
-.expanded-actions-bar {
+/* ACTIONS ROW */
+.order-actions-row {
     display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 20px;
+    gap: 8px;
+    margin-bottom: 16px;
 }
 
-.left-actions,
-.right-actions {
+/* ITEMS LIST */
+.items-list {
     display: flex;
+    flex-direction: column;
     gap: 8px;
 }
 
-.expanded-details {
-    background: white;
-    border-radius: 12px;
-    border: 1px solid var(--border-light);
+.item-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 14px;
+    background: #fff;
+    border-radius: 10px;
+    border: 1px solid #e5e5e7;
+}
+
+.item-row.received {
+    opacity: 0.7;
+    background: #f8fdf8;
+    border-color: #c8e6c9;
+}
+
+.item-checkbox {
+    width: 18px;
+    height: 18px;
+    cursor: pointer;
+    accent-color: var(--accent);
+}
+
+.item-received-icon {
+    font-size: 20px;
+    color: #34c759;
+    flex-shrink: 0;
+}
+
+.item-info {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+}
+
+.item-name {
+    font-size: 14px;
+    font-weight: 500;
+    color: #1d1d1f;
+    white-space: nowrap;
     overflow: hidden;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.03);
+    text-overflow: ellipsis;
 }
 
-/* ITEMS TABLE UPDATES */
-.items-table th {
-    background: #f9fafb;
+.item-qty {
     font-size: 12px;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    padding: 12px 16px;
+    color: #86868b;
 }
 
-.items-table td {
-    padding: 12px 16px;
+.item-received-date {
+    font-size: 12px;
+    color: #34c759;
+    font-weight: 500;
+    flex-shrink: 0;
 }
 
-/* BATCH ACTIONS & FOOTER */
-.batch-actions {
-    padding: 10px 20px;
+/* BATCH RECEIVE BAR */
+.batch-receive-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 16px;
+    margin-top: 12px;
     background: #e3f2fd;
+    border-radius: 10px;
+    font-size: 13px;
+    font-weight: 500;
     color: #1976d2;
-    border-top: 1px solid rgba(25, 118, 210, 0.1);
 }
 
-.order-footer-info {
-    padding: 14px 20px;
-    background: #fafafa;
-    border-top: 1px solid var(--border-light);
-}
+/* ==================== RESPONSIVE ==================== */
+@media (max-width: 600px) {
+    .order-header {
+        flex-wrap: wrap;
+        gap: 10px;
+    }
 
-/* ==================== INNER ITEM STYLES ==================== */
-.qty-badge {
-    background: var(--bg-secondary);
-    padding: 2px 6px;
-    border-radius: 4px;
-    font-family: monospace;
-    font-size: 12px;
-}
+    .order-title-row {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 2px;
+    }
 
-.qty-input-sm {
-    width: 70px;
-    padding: 4px 8px;
-    border: 1px solid var(--accent);
-    border-radius: 4px;
-    text-align: right;
-    font-family: monospace;
-    font-size: 12px;
-}
+    .btn-receive-all {
+        width: 100%;
+        justify-content: center;
+        order: 10;
+    }
 
-.status-dot {
-    display: inline-block;
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-}
+    .item-row {
+        flex-wrap: wrap;
+    }
 
-.status-dot.Nacrt {
-    background: var(--text-tertiary);
-}
-
-.status-dot.Poslano {
-    background: var(--accent);
-}
-
-.status-dot.Primljeno {
-    background: var(--success);
+    .item-received-date {
+        width: 100%;
+        margin-top: 4px;
+    }
 }
 
 
-/* ==================== TABLET BREAKPOINT ==================== */
+/* ==================== ORDER WIZARD RESPONSIVE STYLES ==================== */
+
+/* TABLET BREAKPOINT */
 @media (max-width: 1024px) {
     .wizard-sidebar {
         width: 320px !important;
@@ -602,10 +334,8 @@
     }
 }
 
-/* ==================== MOBILE BREAKPOINT ==================== */
+/* MOBILE BREAKPOINT */
 @media (max-width: 768px) {
-
-    /* Existing sidebar styles... */
     .wizard-content {
         flex-direction: column !important;
         overflow: auto !important;
@@ -654,19 +384,10 @@
         width: 100% !important;
     }
 
-    .order-card {
-        flex-direction: column !important;
-        align-items: stretch !important;
-        gap: 12px !important;
-    }
-
-    /* --- NEW WIZARD RESPONSIVE STYLES --- */
-
     .wizard-body {
         padding: 16px;
     }
 
-    /* Header */
     .wizard-header {
         grid-template-columns: auto 1fr auto;
         padding: 12px;
@@ -681,14 +402,11 @@
         width: 10px;
     }
 
-    /* Grids */
     .projects-grid,
     .suppliers-grid {
         grid-template-columns: 1fr;
-        /* Single column */
     }
 
-    /* List Items */
     .wizard-list-item {
         flex-direction: column;
         align-items: flex-start;
@@ -735,7 +453,7 @@
     }
 }
 
-/* ==================== SMALL MOBILE BREAKPOINT ==================== */
+/* SMALL MOBILE */
 @media (max-width: 480px) {
     .wizard-summary {
         padding: 12px !important;
