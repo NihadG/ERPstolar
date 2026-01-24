@@ -1,6 +1,311 @@
 /* OrdersTab Mobile Responsive Styles */
 /* Targets wizard modal elements by class name */
 
+/* ==================== WIZARD BASE STYLES ==================== */
+.wizard-container {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    background: var(--bg);
+}
+
+.wizard-header {
+    display: grid;
+    grid-template-columns: 120px 1fr 120px;
+    align-items: center;
+    padding: 12px 20px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+    height: 60px;
+    flex-shrink: 0;
+}
+
+.wizard-nav-left,
+.wizard-nav-right {
+    display: flex;
+    align-items: center;
+}
+
+.wizard-nav-right {
+    justify-content: flex-end;
+}
+
+.wizard-nav-btn {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.wizard-stepper {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+}
+
+.step-item {
+    display: flex;
+    align-items: center;
+}
+
+.step-circle {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    background: var(--border);
+    color: var(--text-secondary);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 13px;
+    font-weight: 600;
+    transition: all 0.2s ease;
+}
+
+.step-item.active .step-circle {
+    background: var(--accent);
+    color: white;
+}
+
+.step-line {
+    width: 20px;
+    height: 2px;
+    background: var(--border);
+    margin-left: 6px;
+    transition: all 0.2s ease;
+}
+
+.step-line.active {
+    background: var(--accent);
+}
+
+.wizard-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 24px;
+    background: var(--bg);
+    -webkit-overflow-scrolling: touch;
+}
+
+.wizard-step-container {
+    margin: 0 auto;
+}
+
+.step-header {
+    text-align: center;
+    margin-bottom: 32px;
+}
+
+.step-header h3 {
+    margin: 0 0 8px 0;
+    font-size: 24px;
+    font-weight: 600;
+}
+
+.step-header p {
+    margin: 0;
+    color: var(--text-secondary);
+    font-size: 15px;
+}
+
+.step-header-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 24px;
+}
+
+.step-subtitle-row {
+    display: flex;
+    gap: 20px;
+    font-size: 14px;
+    margin-top: 4px;
+}
+
+.step-actions {
+    display: flex;
+    gap: 12px;
+}
+
+.total-price {
+    color: var(--accent);
+    font-weight: 700;
+    font-size: 16px;
+}
+
+.danger-text {
+    color: var(--error) !important;
+}
+
+/* GRIDS */
+.wizard-grid {
+    display: grid;
+    gap: 16px;
+}
+
+.projects-grid {
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    max-width: 1000px;
+}
+
+.suppliers-grid {
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 20px;
+    max-width: 800px;
+}
+
+/* CARDS */
+.wizard-card {
+    background: white;
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+}
+
+.wizard-card.selected {
+    background: var(--accent-light);
+    border-color: var(--accent);
+    box-shadow: 0 4px 12px rgba(0, 113, 227, 0.15);
+}
+
+.project-card {
+    padding: 20px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+}
+
+.check-icon {
+    font-size: 28px;
+    color: var(--text-tertiary);
+}
+
+.wizard-card.selected .check-icon {
+    color: var(--accent);
+}
+
+.supplier-card {
+    padding: 24px;
+    text-align: center;
+    position: relative;
+}
+
+.supplier-avatar {
+    width: 56px;
+    height: 56px;
+    border-radius: 50%;
+    background: var(--bg);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin: 0 auto 16px;
+}
+
+.wizard-card.selected .supplier-avatar {
+    background: var(--accent);
+}
+
+.supplier-avatar span {
+    color: var(--accent);
+    font-size: 28px;
+}
+
+.wizard-card.selected .supplier-avatar span {
+    color: white;
+}
+
+.supplier-name {
+    font-weight: 600;
+    font-size: 16px;
+}
+
+.supplier-contact {
+    font-size: 13px;
+    color: var(--text-secondary);
+    margin-top: 6px;
+}
+
+.check-badge {
+    position: absolute;
+    top: 12px;
+    right: 12px;
+    color: var(--accent);
+    font-size: 22px;
+}
+
+/* LISTS */
+.wizard-list-container {
+    background: white;
+    border-radius: 16px;
+    border: 1px solid var(--border);
+    overflow: hidden;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+    max-width: 900px;
+    margin: 0 auto;
+}
+
+.wizard-list-item {
+    padding: 16px 20px;
+    background: transparent;
+    border-bottom: 1px solid var(--border-light);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    transition: background 0.15s ease;
+}
+
+.wizard-list-item:last-child {
+    border-bottom: none;
+}
+
+.wizard-list-item.selected {
+    background: var(--accent-light);
+}
+
+.wizard-list-item.selected .check-icon {
+    color: var(--accent);
+}
+
+.item-title {
+    font-weight: 500;
+    font-size: 15px;
+}
+
+.item-subtitle {
+    font-size: 13px;
+    color: var(--text-secondary);
+    margin-top: 2px;
+}
+
+.item-badge {
+    background: var(--bg);
+    padding: 6px 12px;
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-secondary);
+}
+
+.item-meta {
+    text-align: right;
+}
+
+.item-qty {
+    font-size: 14px;
+    color: var(--text-secondary);
+}
+
+.item-price {
+    font-weight: 700;
+    color: var(--accent);
+    font-size: 15px;
+    margin-top: 2px;
+}
+
+
 /* ==================== TABLET BREAKPOINT ==================== */
 @media (max-width: 1024px) {
     .wizard-sidebar {
@@ -12,13 +317,12 @@
 /* ==================== MOBILE BREAKPOINT ==================== */
 @media (max-width: 768px) {
 
-    /* Stack sidebar and content vertically */
+    /* Existing sidebar styles... */
     .wizard-content {
         flex-direction: column !important;
         overflow: auto !important;
     }
 
-    /* Make sidebar full width */
     .wizard-sidebar {
         width: 100% !important;
         min-width: 100% !important;
@@ -29,7 +333,6 @@
         overflow: visible !important;
     }
 
-    /* Summary bar - stack vertically */
     .wizard-summary {
         flex-direction: column !important;
         gap: 16px !important;
@@ -52,7 +355,6 @@
         justify-content: center !important;
     }
 
-    /* Content header - stack on mobile */
     .content-header {
         flex-direction: column !important;
         gap: 12px !important;
@@ -64,11 +366,84 @@
         width: 100% !important;
     }
 
-    /* Order cards - stack on mobile */
     .order-card {
         flex-direction: column !important;
         align-items: stretch !important;
         gap: 12px !important;
+    }
+
+    /* --- NEW WIZARD RESPONSIVE STYLES --- */
+
+    .wizard-body {
+        padding: 16px;
+    }
+
+    /* Header */
+    .wizard-header {
+        grid-template-columns: auto 1fr auto;
+        padding: 12px;
+        height: 56px;
+    }
+
+    .wizard-btn-text {
+        display: none;
+    }
+
+    .step-line {
+        width: 10px;
+    }
+
+    /* Grids */
+    .projects-grid,
+    .suppliers-grid {
+        grid-template-columns: 1fr;
+        /* Single column */
+    }
+
+    /* List Items */
+    .wizard-list-item {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 12px;
+        position: relative;
+    }
+
+    .wizard-list-item .check-icon {
+        position: absolute;
+        top: 16px;
+        right: 16px;
+    }
+
+    .item-meta {
+        text-align: left;
+        display: flex;
+        align-items: center;
+        width: 100%;
+        justify-content: space-between;
+        margin-top: 4px;
+        padding-top: 8px;
+        border-top: 1px dashed var(--border-light);
+    }
+
+    .step-header-row {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 16px;
+    }
+
+    .step-actions {
+        width: 100%;
+        gap: 8px;
+    }
+
+    .step-actions .btn {
+        flex: 1;
+        justify-content: center;
+    }
+
+    .step-subtitle-row {
+        flex-direction: column;
+        gap: 4px;
     }
 }
 
@@ -80,5 +455,9 @@
 
     .wizard-modal-container h2 {
         font-size: 16px !important;
+    }
+
+    .step-header h3 {
+        font-size: 20px;
     }
 }
