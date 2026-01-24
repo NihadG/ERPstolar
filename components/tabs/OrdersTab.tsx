@@ -114,7 +114,7 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
         return matchesSearch && matchesStatus;
     });
 
-    // Get unordered materials (status = "Nije naručeno" or empty)
+    // Get unordered materials (status = "Nije naručeno" or empty)
     const unorderedMaterials = useMemo(() => {
         return productMaterials.filter(m => m.Status === MATERIAL_STATUSES[0] || !m.Status);
     }, [productMaterials]);
@@ -250,7 +250,7 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
             return;
         }
         if (wizardStep === 3 && !selectedSupplierId) {
-            showToast('Odaberite dobavljača', 'error');
+            showToast('Odaberite dobavljača', 'error');
             return;
         }
         setWizardStep(wizardStep + 1);
@@ -431,7 +431,7 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
         }
         await recalculateOrderTotal(currentOrder!.Order_ID);
 
-        showToast('Količine ažurirane', 'success');
+        showToast('Količine ažurirane', 'success');
         setEditMode(false);
         setEditedQuantities({});
         onRefresh();
@@ -485,7 +485,7 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
                     <tr style="background: #f5f5f7;">
                         <th style="padding: 10px; text-align: left; border-bottom: 1px solid #e5e5e5;">#</th>
                         <th style="padding: 10px; text-align: left; border-bottom: 1px solid #e5e5e5;">Materijal</th>
-                        <th style="padding: 10px; text-align: right; border-bottom: 1px solid #e5e5e5;">Količina</th>
+                        <th style="padding: 10px; text-align: right; border-bottom: 1px solid #e5e5e5;">Količina</th>
                         <th style="padding: 10px; text-align: left; border-bottom: 1px solid #e5e5e5;">Jedinica</th>
                     </tr>
                 </thead>
@@ -578,7 +578,7 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
                                         <div><span style="color: #86868b;">Ram:</span> ${d.Frame_Type || '-'}${d.Frame_Color ? ', ' + d.Frame_Color : ''}</div>
                                         <div><span style="color: #86868b;">Staklo:</span> ${d.Glass_Type || '-'}</div>
                                         <div><span style="color: #86868b;">Baglame:</span> ${d.Hinge_Type || '-'}, ${d.Hinge_Side || 'lijevo'}${d.Hinge_Color ? ', ' + d.Hinge_Color : ''}</div>
-                                        ${d.Integrated_Handle ? '<div><span style="color: #86868b;">Ručka:</span> Integrisana</div>' : ''}
+                                        ${d.Integrated_Handle ? '<div><span style="color: #86868b;">Ručka:</span> Integrisana</div>' : ''}
                                         ${d.Note ? `<div style="margin-top: 6px; font-style: italic; color: #6e6e73;"><span style="color: #86868b;">Napomena:</span> ${d.Note}</div>` : ''}
                                     </div>
                                 </div>
@@ -630,7 +630,7 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
                 </div>
                 
                 <div class="supplier-section">
-                    <div class="supplier-name">${currentOrder.Supplier_Name || 'Dobavljač'}</div>
+                    <div class="supplier-name">${currentOrder.Supplier_Name || 'Dobavljač'}</div>
                     <div class="supplier-contact">
                         ${[supplier?.Phone, supplier?.Email, supplier?.Address].filter(Boolean).join(' | ')}
                     </div>
@@ -643,7 +643,7 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
                 ${currentOrder.Notes ? `<div class="notes"><strong>Napomena:</strong> ${currentOrder.Notes}</div>` : ''}
 
                 <div class="footer">
-                    <span>Očekivana dostava: ${currentOrder.Expected_Delivery ? formatDate(currentOrder.Expected_Delivery) : 'Po dogovoru'}</span>
+                    <span>Očekivana dostava: ${currentOrder.Expected_Delivery ? formatDate(currentOrder.Expected_Delivery) : 'Po dogovoru'}</span>
                     <span>Ukupno stavki: ${currentOrder.items?.length || 0}</span>
                 </div>
             </body>
@@ -727,7 +727,7 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
                         const itemCount = order.items?.length || 0;
                         const receivedCount = order.items?.filter(i => i.Status === 'Primljeno').length || 0;
                         const progress = itemCount > 0 ? Math.round((receivedCount / itemCount) * 100) : 0;
-                        const showProgress = order.Status === 'Poslano' || order.Status === 'Djelomično primljeno';
+                        const showProgress = order.Status === 'Poslano' || order.Status === 'Djelomično primljeno';
 
                         return (
                             <div key={order.Order_ID} className="order-card" onClick={() => openViewModal(order.Order_ID)} style={{ cursor: 'pointer' }}>
@@ -737,7 +737,7 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
                                             <div style={{ fontWeight: 600, fontSize: '16px', color: 'var(--accent)' }}>{order.Order_Number}</div>
                                             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '4px', color: 'var(--text-secondary)', fontSize: '13px' }}>
                                                 <span className="material-icons-round" style={{ fontSize: '16px' }}>store</span>
-                                                {order.Supplier_Name || 'Nepoznat dobavljač'}
+                                                {order.Supplier_Name || 'Nepoznat dobavljač'}
                                             </div>
                                         </div>
                                         <span className={`status-badge ${getStatusClass(order.Status)}`}>
@@ -847,7 +847,7 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
                         }}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
                                 <h2 style={{ margin: 0, fontSize: '20px', fontWeight: 600 }}>
-                                    NarudÅ¾ba {currentOrder.Order_Number}
+                                    Narudžba {currentOrder.Order_Number}
                                 </h2>
                                 <span className={`status-badge ${getStatusClass(currentOrder.Status)}`}>
                                     {currentOrder.Status}
@@ -857,7 +857,7 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
                                 {currentOrder.Status === 'Nacrt' && !editMode && (
                                     <button className="btn btn-secondary btn-sm" onClick={() => handleSendOrder(currentOrder.Order_ID)}>
                                         <span className="material-icons-round">send</span>
-                                        PoÅ¡alji
+                                        Pošalji
                                     </button>
                                 )}
                                 <button className="btn btn-secondary btn-sm" onClick={printOrderDocument}>
@@ -890,7 +890,7 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
                                     border: '1px solid var(--border)'
                                 }}>
                                     <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '4px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                                        Broj narudÅ¾be
+                                        Broj narudžbe
                                     </div>
                                     <div style={{ fontSize: '18px', fontWeight: 600 }}>{currentOrder.Order_Number}</div>
                                 </div>
@@ -912,7 +912,7 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
                                     border: '1px solid var(--border)'
                                 }}>
                                     <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '4px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                                        OÄekivana isporuka
+                                        Očekivana isporuka
                                     </div>
                                     <div style={{ fontSize: '18px', fontWeight: 600 }}>
                                         {currentOrder.Expected_Delivery ? formatDate(currentOrder.Expected_Delivery) : 'Po dogovoru'}
@@ -923,7 +923,7 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
                             {/* Supplier Section */}
                             <div style={{ marginBottom: '24px' }}>
                                 <h3 style={{ fontSize: '14px', fontWeight: 600, marginBottom: '12px', color: 'var(--text-secondary)' }}>
-                                    DobavljaÄ
+                                    Dobavljač
                                 </h3>
                                 <div style={{
                                     display: 'flex',
@@ -952,7 +952,7 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
                             {/* Items Section */}
                             <div>
                                 <h3 style={{ fontSize: '14px', fontWeight: 600, marginBottom: '12px', color: 'var(--text-secondary)' }}>
-                                    Stavke narudÅ¾be
+                                    Stavke narudžbe
                                 </h3>
                                 <div style={{
                                     border: '1px solid var(--border)',
@@ -975,7 +975,7 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
                                                 )}
                                                 <th style={{ padding: '14px 16px', textAlign: 'left', fontWeight: 500 }}>Materijal</th>
                                                 <th style={{ padding: '14px 16px', textAlign: 'left', fontWeight: 500 }}>Projekat / Proizvod</th>
-                                                <th style={{ padding: '14px 16px', textAlign: 'right', fontWeight: 500 }}>KoliÄina</th>
+                                                <th style={{ padding: '14px 16px', textAlign: 'right', fontWeight: 500 }}>Količina</th>
                                                 <th style={{ padding: '14px 16px', textAlign: 'left', fontWeight: 500 }}>Jedinica</th>
                                                 <th style={{ padding: '14px 16px', textAlign: 'right', fontWeight: 500 }}>Cijena</th>
                                                 <th style={{ padding: '14px 16px', textAlign: 'right', fontWeight: 500 }}>Ukupno</th>
@@ -1039,7 +1039,7 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
                                                         </td>
                                                         <td style={{ padding: '14px 16px', textAlign: 'center' }}>
                                                             <span className={`status-badge ${getStatusClass(item.Status)}`}>
-                                                                {item.Status || 'Na Äekanju'}
+                                                                {item.Status || 'Na čekanju'}
                                                             </span>
                                                         </td>
                                                     </tr>
@@ -1116,16 +1116,16 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
                                                 Odabrano: {selectedItemIds.size}
                                             </span>
                                         )}
-                                        {(currentOrder.Status === 'Poslano' || currentOrder.Status === 'DjelomiÄno primljeno') && selectedItemIds.size > 0 && (
+                                        {(currentOrder.Status === 'Poslano' || currentOrder.Status === 'Djelomično primljeno') && selectedItemIds.size > 0 && (
                                             <button className="btn btn-success btn-sm" onClick={handleReceiveSelectedItems}>
                                                 <span className="material-icons-round">check_circle</span>
-                                                OznaÄi primljeno
+                                                Označi primljeno
                                             </button>
                                         )}
                                         {currentOrder.Status === 'Nacrt' && selectedItemIds.size > 0 && (
                                             <button className="btn btn-danger btn-sm" onClick={handleDeleteSelectedItems}>
                                                 <span className="material-icons-round">delete</span>
-                                                ObriÅ¡i selektovane
+                                                Obriši selektovane
                                             </button>
                                         )}
                                     </>
@@ -1137,12 +1137,12 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
                                 {currentOrder.Status === 'Nacrt' && !editMode && (
                                     <button className="btn btn-secondary btn-sm" onClick={startEditMode}>
                                         <span className="material-icons-round">edit</span>
-                                        Uredi koliÄine
+                                        Uredi količine
                                     </button>
                                 )}
                                 <button className="btn btn-danger btn-sm" onClick={() => handleDeleteOrder(currentOrder.Order_ID)}>
                                     <span className="material-icons-round">delete</span>
-                                    ObriÅ¡i
+                                    Obriši
                                 </button>
                                 <button className="btn btn-secondary" onClick={() => { setViewModal(false); setEditMode(false); setSelectedItemIds(new Set()); }}>
                                     Zatvori
