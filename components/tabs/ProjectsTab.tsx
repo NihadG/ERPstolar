@@ -32,7 +32,7 @@ interface ProjectsTabProps {
 export default function ProjectsTab({ projects, materials, workOrders = [], onRefresh, showToast }: ProjectsTabProps) {
     const [searchTerm, setSearchTerm] = useState('');
     const [statusFilter, setStatusFilter] = useState('');
-    const [expandedProjects, setExpandedProjects] = useState<Set<string>>(new Set());
+    const [expandedProjectId, setExpandedProjectId] = useState<string | null>(null);
     const [expandedProducts, setExpandedProducts] = useState<Set<string>>(new Set());
 
     // Modal states
@@ -73,13 +73,8 @@ export default function ProjectsTab({ projects, materials, workOrders = [], onRe
     });
 
     function toggleProject(projectId: string) {
-        const newExpanded = new Set(expandedProjects);
-        if (newExpanded.has(projectId)) {
-            newExpanded.delete(projectId);
-        } else {
-            newExpanded.add(projectId);
-        }
-        setExpandedProjects(newExpanded);
+        // Toggle: if already expanded, collapse; otherwise expand this one (and hide others)
+        setExpandedProjectId(prev => prev === projectId ? null : projectId);
     }
 
     function toggleProduct(productId: string) {
@@ -439,14 +434,18 @@ export default function ProjectsTab({ projects, materials, workOrders = [], onRe
                         <p>Kreirajte prvi projekat klikom na "Novi Projekat"</p>
                     </div>
                 ) : (
-                    filteredProjects.map(project => {
+                    // When a project is expanded, only show that project for cleaner view
+                    (expandedProjectId
+                        ? filteredProjects.filter(p => p.Project_ID === expandedProjectId)
+                        : filteredProjects
+                    ).map(project => {
                         const totalProducts = project.products?.length || 0;
                         const totalCost = project.products?.reduce((sum, p) => sum + (p.Material_Cost || 0), 0) || 0;
 
                         return (
                             <div key={project.Project_ID} className="project-card">
                                 <div className="project-header" onClick={() => toggleProject(project.Project_ID)}>
-                                    <button className={`expand-btn ${expandedProjects.has(project.Project_ID) ? 'expanded' : ''}`}>
+                                    <button className={`expand-btn ${expandedProjectId === project.Project_ID ? 'expanded' : ''}`}>
                                         <span className="material-icons-round">chevron_right</span>
                                     </button>
 
@@ -490,7 +489,7 @@ export default function ProjectsTab({ projects, materials, workOrders = [], onRe
                                 </div>
 
                                 {/* Products Section */}
-                                <div className={`project-products ${expandedProjects.has(project.Project_ID) ? 'expanded' : ''}`}>
+                                <div className={`project-products ${expandedProjectId === project.Project_ID ? 'expanded' : ''}`}>
                                     <div className="products-header">
                                         <h4>Proizvodi ({project.products?.length || 0})</h4>
                                         <button className="btn-add-item" onClick={() => openProductModal(project.Project_ID)}>

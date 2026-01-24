@@ -732,7 +732,11 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
                         <p>Kreirajte prvu narudžbu klikom na "Nova Narudžba"</p>
                     </div>
                 ) : (
-                    filteredOrders.map(order => {
+                    // When an order is expanded, only show that order for cleaner view
+                    (expandedOrderId
+                        ? filteredOrders.filter(o => o.Order_ID === expandedOrderId)
+                        : filteredOrders
+                    ).map(order => {
                         const isExpanded = expandedOrderId === order.Order_ID;
                         const itemCount = order.items?.length || 0;
                         const receivedCount = order.items?.filter(i => i.Status === 'Primljeno').length || 0;
