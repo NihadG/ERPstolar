@@ -40,7 +40,7 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
 
     // Company Info (read from Settings page)
     const [companyInfo, setCompanyInfo] = useState({
-        name: 'VaÅ¡a Firma',
+        name: 'Vaša Firma',
         address: 'Ulica i broj, Grad',
         phone: '+387 XX XXX XXX',
         email: 'info@firma.ba',
@@ -114,7 +114,7 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
         return matchesSearch && matchesStatus;
     });
 
-    // Get unordered materials (status = "Nije naruÄeno" or empty)
+    // Get unordered materials (status = "Nije naručeno" or empty)
     const unorderedMaterials = useMemo(() => {
         return productMaterials.filter(m => m.Status === MATERIAL_STATUSES[0] || !m.Status);
     }, [productMaterials]);
@@ -173,11 +173,11 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
     function getStatusClass(status: string): string {
         return 'status-' + status.toLowerCase()
             .replace(/\s+/g, '-')
-            .replace(/Ä/g, 'c')
-            .replace(/Ä‡/g, 'c')
-            .replace(/Å¡/g, 's')
-            .replace(/Å¾/g, 'z')
-            .replace(/Ä‘/g, 'd');
+            .replace(/č/g, 'c')
+            .replace(/ć/g, 'c')
+            .replace(/š/g, 's')
+            .replace(/ž/g, 'z')
+            .replace(/đ/g, 'd');
     }
 
     function formatCurrency(amount: number): string {
@@ -250,7 +250,7 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
             return;
         }
         if (wizardStep === 3 && !selectedSupplierId) {
-            showToast('Odaberite dobavljaÄa', 'error');
+            showToast('Odaberite dobavljača', 'error');
             return;
         }
         setWizardStep(wizardStep + 1);
@@ -314,7 +314,7 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
     }
 
     async function handleDeleteOrder(orderId: string) {
-        if (!confirm('Jeste li sigurni da Å¾elite obrisati ovu narudÅ¾bu?')) return;
+        if (!confirm('Jeste li sigurni da želite obrisati ovu narudžbu?')) return;
 
         const result = await deleteOrder(orderId);
         if (result.success) {
@@ -328,7 +328,7 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
     async function handleSendOrder(orderId: string) {
         const result = await markOrderSent(orderId);
         if (result.success) {
-            showToast('NarudÅ¾ba poslana', 'success');
+            showToast('Narudžba poslana', 'success');
             onRefresh();
             setViewModal(false);
         } else {
@@ -379,7 +379,7 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
             showToast('Odaberite stavke za brisanje', 'error');
             return;
         }
-        if (!confirm(`Obrisati ${selectedItemIds.size} stavki iz narudÅ¾be?`)) return;
+        if (!confirm(`Obrisati ${selectedItemIds.size} stavki iz narudžbe?`)) return;
 
         const result = await deleteOrderItemsByIds(Array.from(selectedItemIds));
         if (result.success) {
@@ -431,7 +431,7 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
         }
         await recalculateOrderTotal(currentOrder!.Order_ID);
 
-        showToast('KoliÄine aÅ¾urirane', 'success');
+        showToast('Količine ažurirane', 'success');
         setEditMode(false);
         setEditedQuantities({});
         onRefresh();
@@ -485,7 +485,7 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
                     <tr style="background: #f5f5f7;">
                         <th style="padding: 10px; text-align: left; border-bottom: 1px solid #e5e5e5;">#</th>
                         <th style="padding: 10px; text-align: left; border-bottom: 1px solid #e5e5e5;">Materijal</th>
-                        <th style="padding: 10px; text-align: right; border-bottom: 1px solid #e5e5e5;">KoliÄina</th>
+                        <th style="padding: 10px; text-align: right; border-bottom: 1px solid #e5e5e5;">Količina</th>
                         <th style="padding: 10px; text-align: left; border-bottom: 1px solid #e5e5e5;">Jedinica</th>
                     </tr>
                 </thead>
@@ -511,7 +511,7 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
                         <th style="padding: 10px; text-align: left; border-bottom: 1px solid #e5e5e5;">Vrsta stakla</th>
                         <th style="padding: 10px; text-align: right; border-bottom: 1px solid #e5e5e5;">Kom</th>
                         <th style="padding: 10px; text-align: left; border-bottom: 1px solid #e5e5e5;">Dimenzije</th>
-                        <th style="padding: 10px; text-align: right; border-bottom: 1px solid #e5e5e5;">mÂ²</th>
+                        <th style="padding: 10px; text-align: right; border-bottom: 1px solid #e5e5e5;">m²</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -538,7 +538,7 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
                                         <td style="padding: 8px 10px 8px 24px; color: #86868b; font-size: 12px;">${idx + 1}.${pIdx + 1}</td>
                                         <td style="padding: 8px 10px;"></td>
                                         <td style="padding: 8px 10px; text-align: right;">${qty}</td>
-                                        <td style="padding: 8px 10px;">${w} Ã— ${h} mm${edge ? ' <span style="background:#e8f5e9;padding:2px 6px;border-radius:4px;font-size:11px;">bruÅ¡eno</span>' : ''}</td>
+                                        <td style="padding: 8px 10px;">${w} × ${h} mm${edge ? ' <span style="background:#e8f5e9;padding:2px 6px;border-radius:4px;font-size:11px;">brušeno</span>' : ''}</td>
                                         <td style="padding: 8px 10px;"></td>
                                     </tr>
                                 `;
@@ -561,7 +561,7 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
             return `
                     <div style="margin-bottom: 16px;">
                         <div style="background: #f5f5f7; padding: 10px 14px; border-radius: 8px 8px 0 0; font-weight: 600;">
-                            ${idx + 1}. ${a.item.Material_Name} <span style="color: #86868b; font-weight: 400;">(${totalArea.toFixed(2)} mÂ²)</span>
+                            ${idx + 1}. ${a.item.Material_Name} <span style="color: #86868b; font-weight: 400;">(${totalArea.toFixed(2)} m²)</span>
                         </div>
                         ${a.doors.map((d: any, dIdx: number) => {
                 const qty = parseInt(d.Qty) || 1;
@@ -571,14 +571,14 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
                                 <div style="border: 1px solid #e5e5e5; border-top: none; padding: 12px 14px;">
                                     <div style="display: flex; gap: 16px; margin-bottom: 8px; font-size: 13px;">
                                         <span style="color: #86868b;">${idx + 1}.${dIdx + 1}</span>
-                                        <strong>${w} Ã— ${h} mm</strong>
+                                        <strong>${w} × ${h} mm</strong>
                                         <span>${qty} kom</span>
                                     </div>
                                     <div style="font-size: 12px; color: #1d1d1f; line-height: 1.6;">
                                         <div><span style="color: #86868b;">Ram:</span> ${d.Frame_Type || '-'}${d.Frame_Color ? ', ' + d.Frame_Color : ''}</div>
                                         <div><span style="color: #86868b;">Staklo:</span> ${d.Glass_Type || '-'}</div>
                                         <div><span style="color: #86868b;">Baglame:</span> ${d.Hinge_Type || '-'}, ${d.Hinge_Side || 'lijevo'}${d.Hinge_Color ? ', ' + d.Hinge_Color : ''}</div>
-                                        ${d.Integrated_Handle ? '<div><span style="color: #86868b;">RuÄka:</span> Integrisana</div>' : ''}
+                                        ${d.Integrated_Handle ? '<div><span style="color: #86868b;">Ručka:</span> Integrisana</div>' : ''}
                                         ${d.Note ? `<div style="margin-top: 6px; font-style: italic; color: #6e6e73;"><span style="color: #86868b;">Napomena:</span> ${d.Note}</div>` : ''}
                                     </div>
                                 </div>
@@ -594,7 +594,7 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
             <html>
             <head>
                 <meta charset="utf-8">
-                <title>NarudÅ¾ba ${currentOrder.Order_Number}</title>
+                <title>Narudžba ${currentOrder.Order_Number}</title>
                 <style>
                     * { box-sizing: border-box; margin: 0; padding: 0; }
                     body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; padding: 40px; color: #1d1d1f; }
@@ -620,17 +620,17 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
                         ${(!companyInfo.logoBase64 || !companyInfo.hideNameWhenLogo) ? `<h1 class="company-name">${companyInfo.name}</h1>` : ''}
                         <div class="company-details">
                             <p>${companyInfo.address}</p>
-                            <p>${[companyInfo.phone, companyInfo.email].filter(Boolean).join(' Â· ')}</p>
+                            <p>${[companyInfo.phone, companyInfo.email].filter(Boolean).join(' · ')}</p>
                         </div>
                     </div>
                     <div class="order-info">
-                        <div class="order-number">NarudÅ¾ba: ${currentOrder.Order_Number}</div>
+                        <div class="order-number">Narudžba: ${currentOrder.Order_Number}</div>
                         <div>Datum: ${formatDate(currentOrder.Order_Date)}</div>
                     </div>
                 </div>
                 
                 <div class="supplier-section">
-                    <div class="supplier-name">${currentOrder.Supplier_Name || 'DobavljaÄ'}</div>
+                    <div class="supplier-name">${currentOrder.Supplier_Name || 'Dobavljač'}</div>
                     <div class="supplier-contact">
                         ${[supplier?.Phone, supplier?.Email, supplier?.Address].filter(Boolean).join(' | ')}
                     </div>
@@ -643,7 +643,7 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
                 ${currentOrder.Notes ? `<div class="notes"><strong>Napomena:</strong> ${currentOrder.Notes}</div>` : ''}
 
                 <div class="footer">
-                    <span>OÄekivana dostava: ${currentOrder.Expected_Delivery ? formatDate(currentOrder.Expected_Delivery) : 'Po dogovoru'}</span>
+                    <span>Očekivana dostava: ${currentOrder.Expected_Delivery ? formatDate(currentOrder.Expected_Delivery) : 'Po dogovoru'}</span>
                     <span>Ukupno stavki: ${currentOrder.items?.length || 0}</span>
                 </div>
             </body>
@@ -694,7 +694,7 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
                     <span className="material-icons-round">search</span>
                     <input
                         type="text"
-                        placeholder="PretraÅ¾i narudÅ¾be..."
+                        placeholder="Pretraži narudžbe..."
                         value={searchTerm}
                         onChange={(e) => setSearchTerm(e.target.value)}
                     />
@@ -711,7 +711,7 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
                 </select>
                 <button className="btn btn-primary" onClick={openWizard}>
                     <span className="material-icons-round">add</span>
-                    Nova NarudÅ¾ba
+                    Nova Narudžba
                 </button>
             </div>
 
@@ -719,15 +719,15 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
                 {filteredOrders.length === 0 ? (
                     <div className="empty-state">
                         <span className="material-icons-round">local_shipping</span>
-                        <h3>Nema narudÅ¾bi</h3>
-                        <p>Kreirajte prvu narudÅ¾bu klikom na "Nova NarudÅ¾ba"</p>
+                        <h3>Nema narudžbi</h3>
+                        <p>Kreirajte prvu narudžbu klikom na "Nova Narudžba"</p>
                     </div>
                 ) : (
                     filteredOrders.map(order => {
                         const itemCount = order.items?.length || 0;
                         const receivedCount = order.items?.filter(i => i.Status === 'Primljeno').length || 0;
                         const progress = itemCount > 0 ? Math.round((receivedCount / itemCount) * 100) : 0;
-                        const showProgress = order.Status === 'Poslano' || order.Status === 'DjelomiÄno primljeno';
+                        const showProgress = order.Status === 'Poslano' || order.Status === 'Djelomično primljeno';
 
                         return (
                             <div key={order.Order_ID} className="order-card" onClick={() => openViewModal(order.Order_ID)} style={{ cursor: 'pointer' }}>
@@ -737,7 +737,7 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
                                             <div style={{ fontWeight: 600, fontSize: '16px', color: 'var(--accent)' }}>{order.Order_Number}</div>
                                             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '4px', color: 'var(--text-secondary)', fontSize: '13px' }}>
                                                 <span className="material-icons-round" style={{ fontSize: '16px' }}>store</span>
-                                                {order.Supplier_Name || 'Nepoznat dobavljaÄ'}
+                                                {order.Supplier_Name || 'Nepoznat dobavljač'}
                                             </div>
                                         </div>
                                         <span className={`status-badge ${getStatusClass(order.Status)}`}>
