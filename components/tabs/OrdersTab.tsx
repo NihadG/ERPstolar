@@ -31,12 +31,16 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
     const [selectedSupplierId, setSelectedSupplierId] = useState('');
     const [selectedMaterialIds, setSelectedMaterialIds] = useState<Set<string>>(new Set());
 
-    // View Order Modal
-    const [viewModal, setViewModal] = useState(false);
-    const [currentOrder, setCurrentOrder] = useState<Order | null>(null);
-    const [selectedItemIds, setSelectedItemIds] = useState<Set<string>>(new Set());
+    // Expanded Order State
+    const [expandedOrderId, setExpandedOrderId] = useState<string | null>(null);
     const [editMode, setEditMode] = useState(false);
     const [editedQuantities, setEditedQuantities] = useState<Record<string, number>>({});
+    const [selectedItemIds, setSelectedItemIds] = useState<Set<string>>(new Set());
+
+    // Current order derived from expanded ID
+    const currentOrder = useMemo(() =>
+        orders.find(o => o.Order_ID === expandedOrderId) || null
+        , [orders, expandedOrderId]);
 
     // Company Info (read from Settings page)
     const [companyInfo, setCompanyInfo] = useState({
@@ -302,14 +306,26 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
         }
     }
 
-    async function openViewModal(orderId: string) {
-        const order = await getOrder(orderId);
-        if (order) {
-            setCurrentOrder(order);
-            setSelectedItemIds(new Set());
+    function toggleOrderExpand(orderId: string) {
+        if (expandedOrderId === orderId) {
+            setExpandedOrderId(null);
             setEditMode(false);
-            setEditedQuantities({});
-            setViewModal(true);
+            setSelectedItemIds(new Set());
+        } else {
+            setExpandedOrderId(orderId);
+            setEditMode(false);
+            setSelectedItemIds(new Set());
+        }
+    }
+
+    async function handleQuickStatusChange(orderId: string, newStatus: string, e: React.SyntheticEvent) {
+        e.stopPropagation();
+        const result = await updateOrderStatus(orderId, newStatus);
+        if (result.success) {
+            showToast('Status promijenjen', 'success');
+            onRefresh();
+        } else {
+            showToast(result.message, 'error');
         }
     }
 
@@ -330,7 +346,7 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
         if (result.success) {
             showToast('Narudžba poslana', 'success');
             onRefresh();
-            setViewModal(false);
+            // setViewModal(false); // No longer needed
         } else {
             showToast(result.message, 'error');
         }
@@ -346,10 +362,7 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
             showToast('Materijali primljeni', 'success');
             setSelectedItemIds(new Set());
             onRefresh();
-            if (currentOrder) {
-                const updatedOrder = await getOrder(currentOrder.Order_ID);
-                setCurrentOrder(updatedOrder);
-            }
+            // Current order updates automatically via useMemo
         } else {
             showToast(result.message, 'error');
         }
@@ -387,8 +400,7 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
             showToast('Stavke obrisane', 'success');
             setSelectedItemIds(new Set());
             onRefresh();
-            const updatedOrder = await getOrder(currentOrder!.Order_ID);
-            setCurrentOrder(updatedOrder);
+            // Current order updates automatically via useMemo
         } else {
             showToast(result.message, 'error');
         }
@@ -434,9 +446,9 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
         showToast('Količine ažurirane', 'success');
         setEditMode(false);
         setEditedQuantities({});
+        setEditedQuantities({});
         onRefresh();
-        const updatedOrder = await getOrder(currentOrder!.Order_ID);
-        setCurrentOrder(updatedOrder);
+        // Current order updates automatically via useMemo
     }
 
     // Print order document
@@ -664,11 +676,8 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
         if (result.success) {
             showToast('Materijali primljeni', 'success');
             onRefresh();
-            // Refresh current order
-            if (currentOrder) {
-                const updatedOrder = await getOrder(currentOrder.Order_ID);
-                setCurrentOrder(updatedOrder);
-            }
+            onRefresh();
+            // Current order updates automatically via useMemo
         } else {
             showToast(result.message, 'error');
         }
@@ -724,76 +733,211 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
                     </div>
                 ) : (
                     filteredOrders.map(order => {
+                        const isExpanded = expandedOrderId === order.Order_ID;
                         const itemCount = order.items?.length || 0;
                         const receivedCount = order.items?.filter(i => i.Status === 'Primljeno').length || 0;
                         const progress = itemCount > 0 ? Math.round((receivedCount / itemCount) * 100) : 0;
                         const showProgress = order.Status === 'Poslano' || order.Status === 'Djelomično primljeno';
 
                         return (
-                            <div key={order.Order_ID} className="order-card" onClick={() => openViewModal(order.Order_ID)} style={{ cursor: 'pointer' }}>
-                                <div className="order-card-main" style={{ flex: 1 }}>
-                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px' }}>
-                                        <div>
-                                            <div style={{ fontWeight: 600, fontSize: '16px', color: 'var(--accent)' }}>{order.Order_Number}</div>
-                                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '4px', color: 'var(--text-secondary)', fontSize: '13px' }}>
-                                                <span className="material-icons-round" style={{ fontSize: '16px' }}>store</span>
+                            <div
+                                key={order.Order_ID}
+                                className={`order-card ${isExpanded ? 'expanded' : ''}`}
+                                onClick={() => toggleOrderExpand(order.Order_ID)}
+                            >
+                                <div className="order-card-header">
+                                    <div className="order-main-info">
+                                        <div className="order-id-section">
+                                            <span className="order-number">{order.Order_Number}</span>
+                                            <div className="order-supplier">
+                                                <span className="material-icons-round">store</span>
                                                 {order.Supplier_Name || 'Nepoznat dobavljač'}
                                             </div>
                                         </div>
-                                        <span className={`status-badge ${getStatusClass(order.Status)}`}>
-                                            {order.Status || 'Nacrt'}
-                                        </span>
+
+                                        <div className="order-status-section" onClick={e => e.stopPropagation()}>
+                                            <select
+                                                className={`status-select-sm ${getStatusClass(order.Status)}`}
+                                                value={order.Status}
+                                                onChange={(e) => handleQuickStatusChange(order.Order_ID, e.target.value, e)}
+                                            >
+                                                {ORDER_STATUSES.map(s => (
+                                                    <option key={s} value={s}>{s}</option>
+                                                ))}
+                                            </select>
+                                        </div>
                                     </div>
-                                    <div style={{ display: 'flex', gap: '16px', fontSize: '13px', color: 'var(--text-secondary)', marginBottom: showProgress ? '12px' : '0' }}>
-                                        <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                                            <span className="material-icons-round" style={{ fontSize: '16px' }}>calendar_today</span>
+
+                                    <div className="order-meta-info">
+                                        <div className="meta-group">
+                                            <span className="material-icons-round">calendar_today</span>
                                             {formatDate(order.Order_Date)}
-                                        </span>
-                                        <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                                            <span className="material-icons-round" style={{ fontSize: '16px' }}>inventory_2</span>
+                                        </div>
+                                        <div className="meta-group">
+                                            <span className="material-icons-round">inventory_2</span>
                                             {itemCount} stavki
-                                        </span>
+                                        </div>
+                                        <div className="meta-price">
+                                            {formatCurrency(order.Total_Amount || 0)}
+                                        </div>
+                                        <div className="expand-icon">
+                                            <span className="material-icons-round">
+                                                {isExpanded ? 'expand_less' : 'expand_more'}
+                                            </span>
+                                        </div>
                                     </div>
-                                    {showProgress && (
-                                        <div style={{ position: 'relative' }}>
-                                            <div style={{
-                                                height: '6px',
-                                                background: 'var(--border)',
-                                                borderRadius: '3px',
-                                                overflow: 'hidden'
-                                            }}>
-                                                <div style={{
+                                </div>
+
+                                {showProgress && !isExpanded && (
+                                    <div className="order-progress-mini">
+                                        <div className="progress-bar-bg">
+                                            <div
+                                                className="progress-bar-fill"
+                                                style={{
                                                     width: `${progress}%`,
-                                                    height: '100%',
-                                                    background: progress === 100 ? 'var(--success)' : 'var(--accent)',
-                                                    borderRadius: '3px',
-                                                    transition: 'width 0.3s ease'
-                                                }} />
+                                                    background: progress === 100 ? 'var(--success)' : 'var(--accent)'
+                                                }}
+                                            />
+                                        </div>
+                                    </div>
+                                )}
+
+                                {isExpanded && (
+                                    <div className="order-expanded-content" onClick={e => e.stopPropagation()}>
+                                        <div className="expanded-actions-bar">
+                                            <div className="left-actions">
+                                                {order.Status === 'Nacrt' && !editMode && (
+                                                    <>
+                                                        <button className="btn btn-sm btn-secondary" onClick={() => handleSendOrder(order.Order_ID)}>
+                                                            <span className="material-icons-round">send</span>
+                                                            Pošalji
+                                                        </button>
+                                                        <button className="btn btn-sm btn-secondary" onClick={startEditMode}>
+                                                            <span className="material-icons-round">edit</span>
+                                                            Uredi
+                                                        </button>
+                                                    </>
+                                                )}
+                                                {editMode && (
+                                                    <>
+                                                        <button className="btn btn-sm btn-primary" onClick={saveEditedQuantities}>
+                                                            <span className="material-icons-round">save</span>
+                                                            Spremi
+                                                        </button>
+                                                        <button className="btn btn-sm btn-ghost" onClick={cancelEditMode}>
+                                                            Odustani
+                                                        </button>
+                                                    </>
+                                                )}
+                                                <button className="btn btn-sm btn-ghost" onClick={printOrderDocument}>
+                                                    <span className="material-icons-round">print</span>
+                                                    Printaj
+                                                </button>
                                             </div>
-                                            <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '4px' }}>
-                                                {receivedCount}/{itemCount} primljeno
+                                            <div className="right-actions">
+                                                <button className="btn btn-sm btn-danger-ghost" onClick={() => handleDeleteOrder(order.Order_ID)}>
+                                                    <span className="material-icons-round">delete</span>
+                                                    Obriši
+                                                </button>
                                             </div>
                                         </div>
-                                    )}
-                                </div>
-                                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '8px', minWidth: '120px' }}>
-                                    <div style={{ fontWeight: 700, fontSize: '18px', color: 'var(--accent)' }}>
-                                        {formatCurrency(order.Total_Amount || 0)}
+
+                                        <div className="expanded-details">
+                                            {/* Items List */}
+                                            <div className="items-table-container">
+                                                <table className="items-table">
+                                                    <thead>
+                                                        <tr>
+                                                            <th style={{ width: '40px' }}>
+                                                                <input
+                                                                    type="checkbox"
+                                                                    checked={selectedItemIds.size === (order.items?.filter(i => i.Status !== 'Primljeno').length || 0) && (order.items?.length || 0) > 0}
+                                                                    onChange={(e) => toggleAllItems(e.target.checked)}
+                                                                />
+                                                            </th>
+                                                            <th>Naziv</th>
+                                                            <th>Dimenzije / Info</th>
+                                                            <th style={{ textAlign: 'right' }}>Kol.</th>
+                                                            <th style={{ textAlign: 'right' }}>Cijena</th>
+                                                            <th style={{ textAlign: 'center' }}>Status</th>
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody>
+                                                        {order.items?.map((item, idx) => (
+                                                            <tr key={item.ID}>
+                                                                <td>
+                                                                    {item.Status !== 'Primljeno' && (
+                                                                        <input
+                                                                            type="checkbox"
+                                                                            checked={selectedItemIds.has(item.ID)}
+                                                                            onChange={(e) => toggleItemSelection(item.ID, e.target.checked)}
+                                                                        />
+                                                                    )}
+                                                                </td>
+                                                                <td>
+                                                                    <div className="item-name">{item.Material_Name}</div>
+                                                                    <div className="item-sub">{item.Product_Name}</div>
+                                                                </td>
+                                                                <td>
+                                                                    <div className="item-info">
+                                                                        {/* Simplified info for list view */}
+                                                                        {item.Unit}
+                                                                    </div>
+                                                                </td>
+                                                                <td style={{ textAlign: 'right' }}>
+                                                                    {editMode ? (
+                                                                        <input
+                                                                            type="number"
+                                                                            className="qty-input-sm"
+                                                                            value={editedQuantities[item.ID] ?? item.Quantity}
+                                                                            onChange={(e) => setEditedQuantities(prev => ({ ...prev, [item.ID]: parseFloat(e.target.value) || 0 }))}
+                                                                        />
+                                                                    ) : (
+                                                                        <span className="qty-badge">{item.Quantity} {item.Unit}</span>
+                                                                    )}
+                                                                </td>
+                                                                <td style={{ textAlign: 'right' }}>
+                                                                    {formatCurrency(item.Expected_Price)}
+                                                                </td>
+                                                                <td style={{ textAlign: 'center' }}>
+                                                                    <span className={`status-dot ${getStatusClass(item.Status)}`} title={item.Status}></span>
+                                                                </td>
+                                                            </tr>
+                                                        ))}
+                                                    </tbody>
+                                                </table>
+                                            </div>
+
+                                            {/* Batch Actions */}
+                                            {selectedItemIds.size > 0 && (
+                                                <div className="batch-actions">
+                                                    <span>Odabrano: {selectedItemIds.size}</span>
+                                                    <div className="batch-btns">
+                                                        <button className="btn btn-xs btn-success" onClick={handleReceiveSelectedItems}>
+                                                            Primljeno
+                                                        </button>
+                                                        {order.Status === 'Nacrt' && (
+                                                            <button className="btn btn-xs btn-danger" onClick={handleDeleteSelectedItems}>
+                                                                Obriši
+                                                            </button>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            )}
+
+                                            <div className="order-footer-info">
+                                                {order.Notes && (
+                                                    <div className="order-notes">
+                                                        <strong>Napomena:</strong> {order.Notes}
+                                                    </div>
+                                                )}
+                                                <div className="delivery-info">
+                                                    <strong>Isporuka:</strong> {order.Expected_Delivery ? formatDate(order.Expected_Delivery) : 'Po dogovoru'}
+                                                </div>
+                                            </div>
+                                        </div>
                                     </div>
-                                    <div style={{ display: 'flex', gap: '6px' }} onClick={(e) => e.stopPropagation()}>
-                                        {order.Status === 'Nacrt' && (
-                                            <button
-                                                className="btn btn-sm btn-primary"
-                                                onClick={() => handleSendOrder(order.Order_ID)}
-                                            >
-                                                <span className="material-icons-round">send</span>
-                                            </button>
-                                        )}
-                                        <button className="icon-btn danger" onClick={() => handleDeleteOrder(order.Order_ID)}>
-                                            <span className="material-icons-round">delete</span>
-                                        </button>
-                                    </div>
-                                </div>
+                                )}
                             </div>
                         );
                     })
@@ -826,332 +970,6 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
                 handleCreateOrder={handleCreateOrder}
             />
 
-            {/* View Order Modal - Fullscreen Redesign */}
-            <Modal
-                isOpen={viewModal}
-                onClose={() => { setViewModal(false); setEditMode(false); setSelectedItemIds(new Set()); }}
-                title=""
-                size="fullscreen"
-                footer={null}
-            >
-                {currentOrder && (
-                    <div className="order-view-container" style={{ display: 'flex', flexDirection: 'column', height: '100%', gap: '0' }}>
-                        {/* Custom Header - Apple style */}
-                        <div style={{
-                            display: 'flex',
-                            justifyContent: 'space-between',
-                            alignItems: 'center',
-                            padding: '16px 24px',
-                            borderBottom: '1px solid var(--border)',
-                            background: 'var(--surface)'
-                        }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-                                <h2 style={{ margin: 0, fontSize: '20px', fontWeight: 600 }}>
-                                    Narudžba {currentOrder.Order_Number}
-                                </h2>
-                                <span className={`status-badge ${getStatusClass(currentOrder.Status)}`}>
-                                    {currentOrder.Status}
-                                </span>
-                            </div>
-                            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                                {currentOrder.Status === 'Nacrt' && !editMode && (
-                                    <button className="btn btn-secondary btn-sm" onClick={() => handleSendOrder(currentOrder.Order_ID)}>
-                                        <span className="material-icons-round">send</span>
-                                        Pošalji
-                                    </button>
-                                )}
-                                <button className="btn btn-secondary btn-sm" onClick={printOrderDocument}>
-                                    <span className="material-icons-round">print</span>
-                                    Printaj
-                                </button>
-                                <button
-                                    className="icon-btn"
-                                    onClick={() => { setViewModal(false); setEditMode(false); setSelectedItemIds(new Set()); }}
-                                    style={{ marginLeft: '8px' }}
-                                >
-                                    <span className="material-icons-round">close</span>
-                                </button>
-                            </div>
-                        </div>
-
-                        {/* Main Content Area */}
-                        <div style={{ flex: 1, overflow: 'auto', padding: '24px' }}>
-                            {/* Info Cards Row */}
-                            <div style={{
-                                display: 'grid',
-                                gridTemplateColumns: 'repeat(3, 1fr)',
-                                gap: '16px',
-                                marginBottom: '24px'
-                            }}>
-                                <div style={{
-                                    background: 'var(--surface)',
-                                    padding: '16px 20px',
-                                    borderRadius: '12px',
-                                    border: '1px solid var(--border)'
-                                }}>
-                                    <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '4px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                                        Broj narudžbe
-                                    </div>
-                                    <div style={{ fontSize: '18px', fontWeight: 600 }}>{currentOrder.Order_Number}</div>
-                                </div>
-                                <div style={{
-                                    background: 'var(--surface)',
-                                    padding: '16px 20px',
-                                    borderRadius: '12px',
-                                    border: '1px solid var(--border)'
-                                }}>
-                                    <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '4px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                                        Datum
-                                    </div>
-                                    <div style={{ fontSize: '18px', fontWeight: 600 }}>{formatDate(currentOrder.Order_Date)}</div>
-                                </div>
-                                <div style={{
-                                    background: 'var(--surface)',
-                                    padding: '16px 20px',
-                                    borderRadius: '12px',
-                                    border: '1px solid var(--border)'
-                                }}>
-                                    <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '4px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                                        Očekivana isporuka
-                                    </div>
-                                    <div style={{ fontSize: '18px', fontWeight: 600 }}>
-                                        {currentOrder.Expected_Delivery ? formatDate(currentOrder.Expected_Delivery) : 'Po dogovoru'}
-                                    </div>
-                                </div>
-                            </div>
-
-                            {/* Supplier Section */}
-                            <div style={{ marginBottom: '24px' }}>
-                                <h3 style={{ fontSize: '14px', fontWeight: 600, marginBottom: '12px', color: 'var(--text-secondary)' }}>
-                                    Dobavljač
-                                </h3>
-                                <div style={{
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    gap: '16px',
-                                    background: 'var(--surface)',
-                                    padding: '16px 20px',
-                                    borderRadius: '12px',
-                                    border: '1px solid var(--border)'
-                                }}>
-                                    <span className="material-icons-round" style={{ fontSize: '32px', color: 'var(--accent)' }}>store</span>
-                                    <div>
-                                        <div style={{ fontSize: '16px', fontWeight: 600 }}>{currentOrder.Supplier_Name}</div>
-                                        {(() => {
-                                            const supplier = suppliers.find(s => s.Supplier_ID === currentOrder.Supplier_ID);
-                                            return supplier && (
-                                                <div style={{ fontSize: '13px', color: 'var(--text-secondary)', marginTop: '2px' }}>
-                                                    {[supplier.Phone, supplier.Email].filter(Boolean).join(' â€¢ ')}
-                                                </div>
-                                            );
-                                        })()}
-                                    </div>
-                                </div>
-                            </div>
-
-                            {/* Items Section */}
-                            <div>
-                                <h3 style={{ fontSize: '14px', fontWeight: 600, marginBottom: '12px', color: 'var(--text-secondary)' }}>
-                                    Stavke narudžbe
-                                </h3>
-                                <div style={{
-                                    border: '1px solid var(--border)',
-                                    borderRadius: '12px',
-                                    overflow: 'hidden',
-                                    background: 'var(--bg)'
-                                }}>
-                                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '14px' }}>
-                                        <thead>
-                                            <tr style={{ background: 'var(--surface)', borderBottom: '1px solid var(--border)' }}>
-                                                {!editMode && (
-                                                    <th style={{ padding: '14px 16px', width: '44px' }}>
-                                                        <input
-                                                            type="checkbox"
-                                                            onChange={(e) => toggleAllItems(e.target.checked)}
-                                                            checked={selectedItemIds.size > 0 && selectedItemIds.size === (currentOrder.items?.filter(i => i.Status !== 'Primljeno').length || 0)}
-                                                            style={{ width: '18px', height: '18px', cursor: 'pointer' }}
-                                                        />
-                                                    </th>
-                                                )}
-                                                <th style={{ padding: '14px 16px', textAlign: 'left', fontWeight: 500 }}>Materijal</th>
-                                                <th style={{ padding: '14px 16px', textAlign: 'left', fontWeight: 500 }}>Projekat / Proizvod</th>
-                                                <th style={{ padding: '14px 16px', textAlign: 'right', fontWeight: 500 }}>Količina</th>
-                                                <th style={{ padding: '14px 16px', textAlign: 'left', fontWeight: 500 }}>Jedinica</th>
-                                                <th style={{ padding: '14px 16px', textAlign: 'right', fontWeight: 500 }}>Cijena</th>
-                                                <th style={{ padding: '14px 16px', textAlign: 'right', fontWeight: 500 }}>Ukupno</th>
-                                                <th style={{ padding: '14px 16px', textAlign: 'center', fontWeight: 500 }}>Status</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody>
-                                            {currentOrder.items?.map(item => {
-                                                const isReceived = item.Status === 'Primljeno';
-                                                const isSelected = selectedItemIds.has(item.ID);
-                                                const project = projects.find(p => p.products?.some(prod => prod.Product_ID === item.Product_ID));
-                                                return (
-                                                    <tr
-                                                        key={item.ID}
-                                                        style={{
-                                                            borderBottom: '1px solid var(--border-light)',
-                                                            background: isReceived ? 'rgba(52, 199, 89, 0.08)' : isSelected ? 'rgba(0, 122, 255, 0.08)' : 'transparent',
-                                                            transition: 'background 0.15s ease'
-                                                        }}
-                                                    >
-                                                        {!editMode && (
-                                                            <td style={{ padding: '14px 16px' }}>
-                                                                <input
-                                                                    type="checkbox"
-                                                                    checked={isSelected}
-                                                                    disabled={isReceived}
-                                                                    onChange={(e) => toggleItemSelection(item.ID, e.target.checked)}
-                                                                    style={{ width: '18px', height: '18px', cursor: isReceived ? 'not-allowed' : 'pointer' }}
-                                                                />
-                                                            </td>
-                                                        )}
-                                                        <td style={{ padding: '14px 16px', fontWeight: 500 }}>{item.Material_Name}</td>
-                                                        <td style={{ padding: '14px 16px' }}>
-                                                            <div style={{ color: 'var(--text-secondary)', fontSize: '12px' }}>{project?.Client_Name || '-'}</div>
-                                                            <div>{item.Product_Name}</div>
-                                                        </td>
-                                                        <td style={{ padding: '14px 16px', textAlign: 'right' }}>
-                                                            {editMode ? (
-                                                                <input
-                                                                    type="number"
-                                                                    value={editedQuantities[item.ID] ?? item.Quantity}
-                                                                    onChange={(e) => setEditedQuantities({ ...editedQuantities, [item.ID]: parseFloat(e.target.value) || 0 })}
-                                                                    style={{
-                                                                        width: '80px',
-                                                                        padding: '8px',
-                                                                        textAlign: 'right',
-                                                                        borderRadius: '6px',
-                                                                        border: '1px solid var(--border)',
-                                                                        fontSize: '14px'
-                                                                    }}
-                                                                    step="any"
-                                                                />
-                                                            ) : (
-                                                                item.Quantity
-                                                            )}
-                                                        </td>
-                                                        <td style={{ padding: '14px 16px', color: 'var(--text-secondary)' }}>{item.Unit}</td>
-                                                        <td style={{ padding: '14px 16px', textAlign: 'right' }}>{formatCurrency(item.Expected_Price)}</td>
-                                                        <td style={{ padding: '14px 16px', textAlign: 'right', fontWeight: 500 }}>
-                                                            {formatCurrency((item.Quantity || 0) * (item.Expected_Price || 0))}
-                                                        </td>
-                                                        <td style={{ padding: '14px 16px', textAlign: 'center' }}>
-                                                            <span className={`status-badge ${getStatusClass(item.Status)}`}>
-                                                                {item.Status || 'Na čekanju'}
-                                                            </span>
-                                                        </td>
-                                                    </tr>
-                                                );
-                                            })}
-                                        </tbody>
-                                    </table>
-                                </div>
-
-                                {/* Notes Section */}
-                                {currentOrder.Notes && (
-                                    <div style={{ marginTop: '24px' }}>
-                                        <h3 style={{ fontSize: '14px', fontWeight: 600, marginBottom: '12px', color: 'var(--text-secondary)' }}>
-                                            Napomene
-                                        </h3>
-                                        <div style={{
-                                            background: 'var(--surface)',
-                                            padding: '16px 20px',
-                                            borderRadius: '12px',
-                                            border: '1px solid var(--border)',
-                                            fontSize: '14px',
-                                            lineHeight: 1.6
-                                        }}>
-                                            {currentOrder.Notes}
-                                        </div>
-                                    </div>
-                                )}
-
-                                {/* Order Total */}
-                                <div style={{
-                                    marginTop: '24px',
-                                    display: 'flex',
-                                    justifyContent: 'flex-end'
-                                }}>
-                                    <div style={{
-                                        background: 'var(--accent)',
-                                        color: 'white',
-                                        padding: '16px 32px',
-                                        borderRadius: '12px',
-                                        textAlign: 'right'
-                                    }}>
-                                        <div style={{ fontSize: '12px', opacity: 0.9, marginBottom: '4px' }}>UKUPNO</div>
-                                        <div style={{ fontSize: '24px', fontWeight: 700 }}>{formatCurrency(currentOrder.Total_Amount)}</div>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-
-                        {/* Footer - Split Layout */}
-                        <div style={{
-                            display: 'flex',
-                            justifyContent: 'space-between',
-                            alignItems: 'center',
-                            padding: '16px 24px',
-                            borderTop: '1px solid var(--border)',
-                            background: 'var(--surface)'
-                        }}>
-                            {/* Left Side - Selection Actions */}
-                            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                                {editMode ? (
-                                    <>
-                                        <button className="btn btn-secondary" onClick={cancelEditMode}>
-                                            Odustani
-                                        </button>
-                                        <button className="btn btn-primary" onClick={saveEditedQuantities}>
-                                            <span className="material-icons-round">save</span>
-                                            Spremi Promjene
-                                        </button>
-                                    </>
-                                ) : (
-                                    <>
-                                        {selectedItemIds.size > 0 && (
-                                            <span style={{ fontSize: '13px', color: 'var(--text-secondary)', marginRight: '8px' }}>
-                                                Odabrano: {selectedItemIds.size}
-                                            </span>
-                                        )}
-                                        {(currentOrder.Status === 'Poslano' || currentOrder.Status === 'Djelomično primljeno') && selectedItemIds.size > 0 && (
-                                            <button className="btn btn-success btn-sm" onClick={handleReceiveSelectedItems}>
-                                                <span className="material-icons-round">check_circle</span>
-                                                Označi primljeno
-                                            </button>
-                                        )}
-                                        {currentOrder.Status === 'Nacrt' && selectedItemIds.size > 0 && (
-                                            <button className="btn btn-danger btn-sm" onClick={handleDeleteSelectedItems}>
-                                                <span className="material-icons-round">delete</span>
-                                                Obriši selektovane
-                                            </button>
-                                        )}
-                                    </>
-                                )}
-                            </div>
-
-                            {/* Right Side - Order Actions */}
-                            <div style={{ display: 'flex', gap: '8px' }}>
-                                {currentOrder.Status === 'Nacrt' && !editMode && (
-                                    <button className="btn btn-secondary btn-sm" onClick={startEditMode}>
-                                        <span className="material-icons-round">edit</span>
-                                        Uredi količine
-                                    </button>
-                                )}
-                                <button className="btn btn-danger btn-sm" onClick={() => handleDeleteOrder(currentOrder.Order_ID)}>
-                                    <span className="material-icons-round">delete</span>
-                                    Obriši
-                                </button>
-                                <button className="btn btn-secondary" onClick={() => { setViewModal(false); setEditMode(false); setSelectedItemIds(new Set()); }}>
-                                    Zatvori
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-                )}
-            </Modal>
         </div>
     );
 }
