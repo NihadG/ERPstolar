@@ -6,6 +6,7 @@ import { createOrder, deleteOrder, updateOrderStatus, markOrderSent, markMateria
 import Modal from '@/components/ui/Modal';
 import { OrderWizardModal } from './OrderWizardModal';
 import { ORDER_STATUSES, MATERIAL_STATUSES } from '@/lib/types';
+import './OrdersTab.css';
 
 interface OrdersTabProps {
     orders: Order[];
