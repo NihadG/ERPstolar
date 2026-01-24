@@ -1,13 +1,16 @@
 'use client';
 
 import { useState, useMemo } from 'react';
-import type { Project, WorkOrder } from '@/lib/types';
+import type { Project, WorkOrder, Order } from '@/lib/types';
+import { updateProductMaterial } from '@/lib/database';
 
 interface OverviewTabProps {
     projects: Project[];
     workOrders: WorkOrder[];
+    orders?: Order[];
     showToast: (message: string, type: 'success' | 'error' | 'info') => void;
     onCreateOrder?: (materialIds: string[], supplierName: string) => void;
+    onRefresh?: () => void;
 }
 
 type GroupBy = 'none' | 'project' | 'productStatus' | 'materialStatus' | 'supplier';
@@ -32,9 +35,12 @@ interface OverviewItem {
     Project_Name: string;
     Client_Name: string;
     Deadline?: string;
+    // Date fields
+    RelevantDate?: string;
+    DateType?: 'deadline' | 'production' | 'order' | 'received';
 }
 
-export default function OverviewTab({ projects, workOrders, showToast, onCreateOrder }: OverviewTabProps) {
+export default function OverviewTab({ projects, workOrders, orders = [], showToast, onCreateOrder, onRefresh }: OverviewTabProps) {
     const [groupBy, setGroupBy] = useState<GroupBy>('project');
     const [viewMode, setViewMode] = useState<ViewMode>('both');
     const [searchTerm, setSearchTerm] = useState('');
@@ -96,70 +102,95 @@ export default function OverviewTab({ projects, workOrders, showToast, onCreateO
         }
     };
 
-    // Helper function to derive product status from work orders
-    function getProductStatusFromWorkOrders(productId: string, workOrders: WorkOrder[]): string {
-        // Find work order items for this product
-        const workOrderItems = workOrders.flatMap(wo =>
-            (wo.items || []).filter(item => item.Product_ID === productId)
+    // Helper function to derive product status and date from work orders
+    function getProductDetails(productId: string, workOrders: WorkOrder[]): { status: string, date?: string } {
+        // Find work orders containing this product
+        // We look for the latest work order that involves this product
+        const relevantWOs = workOrders.filter(wo =>
+            (wo.items || []).some(item => item.Product_ID === productId)
         );
 
-        if (workOrderItems.length === 0) {
-            return 'Na čekanju'; // No work order yet
+        if (relevantWOs.length === 0) {
+            return { status: 'Na čekanju' };
         }
 
-        // Get the most recent work order item
-        const latestItem = workOrderItems[workOrderItems.length - 1];
+        // Get the most recent work order
+        // Assuming the last one in the list is the most recent or we should sort by created date
+        const latestWO = relevantWOs.sort((a, b) => new Date(b.Created_Date).getTime() - new Date(a.Created_Date).getTime())[0];
+        const latestItem = latestWO.items?.find(item => item.Product_ID === productId);
+
+        if (!latestItem) return { status: 'Na čekanju' };
 
         // Check process assignments to determine current status
         const assignments = latestItem.Process_Assignments || {};
         const processes = Object.keys(assignments);
+        let status = 'Na čekanju';
 
-        if (processes.length === 0) {
-            return 'Na čekanju';
+        if (processes.length > 0) {
+            const allCompleted = processes.every(proc => assignments[proc]?.Status === 'Završeno');
+            if (allCompleted) {
+                status = 'Spremno';
+            } else {
+                const inProgressProcess = processes.find(proc => assignments[proc]?.Status === 'U toku');
+                if (inProgressProcess) {
+                    status = inProgressProcess;
+                } else {
+                    const someCompleted = processes.some(proc => assignments[proc]?.Status === 'Završeno');
+                    if (someCompleted) {
+                        status = 'U proizvodnji';
+                    }
+                }
+            }
         }
 
-        // Check if all processes are completed
-        const allCompleted = processes.every(proc => assignments[proc]?.Status === 'Završeno');
-        if (allCompleted) {
-            return 'Spremno';
-        }
-
-        // Find the current process being worked on
-        const inProgressProcess = processes.find(proc => assignments[proc]?.Status === 'U toku');
-        if (inProgressProcess) {
-            return inProgressProcess; // Return the process name (e.g., "Rezanje", "Kantiranje")
-        }
-
-        // If some are completed but none in progress, return "U proizvodnji"
-        const someCompleted = processes.some(proc => assignments[proc]?.Status === 'Završeno');
-        if (someCompleted) {
-            return 'U proizvodnji';
-        }
-
-        return 'Na čekanju';
+        return {
+            status,
+            date: latestWO.Created_Date // Date put into production
+        };
     }
 
     // Aggregate all data
     const allItems = useMemo(() => {
         const items: OverviewItem[] = [];
 
+        // Pre-process orders for fast material lookup
+        const materialOrdersMap = new Map<string, { orderDate: string, receivedDate?: string, status: string }>();
+        if (orders) {
+            orders.forEach(order => {
+                (order.items || []).forEach(item => {
+                    if (item.Product_Material_ID) {
+                        // Store the latest info for this material ID
+                        // If we have multiple orders for same material ID (e.g. creating same project twice?), might be tricky.
+                        // But typically Material ID is unique per project/product instance.
+                        materialOrdersMap.set(item.Product_Material_ID, {
+                            orderDate: order.Order_Date,
+                            receivedDate: item.Received_Date,
+                            status: item.Status
+                        });
+                    }
+                });
+            });
+        }
+
         projects.forEach(project => {
             // Add products
             if (viewMode === 'products' || viewMode === 'both') {
                 (project.products || []).forEach(product => {
-                    // Derive actual status from work orders
-                    const productStatus = getProductStatusFromWorkOrders(product.Product_ID, workOrders);
+                    // Derive actual status and date from work orders
+                    const { status, date } = getProductDetails(product.Product_ID, workOrders);
 
                     items.push({
                         type: 'product',
                         Product_ID: product.Product_ID,
                         Product_Name: product.Name,
-                        Product_Status: productStatus,
+                        Product_Status: status,
                         Product_Quantity: product.Quantity,
                         Project_ID: project.Project_ID,
                         Project_Name: project.Client_Name,
                         Client_Name: project.Client_Name,
                         Deadline: project.Deadline,
+                        RelevantDate: date,
+                        DateType: 'production'
                     });
                 });
             }
@@ -168,6 +199,20 @@ export default function OverviewTab({ projects, workOrders, showToast, onCreateO
             if (viewMode === 'materials' || viewMode === 'both') {
                 (project.products || []).forEach(product => {
                     (product.materials || []).forEach(material => {
+                        // Determine relevant date based on status
+                        let relevantDate = project.Deadline;
+                        let dateType: 'deadline' | 'order' | 'received' = 'deadline';
+
+                        const orderInfo = materialOrdersMap.get(material.ID);
+
+                        if (material.Status === 'Naručeno' && orderInfo) {
+                            relevantDate = orderInfo.orderDate;
+                            dateType = 'order';
+                        } else if (material.Status === 'Primljeno' && orderInfo) {
+                            relevantDate = orderInfo.receivedDate || orderInfo.orderDate; // Fallback to order date if received date missing
+                            dateType = 'received';
+                        }
+
                         items.push({
                             type: 'material',
                             Material_ID: material.ID,
@@ -182,6 +227,8 @@ export default function OverviewTab({ projects, workOrders, showToast, onCreateO
                             Project_Name: project.Client_Name,
                             Client_Name: project.Client_Name,
                             Deadline: project.Deadline,
+                            RelevantDate: relevantDate,
+                            DateType: dateType
                         });
                     });
                 });
@@ -189,7 +236,7 @@ export default function OverviewTab({ projects, workOrders, showToast, onCreateO
         });
 
         return items;
-    }, [projects, viewMode]);
+    }, [projects, viewMode, workOrders, orders]);
 
     // Filter items
     const filteredItems = useMemo(() => {
@@ -548,8 +595,23 @@ export default function OverviewTab({ projects, workOrders, showToast, onCreateO
                                                 </div>
                                                 <div className="col-projekt">{item.Client_Name}</div>
                                                 <div className="col-datum">
-                                                    <span className="material-icons-round">event</span>
-                                                    {item.Deadline ? new Date(item.Deadline).toLocaleDateString('hr') : '-'}
+                                                    <span className="material-icons-round" style={{
+                                                        color: item.DateType === 'received' ? '#10b981' :
+                                                            item.DateType === 'order' ? '#3b82f6' :
+                                                                item.type === 'product' && item.RelevantDate ? '#f59e0b' : '#9ca3af'
+                                                    }}>
+                                                        {item.DateType === 'received' ? 'event_available' :
+                                                            item.DateType === 'order' ? 'shopping_cart' :
+                                                                item.type === 'product' && item.RelevantDate ? 'factory' : 'event'}
+                                                    </span>
+                                                    <span style={{
+                                                        color: item.DateType === 'received' ? '#059669' :
+                                                            item.DateType === 'order' ? '#2563eb' :
+                                                                item.type === 'product' && item.RelevantDate ? '#d97706' : 'inherit',
+                                                        fontWeight: item.RelevantDate ? 500 : 400
+                                                    }}>
+                                                        {item.RelevantDate ? new Date(item.RelevantDate).toLocaleDateString('hr') : '-'}
+                                                    </span>
                                                 </div>
                                             </div>
                                         ))}
@@ -576,6 +638,21 @@ export default function OverviewTab({ projects, workOrders, showToast, onCreateO
                                 onClick={() => { setSelectedMaterials(new Set()); setSelectedSupplier(''); }}
                             >
                                 Poništi
+                            </button>
+                            <button
+                                className="btn btn-in-stock"
+                                onClick={async () => {
+                                    for (const matId of Array.from(selectedMaterials)) {
+                                        await updateProductMaterial(matId, { Status: 'Na stanju' });
+                                    }
+                                    showToast(`${selectedMaterials.size} materijal(a) označeno kao "Na stanju"`, 'success');
+                                    setSelectedMaterials(new Set());
+                                    setSelectedSupplier('');
+                                    onRefresh?.();
+                                }}
+                            >
+                                <span className="material-icons-round">inventory</span>
+                                Na stanju
                             </button>
                             <button
                                 className="btn btn-primary"
@@ -835,6 +912,7 @@ export default function OverviewTab({ projects, workOrders, showToast, onCreateO
                     align-items: center;
                     flex-wrap: nowrap;
                     overflow-x: auto;
+                    min-width: 0; /* Enables scrolling in flex container */
                     scrollbar-width: none;
                     -ms-overflow-style: none;
                 }
@@ -1003,82 +1081,146 @@ export default function OverviewTab({ projects, workOrders, showToast, onCreateO
                 }
 
                 /* Selection Action Bar */
+                /* Selection Action Bar - Apple Style (Compact & Responsive) */
                 .selection-action-bar {
                     position: fixed;
                     bottom: 24px;
                     left: 50%;
                     transform: translateX(-50%);
-                    background: white;
-                    padding: 12px 20px;
-                    border-radius: 16px;
-                    box-shadow: 0 8px 32px rgba(0,0,0,0.15), 0 2px 8px rgba(0,0,0,0.1);
+                    background: rgba(255, 255, 255, 0.9);
+                    backdrop-filter: blur(20px) saturate(180%);
+                    -webkit-backdrop-filter: blur(20px) saturate(180%);
+                    padding: 6px 6px 6px 16px;
+                    border-radius: 100px;
+                    box-shadow: 
+                        0 12px 32px rgba(0, 0, 0, 0.12),
+                        0 2px 8px rgba(0, 0, 0, 0.04),
+                        0 0 0 1px rgba(255, 255, 255, 0.5) inset;
                     display: flex;
                     align-items: center;
-                    gap: 20px;
+                    gap: 16px;
                     z-index: 1000;
-                    border: 1px solid #e5e7eb;
+                    border: 1px solid rgba(0, 0, 0, 0.08);
+                    animation: slideUpFade 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+                    max-width: 90vw;
+                    white-space: nowrap;
+                }
+
+                @media (max-width: 640px) {
+                    .selection-action-bar {
+                        padding: 6px 6px 6px 12px;
+                        gap: 8px;
+                        bottom: 20px;
+                        width: auto;
+                    }
+                    
+                    .selection-info span:not(.material-icons-round):not(.supplier-badge) {
+                        display: none; /* Hide 'x materijala odabrano' text on very small screens */
+                    }
+                    
+                    .selection-info .supplier-badge {
+                        display: none; /* Hide supplier name on mobile to save space */
+                    }
+                    
+                    .selection-actions .btn {
+                        padding: 0 12px;
+                        font-size: 13px;
+                    }
+                    
+                    .selection-actions .btn span:not(.material-icons-round) {
+                         /* Keep text but maybe shorten it in logic if needed, or rely on flex shrinking */
+                    }
+                }
+
+                @keyframes slideUpFade {
+                    from { opacity: 0; transform: translate(-50%, 20px); }
+                    to { opacity: 1; transform: translate(-50%, 0); }
                 }
 
                 .selection-info {
                     display: flex;
                     align-items: center;
-                    gap: 10px;
-                    color: #374151;
+                    gap: 8px;
+                    color: #1d1d1f;
                     font-weight: 500;
+                    font-size: 13px;
+                    letter-spacing: -0.01em;
                 }
 
                 .selection-info .material-icons-round {
-                    color: #22c55e;
-                    font-size: 20px;
+                    color: #34c759;
+                    font-size: 18px;
                 }
 
                 .supplier-badge {
-                    background: #eff6ff;
-                    color: #3b82f6;
-                    padding: 4px 10px;
-                    border-radius: 6px;
-                    font-size: 12px;
+                    background: rgba(0, 0, 0, 0.05);
+                    color: #1d1d1f;
+                    padding: 2px 8px;
+                    border-radius: 99px;
+                    font-size: 11px;
                     font-weight: 600;
+                    letter-spacing: 0.02em;
                 }
 
                 .selection-actions {
                     display: flex;
-                    gap: 8px;
+                    align-items: center;
+                    gap: 6px;
                 }
 
                 .selection-actions .btn {
                     display: flex;
                     align-items: center;
                     gap: 6px;
-                    padding: 8px 16px;
-                    border-radius: 10px;
-                    font-size: 14px;
+                    height: 36px;
+                    padding: 0 16px;
+                    border-radius: 99px;
+                    font-size: 13px;
                     font-weight: 500;
                     cursor: pointer;
                     border: none;
-                    transition: all 0.2s;
+                    transition: all 0.2s cubic-bezier(0.25, 1, 0.5, 1);
+                    white-space: nowrap;
                 }
 
+                /* Cancel Button - Ghost style */
                 .selection-actions .btn-secondary {
-                    background: #f3f4f6;
-                    color: #374151;
+                    background: transparent;
+                    color: #86868b;
+                    padding: 0 10px;
                 }
 
                 .selection-actions .btn-secondary:hover {
-                    background: #e5e7eb;
+                    color: #1d1d1f;
+                    background: rgba(0,0,0,0.05);
                 }
 
-                .selection-actions .btn-primary {
-                    background: #3b82f6;
+                /* In Stock Button */
+                .selection-actions .btn-in-stock {
+                    background: #30b0c7;
                     color: white;
+                    box-shadow: 0 2px 6px rgba(48, 176, 199, 0.2);
+                }
+
+                .selection-actions .btn-in-stock:hover {
+                    background: #25a3b9;
+                    transform: translateY(-1px);
+                }
+
+                /* Create Order Button */
+                .selection-actions .btn-primary {
+                    background: #0071e3;
+                    color: white;
+                    box-shadow: 0 2px 6px rgba(0, 113, 227, 0.2);
                 }
 
                 .selection-actions .btn-primary:hover {
-                    background: #2563eb;
+                    background: #0077ed;
+                    transform: translateY(-1px);
                 }
 
-                .selection-actions .btn-primary .material-icons-round {
-                    font-size: 18px;
+                .selection-actions .material-icons-round {
+                    font-size: 16px;
                 }
 
                 .col-naziv {

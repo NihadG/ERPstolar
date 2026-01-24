@@ -1656,29 +1656,45 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
                     </div>
                 ) : currentOffer && (
                     <div>
-                        {/* Offer Info */}
-                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '16px', marginBottom: '24px' }}>
-                            <div style={{ background: 'var(--surface)', padding: '16px', borderRadius: '8px' }}>
-                                <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Broj ponude</div>
-                                <div style={{ fontSize: '18px', fontWeight: 600 }}>{currentOffer.Offer_Number}</div>
+                        {/* Compact Offer Header */}
+                        <div style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '24px',
+                            marginBottom: '24px',
+                            background: 'var(--surface)',
+                            padding: '12px 20px',
+                            borderRadius: '10px',
+                            border: '1px solid var(--border-light)',
+                            flexWrap: 'wrap'
+                        }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                <span className="material-icons-round" style={{ fontSize: '18px', color: 'var(--accent)' }}>tag</span>
+                                <span style={{ fontSize: '14px', fontWeight: 600, color: 'var(--text-primary)' }}>{currentOffer.Offer_Number}</span>
                             </div>
-                            <div style={{ background: 'var(--surface)', padding: '16px', borderRadius: '8px' }}>
-                                <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Datum kreiranja</div>
-                                <div style={{ fontSize: '18px', fontWeight: 600 }}>{formatDate(currentOffer.Created_Date)}</div>
-                            </div>
-                            <div style={{ background: 'var(--surface)', padding: '16px', borderRadius: '8px' }}>
-                                <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Vrijedi do</div>
-                                <div style={{ fontSize: '18px', fontWeight: 600 }}>{formatDate(currentOffer.Valid_Until)}</div>
-                            </div>
-                        </div>
+                            <div style={{ width: '1px', height: '16px', background: 'var(--border)' }}></div>
 
-                        {/* Client Info */}
-                        <div style={{ background: 'var(--surface)', padding: '16px', borderRadius: '12px', marginBottom: '24px' }}>
-                            <h4 style={{ marginBottom: '12px' }}>Podaci o klijentu</h4>
-                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '12px' }}>
-                                <div><span className="material-icons-round" style={{ fontSize: '16px', marginRight: '8px', verticalAlign: 'middle' }}>person</span>{currentOffer.Client_Name || '-'}</div>
-                                <div><span className="material-icons-round" style={{ fontSize: '16px', marginRight: '8px', verticalAlign: 'middle' }}>phone</span>{currentOffer.Client_Phone || '-'}</div>
-                                <div><span className="material-icons-round" style={{ fontSize: '16px', marginRight: '8px', verticalAlign: 'middle' }}>email</span>{currentOffer.Client_Email || '-'}</div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                <span className="material-icons-round" style={{ fontSize: '18px', color: 'var(--text-secondary)' }}>person</span>
+                                <span style={{ fontSize: '14px', color: 'var(--text-primary)' }}>{currentOffer.Client_Name || '-'}</span>
+                            </div>
+                            <div style={{ width: '1px', height: '16px', background: 'var(--border)' }}></div>
+
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                <span className="material-icons-round" style={{ fontSize: '18px', color: 'var(--text-secondary)' }}>calendar_today</span>
+                                <span style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
+                                    <span style={{ marginRight: '4px' }}>Kreirano:</span>
+                                    <span style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{formatDate(currentOffer.Created_Date)}</span>
+                                </span>
+                            </div>
+                            <div style={{ width: '1px', height: '16px', background: 'var(--border)' }}></div>
+
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                <span className="material-icons-round" style={{ fontSize: '18px', color: 'var(--text-secondary)' }}>event_available</span>
+                                <span style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
+                                    <span style={{ marginRight: '4px' }}>Vrijedi do:</span>
+                                    <span style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{formatDate(currentOffer.Valid_Until)}</span>
+                                </span>
                             </div>
                         </div>
 

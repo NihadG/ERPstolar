@@ -64,6 +64,9 @@ export default function ProjectsTab({ projects, materials, workOrders = [], onRe
     const [editMaterialQty, setEditMaterialQty] = useState(0);
     const [editMaterialPrice, setEditMaterialPrice] = useState(0);
 
+    // Material status dropdown
+    const [statusDropdownMaterialId, setStatusDropdownMaterialId] = useState<string | null>(null);
+
     // Filter projects
     const filteredProjects = projects.filter(project => {
         const matchesSearch = project.Client_Name.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -329,6 +332,18 @@ export default function ProjectsTab({ projects, materials, workOrders = [], onRe
         }
     }
 
+    // Handle material status change
+    async function handleMaterialStatusChange(materialId: string, newStatus: string) {
+        const result = await updateProductMaterial(materialId, { Status: newStatus });
+        if (result.success) {
+            showToast(`Status materijala promjenjen u "${newStatus}"`, 'success');
+            setStatusDropdownMaterialId(null);
+            onRefresh();
+        } else {
+            showToast(result.message, 'error');
+        }
+    }
+
     function getStatusClass(status: string): string {
         return 'status-' + status.toLowerCase()
             .replace(/\s+/g, '-')
@@ -573,9 +588,38 @@ export default function ProjectsTab({ projects, materials, workOrders = [], onRe
                                                                 <strong>{formatCurrency(material.Total_Price)}</strong>
                                                             </div>
                                                             <div className="mat-col-status">
-                                                                <span className={`status-badge ${getStatusClass(material.Status)}`}>
-                                                                    {material.Status}
-                                                                </span>
+                                                                {material.Status === 'Nije naručeno' ? (
+                                                                    <div className="status-dropdown-wrapper">
+                                                                        <span
+                                                                            className={`status-badge ${getStatusClass(material.Status)} clickable`}
+                                                                            onClick={(e) => {
+                                                                                e.stopPropagation();
+                                                                                setStatusDropdownMaterialId(
+                                                                                    statusDropdownMaterialId === material.ID ? null : material.ID
+                                                                                );
+                                                                            }}
+                                                                            title="Klikni za promjenu statusa"
+                                                                        >
+                                                                            {material.Status}
+                                                                            <span className="material-icons-round" style={{ fontSize: '14px', marginLeft: '4px' }}>expand_more</span>
+                                                                        </span>
+                                                                        {statusDropdownMaterialId === material.ID && (
+                                                                            <div className="status-dropdown-menu" onClick={(e) => e.stopPropagation()}>
+                                                                                <button
+                                                                                    className="status-dropdown-item"
+                                                                                    onClick={() => handleMaterialStatusChange(material.ID, 'Na stanju')}
+                                                                                >
+                                                                                    <span className="material-icons-round">inventory</span>
+                                                                                    Na stanju
+                                                                                </button>
+                                                                            </div>
+                                                                        )}
+                                                                    </div>
+                                                                ) : (
+                                                                    <span className={`status-badge ${getStatusClass(material.Status)}`}>
+                                                                        {material.Status}
+                                                                    </span>
+                                                                )}
                                                             </div>
                                                             <div className="mat-col-actions">
                                                                 <div className="action-buttons">

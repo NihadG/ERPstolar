@@ -581,14 +581,12 @@
 }
 
 .order-id-text {
-    font-size: 15px;
-    /* Smanjeno sa 18px */
-    font-weight: 600;
-    color: #1d1d1f;
-    font-family: 'SF Mono', 'Roboto Mono', monospace;
-    /* Monospace za ID izgleda tehnicki bolje */
+    font-size: 14px;
+    font-weight: 500;
+    color: #6b7280;
+    font-family: inherit;
     background: #f5f5f7;
-    padding: 2px 8px;
+    padding: 4px 8px;
     border-radius: 6px;
 }
 
@@ -1220,34 +1218,278 @@
     box-shadow: 0 4px 12px rgba(245, 158, 11, 0.25);
 }
 
-/* ==================== RESPONSIVE ==================== */
+/* ==================== COMPREHENSIVE RESPONSIVE OPTIMIZATION ==================== */
+
+@media (max-width: 1024px) {
+    .controls-row.secondary {
+        grid-template-columns: repeat(2, 1fr);
+    }
+}
+
 @media (max-width: 768px) {
+
+    /* LAYOUT & SPACING */
+    .orders-page {
+        height: auto;
+        min-height: 100vh;
+        background: #f9fafb;
+    }
+
+    .orders-content {
+        padding: 12px;
+        overflow-y: visible;
+        /* Scroll on body instead */
+    }
+
+    /* HEADER ADAPTATION */
+    .page-header {
+        padding: 16px;
+    }
+
+    .header-content {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 16px;
+    }
+
+    .header-text {
+        width: 100%;
+    }
+
+    .header-actions {
+        width: 100%;
+        display: grid;
+        grid-template-columns: 1fr 1.5fr;
+        /* Filter small, New Order larger */
+        gap: 12px;
+    }
+
+    .filter-toggle {
+        justify-content: center;
+        white-space: nowrap;
+    }
+
+    .filter-toggle span:nth-child(2) {
+        display: none;
+        /* Hide text "Pretraga i filteri" on tablet/mobile */
+    }
+
+    .filter-toggle::after {
+        content: 'Filteri';
+        /* Shorter text */
+        font-size: 14px;
+        font-weight: 500;
+    }
+
+    /* CONTROL BAR */
+    .control-bar.open {
+        padding: 16px;
+        max-height: 80vh;
+        overflow-y: auto;
+    }
+
+    .control-bar-inner {
+        gap: 20px;
+    }
+
+    .controls-row {
+        gap: 16px;
+    }
+
+    .search-box {
+        min-width: 100%;
+        flex-basis: 100%;
+        order: 1;
+        /* Search first */
+    }
+
+    .status-pills {
+        order: 2;
+        width: 100%;
+        overflow-x: auto;
+        padding-bottom: 4px;
+        flex-wrap: nowrap;
+        /* Horizontal scroll layout */
+        -webkit-overflow-scrolling: touch;
+        gap: 8px;
+        background: transparent;
+        border: none;
+    }
+
+    .status-pill {
+        flex-shrink: 0;
+        white-space: nowrap;
+    }
+
+    .group-control {
+        order: 3;
+        width: 100%;
+        justify-content: space-between;
+    }
+
+    .group-dropdown {
+        flex: 1;
+    }
+
+    .group-dropdown select {
+        width: 100%;
+    }
+
+    /* SECONDARY FILTERS */
+    .controls-row.secondary {
+        grid-template-columns: 1fr;
+        /* Stack vertically */
+        padding-top: 16px;
+        gap: 12px;
+    }
+
+    .filter-group {
+        width: 100%;
+    }
+
+    .btn-text {
+        /* Clear filters */
+        width: 100%;
+        background: #fee2e2 !important;
+        margin-top: 8px;
+    }
+
+    /* ORDERS LIST */
+    .group-card {
+        border-radius: 12px;
+    }
+
+    .group-card-header {
+        padding: 12px 16px;
+    }
+
+    .group-count-badge {
+        display: none;
+        /* Clean up header */
+    }
+
+    .group-total {
+        font-size: 14px;
+    }
+
+    /* ORDER ITEM ROW (Collapsed) */
     .order-header-custom {
         flex-direction: column;
         align-items: flex-start;
         gap: 12px;
         padding: 16px;
+        position: relative;
+    }
+
+    .expand-btn {
+        position: absolute;
+        top: 16px;
+        right: 16px;
     }
 
     .order-info-group {
         width: 100%;
+        padding-right: 32px;
+        /* Space for expand chevron */
     }
 
     .order-top-row {
-        width: 100%;
-        justify-content: space-between;
+        flex-wrap: wrap;
+        margin-bottom: 6px;
     }
 
     .order-actions-group {
         width: 100%;
         justify-content: space-between;
-        /* Razvuci elemente */
         padding-top: 12px;
-        border-top: 1px dashed #e5e5e7;
+        border-top: 1px dashed #e5e7eb;
+        gap: 8px;
+    }
+
+    .status-badge-custom {
+        flex: 1;
+        justify-content: center;
+        height: 34px;
     }
 
     .btn-receive-all {
-        flex: 1;
+        flex: 1.5;
+        /* Larger receive button */
         justify-content: center;
+        height: 34px !important;
+    }
+
+    .action-item {
+        height: 34px;
+    }
+
+    .icon-btn-custom {
+        width: 34px;
+        height: 34px;
+    }
+}
+
+@media (max-width: 480px) {
+    /* EXTREME MOBILE REFINEMENTS */
+
+    .orders-content {
+        padding: 8px;
+        /* Tighter padding */
+    }
+
+    .header-text h1 {
+        font-size: 20px;
+    }
+
+    .header-text p {
+        font-size: 13px;
+        display: -webkit-box;
+        -webkit-line-clamp: 2;
+        line-clamp: 2;
+        -webkit-box-orient: vertical;
+        overflow: hidden;
+    }
+
+    /* EXPANDED PRODUCTS */
+    .project-products {
+        padding: 0 12px 12px;
+    }
+
+    .product-card {
+        padding: 12px;
+    }
+
+    .product-header {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+
+    .product-header>div:first-child {
+        /* Checkbox area */
+        position: absolute;
+        top: 12px;
+        left: 12px;
+    }
+
+    .product-info {
+        width: 100%;
+        padding-left: 28px;
+        /* Indent for checkbox */
+    }
+
+    .project-actions {
+        width: 100%;
+        padding-left: 28px;
+        justify-content: space-between;
+        margin-top: 8px;
+        padding-top: 8px;
+        border-top: 1px solid #f3f4f6;
+    }
+
+    .product-name {
+        font-size: 14px;
+        white-space: normal;
+        /* Allow wrap */
+        overflow: visible;
     }
 }

@@ -1003,7 +1003,10 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
                         <p>{hasActiveFilters ? 'Pokušajte promijeniti filtere' : 'Kreirajte prvu narudžbu klikom na "Nova Narudžba"'}</p>
                     </div>
                 ) : (
-                    groupedOrders.map(group => (
+                    (expandedOrderId
+                        ? groupedOrders.filter(g => g.items.some(o => o.Order_ID === expandedOrderId))
+                        : groupedOrders
+                    ).map(group => (
                         <div key={group.groupKey} className="group-card">
                             {/* Group Header */}
                             <div

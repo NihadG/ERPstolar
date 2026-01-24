@@ -799,6 +799,71 @@ select:hover,
   color: #721c24;
 }
 
+/* Na stanju / In Stock status */
+.status-na-stanju {
+  background: #ccfbf1;
+  color: #0d9488;
+}
+
+/* Clickable status badge */
+.status-badge.clickable {
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  transition: all 0.2s;
+}
+
+.status-badge.clickable:hover {
+  filter: brightness(0.95);
+  transform: scale(1.02);
+}
+
+/* Status Dropdown */
+.status-dropdown-wrapper {
+  position: relative;
+  display: inline-block;
+}
+
+.status-dropdown-menu {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  margin-top: 4px;
+  background: white;
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  border-radius: 10px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+  min-width: 140px;
+  z-index: 100;
+  overflow: hidden;
+  animation: fadeIn 0.15s ease-out;
+}
+
+.status-dropdown-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 10px 14px;
+  border: none;
+  background: transparent;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-primary);
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.15s;
+}
+
+.status-dropdown-item:hover {
+  background: #f3f4f6;
+}
+
+.status-dropdown-item .material-icons-round {
+  font-size: 18px;
+  color: #0d9488;
+}
+
 .mode-badge {
   padding: 4px 10px;
   border-radius: 20px;

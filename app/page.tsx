@@ -194,8 +194,10 @@ export default function Home() {
                         <OverviewTab
                             projects={appState.projects}
                             workOrders={appState.workOrders}
+                            orders={appState.orders}
                             showToast={showToast}
                             onCreateOrder={handleCreateOrderFromOverview}
+                            onRefresh={loadData}
                         />
                     )}
 
