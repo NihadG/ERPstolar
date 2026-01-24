@@ -7,6 +7,7 @@ interface OverviewTabProps {
     projects: Project[];
     workOrders: WorkOrder[];
     showToast: (message: string, type: 'success' | 'error' | 'info') => void;
+    onCreateOrder?: (materialIds: string[], supplierName: string) => void;
 }
 
 type GroupBy = 'none' | 'project' | 'productStatus' | 'materialStatus' | 'supplier';
@@ -33,13 +34,67 @@ interface OverviewItem {
     Deadline?: string;
 }
 
-export default function OverviewTab({ projects, workOrders, showToast }: OverviewTabProps) {
+export default function OverviewTab({ projects, workOrders, showToast, onCreateOrder }: OverviewTabProps) {
     const [groupBy, setGroupBy] = useState<GroupBy>('project');
     const [viewMode, setViewMode] = useState<ViewMode>('both');
     const [searchTerm, setSearchTerm] = useState('');
     const [statusFilter, setStatusFilter] = useState('');
     const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
     const [isFiltersOpen, setIsFiltersOpen] = useState(false);
+
+    // Material selection for orders
+    const [selectedMaterials, setSelectedMaterials] = useState<Set<string>>(new Set());
+    const [selectedSupplier, setSelectedSupplier] = useState<string>('');
+
+    // Contextual grouping options based on viewMode
+    const groupingOptions = useMemo(() => {
+        if (viewMode === 'products') {
+            return [
+                { value: 'project', label: 'Projektu' },
+                { value: 'productStatus', label: 'Statusu proizvoda' },
+                { value: 'none', label: 'Bez grupiranja' },
+            ];
+        } else if (viewMode === 'materials') {
+            return [
+                { value: 'project', label: 'Projektu' },
+                { value: 'materialStatus', label: 'Statusu materijala' },
+                { value: 'supplier', label: 'Dobavljaču' },
+                { value: 'none', label: 'Bez grupiranja' },
+            ];
+        } else {
+            return [
+                { value: 'project', label: 'Projektu' },
+                { value: 'none', label: 'Bez grupiranja' },
+            ];
+        }
+    }, [viewMode]);
+
+    // Status options for pills
+    const statusOptions = useMemo(() => {
+        if (viewMode === 'products') {
+            return [{ value: '', label: 'Svi' }, { value: 'Na čekanju', label: 'Na čekanju' }, { value: 'U proizvodnji', label: 'U proizvodnji' }, { value: 'Završeno', label: 'Završeno' }];
+        } else if (viewMode === 'materials') {
+            return [{ value: '', label: 'Svi' }, { value: 'Nije naručeno', label: 'Nije naručeno' }, { value: 'Naručeno', label: 'Naručeno' }, { value: 'Primljeno', label: 'Primljeno' }];
+        }
+        return [];
+    }, [viewMode]);
+
+    // Handler for viewMode change
+    const handleViewModeChange = (newMode: ViewMode) => {
+        setViewMode(newMode);
+        setStatusFilter('');
+        if (newMode === 'products' && (groupBy === 'materialStatus' || groupBy === 'supplier')) {
+            setGroupBy('project');
+        } else if (newMode === 'materials' && groupBy === 'productStatus') {
+            setGroupBy('project');
+        } else if (newMode === 'both' && groupBy !== 'project' && groupBy !== 'none') {
+            setGroupBy('project');
+        }
+        if (newMode !== 'materials') {
+            setSelectedMaterials(new Set());
+            setSelectedSupplier('');
+        }
+    };
 
     // Helper function to derive product status from work orders
     function getProductStatusFromWorkOrders(productId: string, workOrders: WorkOrder[]): string {
@@ -226,6 +281,68 @@ export default function OverviewTab({ projects, workOrders, showToast }: Overvie
             .replace(/đ/g, 'd');
     }
 
+    // Material selection functions
+    function toggleMaterialSelection(materialId: string, supplierName: string) {
+        // When grouped by supplier, only allow selecting from one supplier at a time
+        if (selectedSupplier && selectedSupplier !== supplierName) {
+            // Switch to new supplier, clear previous selections
+            setSelectedMaterials(new Set([materialId]));
+            setSelectedSupplier(supplierName);
+            return;
+        }
+
+        const newSelected = new Set(selectedMaterials);
+        if (newSelected.has(materialId)) {
+            newSelected.delete(materialId);
+            if (newSelected.size === 0) {
+                setSelectedSupplier('');
+            }
+        } else {
+            newSelected.add(materialId);
+            setSelectedSupplier(supplierName);
+        }
+        setSelectedMaterials(newSelected);
+    }
+
+    function selectAllMaterialsInGroup(items: OverviewItem[], supplierName: string) {
+        const materialItems = items.filter(i => i.type === 'material' && i.Material_ID);
+        if (materialItems.length === 0) return;
+
+        // If different supplier, switch
+        if (selectedSupplier && selectedSupplier !== supplierName) {
+            setSelectedMaterials(new Set(materialItems.map(i => i.Material_ID!)));
+            setSelectedSupplier(supplierName);
+            return;
+        }
+
+        // Toggle all in this group
+        const allSelected = materialItems.every(i => selectedMaterials.has(i.Material_ID!));
+        if (allSelected) {
+            const newSelected = new Set(selectedMaterials);
+            materialItems.forEach(i => newSelected.delete(i.Material_ID!));
+            setSelectedMaterials(newSelected);
+            if (newSelected.size === 0) setSelectedSupplier('');
+        } else {
+            const newSelected = new Set(selectedMaterials);
+            materialItems.forEach(i => newSelected.add(i.Material_ID!));
+            setSelectedMaterials(newSelected);
+            setSelectedSupplier(supplierName);
+        }
+    }
+
+    function handleCreateOrderClick() {
+        if (selectedMaterials.size === 0 || !selectedSupplier) return;
+        if (onCreateOrder) {
+            onCreateOrder(Array.from(selectedMaterials), selectedSupplier);
+            // Clear selection after
+            setSelectedMaterials(new Set());
+            setSelectedSupplier('');
+        }
+    }
+
+    // Check if selection mode is active (only when grouped by supplier)
+    const isSelectionMode = groupBy === 'supplier' && (viewMode === 'materials' || viewMode === 'both');
+
     // Statistics
     const stats = useMemo(() => {
         const productItems = filteredItems.filter(i => i.type === 'product');
@@ -242,327 +359,372 @@ export default function OverviewTab({ projects, workOrders, showToast }: Overvie
         };
     }, [filteredItems]);
 
-    return (
-        <div className="tab-content active">
-            {/* Header with controls */}
-            <div className="overview-header">
-                <div className="header-top">
-                    <h2>Pregled Proizvodnje</h2>
-                    <div className="header-stats">
-                        <div className="stat-pill">
-                            <span className="material-icons-round">inventory</span>
-                            {stats.totalProducts} proizvoda
-                        </div>
-                        <div className="stat-pill">
-                            <span className="material-icons-round">category</span>
-                            {stats.totalMaterials} materijala
-                        </div>
-                    </div>
-                </div>
 
-                <div className="controls-row">
-                    {/* View Mode */}
-                    <div className="control-group">
-                        <label>Prikaz:</label>
-                        <div className="button-group">
+
+    return (
+        <div className="overview-page">
+            {/* Page Header */}
+            <div className="page-header">
+                <div className="header-content">
+                    <div className="header-text">
+                        <h1>Pregled Proizvodnje</h1>
+                        <p>Upravljajte statusima proizvodnje i materijala po projektima.</p>
+                    </div>
+                    <button
+                        className={`filter-toggle ${isFiltersOpen ? 'active' : ''}`}
+                        onClick={() => setIsFiltersOpen(!isFiltersOpen)}
+                    >
+                        <span className="material-icons-round">filter_list</span>
+                        <span>{isFiltersOpen ? 'Sakrij pretragu' : 'Pretraga i filteri'}</span>
+                        <span className="material-icons-round">{isFiltersOpen ? 'expand_less' : 'expand_more'}</span>
+                    </button>
+                </div>
+            </div>
+
+            {/* Collapsible Control Bar */}
+            <div className={`control-bar ${isFiltersOpen ? 'open' : ''}`}>
+                <div className="control-bar-inner">
+                    <div className="controls-row">
+                        {/* Search */}
+                        <div className="search-box">
+                            <span className="material-icons-round">search</span>
+                            <input
+                                type="text"
+                                placeholder="Pretraži po nazivu..."
+                                value={searchTerm}
+                                onChange={(e) => setSearchTerm(e.target.value)}
+                            />
+                        </div>
+
+                        <div className="divider"></div>
+
+                        {/* View Mode Tabs */}
+                        <div className="view-tabs">
                             <button
                                 className={viewMode === 'both' ? 'active' : ''}
-                                onClick={() => setViewMode('both')}
+                                onClick={() => handleViewModeChange('both')}
                             >
                                 Sve
                             </button>
                             <button
                                 className={viewMode === 'products' ? 'active' : ''}
-                                onClick={() => setViewMode('products')}
+                                onClick={() => handleViewModeChange('products')}
                             >
+                                <span className="material-icons-round">inventory_2</span>
                                 Proizvodi
                             </button>
                             <button
                                 className={viewMode === 'materials' ? 'active' : ''}
-                                onClick={() => setViewMode('materials')}
+                                onClick={() => handleViewModeChange('materials')}
                             >
+                                <span className="material-icons-round">category</span>
                                 Materijali
                             </button>
                         </div>
-                    </div>
 
-                    {/* Group By */}
-                    <div className="control-group">
-                        <label>Grupiši po:</label>
-                        <select value={groupBy} onChange={(e) => setGroupBy(e.target.value as GroupBy)}>
-                            <option value="none">Bez grupiranja</option>
-                            <option value="project">Projektu</option>
-                            <option value="productStatus">Statusu proizvoda</option>
-                            <option value="materialStatus">Statusu materijala</option>
-                            <option value="supplier">Dobavljaču</option>
-                        </select>
-                    </div>
+                        <div className="divider"></div>
 
-                    {/* Search */}
-                    <div className="search-box">
-                        <span className="material-icons-round">search</span>
-                        <input
-                            type="text"
-                            placeholder="Pretraži..."
-                            value={searchTerm}
-                            onChange={(e) => setSearchTerm(e.target.value)}
-                        />
-                    </div>
-                </div>
+                        {/* Grouping */}
+                        <div className="group-control">
+                            <span className="group-label">Grupiši:</span>
+                            <div className="group-dropdown">
+                                <select value={groupBy} onChange={(e) => setGroupBy(e.target.value as GroupBy)}>
+                                    {groupingOptions.map(opt => (
+                                        <option key={opt.value} value={opt.value}>{opt.label}</option>
+                                    ))}
+                                </select>
+                                <span className="material-icons-round">expand_more</span>
+                            </div>
+                        </div>
 
-                {/* Quick stats badges */}
-                <div className="quick-stats">
-                    {stats.productsInProduction > 0 && (
-                        <div className="stat-badge production">
-                            <span className="material-icons-round">engineering</span>
-                            {stats.productsInProduction} u proizvodnji
-                        </div>
-                    )}
-                    {stats.productsWaiting > 0 && (
-                        <div className="stat-badge waiting">
-                            <span className="material-icons-round">schedule</span>
-                            {stats.productsWaiting} čeka
-                        </div>
-                    )}
-                    {stats.materialsNotOrdered > 0 && (
-                        <div className="stat-badge alert">
-                            <span className="material-icons-round">warning</span>
-                            {stats.materialsNotOrdered} nije naručeno
-                        </div>
-                    )}
-                    {stats.materialsOrdered > 0 && (
-                        <div className="stat-badge ordered">
-                            <span className="material-icons-round">local_shipping</span>
-                            {stats.materialsOrdered} naručeno
-                        </div>
-                    )}
+                        {/* Status Pills */}
+                        {statusOptions.length > 0 && (
+                            <>
+                                <div className="divider"></div>
+                                <div className="status-pills">
+                                    {statusOptions.map(opt => (
+                                        <button
+                                            key={opt.value}
+                                            className={`status-pill ${statusFilter === opt.value ? 'active' : ''}`}
+                                            onClick={() => setStatusFilter(opt.value)}
+                                        >
+                                            {opt.label}
+                                        </button>
+                                    ))}
+                                </div>
+                            </>
+                        )}
+                    </div>
                 </div>
             </div>
 
             {/* Grouped content */}
-            <div className="overview-content">
-                {groupedData.length === 0 ? (
-                    <div className="empty-state">
-                        <span className="material-icons-round">inbox</span>
-                        <h3>Nema rezultata</h3>
-                        <p>Pokušajte promijeniti filtere</p>
-                    </div>
-                ) : (
-                    groupedData.map(group => (
-                        <div key={group.groupKey} className="group-section">
-                            <div
-                                className="group-header"
-                                onClick={() => toggleGroup(group.groupKey)}
-                            >
-                                <div className="group-info">
-                                    <span className="material-icons-round">
-                                        {collapsedGroups.has(group.groupKey) ? 'chevron_right' : 'expand_more'}
-                                    </span>
-                                    <h3>{group.groupLabel}</h3>
-                                    <span className="group-count">{group.count}</span>
+            < div className="overview-content" >
+                {
+                    groupedData.length === 0 ? (
+                        <div className="empty-state">
+                            <span className="material-icons-round">inbox</span>
+                            <h3>Nema rezultata</h3>
+                            <p>Pokušajte promijeniti filtere</p>
+                        </div>
+                    ) : (
+                        groupedData.map(group => (
+                            <div key={group.groupKey} className="group-card">
+                                {/* Group Header - Clean single row */}
+                                <div
+                                    className="group-card-header"
+                                    onClick={() => toggleGroup(group.groupKey)}
+                                >
+                                    <div className="group-left">
+                                        <span className="material-icons-round toggle-chevron">
+                                            {collapsedGroups.has(group.groupKey) ? 'chevron_right' : 'expand_more'}
+                                        </span>
+                                        <span className="group-title">{group.groupLabel}</span>
+                                        <span className="group-count-badge">{group.count} stavke</span>
+                                    </div>
+                                    <div className="group-right">
+                                        {/* Progress bar removed */}
+                                    </div>
                                 </div>
-                            </div>
 
-                            {!collapsedGroups.has(group.groupKey) && (
-                                <div className="group-items">
-                                    <div className="items-table">
-                                        {/* Desktop Header */}
-                                        <div className="table-header desktop-only">
-                                            <div className="col-type">Tip</div>
-                                            <div className="col-name">Naziv</div>
-                                            <div className="col-qty">Kol.</div>
-                                            <div className="col-unit">Jed.</div>
-                                            <div className="col-project">Projekat</div>
-                                            <div className="col-status">Status</div>
-                                            <div className="col-details">Detalji</div>
+                                {/* Items List */}
+                                {!collapsedGroups.has(group.groupKey) && (
+                                    <div className="group-card-content">
+                                        {/* Table Header */}
+                                        <div className={`list-header ${isSelectionMode ? 'with-checkbox' : ''}`}>
+                                            {isSelectionMode && (
+                                                <div className="col-checkbox">
+                                                    <input
+                                                        type="checkbox"
+                                                        checked={group.items.filter(i => i.type === 'material' && i.Material_ID).every(i => selectedMaterials.has(i.Material_ID!))}
+                                                        onChange={() => selectAllMaterialsInGroup(group.items, group.groupKey)}
+                                                    />
+                                                </div>
+                                            )}
+                                            <div className="col-naziv">NAZIV</div>
+                                            <div className="col-kol">KOL.</div>
+                                            <div className="col-projekt">PROJEKT</div>
+                                            <div className="col-datum">DATUM</div>
                                         </div>
 
+                                        {/* Items */}
                                         {group.items.map((item, idx) => (
-                                            <div key={idx} className="table-row">
-                                                {/* Desktop Columns */}
-                                                <div className="col-type desktop-only">
-                                                    <span className={`type-badge ${item.type}`}>
+                                            <div
+                                                key={idx}
+                                                className={`list-item ${isSelectionMode ? 'with-checkbox' : ''} ${item.type === 'material' && item.Material_ID && selectedMaterials.has(item.Material_ID) ? 'selected' : ''}`}
+                                                onClick={item.type === 'material' && isSelectionMode && item.Material_ID ? () => toggleMaterialSelection(item.Material_ID!, group.groupKey) : undefined}
+                                                style={isSelectionMode && item.type === 'material' ? { cursor: 'pointer' } : undefined}
+                                            >
+                                                {isSelectionMode && (
+                                                    <div className="col-checkbox">
+                                                        {item.type === 'material' && item.Material_ID && (
+                                                            <input
+                                                                type="checkbox"
+                                                                checked={selectedMaterials.has(item.Material_ID)}
+                                                                onChange={() => toggleMaterialSelection(item.Material_ID!, group.groupKey)}
+                                                                onClick={(e) => e.stopPropagation()}
+                                                            />
+                                                        )}
+                                                    </div>
+                                                )}
+                                                <div className="col-naziv">
+                                                    <div className={`item-icon ${item.type}`}>
                                                         <span className="material-icons-round">
                                                             {item.type === 'product' ? 'inventory_2' : 'category'}
                                                         </span>
-                                                        {item.type === 'product' ? 'Proizvod' : 'Materijal'}
-                                                    </span>
-                                                </div>
-
-                                                <div className="col-name">
-                                                    <strong>
-                                                        {item.type === 'product' ? item.Product_Name : item.Material_Name}
-                                                    </strong>
-                                                    {item.type === 'material' && item.Product_Name && (
-                                                        <small>Za: {item.Product_Name}</small>
-                                                    )}
-                                                    {/* Mobile Only Meta */}
-                                                    <div className="mobile-meta mobile-only">
-                                                        <span>{item.Client_Name}</span>
-                                                        <span className="dot">•</span>
-                                                        <span className={`status-text status-${item.type === 'product' ? item.Product_Status?.toLowerCase().replace(/\s+/g, '-') : item.Material_Status?.toLowerCase().replace(/\s+/g, '-')}`}>
+                                                    </div>
+                                                    <div className="item-info">
+                                                        <span className="item-name">
+                                                            {item.type === 'product' ? item.Product_Name : item.Material_Name}
+                                                        </span>
+                                                        <span className={`item-status ${getStatusClass(item.type === 'product' ? item.Product_Status! : item.Material_Status!)}`}>
                                                             {item.type === 'product' ? item.Product_Status : item.Material_Status}
                                                         </span>
                                                     </div>
                                                 </div>
-
-                                                <div className="col-qty text-right">
-                                                    <span className="mobile-label mobile-only">Količina:</span>
-                                                    <span className="qty-val">{item.type === 'material' ? item.Material_Quantity : (item.Product_Quantity || 1)}</span>
+                                                <div className="col-kol">
+                                                    <span className="kol-value">{item.type === 'material' ? item.Material_Quantity : (item.Product_Quantity || 1)}</span>
+                                                    <span className="kol-unit">{item.type === 'material' ? (item.Material_Unit || 'kom') : 'KOM'}</span>
                                                 </div>
-
-                                                <div className="col-unit text-left">
-                                                    <span className="unit-val">{item.type === 'material' ? (item.Material_Unit || 'kom') : 'kom'}</span>
-                                                </div>
-
-                                                <div className="col-project desktop-only">
-                                                    <span>{item.Client_Name}</span>
-                                                    {item.Deadline && (
-                                                        <small className="deadline">
-                                                            <span className="material-icons-round">event</span>
-                                                            {new Date(item.Deadline).toLocaleDateString('hr')}
-                                                        </small>
-                                                    )}
-                                                </div>
-
-                                                <div className="col-status desktop-only">
-                                                    <span className={`status-badge ${getStatusClass(
-                                                        item.type === 'product' ? item.Product_Status! : item.Material_Status!
-                                                    )}`}>
-                                                        {item.type === 'product' ? item.Product_Status : item.Material_Status}
-                                                    </span>
-                                                </div>
-
-                                                <div className="col-details">
-                                                    {item.type === 'material' && item.Material_Supplier && (
-                                                        <span className="detail-item supplier">
-                                                            <span className="material-icons-round">store</span>
-                                                            {item.Material_Supplier}
-                                                        </span>
-                                                    )}
+                                                <div className="col-projekt">{item.Client_Name}</div>
+                                                <div className="col-datum">
+                                                    <span className="material-icons-round">event</span>
+                                                    {item.Deadline ? new Date(item.Deadline).toLocaleDateString('hr') : '-'}
                                                 </div>
                                             </div>
                                         ))}
                                     </div>
-                                </div>
-                            )}
+                                )}
+                            </div>
+                        ))
+                    )
+                }
+            </div >
+
+            {/* Floating Action Bar for Material Selection */}
+            {
+                selectedMaterials.size > 0 && (
+                    <div className="selection-action-bar">
+                        <div className="selection-info">
+                            <span className="material-icons-round">check_circle</span>
+                            <span>{selectedMaterials.size} materijal(a) odabrano</span>
+                            <span className="supplier-badge">{selectedSupplier}</span>
                         </div>
-                    ))
-                )}
-            </div>
+                        <div className="selection-actions">
+                            <button
+                                className="btn btn-secondary"
+                                onClick={() => { setSelectedMaterials(new Set()); setSelectedSupplier(''); }}
+                            >
+                                Poništi
+                            </button>
+                            <button
+                                className="btn btn-primary"
+                                onClick={handleCreateOrderClick}
+                            >
+                                <span className="material-icons-round">add_shopping_cart</span>
+                                Kreiraj narudžbu
+                            </button>
+                        </div>
+                    </div>
+                )
+            }
 
             <style jsx>{`
-                .overview-header {
-                    background: var(--background);
-                    padding: 20px 24px;
-                    border-bottom: 1px solid var(--border);
-                    position: sticky;
-                    top: 0;
-                    z-index: 10;
+                /* Overview Page Layout */
+                .overview-page {
+                    max-width: 100%;
                 }
 
-                .header-top {
+                /* Page Header */
+                .page-header {
+                    margin-bottom: 24px;
+                }
+
+                .header-content {
                     display: flex;
-                    justify-content: space-between;
-                    align-items: center;
-                    margin-bottom: 20px;
+                    flex-direction: column;
+                    gap: 16px;
                 }
 
-                .header-top h2 {
-                    font-size: 24px;
+                @media (min-width: 768px) {
+                    .header-content {
+                        flex-direction: row;
+                        align-items: flex-end;
+                        justify-content: space-between;
+                    }
+                }
+
+                .header-text h1 {
+                    font-size: 28px;
                     font-weight: 700;
+                    color: #111827;
                     margin: 0;
+                    letter-spacing: -0.5px;
                 }
 
-                .header-stats {
-                    display: flex;
-                    gap: 12px;
+                .header-text p {
+                    color: #6b7280;
+                    margin: 4px 0 0 0;
+                    font-size: 15px;
                 }
 
-                .stat-pill {
+                .filter-toggle {
                     display: flex;
                     align-items: center;
-                    gap: 6px;
-                    padding: 8px 16px;
-                    background: var(--surface);
-                    border-radius: 20px;
+                    gap: 8px;
+                    padding: 10px 16px;
+                    background: white;
+                    border: 1px solid #e5e7eb;
+                    border-radius: 10px;
                     font-size: 14px;
-                    font-weight: 600;
-                    color: var(--text-secondary);
+                    font-weight: 500;
+                    color: #374151;
+                    cursor: pointer;
+                    transition: all 0.2s;
+                    box-shadow: 0 1px 2px rgba(0,0,0,0.05);
                 }
 
-                .stat-pill .material-icons-round {
+                .filter-toggle:hover {
+                    background: #f9fafb;
+                    border-color: #d1d5db;
+                }
+
+                .filter-toggle.active {
+                    background: #eff6ff;
+                    border-color: #3b82f6;
+                    color: #2563eb;
+                }
+
+                .filter-toggle .material-icons-round {
                     font-size: 18px;
+                }
+
+                /* Control Bar (Unified Toolbar) */
+                .control-bar {
+                    background: white;
+                    border-radius: 12px;
+                    /* Hidden state defaults */
+                    max-height: 0;
+                    opacity: 0;
+                    margin-bottom: 0;
+                    padding: 0 16px;
+                    border: none;
+                    overflow: hidden;
+                    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+                    transform: translateY(-10px);
+                }
+
+                .control-bar.open {
+                    max-height: 200px; /* Enough for content including wrapping */
+                    opacity: 1;
+                    margin-bottom: 24px;
+                    padding: 8px 16px;
+                    border: 1px solid #e5e7eb;
+                    box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+                    transform: translateY(0);
+                }
+
+                .control-bar-inner {
+                    width: 100%;
                 }
 
                 .controls-row {
                     display: flex;
+                    align-items: center;
                     gap: 16px;
-                    align-items: center;
-                    flex-wrap: wrap;
-                    margin-bottom: 16px;
+                    flex-wrap: nowrap;
+                    width: 100%;
                 }
 
-                .control-group {
-                    display: flex;
-                    align-items: center;
-                    gap: 8px;
+                /* Divider */
+                .divider {
+                    width: 1px;
+                    height: 24px;
+                    background: #e5e7eb;
+                    flex-shrink: 0;
                 }
 
-                .control-group label {
-                    font-size: 13px;
-                    font-weight: 600;
-                    color: var(--text-secondary);
-                }
-
-                .button-group {
-                    display: flex;
-                    background: var(--surface);
-                    border-radius: 8px;
-                    padding: 2px;
-                }
-
-                .button-group button {
-                    padding: 6px 14px;
-                    border: none;
-                    background: transparent;
-                    border-radius: 6px;
-                    font-size: 13px;
-                    font-weight: 600;
-                    color: var(--text-secondary);
-                    cursor: pointer;
-                    transition: all 0.2s;
-                }
-
-                .button-group button.active {
-                    background: var(--accent);
-                    color: white;
-                }
-
-                .control-group select {
-                    padding: 8px 12px;
-                    border: 1px solid var(--border);
-                    border-radius: 8px;
-                    font-size: 14px;
-                    background: var(--surface);
-                    cursor: pointer;
-                }
-
+                /* Search Box */
                 .search-box {
                     display: flex;
                     align-items: center;
-                    gap: 8px;
-                    background: var(--surface);
-                    padding: 8px 14px;
-                    border-radius: 8px;
-                    border: 1px solid var(--border);
+                    gap: 10px;
                     flex: 1;
-                    max-width: 300px;
+                    min-width: 200px;
+                    background: #f9fafb;
+                    border-radius: 8px;
+                    padding: 8px 12px;
+                    transition: all 0.2s;
+                }
+
+                .search-box:focus-within {
+                    background: #f3f4f6;
+                    box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.1);
                 }
 
                 .search-box .material-icons-round {
+                    color: #9ca3af;
                     font-size: 20px;
-                    color: var(--text-tertiary);
                 }
 
                 .search-box input {
@@ -571,571 +733,1673 @@ export default function OverviewTab({ projects, workOrders, showToast }: Overvie
                     outline: none;
                     flex: 1;
                     font-size: 14px;
+                    color: #111827;
                 }
 
-                .quick-stats {
+                .search-box input::placeholder {
+                    color: #9ca3af;
+                }
+
+                /* View Tabs (Segmented Control) */
+                .view-tabs {
                     display: flex;
-                    gap: 10px;
-                    flex-wrap: wrap;
+                    background: #f3f4f6;
+                    padding: 4px;
+                    border-radius: 8px;
+                    gap: 4px;
+                    flex-shrink: 0;
                 }
 
-                .stat-badge {
+                .view-tabs button {
                     display: flex;
                     align-items: center;
                     gap: 6px;
                     padding: 6px 12px;
-                    border-radius: 8px;
-                    font-size: 12px;
-                    font-weight: 600;
+                    border: none;
+                    background: transparent;
+                    border-radius: 6px;
+                    font-size: 13px;
+                    font-weight: 500;
+                    color: #6b7280;
+                    cursor: pointer;
+                    transition: all 0.2s;
                 }
 
-                .stat-badge .material-icons-round {
+                .view-tabs button:hover {
+                    color: #111827;
+                }
+
+                .view-tabs button.active {
+                    background: white;
+                    color: #111827;
+                    box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+                    font-weight: 600;
+                }
+                
+                .view-tabs button .material-icons-round {
                     font-size: 16px;
                 }
 
-                .stat-badge.production {
-                    background: #e3f2fd;
-                    color: #1976d2;
+                /* Group Control */
+                .group-control {
+                    display: flex;
+                    align-items: center;
+                    gap: 10px;
+                    flex-shrink: 0;
                 }
 
-                .stat-badge.waiting {
-                    background: #fff3e0;
-                    color: #f57c00;
+                .group-label {
+                    font-size: 13px;
+                    color: #6b7280;
+                    font-weight: 500;
+                    white-space: nowrap;
                 }
 
-                .stat-badge.alert {
-                    background: #ffebee;
-                    color: #d32f2f;
+                .group-dropdown {
+                    position: relative;
+                    display: flex;
+                    align-items: center;
                 }
 
-                .stat-badge.ordered {
-                    background: #f3e5f5;
-                    color: #7b1fa2;
-                }
-
-                .overview-content {
-                    padding: 16px 24px;
-                }
-
-                .group-section {
-                    background: var(--background);
-                    border-radius: 12px;
-                    margin-bottom: 16px;
-                    overflow: hidden;
-                    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
-                }
-
-                .group-header {
-                    padding: 16px 20px;
-                    background: var(--surface);
+                .group-dropdown select {
+                    appearance: none;
+                    background: #f3f4f6;
+                    border: none;
+                    border-radius: 8px;
+                    padding: 8px 32px 8px 12px;
+                    font-size: 13px;
+                    font-weight: 600;
+                    color: #4b5563;
                     cursor: pointer;
-                    border-bottom: 1px solid var(--border);
+                    outline: none;
+                    transition: all 0.2s;
+                }
+
+                .group-dropdown select:hover {
+                    background: #e5e7eb;
+                    color: #111827;
+                }
+
+                .group-dropdown .material-icons-round {
+                    position: absolute;
+                    right: 8px;
+                    font-size: 18px;
+                    color: #6b7280;
+                    pointer-events: none;
+                }
+
+                /* Status Pills */
+                .status-pills {
+                    display: flex;
+                    gap: 4px;
+                    align-items: center;
+                    flex-wrap: nowrap;
+                    overflow-x: auto;
+                    scrollbar-width: none;
+                    -ms-overflow-style: none;
+                }
+                
+                .status-pills::-webkit-scrollbar {
+                    display: none;
+                }
+
+                .status-pill {
+                    padding: 6px 14px;
+                    border: none;
+                    background: transparent;
+                    border-radius: 100px;
+                    font-size: 13px;
+                    font-weight: 500;
+                    color: #6b7280;
+                    cursor: pointer;
+                    transition: all 0.2s;
+                    white-space: nowrap;
+                }
+
+                .status-pill:hover {
+                    background: #f3f4f6;
+                    color: #111827;
+                }
+
+                .status-pill.active {
+                    background: #2563eb;
+                    color: white;
+                    font-weight: 600;
+                    box-shadow: 0 1px 2px rgba(37, 99, 235, 0.2);
+                }
+
+                /* Content Area */
+                .overview-content {
+                    display: flex;
+                    flex-direction: column;
+                    gap: 16px;
+                }
+
+                /* Group Card Styles */
+                .group-card {
+                    background: white;
+                    border-radius: 16px;
+                    box-shadow: 0 1px 3px rgba(0,0,0,0.06), 0 2px 8px rgba(0,0,0,0.04);
+                    overflow: hidden;
+                    border: 1px solid #e5e7eb;
+                }
+
+                .group-card-header {
+                    display: flex;
+                    align-items: center;
+                    justify-content: space-between;
+                    padding: 16px 20px;
+                    background: #fafafa;
+                    border-bottom: 1px solid #e5e7eb;
+                    cursor: pointer;
                     transition: background 0.2s;
                 }
 
-                .group-header:hover {
-                    background: var(--surface-hover);
+                .group-card-header:hover {
+                    background: #f5f5f5;
                 }
 
-                .group-info {
+                .group-left {
                     display: flex;
                     align-items: center;
                     gap: 12px;
                 }
 
-                .group-info h3 {
+                .toggle-chevron {
+                    font-size: 20px;
+                    color: #6b7280;
+                    transition: transform 0.2s;
+                }
+
+                .group-title {
                     font-size: 16px;
                     font-weight: 600;
-                    margin: 0;
-                    flex: 1;
+                    color: #111827;
                 }
 
-                .group-count {
-                    display: inline-flex;
-                    align-items: center;
-                    justify-content: center;
-                    min-width: 24px;
-                    height: 24px;
-                    padding: 0 8px;
-                    background: var(--accent);
-                    color: white;
-                    border-radius: 12px;
+                .group-count-badge {
                     font-size: 12px;
-                    font-weight: 600;
+                    font-weight: 500;
+                    color: #6b7280;
+                    background: #e5e7eb;
+                    padding: 4px 10px;
+                    border-radius: 20px;
                 }
 
-                .group-items {
+                .group-right {
+                    display: flex;
+                    align-items: center;
+                    gap: 12px;
+                }
+
+
+
+                .group-card-content {
                     padding: 0;
                 }
-                
-                /* Responsive Table Layout */
-                .items-table {
-                    width: 100%;
-                }
 
-                .table-header {
+                /* List Header */
+                .list-header {
                     display: grid;
-                    grid-template-columns: 100px minmax(200px, 2fr) 70px 60px minmax(150px, 2.5fr) 130px minmax(150px, 1.5fr);
-                    gap: 12px;
-                    padding: 16px 24px;
-                    align-items: center;
-                    background: var(--surface);
-                    border-bottom: 1px solid var(--border);
+                    grid-template-columns: 2fr 100px 1fr 120px;
+                    gap: 16px;
+                    padding: 12px 20px;
+                    background: #f9fafb;
+                    border-bottom: 1px solid #e5e7eb;
                     font-size: 11px;
-                    font-weight: 700;
-                    color: var(--text-secondary);
+                    font-weight: 600;
+                    color: #6b7280;
                     text-transform: uppercase;
                     letter-spacing: 0.5px;
                 }
 
-                .table-row {
+                .list-header.with-checkbox {
+                    grid-template-columns: 40px 2fr 100px 1fr 120px;
+                }
+
+                /* List Item */
+                .list-item {
                     display: grid;
-                    grid-template-columns: 100px minmax(200px, 2fr) 70px 60px minmax(150px, 2.5fr) 130px minmax(150px, 1.5fr);
-                    gap: 12px;
-                    padding: 16px 24px;
+                    grid-template-columns: 2fr 100px 1fr 120px;
+                    gap: 16px;
+                    padding: 14px 20px;
+                    border-bottom: 1px solid #f3f4f6;
                     align-items: center;
-                    border-bottom: 1px solid var(--border-light);
-                    transition: background 0.15s;
-                    font-size: 14px; /* Uniform base size */
-                }
-
-                .col-type {
-                    display: flex;
-                    align-items: center;
-                }
-
-                .col-qty { 
-                    font-size: 14px;
-                    font-weight: 500; 
-                    font-variant-numeric: tabular-nums; 
-                    color: var(--text-primary);
-                    text-align: right;
-                }
-                
-                .col-unit { 
-                    font-size: 14px;
-                    color: var(--text-secondary); 
-                    text-align: left;
-                    padding-left: 4px;
-                }
-
-                /* Header alignments must match row alignments */
-                .table-header .col-qty { 
-                    text-align: right; 
-                    font-size: 11px;
-                    font-weight: 700;
-                }
-                
-                .table-header .col-unit { 
-                    text-align: left; 
-                    padding-left: 4px;
-                    font-size: 11px;
-                    font-weight: 700;
-                }
-                
-                /* Ensure other text columns align left */
-                .col-name, .col-project, .col-details { text-align: left; }
-                
-                /* Mobile Components Hidden by Default */
-                .mobile-only { display: none; }
-                
-                /* Mobile Responsive Styles */
-                @media (max-width: 1100px) {
-                    .desktop-only { display: none !important; }
-                    .mobile-only { display: block; }
-                    
-                    .items-table {
-                        display: flex;
-                        flex-direction: column;
-                        gap: 12px;
-                    }
-                    
-                    .table-header { display: none; }
-                    
-                    .table-row {
-                        display: flex;
-                        flex-direction: column;
-                        align-items: flex-start;
-                        padding: 16px;
-                        gap: 12px;
-                        background: var(--surface);
-                        border: 1px solid var(--border-light);
-                        border-radius: 12px;
-                        box-shadow: 0 2px 4px rgba(0,0,0,0.02);
-                        font-size: 15px; 
-                    }
-                    
-                    /* Mobile Card Internal Layout */
-                    .col-name {
-                        width: 100%;
-                        margin-bottom: 4px;
-                        order: 1; 
-                    }
-                    
-                    .col-name strong {
-                        font-size: 16px;
-                        margin-bottom: 6px;
-                        color: var(--text-primary);
-                        display: block;
-                    }
-
-                    .mobile-meta {
-                        display: flex;
-                        align-items: center;
-                        flex-wrap: wrap;
-                        gap: 8px;
-                        font-size: 13px;
-                        color: var(--text-secondary);
-                    }
-                    
-                    .col-qty, .col-unit {
-                        text-align: left;
-                        display: inline-block;
-                        width: auto;
-                        padding: 0;
-                        margin: 0;
-                    }
-                    
-                    .col-qty {
-                        font-size: 14px;
-                        margin-right: 4px;
-                        order: 2;
-                    }
-                    
-                    .col-unit {
-                        font-size: 14px;
-                        order: 3;
-                        display: inline-block;
-                    }
-                    
-                    .col-details {
-                        order: 4;
-                        width: 100%;
-                        margin-top: 4px;
-                        font-size: 13px;
-                    }
-                }
-
-                .table-row {
-                    border-bottom: 1px solid var(--border-light);
                     transition: background 0.15s;
                 }
 
-                .table-row:last-child {
+                .list-item.with-checkbox {
+                    grid-template-columns: 40px 2fr 100px 1fr 120px;
+                }
+
+                .list-item.selected {
+                    background: #eff6ff;
+                }
+
+                .list-item:last-child {
                     border-bottom: none;
                 }
 
-                .table-row:hover {
-                    background: var(--surface);
+                .list-item:hover {
+                    background: #fafafa;
                 }
 
-                .type-badge {
-                    display: inline-flex;
+                .list-item.selected:hover {
+                    background: #dbeafe;
+                }
+
+                /* Checkbox Column */
+                .col-checkbox {
+                    display: flex;
                     align-items: center;
-                    gap: 4px;
+                    justify-content: center;
+                }
+
+                .col-checkbox input[type="checkbox"] {
+                    width: 18px;
+                    height: 18px;
+                    cursor: pointer;
+                    accent-color: #3b82f6;
+                }
+
+                /* Selection Action Bar */
+                .selection-action-bar {
+                    position: fixed;
+                    bottom: 24px;
+                    left: 50%;
+                    transform: translateX(-50%);
+                    background: white;
+                    padding: 12px 20px;
+                    border-radius: 16px;
+                    box-shadow: 0 8px 32px rgba(0,0,0,0.15), 0 2px 8px rgba(0,0,0,0.1);
+                    display: flex;
+                    align-items: center;
+                    gap: 20px;
+                    z-index: 1000;
+                    border: 1px solid #e5e7eb;
+                }
+
+                .selection-info {
+                    display: flex;
+                    align-items: center;
+                    gap: 10px;
+                    color: #374151;
+                    font-weight: 500;
+                }
+
+                .selection-info .material-icons-round {
+                    color: #22c55e;
+                    font-size: 20px;
+                }
+
+                .supplier-badge {
+                    background: #eff6ff;
+                    color: #3b82f6;
                     padding: 4px 10px;
                     border-radius: 6px;
-                    font-size: 11px;
+                    font-size: 12px;
                     font-weight: 600;
                 }
 
-                .type-badge.product {
-                    background: #e3f2fd;
-                    color: #1976d2;
+                .selection-actions {
+                    display: flex;
+                    gap: 8px;
                 }
 
-                .type-badge.material {
-                    background: #f3e5f5;
-                    color: #7b1fa2;
-                }
-
-                .type-badge .material-icons-round {
-                    font-size: 14px;
-                }
-
-                .col-name strong {
-                    display: block;
+                .selection-actions .btn {
+                    display: flex;
+                    align-items: center;
+                    gap: 6px;
+                    padding: 8px 16px;
+                    border-radius: 10px;
                     font-size: 14px;
                     font-weight: 500;
-                    margin-bottom: 2px;
+                    cursor: pointer;
+                    border: none;
+                    transition: all 0.2s;
                 }
 
-                .col-name small {
-                    display: block;
-                    font-size: 12px;
-                    color: var(--text-secondary);
+                .selection-actions .btn-secondary {
+                    background: #f3f4f6;
+                    color: #374151;
                 }
 
-                .col-project span {
-                    display: block;
-                    font-size: 13px;
+                .selection-actions .btn-secondary:hover {
+                    background: #e5e7eb;
                 }
 
-                .col-project small {
+                .selection-actions .btn-primary {
+                    background: #3b82f6;
+                    color: white;
+                }
+
+                .selection-actions .btn-primary:hover {
+                    background: #2563eb;
+                }
+
+                .selection-actions .btn-primary .material-icons-round {
+                    font-size: 18px;
+                }
+
+                .col-naziv {
                     display: flex;
                     align-items: center;
-                    gap: 4px;
-                    font-size: 11px;
-                    color: var(--text-tertiary);
-                    margin-top: 4px;
+                    gap: 12px;
                 }
 
-                .col-project small .material-icons-round {
-                    font-size: 12px;
+                .item-icon {
+                    width: 36px;
+                    height: 36px;
+                    border-radius: 10px;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    flex-shrink: 0;
                 }
 
-                .status-badge {
-                    display: inline-flex;
-                    padding: 4px 12px;
-                    border-radius: 12px;
-                    font-size: 12px;
-                    font-weight: 600;
-                    white-space: nowrap;
+                .item-icon.product {
+                    background: linear-gradient(135deg, #eff6ff, #dbeafe);
+                    color: #3b82f6;
                 }
 
-                .status-u-proizvodnji { background: #e3f2fd; color: #1976d2; }
-                .status-na-cekanju { background: #fff3e0; color: #f57c00; }
-                .status-spremno { background: #e8f5e9; color: #388e3c; }
-                .status-instalirano { background: #f3e5f5; color: #7b1fa2; }
-                .status-nije-naruceno { background: #ffebee; color: #d32f2f; }
-                .status-naruceno { background: #fff3e0; color: #f57c00; }
-                .status-primljeno { background: #e8f5e9; color: #388e3c; }
-                .status-u-upotrebi { background: #e3f2fd; color: #1976d2; }
+                .item-icon.material {
+                    background: linear-gradient(135deg, #fef3c7, #fde68a);
+                    color: #d97706;
+                }
 
-                .col-details {
+                .item-icon .material-icons-round {
+                    font-size: 18px;
+                }
+
+                .item-info {
                     display: flex;
                     flex-direction: column;
+                    gap: 2px;
+                    min-width: 0;
+                }
+
+                .item-name {
+                    font-size: 14px;
+                    font-weight: 500;
+                    color: #111827;
+                    white-space: nowrap;
+                    overflow: hidden;
+                    text-overflow: ellipsis;
+                }
+
+                .item-status {
+                    font-size: 11px;
+                    font-weight: 500;
+                    padding: 2px 8px;
+                    border-radius: 4px;
+                    width: fit-content;
+                }
+
+                .item-status.status-na-cekanju {
+                    background: #fef3c7;
+                    color: #b45309;
+                }
+
+                .item-status.status-u-proizvodnji {
+                    background: #dbeafe;
+                    color: #1d4ed8;
+                }
+
+                .item-status.status-zavrseno {
+                    background: #dcfce7;
+                    color: #15803d;
+                }
+
+                .item-status.status-nije-naruceno {
+                    background: #fef3c7;
+                    color: #b45309;
+                }
+
+                .item-status.status-naruceno {
+                    background: #e0e7ff;
+                    color: #4338ca;
+                }
+
+                .item-status.status-primljeno {
+                    background: #d1fae5;
+                    color: #047857;
+                }
+
+                .col-kol {
+                    display: flex;
+                    align-items: baseline;
                     gap: 4px;
                 }
 
-                .detail-item {
-                    font-size: 12px;
-                    color: var(--text-secondary);
+                .kol-value {
+                    font-size: 15px;
+                    font-weight: 600;
+                    color: #111827;
                 }
 
-                .detail-item.supplier {
+                .kol-unit {
+                    font-size: 12px;
+                    color: #6b7280;
+                    text-transform: uppercase;
+                }
+
+                .col-projekt {
+                    font-size: 13px;
+                    color: #6b7280;
+                    white-space: nowrap;
+                    overflow: hidden;
+                    text-overflow: ellipsis;
+                }
+
+                .col-datum {
                     display: flex;
                     align-items: center;
-                    gap: 4px;
+                    gap: 6px;
+                    font-size: 13px;
+                    color: #6b7280;
                 }
 
-                .detail-item .material-icons-round {
-                    font-size: 14px;
+                .col-datum .material-icons-round {
+                    font-size: 16px;
+                    color: #9ca3af;
                 }
 
+                /* Empty State */
                 .empty-state {
                     display: flex;
                     flex-direction: column;
                     align-items: center;
                     justify-content: center;
                     padding: 60px 20px;
-                    color: var(--text-tertiary);
+                    text-align: center;
                 }
 
                 .empty-state .material-icons-round {
-                    font-size: 64px;
+                    font-size: 48px;
+                    color: #d1d5db;
                     margin-bottom: 16px;
-                    opacity: 0.4;
                 }
 
                 .empty-state h3 {
-                    margin: 0 0 8px 0;
                     font-size: 18px;
+                    font-weight: 600;
+                    color: #374151;
+                    margin: 0 0 8px 0;
                 }
 
                 .empty-state p {
-                    margin: 0;
                     font-size: 14px;
+                    color: #6b7280;
+                    margin: 0;
                 }
 
-                /* Mobile Specific Styles */
-                .mobile-filter-toggle {
-                    display: none;
-                }
+                /* ==================== MOBILE RESPONSIVENESS ==================== */
                 
-                .mobile-filters-summary {
-                    display: none;
-                }
-
-                /* Responsive Design */
-                @media (max-width: 1200px) {
-                    .table-header,
-                    .table-row {
-                        grid-template-columns: 100px 1.5fr 1fr 130px 1fr;
-                    }
-                }
-
-                @media (max-width: 900px) {
-                    .overview-header {
-                        padding: 16px;
-                    }
-
-                    .overview-title-bar {
-                        display: flex;
-                        justify-content: space-between;
-                        align-items: center;
-                        margin-bottom: 12px;
-                    }
-
-                    .mobile-filter-toggle {
-                        display: flex;
-                        align-items: center;
-                        gap: 6px;
-                        padding: 6px 12px;
-                        background: var(--surface);
-                        border: 1px solid var(--border);
-                        border-radius: 8px;
-                        font-size: 13px;
-                        font-weight: 600;
-                        color: var(--text-primary);
-                        cursor: pointer;
-                    }
-
-                    .mobile-filters-summary {
-                        display: flex;
-                        gap: 8px;
-                        overflow-x: auto;
-                        padding-bottom: 4px;
-                        margin-bottom: 12px;
-                    }
-
-                    .summary-pill {
-                        font-size: 12px;
-                        padding: 4px 10px;
-                        background: var(--surface);
-                        border-radius: 12px;
-                        color: var(--text-secondary);
-                        white-space: nowrap;
-                        border: 1px solid var(--border-light);
-                    }
-
-                    .summary-pill.active {
-                        background: var(--accent-light);
-                        color: var(--accent);
-                        border-color: var(--accent-light);
-                    }
-
-                    .overview-controls {
-                        display: none; /* Hidden by default on mobile */
-                    }
-
-                    .overview-controls.open {
-                        display: flex; /* Show when open */
-                        flex-direction: column;
+                /* Tablet Breakpoint */
+                @media (max-width: 1024px) {
+                    .controls-row {
+                        flex-wrap: wrap;
                         gap: 12px;
-                        margin-bottom: 16px;
-                        padding-top: 12px;
-                        border-top: 1px solid var(--border-light);
-                        animation: slideDown 0.2s ease-out;
                     }
-
-                    @keyframes slideDown {
-                        from { opacity: 0; transform: translateY(-10px); }
-                        to { opacity: 1; transform: translateY(0); }
+                    
+                    .search-box {
+                        min-width: 100%;
+                        order: 1;
                     }
+                    
+                    .divider:first-of-type {
+                        display: none;
+                    }
+                    
+                    .view-tabs {
+                        order: 2;
+                    }
+                    
+                    .group-control {
+                        order: 3;
+                    }
+                    
+                    .status-pills {
+                        order: 4;
+                        width: 100%;
+                        margin-top: 4px;
+                    }
+                    
+                    .control-bar.open {
+                        max-height: 300px;
+                    }
+                }
 
+                /* Mobile Breakpoint */
+                @media (max-width: 768px) {
+                    /* Page Header */
+                    .header-content {
+                        gap: 12px;
+                    }
+                    
                     .header-top {
                         flex-direction: column;
                         align-items: flex-start;
                         gap: 12px;
-                        margin-bottom: 16px;
                     }
-
-                    .header-stats {
-                        flex-direction: column;
-                        width: 100%;
-                        gap: 8px;
+                    
+                    .page-title {
+                        font-size: 22px;
                     }
-
-                    .stat-pill {
+                    
+                    .page-subtitle {
                         font-size: 13px;
-                        padding: 6px 12px;
                     }
-
+                    
+                    .filter-toggle {
+                        width: 100%;
+                        justify-content: center;
+                    }
+                    
+                    /* Control Bar */
+                    .control-bar.open {
+                        max-height: 400px;
+                        padding: 12px;
+                    }
+                    
                     .controls-row {
                         flex-direction: column;
                         align-items: stretch;
-                        gap: 12px;
-                        margin-bottom: 12px;
+                        gap: 10px;
                     }
-
-                    .control-group {
-                        flex-direction: column;
-                        align-items: stretch;
-                        gap: 6px;
-                    }
-
-                    .control-group label {
-                        font-size: 12px;
-                        font-weight: 700;
-                        text-transform: uppercase;
-                        letter-spacing: 0.5px;
-                    }
-
-                    .search-box {
-                        max-width: 100%;
-                    }
-
-                    .button-group {
-                        width: 100%;
-                    }
-
-                    .button-group button {
-                        flex: 1;
-                    }
-
-                    .quick-stats {
-                        flex-direction: column;
-                        gap: 8px;
-                    }
-
-                    .stat-badge {
-                        justify-content: flex-start;
-                        padding: 8px 12px;
-                    }
-
-                    .table-header {
+                    
+                    .divider {
                         display: none;
                     }
-
-                    .table-row {
-                        grid-template-columns: 1fr;
-                        gap: 8px;
-                        padding: 16px 20px;
+                    
+                    .search-box {
+                        width: 100%;
+                        padding: 10px 12px;
                     }
-
-                    .col-type,
-                    .col-name,
-                    .col-project,
-                    .col-status,
-                    .col-details {
+                    
+                    .view-tabs {
+                        width: 100%;
+                        justify-content: stretch;
+                    }
+                    
+                    .view-tabs button {
+                        flex: 1;
+                        justify-content: center;
+                        padding: 8px 6px;
+                        font-size: 12px;
+                    }
+                    
+                    .view-tabs button .material-icons-round {
+                        font-size: 16px;
+                    }
+                    
+                    .group-control {
+                        width: 100%;
+                        justify-content: space-between;
+                        background: #f9fafb;
+                        padding: 8px 12px;
+                        border-radius: 8px;
+                    }
+                    
+                    .group-dropdown {
+                        flex: 1;
+                    }
+                    
+                    .group-dropdown select {
+                        width: 100%;
+                    }
+                    
+                    .status-pills {
+                        width: 100%;
+                        justify-content: flex-start;
+                        padding: 0;
+                        overflow-x: auto;
+                        gap: 6px;
+                    }
+                    
+                    .status-pill {
+                        padding: 8px 14px;
+                        font-size: 12px;
+                    }
+                    
+                    /* Group Cards */
+                    .group-card {
+                        border-radius: 12px;
+                    }
+                    
+                    .group-card-header {
+                        flex-direction: column;
+                        align-items: flex-start;
+                        gap: 10px;
+                        padding: 14px 16px;
+                    }
+                    
+                    .group-right {
+                        width: 100%;
+                        justify-content: space-between;
+                    }
+                    
+                    .group-title {
+                        font-size: 15px;
+                    }
+                    
+                    /* List Header - Hide on Mobile */
+                    .list-header {
+                        display: none;
+                    }
+                    
+                    /* List Items - Card Layout */
+                    .list-item {
                         display: flex;
                         flex-direction: column;
+                        gap: 10px;
+                        padding: 14px 16px;
+                    }
+                    
+                    .list-item.with-checkbox {
+                        display: grid;
+                        grid-template-columns: 32px 1fr;
+                        grid-template-rows: auto auto;
+                        gap: 8px 10px;
+                    }
+                    
+                    .list-item.with-checkbox .col-checkbox {
+                        grid-row: 1 / 3;
+                        align-self: center;
+                    }
+                    
+                    .list-item.with-checkbox .col-naziv {
+                        grid-column: 2;
+                        grid-row: 1;
+                    }
+                    
+                    .list-item.with-checkbox .col-kol,
+                    .list-item.with-checkbox .col-projekt,
+                    .list-item.with-checkbox .col-datum {
+                        grid-column: 2;
+                    }
+                    
+                    .col-naziv {
+                        width: 100%;
+                    }
+                    
+                    .item-info {
+                        flex: 1;
+                        min-width: 0;
+                    }
+                    
+                    .item-name {
+                        font-size: 15px;
+                        white-space: normal;
+                        word-break: break-word;
+                    }
+                    
+                    /* Secondary info row */
+                    .col-kol, .col-projekt, .col-datum {
+                        font-size: 12px;
+                        color: #6b7280;
+                    }
+                    
+                    .col-kol {
+                        display: inline-flex;
+                    }
+                    
+                    .kol-value {
+                        font-size: 13px;
+                    }
+                    
+                    /* Selection Action Bar - Full Width */
+                    .selection-action-bar {
+                        left: 16px;
+                        right: 16px;
+                        bottom: 16px;
+                        transform: none;
+                        flex-direction: column;
+                        gap: 12px;
+                        padding: 14px 16px;
+                        border-radius: 12px;
+                    }
+                    
+                    .selection-info {
+                        width: 100%;
+                        justify-content: center;
+                        text-align: center;
+                        font-size: 13px;
+                    }
+                    
+                    .selection-actions {
+                        width: 100%;
+                        justify-content: stretch;
+                    }
+                    
+                    .selection-actions .btn {
+                        flex: 1;
+                        justify-content: center;
+                        padding: 10px 12px;
+                        font-size: 13px;
+                    }
+                    
+                    /* Empty State */
+                    .empty-state {
+                        padding: 40px 20px;
+                    }
+                    
+                    .empty-state .material-icons-round {
+                        font-size: 40px;
+                    }
+                }
+                
+                /* Small Mobile Breakpoint */
+                @media (max-width: 480px) {
+                    .page-title {
+                        font-size: 20px;
+                    }
+                    
+                    .view-tabs button {
+                        padding: 6px 4px;
+                        font-size: 11px;
+                        gap: 4px;
+                    }
+                    
+                    .view-tabs button .material-icons-round {
+                        font-size: 14px;
+                    }
+                    
+                    .group-card-header {
+                        padding: 12px 14px;
+                    }
+                    
+                    .list-item {
+                        padding: 12px 14px;
+                    }
+                    
+                    .item-icon {
+                        width: 32px;
+                        height: 32px;
+                    }
+                    
+                    .item-icon .material-icons-round {
+                        font-size: 16px;
+                    }
+                    
+                    .selection-action-bar {
+                        left: 8px;
+                        right: 8px;
+                        bottom: 8px;
+                    }
+                    
+                    .supplier-badge {
+                        display: none;
                     }
                 }
 
-                @media (max-width: 600px) {
-                    .overview-header {
-                        padding: 12px;
+            /* View Mode Tabs */
+            .view-mode-tabs {
+                display: flex;
+                background: var(--surface);
+                border-radius: 8px;
+                padding: 3px;
+                border: 1px solid var(--border-light);
+            }
+
+            .tab-btn {
+                display: flex;
+                align-items: center;
+                gap: 4px;
+                padding: 5px 10px;
+                border: none;
+                background: transparent;
+                border-radius: 6px;
+                font-size: 13px;
+                font-weight: 600;
+                color: var(--text-secondary);
+                cursor: pointer;
+                transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+                white-space: nowrap;
+            }
+
+            .tab-btn .material-icons-round {
+                font-size: 16px;
+            }
+
+            .tab-btn:hover {
+                color: var(--text-primary);
+            background: var(--surface-hover);
+                }
+
+            .tab-btn.active {
+                background: var(--accent);
+            color: white;
+            box-shadow: 0 2px 8px rgba(0, 113, 227, 0.25);
+                }
+
+            .tab-btn.active .material-icons-round {
+                color: white;
+                }
+
+            /* Group Selector */
+            .group-selector {
+                display: flex;
+                align-items: center;
+                gap: 6px;
+                background: var(--surface);
+                padding: 6px 10px;
+                border-radius: 8px;
+                border: 1px solid var(--border-light);
+            }
+
+            .selector-icon {
+                font-size: 16px;
+                color: var(--text-secondary);
+            }
+
+            .group-selector select {
+                border: none;
+                background: transparent;
+                font-size: 13px;
+                font-weight: 600;
+                color: var(--text-primary);
+                cursor: pointer;
+                padding: 2px 20px 2px 4px;
+                outline: none;
+                appearance: none;
+                background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='%236e6e73' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+                background-repeat: no-repeat;
+                background-position: right 2px center;
+                background-size: 14px;
+            }
+
+            /* Search Container */
+            .search-container {
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                background: var(--surface);
+                padding: 6px 10px;
+                border-radius: 8px;
+                border: 1px solid var(--border-light);
+                flex: 1;
+                max-width: 300px;
+                transition: all 0.2s;
+            }
+
+            .search-container:focus-within {
+                border - color: var(--accent);
+            box-shadow: 0 0 0 3px rgba(0, 113, 227, 0.1);
+            background: white;
+                }
+
+            .search-container .material-icons-round {
+                font-size: 16px;
+                color: var(--text-tertiary);
+            }
+
+            .search-container:focus-within .material-icons-round {
+                color: var(--accent);
+                }
+
+            .search-container input {
+                border: none;
+                background: transparent;
+                outline: none;
+                flex: 1;
+                font-size: 13px;
+                color: var(--text-primary);
+                min-width: 0;
+            }
+
+            .search-container input::placeholder {
+                color: var(--text-tertiary);
+                }
+
+            /* Status Indicators */
+            .status-indicators {
+                display: flex;
+                gap: 8px;
+                padding: 8px 16px 12px;
+                flex-wrap: wrap;
+            }
+
+            .status-chip {
+                display: inline-flex;
+                align-items: center;
+                gap: 6px;
+                padding: 5px 10px;
+                border-radius: 8px;
+                font-size: 12px;
+                font-weight: 600;
+                border: 1px solid;
+                transition: all 0.2s;
+            }
+
+            .status-chip .material-icons-round {
+                font-size: 16px;
+            }
+
+            .chip-count {
+                font-size: 14px;
+                font-weight: 700;
+            }
+
+            .chip-label {
+                font-size: 12px;
+                font-weight: 600;
+            }
+
+            .status-chip.waiting {
+                background: #fff8e1;
+            border-color: #ffc107;
+            color: #f57c00;
+                }
+
+            .status-chip.production {
+                background: #e3f2fd;
+            border-color: #2196f3;
+            color: #1976d2;
+                }
+
+            .status-chip.alert {
+                background: #ffebee;
+            border-color: #f44336;
+            color: #d32f2f;
+                }
+
+            .status-chip.ordered {
+                background: #f3e5f5;
+            border-color: #9c27b0;
+            color: #7b1fa2;
+                }
+
+            /* Responsive adjustments */
+            @media (max-width: 768px) {
+                    .title - section {
+                flex - direction: column;
+            align-items: flex-start;
                     }
 
-                    .header-top h2 {
-                        font-size: 20px;
+            .filters-container {
+                flex - direction: column;
+            align-items: stretch;
                     }
 
-                    .controls-row {
-                        gap: 10px;
+            .filters-left {
+                flex - direction: column;
+            align-items: stretch;
                     }
 
-                    .overview-content {
-                        padding: 12px;
+            .view-mode-tabs {
+                width: 100%;
                     }
 
-                    .group-section {
-                        margin-bottom: 12px;
+            .group-selector {
+                width: 100%;
+                    }
+
+            .group-selector select {
+                flex: 1;
+                    }
+
+            .search-container {
+                max - width: none;
+            width: 100%;
+                    }
+
+            .status-indicators {
+                justify - content: flex-start;
+                    }
+                }
+
+            .overview-content {
+                padding: 16px 24px;
+                }
+
+            .group-section {
+                background: var(--background);
+            border-radius: 12px;
+            margin-bottom: 16px;
+            overflow: hidden;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+                }
+
+            .group-header {
+                padding: 16px 20px;
+            background: var(--surface);
+            cursor: pointer;
+            border-bottom: 1px solid var(--border);
+            transition: background 0.2s;
+                }
+
+            .group-header:hover {
+                background: var(--surface-hover);
+                }
+
+            .group-info {
+                display: flex;
+            align-items: center;
+            gap: 12px;
+                }
+
+            .group-info h3 {
+                font - size: 16px;
+            font-weight: 600;
+            margin: 0;
+            flex: 1;
+                }
+
+            .group-count {
+                display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-width: 24px;
+            height: 24px;
+            padding: 0 8px;
+            background: var(--accent);
+            color: white;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 600;
+                }
+
+            .group-items {
+                padding: 0;
+                }
+
+            /* Responsive Table Layout */
+            .items-table {
+                width: 100%;
+                }
+
+            .table-header {
+                display: grid;
+            grid-template-columns: 100px minmax(200px, 2fr) 70px 60px minmax(150px, 2.5fr) 130px minmax(150px, 1.5fr);
+            gap: 12px;
+            padding: 16px 24px;
+            align-items: center;
+            background: var(--surface);
+            border-bottom: 1px solid var(--border);
+            font-size: 11px;
+            font-weight: 700;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+                }
+
+            .table-row {
+                display: grid;
+            grid-template-columns: 100px minmax(200px, 2fr) 70px 60px minmax(150px, 2.5fr) 130px minmax(150px, 1.5fr);
+            gap: 12px;
+            padding: 16px 24px;
+            align-items: center;
+            border-bottom: 1px solid var(--border-light);
+            transition: background 0.15s;
+            font-size: 14px; /* Uniform base size */
+                }
+
+            .col-type {
+                display: flex;
+            align-items: center;
+                }
+
+            .col-qty {
+                font - size: 14px;
+            font-weight: 500;
+            font-variant-numeric: tabular-nums;
+            color: var(--text-primary);
+            text-align: right;
+                }
+
+            .col-unit {
+                font - size: 14px;
+            color: var(--text-secondary);
+            text-align: left;
+            padding-left: 4px;
+                }
+
+            /* Header alignments must match row alignments */
+            .table-header .col-qty {
+                text - align: right;
+            font-size: 11px;
+            font-weight: 700;
+                }
+
+            .table-header .col-unit {
+                text - align: left;
+            padding-left: 4px;
+            font-size: 11px;
+            font-weight: 700;
+                }
+
+            /* Ensure other text columns align left */
+            .col-name, .col-project, .col-details {text - align: left; }
+
+            /* Mobile Components Hidden by Default */
+            .mobile-only {display: none; }
+
+            /* Mobile Responsive Styles */
+            @media (max-width: 1100px) {
+                    .desktop - only {display: none !important; }
+            .mobile-only {display: block; }
+
+            .items-table {
+                display: flex;
+            flex-direction: column;
+            gap: 12px;
+                    }
+
+            .table-header {display: none; }
+
+            .table-row {
+                display: flex;
+            flex-direction: column;
+            align-items: flex-start;
+            padding: 16px;
+            gap: 12px;
+            background: var(--surface);
+            border: 1px solid var(--border-light);
+            border-radius: 12px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.02);
+            font-size: 15px; 
+                    }
+
+            /* Group Section Redesign */
+            .group-section {
+                background: white;
+                border-radius: 16px;
+                margin-bottom: 16px;
+                overflow: hidden;
+                box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+                border: 1px solid var(--border-light);
+                transition: box-shadow 0.2s;
+            }
+
+            .group-section:hover {
+                box-shadow: 0 4px 12px rgba(0, 0, 0, 0.06);
+            }
+
+            .group-header {
+                padding: 16px 20px;
+                background: var(--surface);
+                cursor: pointer;
+                border-bottom: 1px solid var(--border-light);
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                transition: background 0.2s;
+            }
+
+            .group-header:hover {
+                background: #f1f5f9;
+            }
+
+            .group-info {
+                display: flex;
+                align-items: center;
+                gap: 12px;
+            }
+
+            .toggle-icon {
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                width: 28px;
+                height: 28px;
+                background: white;
+                border-radius: 8px;
+                border: 1px solid var(--border-light);
+                color: var(--text-secondary);
+                transition: all 0.2s;
+            }
+
+            .group-header:hover .toggle-icon {
+                border-color: var(--accent);
+                color: var(--accent);
+            }
+
+            .toggle-icon .material-icons-round {
+                font-size: 20px;
+            }
+
+            .group-info h3 {
+                margin: 0;
+                font-size: 15px;
+                font-weight: 700;
+                color: var(--text-primary);
+            }
+
+            .desktop-count-badge {
+                padding: 2px 8px;
+                background: white;
+                border: 1px solid var(--border-light);
+                border-radius: 12px;
+                font-size: 11px;
+                font-weight: 600;
+                color: var(--text-secondary);
+            }
+
+            .mobile-meta {
+                display: none;
+                flex-direction: row;
+                align-items: center;
+                gap: 6px;
+                font-size: 12px;
+                color: var(--text-secondary);
+                margin-top: 2px;
+            }
+
+            .dot {
+                font-weight: 900;
+                font-size: 10px;
+                opacity: 0.5;
+            }
+
+            .group-progress {
+                display: flex;
+                align-items: center;
+                gap: 12px;
+            }
+
+            .progress-bar {
+                width: 120px;
+                height: 6px;
+                background: var(--border-light);
+                border-radius: 10px;
+                overflow: hidden;
+            }
+
+            .progress-fill {
+                height: 100%;
+                background: #f59e0b; /* Orange for progress */
+                border-radius: 10px;
+                transition: width 0.5s ease-in-out;
+            }
+
+            .progress-text {
+                font-size: 12px;
+                font-weight: 600;
+                color: var(--text-secondary);
+                min-width: 65px;
+                text-align: right;
+            }
+
+            /* Table Styles */
+            .items-table {
+                width: 100%;
+            }
+
+            .table-header {
+                display: grid;
+                grid-template-columns: 80px 3fr 60px 60px 2fr 120px 1.5fr;
+                gap: 16px;
+                padding: 12px 24px;
+                background: white;
+                border-bottom: 1px solid var(--border-light);
+                font-size: 11px;
+                font-weight: 700;
+                color: var(--text-tertiary);
+                text-transform: uppercase;
+                letter-spacing: 0.5px;
+            }
+
+            .table-row {
+                display: grid;
+                grid-template-columns: 80px 3fr 60px 60px 2fr 120px 1.5fr;
+                gap: 16px;
+                padding: 14px 24px;
+                align-items: center;
+                border-bottom: 1px solid var(--border-light);
+                transition: background 0.2s;
+            }
+
+            .table-row:last-child {
+                border-bottom: none;
+            }
+
+            .table-row:hover {
+                background: #f8fafc; /* Very light blue/gray hover */
+            }
+
+            .col-type .type-badge {
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                width: 36px;
+                height: 36px;
+                border-radius: 10px;
+                color: white;
+            }
+
+            .type-badge.product {
+                background: #e3f2fd;
+                color: var(--accent);
+            }
+
+            .type-badge.material {
+                background: #f3e5f5;
+                color: #9c27b0;
+            }
+
+            .col-type .material-icons-round {
+                font-size: 20px;
+            }
+
+            .col-name {
+                display: flex;
+                flex-direction: column;
+                justify-content: center;
+                min-width: 0; 
+            }
+
+            .col-name strong {
+                font-size: 14px;
+                font-weight: 600;
+                color: var(--text-primary);
+                white-space: nowrap;
+                overflow: hidden;
+                text-overflow: ellipsis;
+            }
+
+            .col-name small {
+                font-size: 12px;
+                color: var(--text-tertiary);
+                margin-top: 2px;
+            }
+
+            .col-qty, .col-unit {
+                display: flex;
+                flex-direction: column;
+                justify-content: center;
+            }
+
+            .qty-val {
+                font-size: 14px;
+                font-weight: 700;
+                color: var(--text-primary);
+            }
+
+            .unit-val {
+                font-size: 11px;
+                text-transform: uppercase;
+                font-weight: 600;
+                color: var(--text-tertiary);
+            }
+
+            .col-project {
+                display: flex;
+                flex-direction: column;
+                font-size: 13px;
+                font-weight: 500;
+                color: var(--text-secondary);
+                white-space: nowrap;
+                overflow: hidden;
+                text-overflow: ellipsis;
+            }
+
+            .col-project .deadline {
+                display: flex;
+                align-items: center;
+                gap: 4px;
+                font-size: 11px;
+                color: var(--text-tertiary);
+                margin-top: 2px;
+            }
+
+            .col-project .material-icons-round {
+                font-size: 12px;
+            }
+
+            .status-badge {
+                display: inline-flex;
+                align-items: center;
+                padding: 4px 8px;
+                border-radius: 6px;
+                font-size: 11px;
+                font-weight: 600;
+                white-space: nowrap;
+            }
+
+            .status-badge.waiting { background: #fff8e1; color: #f57c00; border: 1px solid #ffe0b2; }
+            .status-badge.production { background: #e3f2fd; color: #1976d2; border: 1px solid #bbdefb; }
+            .status-badge.alert { background: #ffebee; color: #d32f2f; border: 1px solid #ffcdd2; }
+            .status-badge.ordered { background: #f3e5f5; color: #7b1fa2; border: 1px solid #e1bee7; }
+            .status-badge.received { background: #e8f5e9; color: #2e7d32; border: 1px solid #c8e6c9; }
+            .status-badge.done { background: #f0fdf4; color: #16a34a; border: 1px solid #bbf7d0; }
+
+            .col-details span.supplier {
+                display: flex;
+                align-items: center;
+                gap: 6px;
+                font-size: 12px;
+                color: var(--text-secondary);
+                background: var(--surface);
+                padding: 4px 8px;
+                border-radius: 6px;
+                max-width: fit-content;
+            }
+
+            .col-details .material-icons-round {
+                font-size: 14px;
+                color: var(--text-tertiary);
+            }
+
+            /* Responsive Design */
+            @media (max-width: 768px) {
+                .desktop-only {
+                    display: none !important;
+                }
+
+                .mobile-only {
+                    display: flex !important;
+                }
+
+                .mobile-meta {
+                    display: flex;
+                }
+
+                .group-header {
+                    padding: 12px 16px;
+                }
+
+                .group-title-wrapper {
+                    flex: 1;
+                    min-width: 0;
+                }
+
+                .table-row {
+                    grid-template-columns: 1fr auto auto; /* Name, Qty, Chevron/Actions */
+                    gap: 12px;
+                    padding: 12px 16px;
+                }
+
+                .col-name strong {
+                    font-size: 13px;
+                }
+
+                .status-text {
+                    font-weight: 500;
+                }
+                
+                .status-text.status-ceka { color: #f57c00; }
+                .status-text.status-u-proizvodnji { color: #1976d2; }
+                .status-text.status-nije-naruceno { color: #d32f2f; }
+                
+                .col-qty {
+                    align-items: flex-end;
+                }
+                
+                .items-table {
+                    border-top: 1px solid var(--border-light);
+                }
+            }  @media (max-width: 900px) {
+                    .overview - header {
+                padding: 16px;
+                    }
+
+            .overview-title-bar {
+                display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 12px;
+                    }
+
+            .mobile-filter-toggle {
+                display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 12px;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-primary);
+            cursor: pointer;
+                    }
+
+            .mobile-filters-summary {
+                display: flex;
+            gap: 8px;
+            overflow-x: auto;
+            padding-bottom: 4px;
+            margin-bottom: 12px;
+                    }
+
+            .summary-pill {
+                font - size: 12px;
+            padding: 4px 10px;
+            background: var(--surface);
+            border-radius: 12px;
+            color: var(--text-secondary);
+            white-space: nowrap;
+            border: 1px solid var(--border-light);
+                    }
+
+            .summary-pill.active {
+                background: var(--accent-light);
+            color: var(--accent);
+            border-color: var(--accent-light);
+                    }
+
+            .overview-controls {
+                display: none; /* Hidden by default on mobile */
+                    }
+
+            .overview-controls.open {
+                display: flex; /* Show when open */
+            flex-direction: column;
+            gap: 12px;
+            margin-bottom: 16px;
+            padding-top: 12px;
+            border-top: 1px solid var(--border-light);
+            animation: slideDown 0.2s ease-out;
+                    }
+
+            @keyframes slideDown {
+                from {opacity: 0; transform: translateY(-10px); }
+            to {opacity: 1; transform: translateY(0); }
+                    }
+
+            .header-top {
+                flex - direction: column;
+            align-items: flex-start;
+            gap: 12px;
+            margin-bottom: 16px;
+                    }
+
+            .header-stats {
+                flex - direction: column;
+            width: 100%;
+            gap: 8px;
+                    }
+
+            .stat-pill {
+                font - size: 13px;
+            padding: 6px 12px;
+                    }
+
+            .controls-row {
+                flex - direction: column;
+            align-items: stretch;
+            gap: 12px;
+            margin-bottom: 12px;
+                    }
+
+            .control-group {
+                flex - direction: column;
+            align-items: stretch;
+            gap: 6px;
+                    }
+
+            .control-group label {
+                font - size: 12px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+                    }
+
+            .search-box {
+                max - width: 100%;
+                    }
+
+            .button-group {
+                width: 100%;
+                    }
+
+            .button-group button {
+                flex: 1;
+                    }
+
+            .quick-stats {
+                flex - direction: column;
+            gap: 8px;
+                    }
+
+            .stat-badge {
+                justify - content: flex-start;
+            padding: 8px 12px;
+                    }
+
+            .table-header {
+                display: none;
+                    }
+
+            .table-row {
+                grid - template - columns: 1fr;
+            gap: 8px;
+            padding: 16px 20px;
+                    }
+
+            .col-type,
+            .col-name,
+            .col-project,
+            .col-status,
+            .col-details {
+                display: flex;
+            flex-direction: column;
+                    }
+                }
+
+            @media (max-width: 600px) {
+                    .overview - header {
+                padding: 12px;
+                    }
+
+            .header-top h2 {
+                font - size: 20px;
+                    }
+
+            .controls-row {
+                gap: 10px;
+                    }
+
+            .overview-content {
+                padding: 12px;
+                    }
+
+            .group-section {
+                margin - bottom: 12px;
                     }
                 }
             `}</style>
-        </div>
+        </div >
     );
 }

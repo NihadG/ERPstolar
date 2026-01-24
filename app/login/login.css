@@ -1,0 +1,549 @@
+/* ============================================
+   LOGIN PAGE SPECIFIC STYLES
+   ============================================ */
+
+.login-page {
+    min-height: 100vh;
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    background-color: #f8fafc;
+    /* slate-50 */
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    color: #0f172a;
+    /* slate-900 */
+}
+
+/* Desktop: Row layout */
+@media (min-width: 1024px) {
+    .login-page {
+        flex-direction: row;
+        overflow: hidden;
+        /* Prevent scroll on desktop if possible */
+    }
+}
+
+/* ============================================
+   ARTISTIC SIDE (Right/Top)
+   ============================================ */
+.artistic-side {
+    position: relative;
+    width: 100%;
+    height: 35vh;
+    background-color: #0f172a;
+    /* slate-900 */
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+@media (min-width: 1024px) {
+    .artistic-side {
+        width: 50%;
+        height: 100vh;
+        order: 2;
+        /* Right side on desktop */
+    }
+}
+
+.art-bg-image {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    opacity: 0.6;
+    z-index: 0;
+    animation: slowZoom 20s infinite alternate ease-in-out;
+}
+
+@keyframes slowZoom {
+    0% {
+        transform: scale(1);
+    }
+
+    100% {
+        transform: scale(1.1);
+    }
+}
+
+.art-overlay-gradient {
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(to bottom, rgba(15, 23, 42, 0.4), rgba(15, 23, 42, 0.6), #0f172a);
+    mix-blend-mode: multiply;
+    z-index: 1;
+}
+
+@media (min-width: 1024px) {
+    .art-overlay-gradient {
+        background: linear-gradient(to bottom right, rgba(15, 23, 42, 0.4), rgba(15, 23, 42, 0.6), #0f172a);
+    }
+}
+
+.art-grid-pattern {
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    background-image:
+        linear-gradient(rgba(255, 255, 255, 0.03) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
+    background-size: 64px 64px;
+    pointer-events: none;
+}
+
+/* Floating Orbs */
+.orb {
+    position: absolute;
+    border-radius: 50%;
+    mix-blend-mode: overlay;
+    filter: blur(40px);
+    /* blur-3xl equivalent roughly */
+    opacity: 0.4;
+    z-index: 2;
+    animation: floatOrb 8s infinite ease-in-out;
+}
+
+.orb-primary {
+    top: 25%;
+    right: 10%;
+    width: 128px;
+    height: 128px;
+    background-color: var(--accent);
+    /* Brand color */
+}
+
+.orb-secondary {
+    bottom: 25%;
+    left: 10%;
+    width: 128px;
+    height: 128px;
+    background-color: #a855f7;
+    /* purple-500 */
+    animation-delay: 2s;
+}
+
+@media (min-width: 1024px) {
+
+    .orb-primary,
+    .orb-secondary {
+        width: 256px;
+        height: 256px;
+    }
+}
+
+@keyframes floatOrb {
+
+    0%,
+    100% {
+        transform: translateY(0);
+    }
+
+    50% {
+        transform: translateY(-20px);
+    }
+}
+
+/* Mobile Header Content */
+.mobile-header-content {
+    position: relative;
+    z-index: 10;
+    text-align: center;
+    margin-top: -1rem;
+    display: block;
+}
+
+@media (min-width: 1024px) {
+    .mobile-header-content {
+        display: none;
+    }
+}
+
+.mobile-header-title {
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: white;
+    letter-spacing: -0.025em;
+    text-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+}
+
+.mobile-header-subtitle {
+    color: #e0f2fe;
+    /* brand-100/sky-100 */
+    font-size: 0.75rem;
+    font-weight: 300;
+    letter-spacing: 0.05em;
+    margin-top: 0.25rem;
+}
+
+/* Glass Card (Desktop Status) */
+.glass-status-card {
+    position: relative;
+    z-index: 10;
+    width: 100%;
+    max-width: 32rem;
+    /* max-w-lg */
+    padding: 3rem;
+    transition: transform 0.5s ease;
+    display: none;
+}
+
+@media (min-width: 1024px) {
+    .glass-status-card {
+        display: block;
+    }
+}
+
+.glass-status-card:hover {
+    transform: scale(1.02);
+}
+
+.glass-panel {
+    background: rgba(255, 255, 255, 0.05);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 1rem;
+    /* rounded-2xl */
+    padding: 2rem;
+    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+    position: relative;
+    overflow: hidden;
+}
+
+.glass-panel:hover {
+    border-color: rgba(255, 255, 255, 0.2);
+}
+
+.glass-shine {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 50%;
+    height: 100%;
+    background: linear-gradient(to right, transparent, rgba(255, 255, 255, 0.1), transparent);
+    transform: skewX(-12deg) translateX(-200%);
+    transition: transform 0s;
+}
+
+.glass-panel:hover .glass-shine {
+    transform: skewX(-12deg) translateX(300%);
+    transition: transform 1s ease-in-out;
+}
+
+.status-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.75rem;
+    background: rgba(0, 0, 0, 0.2);
+    border-radius: 0.5rem;
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    transition: background-color 0.2s;
+    margin-bottom: 1rem;
+}
+
+.status-row:hover {
+    background: rgba(0, 0, 0, 0.3);
+}
+
+.status-dot {
+    width: 0.5rem;
+    height: 0.5rem;
+    border-radius: 50%;
+    box-shadow: 0 0 8px currentColor;
+}
+
+.status-dot.success {
+    background-color: #34d399;
+    /* emerald-400 */
+    color: rgba(52, 211, 153, 0.6);
+    animation: pulse 2s infinite;
+}
+
+.status-dot.info {
+    background-color: var(--accent);
+    /* brand-400 */
+    color: rgba(56, 189, 248, 0.6);
+}
+
+@keyframes pulse {
+
+    0%,
+    100% {
+        opacity: 1;
+    }
+
+    50% {
+        opacity: .5;
+    }
+}
+
+/* ============================================
+   FORM SIDE (Left/Bottom)
+   ============================================ */
+.form-side {
+    flex: 1;
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+    z-index: 10;
+    margin-top: -2rem;
+    /* Negative margin mobile */
+}
+
+@media (min-width: 1024px) {
+    .form-side {
+        width: 50%;
+        order: 1;
+        /* Left side on desktop */
+        align-items: center;
+        margin-top: 0;
+        position: relative;
+        z-index: auto;
+    }
+}
+
+.login-card {
+    width: 100%;
+    background-color: #ffffff;
+    border-top-left-radius: 2rem;
+    border-top-right-radius: 2rem;
+    box-shadow: 0 -10px 40px -15px rgba(0, 0, 0, 0.1);
+    padding: 2rem 1.5rem;
+    min-height: auto;
+    /* Allow content to dictate height on mobile */
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-start;
+    transition: all 0.5s ease-out;
+    padding-bottom: 4rem;
+    /* Extra padding at bottom for mobile scroll */
+}
+
+@media (min-width: 640px) {
+    .login-card {
+        padding: 3rem;
+    }
+}
+
+@media (min-width: 1024px) {
+    .login-card {
+        border-radius: 0;
+        box-shadow: none;
+        background-color: transparent;
+        padding: 4rem;
+        min-height: 100vh;
+        justify-content: center;
+        padding-bottom: 4rem;
+    }
+}
+
+.form-container {
+    max-width: 28rem;
+    /* max-w-md */
+    width: 100%;
+    margin: 0 auto;
+    opacity: 0;
+    animation: fadeInUp 0.5s ease-out forwards;
+}
+
+@keyframes fadeInUp {
+    from {
+        opacity: 0;
+        transform: translateY(20px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.logo-container {
+    display: none;
+}
+
+@media (min-width: 1024px) {
+    .logo-container {
+        display: flex;
+        width: 3rem;
+        height: 3rem;
+        background-color: #0f172a;
+        border-radius: 0.75rem;
+        align-items: center;
+        justify-content: center;
+        color: white;
+        margin-bottom: 1.5rem;
+        box-shadow: 0 10px 15px -3px rgba(15, 23, 42, 0.2);
+    }
+}
+
+/* Inputs & Form Elements */
+.input-group {
+    margin-bottom: 1.25rem;
+}
+
+.input-wrapper {
+    position: relative;
+    transition: transform 0.2s;
+}
+
+.input-wrapper:focus-within {
+    transform: scale(1.01);
+}
+
+.form-input {
+    width: 100%;
+    border: 1px solid #e2e8f0;
+    /* slate-200 */
+    border-radius: 0.5rem;
+    padding: 0.75rem 1rem;
+    /* Default padding */
+    font-size: 0.875rem;
+    color: #0f172a;
+    outline: none;
+    transition: all 0.2s;
+    background-color: white;
+    /* Ensure white background */
+}
+
+/* Use high specificity to ensure it overrides any defaults */
+.form-input.with-icon {
+    padding-left: 2.75rem !important;
+}
+
+.form-input.has-right-element {
+    padding-right: 2.75rem !important;
+}
+
+.form-input.error {
+    border-color: #fca5a5 !important;
+}
+
+.form-input:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 4px rgba(0, 113, 227, 0.1);
+}
+
+.input-icon {
+    position: absolute;
+    left: 0.75rem;
+    top: 50%;
+    transform: translateY(-50%);
+    color: #94a3b8;
+    /* slate-400 */
+    transition: color 0.2s;
+    pointer-events: none;
+}
+
+.input-wrapper:focus-within .input-icon {
+    color: var(--accent);
+}
+
+.password-toggle {
+    position: absolute;
+    right: 0.75rem;
+    top: 50%;
+    transform: translateY(-50%);
+    color: #94a3b8;
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 0.25rem;
+}
+
+.password-toggle:hover {
+    color: #475569;
+}
+
+/* Buttons */
+.auth-btn {
+    width: 100%;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    padding: 0.75rem 1rem;
+    border-radius: 0.5rem;
+    font-size: 0.875rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+    border: none;
+    position: relative;
+}
+
+.auth-btn-primary {
+    background-color: #0f172a;
+    color: white;
+    box-shadow: 0 10px 15px -3px rgba(15, 23, 42, 0.2);
+}
+
+.auth-btn-primary:hover {
+    background-color: #1e293b;
+    transform: translateY(-1px);
+}
+
+.auth-btn-secondary {
+    background-color: white;
+    border: 1px solid #e2e8f0;
+    color: #334155;
+}
+
+.auth-btn-secondary:hover {
+    background-color: #f8fafc;
+    border-color: #cbd5e1;
+}
+
+.divider {
+    position: relative;
+    margin: 2rem 0;
+    text-align: center;
+}
+
+.divider::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 50%;
+    width: 100%;
+    height: 1px;
+    background-color: #e2e8f0;
+}
+
+.divider span {
+    position: relative;
+    background-color: white;
+    padding: 0 0.5rem;
+    color: #94a3b8;
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    font-weight: 500;
+}
+
+@media (min-width: 1024px) {
+    .divider span {
+        background-color: #f8fafc;
+        /* Match desktop bg if needed, but card is transparent so white might be wrong if bg is not white. 
+                                   Actually on desktop login-card has transparent bg, but body has slate-50.
+                                   Let's stick to transparent or matching bg. */
+        background-color: #f8fafc;
+    }
+}
+
+/* Alert */
+.alert-error {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 1rem;
+    background-color: #fef2f2;
+    border: 1px solid #fee2e2;
+    border-radius: 0.5rem;
+    color: #991b1b;
+    font-size: 0.875rem;
+    margin-bottom: 1.5rem;
+    animation: pulse 2s infinite;
+}

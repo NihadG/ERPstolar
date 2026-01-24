@@ -8,6 +8,7 @@ import {
     getUserProfile,
     getOrganization,
     updateLastLogin,
+    signOut,
 } from '@/lib/auth';
 import type { User, Organization, ModuleAccess } from '@/lib/types';
 
@@ -27,9 +28,9 @@ interface AuthContextType {
     isOwner: boolean;
     isAdmin: boolean;
 
-    // Refresh functions
     refreshUser: () => Promise<void>;
     refreshOrganization: () => Promise<void>;
+    signOut: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -123,6 +124,11 @@ export function AuthProvider({ children }: AuthProviderProps) {
         }
     };
 
+    // Sign out wrapper
+    const handleSignOut = async () => {
+        await signOut();
+    };
+
     const value: AuthContextType = {
         firebaseUser,
         user,
@@ -133,6 +139,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
         isAdmin,
         refreshUser,
         refreshOrganization,
+        signOut: handleSignOut,
     };
 
     return (

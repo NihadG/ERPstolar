@@ -20,6 +20,7 @@ import SuppliersTab from '@/components/tabs/SuppliersTab';
 import Toast from '@/components/ui/Toast';
 import LoadingOverlay from '@/components/ui/LoadingOverlay';
 import ModuleGuard from '@/components/auth/ModuleGuard';
+import Sidebar from '@/components/Sidebar';
 
 export const dynamic = 'force-dynamic';
 
@@ -30,6 +31,7 @@ export default function Home() {
     const [activeTab, setActiveTab] = useState('projects');
     const [dropdownOpen, setDropdownOpen] = useState(false);
     const [userMenuOpen, setUserMenuOpen] = useState(false);
+    const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
     const [loading, setLoading] = useState(true);
     const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null);
 
@@ -104,6 +106,19 @@ export default function Home() {
         setDropdownOpen(false);
     }
 
+    // State and handler for creating orders from Overview tab
+    const [pendingOrderMaterials, setPendingOrderMaterials] = useState<{ materialIds: string[], supplierName: string } | null>(null);
+
+    function handleCreateOrderFromOverview(materialIds: string[], supplierName: string) {
+        setPendingOrderMaterials({ materialIds, supplierName });
+        setActiveTab('orders');
+        showToast(`${materialIds.length} materijal(a) spremno za narudžbu`, 'info');
+    }
+
+    function clearPendingOrder() {
+        setPendingOrderMaterials(null);
+    }
+
     async function handleLogout() {
         await signOut();
         router.push('/login');
@@ -132,209 +147,168 @@ export default function Home() {
     }
 
     return (
-        <div className="app">
-            {/* Header */}
-            <header className="header">
-                <h1 className="header-title">
-                    <span className="material-icons-round">factory</span>
-                    Furniture Production
-                </h1>
+        <div className="app-container">
+            {/* Sidebar Navigation */}
+            <Sidebar
+                activeTab={activeTab}
+                onTabChange={handleTabClick}
+                isOpen={userMenuOpen}
+                onClose={() => setUserMenuOpen(false)}
+                isCollapsed={sidebarCollapsed}
+                onToggleCollapse={() => setSidebarCollapsed(!sidebarCollapsed)}
+            />
 
-                {/* Tab Navigation - Moved to Header */}
-                <nav className="tabs">
+            {/* Main Content Area */}
+            <div className={`main-content-wrapper ${sidebarCollapsed ? 'sidebar-collapsed' : ''}`}>
+                {/* Mobile Header */}
+                <header className="mobile-header">
                     <button
-                        className={`tab ${activeTab === 'projects' ? 'active' : ''}`}
-                        onClick={() => handleTabClick('projects')}
+                        className="menu-trigger"
+                        onClick={() => setUserMenuOpen(true)}
                     >
-                        <span className="material-icons-round">folder</span>
-                        Projekti
+                        <span className="material-icons-round">menu</span>
                     </button>
-                    <button
-                        className={`tab ${activeTab === 'overview' ? 'active' : ''}`}
-                        onClick={() => handleTabClick('overview')}
-                    >
-                        <span className="material-icons-round">dashboard</span>
-                        Pregled
-                    </button>
-                    <button
-                        className={`tab ${activeTab === 'offers' ? 'active' : ''}`}
-                        onClick={() => handleTabClick('offers')}
-                    >
-                        <span className="material-icons-round">request_quote</span>
-                        Ponude
-                        {!hasModule('offers') && <span className="material-icons-round tab-lock">lock</span>}
-                    </button>
-                    <button
-                        className={`tab ${activeTab === 'orders' ? 'active' : ''}`}
-                        onClick={() => handleTabClick('orders')}
-                    >
-                        <span className="material-icons-round">local_shipping</span>
-                        Narudžbe
-                        {!hasModule('orders') && <span className="material-icons-round tab-lock">lock</span>}
-                    </button>
-                    <button
-                        className={`tab ${activeTab === 'production' ? 'active' : ''}`}
-                        onClick={() => handleTabClick('production')}
-                    >
-                        <span className="material-icons-round">engineering</span>
-                        Proizvodnja
-                    </button>
-
-                    {/* Settings Dropdown removed and moved to User Menu */}
-                </nav>
-
-                {/* User Menu - Genius Style */}
-                <div ref={userMenuRef} className={`user-menu ${userMenuOpen ? 'open' : ''}`}>
-                    <button
-                        className="user-menu-button"
-                        onClick={() => {
-                            setUserMenuOpen(!userMenuOpen);
-                            setDropdownOpen(false);
-                        }}
-                    >
-                        <div className="user-avatar">{getUserInitials()}</div>
-                        <span className="user-name">{user?.Name}</span>
-                        <span className="material-icons-round">expand_more</span>
-                    </button>
-                    <div className="user-menu-dropdown">
-                        <div className="user-menu-header">
-                            <div className="org-name">{organization?.Name}</div>
-                            <div className="user-email">{user?.Email}</div>
-                        </div>
-
-                        <div className="menu-group-label" style={{ padding: '8px 16px 4px', fontSize: '11px', color: '#888', fontWeight: 600, textTransform: 'uppercase' }}>
-                            Upravljanje
-                        </div>
-
-                        <button
-                            className={`user-menu-item ${activeTab === 'materials' ? 'active' : ''}`}
-                            onClick={() => { handleTabClick('materials'); setUserMenuOpen(false); }}
-                        >
-                            <span className="material-icons-round">inventory_2</span>
-                            Materijali
-                        </button>
-                        <button
-                            className={`user-menu-item ${activeTab === 'workers' ? 'active' : ''}`}
-                            onClick={() => { handleTabClick('workers'); setUserMenuOpen(false); }}
-                        >
-                            <span className="material-icons-round">people</span>
-                            Radnici
-                        </button>
-                        <button
-                            className={`user-menu-item ${activeTab === 'suppliers' ? 'active' : ''}`}
-                            onClick={() => { handleTabClick('suppliers'); setUserMenuOpen(false); }}
-                        >
-                            <span className="material-icons-round">store</span>
-                            Dobavljači
-                        </button>
-
-                        <div className="menu-divider" style={{ height: '1px', background: '#f0f0f0', margin: '4px 0' }}></div>
-
-                        <button className="user-menu-item" onClick={() => router.push('/settings')}>
-                            <span className="material-icons-round">settings</span>
-                            Postavke Profila
-                        </button>
-                        <button className="user-menu-item" onClick={() => router.push('/pricing')}>
-                            <span className="material-icons-round">diamond</span>
-                            Plan: {organization?.Subscription_Plan || 'Free'}
-                        </button>
-
-                        <div className="menu-divider" style={{ height: '1px', background: '#f0f0f0', margin: '4px 0' }}></div>
-
-                        <button className="user-menu-item danger" onClick={handleLogout}>
-                            <span className="material-icons-round">logout</span>
-                            Odjava
-                        </button>
+                    <span className="logo-text" style={{ fontSize: '16px' }}>Furniture Prod.</span>
+                    <div className="user-avatar-small" style={{
+                        width: '32px', height: '32px', borderRadius: '50%',
+                        background: '#e3f2fd', color: '#0071e3', display: 'flex',
+                        alignItems: 'center', justifyContent: 'center', fontSize: '12px', fontWeight: 'bold'
+                    }}>
+                        {getUserInitials()}
                     </div>
-                </div>
-            </header>
+                </header>
 
-
-
-            {/* Tab Content */}
-            <main className="content">
-                {activeTab === 'projects' && (
-                    <ProjectsTab
-                        projects={appState.projects}
-                        materials={appState.materials}
-                        workOrders={appState.workOrders}
-                        onRefresh={loadData}
-                        showToast={showToast}
-                    />
-                )}
-
-                {activeTab === 'overview' && (
-                    <OverviewTab
-                        projects={appState.projects}
-                        workOrders={appState.workOrders}
-                        showToast={showToast}
-                    />
-                )}
-
-                {activeTab === 'offers' && (
-                    <ModuleGuard module="offers" moduleName="Modul Ponude">
-                        <OffersTab
-                            offers={appState.offers}
+                {/* Content */}
+                <main className="content-area">
+                    {activeTab === 'projects' && (
+                        <ProjectsTab
                             projects={appState.projects}
+                            materials={appState.materials}
+                            workOrders={appState.workOrders}
                             onRefresh={loadData}
                             showToast={showToast}
                         />
-                    </ModuleGuard>
-                )}
+                    )}
 
-                {activeTab === 'orders' && (
-                    <ModuleGuard module="orders" moduleName="Modul Narudžbe">
-                        <OrdersTab
-                            orders={appState.orders}
+                    {activeTab === 'overview' && (
+                        <OverviewTab
+                            projects={appState.projects}
+                            workOrders={appState.workOrders}
+                            showToast={showToast}
+                            onCreateOrder={handleCreateOrderFromOverview}
+                        />
+                    )}
+
+                    {activeTab === 'offers' && (
+                        <ModuleGuard module="offers" moduleName="Modul Ponude">
+                            <OffersTab
+                                offers={appState.offers}
+                                projects={appState.projects}
+                                onRefresh={loadData}
+                                showToast={showToast}
+                            />
+                        </ModuleGuard>
+                    )}
+
+                    {activeTab === 'orders' && (
+                        <ModuleGuard module="orders" moduleName="Modul Narudžbe">
+                            <OrdersTab
+                                orders={appState.orders}
+                                suppliers={appState.suppliers}
+                                projects={appState.projects}
+                                productMaterials={appState.productMaterials}
+                                onRefresh={loadData}
+                                showToast={showToast}
+                                pendingOrderMaterials={pendingOrderMaterials}
+                                onClearPendingOrder={clearPendingOrder}
+                            />
+                        </ModuleGuard>
+                    )}
+
+                    {activeTab === 'production' && (
+                        <ProductionTab
+                            workOrders={appState.workOrders}
+                            projects={appState.projects}
+                            workers={appState.workers}
+                            onRefresh={loadData}
+                            showToast={showToast}
+                        />
+                    )}
+
+                    {activeTab === 'materials' && (
+                        <MaterialsTab
+                            materials={appState.materials}
+                            onRefresh={loadData}
+                            showToast={showToast}
+                        />
+                    )}
+
+                    {activeTab === 'workers' && (
+                        <WorkersTab
+                            workers={appState.workers}
+                            onRefresh={loadData}
+                            showToast={showToast}
+                        />
+                    )}
+
+                    {activeTab === 'suppliers' && (
+                        <SuppliersTab
                             suppliers={appState.suppliers}
-                            projects={appState.projects}
-                            productMaterials={appState.productMaterials}
                             onRefresh={loadData}
                             showToast={showToast}
                         />
-                    </ModuleGuard>
-                )}
-
-                {activeTab === 'production' && (
-                    <ProductionTab
-                        workOrders={appState.workOrders}
-                        projects={appState.projects}
-                        workers={appState.workers}
-                        onRefresh={loadData}
-                        showToast={showToast}
-                    />
-                )}
-
-                {activeTab === 'materials' && (
-                    <MaterialsTab
-                        materials={appState.materials}
-                        onRefresh={loadData}
-                        showToast={showToast}
-                    />
-                )}
-
-                {activeTab === 'workers' && (
-                    <WorkersTab
-                        workers={appState.workers}
-                        onRefresh={loadData}
-                        showToast={showToast}
-                    />
-                )}
-
-                {activeTab === 'suppliers' && (
-                    <SuppliersTab
-                        suppliers={appState.suppliers}
-                        onRefresh={loadData}
-                        showToast={showToast}
-                    />
-                )}
-            </main>
+                    )}
+                </main>
+            </div>
 
             {/* Toast Notifications */}
             {toast && <Toast message={toast.message} type={toast.type} />}
 
             {/* Loading Overlay */}
             <LoadingOverlay visible={loading} />
+
+            <style jsx global>{`
+                .app-container {
+                    display: flex;
+                    min-height: 100vh;
+                    background: #f8fafc;
+                }
+
+                .main-content-wrapper {
+                    flex: 1;
+                    /* margin-left: 280px; */ /* Moved to media query */
+                    display: flex;
+                    flex-direction: column;
+                    min-width: 0;
+                    background: #f8fafc;
+                }
+
+                @media (min-width: 769px) {
+                    .main-content-wrapper {
+                        margin-left: 280px;
+                        transition: margin-left 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+                    }
+                    .main-content-wrapper.sidebar-collapsed {
+                        margin-left: 72px;
+                    }
+                }
+
+                .content-area {
+                    flex: 1;
+                    padding: 24px 32px;
+                    max-width: 1400px;
+                    margin: 0 auto;
+                    width: 100%;
+                    box-sizing: border-box;
+                    overflow-x: hidden;
+                }
+
+                @media (max-width: 768px) {
+                    .content-area {
+                        padding: 16px;
+                    }
+                }
+            `}</style>
         </div>
     );
 }

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import type { Order, Supplier, Project, ProductMaterial, OrderItem } from '@/lib/types';
 import { createOrder, deleteOrder, updateOrderStatus, markOrderSent, markMaterialsReceived, getOrder, deleteOrderItemsByIds, updateOrderItem, recalculateOrderTotal } from '@/lib/database';
 import Modal from '@/components/ui/Modal';
@@ -13,9 +13,11 @@ interface OrdersTabProps {
     productMaterials: ProductMaterial[];
     onRefresh: () => void;
     showToast: (message: string, type: 'success' | 'error' | 'info') => void;
+    pendingOrderMaterials?: { materialIds: string[], supplierName: string } | null;
+    onClearPendingOrder?: () => void;
 }
 
-export default function OrdersTab({ orders, suppliers, projects, productMaterials, onRefresh, showToast }: OrdersTabProps) {
+export default function OrdersTab({ orders, suppliers, projects, productMaterials, onRefresh, showToast, pendingOrderMaterials, onClearPendingOrder }: OrdersTabProps) {
     const [searchTerm, setSearchTerm] = useState('');
     const [statusFilter, setStatusFilter] = useState('');
 
@@ -59,6 +61,49 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
             }
         }
     }, []);
+
+    // Handle pending order materials from Overview tab
+    useEffect(() => {
+        if (pendingOrderMaterials && pendingOrderMaterials.materialIds.length > 0) {
+            // Find the supplier by name
+            const supplier = suppliers.find(s => s.Name === pendingOrderMaterials.supplierName);
+            if (supplier) {
+                // Set up wizard with pre-selected data
+                setSelectedSupplierId(supplier.Supplier_ID);
+
+                // Find projects and products for these materials
+                const materialIdsSet = new Set(pendingOrderMaterials.materialIds);
+                const relevantMaterials = productMaterials.filter(m => materialIdsSet.has(m.ID));
+
+                // Get unique project IDs from materials
+                const projectIds = new Set<string>();
+                const productIds = new Set<string>();
+
+                relevantMaterials.forEach(m => {
+                    productIds.add(m.Product_ID);
+                    // Find project for this product
+                    projects.forEach(p => {
+                        if (p.products?.some(prod => prod.Product_ID === m.Product_ID)) {
+                            projectIds.add(p.Project_ID);
+                        }
+                    });
+                });
+
+                setSelectedProjectIds(projectIds);
+                setSelectedProductIds(productIds);
+                setSelectedMaterialIds(materialIdsSet);
+
+                // Open wizard at step 4 (material selection)
+                setWizardStep(4);
+                setWizardModal(true);
+            }
+
+            // Clear pending order
+            if (onClearPendingOrder) {
+                onClearPendingOrder();
+            }
+        }
+    }, [pendingOrderMaterials, suppliers, productMaterials, projects, onClearPendingOrder]);
 
     const filteredOrders = orders.filter(order => {
         const matchesSearch = order.Order_Number?.toLowerCase().includes(searchTerm.toLowerCase()) ||
