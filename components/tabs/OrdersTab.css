@@ -1,44 +1,177 @@
-/* ==================== ORDERS TAB - UTILITIES ONLY ==================== */
-/* Main layout uses .project-card structure from globals.css */
+/* ==================== ORDERS TAB - FINE TUNED LAYOUT ==================== */
 
-/* QUICK RECEIVE BUTTON */
-.btn-receive-all {
+/* CUSTOM HEADER LAYOUT */
+.order-header-custom {
     display: flex;
     align-items: center;
-    gap: 6px;
-    padding: 8px 14px;
-    border: none;
-    background: linear-gradient(135deg, #34c759, #30b350);
-    color: #fff;
-    font-size: 13px;
+    gap: 16px;
+    padding: 16px 20px;
+    width: 100%;
+}
+
+/* LEFT SIDE: ID, Project, Date - Compact */
+.order-info-group {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    flex: 1;
+    min-width: 0;
+}
+
+.order-top-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.order-id-text {
+    font-size: 15px;
+    /* Smanjeno sa 18px */
     font-weight: 600;
-    border-radius: 8px;
-    cursor: pointer;
-    transition: all 0.2s;
+    color: #1d1d1f;
+    font-family: 'SF Mono', 'Roboto Mono', monospace;
+    /* Monospace za ID izgleda tehnicki bolje */
+    background: #f5f5f7;
+    padding: 2px 8px;
+    border-radius: 6px;
+}
+
+.order-project-text {
+    font-size: 14px;
+    color: #1d1d1f;
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.order-meta-info {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    color: #86868b;
+}
+
+/* RIGHT SIDE: Status + Actions in ONE LINE */
+.order-actions-group {
+    display: flex;
+    align-items: center;
+    gap: 12px;
     flex-shrink: 0;
 }
 
-.btn-receive-all:hover {
-    background: linear-gradient(135deg, #30b350, #28a745);
-    transform: scale(1.02);
-    box-shadow: 0 2px 8px rgba(52, 199, 89, 0.25);
+/* Unified dimensions for actions */
+.action-item {
+    height: 36px;
+    /* Fiksna visina za uskladjenost */
+    display: flex;
+    align-items: center;
+    border-radius: 8px;
 }
 
-.btn-receive-all .material-icons-round {
-    font-size: 18px;
-}
-
-/* ALL RECEIVED BADGE */
-.all-received-badge {
-    width: 32px;
+.status-badge-custom {
     height: 32px;
+    padding: 0 12px;
+    display: flex;
+    align-items: center;
+    font-size: 12px;
+    font-weight: 600;
+    border-radius: 8px;
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
+}
+
+.btn-receive-all {
+    /* Existing style override */
+    height: 36px !important;
+    padding: 0 16px !important;
+    font-size: 13px !important;
+}
+
+.icon-btn-custom {
+    width: 36px;
+    height: 36px;
     display: flex;
     align-items: center;
     justify-content: center;
-    color: #34c759;
-    flex-shrink: 0;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 8px;
+    color: #86868b;
+    cursor: pointer;
+    transition: all 0.2s;
 }
 
-.all-received-badge .material-icons-round {
-    font-size: 24px;
+.icon-btn-custom:hover {
+    background: #f5f5f7;
+    color: #1d1d1f;
+}
+
+.icon-btn-custom.danger:hover {
+    background: #ffebe9;
+    color: #ff3b30;
+}
+
+/* STATUS COLORS REUSE */
+.status-nacrt {
+    background: #f5f5f7;
+    color: #6e6e73;
+}
+
+.status-poslano {
+    background: #e3f2fd;
+    color: #1976d2;
+}
+
+.status-potvrđeno {
+    background: #fff3e0;
+    color: #f57c00;
+}
+
+.status-isporučeno {
+    background: #e8f5e9;
+    color: #43a047;
+}
+
+.status-primljeno {
+    background: #d4edda;
+    color: #155724;
+}
+
+.status-djelomično {
+    background: #fff8e1;
+    color: #ff8f00;
+}
+
+/* ==================== RESPONSIVE ==================== */
+@media (max-width: 768px) {
+    .order-header-custom {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 12px;
+        padding: 16px;
+    }
+
+    .order-info-group {
+        width: 100%;
+    }
+
+    .order-top-row {
+        width: 100%;
+        justify-content: space-between;
+    }
+
+    .order-actions-group {
+        width: 100%;
+        justify-content: space-between;
+        /* Razvuci elemente */
+        padding-top: 12px;
+        border-top: 1px dashed #e5e5e7;
+    }
+
+    .btn-receive-all {
+        flex: 1;
+        justify-content: center;
+    }
 }

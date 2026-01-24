@@ -765,62 +765,71 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
                         return (
                             <div
                                 key={order.Order_ID}
-                                className="project-card" /* Using Project Card Style */
+                                className="project-card" /* Keep project card wrapper for consistency */
                             >
-                                {/* HEADER - Reuse project-header structure */}
-                                <div className="project-header" onClick={() => toggleOrderExpand(order.Order_ID)}>
+                                {/* CUSTOM HEADER - Fine tuned layout */}
+                                <div className="order-header-custom" onClick={() => toggleOrderExpand(order.Order_ID)} style={{ cursor: 'pointer' }}>
+
+                                    {/* EXPAND BUTTON */}
                                     <button className={`expand-btn ${isExpanded ? 'expanded' : ''}`}>
                                         <span className="material-icons-round">chevron_right</span>
                                     </button>
 
-                                    <div className="project-main-info">
-                                        <div className="project-title-section">
-                                            <div className="project-name">{order.Order_Number}</div>
-                                            <div className="project-badges">
-                                                <span className={`status-badge ${getStatusClass(order.Status)}`}>
-                                                    {order.Status}
-                                                </span>
-                                            </div>
+                                    {/* MAIN INFO GROUP */}
+                                    <div className="order-info-group">
+                                        <div className="order-top-row">
+                                            <span className="order-id-text">{order.Order_Number}</span>
+                                            {projectName !== 'N/A' && (
+                                                <span className="order-project-text">{projectName}</span>
+                                            )}
                                         </div>
-                                        <div className="project-details">
-                                            <div className="project-client">
-                                                <span>{projectName}</span>
-                                            </div>
-                                            <div className="project-summary">
-                                                <span className="summary-item">
-                                                    <span className="material-icons-round">calendar_today</span>
-                                                    {formatDate(order.Order_Date)}
-                                                </span>
-                                                <span className="summary-divider">•</span>
-                                                <span className="summary-item">
-                                                    <span className="material-icons-round">inventory_2</span>
-                                                    {itemCount} stavki
-                                                </span>
-                                            </div>
+                                        <div className="order-meta-info">
+                                            <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                                                <span className="material-icons-round" style={{ fontSize: 14 }}>calendar_today</span>
+                                                {formatDate(order.Order_Date)}
+                                            </span>
+                                            <span>•</span>
+                                            <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                                                <span className="material-icons-round" style={{ fontSize: 14 }}>inventory_2</span>
+                                                {itemCount} stavki
+                                            </span>
                                         </div>
                                     </div>
 
-                                    <div className="project-actions" onClick={e => e.stopPropagation()}>
+                                    {/* ACTIONS GROUP - Single line: Status | Receive | Print | Delete */}
+                                    <div className="order-actions-group" onClick={e => e.stopPropagation()}>
+
+                                        {/* Status Badge */}
+                                        <span className={`status-badge-custom status-${order.Status.toLowerCase().replace(/\s+/g, '-')}`}>
+                                            {order.Status}
+                                        </span>
+
+                                        {/* Receive All Button */}
                                         {!allReceived && order.Status !== 'Nacrt' && (
                                             <button
-                                                className="btn-receive-all"
+                                                className="btn-receive-all action-item"
                                                 onClick={handleQuickReceiveAll}
                                                 title="Primi sve"
-                                                style={{ marginRight: 8 }}
                                             >
                                                 <span className="material-icons-round">check_circle</span>
-                                                Primi sve
+                                                <span className="btn-text-responsive">Primi sve</span>
                                             </button>
                                         )}
-                                        <button className="icon-btn" onClick={printOrderDocument}>
+
+                                        {/* Print Button */}
+                                        <button className="icon-btn-custom action-item" onClick={printOrderDocument} title="Printaj">
                                             <span className="material-icons-round">print</span>
                                         </button>
+
+                                        {/* Send Button (if Draft) */}
                                         {order.Status === 'Nacrt' && (
-                                            <button className="icon-btn" onClick={() => handleSendOrder(order.Order_ID)}>
+                                            <button className="icon-btn-custom action-item" onClick={() => handleSendOrder(order.Order_ID)} title="Pošalji">
                                                 <span className="material-icons-round">send</span>
                                             </button>
                                         )}
-                                        <button className="icon-btn danger" onClick={() => handleDeleteOrder(order.Order_ID)}>
+
+                                        {/* Delete Button */}
+                                        <button className="icon-btn-custom danger action-item" onClick={() => handleDeleteOrder(order.Order_ID)} title="Obriši">
                                             <span className="material-icons-round">delete</span>
                                         </button>
                                     </div>
