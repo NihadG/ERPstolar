@@ -1,10 +1,11 @@
-'use client';
+﻿'use client';
 
 import { useState, useMemo, useEffect } from 'react';
 import type { Order, Supplier, Project, ProductMaterial, OrderItem } from '@/lib/types';
 import { createOrder, deleteOrder, updateOrderStatus, markOrderSent, markMaterialsReceived, getOrder, deleteOrderItemsByIds, updateOrderItem, recalculateOrderTotal } from '@/lib/database';
 import Modal from '@/components/ui/Modal';
-import { ORDER_STATUSES } from '@/lib/types';
+import { OrderWizardModal } from './OrderWizardModal';
+import { ORDER_STATUSES, MATERIAL_STATUSES } from '@/lib/types';
 
 interface OrdersTabProps {
     orders: Order[];
@@ -38,7 +39,7 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
 
     // Company Info (read from Settings page)
     const [companyInfo, setCompanyInfo] = useState({
-        name: 'Vaša Firma',
+        name: 'VaÅ¡a Firma',
         address: 'Ulica i broj, Grad',
         phone: '+387 XX XXX XXX',
         email: 'info@firma.ba',
@@ -112,9 +113,9 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
         return matchesSearch && matchesStatus;
     });
 
-    // Get unordered materials (status = "Nije naručeno" or empty)
+    // Get unordered materials (status = "Nije naruÄeno" or empty)
     const unorderedMaterials = useMemo(() => {
-        return productMaterials.filter(m => m.Status === 'Nije naručeno' || !m.Status);
+        return productMaterials.filter(m => m.Status === MATERIAL_STATUSES[0] || !m.Status);
     }, [productMaterials]);
 
     // Get products from selected projects
@@ -171,11 +172,11 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
     function getStatusClass(status: string): string {
         return 'status-' + status.toLowerCase()
             .replace(/\s+/g, '-')
-            .replace(/č/g, 'c')
-            .replace(/ć/g, 'c')
-            .replace(/š/g, 's')
-            .replace(/ž/g, 'z')
-            .replace(/đ/g, 'd');
+            .replace(/Ä/g, 'c')
+            .replace(/Ä‡/g, 'c')
+            .replace(/Å¡/g, 's')
+            .replace(/Å¾/g, 'z')
+            .replace(/Ä‘/g, 'd');
     }
 
     function formatCurrency(amount: number): string {
@@ -248,7 +249,7 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
             return;
         }
         if (wizardStep === 3 && !selectedSupplierId) {
-            showToast('Odaberite dobavljača', 'error');
+            showToast('Odaberite dobavljaÄa', 'error');
             return;
         }
         setWizardStep(wizardStep + 1);
@@ -312,7 +313,7 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
     }
 
     async function handleDeleteOrder(orderId: string) {
-        if (!confirm('Jeste li sigurni da želite obrisati ovu narudžbu?')) return;
+        if (!confirm('Jeste li sigurni da Å¾elite obrisati ovu narudÅ¾bu?')) return;
 
         const result = await deleteOrder(orderId);
         if (result.success) {
@@ -326,7 +327,7 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
     async function handleSendOrder(orderId: string) {
         const result = await markOrderSent(orderId);
         if (result.success) {
-            showToast('Narudžba poslana', 'success');
+            showToast('NarudÅ¾ba poslana', 'success');
             onRefresh();
             setViewModal(false);
         } else {
@@ -377,7 +378,7 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
             showToast('Odaberite stavke za brisanje', 'error');
             return;
         }
-        if (!confirm(`Obrisati ${selectedItemIds.size} stavki iz narudžbe?`)) return;
+        if (!confirm(`Obrisati ${selectedItemIds.size} stavki iz narudÅ¾be?`)) return;
 
         const result = await deleteOrderItemsByIds(Array.from(selectedItemIds));
         if (result.success) {
@@ -429,7 +430,7 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
         }
         await recalculateOrderTotal(currentOrder!.Order_ID);
 
-        showToast('Količine ažurirane', 'success');
+        showToast('KoliÄine aÅ¾urirane', 'success');
         setEditMode(false);
         setEditedQuantities({});
         onRefresh();
@@ -483,7 +484,7 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
                     <tr style="background: #f5f5f7;">
                         <th style="padding: 10px; text-align: left; border-bottom: 1px solid #e5e5e5;">#</th>
                         <th style="padding: 10px; text-align: left; border-bottom: 1px solid #e5e5e5;">Materijal</th>
-                        <th style="padding: 10px; text-align: right; border-bottom: 1px solid #e5e5e5;">Količina</th>
+                        <th style="padding: 10px; text-align: right; border-bottom: 1px solid #e5e5e5;">KoliÄina</th>
                         <th style="padding: 10px; text-align: left; border-bottom: 1px solid #e5e5e5;">Jedinica</th>
                     </tr>
                 </thead>
@@ -509,7 +510,7 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
                         <th style="padding: 10px; text-align: left; border-bottom: 1px solid #e5e5e5;">Vrsta stakla</th>
                         <th style="padding: 10px; text-align: right; border-bottom: 1px solid #e5e5e5;">Kom</th>
                         <th style="padding: 10px; text-align: left; border-bottom: 1px solid #e5e5e5;">Dimenzije</th>
-                        <th style="padding: 10px; text-align: right; border-bottom: 1px solid #e5e5e5;">m²</th>
+                        <th style="padding: 10px; text-align: right; border-bottom: 1px solid #e5e5e5;">mÂ²</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -536,7 +537,7 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
                                         <td style="padding: 8px 10px 8px 24px; color: #86868b; font-size: 12px;">${idx + 1}.${pIdx + 1}</td>
                                         <td style="padding: 8px 10px;"></td>
                                         <td style="padding: 8px 10px; text-align: right;">${qty}</td>
-                                        <td style="padding: 8px 10px;">${w} × ${h} mm${edge ? ' <span style="background:#e8f5e9;padding:2px 6px;border-radius:4px;font-size:11px;">brušeno</span>' : ''}</td>
+                                        <td style="padding: 8px 10px;">${w} Ã— ${h} mm${edge ? ' <span style="background:#e8f5e9;padding:2px 6px;border-radius:4px;font-size:11px;">bruÅ¡eno</span>' : ''}</td>
                                         <td style="padding: 8px 10px;"></td>
                                     </tr>
                                 `;
@@ -559,7 +560,7 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
             return `
                     <div style="margin-bottom: 16px;">
                         <div style="background: #f5f5f7; padding: 10px 14px; border-radius: 8px 8px 0 0; font-weight: 600;">
-                            ${idx + 1}. ${a.item.Material_Name} <span style="color: #86868b; font-weight: 400;">(${totalArea.toFixed(2)} m²)</span>
+                            ${idx + 1}. ${a.item.Material_Name} <span style="color: #86868b; font-weight: 400;">(${totalArea.toFixed(2)} mÂ²)</span>
                         </div>
                         ${a.doors.map((d: any, dIdx: number) => {
                 const qty = parseInt(d.Qty) || 1;
@@ -569,14 +570,14 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
                                 <div style="border: 1px solid #e5e5e5; border-top: none; padding: 12px 14px;">
                                     <div style="display: flex; gap: 16px; margin-bottom: 8px; font-size: 13px;">
                                         <span style="color: #86868b;">${idx + 1}.${dIdx + 1}</span>
-                                        <strong>${w} × ${h} mm</strong>
+                                        <strong>${w} Ã— ${h} mm</strong>
                                         <span>${qty} kom</span>
                                     </div>
                                     <div style="font-size: 12px; color: #1d1d1f; line-height: 1.6;">
                                         <div><span style="color: #86868b;">Ram:</span> ${d.Frame_Type || '-'}${d.Frame_Color ? ', ' + d.Frame_Color : ''}</div>
                                         <div><span style="color: #86868b;">Staklo:</span> ${d.Glass_Type || '-'}</div>
                                         <div><span style="color: #86868b;">Baglame:</span> ${d.Hinge_Type || '-'}, ${d.Hinge_Side || 'lijevo'}${d.Hinge_Color ? ', ' + d.Hinge_Color : ''}</div>
-                                        ${d.Integrated_Handle ? '<div><span style="color: #86868b;">Ručka:</span> Integrisana</div>' : ''}
+                                        ${d.Integrated_Handle ? '<div><span style="color: #86868b;">RuÄka:</span> Integrisana</div>' : ''}
                                         ${d.Note ? `<div style="margin-top: 6px; font-style: italic; color: #6e6e73;"><span style="color: #86868b;">Napomena:</span> ${d.Note}</div>` : ''}
                                     </div>
                                 </div>
@@ -592,7 +593,7 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
             <html>
             <head>
                 <meta charset="utf-8">
-                <title>Narudžba ${currentOrder.Order_Number}</title>
+                <title>NarudÅ¾ba ${currentOrder.Order_Number}</title>
                 <style>
                     * { box-sizing: border-box; margin: 0; padding: 0; }
                     body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; padding: 40px; color: #1d1d1f; }
@@ -618,17 +619,17 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
                         ${(!companyInfo.logoBase64 || !companyInfo.hideNameWhenLogo) ? `<h1 class="company-name">${companyInfo.name}</h1>` : ''}
                         <div class="company-details">
                             <p>${companyInfo.address}</p>
-                            <p>${[companyInfo.phone, companyInfo.email].filter(Boolean).join(' · ')}</p>
+                            <p>${[companyInfo.phone, companyInfo.email].filter(Boolean).join(' Â· ')}</p>
                         </div>
                     </div>
                     <div class="order-info">
-                        <div class="order-number">Narudžba: ${currentOrder.Order_Number}</div>
+                        <div class="order-number">NarudÅ¾ba: ${currentOrder.Order_Number}</div>
                         <div>Datum: ${formatDate(currentOrder.Order_Date)}</div>
                     </div>
                 </div>
                 
                 <div class="supplier-section">
-                    <div class="supplier-name">${currentOrder.Supplier_Name || 'Dobavljač'}</div>
+                    <div class="supplier-name">${currentOrder.Supplier_Name || 'DobavljaÄ'}</div>
                     <div class="supplier-contact">
                         ${[supplier?.Phone, supplier?.Email, supplier?.Address].filter(Boolean).join(' | ')}
                     </div>
@@ -641,7 +642,7 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
                 ${currentOrder.Notes ? `<div class="notes"><strong>Napomena:</strong> ${currentOrder.Notes}</div>` : ''}
 
                 <div class="footer">
-                    <span>Očekivana dostava: ${currentOrder.Expected_Delivery ? formatDate(currentOrder.Expected_Delivery) : 'Po dogovoru'}</span>
+                    <span>OÄekivana dostava: ${currentOrder.Expected_Delivery ? formatDate(currentOrder.Expected_Delivery) : 'Po dogovoru'}</span>
                     <span>Ukupno stavki: ${currentOrder.items?.length || 0}</span>
                 </div>
             </body>
@@ -692,7 +693,7 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
                     <span className="material-icons-round">search</span>
                     <input
                         type="text"
-                        placeholder="Pretraži narudžbe..."
+                        placeholder="PretraÅ¾i narudÅ¾be..."
                         value={searchTerm}
                         onChange={(e) => setSearchTerm(e.target.value)}
                     />
@@ -709,7 +710,7 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
                 </select>
                 <button className="btn btn-primary" onClick={openWizard}>
                     <span className="material-icons-round">add</span>
-                    Nova Narudžba
+                    Nova NarudÅ¾ba
                 </button>
             </div>
 
@@ -717,15 +718,15 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
                 {filteredOrders.length === 0 ? (
                     <div className="empty-state">
                         <span className="material-icons-round">local_shipping</span>
-                        <h3>Nema narudžbi</h3>
-                        <p>Kreirajte prvu narudžbu klikom na "Nova Narudžba"</p>
+                        <h3>Nema narudÅ¾bi</h3>
+                        <p>Kreirajte prvu narudÅ¾bu klikom na "Nova NarudÅ¾ba"</p>
                     </div>
                 ) : (
                     filteredOrders.map(order => {
                         const itemCount = order.items?.length || 0;
                         const receivedCount = order.items?.filter(i => i.Status === 'Primljeno').length || 0;
                         const progress = itemCount > 0 ? Math.round((receivedCount / itemCount) * 100) : 0;
-                        const showProgress = order.Status === 'Poslano' || order.Status === 'Djelomično primljeno';
+                        const showProgress = order.Status === 'Poslano' || order.Status === 'DjelomiÄno primljeno';
 
                         return (
                             <div key={order.Order_ID} className="order-card" onClick={() => openViewModal(order.Order_ID)} style={{ cursor: 'pointer' }}>
@@ -735,7 +736,7 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
                                             <div style={{ fontWeight: 600, fontSize: '16px', color: 'var(--accent)' }}>{order.Order_Number}</div>
                                             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '4px', color: 'var(--text-secondary)', fontSize: '13px' }}>
                                                 <span className="material-icons-round" style={{ fontSize: '16px' }}>store</span>
-                                                {order.Supplier_Name || 'Nepoznat dobavljač'}
+                                                {order.Supplier_Name || 'Nepoznat dobavljaÄ'}
                                             </div>
                                         </div>
                                         <span className={`status-badge ${getStatusClass(order.Status)}`}>
@@ -798,381 +799,31 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
                 )}
             </div>
 
-            {/* Order Creation Modal - Sidebar + Main Content Layout */}
-            <Modal
+            {/* Order Creation Wizard - Step-based Layout */}
+            <OrderWizardModal
                 isOpen={wizardModal}
                 onClose={() => setWizardModal(false)}
-                title=""
-                size="fullscreen"
-                footer={null}
-            >
-                <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-                    {/* Header */}
-                    <div style={{
-                        display: 'flex',
-                        justifyContent: 'space-between',
-                        alignItems: 'center',
-                        padding: '16px 24px',
-                        borderBottom: '1px solid var(--border)',
-                        background: 'var(--surface)'
-                    }}>
-                        <h2 style={{ margin: 0, fontSize: '20px', fontWeight: 600 }}>Nova Narudžba</h2>
-                        <button
-                            className="icon-btn"
-                            onClick={() => setWizardModal(false)}
-                        >
-                            <span className="material-icons-round">close</span>
-                        </button>
-                    </div>
-
-                    {/* Content - Sidebar + Main */}
-                    <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
-                        {/* Sidebar - Filters */}
-                        <div style={{
-                            width: '400px',
-                            minWidth: '400px',
-                            borderRight: '1px solid var(--border)',
-                            display: 'flex',
-                            flexDirection: 'column',
-                            background: 'var(--surface)',
-                            overflow: 'hidden'
-                        }}>
-                            {/* Projects Panel */}
-                            <div style={{
-                                flex: '0 0 auto',
-                                maxHeight: '35%',
-                                display: 'flex',
-                                flexDirection: 'column',
-                                borderBottom: '1px solid var(--border)',
-                                overflow: 'hidden'
-                            }}>
-                                <div style={{
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    gap: '8px',
-                                    padding: '14px 16px',
-                                    background: 'var(--bg)',
-                                    fontWeight: 600,
-                                    fontSize: '14px',
-                                    borderBottom: '1px solid var(--border-light)'
-                                }}>
-                                    <span className="material-icons-round" style={{ fontSize: '20px', color: 'var(--accent)' }}>folder</span>
-                                    <span style={{ flex: 1 }}>Projekti</span>
-                                    <span style={{
-                                        background: selectedProjectIds.size > 0 ? 'var(--accent)' : 'var(--border)',
-                                        color: selectedProjectIds.size > 0 ? 'white' : 'var(--text-secondary)',
-                                        padding: '4px 10px',
-                                        borderRadius: '12px',
-                                        fontSize: '13px',
-                                        fontWeight: 600
-                                    }}>
-                                        {selectedProjectIds.size}/{projectsWithMaterials.length}
-                                    </span>
-                                </div>
-                                <div style={{ flex: 1, overflow: 'auto' }}>
-                                    {projectsWithMaterials.length === 0 ? (
-                                        <div style={{ padding: '20px', textAlign: 'center', color: 'var(--text-secondary)', fontSize: '13px' }}>
-                                            Nema projekata sa materijalima
-                                        </div>
-                                    ) : (
-                                        projectsWithMaterials.map(project => (
-                                            <div
-                                                key={project.Project_ID}
-                                                style={{
-                                                    display: 'flex',
-                                                    alignItems: 'center',
-                                                    gap: '12px',
-                                                    padding: '12px 16px',
-                                                    cursor: 'pointer',
-                                                    background: selectedProjectIds.has(project.Project_ID) ? 'var(--accent-light)' : 'transparent',
-                                                    borderBottom: '1px solid var(--border-light)',
-                                                    transition: 'background 0.1s ease'
-                                                }}
-                                                onClick={() => toggleProject(project.Project_ID)}
-                                            >
-                                                <input
-                                                    type="checkbox"
-                                                    checked={selectedProjectIds.has(project.Project_ID)}
-                                                    onChange={() => { }}
-                                                    style={{ width: '18px', height: '18px', cursor: 'pointer' }}
-                                                />
-                                                <div style={{ flex: 1, minWidth: 0 }}>
-                                                    <div style={{ fontWeight: 500, fontSize: '14px' }}>{project.Client_Name}</div>
-                                                    <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '2px' }}>
-                                                        {project.products?.length || 0} proizvoda
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        ))
-                                    )}
-                                </div>
-                            </div>
-
-                            {/* Products Panel */}
-                            <div style={{
-                                flex: 1,
-                                display: 'flex',
-                                flexDirection: 'column',
-                                borderBottom: '1px solid var(--border)',
-                                overflow: 'hidden'
-                            }}>
-                                <div style={{
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    gap: '8px',
-                                    padding: '14px 16px',
-                                    background: 'var(--bg)',
-                                    fontWeight: 600,
-                                    fontSize: '14px',
-                                    borderBottom: '1px solid var(--border-light)'
-                                }}>
-                                    <span className="material-icons-round" style={{ fontSize: '20px', color: 'var(--accent)' }}>inventory</span>
-                                    <span style={{ flex: 1 }}>Proizvodi</span>
-                                    {availableProducts.length > 0 && (
-                                        <button
-                                            className="btn btn-sm"
-                                            style={{ padding: '4px 8px', fontSize: '11px' }}
-                                            onClick={(e) => {
-                                                e.stopPropagation();
-                                                // Select all available products
-                                                const newSelected = new Set(selectedProductIds);
-                                                availableProducts.forEach(p => newSelected.add(p.Product_ID));
-                                                setSelectedProductIds(newSelected);
-                                            }}
-                                        >
-                                            Sve
-                                        </button>
-                                    )}
-                                    <span style={{
-                                        background: selectedProductIds.size > 0 ? 'var(--accent)' : 'var(--border)',
-                                        color: selectedProductIds.size > 0 ? 'white' : 'var(--text-secondary)',
-                                        padding: '4px 10px',
-                                        borderRadius: '12px',
-                                        fontSize: '13px',
-                                        fontWeight: 600
-                                    }}>
-                                        {selectedProductIds.size}
-                                    </span>
-                                </div>
-                                <div style={{ flex: 1, overflow: 'auto' }}>
-                                    {selectedProjectIds.size === 0 ? (
-                                        <div style={{ padding: '24px', textAlign: 'center', color: 'var(--text-secondary)' }}>
-                                            <span className="material-icons-round" style={{ fontSize: '32px', color: 'var(--text-tertiary)', marginBottom: '8px', display: 'block' }}>arrow_upward</span>
-                                            <div style={{ fontSize: '13px' }}>Prvo odaberi projekte</div>
-                                        </div>
-                                    ) : availableProducts.length === 0 ? (
-                                        <div style={{ padding: '24px', textAlign: 'center', color: 'var(--text-secondary)', fontSize: '13px' }}>
-                                            Nema proizvoda u odabranim projektima
-                                        </div>
-                                    ) : (
-                                        availableProducts.map(product => (
-                                            <div
-                                                key={product.Product_ID}
-                                                style={{
-                                                    display: 'flex',
-                                                    alignItems: 'center',
-                                                    gap: '12px',
-                                                    padding: '12px 16px',
-                                                    cursor: 'pointer',
-                                                    background: selectedProductIds.has(product.Product_ID) ? 'var(--accent-light)' : 'transparent',
-                                                    borderBottom: '1px solid var(--border-light)',
-                                                    transition: 'background 0.1s ease'
-                                                }}
-                                                onClick={() => toggleProduct(product.Product_ID)}
-                                            >
-                                                <input
-                                                    type="checkbox"
-                                                    checked={selectedProductIds.has(product.Product_ID)}
-                                                    onChange={() => { }}
-                                                    style={{ width: '18px', height: '18px', cursor: 'pointer' }}
-                                                />
-                                                <div style={{ flex: 1, minWidth: 0 }}>
-                                                    <div style={{ fontWeight: 500, fontSize: '14px' }}>{product.Name}</div>
-                                                    <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '2px' }}>{product.Project_Name}</div>
-                                                </div>
-                                            </div>
-                                        ))
-                                    )}
-                                </div>
-                            </div>
-
-                            {/* Supplier & Settings Panel - Compact */}
-                            <div style={{
-                                flex: '0 0 auto',
-                                padding: '16px',
-                                background: 'var(--bg)'
-                            }}>
-                                <div style={{
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    gap: '8px',
-                                    marginBottom: '12px',
-                                    fontWeight: 600,
-                                    fontSize: '14px'
-                                }}>
-                                    <span className="material-icons-round" style={{ fontSize: '20px', color: 'var(--accent)' }}>store</span>
-                                    Dobavljač
-                                    {selectedSupplierId && (
-                                        <span style={{ color: 'var(--success)', marginLeft: 'auto' }}>✓</span>
-                                    )}
-                                </div>
-                                <select
-                                    value={selectedSupplierId}
-                                    onChange={(e) => {
-                                        setSelectedSupplierId(e.target.value);
-                                        setSelectedMaterialIds(new Set());
-                                    }}
-                                    style={{
-                                        width: '100%',
-                                        padding: '12px',
-                                        borderRadius: '8px',
-                                        border: selectedSupplierId ? '2px solid var(--accent)' : '1px solid var(--border)',
-                                        fontSize: '14px',
-                                        fontWeight: selectedSupplierId ? 500 : 400,
-                                        background: 'var(--background)'
-                                    }}
-                                >
-                                    <option value="">— Odaberi dobavljača —</option>
-                                    {availableSuppliers.map(supplier => (
-                                        <option key={supplier.Supplier_ID} value={supplier.Supplier_ID}>
-                                            {supplier.Name}
-                                        </option>
-                                    ))}
-                                </select>
-
-                                <div style={{ display: 'flex', gap: '12px', marginTop: '12px' }}>
-                                    <div style={{ flex: 1 }}>
-                                        <label style={{ display: 'block', fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '4px' }}>Isporuka</label>
-                                        <input
-                                            type="date"
-                                            id="expected-delivery"
-                                            style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid var(--border)', fontSize: '13px' }}
-                                        />
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-
-                        {/* Main Content - Materials */}
-                        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-                            {/* Materials Header */}
-                            <div style={{
-                                display: 'flex',
-                                alignItems: 'center',
-                                justifyContent: 'space-between',
-                                padding: '12px 24px',
-                                background: 'var(--surface)',
-                                borderBottom: '1px solid var(--border)'
-                            }}>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                                    <span className="material-icons-round" style={{ color: 'var(--accent)' }}>shopping_cart</span>
-                                    <span style={{ fontWeight: 600 }}>Materijali za narudžbu</span>
-                                    <span style={{
-                                        background: 'var(--accent-light)',
-                                        color: 'var(--accent)',
-                                        padding: '2px 10px',
-                                        borderRadius: '12px',
-                                        fontSize: '13px',
-                                        fontWeight: 600
-                                    }}>
-                                        {filteredMaterials.length}
-                                    </span>
-                                </div>
-                                <div style={{ display: 'flex', gap: '8px' }}>
-                                    <button
-                                        className="btn btn-sm btn-secondary"
-                                        onClick={selectAllMaterials}
-                                    >
-                                        Sve
-                                    </button>
-                                    <button
-                                        className="btn btn-sm btn-secondary"
-                                        onClick={() => setSelectedMaterialIds(new Set())}
-                                    >
-                                        Ništa
-                                    </button>
-                                </div>
-                            </div>
-
-                            {/* Materials List */}
-                            <div style={{ flex: 1, overflow: 'auto', padding: '16px 24px' }}>
-                                {filteredMaterials.length === 0 ? (
-                                    <div style={{ textAlign: 'center', padding: '60px 20px', color: 'var(--text-secondary)' }}>
-                                        <span className="material-icons-round" style={{ fontSize: '48px', color: 'var(--text-tertiary)', marginBottom: '12px', display: 'block' }}>inventory_2</span>
-                                        <p>Odaberite projekte, proizvode i dobavljača za prikaz materijala</p>
-                                    </div>
-                                ) : (
-                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                                        {filteredMaterials.map(material => (
-                                            <div
-                                                key={material.ID}
-                                                onClick={() => toggleMaterial(material.ID)}
-                                                style={{
-                                                    display: 'flex',
-                                                    alignItems: 'center',
-                                                    gap: '16px',
-                                                    padding: '14px 16px',
-                                                    background: selectedMaterialIds.has(material.ID) ? 'var(--accent-light)' : 'var(--bg)',
-                                                    border: selectedMaterialIds.has(material.ID) ? '1px solid var(--accent)' : '1px solid var(--border)',
-                                                    borderRadius: '10px',
-                                                    cursor: 'pointer',
-                                                    transition: 'all 0.15s ease'
-                                                }}
-                                            >
-                                                <input
-                                                    type="checkbox"
-                                                    checked={selectedMaterialIds.has(material.ID)}
-                                                    onChange={() => { }}
-                                                    style={{ width: '18px', height: '18px', cursor: 'pointer' }}
-                                                />
-                                                <div style={{ flex: 1 }}>
-                                                    <div style={{ fontWeight: 500, fontSize: '14px' }}>{material.Material_Name}</div>
-                                                    <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '2px' }}>
-                                                        {material.Product_Name} • {material.Project_Name}
-                                                    </div>
-                                                </div>
-                                                <div style={{ textAlign: 'right' }}>
-                                                    <div style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>{material.Quantity} {material.Unit}</div>
-                                                    <div style={{ fontWeight: 600, color: 'var(--accent)', fontSize: '14px' }}>{formatCurrency(material.Total_Price)}</div>
-                                                </div>
-                                            </div>
-                                        ))}
-                                    </div>
-                                )}
-                            </div>
-
-                            {/* Summary Bar */}
-                            <div style={{
-                                display: 'flex',
-                                justifyContent: 'space-between',
-                                alignItems: 'center',
-                                padding: '16px 24px',
-                                background: 'var(--surface)',
-                                borderTop: '1px solid var(--border)'
-                            }}>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                    <strong style={{ fontSize: '18px' }}>{selectedMaterialIds.size}</strong>
-                                    <span style={{ color: 'var(--text-secondary)' }}>stavki</span>
-                                </div>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '24px' }}>
-                                    <div>
-                                        <span style={{ color: 'var(--text-secondary)', marginRight: '8px' }}>Ukupno:</span>
-                                        <strong style={{ fontSize: '20px', color: 'var(--accent)' }}>{formatCurrency(selectedTotal)}</strong>
-                                    </div>
-                                    <button
-                                        className="btn btn-primary"
-                                        onClick={handleCreateOrder}
-                                        disabled={selectedMaterialIds.size === 0 || !selectedSupplierId}
-                                    >
-                                        <span className="material-icons-round">add_shopping_cart</span>
-                                        Kreiraj Narudžbu
-                                    </button>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </Modal>
+                wizardStep={wizardStep}
+                setWizardStep={setWizardStep}
+                projectsWithMaterials={projectsWithMaterials}
+                selectedProjectIds={selectedProjectIds}
+                toggleProject={toggleProject}
+                availableProducts={availableProducts}
+                selectedProductIds={selectedProductIds}
+                toggleProduct={toggleProduct}
+                setSelectedProductIds={setSelectedProductIds}
+                availableSuppliers={availableSuppliers}
+                selectedSupplierId={selectedSupplierId}
+                setSelectedSupplierId={setSelectedSupplierId}
+                setSelectedMaterialIds={setSelectedMaterialIds}
+                filteredMaterials={filteredMaterials}
+                selectedMaterialIds={selectedMaterialIds}
+                toggleMaterial={toggleMaterial}
+                selectAllMaterials={selectAllMaterials}
+                selectedTotal={selectedTotal}
+                formatCurrency={formatCurrency}
+                handleCreateOrder={handleCreateOrder}
+            />
 
             {/* View Order Modal - Fullscreen Redesign */}
             <Modal
@@ -1195,7 +846,7 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
                         }}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
                                 <h2 style={{ margin: 0, fontSize: '20px', fontWeight: 600 }}>
-                                    Narudžba {currentOrder.Order_Number}
+                                    NarudÅ¾ba {currentOrder.Order_Number}
                                 </h2>
                                 <span className={`status-badge ${getStatusClass(currentOrder.Status)}`}>
                                     {currentOrder.Status}
@@ -1205,7 +856,7 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
                                 {currentOrder.Status === 'Nacrt' && !editMode && (
                                     <button className="btn btn-secondary btn-sm" onClick={() => handleSendOrder(currentOrder.Order_ID)}>
                                         <span className="material-icons-round">send</span>
-                                        Pošalji
+                                        PoÅ¡alji
                                     </button>
                                 )}
                                 <button className="btn btn-secondary btn-sm" onClick={printOrderDocument}>
@@ -1238,7 +889,7 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
                                     border: '1px solid var(--border)'
                                 }}>
                                     <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '4px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                                        Broj narudžbe
+                                        Broj narudÅ¾be
                                     </div>
                                     <div style={{ fontSize: '18px', fontWeight: 600 }}>{currentOrder.Order_Number}</div>
                                 </div>
@@ -1260,7 +911,7 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
                                     border: '1px solid var(--border)'
                                 }}>
                                     <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '4px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                                        Očekivana isporuka
+                                        OÄekivana isporuka
                                     </div>
                                     <div style={{ fontSize: '18px', fontWeight: 600 }}>
                                         {currentOrder.Expected_Delivery ? formatDate(currentOrder.Expected_Delivery) : 'Po dogovoru'}
@@ -1271,7 +922,7 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
                             {/* Supplier Section */}
                             <div style={{ marginBottom: '24px' }}>
                                 <h3 style={{ fontSize: '14px', fontWeight: 600, marginBottom: '12px', color: 'var(--text-secondary)' }}>
-                                    Dobavljač
+                                    DobavljaÄ
                                 </h3>
                                 <div style={{
                                     display: 'flex',
@@ -1289,7 +940,7 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
                                             const supplier = suppliers.find(s => s.Supplier_ID === currentOrder.Supplier_ID);
                                             return supplier && (
                                                 <div style={{ fontSize: '13px', color: 'var(--text-secondary)', marginTop: '2px' }}>
-                                                    {[supplier.Phone, supplier.Email].filter(Boolean).join(' • ')}
+                                                    {[supplier.Phone, supplier.Email].filter(Boolean).join(' â€¢ ')}
                                                 </div>
                                             );
                                         })()}
@@ -1300,7 +951,7 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
                             {/* Items Section */}
                             <div>
                                 <h3 style={{ fontSize: '14px', fontWeight: 600, marginBottom: '12px', color: 'var(--text-secondary)' }}>
-                                    Stavke narudžbe
+                                    Stavke narudÅ¾be
                                 </h3>
                                 <div style={{
                                     border: '1px solid var(--border)',
@@ -1323,7 +974,7 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
                                                 )}
                                                 <th style={{ padding: '14px 16px', textAlign: 'left', fontWeight: 500 }}>Materijal</th>
                                                 <th style={{ padding: '14px 16px', textAlign: 'left', fontWeight: 500 }}>Projekat / Proizvod</th>
-                                                <th style={{ padding: '14px 16px', textAlign: 'right', fontWeight: 500 }}>Količina</th>
+                                                <th style={{ padding: '14px 16px', textAlign: 'right', fontWeight: 500 }}>KoliÄina</th>
                                                 <th style={{ padding: '14px 16px', textAlign: 'left', fontWeight: 500 }}>Jedinica</th>
                                                 <th style={{ padding: '14px 16px', textAlign: 'right', fontWeight: 500 }}>Cijena</th>
                                                 <th style={{ padding: '14px 16px', textAlign: 'right', fontWeight: 500 }}>Ukupno</th>
@@ -1387,7 +1038,7 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
                                                         </td>
                                                         <td style={{ padding: '14px 16px', textAlign: 'center' }}>
                                                             <span className={`status-badge ${getStatusClass(item.Status)}`}>
-                                                                {item.Status || 'Na čekanju'}
+                                                                {item.Status || 'Na Äekanju'}
                                                             </span>
                                                         </td>
                                                     </tr>
@@ -1464,16 +1115,16 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
                                                 Odabrano: {selectedItemIds.size}
                                             </span>
                                         )}
-                                        {(currentOrder.Status === 'Poslano' || currentOrder.Status === 'Djelomično primljeno') && selectedItemIds.size > 0 && (
+                                        {(currentOrder.Status === 'Poslano' || currentOrder.Status === 'DjelomiÄno primljeno') && selectedItemIds.size > 0 && (
                                             <button className="btn btn-success btn-sm" onClick={handleReceiveSelectedItems}>
                                                 <span className="material-icons-round">check_circle</span>
-                                                Označi primljeno
+                                                OznaÄi primljeno
                                             </button>
                                         )}
                                         {currentOrder.Status === 'Nacrt' && selectedItemIds.size > 0 && (
                                             <button className="btn btn-danger btn-sm" onClick={handleDeleteSelectedItems}>
                                                 <span className="material-icons-round">delete</span>
-                                                Obriši selektovane
+                                                ObriÅ¡i selektovane
                                             </button>
                                         )}
                                     </>
@@ -1485,12 +1136,12 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
                                 {currentOrder.Status === 'Nacrt' && !editMode && (
                                     <button className="btn btn-secondary btn-sm" onClick={startEditMode}>
                                         <span className="material-icons-round">edit</span>
-                                        Uredi količine
+                                        Uredi koliÄine
                                     </button>
                                 )}
                                 <button className="btn btn-danger btn-sm" onClick={() => handleDeleteOrder(currentOrder.Order_ID)}>
                                     <span className="material-icons-round">delete</span>
-                                    Obriši
+                                    ObriÅ¡i
                                 </button>
                                 <button className="btn btn-secondary" onClick={() => { setViewModal(false); setEditMode(false); setSelectedItemIds(new Set()); }}>
                                     Zatvori

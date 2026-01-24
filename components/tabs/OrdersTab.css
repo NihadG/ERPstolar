@@ -1,0 +1,84 @@
+/* OrdersTab Mobile Responsive Styles */
+/* Targets wizard modal elements by class name */
+
+/* ==================== TABLET BREAKPOINT ==================== */
+@media (max-width: 1024px) {
+    .wizard-sidebar {
+        width: 320px !important;
+        min-width: 320px !important;
+    }
+}
+
+/* ==================== MOBILE BREAKPOINT ==================== */
+@media (max-width: 768px) {
+
+    /* Stack sidebar and content vertically */
+    .wizard-content {
+        flex-direction: column !important;
+        overflow: auto !important;
+    }
+
+    /* Make sidebar full width */
+    .wizard-sidebar {
+        width: 100% !important;
+        min-width: 100% !important;
+        max-width: 100% !important;
+        border-right: none !important;
+        border-bottom: 1px solid var(--border) !important;
+        max-height: none !important;
+        overflow: visible !important;
+    }
+
+    /* Summary bar - stack vertically */
+    .wizard-summary {
+        flex-direction: column !important;
+        gap: 16px !important;
+        padding: 16px !important;
+    }
+
+    .wizard-summary>div {
+        width: 100% !important;
+        justify-content: center !important;
+        text-align: center !important;
+    }
+
+    .wizard-summary>div:last-child {
+        flex-direction: column !important;
+        gap: 12px !important;
+    }
+
+    .wizard-summary .btn {
+        width: 100% !important;
+        justify-content: center !important;
+    }
+
+    /* Content header - stack on mobile */
+    .content-header {
+        flex-direction: column !important;
+        gap: 12px !important;
+    }
+
+    .content-header .search-box,
+    .content-header .filter-select,
+    .content-header .btn {
+        width: 100% !important;
+    }
+
+    /* Order cards - stack on mobile */
+    .order-card {
+        flex-direction: column !important;
+        align-items: stretch !important;
+        gap: 12px !important;
+    }
+}
+
+/* ==================== SMALL MOBILE BREAKPOINT ==================== */
+@media (max-width: 480px) {
+    .wizard-summary {
+        padding: 12px !important;
+    }
+
+    .wizard-modal-container h2 {
+        font-size: 16px !important;
+    }
+}
