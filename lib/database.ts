@@ -1276,6 +1276,9 @@ export async function markMaterialsReceived(orderItemIds: string[]): Promise<{ s
     try {
         const affectedProducts = new Set<string>();
         const affectedProjects = new Set<string>();
+        const affectedOrders = new Set<string>();
+
+        const now = new Date().toISOString();
 
         for (const itemId of orderItemIds) {
             // Find order item
@@ -1286,8 +1289,12 @@ export async function markMaterialsReceived(orderItemIds: string[]): Promise<{ s
 
             const item = itemSnap.docs[0].data() as OrderItem;
 
-            // Update order item status
-            await updateDoc(itemSnap.docs[0].ref, { Status: 'Primljeno' });
+            // Update order item status and received date
+            await updateDoc(itemSnap.docs[0].ref, {
+                Status: 'Primljeno',
+                Received_Quantity: item.Quantity, // Assume full receipt for now
+                Received_Date: now
+            });
 
             // Update material status
             if (item.Product_Material_ID) {
@@ -1296,6 +1303,23 @@ export async function markMaterialsReceived(orderItemIds: string[]): Promise<{ s
 
             if (item.Product_ID) affectedProducts.add(item.Product_ID);
             if (item.Project_ID) affectedProjects.add(item.Project_ID);
+            if (item.Order_ID) affectedOrders.add(item.Order_ID);
+        }
+
+        // Check if all items for affected orders are received
+        for (const orderId of Array.from(affectedOrders)) {
+            const items = await getOrderItems(orderId);
+            const allReceived = items.every(i => i.Status === 'Primljeno');
+
+            if (allReceived) {
+                await updateOrderStatus(orderId, 'Primljeno');
+            } else {
+                // Check if at least one is received, then it's partially received
+                const anyReceived = items.some(i => i.Status === 'Primljeno');
+                if (anyReceived) {
+                    await updateOrderStatus(orderId, 'Djelomično');
+                }
+            }
         }
 
         // Check if all materials for products are received

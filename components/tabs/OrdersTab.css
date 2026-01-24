@@ -115,17 +115,7 @@
     margin-bottom: 24px;
 }
 
-.step-subtitle-row {
-    display: flex;
-    gap: 20px;
-    font-size: 14px;
-    margin-top: 4px;
-}
 
-.step-actions {
-    display: flex;
-    gap: 12px;
-}
 
 .total-price {
     color: var(--accent);

@@ -175,6 +175,7 @@ export interface OrderItem {
     Actual_Price: number;
     Received_Quantity: number;
     Status: string;
+    Received_Date?: string;
 }
 
 export interface Supplier {
