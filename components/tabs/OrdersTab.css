@@ -1,4 +1,560 @@
-/* ==================== ORDERS TAB - FINE TUNED LAYOUT ==================== */
+/* ==================== ORDERS TAB - OVERVIEW-STYLE LAYOUT ==================== */
+
+/* Orders Page Container */
+.orders-page {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    height: 100%;
+}
+
+/* Page Header */
+.page-header {
+    background: white;
+    padding: 20px 24px;
+    border-bottom: 1px solid #e5e7eb;
+}
+
+.header-content {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 20px;
+}
+
+.header-text h1 {
+    font-size: 24px;
+    font-weight: 700;
+    color: #111827;
+    margin: 0 0 4px 0;
+}
+
+.header-text p {
+    font-size: 14px;
+    color: #6b7280;
+    margin: 0;
+}
+
+.header-actions {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.filter-toggle {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 16px;
+    background: #f3f4f6;
+    border: none;
+    border-radius: 10px;
+    font-size: 14px;
+    font-weight: 500;
+    color: #374151;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.filter-toggle:hover {
+    background: #e5e7eb;
+}
+
+.filter-toggle.active {
+    background: #eff6ff;
+    color: #2563eb;
+}
+
+.filter-toggle .material-icons-round {
+    font-size: 20px;
+}
+
+/* Control Bar */
+.control-bar {
+    background: #ffffff;
+    border-bottom: 1px solid #e5e7eb;
+    max-height: 0;
+    overflow: hidden;
+    transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+    opacity: 0;
+    /* Soft shadow only when open */
+}
+
+.control-bar.open {
+    max-height: 480px;
+    /* Increased to accommodate wrapping */
+    opacity: 1;
+    padding: 24px 32px;
+    box-shadow: 0 4px 20px -10px rgba(0, 0, 0, 0.05);
+}
+
+.control-bar-inner {
+    display: flex;
+    flex-direction: column;
+    gap: 24px;
+    max-width: 1600px;
+    margin: 0 auto;
+}
+
+/* Primary Row: Search | Pills | Grouping */
+.controls-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 24px;
+    flex-wrap: wrap;
+}
+
+/* SECONDARY ROW: Grid layout for filters */
+.controls-row.secondary {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 20px;
+    padding-top: 24px;
+    border-top: 1px solid #f3f4f6;
+    align-items: end;
+}
+
+.divider {
+    width: 1px;
+    height: 32px;
+    background: #e5e7eb;
+    display: none;
+    /* Skriveno po defaultu radi boljeg responsiva */
+}
+
+@media (min-width: 1200px) {
+    .divider {
+        display: block;
+        margin: 0 8px;
+    }
+}
+
+/* Search Box - More Prominent */
+.orders-page .search-box {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    background: #ffffff;
+    border: 1px solid #e5e7eb;
+    border-radius: 12px;
+    padding: 10px 16px;
+    padding: 10px 16px;
+    min-width: 240px;
+    flex-grow: 1;
+    flex-basis: 240px;
+    transition: all 0.2s ease;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.02);
+}
+
+.orders-page .search-box:focus-within {
+    border-color: #3b82f6;
+    box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.1);
+}
+
+.orders-page .search-box .material-icons-round {
+    font-size: 20px;
+    color: #9ca3af;
+}
+
+.orders-page .search-box input {
+    border: none;
+    background: transparent;
+    font-size: 15px;
+    color: #111827;
+    outline: none;
+    width: 100%;
+}
+
+.orders-page .search-box input::placeholder {
+    color: #9ca3af;
+}
+
+/* Status Pills - Cleaner Container */
+.status-pills {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    flex-wrap: wrap;
+    padding: 4px;
+    background: #f9fafb;
+    border-radius: 14px;
+    border: 1px solid #f3f4f6;
+}
+
+.status-pill {
+    padding: 6px 16px;
+    border: none;
+    background: transparent;
+    border-radius: 10px;
+    font-size: 13px;
+    font-weight: 500;
+    color: #6b7280;
+    cursor: pointer;
+    transition: all 0.2s;
+    white-space: nowrap;
+}
+
+.status-pill:hover {
+    background: rgba(0, 0, 0, 0.05);
+    color: #374151;
+}
+
+.status-pill.active {
+    background: #ffffff;
+    color: #2563eb;
+    font-weight: 600;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05), 0 1px 2px rgba(0, 0, 0, 0.05);
+}
+
+/* Group Control - Better Alignment */
+.group-control {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    background: #f9fafb;
+    padding: 6px 6px 6px 16px;
+    border-radius: 12px;
+    border: 1px solid #f3f4f6;
+}
+
+.group-label {
+    font-size: 13px;
+    color: #6b7280;
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.group-dropdown {
+    position: relative;
+    display: flex;
+    align-items: center;
+}
+
+.group-dropdown select {
+    appearance: none;
+    background: #ffffff;
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    padding: 6px 32px 6px 12px;
+    font-size: 13px;
+    font-weight: 500;
+    color: #374151;
+    cursor: pointer;
+    outline: none;
+    transition: all 0.2s;
+    min-width: 140px;
+}
+
+.group-dropdown select:hover {
+    border-color: #d1d5db;
+}
+
+.group-dropdown .material-icons-round {
+    position: absolute;
+    right: 8px;
+    font-size: 18px;
+    color: #6b7280;
+    pointer-events: none;
+    background: #ffffff;
+    /* Da prekrije strelicu ako je select transparentan */
+}
+
+
+/* Filter Groups (Secondary) */
+.filter-group {
+    display: flex;
+    flex-direction: column;
+    /* Labela iznad inputa */
+    gap: 6px;
+}
+
+.filter-group label {
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    color: #6b7280;
+    font-weight: 600;
+    margin-left: 2px;
+}
+
+.filter-group select,
+.filter-group input[type="date"] {
+    appearance: none;
+    background: #ffffff;
+    border: 1px solid #e5e7eb;
+    border-radius: 10px;
+    padding: 10px 12px;
+    font-size: 14px;
+    font-weight: 500;
+    color: #374151;
+    cursor: pointer;
+    outline: none;
+    transition: all 0.2s;
+    width: 100%;
+}
+
+.filter-group input[type="date"] {
+    font-family: inherit;
+}
+
+.filter-group select:hover,
+.filter-group input[type="date"]:hover {
+    border-color: #d1d5db;
+}
+
+.filter-group select:focus,
+.filter-group input[type="date"]:focus {
+    border-color: #3b82f6;
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+}
+
+/* Clear Filters Button */
+.btn-text {
+    align-self: flex-end;
+    /* Poravnanje s dnom u grid-u */
+    margin-bottom: 2px;
+    color: #ef4444 !important;
+    background: rgba(239, 68, 68, 0.05) !important;
+    padding: 10px 16px !important;
+    border-radius: 10px !important;
+    justify-content: center;
+}
+
+.btn-text:hover {
+    background: rgba(239, 68, 68, 0.1) !important;
+    color: #dc2626 !important;
+}
+
+/* Orders Content */
+.orders-content {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    background: #f9fafb;
+}
+
+/* Group Card */
+.group-card {
+    background: white;
+    border-radius: 16px;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06), 0 2px 8px rgba(0, 0, 0, 0.04);
+    overflow: hidden;
+    border: 1px solid #e5e7eb;
+}
+
+.group-card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px 20px;
+    background: #fafafa;
+    border-bottom: 1px solid #e5e7eb;
+    cursor: pointer;
+    transition: background 0.2s;
+}
+
+.group-card-header:hover {
+    background: #f5f5f5;
+}
+
+.group-left {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.toggle-chevron {
+    font-size: 20px;
+    color: #6b7280;
+    transition: transform 0.2s;
+}
+
+.group-title {
+    font-size: 16px;
+    font-weight: 600;
+    color: #111827;
+}
+
+.group-count-badge {
+    font-size: 12px;
+    font-weight: 500;
+    color: #6b7280;
+    background: #e5e7eb;
+    padding: 4px 10px;
+    border-radius: 20px;
+}
+
+.group-right {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.group-total {
+    font-size: 15px;
+    font-weight: 600;
+    color: #2563eb;
+}
+
+/* Expanded Products Area */
+.project-products {
+    background: #f9fafb;
+    border-top: 1px solid #f3f4f6;
+    padding: 0 20px 20px;
+}
+
+.products-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px 4px 12px;
+}
+
+.products-header h4 {
+    font-size: 13px;
+    font-weight: 600;
+    color: #6b7280;
+    margin: 0;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.product-card {
+    background: #ffffff;
+    border: 1px solid #e5e7eb;
+    border-radius: 12px;
+    padding: 12px 16px;
+    margin-bottom: 8px;
+    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    position: relative;
+    overflow: hidden;
+}
+
+.product-card:hover {
+    border-color: #d1d5db;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.03);
+    transform: translateY(-1px);
+}
+
+.product-header {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+}
+
+.product-info {
+    flex: 1;
+    min-width: 0;
+    /* Truncation fix */
+}
+
+.product-name {
+    font-size: 15px;
+    font-weight: 600;
+    color: #111827;
+    margin-bottom: 4px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.product-dims {
+    font-size: 13px;
+    color: #6b7280;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.project-actions {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.group-card-content {
+    padding: 0;
+}
+
+/* Order Item */
+.order-item {
+    border-bottom: 1px solid #f3f4f6;
+}
+
+.order-item:last-child {
+    border-bottom: none;
+}
+
+.order-supplier-text {
+    font-size: 13px;
+    color: #6b7280;
+    font-weight: 500;
+    background: #f3f4f6;
+    padding: 2px 8px;
+    border-radius: 4px;
+}
+
+/* Empty State */
+.orders-page .empty-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 60px 20px;
+    text-align: center;
+    color: #6b7280;
+}
+
+.orders-page .empty-state .material-icons-round {
+    font-size: 48px;
+    color: #d1d5db;
+    margin-bottom: 16px;
+}
+
+.orders-page .empty-state h3 {
+    font-size: 18px;
+    font-weight: 600;
+    color: #111827;
+    margin: 0 0 8px 0;
+}
+
+.orders-page .empty-state p {
+    font-size: 14px;
+    color: #6b7280;
+    margin: 0;
+}
+
+/* Button Text */
+.btn-text {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    background: transparent;
+    border: none;
+    color: #6b7280;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    padding: 8px 12px;
+    border-radius: 8px;
+    transition: all 0.2s;
+}
+
+.btn-text:hover {
+    background: #f3f4f6;
+    color: #111827;
+}
+
+.btn-text .material-icons-round {
+    font-size: 18px;
+}
+
+/* ==================== ORDERS TAB - CUSTOM HEADER LAYOUT ==================== */
 
 /* CUSTOM HEADER LAYOUT */
 .order-header-custom {
@@ -22,52 +578,24 @@
     display: flex;
     align-items: center;
     gap: 12px;
-    margin-bottom: 2px;
 }
 
 .order-id-text {
-    font-size: 14px;
+    font-size: 15px;
+    /* Smanjeno sa 18px */
     font-weight: 600;
     color: #1d1d1f;
     font-family: 'SF Mono', 'Roboto Mono', monospace;
+    /* Monospace za ID izgleda tehnicki bolje */
     background: #f5f5f7;
-    padding: 2px 6px;
-    border-radius: 4px;
-}
-
-.order-amount-text {
-    font-weight: 700;
-    color: var(--accent);
-    font-size: 15px;
-}
-
-.order-middle-row {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    font-size: 13px;
-    color: #1d1d1f;
-    margin-bottom: 2px;
-    flex-wrap: wrap;
-}
-
-.order-supplier-text {
-    font-weight: 500;
-}
-
-.icon-sm {
-    font-size: 14px;
-    color: #86868b;
-}
-
-.separator {
-    color: #aeaeb2;
-    font-size: 10px;
+    padding: 2px 8px;
+    border-radius: 6px;
 }
 
 .order-project-text {
-    font-size: 13px;
-    color: #6e6e73;
+    font-size: 14px;
+    color: #1d1d1f;
+    font-weight: 500;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -77,7 +605,7 @@
     display: flex;
     align-items: center;
     gap: 8px;
-    font-size: 12px;
+    font-size: 13px;
     color: #86868b;
 }
 
@@ -585,6 +1113,111 @@
 .status-djelomično {
     background: #fff8e1;
     color: #ff8f00;
+}
+
+/* Missing Helper Classes */
+.expand-btn {
+    background: transparent;
+    border: none;
+    padding: 4px;
+    border-radius: 50%;
+    cursor: pointer;
+    transition: transform 0.2s ease;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #86868b;
+}
+
+.expand-btn:hover {
+    background: #f5f5f7;
+    color: #1d1d1f;
+}
+
+.expand-btn.expanded {
+    transform: rotate(90deg);
+}
+
+.status-badge {
+    height: 22px;
+    padding: 0 8px;
+    display: inline-flex;
+    align-items: center;
+    font-size: 11px;
+    font-weight: 600;
+    border-radius: 6px;
+    white-space: nowrap;
+}
+
+@media (max-width: 480px) {
+    .btn-text-responsive {
+        display: none;
+    }
+}
+
+/* Control Bar Status Pills - Soft Colors (Transparent) */
+.status-pill.status-nacrt {
+    background: rgba(107, 114, 128, 0.06);
+    /* Ultra light gray */
+    color: #4b5563;
+}
+
+.status-pill.status-nacrt:hover {
+    background: rgba(107, 114, 128, 0.12);
+}
+
+.status-pill.status-nacrt.active {
+    background: #6b7280;
+    color: white;
+    box-shadow: 0 4px 12px rgba(107, 114, 128, 0.25);
+}
+
+.status-pill.status-poslano {
+    background: rgba(37, 99, 235, 0.06);
+    /* Ultra light blue */
+    color: #1d4ed8;
+}
+
+.status-pill.status-poslano:hover {
+    background: rgba(37, 99, 235, 0.12);
+}
+
+.status-pill.status-poslano.active {
+    background: #2563eb;
+    color: white;
+    box-shadow: 0 4px 12px rgba(37, 99, 235, 0.25);
+}
+
+.status-pill.status-primljeno {
+    background: rgba(22, 163, 74, 0.06);
+    /* Ultra light green */
+    color: #15803d;
+}
+
+.status-pill.status-primljeno:hover {
+    background: rgba(22, 163, 74, 0.12);
+}
+
+.status-pill.status-primljeno.active {
+    background: #16a34a;
+    color: white;
+    box-shadow: 0 4px 12px rgba(22, 163, 74, 0.25);
+}
+
+.status-pill.status-djelomično {
+    background: rgba(245, 158, 11, 0.06);
+    /* Ultra light amber */
+    color: #b45309;
+}
+
+.status-pill.status-djelomično:hover {
+    background: rgba(245, 158, 11, 0.12);
+}
+
+.status-pill.status-djelomično.active {
+    background: #f59e0b;
+    color: white;
+    box-shadow: 0 4px 12px rgba(245, 158, 11, 0.25);
 }
 
 /* ==================== RESPONSIVE ==================== */

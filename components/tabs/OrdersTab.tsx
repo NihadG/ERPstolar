@@ -19,9 +19,20 @@ interface OrdersTabProps {
     onClearPendingOrder?: () => void;
 }
 
+type GroupBy = 'none' | 'supplier' | 'status' | 'date' | 'project';
+type SortBy = 'date-desc' | 'date-asc' | 'amount-desc' | 'amount-asc' | 'supplier';
+
 export default function OrdersTab({ orders, suppliers, projects, productMaterials, onRefresh, showToast, pendingOrderMaterials, onClearPendingOrder }: OrdersTabProps) {
     const [searchTerm, setSearchTerm] = useState('');
     const [statusFilter, setStatusFilter] = useState('');
+    const [groupBy, setGroupBy] = useState<GroupBy>('supplier');
+    const [sortBy, setSortBy] = useState<SortBy>('date-desc');
+    const [isFiltersOpen, setIsFiltersOpen] = useState(false);
+    const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
+    const [supplierFilter, setSupplierFilter] = useState('');
+    const [projectFilter, setProjectFilter] = useState('');
+    const [dateFromFilter, setDateFromFilter] = useState('');
+    const [dateToFilter, setDateToFilter] = useState('');
 
     // Create Order Wizard
     const [wizardModal, setWizardModal] = useState(false);
@@ -111,14 +122,176 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
         }
     }, [pendingOrderMaterials, suppliers, productMaterials, projects, onClearPendingOrder]);
 
-    const filteredOrders = orders.filter(order => {
-        const matchesSearch = order.Order_Number?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-            order.Supplier_Name?.toLowerCase().includes(searchTerm.toLowerCase());
-        const matchesStatus = !statusFilter || order.Status === statusFilter;
-        return matchesSearch && matchesStatus;
-    });
+    // Grouping options
+    const groupingOptions = [
+        { value: 'supplier', label: 'Dobavljaču' },
+        { value: 'status', label: 'Statusu' },
+        { value: 'project', label: 'Projektu' },
+        { value: 'date', label: 'Datumu' },
+        { value: 'none', label: 'Bez grupiranja' },
+    ];
 
-    // Get unordered materials (status = "Nije naručeno" or empty)
+    // Status options for pills
+    const statusOptions = [
+        { value: '', label: 'Sve' },
+        ...ORDER_STATUSES
+            .filter(s => s !== 'Potvrđeno' && s !== 'Isporučeno')
+            .map(s => ({ value: s, label: s }))
+    ];
+
+    // Get unique suppliers from orders
+    const orderSuppliers = useMemo(() => {
+        const supplierNames = new Set<string>();
+        orders.forEach(o => {
+            if (o.Supplier_Name) supplierNames.add(o.Supplier_Name);
+        });
+        return Array.from(supplierNames).sort();
+    }, [orders]);
+
+    // Get projects that have orders
+    const orderProjects = useMemo(() => {
+        const projectIds = new Set<string>();
+        orders.forEach(order => {
+            order.items?.forEach(item => {
+                if (item.Project_ID) projectIds.add(item.Project_ID);
+            });
+        });
+        return projects.filter(p => projectIds.has(p.Project_ID));
+    }, [orders, projects]);
+
+    // Enhanced filtering
+    const filteredOrders = useMemo(() => {
+        return orders.filter(order => {
+            // Search filter
+            const matchesSearch = !searchTerm.trim() ||
+                order.Order_Number?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                order.Supplier_Name?.toLowerCase().includes(searchTerm.toLowerCase());
+
+            // Status filter
+            const matchesStatus = !statusFilter || order.Status === statusFilter;
+
+            // Supplier filter
+            const matchesSupplier = !supplierFilter || order.Supplier_Name === supplierFilter;
+
+            // Project filter
+            const matchesProject = !projectFilter || order.items?.some(item => item.Project_ID === projectFilter);
+
+            // Date range filter
+            let matchesDateFrom = true;
+            let matchesDateTo = true;
+            if (dateFromFilter) {
+                const orderDate = new Date(order.Order_Date);
+                const fromDate = new Date(dateFromFilter);
+                matchesDateFrom = orderDate >= fromDate;
+            }
+            if (dateToFilter) {
+                const orderDate = new Date(order.Order_Date);
+                const toDate = new Date(dateToFilter);
+                toDate.setHours(23, 59, 59); // End of day
+                matchesDateTo = orderDate <= toDate;
+            }
+
+            return matchesSearch && matchesStatus && matchesSupplier && matchesProject && matchesDateFrom && matchesDateTo;
+        });
+    }, [orders, searchTerm, statusFilter, supplierFilter, projectFilter, dateFromFilter, dateToFilter]);
+
+    // Sorting
+    const sortedOrders = useMemo(() => {
+        const sorted = [...filteredOrders];
+        switch (sortBy) {
+            case 'date-desc':
+                sorted.sort((a, b) => new Date(b.Order_Date).getTime() - new Date(a.Order_Date).getTime());
+                break;
+            case 'date-asc':
+                sorted.sort((a, b) => new Date(a.Order_Date).getTime() - new Date(b.Order_Date).getTime());
+                break;
+            case 'amount-desc':
+                sorted.sort((a, b) => (b.Total_Amount || 0) - (a.Total_Amount || 0));
+                break;
+            case 'amount-asc':
+                sorted.sort((a, b) => (a.Total_Amount || 0) - (b.Total_Amount || 0));
+                break;
+            case 'supplier':
+                sorted.sort((a, b) => (a.Supplier_Name || '').localeCompare(b.Supplier_Name || ''));
+                break;
+        }
+        return sorted;
+    }, [filteredOrders, sortBy]);
+
+    // Grouping
+    const groupedOrders = useMemo(() => {
+        const groups = new Map<string, Order[]>();
+
+        sortedOrders.forEach(order => {
+            let groupKey = '';
+
+            switch (groupBy) {
+                case 'supplier':
+                    groupKey = order.Supplier_Name || 'Nepoznat dobavljač';
+                    break;
+                case 'status':
+                    groupKey = order.Status || 'Nepoznat status';
+                    break;
+                case 'project':
+                    const projectId = order.items?.[0]?.Project_ID;
+                    const project = projects.find(p => p.Project_ID === projectId);
+                    groupKey = project?.Client_Name || 'Bez projekta';
+                    break;
+                case 'date':
+                    if (order.Order_Date) {
+                        const date = new Date(order.Order_Date);
+                        const month = date.toLocaleDateString('hr-HR', { month: 'long', year: 'numeric' });
+                        groupKey = month.charAt(0).toUpperCase() + month.slice(1);
+                    } else {
+                        groupKey = 'Bez datuma';
+                    }
+                    break;
+                default:
+                    groupKey = 'Sve narudžbe';
+            }
+
+            if (!groups.has(groupKey)) {
+                groups.set(groupKey, []);
+            }
+            groups.get(groupKey)!.push(order);
+        });
+
+        return Array.from(groups.entries()).map(([key, items]) => ({
+            groupKey: key,
+            groupLabel: key,
+            items,
+            count: items.length,
+            totalAmount: items.reduce((sum, o) => sum + (o.Total_Amount || 0), 0),
+        }));
+    }, [sortedOrders, groupBy, projects]);
+
+    // Toggle group collapse
+    function toggleGroup(groupKey: string) {
+        setCollapsedGroups(prev => {
+            const next = new Set(prev);
+            if (next.has(groupKey)) {
+                next.delete(groupKey);
+            } else {
+                next.add(groupKey);
+            }
+            return next;
+        });
+    }
+
+    // Clear all filters
+    function clearFilters() {
+        setSearchTerm('');
+        setStatusFilter('');
+        setSupplierFilter('');
+        setProjectFilter('');
+        setDateFromFilter('');
+        setDateToFilter('');
+    }
+
+    // Check if any filters are active
+    const hasActiveFilters = searchTerm || statusFilter || supplierFilter || projectFilter || dateFromFilter || dateToFilter;
+
+    // Get unordered materials (status = "Nije naručeno" or empty)
     const unorderedMaterials = useMemo(() => {
         return productMaterials.filter(m => m.Status === MATERIAL_STATUSES[0] || !m.Status);
     }, [productMaterials]);
@@ -697,234 +870,334 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
     );
 
     return (
-        <div className="tab-content active" id="orders-content">
-            <div className="content-header">
-                <div className="search-box">
-                    <span className="material-icons-round">search</span>
-                    <input
-                        type="text"
-                        placeholder="Pretraži narudžbe..."
-                        value={searchTerm}
-                        onChange={(e) => setSearchTerm(e.target.value)}
-                    />
+        <div className="orders-page">
+            {/* Page Header */}
+            <div className="page-header">
+                <div className="header-content">
+                    <div className="header-text">
+                        <h1>Narudžbe</h1>
+                        <p>Upravljajte narudžbama materijala prema dobavljačima.</p>
+                    </div>
+                    <div className="header-actions">
+                        <button
+                            className={`filter-toggle ${isFiltersOpen ? 'active' : ''}`}
+                            onClick={() => setIsFiltersOpen(!isFiltersOpen)}
+                        >
+                            <span className="material-icons-round">filter_list</span>
+                            <span>{isFiltersOpen ? 'Sakrij pretragu' : 'Pretraga i filteri'}</span>
+                            <span className="material-icons-round">{isFiltersOpen ? 'expand_less' : 'expand_more'}</span>
+                        </button>
+                        <button className="btn btn-primary" onClick={openWizard}>
+                            <span className="material-icons-round">add</span>
+                            Nova Narudžba
+                        </button>
+                    </div>
                 </div>
-                <select
-                    className="filter-select"
-                    value={statusFilter}
-                    onChange={(e) => setStatusFilter(e.target.value)}
-                >
-                    <option value="">Svi statusi</option>
-                    {ORDER_STATUSES.map(status => (
-                        <option key={status} value={status}>{status}</option>
-                    ))}
-                </select>
-                <button className="btn btn-primary" onClick={openWizard}>
-                    <span className="material-icons-round">add</span>
-                    Nova Narudžba
-                </button>
             </div>
 
-            <div className="orders-list">
-                {filteredOrders.length === 0 ? (
+            {/* Collapsible Control Bar */}
+            <div className={`control-bar ${isFiltersOpen ? 'open' : ''}`}>
+                <div className="control-bar-inner">
+                    <div className="controls-row">
+                        {/* Search */}
+                        <div className="search-box">
+                            <span className="material-icons-round">search</span>
+                            <input
+                                type="text"
+                                placeholder="Pretraži po broju ili dobavljaču..."
+                                value={searchTerm}
+                                onChange={(e) => setSearchTerm(e.target.value)}
+                            />
+                        </div>
+
+                        <div className="divider"></div>
+
+                        {/* Status Pills */}
+                        <div className="status-pills">
+                            {statusOptions.map(opt => (
+                                <button
+                                    key={opt.value}
+                                    className={`status-pill ${statusFilter === opt.value ? 'active' : ''} ${opt.value ? `status-${opt.value.toLowerCase().replace(/\s+/g, '-')}` : ''}`}
+                                    onClick={() => setStatusFilter(opt.value)}
+                                >
+                                    {opt.label}
+                                </button>
+                            ))}
+                        </div>
+
+                        <div className="divider"></div>
+
+                        {/* Grouping */}
+                        <div className="group-control">
+                            <span className="group-label">Grupiši:</span>
+                            <div className="group-dropdown">
+                                <select value={groupBy} onChange={(e) => setGroupBy(e.target.value as GroupBy)}>
+                                    {groupingOptions.map(opt => (
+                                        <option key={opt.value} value={opt.value}>{opt.label}</option>
+                                    ))}
+                                </select>
+                                <span className="material-icons-round">expand_more</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Secondary filter row */}
+                    <div className="controls-row secondary">
+                        {/* Supplier Filter */}
+                        <div className="filter-group">
+                            <label>Dobavljač:</label>
+                            <select value={supplierFilter} onChange={(e) => setSupplierFilter(e.target.value)}>
+                                <option value="">Svi dobavljači</option>
+                                {orderSuppliers.map(s => (
+                                    <option key={s} value={s}>{s}</option>
+                                ))}
+                            </select>
+                        </div>
+
+                        {/* Project Filter */}
+                        <div className="filter-group">
+                            <label>Projekt:</label>
+                            <select value={projectFilter} onChange={(e) => setProjectFilter(e.target.value)}>
+                                <option value="">Svi projekti</option>
+                                {orderProjects.map(p => (
+                                    <option key={p.Project_ID} value={p.Project_ID}>{p.Client_Name}</option>
+                                ))}
+                            </select>
+                        </div>
+
+                        {/* Date Range */}
+                        <div className="filter-group">
+                            <label>Od:</label>
+                            <input
+                                type="date"
+                                value={dateFromFilter}
+                                onChange={(e) => setDateFromFilter(e.target.value)}
+                            />
+                        </div>
+                        <div className="filter-group">
+                            <label>Do:</label>
+                            <input
+                                type="date"
+                                value={dateToFilter}
+                                onChange={(e) => setDateToFilter(e.target.value)}
+                            />
+                        </div>
+
+                        {/* Clear filters */}
+                        {hasActiveFilters && (
+                            <button className="btn btn-text" onClick={clearFilters}>
+                                <span className="material-icons-round">close</span>
+                                Očisti filtere
+                            </button>
+                        )}
+                    </div>
+                </div>
+            </div>
+
+            {/* Grouped Content */}
+            <div className="orders-content">
+                {groupedOrders.length === 0 ? (
                     <div className="empty-state">
                         <span className="material-icons-round">local_shipping</span>
                         <h3>Nema narudžbi</h3>
-                        <p>Kreirajte prvu narudžbu klikom na "Nova Narudžba"</p>
+                        <p>{hasActiveFilters ? 'Pokušajte promijeniti filtere' : 'Kreirajte prvu narudžbu klikom na "Nova Narudžba"'}</p>
                     </div>
                 ) : (
-                    // When an order is expanded, only show that order for cleaner view
-                    (expandedOrderId
-                        ? filteredOrders.filter(o => o.Order_ID === expandedOrderId)
-                        : filteredOrders
-                    ).map(order => {
-                        const isExpanded = expandedOrderId === order.Order_ID;
-                        const itemCount = order.items?.length || 0;
-                        const receivedCount = order.items?.filter(i => i.Status === 'Primljeno').length || 0;
-                        const allReceived = itemCount > 0 && receivedCount === itemCount;
-                        const unreceivedItems = order.items?.filter(i => i.Status !== 'Primljeno') || [];
-
-                        // Get project name from first item
-                        const firstItem = order.items?.[0];
-                        const projectName = firstItem?.Project_ID
-                            ? projects.find(p => p.Project_ID === firstItem.Project_ID)?.Client_Name || 'N/A'
-                            : 'N/A';
-
-                        // Quick receive all handler
-                        const handleQuickReceiveAll = async (e: React.MouseEvent) => {
-                            e.stopPropagation();
-                            if (unreceivedItems.length === 0) {
-                                showToast('Sve stavke su već primljene', 'info');
-                                return;
-                            }
-                            const result = await markMaterialsReceived(unreceivedItems.map(i => i.ID));
-                            if (result.success) {
-                                await updateOrderStatus(order.Order_ID, 'Primljeno');
-                                showToast('Sve stavke primljene', 'success');
-                                onRefresh();
-                            } else {
-                                showToast(result.message, 'error');
-                            }
-                        };
-
-                        return (
+                    groupedOrders.map(group => (
+                        <div key={group.groupKey} className="group-card">
+                            {/* Group Header */}
                             <div
-                                key={order.Order_ID}
-                                className="project-card" /* Keep project card wrapper for consistency */
+                                className="group-card-header"
+                                onClick={() => toggleGroup(group.groupKey)}
                             >
-                                {/* CUSTOM HEADER - Fine tuned layout */}
-                                <div className="order-header-custom" onClick={() => toggleOrderExpand(order.Order_ID)} style={{ cursor: 'pointer' }}>
-
-                                    {/* EXPAND BUTTON */}
-                                    <button className={`expand-btn ${isExpanded ? 'expanded' : ''}`}>
-                                        <span className="material-icons-round">chevron_right</span>
-                                    </button>
-
-                                    {/* MAIN INFO GROUP */}
-                                    <div className="order-info-group">
-
-                                        {/* ROW 1: ID + AMOUNT */}
-                                        <div className="order-top-row">
-                                            <span className="order-id-text">{order.Order_Number}</span>
-                                            <span className="order-amount-text">{formatCurrency(order.Total_Amount || 0)}</span>
-                                        </div>
-
-                                        {/* ROW 2: SUPPLIER + PROJECT */}
-                                        <div className="order-middle-row">
-                                            <span className="material-icons-round icon-sm">store</span>
-                                            <span className="order-supplier-text">{order.Supplier_Name || 'Nepoznat dobavljač'}</span>
-                                            {projectName !== 'N/A' && (
-                                                <>
-                                                    <span className="separator">•</span>
-                                                    <span className="order-project-text">{projectName}</span>
-                                                </>
-                                            )}
-                                        </div>
-
-                                        {/* ROW 3: META INFO */}
-                                        <div className="order-meta-info">
-                                            <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                                                <span className="material-icons-round" style={{ fontSize: 13 }}>calendar_today</span>
-                                                {formatDate(order.Order_Date)}
-                                            </span>
-                                            <span className="separator">•</span>
-                                            <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                                                <span className="material-icons-round" style={{ fontSize: 13 }}>inventory_2</span>
-                                                {itemCount} stavki
-                                            </span>
-                                        </div>
-                                    </div>
-
-                                    {/* ACTIONS GROUP - Single line: Status | Receive | Print | Delete */}
-                                    <div className="order-actions-group" onClick={e => e.stopPropagation()}>
-
-                                        {/* Status Badge */}
-                                        <span className={`status-badge-custom status-${order.Status.toLowerCase().replace(/\s+/g, '-')}`}>
-                                            {order.Status}
-                                        </span>
-
-                                        {/* Receive All Button */}
-                                        {!allReceived && order.Status !== 'Nacrt' && (
-                                            <button
-                                                className="btn-receive-all action-item"
-                                                onClick={handleQuickReceiveAll}
-                                                title="Primi sve"
-                                            >
-                                                <span className="material-icons-round">check_circle</span>
-                                                <span className="btn-text-responsive">Primi sve</span>
-                                            </button>
-                                        )}
-
-                                        {/* Print Button */}
-                                        <button className="icon-btn-custom action-item" onClick={printOrderDocument} title="Printaj">
-                                            <span className="material-icons-round">print</span>
-                                        </button>
-
-                                        {/* Send Button (if Draft) */}
-                                        {order.Status === 'Nacrt' && (
-                                            <button className="icon-btn-custom action-item" onClick={() => handleSendOrder(order.Order_ID)} title="Pošalji">
-                                                <span className="material-icons-round">send</span>
-                                            </button>
-                                        )}
-
-                                        {/* Delete Button */}
-                                        <button className="icon-btn-custom danger action-item" onClick={() => handleDeleteOrder(order.Order_ID)} title="Obriši">
-                                            <span className="material-icons-round">delete</span>
-                                        </button>
-                                    </div>
+                                <div className="group-left">
+                                    <span className="material-icons-round toggle-chevron">
+                                        {collapsedGroups.has(group.groupKey) ? 'chevron_right' : 'expand_more'}
+                                    </span>
+                                    <span className="group-title">{group.groupLabel}</span>
+                                    <span className="group-count-badge">{group.count} narudžbi</span>
                                 </div>
+                                <div className="group-right">
+                                    <span className="group-total">{formatCurrency(group.totalAmount)}</span>
+                                </div>
+                            </div>
 
-                                {/* EXPANDED CONTENT - Reuse project-products structure */}
-                                <div className={`project-products ${isExpanded ? 'expanded' : ''}`}>
-                                    <div className="products-header">
-                                        <h4>Stavke narudžbe ({itemCount})</h4>
-                                        {selectedItemIds.size > 0 && (
-                                            <button className="btn btn-sm btn-success" onClick={handleReceiveSelectedItems}>
-                                                <span className="material-icons-round">check</span>
-                                                Primi odabrano ({selectedItemIds.size})
-                                            </button>
-                                        )}
-                                    </div>
+                            {/* Group Items */}
+                            {!collapsedGroups.has(group.groupKey) && (
+                                <div className="group-card-content">
+                                    {(expandedOrderId
+                                        ? group.items.filter(o => o.Order_ID === expandedOrderId)
+                                        : group.items
+                                    ).map(order => {
+                                        const isExpanded = expandedOrderId === order.Order_ID;
+                                        const itemCount = order.items?.length || 0;
+                                        const receivedCount = order.items?.filter(i => i.Status === 'Primljeno').length || 0;
+                                        const allReceived = itemCount > 0 && receivedCount === itemCount;
+                                        const unreceivedItems = order.items?.filter(i => i.Status !== 'Primljeno') || [];
 
-                                    {/* ITEMS AS PRODUCT CARDS */}
-                                    {order.items?.map(item => {
-                                        const isReceived = item.Status === 'Primljeno';
-                                        const isSelected = selectedItemIds.has(item.ID);
+                                        const firstItem = order.items?.[0];
+                                        const projectName = firstItem?.Project_ID
+                                            ? projects.find(p => p.Project_ID === firstItem.Project_ID)?.Client_Name || 'N/A'
+                                            : 'N/A';
+
+                                        const handleQuickReceiveAll = async (e: React.MouseEvent) => {
+                                            e.stopPropagation();
+                                            if (unreceivedItems.length === 0) {
+                                                showToast('Sve stavke su već primljene', 'info');
+                                                return;
+                                            }
+                                            const result = await markMaterialsReceived(unreceivedItems.map(i => i.ID));
+                                            if (result.success) {
+                                                await updateOrderStatus(order.Order_ID, 'Primljeno');
+                                                showToast('Sve stavke primljene', 'success');
+                                                onRefresh();
+                                            } else {
+                                                showToast(result.message, 'error');
+                                            }
+                                        };
 
                                         return (
-                                            <div
-                                                key={item.ID}
-                                                className="product-card" /* Using Product Card Style */
-                                                onClick={() => {
-                                                    if (!isReceived) toggleItemSelection(item.ID, !isSelected);
-                                                }}
-                                                style={{ cursor: 'pointer', borderColor: isSelected ? 'var(--accent)' : undefined }}
-                                            >
-                                                <div className="product-header">
-                                                    {/* CHECKBOX for selection */}
-                                                    {!isReceived ? (
-                                                        <div onClick={e => e.stopPropagation()}>
-                                                            <input
-                                                                type="checkbox"
-                                                                checked={isSelected}
-                                                                onChange={(e) => toggleItemSelection(item.ID, e.target.checked)}
-                                                                style={{ width: 18, height: 18, cursor: 'pointer' }}
-                                                            />
-                                                        </div>
-                                                    ) : (
-                                                        <span className="material-icons-round" style={{ color: 'var(--success)' }}>check_circle</span>
-                                                    )}
+                                            <div key={order.Order_ID} className={`order-item ${isExpanded ? 'expanded' : ''}`}>
+                                                {/* Order Header Row */}
+                                                <div className="order-header-custom" onClick={() => toggleOrderExpand(order.Order_ID)} style={{ cursor: 'pointer' }}>
+                                                    <button className={`expand-btn ${isExpanded ? 'expanded' : ''}`}>
+                                                        <span className="material-icons-round">chevron_right</span>
+                                                    </button>
 
-                                                    <div className="product-info">
-                                                        <div className="product-name">{item.Material_Name}</div>
-                                                        <div className="product-dims">
-                                                            {item.Quantity} {item.Unit}
-                                                            {item.Product_Name && ` • ${item.Product_Name}`}
+                                                    <div className="order-info-group">
+                                                        <div className="order-top-row">
+                                                            <span className="order-id-text">{order.Order_Number}</span>
+                                                            {groupBy !== 'project' && projectName !== 'N/A' && (
+                                                                <span className="order-project-text">{projectName}</span>
+                                                            )}
+                                                            {groupBy !== 'supplier' && (
+                                                                <span className="order-supplier-text">{order.Supplier_Name}</span>
+                                                            )}
+                                                        </div>
+                                                        <div className="order-meta-info">
+                                                            <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                                                                <span className="material-icons-round" style={{ fontSize: 14 }}>calendar_today</span>
+                                                                {formatDate(order.Order_Date)}
+                                                            </span>
+                                                            <span>•</span>
+                                                            <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                                                                <span className="material-icons-round" style={{ fontSize: 14 }}>inventory_2</span>
+                                                                {itemCount} stavki
+                                                            </span>
+                                                            <span>•</span>
+                                                            <span style={{ fontWeight: 600 }}>{formatCurrency(order.Total_Amount || 0)}</span>
                                                         </div>
                                                     </div>
 
-                                                    {isReceived && item.Received_Date && (
-                                                        <span className="status-badge status-primljeno">
-                                                            {formatDate(item.Received_Date)}
+                                                    <div className="order-actions-group" onClick={e => e.stopPropagation()}>
+                                                        <span className={`status-badge-custom status-${order.Status.toLowerCase().replace(/\s+/g, '-')}`}>
+                                                            {order.Status}
                                                         </span>
-                                                    )}
 
-                                                    <div className="project-actions">
-                                                        <span style={{ fontWeight: 600, color: 'var(--accent)' }}>
-                                                            {formatCurrency(item.Expected_Price)}
-                                                        </span>
+                                                        {!allReceived && order.Status !== 'Nacrt' && (
+                                                            <button
+                                                                className="btn-receive-all action-item"
+                                                                onClick={handleQuickReceiveAll}
+                                                                title="Primi sve"
+                                                            >
+                                                                <span className="material-icons-round">check_circle</span>
+                                                                <span className="btn-text-responsive">Primi sve</span>
+                                                            </button>
+                                                        )}
+
+                                                        <button className="icon-btn-custom action-item" onClick={() => {
+                                                            setExpandedOrderId(order.Order_ID);
+                                                            setTimeout(() => printOrderDocument(), 100);
+                                                        }} title="Printaj">
+                                                            <span className="material-icons-round">print</span>
+                                                        </button>
+
+                                                        {order.Status === 'Nacrt' && (
+                                                            <button className="icon-btn-custom action-item" onClick={() => handleSendOrder(order.Order_ID)} title="Pošalji">
+                                                                <span className="material-icons-round">send</span>
+                                                            </button>
+                                                        )}
+
+                                                        <button className="icon-btn-custom danger action-item" onClick={() => handleDeleteOrder(order.Order_ID)} title="Obriši">
+                                                            <span className="material-icons-round">delete</span>
+                                                        </button>
                                                     </div>
+                                                </div>
+
+                                                {/* Expanded Content */}
+                                                <div className={`project-products ${isExpanded ? 'expanded' : ''}`}>
+                                                    <div className="products-header">
+                                                        <h4>Stavke narudžbe ({itemCount})</h4>
+                                                        {selectedItemIds.size > 0 && (
+                                                            <button className="btn btn-sm btn-success" onClick={handleReceiveSelectedItems}>
+                                                                <span className="material-icons-round">check</span>
+                                                                Primi odabrano ({selectedItemIds.size})
+                                                            </button>
+                                                        )}
+                                                    </div>
+
+                                                    {order.items?.map(item => {
+                                                        const isReceived = item.Status === 'Primljeno';
+                                                        const isSelected = selectedItemIds.has(item.ID);
+
+                                                        return (
+                                                            <div
+                                                                key={item.ID}
+                                                                className="product-card"
+                                                                onClick={() => {
+                                                                    if (!isReceived) toggleItemSelection(item.ID, !isSelected);
+                                                                }}
+                                                                style={{ cursor: 'pointer', borderColor: isSelected ? 'var(--accent)' : undefined }}
+                                                            >
+                                                                <div className="product-header">
+                                                                    {!isReceived ? (
+                                                                        <div onClick={e => e.stopPropagation()}>
+                                                                            <input
+                                                                                type="checkbox"
+                                                                                checked={isSelected}
+                                                                                onChange={(e) => toggleItemSelection(item.ID, e.target.checked)}
+                                                                                style={{ width: 18, height: 18, cursor: 'pointer' }}
+                                                                            />
+                                                                        </div>
+                                                                    ) : (
+                                                                        <span className="material-icons-round" style={{ color: 'var(--success)' }}>check_circle</span>
+                                                                    )}
+
+                                                                    <div className="product-info">
+                                                                        <div className="product-name">{item.Material_Name}</div>
+                                                                        <div className="product-dims">
+                                                                            {item.Quantity} {item.Unit}
+                                                                            {item.Product_Name && ` • ${item.Product_Name}`}
+                                                                        </div>
+                                                                    </div>
+
+                                                                    {isReceived && item.Received_Date && (
+                                                                        <span className="status-badge status-primljeno">
+                                                                            {formatDate(item.Received_Date)}
+                                                                        </span>
+                                                                    )}
+
+                                                                    <div className="project-actions">
+                                                                        <span style={{ fontWeight: 600, color: 'var(--accent)' }}>
+                                                                            {formatCurrency(item.Expected_Price)}
+                                                                        </span>
+                                                                    </div>
+                                                                </div>
+                                                            </div>
+                                                        );
+                                                    })}
                                                 </div>
                                             </div>
                                         );
                                     })}
                                 </div>
-                            </div>
-                        );
-                    })
+                            )}
+                        </div>
+                    ))
                 )}
             </div>
 
-            {/* Order Creation Wizard - Step-based Layout */}
+            {/* Order Creation Wizard */}
             <OrderWizardModal
                 isOpen={wizardModal}
                 onClose={() => setWizardModal(false)}
@@ -949,7 +1222,7 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
                 formatCurrency={formatCurrency}
                 handleCreateOrder={handleCreateOrder}
             />
-
         </div>
     );
 }
+
