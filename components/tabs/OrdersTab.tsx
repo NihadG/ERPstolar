@@ -754,7 +754,6 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
                             }
                             const result = await markMaterialsReceived(unreceivedItems.map(i => i.ID));
                             if (result.success) {
-                                // Auto-update order status to Primljeno
                                 await updateOrderStatus(order.Order_ID, 'Primljeno');
                                 showToast('Sve stavke primljene', 'success');
                                 onRefresh();
@@ -766,112 +765,132 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
                         return (
                             <div
                                 key={order.Order_ID}
-                                className={`order-card ${isExpanded ? 'expanded' : ''}`}
+                                className="project-card" /* Using Project Card Style */
                             >
-                                {/* COLLAPSED HEADER */}
-                                <div className="order-header" onClick={() => toggleOrderExpand(order.Order_ID)}>
+                                {/* HEADER - Reuse project-header structure */}
+                                <div className="project-header" onClick={() => toggleOrderExpand(order.Order_ID)}>
                                     <button className={`expand-btn ${isExpanded ? 'expanded' : ''}`}>
                                         <span className="material-icons-round">chevron_right</span>
                                     </button>
 
-                                    <div className="order-main-info">
-                                        <div className="order-title-row">
-                                            <span className="order-number">{order.Order_Number}</span>
-                                            <span className="order-project">{projectName}</span>
+                                    <div className="project-main-info">
+                                        <div className="project-title-section">
+                                            <div className="project-name">{order.Order_Number}</div>
+                                            <div className="project-badges">
+                                                <span className={`status-badge ${getStatusClass(order.Status)}`}>
+                                                    {order.Status}
+                                                </span>
+                                            </div>
                                         </div>
-                                        <div className="order-meta">
-                                            <span className="order-date">{formatDate(order.Order_Date)}</span>
-                                            <span className={`status-badge status-${order.Status.toLowerCase().replace(/\s+/g, '-')}`}>
-                                                {order.Status}
-                                            </span>
+                                        <div className="project-details">
+                                            <div className="project-client">
+                                                <span>{projectName}</span>
+                                            </div>
+                                            <div className="project-summary">
+                                                <span className="summary-item">
+                                                    <span className="material-icons-round">calendar_today</span>
+                                                    {formatDate(order.Order_Date)}
+                                                </span>
+                                                <span className="summary-divider">•</span>
+                                                <span className="summary-item">
+                                                    <span className="material-icons-round">inventory_2</span>
+                                                    {itemCount} stavki
+                                                </span>
+                                            </div>
                                         </div>
                                     </div>
 
-                                    {/* Quick Receive Button - only show if not all received */}
-                                    {!allReceived && order.Status !== 'Nacrt' && (
-                                        <button
-                                            className="btn-receive-all"
-                                            onClick={handleQuickReceiveAll}
-                                            title="Primi sve stavke"
-                                        >
-                                            <span className="material-icons-round">check_circle</span>
-                                            Primi
+                                    <div className="project-actions" onClick={e => e.stopPropagation()}>
+                                        {!allReceived && order.Status !== 'Nacrt' && (
+                                            <button
+                                                className="btn-receive-all"
+                                                onClick={handleQuickReceiveAll}
+                                                title="Primi sve"
+                                                style={{ marginRight: 8 }}
+                                            >
+                                                <span className="material-icons-round">check_circle</span>
+                                                Primi sve
+                                            </button>
+                                        )}
+                                        <button className="icon-btn" onClick={printOrderDocument}>
+                                            <span className="material-icons-round">print</span>
                                         </button>
-                                    )}
-
-                                    {allReceived && (
-                                        <span className="all-received-badge">
-                                            <span className="material-icons-round">verified</span>
-                                        </span>
-                                    )}
+                                        {order.Status === 'Nacrt' && (
+                                            <button className="icon-btn" onClick={() => handleSendOrder(order.Order_ID)}>
+                                                <span className="material-icons-round">send</span>
+                                            </button>
+                                        )}
+                                        <button className="icon-btn danger" onClick={() => handleDeleteOrder(order.Order_ID)}>
+                                            <span className="material-icons-round">delete</span>
+                                        </button>
+                                    </div>
                                 </div>
 
-                                {/* EXPANDED CONTENT */}
-                                {isExpanded && (
-                                    <div className="order-expanded" onClick={e => e.stopPropagation()}>
-                                        {/* Actions */}
-                                        <div className="order-actions-row">
-                                            {order.Status === 'Nacrt' && (
-                                                <button className="btn btn-sm btn-primary" onClick={() => handleSendOrder(order.Order_ID)}>
-                                                    <span className="material-icons-round">send</span>
-                                                    Pošalji
-                                                </button>
-                                            )}
-                                            <button className="btn btn-sm btn-ghost" onClick={printOrderDocument}>
-                                                <span className="material-icons-round">print</span>
+                                {/* EXPANDED CONTENT - Reuse project-products structure */}
+                                <div className={`project-products ${isExpanded ? 'expanded' : ''}`}>
+                                    <div className="products-header">
+                                        <h4>Stavke narudžbe ({itemCount})</h4>
+                                        {selectedItemIds.size > 0 && (
+                                            <button className="btn btn-sm btn-success" onClick={handleReceiveSelectedItems}>
+                                                <span className="material-icons-round">check</span>
+                                                Primi odabrano ({selectedItemIds.size})
                                             </button>
-                                            <button className="btn btn-sm btn-danger-ghost" onClick={() => handleDeleteOrder(order.Order_ID)}>
-                                                <span className="material-icons-round">delete</span>
-                                            </button>
-                                        </div>
+                                        )}
+                                    </div>
 
-                                        {/* Items List */}
-                                        <div className="items-list">
-                                            {order.items?.map(item => {
-                                                const isReceived = item.Status === 'Primljeno';
-                                                const isSelected = selectedItemIds.has(item.ID);
+                                    {/* ITEMS AS PRODUCT CARDS */}
+                                    {order.items?.map(item => {
+                                        const isReceived = item.Status === 'Primljeno';
+                                        const isSelected = selectedItemIds.has(item.ID);
 
-                                                return (
-                                                    <div key={item.ID} className={`item-row ${isReceived ? 'received' : ''}`}>
-                                                        {!isReceived && (
+                                        return (
+                                            <div
+                                                key={item.ID}
+                                                className="product-card" /* Using Product Card Style */
+                                                onClick={() => {
+                                                    if (!isReceived) toggleItemSelection(item.ID, !isSelected);
+                                                }}
+                                                style={{ cursor: 'pointer', borderColor: isSelected ? 'var(--accent)' : undefined }}
+                                            >
+                                                <div className="product-header">
+                                                    {/* CHECKBOX for selection */}
+                                                    {!isReceived ? (
+                                                        <div onClick={e => e.stopPropagation()}>
                                                             <input
                                                                 type="checkbox"
                                                                 checked={isSelected}
                                                                 onChange={(e) => toggleItemSelection(item.ID, e.target.checked)}
-                                                                className="item-checkbox"
+                                                                style={{ width: 18, height: 18, cursor: 'pointer' }}
                                                             />
-                                                        )}
-                                                        {isReceived && (
-                                                            <span className="material-icons-round item-received-icon">check_circle</span>
-                                                        )}
-
-                                                        <div className="item-info">
-                                                            <span className="item-name">{item.Material_Name}</span>
-                                                            <span className="item-qty">{item.Quantity} {item.Unit}</span>
                                                         </div>
+                                                    ) : (
+                                                        <span className="material-icons-round" style={{ color: 'var(--success)' }}>check_circle</span>
+                                                    )}
 
-                                                        {isReceived && item.Received_Date && (
-                                                            <span className="item-received-date">
-                                                                {formatDate(item.Received_Date)}
-                                                            </span>
-                                                        )}
+                                                    <div className="product-info">
+                                                        <div className="product-name">{item.Material_Name}</div>
+                                                        <div className="product-dims">
+                                                            {item.Quantity} {item.Unit}
+                                                            {item.Product_Name && ` • ${item.Product_Name}`}
+                                                        </div>
                                                     </div>
-                                                );
-                                            })}
-                                        </div>
 
-                                        {/* Batch Receive Action */}
-                                        {selectedItemIds.size > 0 && (
-                                            <div className="batch-receive-bar">
-                                                <span>{selectedItemIds.size} odabrano</span>
-                                                <button className="btn btn-sm btn-success" onClick={handleReceiveSelectedItems}>
-                                                    <span className="material-icons-round">check</span>
-                                                    Označi primljeno
-                                                </button>
+                                                    {isReceived && item.Received_Date && (
+                                                        <span className="status-badge status-primljeno">
+                                                            {formatDate(item.Received_Date)}
+                                                        </span>
+                                                    )}
+
+                                                    <div className="project-actions">
+                                                        <span style={{ fontWeight: 600, color: 'var(--accent)' }}>
+                                                            {formatCurrency(item.Expected_Price)}
+                                                        </span>
+                                                    </div>
+                                                </div>
                                             </div>
-                                        )}
-                                    </div>
-                                )}
+                                        );
+                                    })}
+                                </div>
                             </div>
                         );
                     })
