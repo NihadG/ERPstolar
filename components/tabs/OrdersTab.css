@@ -22,24 +22,52 @@
     display: flex;
     align-items: center;
     gap: 12px;
+    margin-bottom: 2px;
 }
 
 .order-id-text {
-    font-size: 15px;
-    /* Smanjeno sa 18px */
+    font-size: 14px;
     font-weight: 600;
     color: #1d1d1f;
     font-family: 'SF Mono', 'Roboto Mono', monospace;
-    /* Monospace za ID izgleda tehnicki bolje */
     background: #f5f5f7;
-    padding: 2px 8px;
-    border-radius: 6px;
+    padding: 2px 6px;
+    border-radius: 4px;
+}
+
+.order-amount-text {
+    font-weight: 700;
+    color: var(--accent);
+    font-size: 15px;
+}
+
+.order-middle-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+    color: #1d1d1f;
+    margin-bottom: 2px;
+    flex-wrap: wrap;
+}
+
+.order-supplier-text {
+    font-weight: 500;
+}
+
+.icon-sm {
+    font-size: 14px;
+    color: #86868b;
+}
+
+.separator {
+    color: #aeaeb2;
+    font-size: 10px;
 }
 
 .order-project-text {
-    font-size: 14px;
-    color: #1d1d1f;
-    font-weight: 500;
+    font-size: 13px;
+    color: #6e6e73;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -49,7 +77,7 @@
     display: flex;
     align-items: center;
     gap: 8px;
-    font-size: 13px;
+    font-size: 12px;
     color: #86868b;
 }
 

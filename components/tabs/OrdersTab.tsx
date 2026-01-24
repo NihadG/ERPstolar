@@ -781,20 +781,34 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
 
                                     {/* MAIN INFO GROUP */}
                                     <div className="order-info-group">
+
+                                        {/* ROW 1: ID + AMOUNT */}
                                         <div className="order-top-row">
                                             <span className="order-id-text">{order.Order_Number}</span>
+                                            <span className="order-amount-text">{formatCurrency(order.Total_Amount || 0)}</span>
+                                        </div>
+
+                                        {/* ROW 2: SUPPLIER + PROJECT */}
+                                        <div className="order-middle-row">
+                                            <span className="material-icons-round icon-sm">store</span>
+                                            <span className="order-supplier-text">{order.Supplier_Name || 'Nepoznat dobavljač'}</span>
                                             {projectName !== 'N/A' && (
-                                                <span className="order-project-text">{projectName}</span>
+                                                <>
+                                                    <span className="separator">•</span>
+                                                    <span className="order-project-text">{projectName}</span>
+                                                </>
                                             )}
                                         </div>
+
+                                        {/* ROW 3: META INFO */}
                                         <div className="order-meta-info">
                                             <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                                                <span className="material-icons-round" style={{ fontSize: 14 }}>calendar_today</span>
+                                                <span className="material-icons-round" style={{ fontSize: 13 }}>calendar_today</span>
                                                 {formatDate(order.Order_Date)}
                                             </span>
-                                            <span>•</span>
+                                            <span className="separator">•</span>
                                             <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                                                <span className="material-icons-round" style={{ fontSize: 14 }}>inventory_2</span>
+                                                <span className="material-icons-round" style={{ fontSize: 13 }}>inventory_2</span>
                                                 {itemCount} stavki
                                             </span>
                                         </div>
