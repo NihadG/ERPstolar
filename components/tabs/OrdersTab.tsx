@@ -743,47 +743,52 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
                             <div
                                 key={order.Order_ID}
                                 className={`order-card ${isExpanded ? 'expanded' : ''}`}
-                                onClick={() => toggleOrderExpand(order.Order_ID)}
                             >
-                                <div className="order-card-header">
+                                <div className="order-header" onClick={() => toggleOrderExpand(order.Order_ID)}>
+                                    <button className={`expand-btn ${isExpanded ? 'expanded' : ''}`}>
+                                        <span className="material-icons-round">chevron_right</span>
+                                    </button>
+
                                     <div className="order-main-info">
-                                        <div className="order-id-section">
-                                            <span className="order-number">{order.Order_Number}</span>
-                                            <div className="order-supplier">
-                                                <span className="material-icons-round">store</span>
-                                                {order.Supplier_Name || 'Nepoznat dobavljač'}
+                                        <div className="order-title-section">
+                                            <div className="order-number">{order.Order_Number}</div>
+                                            <div className="order-badges">
+                                                <span className={`status-badge ${getStatusClass(order.Status)}`}>
+                                                    {order.Status}
+                                                </span>
                                             </div>
                                         </div>
 
-                                        <div className="order-status-section" onClick={e => e.stopPropagation()}>
+                                        <div className="order-details-row">
+                                            <div className="order-client">
+                                                <span className="material-icons-round" style={{ fontSize: '14px' }}>store</span>
+                                                {order.Supplier_Name || 'Nepoznat dobavljač'}
+                                            </div>
+                                            <div className="order-summary">
+                                                <span className="summary-item">
+                                                    <span className="material-icons-round">inventory_2</span>
+                                                    {itemCount} {itemCount === 1 ? 'stavka' : 'stavki'}
+                                                </span>
+                                                <span className="summary-divider">•</span>
+                                                <span className="summary-cost">
+                                                    {formatCurrency(order.Total_Amount || 0)}
+                                                </span>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div className="order-actions" onClick={e => e.stopPropagation()}>
+                                        <div className="quick-status-wrapper">
                                             <select
-                                                className={`status-select-sm ${getStatusClass(order.Status)}`}
+                                                className={`status-select-mini ${getStatusClass(order.Status)}`}
                                                 value={order.Status}
                                                 onChange={(e) => handleQuickStatusChange(order.Order_ID, e.target.value, e)}
+                                                onClick={e => e.stopPropagation()}
                                             >
                                                 {ORDER_STATUSES.map(s => (
                                                     <option key={s} value={s}>{s}</option>
                                                 ))}
                                             </select>
-                                        </div>
-                                    </div>
-
-                                    <div className="order-meta-info">
-                                        <div className="meta-group">
-                                            <span className="material-icons-round">calendar_today</span>
-                                            {formatDate(order.Order_Date)}
-                                        </div>
-                                        <div className="meta-group">
-                                            <span className="material-icons-round">inventory_2</span>
-                                            {itemCount} stavki
-                                        </div>
-                                        <div className="meta-price">
-                                            {formatCurrency(order.Total_Amount || 0)}
-                                        </div>
-                                        <div className="expand-icon">
-                                            <span className="material-icons-round">
-                                                {isExpanded ? 'expand_less' : 'expand_more'}
-                                            </span>
                                         </div>
                                     </div>
                                 </div>

@@ -307,118 +307,137 @@
 
 
 
-/* ==================== EXPANDED ORDER CARD STYLES ==================== */
+/* ==================== REDESIGNED ORDER CARD (MATCHING PROJECTS) ==================== */
 .order-card {
-    background: white;
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    padding: 16px;
-    margin-bottom: 12px;
-    cursor: pointer;
-    transition: all 0.2s ease;
+    background: #ffffff;
+    border-radius: 16px;
+    overflow: hidden;
+    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.06);
+    border: 1px solid rgba(0, 0, 0, 0.06);
+    transition: box-shadow 0.2s ease, transform 0.2s ease;
     display: flex;
     flex-direction: column;
 }
 
 .order-card:hover {
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
-    border-color: var(--accent);
+    box-shadow: 0 6px 24px rgba(0, 0, 0, 0.1);
+    transform: translateY(-1px);
+    border-color: rgba(0, 0, 0, 0.06);
+    /* Maintain original border color interaction or match projects */
 }
 
 .order-card.expanded {
+    box-shadow: 0 8px 30px rgba(0, 0, 0, 0.12);
+    transform: translateY(-2px);
     border-color: var(--accent);
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
-    cursor: default;
 }
 
 /* HEADER LAYOUT */
-.order-card-header {
+.order-header {
     display: flex;
-    justify-content: space-between;
-    align-items: flex-start;
-    width: 100%;
+    align-items: center;
+    padding: 20px 24px;
+    gap: 16px;
+    cursor: pointer;
+    transition: background 0.15s;
+    background: white;
 }
+
+.order-header:hover {
+    background: var(--surface);
+}
+
+/* LEFT SIDE EXPAND BTN (Reusing global .expand-btn if possible, but defining here to be safe) */
+/* Global .expand-btn should handle this, but ensures overrides if needed */
 
 .order-main-info {
     flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
 }
 
-.order-id-section {
+.order-title-section {
     display: flex;
     align-items: center;
     gap: 12px;
-    margin-bottom: 6px;
+    flex-wrap: wrap;
 }
 
 .order-number {
     font-weight: 600;
-    font-size: 16px;
+    font-size: 18px;
     color: var(--text-primary);
 }
 
-.order-supplier {
+.order-badges {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+/* DETAILS ROW (Like project-details) */
+.order-details-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+    font-size: 13px;
+    color: var(--text-secondary);
+}
+
+.order-client {
     display: flex;
     align-items: center;
     gap: 6px;
-    color: var(--text-secondary);
-    font-size: 13px;
-    background: var(--bg);
-    padding: 2px 8px;
-    border-radius: 6px;
 }
 
-.order-supplier .material-icons-round {
-    font-size: 16px;
-}
-
-.order-meta-info {
+.order-summary {
     display: flex;
     align-items: center;
-    gap: 16px;
-    margin-top: 8px;
+    gap: 8px;
 }
 
-.meta-group {
+.summary-item {
     display: flex;
     align-items: center;
-    gap: 6px;
-    color: var(--text-secondary);
-    font-size: 13px;
+    gap: 4px;
 }
 
-.meta-group .material-icons-round {
+.summary-item .material-icons-round {
     font-size: 16px;
+    color: var(--text-tertiary);
 }
 
-.meta-price {
-    margin-left: auto;
-    font-weight: 700;
-    font-size: 16px;
+.summary-divider {
+    color: var(--text-tertiary);
+}
+
+.summary-cost {
+    font-weight: 600;
     color: var(--accent);
     font-family: monospace;
+    font-size: 14px;
 }
 
-.expand-icon {
-    margin-left: 12px;
-    color: var(--text-tertiary);
-    transition: transform 0.3s ease;
+/* ACTIONS SIDE */
+.order-actions {
     display: flex;
     align-items: center;
+    gap: 8px;
 }
 
-.expand-icon .material-icons-round {
-    font-size: 24px;
+/* QUICK STATUS MINI SELECT */
+.quick-status-wrapper {
+    position: relative;
+    /* Wrapper to help with click propogation handling if needed */
 }
 
-.order-card.expanded .expand-icon {
-    transform: rotate(180deg);
-    color: var(--accent);
-}
-
-/* QUICK STATUS SELECT */
-.status-select-sm {
-    padding: 4px 8px;
-    border-radius: 6px;
+.status-select-mini {
+    padding: 6px 24px 6px 10px;
+    /* Space for arrow */
+    border-radius: 20px;
     font-size: 12px;
     font-weight: 600;
     border: none;
@@ -426,64 +445,70 @@
     outline: none;
     appearance: none;
     transition: all 0.2s;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='%236e6e73' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 4px center;
+    background-size: 14px;
 }
 
-.status-select-sm:hover {
-    opacity: 0.9;
+.status-select-mini:hover {
+    opacity: 0.8;
 }
 
-/* Apply specific colors based on class (assuming these classes exist or handled by helper) */
-.status-select-sm.Nacrt {
-    background: var(--bg-secondary);
-    color: var(--text-secondary);
+/* Status colors map to global status classes usually, but ensuring select has backgrounds */
+.status-select-mini.Nacrt {
+    background-color: #e8e8ed;
+    color: #6e6e73;
 }
 
-.status-select-sm.Poslano {
-    background: rgba(0, 113, 227, 0.1);
-    color: var(--accent);
+.status-select-mini.Poslano {
+    background-color: #cce5ff;
+    color: #004085;
 }
 
-.status-select-sm.Djelomično.primljeno {
-    background: rgba(255, 149, 0, 0.1);
-    color: var(--warning);
+.status-select-mini.Djelomično.primljeno {
+    background-color: #fff3cd;
+    color: #856404;
 }
 
-.status-select-sm.Primljeno {
-    background: rgba(52, 199, 89, 0.1);
-    color: var(--success);
+.status-select-mini.Primljeno {
+    background-color: #d4edda;
+    color: #155724;
 }
 
 
-/* PROGRESS BAR MINI */
+/* PROGRESS BAR */
 .order-progress-mini {
-    margin-top: 12px;
+    margin: 0;
+    height: 3px;
+    background: transparent;
 }
 
 .progress-bar-bg {
-    height: 4px;
-    background: var(--border-light);
-    border-radius: 2px;
+    height: 100%;
+    background: #f0f0f0;
     overflow: hidden;
 }
 
 .progress-bar-fill {
     height: 100%;
-    border-radius: 2px;
     transition: width 0.3s ease;
 }
 
+
 /* EXPANDED CONTENT AREA */
 .order-expanded-content {
-    margin-top: 20px;
-    padding-top: 20px;
+    background: #fafafa;
+    /* Slightly different bg for expanded area */
     border-top: 1px solid var(--border-light);
-    animation: slideDown 0.3s ease;
+    padding: 24px;
+    animation: slideDown 0.25s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 @keyframes slideDown {
     from {
         opacity: 0;
-        transform: translateY(-10px);
+        transform: translateY(-8px);
     }
 
     to {
@@ -496,7 +521,7 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
-    margin-bottom: 16px;
+    margin-bottom: 20px;
 }
 
 .left-actions,
@@ -505,66 +530,48 @@
     gap: 8px;
 }
 
-/* ITEMS TABLE */
 .expanded-details {
-    background: var(--bg);
-    border-radius: 8px;
+    background: white;
+    border-radius: 12px;
+    border: 1px solid var(--border-light);
     overflow: hidden;
-    border: 1px solid var(--border);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.03);
 }
 
-.items-table-container {
-    overflow-x: auto;
-    max-height: 400px;
-}
-
-.items-table {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 13px;
-}
-
+/* ITEMS TABLE UPDATES */
 .items-table th {
-    background: var(--surface);
-    padding: 10px 16px;
-    text-align: left;
-    font-weight: 600;
-    color: var(--text-secondary);
-    border-bottom: 1px solid var(--border);
-    position: sticky;
-    top: 0;
-    z-index: 10;
+    background: #f9fafb;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    padding: 12px 16px;
 }
 
 .items-table td {
-    padding: 10px 16px;
-    border-bottom: 1px solid var(--border-light);
-    vertical-align: middle;
+    padding: 12px 16px;
 }
 
-.items-table tr:last-child td {
-    border-bottom: none;
+/* BATCH ACTIONS & FOOTER */
+.batch-actions {
+    padding: 10px 20px;
+    background: #e3f2fd;
+    color: #1976d2;
+    border-top: 1px solid rgba(25, 118, 210, 0.1);
 }
 
-.items-table tr:hover td {
-    background: rgba(0, 0, 0, 0.01);
+.order-footer-info {
+    padding: 14px 20px;
+    background: #fafafa;
+    border-top: 1px solid var(--border-light);
 }
 
-.item-name {
-    font-weight: 500;
-    color: var(--text-primary);
-}
-
-.item-sub {
-    font-size: 11px;
-    color: var(--text-secondary);
-}
-
+/* ==================== INNER ITEM STYLES ==================== */
 .qty-badge {
     background: var(--bg-secondary);
     padding: 2px 6px;
     border-radius: 4px;
     font-family: monospace;
+    font-size: 12px;
 }
 
 .qty-input-sm {
@@ -574,6 +581,7 @@
     border-radius: 4px;
     text-align: right;
     font-family: monospace;
+    font-size: 12px;
 }
 
 .status-dot {
@@ -595,33 +603,6 @@
     background: var(--success);
 }
 
-/* BATCH ACTIONS & FOOTER */
-.batch-actions {
-    padding: 8px 16px;
-    background: var(--accent-light);
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    font-size: 13px;
-    font-weight: 500;
-    color: var(--accent);
-    border-top: 1px solid var(--border-light);
-}
-
-.batch-btns {
-    display: flex;
-    gap: 8px;
-}
-
-.order-footer-info {
-    padding: 12px 16px;
-    background: var(--surface);
-    border-top: 1px solid var(--border-light);
-    display: flex;
-    justify-content: space-between;
-    font-size: 13px;
-    color: var(--text-secondary);
-}
 
 /* ==================== TABLET BREAKPOINT ==================== */
 @media (max-width: 1024px) {
