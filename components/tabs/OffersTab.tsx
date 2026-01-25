@@ -3,6 +3,7 @@
 import { useState, useMemo } from 'react';
 import type { Offer, Project, OfferProduct, Product } from '@/lib/types';
 import { getOffer, createOfferWithProducts, deleteOffer, updateOfferStatus, saveOffer, updateOfferWithProducts } from '@/lib/database';
+import { generateOfferPDF, type OfferPDFData } from '@/lib/pdfGenerator';
 import Modal from '@/components/ui/Modal';
 import { OFFER_STATUSES } from '@/lib/types';
 
@@ -1077,6 +1078,73 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
         }
     }
 
+    // ============================================
+    // DOWNLOAD PDF
+    // ============================================
+
+    async function handleDownloadPDF(offer: Offer) {
+        try {
+            // Calculate prices dynamically
+            const productsWithPrices = (offer.products || []).filter(p => p.Included !== false).map(p => {
+                const materialCost = p.Material_Cost || 0;
+                const margin = p.Margin || 0;
+                const extrasTotal = (p.extras || []).reduce((sum: number, e: any) => sum + (e.Total || e.total || 0), 0);
+                const laborWorkers = (p as any).Labor_Workers || (p as any).laborWorkers || 0;
+                const laborDays = (p as any).Labor_Days || (p as any).laborDays || 0;
+                const laborRate = (p as any).Labor_Daily_Rate || (p as any).laborDailyRate || 0;
+                const laborTotal = laborWorkers * laborDays * laborRate;
+
+                const sellingPrice = materialCost + margin + extrasTotal + laborTotal;
+                const totalPrice = sellingPrice * (p.Quantity || 1);
+
+                return {
+                    name: p.Product_Name,
+                    quantity: p.Quantity || 1,
+                    dimensions: undefined,
+                    materialCost: materialCost,
+                    laborCost: laborTotal,
+                    extras: (p.extras || []).map((e: any) => ({
+                        name: e.name || e.Name,
+                        total: e.total || e.Total || 0
+                    })),
+                    sellingPrice: sellingPrice || p.Selling_Price || 0,
+                    totalPrice: totalPrice || p.Total_Price || 0
+                };
+            });
+
+            const calculatedSubtotal = productsWithPrices.reduce((sum, p) => sum + p.totalPrice, 0);
+            const subtotal = calculatedSubtotal || offer.Subtotal || 0;
+            const transport = offer.Transport_Cost || 0;
+            const discount = offer.Onsite_Assembly ? (offer.Onsite_Discount || 0) : 0;
+            const total = subtotal + transport - discount;
+
+            const pdfData: OfferPDFData = {
+                offerNumber: offer.Offer_Number,
+                clientName: offer.Client_Name || 'Nepoznat klijent',
+                clientPhone: offer.Client_Phone,
+                clientEmail: offer.Client_Email,
+                createdDate: offer.Created_Date,
+                validUntil: offer.Valid_Until,
+                products: productsWithPrices,
+                subtotal: subtotal,
+                transportCost: transport,
+                discount: discount,
+                total: total,
+                notes: offer.Notes,
+                companyName: companyInfo.name,
+                companyAddress: companyInfo.address,
+                companyPhone: companyInfo.phone,
+                companyEmail: companyInfo.email
+            };
+
+            await generateOfferPDF(pdfData);
+            showToast('PDF ponude preuzet', 'success');
+        } catch (error) {
+            console.error('Error generating PDF:', error);
+            showToast('Greška pri generiranju PDF-a', 'error');
+        }
+    }
+
     const totals = calculateOfferTotals();
 
     const EXTRA_OPTIONS = [
@@ -1171,6 +1239,13 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
                                     </button>
                                     <button
                                         className="btn btn-sm btn-secondary"
+                                        onClick={() => handleDownloadPDF(offer)}
+                                        title="Preuzmi PDF"
+                                    >
+                                        <span className="material-icons-round">picture_as_pdf</span>
+                                    </button>
+                                    <button
+                                        className="btn btn-sm btn-secondary"
                                         onClick={() => handlePrintOffer(offer)}
                                         title="Štampaj ponudu"
                                     >
@@ -1199,7 +1274,7 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
                     setCurrentOffer(null);
                 }}
                 title={isEditMode ? `Uredi Ponudu: ${currentOffer?.Offer_Number || ''}` : 'Nova Ponuda'}
-                size="large"
+                size="xl"
                 footer={
                     <>
                         <button className="btn btn-secondary" onClick={() => {
@@ -1298,7 +1373,7 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
                                                                     <input
                                                                         type="number"
                                                                         className="clean-input"
-                                                                        value={product.margin}
+                                                                        value={product.margin || ''}
                                                                         onChange={(e) => updateProductMargin(index, parseFloat(e.target.value) || 0)}
                                                                         min="0"
                                                                         step="10"
@@ -1316,10 +1391,10 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
                                                                         <input
                                                                             type="number"
                                                                             className="clean-input"
-                                                                            value={product.laborWorkers}
+                                                                            value={product.laborWorkers || ''}
                                                                             onChange={(e) => {
                                                                                 const updated = [...offerProducts];
-                                                                                updated[index].laborWorkers = parseInt(e.target.value) || 0;
+                                                                                updated[index].laborWorkers = e.target.value === '' ? 0 : parseInt(e.target.value);
                                                                                 setOfferProducts(updated);
                                                                             }}
                                                                             min="0"
@@ -1331,10 +1406,10 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
                                                                         <input
                                                                             type="number"
                                                                             className="clean-input"
-                                                                            value={product.laborDays}
+                                                                            value={product.laborDays || ''}
                                                                             onChange={(e) => {
                                                                                 const updated = [...offerProducts];
-                                                                                updated[index].laborDays = parseInt(e.target.value) || 0;
+                                                                                updated[index].laborDays = e.target.value === '' ? 0 : parseInt(e.target.value);
                                                                                 setOfferProducts(updated);
                                                                             }}
                                                                             min="0"
@@ -1346,10 +1421,10 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
                                                                         <input
                                                                             type="number"
                                                                             className="clean-input"
-                                                                            value={product.laborDailyRate}
+                                                                            value={product.laborDailyRate || ''}
                                                                             onChange={(e) => {
                                                                                 const updated = [...offerProducts];
-                                                                                updated[index].laborDailyRate = parseFloat(e.target.value) || 0;
+                                                                                updated[index].laborDailyRate = e.target.value === '' ? 0 : parseFloat(e.target.value);
                                                                                 setOfferProducts(updated);
                                                                             }}
                                                                             min="0"
@@ -1408,9 +1483,9 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
 
                         {/* Right Column - Settings & Summary */}
                         {offerProducts.length > 0 && (
-                            <div className="offer-form-right">
+                            <div className="offer-form-right" style={{ display: 'flex', flexDirection: 'row', gap: '24px', alignItems: 'flex-start', flexWrap: 'wrap' }}>
                                 {/* Settings - Compact */}
-                                <div className="offer-settings-compact">
+                                <div className="offer-settings-compact" style={{ flex: 1, minWidth: '300px' }}>
                                     <h4>Postavke</h4>
 
                                     {/* Row 1: Transport + Vrijedi do */}
@@ -1493,7 +1568,7 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
                                 </div>
 
                                 {/* Summary */}
-                                <div className="offer-summary">
+                                <div className="offer-summary" style={{ width: '280px', flexShrink: 0 }}>
                                     <div className="offer-summary-rows">
                                         <div className="offer-summary-row">
                                             <span className="label">Proizvodi</span>

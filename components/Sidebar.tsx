@@ -10,11 +10,15 @@ interface SidebarProps {
     onClose: () => void;
     isCollapsed: boolean;
     onToggleCollapse: () => void;
+    onOpenSearch: () => void;
 }
 
-const Sidebar: React.FC<SidebarProps> = ({ activeTab, onTabChange, isOpen, onClose, isCollapsed, onToggleCollapse }) => {
+const Sidebar: React.FC<SidebarProps> = ({ activeTab, onTabChange, isOpen, onClose, isCollapsed, onToggleCollapse, onOpenSearch }) => {
     const router = useRouter();
     const { user, organization, hasModule, signOut } = useAuth();
+
+    // Default collapsed as requested ("close it so I can expand when needed")
+    const [isManagementExpanded, setIsManagementExpanded] = React.useState(false);
 
     const handleLogout = async () => {
         await signOut();
@@ -74,6 +78,25 @@ const Sidebar: React.FC<SidebarProps> = ({ activeTab, onTabChange, isOpen, onClo
 
                 {/* Navigation */}
                 <nav className="sidebar-nav">
+                    <button
+                        className="nav-item search-btn"
+                        onClick={() => {
+                            onOpenSearch();
+                            if (window.innerWidth <= 768) onClose();
+                        }}
+                        title={isCollapsed ? "Pretraga (Ctrl+K)" : undefined}
+                    >
+                        <span className="material-icons-round">search</span>
+                        {!isCollapsed && (
+                            <div className="nav-label-group">
+                                <span className="nav-label">Pretraga</span>
+                                <span className="nav-shortcut">Ctrl+K</span>
+                            </div>
+                        )}
+                    </button>
+
+                    <div className="nav-divider"></div>
+
                     <NavItem id="projects" icon="folder" label="Projekti" />
                     <NavItem id="overview" icon="dashboard" label="Pregled" />
                     <NavItem
@@ -92,11 +115,30 @@ const Sidebar: React.FC<SidebarProps> = ({ activeTab, onTabChange, isOpen, onClo
 
                     <div className="nav-divider"></div>
 
-                    {!isCollapsed && <div className="nav-section-label">Upravljanje</div>}
+                    {!isCollapsed ? (
+                        <button
+                            className="nav-section-label clickable"
+                            onClick={() => setIsManagementExpanded(!isManagementExpanded)}
+                            title={isManagementExpanded ? "Sklopi" : "Proširi"}
+                        >
+                            <span>Upravljanje</span>
+                            <span className="material-icons-round" style={{ fontSize: '16px' }}>
+                                {isManagementExpanded ? 'expand_more' : 'chevron_right'}
+                            </span>
+                        </button>
+                    ) : (
+                        <div className="nav-divider"></div> // Extra spacer in collapsed mode if needed, or just nothing? 
+                        // Actually, let's just keep the divider above.
+                        // In collapsed mode, we don't show the label.
+                    )}
 
-                    <NavItem id="materials" icon="inventory_2" label="Materijali" />
-                    <NavItem id="workers" icon="people" label="Radnici" />
-                    <NavItem id="suppliers" icon="store" label="Dobavljači" />
+                    {(isManagementExpanded || isCollapsed) && (
+                        <>
+                            <NavItem id="materials" icon="inventory_2" label="Materijali" />
+                            <NavItem id="workers" icon="people" label="Radnici" />
+                            <NavItem id="suppliers" icon="store" label="Dobavljači" />
+                        </>
+                    )}
                 </nav>
 
                 {/* User Profile */}

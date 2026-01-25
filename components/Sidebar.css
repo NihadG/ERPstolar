@@ -100,6 +100,22 @@
     text-transform: uppercase;
 }
 
+.nav-section-label.clickable {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    transition: color 0.2s;
+}
+
+.nav-section-label.clickable:hover {
+    color: var(--text-primary);
+    background: var(--surface-hover);
+}
+
 @media (max-width: 768px) {
     .collapse-btn {
         display: none;
@@ -113,7 +129,11 @@
 /* Mobile State */
 @media (max-width: 768px) {
     .sidebar {
-        transform: translateX(-100%);
+        left: auto;
+        right: 0;
+        border-right: none;
+        border-left: 1px solid var(--border-light);
+        transform: translateX(100%);
     }
 
     .sidebar.open {
@@ -316,7 +336,7 @@
 
 .menu-trigger {
     padding: 8px;
-    margin-left: -8px;
+    margin-right: -8px;
     border: none;
     background: transparent;
     color: var(--text-primary);
@@ -325,4 +345,22 @@
 .menu-trigger:active {
     background: var(--surface);
     border-radius: 8px;
+}
+
+/* Search Button Styles */
+.nav-label-group {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    line-height: 1.2;
+}
+
+.nav-shortcut {
+    font-size: 10px;
+    color: var(--text-secondary);
+    font-weight: 500;
+}
+
+.sidebar.collapsed .nav-item.search-btn {
+    justify-content: center;
 }

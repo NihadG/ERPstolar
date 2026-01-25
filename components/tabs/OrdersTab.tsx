@@ -3,6 +3,8 @@
 import { useState, useMemo, useEffect } from 'react';
 import type { Order, Supplier, Project, ProductMaterial, OrderItem } from '@/lib/types';
 import { createOrder, deleteOrder, updateOrderStatus, markOrderSent, markMaterialsReceived, getOrder, deleteOrderItemsByIds, updateOrderItem, recalculateOrderTotal } from '@/lib/database';
+import { generateOrderPDF, generatePDFFromHTML, type OrderPDFData } from '@/lib/pdfGenerator';
+import { DropdownMenu } from '@/components/ui/DropdownMenu';
 import Modal from '@/components/ui/Modal';
 import { OrderWizardModal } from './OrderWizardModal';
 import { ORDER_STATUSES, MATERIAL_STATUSES } from '@/lib/types';
@@ -636,7 +638,6 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
         const aluDoorItems: { item: OrderItem; doors: any[] }[] = [];
 
         (currentOrder.items || []).forEach(item => {
-            // Find associated material to check for glass/alu door items
             let foundGlass = false;
             let foundAluDoor = false;
 
@@ -662,7 +663,19 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
             }
         });
 
-        // Generate print HTML
+        const html = generateOrderHtml(currentOrder, supplier, regularItems, glassItems, aluDoorItems);
+
+        // Print
+        const printWindow = window.open('', '_blank');
+        if (printWindow) {
+            printWindow.document.write(html);
+            printWindow.document.close();
+            printWindow.focus();
+            setTimeout(() => printWindow.print(), 250);
+        }
+    }
+
+    function generateOrderHtml(order: Order, supplier: Supplier | undefined, regularItems: any[], glassItems: any[], aluDoorItems: any[]) {
         const regularTableHtml = regularItems.length > 0 ? `
             <h3 style="margin: 24px 0 12px; font-size: 14px; font-weight: 600;">Materijali</h3>
             <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
@@ -670,7 +683,7 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
                     <tr style="background: #f5f5f7;">
                         <th style="padding: 10px; text-align: left; border-bottom: 1px solid #e5e5e5;">#</th>
                         <th style="padding: 10px; text-align: left; border-bottom: 1px solid #e5e5e5;">Materijal</th>
-                        <th style="padding: 10px; text-align: right; border-bottom: 1px solid #e5e5e5;">Količina</th>
+                        <th style="padding: 10px; text-align: right; border-bottom: 1px solid #e5e5e5;">Količina</th>
                         <th style="padding: 10px; text-align: left; border-bottom: 1px solid #e5e5e5;">Jedinica</th>
                     </tr>
                 </thead>
@@ -763,7 +776,7 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
                                         <div><span style="color: #86868b;">Ram:</span> ${d.Frame_Type || '-'}${d.Frame_Color ? ', ' + d.Frame_Color : ''}</div>
                                         <div><span style="color: #86868b;">Staklo:</span> ${d.Glass_Type || '-'}</div>
                                         <div><span style="color: #86868b;">Baglame:</span> ${d.Hinge_Type || '-'}, ${d.Hinge_Side || 'lijevo'}${d.Hinge_Color ? ', ' + d.Hinge_Color : ''}</div>
-                                        ${d.Integrated_Handle ? '<div><span style="color: #86868b;">Ručka:</span> Integrisana</div>' : ''}
+                                        ${d.Integrated_Handle ? '<div><span style="color: #86868b;">Ručka:</span> Integrisana</div>' : ''}
                                         ${d.Note ? `<div style="margin-top: 6px; font-style: italic; color: #6e6e73;"><span style="color: #86868b;">Napomena:</span> ${d.Note}</div>` : ''}
                                     </div>
                                 </div>
@@ -774,75 +787,128 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
         }).join('')}
         ` : '';
 
-        const printHtml = `
+        return `
             <!DOCTYPE html>
             <html>
             <head>
                 <meta charset="utf-8">
-                <title>Narudžba ${currentOrder.Order_Number}</title>
+                <title>Narudžba ${order.Order_Number}</title>
                 <style>
-                    * { box-sizing: border-box; margin: 0; padding: 0; }
-                    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; padding: 40px; color: #1d1d1f; }
-                    .header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 32px; padding-bottom: 24px; border-bottom: 2px solid #1d1d1f; }
-                    .company-info { display: flex; flex-direction: column; gap: 6px; }
-                    .company-logo { max-width: 180px; max-height: 60px; width: auto; height: auto; object-fit: contain; }
-                    .company-name { font-size: 20px; font-weight: 700; letter-spacing: -0.3px; color: #1d1d1f; margin: 0; }
-                    .company-details p { font-size: 11px; color: #86868b; margin: 0 0 2px 0; }
-                    .order-info { text-align: right; font-size: 14px; }
-                    .order-number { font-size: 18px; font-weight: 600; }
-                    .supplier-section { background: #f5f5f7; padding: 16px; border-radius: 12px; margin-bottom: 24px; }
-                    .supplier-name { font-size: 16px; font-weight: 600; margin-bottom: 4px; }
-                    .supplier-contact { font-size: 13px; color: #86868b; }
-                    .notes { margin-top: 24px; padding: 12px 16px; background: #fffaf0; border-radius: 8px; border-left: 3px solid #f5a623; font-size: 13px; }
-                    .footer { margin-top: 32px; padding-top: 16px; border-top: 1px solid #e5e5e5; font-size: 12px; color: #86868b; display: flex; justify-content: space-between; }
-                    @media print { body { padding: 20px; } }
+                    .print-layout * { box-sizing: border-box; margin: 0; padding: 0; }
+                    .print-layout { 
+                        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; 
+                        padding: 40px; 
+                        color: #1d1d1f; 
+                        background: white; 
+                        width: 100%;
+                    }
+                    .print-layout .header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 32px; padding-bottom: 24px; border-bottom: 2px solid #1d1d1f; }
+                    .print-layout .company-info { display: flex; flex-direction: column; gap: 6px; }
+                    .print-layout .company-logo { max-width: 180px; max-height: 60px; width: auto; height: auto; object-fit: contain; }
+                    .print-layout .company-name { font-size: 20px; font-weight: 700; letter-spacing: -0.3px; color: #1d1d1f; margin: 0; }
+                    .print-layout .company-details p { font-size: 11px; color: #86868b; margin: 0 0 2px 0; }
+                    .print-layout .order-info { text-align: right; font-size: 14px; }
+                    .print-layout .order-number { font-size: 18px; font-weight: 600; }
+                    .print-layout .supplier-section { background: #f5f5f7; padding: 16px; border-radius: 12px; margin-bottom: 24px; }
+                    .print-layout .supplier-name { font-size: 16px; font-weight: 600; margin-bottom: 4px; }
+                    .print-layout .supplier-contact { font-size: 13px; color: #86868b; }
+                    .print-layout .notes { margin-top: 24px; padding: 12px 16px; background: #fffaf0; border-radius: 8px; border-left: 3px solid #f5a623; font-size: 13px; }
+                    .print-layout .footer { margin-top: 32px; padding-top: 16px; border-top: 1px solid #e5e5e5; font-size: 12px; color: #86868b; display: flex; justify-content: space-between; }
+                    @media print { 
+                        .print-layout { padding: 20px; } 
+                        body { margin: 0; padding: 0; }
+                    }
                 </style>
             </head>
             <body>
-                <div class="header">
-                    <div class="company-info">
-                        ${companyInfo.logoBase64 ? `<img class="company-logo" src="${companyInfo.logoBase64}" alt="${companyInfo.name}" />` : ''}
-                        ${(!companyInfo.logoBase64 || !companyInfo.hideNameWhenLogo) ? `<h1 class="company-name">${companyInfo.name}</h1>` : ''}
-                        <div class="company-details">
-                            <p>${companyInfo.address}</p>
-                            <p>${[companyInfo.phone, companyInfo.email].filter(Boolean).join(' · ')}</p>
+                <div class="print-layout">
+                    <div class="header">
+                        <div class="company-info">
+                            ${companyInfo.logoBase64 ? `<img class="company-logo" src="${companyInfo.logoBase64}" alt="${companyInfo.name}" />` : ''}
+                            ${(!companyInfo.logoBase64 || !companyInfo.hideNameWhenLogo) ? `<h1 class="company-name">${companyInfo.name}</h1>` : ''}
+                            <div class="company-details">
+                                <p>${companyInfo.address}</p>
+                                <p>${[companyInfo.phone, companyInfo.email].filter(Boolean).join(' · ')}</p>
+                            </div>
+                        </div>
+                        <div class="order-info">
+                            <div class="order-number">Narudžba: ${order.Order_Number}</div>
+                            <div>Datum: ${formatDate(order.Order_Date)}</div>
                         </div>
                     </div>
-                    <div class="order-info">
-                        <div class="order-number">Narudžba: ${currentOrder.Order_Number}</div>
-                        <div>Datum: ${formatDate(currentOrder.Order_Date)}</div>
+                    
+                    <div class="supplier-section">
+                        <div class="supplier-name">${order.Supplier_Name || 'Dobavljač'}</div>
+                        <div class="supplier-contact">
+                            ${[supplier?.Phone, supplier?.Email, supplier?.Address].filter(Boolean).join(' | ')}
+                        </div>
                     </div>
-                </div>
-                
-                <div class="supplier-section">
-                    <div class="supplier-name">${currentOrder.Supplier_Name || 'Dobavljač'}</div>
-                    <div class="supplier-contact">
-                        ${[supplier?.Phone, supplier?.Email, supplier?.Address].filter(Boolean).join(' | ')}
+
+                    ${regularTableHtml}
+                    ${glassTableHtml}
+                    ${aluDoorHtml}
+
+                    ${order.Notes ? `<div class="notes"><strong>Napomena:</strong> ${order.Notes}</div>` : ''}
+
+                    <div class="footer">
+                        <span>Očekivana dostava: ${order.Expected_Delivery ? formatDate(order.Expected_Delivery) : 'Po dogovoru'}</span>
+                        <span>Ukupno stavki: ${order.items?.length || 0}</span>
                     </div>
-                </div>
-
-                ${regularTableHtml}
-                ${glassTableHtml}
-                ${aluDoorHtml}
-
-                ${currentOrder.Notes ? `<div class="notes"><strong>Napomena:</strong> ${currentOrder.Notes}</div>` : ''}
-
-                <div class="footer">
-                    <span>Očekivana dostava: ${currentOrder.Expected_Delivery ? formatDate(currentOrder.Expected_Delivery) : 'Po dogovoru'}</span>
-                    <span>Ukupno stavki: ${currentOrder.items?.length || 0}</span>
                 </div>
             </body>
             </html>
         `;
+    }
 
-        const printWindow = window.open('', '_blank');
-        if (printWindow) {
-            printWindow.document.write(printHtml);
-            printWindow.document.close();
-            printWindow.focus();
-            setTimeout(() => printWindow.print(), 250);
+    // Download order as PDF
+    async function downloadOrderPDF(order: Order) {
+        try {
+            const supplier = suppliers.find(s => s.Supplier_ID === order.Supplier_ID);
+
+            // Re-use logic for grouped items to ensure consistency
+            const regularItems: OrderItem[] = [];
+            const glassItems: { item: OrderItem; pieces: any[] }[] = [];
+            const aluDoorItems: { item: OrderItem; doors: any[] }[] = [];
+
+            (order.items || []).forEach(item => {
+                let foundGlass = false;
+                let foundAluDoor = false;
+
+                for (const project of projects) {
+                    for (const product of (project.products || [])) {
+                        const pm = product.materials?.find(m => m.ID === item.Product_Material_ID);
+                        if (pm?.glassItems && pm.glassItems.length > 0) {
+                            glassItems.push({ item, pieces: pm.glassItems });
+                            foundGlass = true;
+                            break;
+                        }
+                        if (pm?.aluDoorItems && pm.aluDoorItems.length > 0) {
+                            aluDoorItems.push({ item, doors: pm.aluDoorItems });
+                            foundAluDoor = true;
+                            break;
+                        }
+                    }
+                    if (foundGlass || foundAluDoor) break;
+                }
+
+                if (!foundGlass && !foundAluDoor) {
+                    regularItems.push(item);
+                }
+            });
+
+            // Re-use the EXACT same HTML generator as print
+            const html = generateOrderHtml(order, supplier, regularItems, glassItems, aluDoorItems);
+
+            await generatePDFFromHTML(html, `Narudzba_${order.Order_Number}`, {
+                width: 794 // A4 width at 96 DPI
+            });
+            showToast('PDF narudžbe preuzet', 'success');
+        } catch (error) {
+            console.error('Error generating PDF:', error);
+            showToast('Greška pri generiranju PDF-a', 'error');
         }
     }
+
 
     async function handleReceiveItems(itemIds: string[]) {
         const result = await markMaterialsReceived(itemIds);
@@ -871,128 +937,112 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
 
     return (
         <div className="orders-page">
-            {/* Page Header */}
-            <div className="page-header">
+            {/* Sticky Header */}
+            <header className="page-header">
+                {/* Top Row: Title & Search & Main Action */}
                 <div className="header-content">
                     <div className="header-text">
-                        <h1>Narudžbe</h1>
-                        <p>Upravljajte narudžbama materijala prema dobavljačima.</p>
+                        <h1>Radni Nalozi</h1>
                     </div>
-                    <div className="header-actions">
-                        <button
-                            className={`filter-toggle ${isFiltersOpen ? 'active' : ''}`}
-                            onClick={() => setIsFiltersOpen(!isFiltersOpen)}
-                        >
-                            <span className="material-icons-round">filter_list</span>
-                            <span>{isFiltersOpen ? 'Sakrij pretragu' : 'Pretraga i filteri'}</span>
-                            <span className="material-icons-round">{isFiltersOpen ? 'expand_less' : 'expand_more'}</span>
-                        </button>
-                        <button className="btn btn-primary" onClick={openWizard}>
-                            <span className="material-icons-round">add</span>
-                            Nova Narudžba
-                        </button>
-                    </div>
-                </div>
-            </div>
 
-            {/* Collapsible Control Bar */}
-            <div className={`control-bar ${isFiltersOpen ? 'open' : ''}`}>
-                <div className="control-bar-inner">
-                    <div className="controls-row">
-                        {/* Search */}
-                        <div className="search-box">
+                    <div className="header-controls">
+                        {/* Apple-style Search */}
+                        <div className="search-box-apple">
                             <span className="material-icons-round">search</span>
                             <input
                                 type="text"
-                                placeholder="Pretraži po broju ili dobavljaču..."
+                                placeholder="Pretraži..."
                                 value={searchTerm}
                                 onChange={(e) => setSearchTerm(e.target.value)}
                             />
                         </div>
 
-                        <div className="divider"></div>
-
-                        {/* Status Pills */}
-                        <div className="status-pills">
-                            {statusOptions.map(opt => (
-                                <button
-                                    key={opt.value}
-                                    className={`status-pill ${statusFilter === opt.value ? 'active' : ''} ${opt.value ? `status-${opt.value.toLowerCase().replace(/\s+/g, '-')}` : ''}`}
-                                    onClick={() => setStatusFilter(opt.value)}
-                                >
-                                    {opt.label}
-                                </button>
-                            ))}
-                        </div>
-
-                        <div className="divider"></div>
-
-                        {/* Grouping */}
-                        <div className="group-control">
-                            <span className="group-label">Grupiši:</span>
-                            <div className="group-dropdown">
-                                <select value={groupBy} onChange={(e) => setGroupBy(e.target.value as GroupBy)}>
-                                    {groupingOptions.map(opt => (
-                                        <option key={opt.value} value={opt.value}>{opt.label}</option>
-                                    ))}
-                                </select>
-                                <span className="material-icons-round">expand_more</span>
-                            </div>
-                        </div>
-                    </div>
-
-                    {/* Secondary filter row */}
-                    <div className="controls-row secondary">
-                        {/* Supplier Filter */}
-                        <div className="filter-group">
-                            <label>Dobavljač:</label>
-                            <select value={supplierFilter} onChange={(e) => setSupplierFilter(e.target.value)}>
-                                <option value="">Svi dobavljači</option>
-                                {orderSuppliers.map(s => (
-                                    <option key={s} value={s}>{s}</option>
-                                ))}
-                            </select>
-                        </div>
-
-                        {/* Project Filter */}
-                        <div className="filter-group">
-                            <label>Projekt:</label>
-                            <select value={projectFilter} onChange={(e) => setProjectFilter(e.target.value)}>
-                                <option value="">Svi projekti</option>
-                                {orderProjects.map(p => (
-                                    <option key={p.Project_ID} value={p.Project_ID}>{p.Client_Name}</option>
-                                ))}
-                            </select>
-                        </div>
-
-                        {/* Date Range */}
-                        <div className="filter-group">
-                            <label>Od:</label>
-                            <input
-                                type="date"
-                                value={dateFromFilter}
-                                onChange={(e) => setDateFromFilter(e.target.value)}
-                            />
-                        </div>
-                        <div className="filter-group">
-                            <label>Do:</label>
-                            <input
-                                type="date"
-                                value={dateToFilter}
-                                onChange={(e) => setDateToFilter(e.target.value)}
-                            />
-                        </div>
-
-                        {/* Clear filters */}
-                        {hasActiveFilters && (
-                            <button className="btn btn-text" onClick={clearFilters}>
-                                <span className="material-icons-round">close</span>
-                                Očisti filtere
-                            </button>
-                        )}
+                        {/* New Order Button */}
+                        <button className="btn-primary-apple" onClick={openWizard}>
+                            <span className="material-icons-round">add</span>
+                            Novi Nalog
+                        </button>
                     </div>
                 </div>
-            </div>
+
+                {/* Bottom Row: Horizontal Filters */}
+                <div className="filters-bar">
+                    {/* Status Pills */}
+                    <button
+                        className={`filter-pill ${statusFilter === '' ? 'active' : ''}`}
+                        onClick={() => setStatusFilter('')}
+                    >
+                        Sve
+                    </button>
+                    {ORDER_STATUSES.filter(s => s !== 'Potvrđeno' && s !== 'Isporučeno').map(status => (
+                        <button
+                            key={status}
+                            className={`filter-pill ${statusFilter === status ? 'active' : ''}`}
+                            onClick={() => setStatusFilter(status)}
+                        >
+                            {status}
+                        </button>
+                    ))}
+
+                    <div className="divider-vertical"></div>
+
+                    {/* Group By Dropdown */}
+                    <div className="filter-select-wrapper">
+                        <select
+                            className="filter-select"
+                            value={groupBy}
+                            onChange={(e) => setGroupBy(e.target.value as GroupBy)}
+                        >
+                            {groupingOptions.map(opt => (
+                                <option key={opt.value} value={opt.value}>Grupiši: {opt.label}</option>
+                            ))}
+                        </select>
+                        <span className="material-icons-round filter-select-icon">expand_more</span>
+                    </div>
+
+                    {/* Supplier Filter */}
+                    <div className="filter-select-wrapper">
+                        <select
+                            className="filter-select"
+                            value={supplierFilter}
+                            onChange={(e) => setSupplierFilter(e.target.value)}
+                        >
+                            <option value="">Svi dobavljači</option>
+                            {orderSuppliers.map(s => (
+                                <option key={s} value={s}>{s}</option>
+                            ))}
+                        </select>
+                        <span className="material-icons-round filter-select-icon">expand_more</span>
+                    </div>
+
+                    {/* Project Filter */}
+                    <div className="filter-select-wrapper">
+                        <select
+                            className="filter-select"
+                            value={projectFilter}
+                            onChange={(e) => setProjectFilter(e.target.value)}
+                        >
+                            <option value="">Svi projekti</option>
+                            {orderProjects.map(p => (
+                                <option key={p.Project_ID} value={p.Project_ID}>{p.Client_Name}</option>
+                            ))}
+                        </select>
+                        <span className="material-icons-round filter-select-icon">expand_more</span>
+                    </div>
+
+                    {/* Clear Filters (if active) */}
+                    {hasActiveFilters && (
+                        <button
+                            className="filter-pill"
+                            style={{ color: '#ff3b30' }}
+                            onClick={clearFilters}
+                        >
+                            <span className="material-icons-round" style={{ fontSize: 16, marginRight: 4, verticalAlign: 'text-bottom' }}>close</span>
+                            Očisti
+                        </button>
+                    )}
+                </div>
+            </header>
 
             {/* Grouped Content */}
             <div className="orders-content">
@@ -1082,12 +1132,7 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
                                                                 <span className="material-icons-round" style={{ fontSize: 14 }}>calendar_today</span>
                                                                 {formatDate(order.Order_Date)}
                                                             </span>
-                                                            <span>•</span>
-                                                            <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                                                                <span className="material-icons-round" style={{ fontSize: 14 }}>inventory_2</span>
-                                                                {itemCount} stavki
-                                                            </span>
-                                                            <span>•</span>
+                                                            <span className="meta-separator">•</span>
                                                             <span style={{ fontWeight: 600 }}>{formatCurrency(order.Total_Amount || 0)}</span>
                                                         </div>
                                                     </div>
@@ -1108,22 +1153,36 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
                                                             </button>
                                                         )}
 
-                                                        <button className="icon-btn-custom action-item" onClick={() => {
-                                                            setExpandedOrderId(order.Order_ID);
-                                                            setTimeout(() => printOrderDocument(), 100);
-                                                        }} title="Printaj">
-                                                            <span className="material-icons-round">print</span>
-                                                        </button>
-
-                                                        {order.Status === 'Nacrt' && (
-                                                            <button className="icon-btn-custom action-item" onClick={() => handleSendOrder(order.Order_ID)} title="Pošalji">
-                                                                <span className="material-icons-round">send</span>
+                                                        <DropdownMenu trigger={
+                                                            <button className="icon-btn-custom action-item" title="Opcije">
+                                                                <span className="material-icons-round">more_vert</span>
                                                             </button>
-                                                        )}
+                                                        }>
+                                                            <div className="dropdown-item" onClick={() => downloadOrderPDF(order)}>
+                                                                <span className="material-icons-round" style={{ fontSize: 18 }}>picture_as_pdf</span>
+                                                                Preuzmi PDF
+                                                            </div>
 
-                                                        <button className="icon-btn-custom danger action-item" onClick={() => handleDeleteOrder(order.Order_ID)} title="Obriši">
-                                                            <span className="material-icons-round">delete</span>
-                                                        </button>
+                                                            <div className="dropdown-item" onClick={() => {
+                                                                setExpandedOrderId(order.Order_ID);
+                                                                setTimeout(() => printOrderDocument(), 100);
+                                                            }}>
+                                                                <span className="material-icons-round" style={{ fontSize: 18 }}>print</span>
+                                                                Printaj
+                                                            </div>
+
+                                                            {order.Status.toLowerCase() === 'nacrt' && (
+                                                                <div className="dropdown-item" onClick={() => handleSendOrder(order.Order_ID)}>
+                                                                    <span className="material-icons-round" style={{ fontSize: 18 }}>send</span>
+                                                                    Pošalji
+                                                                </div>
+                                                            )}
+
+                                                            <div className="dropdown-item danger" onClick={() => handleDeleteOrder(order.Order_ID)}>
+                                                                <span className="material-icons-round" style={{ fontSize: 18 }}>delete</span>
+                                                                Obriši
+                                                            </div>
+                                                        </DropdownMenu>
                                                     </div>
                                                 </div>
 

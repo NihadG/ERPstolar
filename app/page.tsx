@@ -21,6 +21,7 @@ import Toast from '@/components/ui/Toast';
 import LoadingOverlay from '@/components/ui/LoadingOverlay';
 import ModuleGuard from '@/components/auth/ModuleGuard';
 import Sidebar from '@/components/Sidebar';
+import CommandPalette, { type CommandPaletteItem } from '@/components/ui/CommandPalette';
 
 export const dynamic = 'force-dynamic';
 
@@ -34,6 +35,48 @@ export default function Home() {
     const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
     const [loading, setLoading] = useState(true);
     const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null);
+
+    // Command Palette state
+    const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
+
+    // Swipe handling state
+    const [touchStart, setTouchStart] = useState<{ x: number, y: number } | null>(null);
+
+    function handleTouchStart(e: React.TouchEvent) {
+        setTouchStart({ x: e.touches[0].clientX, y: e.touches[0].clientY });
+    }
+
+    function handleTouchEnd(e: React.TouchEvent) {
+        if (!touchStart) return;
+
+        const touchEndX = e.changedTouches[0].clientX;
+        const touchEndY = e.changedTouches[0].clientY;
+
+        const diffX = touchEndX - touchStart.x;
+        const diffY = touchEndY - touchStart.y;
+
+        // Reset
+        setTouchStart(null);
+
+        // Ignore if vertical swipe is significant (scrolling)
+        if (Math.abs(diffY) > 50) return;
+
+        const SWIPE_THRESHOLD = 50;
+        const EDGE_THRESHOLD = 50; // Must start within 50px of edge to open
+
+        // Swipe Left (Open Sidebar) - must start from right edge
+        if (diffX < -SWIPE_THRESHOLD) {
+            const screenWidth = window.innerWidth;
+            if (touchStart.x > screenWidth - EDGE_THRESHOLD && !userMenuOpen) {
+                setUserMenuOpen(true);
+            }
+        }
+
+        // Swipe Right (Close Sidebar) - if sidebar is open
+        if (diffX > SWIPE_THRESHOLD && userMenuOpen) {
+            setUserMenuOpen(false);
+        }
+    }
 
     const [appState, setAppState] = useState<AppState>({
         projects: [],
@@ -68,6 +111,36 @@ export default function Home() {
 
         document.addEventListener('mousedown', handleClickOutside);
         return () => document.removeEventListener('mousedown', handleClickOutside);
+    }, []);
+
+    // Global keyboard shortcuts
+    useEffect(() => {
+        function handleKeyDown(e: KeyboardEvent) {
+            // Ctrl+K or Cmd+K - Open Command Palette
+            if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+                e.preventDefault();
+                setCommandPaletteOpen(prev => !prev);
+            }
+            // Ctrl+N or Cmd+N - New Project (when not in input)
+            if ((e.ctrlKey || e.metaKey) && e.key === 'n' && !isInputFocused()) {
+                e.preventDefault();
+                setActiveTab('projects');
+                showToast('Otvori novi projekt iz Projekti taba', 'info');
+            }
+            // Ctrl+O or Cmd+O - Go to Orders
+            if ((e.ctrlKey || e.metaKey) && e.key === 'o' && !isInputFocused()) {
+                e.preventDefault();
+                setActiveTab('orders');
+            }
+        }
+
+        function isInputFocused() {
+            const active = document.activeElement;
+            return active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement || active instanceof HTMLSelectElement;
+        }
+
+        document.addEventListener('keydown', handleKeyDown);
+        return () => document.removeEventListener('keydown', handleKeyDown);
     }, []);
 
     // Redirect to login if not authenticated
@@ -147,7 +220,11 @@ export default function Home() {
     }
 
     return (
-        <div className="app-container">
+        <div
+            className="app-container"
+            onTouchStart={handleTouchStart}
+            onTouchEnd={handleTouchEnd}
+        >
             {/* Sidebar Navigation */}
             <Sidebar
                 activeTab={activeTab}
@@ -156,26 +233,29 @@ export default function Home() {
                 onClose={() => setUserMenuOpen(false)}
                 isCollapsed={sidebarCollapsed}
                 onToggleCollapse={() => setSidebarCollapsed(!sidebarCollapsed)}
+                onOpenSearch={() => setCommandPaletteOpen(true)}
             />
 
             {/* Main Content Area */}
             <div className={`main-content-wrapper ${sidebarCollapsed ? 'sidebar-collapsed' : ''}`}>
                 {/* Mobile Header */}
                 <header className="mobile-header">
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                        <span className="logo-text" style={{ fontSize: '16px' }}>Furniture Prod.</span>
+                        <div className="user-avatar-small" style={{
+                            width: '32px', height: '32px', borderRadius: '50%',
+                            background: '#e3f2fd', color: '#0071e3', display: 'flex',
+                            alignItems: 'center', justifyContent: 'center', fontSize: '12px', fontWeight: 'bold'
+                        }}>
+                            {getUserInitials()}
+                        </div>
+                    </div>
                     <button
                         className="menu-trigger"
                         onClick={() => setUserMenuOpen(true)}
                     >
                         <span className="material-icons-round">menu</span>
                     </button>
-                    <span className="logo-text" style={{ fontSize: '16px' }}>Furniture Prod.</span>
-                    <div className="user-avatar-small" style={{
-                        width: '32px', height: '32px', borderRadius: '50%',
-                        background: '#e3f2fd', color: '#0071e3', display: 'flex',
-                        alignItems: 'center', justifyContent: 'center', fontSize: '12px', fontWeight: 'bold'
-                    }}>
-                        {getUserInitials()}
-                    </div>
                 </header>
 
                 {/* Content */}
@@ -195,6 +275,7 @@ export default function Home() {
                             projects={appState.projects}
                             workOrders={appState.workOrders}
                             orders={appState.orders}
+                            suppliers={appState.suppliers}
                             showToast={showToast}
                             onCreateOrder={handleCreateOrderFromOverview}
                             onRefresh={loadData}
@@ -311,6 +392,39 @@ export default function Home() {
                     }
                 }
             `}</style>
+
+            {/* Command Palette */}
+            <CommandPalette
+                isOpen={commandPaletteOpen}
+                onClose={() => setCommandPaletteOpen(false)}
+                items={[
+                    // Quick Actions
+                    { id: 'action-projects', type: 'action', title: 'Idi na Projekte', shortcut: 'Ctrl+N', action: () => setActiveTab('projects') },
+                    { id: 'action-orders', type: 'action', title: 'Idi na Narudžbe', shortcut: 'Ctrl+O', action: () => setActiveTab('orders') },
+                    { id: 'action-overview', type: 'action', title: 'Idi na Pregled', action: () => setActiveTab('overview') },
+                    { id: 'action-offers', type: 'action', title: 'Idi na Ponude', action: () => setActiveTab('offers') },
+                    { id: 'action-production', type: 'action', title: 'Idi na Proizvodnju', action: () => setActiveTab('production') },
+                    // Projects
+                    ...appState.projects.map(p => ({
+                        id: `project-${p.Project_ID}`,
+                        type: 'project' as const,
+                        title: p.Client_Name,
+                        subtitle: `${p.Address || 'Bez adrese'} • ${p.Status}`,
+                        action: () => { setActiveTab('projects'); showToast(`Projekat: ${p.Client_Name}`, 'info'); }
+                    })),
+                    // Orders
+                    ...appState.orders.map(o => ({
+                        id: `order-${o.Order_ID}`,
+                        type: 'order' as const,
+                        title: `Narudžba ${o.Order_Number}`,
+                        subtitle: `${o.Supplier_Name} • ${o.Status}`,
+                        action: () => { setActiveTab('orders'); }
+                    })),
+                ]}
+                onSelect={(item) => {
+                    if (item.action) item.action();
+                }}
+            />
         </div>
     );
 }

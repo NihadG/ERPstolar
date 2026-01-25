@@ -467,14 +467,6 @@ export default function ProjectsTab({ projects, materials, workOrders = [], onRe
                                     <div className="project-main-info">
                                         <div className="project-title-section">
                                             <div className="project-name">{project.Client_Name}</div>
-                                            <div className="project-badges">
-                                                <span className={`status-badge ${getStatusClass(project.Status)}`}>
-                                                    {project.Status}
-                                                </span>
-                                                <span className="mode-badge">
-                                                    {project.Production_Mode === 'PreCut' ? 'Gotovi elementi' : 'Vlastita obrada'}
-                                                </span>
-                                            </div>
                                         </div>
                                         <div className="project-details">
                                             {project.Address && <div className="project-client">{project.Address}</div>}
@@ -487,19 +479,30 @@ export default function ProjectsTab({ projects, materials, workOrders = [], onRe
                                         </div>
                                     </div>
 
-                                    <div className="project-actions" onClick={(e) => e.stopPropagation()}>
-                                        <button className="icon-btn" onClick={() => {
-                                            setReportProject(project);
-                                            setReportModal(true);
-                                        }} title="Izvještaj o materijalima">
-                                            <span className="material-icons-round">summarize</span>
-                                        </button>
-                                        <button className="icon-btn" onClick={() => openProjectModal(project)}>
-                                            <span className="material-icons-round">edit</span>
-                                        </button>
-                                        <button className="icon-btn danger" onClick={() => handleDeleteProject(project.Project_ID)}>
-                                            <span className="material-icons-round">delete</span>
-                                        </button>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+                                        <div className="project-badges">
+                                            <span className={`status-badge ${getStatusClass(project.Status)}`}>
+                                                {project.Status}
+                                            </span>
+                                            <span className="mode-badge">
+                                                {project.Production_Mode === 'PreCut' ? 'Gotovi elementi' : 'Vlastita obrada'}
+                                            </span>
+                                        </div>
+
+                                        <div className="project-actions" onClick={(e) => e.stopPropagation()}>
+                                            <button className="icon-btn" onClick={() => {
+                                                setReportProject(project);
+                                                setReportModal(true);
+                                            }} title="Izvještaj o materijalima">
+                                                <span className="material-icons-round">summarize</span>
+                                            </button>
+                                            <button className="icon-btn" onClick={() => openProjectModal(project)}>
+                                                <span className="material-icons-round">edit</span>
+                                            </button>
+                                            <button className="icon-btn danger" onClick={() => handleDeleteProject(project.Project_ID)}>
+                                                <span className="material-icons-round">delete</span>
+                                            </button>
+                                        </div>
                                     </div>
                                 </div>
 

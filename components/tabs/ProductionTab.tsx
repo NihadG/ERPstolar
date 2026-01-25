@@ -4,7 +4,7 @@ import { useState, useMemo, useEffect } from 'react';
 import type { WorkOrder, Project, Worker } from '@/lib/types';
 import { createWorkOrder, deleteWorkOrder, startWorkOrder, getWorkOrder, updateWorkOrder } from '@/lib/database';
 import Modal from '@/components/ui/Modal';
-import WorkOrderViewModal from '@/components/ui/WorkOrderViewModal';
+import WorkOrderExpandedDetail from '@/components/ui/WorkOrderExpandedDetail';
 import WorkOrderPrintTemplate from '@/components/ui/WorkOrderPrintTemplate';
 import { WORK_ORDER_STATUSES, PRODUCTION_STEPS } from '@/lib/types';
 
@@ -76,10 +76,84 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
         });
     }, [projects, projectSearch]);
 
+    // Grouping State
+    type GroupBy = 'none' | 'status' | 'project' | 'date';
+    const [groupBy, setGroupBy] = useState<GroupBy>('none');
+    const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
+
+    const groupingOptions = [
+        { value: 'none', label: 'Bez grupisanja' },
+        { value: 'status', label: 'Po statusu' },
+        { value: 'project', label: 'Po projektu' },
+        { value: 'date', label: 'Po datumu' }
+    ];
+
+    // Filter Logic
+    const filteredWorkOrders = workOrders.filter(wo => {
+        const matchesSearch = wo.Work_Order_Number?.toLowerCase().includes(searchTerm.toLowerCase());
+        const matchesStatus = !statusFilter || wo.Status === statusFilter;
+        return matchesSearch && matchesStatus;
+    });
+
+    // Grouping Logic
+    const groupedWorkOrders = useMemo(() => {
+        if (groupBy === 'none') return [];
+
+        const groups: Record<string, { key: string; label: string; count: number; items: WorkOrder[] }> = {};
+
+        filteredWorkOrders.forEach(wo => {
+            let key = '';
+            let label = '';
+
+            switch (groupBy) {
+                case 'status':
+                    key = wo.Status || 'Ostalo';
+                    label = key;
+                    break;
+                case 'project':
+                    key = wo.items?.[0]?.Project_ID || 'unknown';
+                    label = wo.items?.[0]?.Project_Name || 'Nepoznat projekat';
+                    break;
+                case 'date':
+                    // Group by exact date for now, could be by month/week
+                    key = wo.Created_Date ? wo.Created_Date.split('T')[0] : 'unknown';
+                    label = wo.Created_Date ? formatDate(wo.Created_Date) : 'Nepoznat datum';
+                    break;
+            }
+
+            if (!groups[key]) {
+                groups[key] = { key, label, count: 0, items: [] };
+            }
+            groups[key].items.push(wo);
+            groups[key].count++;
+        });
+
+        // Sort groups
+        return Object.values(groups).sort((a, b) => {
+            if (groupBy === 'date') return b.key.localeCompare(a.key); // Newest first
+            if (groupBy === 'status') {
+                // Custom order for status can be added here
+                return WORK_ORDER_STATUSES.indexOf(a.key) - WORK_ORDER_STATUSES.indexOf(b.key);
+            }
+            return a.label.localeCompare(b.label);
+        });
+    }, [filteredWorkOrders, groupBy]);
+
+    function toggleGroup(groupKey: string) {
+        const newCollapsed = new Set(collapsedGroups);
+        if (newCollapsed.has(groupKey)) {
+            newCollapsed.delete(groupKey);
+        } else {
+            newCollapsed.add(groupKey);
+        }
+        setCollapsedGroups(newCollapsed);
+    }
+
     // Create Modal State
     const [createModal, setCreateModal] = useState(false);
     const [activeStep, setActiveStep] = useState(0); // 0: Projects, 1: Products, 2: Processes, 3: Details
 
+    // Data State
     // Data State
     const [selectedProjectIds, setSelectedProjectIds] = useState<string[]>([]);
     const [selectedProducts, setSelectedProducts] = useState<ProductSelection[]>([]);
@@ -89,18 +163,18 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
     const [notes, setNotes] = useState('');
     const [productSearch, setProductSearch] = useState('');
 
-    // View Modal
-    const [viewModal, setViewModal] = useState(false);
-    const [currentWorkOrder, setCurrentWorkOrder] = useState<WorkOrder | null>(null);
+    // Expansion State
+    const [expandedOrderId, setExpandedOrderId] = useState<string | null>(null);
+    const [currentWorkOrderForPrint, setCurrentWorkOrderForPrint] = useState<WorkOrder | null>(null);
+
+    function toggleWorkOrder(id: string) {
+        setExpandedOrderId(prev => prev === id ? null : id);
+    }
 
     // Print Modal
     const [printModal, setPrintModal] = useState(false);
 
-    const filteredWorkOrders = workOrders.filter(wo => {
-        const matchesSearch = wo.Work_Order_Number?.toLowerCase().includes(searchTerm.toLowerCase());
-        const matchesStatus = !statusFilter || wo.Status === statusFilter;
-        return matchesSearch && matchesStatus;
-    });
+
 
     const eligibleProducts = useMemo(() => {
         let products: any[] = [];
@@ -278,26 +352,18 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
     }
 
     // View/Edit/Delete/Print logic
-    async function openViewModal(workOrderId: string) {
-        const wo = await getWorkOrder(workOrderId);
-        if (wo) { setCurrentWorkOrder(wo); setViewModal(true); }
-    }
-
     async function handleUpdateWorkOrder(workOrderId: string, updates: any) {
         const res = await updateWorkOrder(workOrderId, updates);
         if (res.success) {
             showToast(res.message, 'success');
             onRefresh();
-            // Refresh current work order
-            if (res.data) setCurrentWorkOrder(res.data);
         } else {
             showToast(res.message, 'error');
         }
     }
 
-    function handlePrintWorkOrder() {
-        if (!currentWorkOrder) return;
-        setViewModal(false);
+    function handlePrintWorkOrder(wo: WorkOrder) {
+        setCurrentWorkOrderForPrint(wo);
         setPrintModal(true);
     }
 
@@ -309,12 +375,93 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
 
     async function handleStartWorkOrder(workOrderId: string) {
         const res = await startWorkOrder(workOrderId);
-        if (res.success) { showToast('Nalog pokrenut', 'success'); onRefresh(); setViewModal(false); } else showToast(res.message, 'error');
+        if (res.success) {
+            showToast('Nalog pokrenut', 'success');
+            onRefresh();
+        } else {
+            showToast(res.message, 'error');
+        }
     }
 
-    const activeOrders = filteredWorkOrders.filter(wo => wo.Status === 'U toku');
-    const pendingOrders = filteredWorkOrders.filter(wo => wo.Status === 'Nacrt' || wo.Status === 'Dodijeljeno');
-    const completedOrders = filteredWorkOrders.filter(wo => wo.Status === 'Završeno');
+    const renderWorkOrderCard = (wo: WorkOrder) => {
+        const isExpanded = expandedOrderId === wo.Work_Order_ID;
+        const totalItems = wo.items?.length || 0;
+
+        // Calculate stats
+        const totalSteps = totalItems * (wo.Production_Steps?.length || 0);
+        let completedSteps = 0;
+        if (totalSteps > 0) {
+            wo.items?.forEach(item => {
+                wo.Production_Steps?.forEach(step => {
+                    if (item.Process_Assignments?.[step]?.Status === 'Završeno') completedSteps++;
+                });
+            });
+        }
+        const percent = totalSteps > 0 ? Math.round((completedSteps / totalSteps) * 100) : 0;
+
+        return (
+            <div key={wo.Work_Order_ID} className={`project-card ${isExpanded ? 'active' : ''}`}>
+                <div className="project-header" onClick={() => toggleWorkOrder(wo.Work_Order_ID)}>
+                    <button className={`expand-btn ${isExpanded ? 'expanded' : ''}`}>
+                        <span className="material-icons-round">chevron_right</span>
+                    </button>
+
+                    <div className="project-main-info">
+                        <div className="project-title-section">
+                            <div className="project-name">{wo.Work_Order_Number}</div>
+                            {wo.items?.[0]?.Project_Name && <div className="project-client">{wo.items[0].Project_Name}</div>}
+                        </div>
+                        <div className="project-details">
+                            <div className="project-summary">
+                                <span className="summary-item">
+                                    <span className="material-icons-round">inventory_2</span>
+                                    {totalItems} {totalItems === 1 ? 'proizvod' : 'proizvoda'}
+                                </span>
+                                <span className="summary-item">
+                                    <span className="material-icons-round">calendar_today</span>
+                                    {formatDate(wo.Due_Date)}
+                                </span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+                        <div className="progress-mini">
+                            <div className="progress-text">{percent}%</div>
+                            <div className="progress-circle" style={{ background: `conic-gradient(#34c759 ${percent}%, #f0f0f0 0)` }}></div>
+                        </div>
+
+                        <div className="project-badges">
+                            <span className={`status-badge ${getStatusClass(wo.Status)}`}>
+                                {wo.Status}
+                            </span>
+                        </div>
+
+                        <div className="project-actions" onClick={(e) => e.stopPropagation()}>
+                            <button className="icon-btn" onClick={() => handlePrintWorkOrder(wo)} title="Printaj">
+                                <span className="material-icons-round">print</span>
+                            </button>
+                            <button className="icon-btn danger" onClick={() => handleDeleteWorkOrder(wo.Work_Order_ID)}>
+                                <span className="material-icons-round">delete</span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                {/* Expanded Content */}
+                {isExpanded && (
+                    <WorkOrderExpandedDetail
+                        workOrder={wo}
+                        workers={workers}
+                        onUpdate={handleUpdateWorkOrder}
+                        onPrint={handlePrintWorkOrder}
+                        onDelete={handleDeleteWorkOrder}
+                        onStart={handleStartWorkOrder}
+                    />
+                )}
+            </div>
+        );
+    };
 
     return (
         <div className="tab-content active">
@@ -323,22 +470,171 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                     <span className="material-icons-round">search</span>
                     <input type="text" placeholder="Pretraži radne naloge..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
                 </div>
-                <select className="filter-select" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
-                    <option value="">Svi statusi</option>
-                    {WORK_ORDER_STATUSES.map(status => <option key={status} value={status}>{status}</option>)}
-                </select>
+
+                <div style={{ display: 'flex', gap: '8px' }}>
+                    {/* Grouping Control */}
+                    <div className="group-control" style={{ display: 'flex', alignItems: 'center', gap: '8px', background: 'white', padding: '0 12px', borderRadius: '8px', border: '1px solid #e0e0e0', height: '40px' }}>
+                        <span style={{ fontSize: '13px', color: '#666', fontWeight: 500 }}>Grupiši:</span>
+                        <select
+                            value={groupBy}
+                            onChange={(e) => setGroupBy(e.target.value as GroupBy)}
+                            style={{ border: 'none', background: 'transparent', fontSize: '13px', fontWeight: 600, color: '#333', cursor: 'pointer', outline: 'none' }}
+                        >
+                            {groupingOptions.map(opt => (
+                                <option key={opt.value} value={opt.value}>{opt.label}</option>
+                            ))}
+                        </select>
+                    </div>
+
+                    <select className="filter-select" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+                        <option value="">Svi statusi</option>
+                        {WORK_ORDER_STATUSES.map(status => <option key={status} value={status}>{status}</option>)}
+                    </select>
+                </div>
+
                 <button className="btn btn-primary" onClick={openCreateModal}><span className="material-icons-round">add</span>Novi Radni Nalog</button>
             </div>
 
-            {filteredWorkOrders.length === 0 ? (
-                <div className="empty-state"><span className="material-icons-round">engineering</span><h3>Nema radnih naloga</h3><p>Kreirajte prvi radni nalog</p></div>
-            ) : (
-                <div className="orders-sections">
-                    {activeOrders.length > 0 && <OrderSection title="U toku" icon="play_circle" color="#0071e3" orders={activeOrders} onView={openViewModal} onDelete={handleDeleteWorkOrder} onStart={handleStartWorkOrder} getStatusClass={getStatusClass} formatDate={formatDate} />}
-                    {pendingOrders.length > 0 && <OrderSection title="Na čekanju" icon="schedule" color="#ff9500" orders={pendingOrders} onView={openViewModal} onDelete={handleDeleteWorkOrder} onStart={handleStartWorkOrder} getStatusClass={getStatusClass} formatDate={formatDate} />}
-                    {completedOrders.length > 0 && <OrderSection title="Završeno" icon="check_circle" color="#34c759" orders={completedOrders} onView={openViewModal} onDelete={handleDeleteWorkOrder} onStart={() => { }} getStatusClass={getStatusClass} formatDate={formatDate} />}
-                </div>
-            )}
+            <div className="orders-list">
+                {filteredWorkOrders.length === 0 ? (
+                    <div className="empty-state"><span className="material-icons-round">engineering</span><h3>Nema radnih naloga</h3><p>Kreirajte prvi radni nalog</p></div>
+                ) : (
+                    groupBy === 'none' ? (
+                        filteredWorkOrders.map(wo => renderWorkOrderCard(wo))
+                    ) : (
+                        groupedWorkOrders.map(group => (
+                            <div key={group.key} className="group-section" style={{ marginBottom: '24px' }}>
+                                <div
+                                    className="group-header"
+                                    onClick={() => toggleGroup(group.key)}
+                                    style={{
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        gap: '8px',
+                                        padding: '12px 0',
+                                        cursor: 'pointer',
+                                        userSelect: 'none'
+                                    }}
+                                >
+                                    <span className="material-icons-round" style={{
+                                        transform: collapsedGroups.has(group.key) ? 'rotate(-90deg)' : 'rotate(0deg)',
+                                        transition: 'transform 0.2s',
+                                        color: '#666'
+                                    }}>
+                                        expand_more
+                                    </span>
+                                    <h3 style={{ margin: 0, fontSize: '16px', fontWeight: 600, color: '#1d1d1f' }}>{group.label}</h3>
+                                    <span style={{
+                                        background: '#f5f5f7',
+                                        padding: '2px 8px',
+                                        borderRadius: '12px',
+                                        fontSize: '12px',
+                                        fontWeight: 600,
+                                        color: '#666'
+                                    }}>
+                                        {group.count}
+                                    </span>
+                                </div>
+
+                                {!collapsedGroups.has(group.key) && (
+                                    <div className="group-items" style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                                        {group.items.map(wo => renderWorkOrderCard(wo))}
+                                    </div>
+                                )}
+                            </div>
+                        ))
+                    )
+                )}
+            </div>
+
+
+            <style jsx>{`
+                .orders-list { display: flex; flex-direction: column; gap: 12px; }
+                
+                /* Creating styles similar to ProjectsTab */
+                .project-card {
+                    background: white;
+                    border: 1px solid #e0e0e0;
+                    border-radius: 12px;
+                    overflow: hidden;
+                    transition: all 0.2s;
+                }
+                .project-card:hover { border-color: #ccc; box-shadow: 0 2px 8px rgba(0,0,0,0.05); }
+                .project-card.active { border-color: var(--accent); box-shadow: 0 4px 12px rgba(0,113,227,0.1); }
+                
+                .project-header {
+                    display: flex;
+                    align-items: center;
+                    padding: 16px 20px;
+                    gap: 16px;
+                    cursor: pointer;
+                    background: white;
+                }
+                
+                .expand-btn {
+                    width: 28px;
+                    height: 28px;
+                    border-radius: 50%;
+                    border: 1px solid #e0e0e0;
+                    background: #f5f5f7;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    color: #666;
+                    cursor: pointer;
+                    transition: all 0.2s;
+                }
+                .expand-btn.expanded { transform: rotate(90deg); background: var(--accent); color: white; border-color: var(--accent); }
+                
+                .project-main-info { flex: 1; display: flex; flex-direction: column; gap: 4px; }
+                .project-title-section { display: flex; align-items: baseline; gap: 10px; }
+                .project-name { font-size: 16px; font-weight: 600; color: #1d1d1f; }
+                .project-client { font-size: 13px; color: #86868b; }
+                
+                .project-details { display: flex; align-items: center; gap: 16px; margin-top: 2px; }
+                .project-summary { display: flex; gap: 12px; }
+                .summary-item { display: flex; align-items: center; gap: 4px; font-size: 12px; color: #666; background: #f5f5f7; padding: 2px 8px; border-radius: 6px; }
+                .summary-item .material-icons-round { font-size: 14px; }
+                
+
+                
+                .project-actions { display: flex; gap: 8px; margin-left: 8px; }
+                .icon-btn { width: 32px; height: 32px; border-radius: 8px; border: 1px solid transparent; background: transparent; color: #666; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all 0.2s; }
+                .icon-btn:hover { background: #f5f5f7; color: #333; }
+                .icon-btn.danger:hover { background: #fee2e2; color: #ef4444; }
+                .icon-btn .material-icons-round { font-size: 18px; }
+
+                /* Standardized heights for right-side items */
+                .progress-mini { 
+                    display: flex; 
+                    align-items: center; 
+                    gap: 8px; 
+                    margin-right: 8px; 
+                    background: #f5f5f7; 
+                    padding: 0 12px; 
+                    border-radius: 8px; 
+                    height: 32px; 
+                }
+                .progress-text { font-size: 12px; font-weight: 600; color: #333; }
+                .progress-circle { width: 10px; height: 10px; border-radius: 50%; }
+
+                .project-badges { display: flex; gap: 8px; height: 32px; align-items: center; }
+                .status-badge { 
+                    padding: 0 12px; 
+                    border-radius: 8px; 
+                    font-size: 11px; 
+                    font-weight: 600; 
+                    text-transform: uppercase; 
+                    height: 32px; 
+                    display: flex; 
+                    align-items: center; 
+                }
+                .status-nacrt { background: #f5f5f7; color: #666; }
+                .status-u-toku { background: #e3f2fd; color: #0d47a1; }
+                .status-zavrseno { background: #dcfce7; color: #166534; }
+                .status-na-cekanju { background: #fff7ed; color: #c2410c; }
+
+            `}</style>
 
             {/* ========== FULL-SCREEN WIZARD MODAL ========== */}
             <Modal isOpen={createModal} onClose={() => setCreateModal(false)} title="Novi Radni Nalog" size="fullscreen" footer={null}>
@@ -540,14 +836,7 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
             </Modal>
 
             {/* ========== WORK ORDER VIEW/EDIT MODAL ========== */}
-            <WorkOrderViewModal
-                isOpen={viewModal}
-                onClose={() => setViewModal(false)}
-                workOrder={currentWorkOrder}
-                workers={workers}
-                onUpdate={handleUpdateWorkOrder}
-                onPrint={handlePrintWorkOrder}
-            />
+
 
             {/* ========== PRINT TEMPLATE MODAL ========== */}
             <Modal
@@ -557,7 +846,7 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                 size="xl"
                 footer={<button className="btn btn-secondary" onClick={() => setPrintModal(false)}>Zatvori</button>}
             >
-                {currentWorkOrder && <WorkOrderPrintTemplate workOrder={currentWorkOrder} />}
+                {currentWorkOrderForPrint && <WorkOrderPrintTemplate workOrder={currentWorkOrderForPrint} />}
             </Modal>
 
             <style jsx>{`
@@ -1005,128 +1294,9 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                     .m-col.process { min-width: 120px; }
                 }
             `}</style>
-        </div>
+        </div >
     );
 }
 
-function OrderSection({ title, icon, color, orders, onView, onDelete, onStart, getStatusClass, formatDate }: any) {
-    return (
-        <div className="order-section">
-            <div className="section-title" style={{ color }}>
-                <span className="material-icons-round">{icon}</span>
-                {title} <span className="badge">{orders.length}</span>
-            </div>
-            <div className="orders-grid">
-                {orders.map((wo: any) => (
-                    <div key={wo.Work_Order_ID} className="order-card" onClick={() => onView(wo.Work_Order_ID)}>
-                        <div className="order-header">
-                            <strong>{wo.Work_Order_Number}</strong>
-                            <span className={`status-badge ${getStatusClass(wo.Status)}`}>{wo.Status}</span>
-                        </div>
-                        <div className="order-processes">
-                            <span className="material-icons-round">engineering</span>
-                            {wo.Production_Steps?.join(' → ') || 'N/A'}
-                        </div>
-                        <div className="order-meta">
-                            <span><span className="material-icons-round">calendar_today</span>{formatDate(wo.Created_Date)}</span>
-                            <span><span className="material-icons-round">inventory_2</span>{wo.items?.length || 0} proizvoda</span>
-                        </div>
-                        <div className="order-actions" onClick={(e) => e.stopPropagation()}>
-                            {wo.Status === 'Nacrt' && (
-                                <button className="btn btn-sm btn-primary" onClick={() => onStart(wo.Work_Order_ID)}>
-                                    <span className="material-icons-round">play_arrow</span>
-                                    Pokreni
-                                </button>
-                            )}
-                            <button className="icon-btn sm danger" onClick={() => onDelete(wo.Work_Order_ID)}>
-                                <span className="material-icons-round">delete</span>
-                            </button>
-                        </div>
-                    </div>
-                ))}
-            </div>
-            <style jsx>{`
-                .order-section {
-                    display: flex;
-                    flex-direction: column;
-                    gap: 12px;
-                }
-                .section-title {
-                    display: flex;
-                    align-items: center;
-                    gap: 8px;
-                    font-size: 16px;
-                    font-weight: 600;
-                }
-                .section-title .badge {
-                    background: var(--surface-hover);
-                    padding: 2px 10px;
-                    border-radius: 12px;
-                    font-size: 13px;
-                    font-weight: 500;
-                }
-                .orders-grid {
-                    display: grid;
-                    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
-                    gap: 12px;
-                }
-                .order-card {
-                    padding: 16px;
-                    background: var(--surface);
-                    border: 1px solid var(--border);
-                    border-radius: 12px;
-                    cursor: pointer;
-                    transition: all 0.2s;
-                    display: flex;
-                    flex-direction: column;
-                    gap: 12px;
-                }
-                .order-card:hover {
-                    border-color: var(--accent);
-                    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
-                    transform: translateY(-1px);
-                }
-                .order-header {
-                    display: flex;
-                    justify-content: space-between;
-                    align-items: center;
-                }
-                .order-processes {
-                    display: flex;
-                    align-items: center;
-                    gap: 6px;
-                    font-size: 13px;
-                    color: var(--text-secondary);
-                }
-                .order-processes .material-icons-round {
-                    font-size: 16px;
-                }
-                .order-meta {
-                    display: flex;
-                    gap: 16px;
-                    font-size: 12px;
-                    color: var(--text-secondary);
-                }
-                .order-meta span {
-                    display: flex;
-                    align-items: center;
-                    gap: 4px;
-                }
-                .order-meta .material-icons-round {
-                    font-size: 14px;
-                }
-                .order-actions {
-                    display: flex;
-                    gap: 8px;
-                }
-                .icon-btn.sm {
-                    padding: 6px;
-                }
-                .icon-btn.sm .material-icons-round {
-                    font-size: 16px;
-                }
-            `}</style>
-        </div>
-    );
-}
+
 

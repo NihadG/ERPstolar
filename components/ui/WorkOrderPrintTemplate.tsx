@@ -138,31 +138,92 @@ export default function WorkOrderPrintTemplate({ workOrder, companyName = 'ERP S
                         margin-bottom: 3mm;
                         border-bottom: 1pt solid #333;
                     }
-                    .data-table { width: 100%; border-collapse: collapse; font-size: 9pt; }
+                    /* Modern Apple-Style Tables */
+                    .data-table { width: 100%; border-collapse: separate; border-spacing: 0; margin-bottom: 20px; }
                     .data-table th {
-                        background: #f0f0f0;
-                        font-weight: 600;
                         text-align: left;
-                        padding: 8px 10px;
-                        border: 0.5pt solid #ccc;
+                        color: #86868b; /* Apple Text Secondary */
                         font-size: 8pt;
-                        text-transform: uppercase;
-                        color: #555;
+                        font-weight: 600;
+                        padding: 10px 12px;
+                        border-bottom: 1px solid #d2d2d7;
+                        letter-spacing: 0.02em;
                     }
-                    .data-table td { padding: 8px 10px; border: 0.5pt solid #ddd; vertical-align: top; }
-                    .data-table .col-num { width: 30px; text-align: center; color: #888; }
-                    .data-table .col-name { font-weight: 500; }
-                    .data-table .col-project { color: #666; width: 140px; }
-                    .data-table .col-qty { width: 80px; text-align: center; font-weight: 600; }
-                    .data-table .col-process { text-align: center; width: 80px; font-size: 8pt; }
-                    .product-main-row { background: #fafafa; }
-                    .product-main-row td { border-bottom: none; }
-                    .materials-row td { background: #fff; border-top: none; padding-top: 0; padding-bottom: 10px; }
-                    .materials-list { padding-left: 20px; }
-                    .materials-label { font-size: 8pt; color: #888; font-weight: 600; margin-bottom: 4px; text-transform: uppercase; }
-                    .materials-list ul { margin: 0; padding-left: 16px; }
-                    .materials-list li { font-size: 8pt; color: #555; margin-bottom: 2px; }
-                    .materials-list .supplier { color: #999; font-style: italic; }
+                    .data-table td {
+                        padding: 12px;
+                        vertical-align: top;
+                        color: #1d1d1f; /* Apple Text Primary */
+                    }
+                    
+                    /* Product Row Styling */
+                    .product-main-row td {
+                        border-bottom: 1px solid #e5e5e5;
+                        padding-top: 16px;
+                        padding-bottom: 16px;
+                        font-size: 10pt;
+                    }
+                    .product-main-row.has-materials td {
+                        border-bottom: none;
+                        padding-bottom: 8px;
+                    }
+                    
+                    .col-num { color: #86868b; font-size: 9pt; width: 40px; text-align: center; font-variant-numeric: tabular-nums; }
+                    .col-name { font-weight: 600; font-size: 10.5pt; color: #1d1d1f; }
+                    .col-project { color: #86868b; font-size: 9pt; }
+                    .col-qty { font-weight: 600; font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
+
+                    /* Materials Section - The "Island" Look */
+                    .materials-row td { 
+                        padding: 0 12px 16px 12px; 
+                        border-bottom: 1px solid #e5e5e5; 
+                    }
+                    
+                    .materials-container {
+                        background: #F5F5F7; /* Apple System Gray 6 */
+                        border-radius: 8px;
+                        padding: 12px 16px;
+                        margin-left: 40px; /* Indent to align with product name */
+                    }
+
+                    .materials-header-label {
+                        font-size: 7.5pt;
+                        color: #86868b;
+                        font-weight: 600;
+                        text-transform: uppercase;
+                        letter-spacing: 0.05em;
+                        margin-bottom: 8px;
+                    }
+
+                    .materials-table { width: 100%; border-collapse: collapse; }
+                    .materials-table td {
+                        padding: 6px 0;
+                        border-bottom: 1px solid rgba(0,0,0,0.05);
+                        font-size: 9pt;
+                        color: #424245;
+                    }
+                    .materials-table tr:last-child td { border-bottom: none; }
+                    
+                    .mat-name { font-weight: 500; color: #1d1d1f; }
+                    .mat-supplier { color: #86868b; font-size: 8.5pt; margin-left: 6px; }
+                    .mat-qty { font-variant-numeric: tabular-nums; font-weight: 500; font-size: 9pt; }
+
+                    /* Modern Status Badge */
+                    .status-badge-modern {
+                        display: inline-flex;
+                        align-items: center;
+                        padding: 2px 8px;
+                        border-radius: 12px;
+                        font-size: 8pt;
+                        font-weight: 500;
+                        line-height: 1.2;
+                    }
+                    
+                    .status-badge-modern.na-stanju { background: #e8f5e9; color: #1b5e20; }
+                    .status-badge-modern.naručeno { background: #e3f2fd; color: #0d47a1; }
+                    .status-badge-modern.nije-naručeno { background: #ffebee; color: #b71c1c; }
+                    .status-badge-modern.primljeno { background: #e0f2f1; color: #004d40; }
+                    .status-badge-modern.u-upotrebi { background: #fff8e1; color: #ff6f00; }
+                    .status-badge-modern.unknown { background: #f5f5f5; color: #616161; }
                     .signature-area { margin-top: 15mm; padding-top: 10mm; }
                     .signature-row { display: flex; justify-content: space-between; gap: 20mm; }
                     .signature-block { flex: 1; text-align: center; }
@@ -311,16 +372,16 @@ export default function WorkOrderPrintTemplate({ workOrder, companyName = 'ERP S
                                     <table className="data-table">
                                         <thead>
                                             <tr>
-                                                <th className="col-num">#</th>
+                                                <th style={{ width: '40px' }} className="col-num">#</th>
                                                 <th className="col-name">Naziv proizvoda</th>
                                                 <th className="col-project">Projekat</th>
-                                                <th className="col-qty">Količina</th>
+                                                <th style={{ textAlign: 'right' }} className="col-qty">Količina</th>
                                             </tr>
                                         </thead>
                                         <tbody>
                                             {workOrder.items?.map((item, idx) => (
                                                 <>
-                                                    <tr key={item.ID} className="product-main-row">
+                                                    <tr key={item.ID} className={`product-main-row ${showMaterials && item.materials?.length ? 'has-materials' : ''}`}>
                                                         <td className="col-num">{idx + 1}</td>
                                                         <td className="col-name">{item.Product_Name}</td>
                                                         <td className="col-project">{item.Project_Name}</td>
@@ -330,18 +391,29 @@ export default function WorkOrderPrintTemplate({ workOrder, companyName = 'ERP S
                                                     {/* Nested Materials */}
                                                     {showMaterials && item.materials && item.materials.length > 0 && (
                                                         <tr key={`${item.ID}-mats`} className="materials-row">
-                                                            <td></td>
-                                                            <td colSpan={3}>
-                                                                <div className="materials-list">
-                                                                    <div className="materials-label">Materijali:</div>
-                                                                    <ul>
-                                                                        {item.materials.map((mat: any, mIdx: number) => (
-                                                                            <li key={mIdx}>
-                                                                                {mat.Material_Name} — {mat.Quantity} {mat.Unit}
-                                                                                {mat.Supplier && <span className="supplier"> ({mat.Supplier})</span>}
-                                                                            </li>
-                                                                        ))}
-                                                                    </ul>
+                                                            <td colSpan={4}> {/* Spanning all columns */}
+                                                                <div className="materials-container">
+                                                                    <div className="materials-header-label">Materijali & Dijelovi</div>
+                                                                    <table className="materials-table">
+                                                                        <tbody>
+                                                                            {item.materials.map((mat: any, mIdx: number) => (
+                                                                                <tr key={mIdx}>
+                                                                                    <td style={{ width: '50%' }}>
+                                                                                        <span className="mat-name">{mat.Material_Name}</span>
+                                                                                        {mat.Supplier && <span className="mat-supplier">· {mat.Supplier}</span>}
+                                                                                    </td>
+                                                                                    <td style={{ width: '20%', textAlign: 'right' }}>
+                                                                                        <span className="mat-qty">{mat.Quantity}</span> <span style={{ fontSize: '8pt', color: '#86868b' }}>{mat.Unit}</span>
+                                                                                    </td>
+                                                                                    <td style={{ width: '30%', textAlign: 'right' }}>
+                                                                                        <span className={`status-badge-modern ${mat.Status?.toLowerCase().replace(/\s+/g, '-') || 'unknown'}`}>
+                                                                                            {mat.Status || '-'}
+                                                                                        </span>
+                                                                                    </td>
+                                                                                </tr>
+                                                                            ))}
+                                                                        </tbody>
+                                                                    </table>
                                                                 </div>
                                                             </td>
                                                         </tr>
@@ -622,91 +694,90 @@ export default function WorkOrderPrintTemplate({ workOrder, companyName = 'ERP S
                 }
 
                 /* Data Table */
-                .data-table {
-                    width: 100%;
-                    border-collapse: collapse;
-                    font-size: 9pt;
-                }
+                .data-table { width: 100%; border-collapse: separate; border-spacing: 0; margin-bottom: 20px; }
                 .data-table th {
-                    background: #f0f0f0;
-                    font-weight: 600;
                     text-align: left;
-                    padding: 8px 10px;
-                    border: 0.5pt solid #ccc;
+                    color: #86868b;
                     font-size: 8pt;
-                    text-transform: uppercase;
-                    color: #555;
+                    font-weight: 600;
+                    padding: 10px 12px;
+                    border-bottom: 1px solid #d2d2d7;
+                    letter-spacing: 0.02em;
                 }
                 .data-table td {
-                    padding: 8px 10px;
-                    border: 0.5pt solid #ddd;
+                    padding: 12px;
                     vertical-align: top;
+                    color: #1d1d1f;
                 }
-                .data-table .col-num {
-                    width: 30px;
-                    text-align: center;
-                    color: #888;
+                
+                .col-num { color: #86868b; font-size: 9pt; width: 40px; text-align: center; }
+                .col-name { font-weight: 600; font-size: 10.5pt; color: #1d1d1f; }
+                .col-project { color: #86868b; font-size: 9pt; }
+                .col-qty { font-weight: 600; text-align: right; white-space: nowrap; }
+
+                /* Product Row Styling */
+                .product-main-row td {
+                    border-bottom: 1px solid #e5e5e5;
+                    padding-top: 16px;
+                    padding-bottom: 16px;
+                    font-size: 10pt;
                 }
-                .data-table .col-name {
+                .product-main-row.has-materials td {
+                    border-bottom: none;
+                    padding-bottom: 8px;
+                }
+
+                /* Materials Section */
+                .materials-row td { 
+                    padding: 0 12px 16px 12px; 
+                    border-bottom: 1px solid #e5e5e5; 
+                    background: #fff !important; 
+                }
+                
+                .materials-container {
+                    background: #F5F5F7;
+                    border-radius: 8px;
+                    padding: 12px 16px;
+                    margin-left: 40px;
+                }
+
+                .materials-header-label {
+                    font-size: 7.5pt;
+                    color: #86868b;
+                    font-weight: 600;
+                    text-transform: uppercase;
+                    letter-spacing: 0.05em;
+                    margin-bottom: 8px;
+                }
+
+                .materials-table { width: 100%; border-collapse: collapse; }
+                .materials-table td {
+                    padding: 6px 0;
+                    border-bottom: 1px solid rgba(0,0,0,0.05);
+                    font-size: 9pt;
+                    color: #424245;
+                }
+                .materials-table tr:last-child td { border-bottom: none; }
+                
+                .mat-name { font-weight: 500; color: #1d1d1f; }
+                .mat-supplier { color: #86868b; font-size: 8.5pt; margin-left: 6px; }
+                .mat-qty { font-weight: 500; font-size: 9pt; }
+
+                /* Modern Badge */
+                .status-badge-modern {
+                    display: inline-flex;
+                    align-items: center;
+                    padding: 2px 8px;
+                    border-radius: 4px;
+                    font-size: 8pt;
                     font-weight: 500;
                 }
-                .data-table .col-project {
-                    color: #666;
-                    width: 140px;
-                }
-                .data-table .col-qty {
-                    width: 80px;
-                    text-align: center;
-                    font-weight: 600;
-                }
-                .data-table .col-process {
-                    text-align: center;
-                    width: 80px;
-                    font-size: 8pt;
-                }
-                .data-table.compact td,
-                .data-table.compact th {
-                    padding: 6px 8px;
-                }
-
-                /* Product Main Row */
-                .product-main-row {
-                    background: #fafafa;
-                }
-                .product-main-row td {
-                    border-bottom: none;
-                }
-
-                /* Materials Row */
-                .materials-row td {
-                    background: #fff;
-                    border-top: none;
-                    padding-top: 0;
-                    padding-bottom: 10px;
-                }
-                .materials-list {
-                    padding-left: 20px;
-                }
-                .materials-label {
-                    font-size: 8pt;
-                    color: #888;
-                    font-weight: 600;
-                    margin-bottom: 4px;
-                    text-transform: uppercase;
-                }
-                .materials-list ul {
-                    margin: 0;
-                    padding-left: 16px;
-                }
-                .materials-list li {
-                    font-size: 8pt;
-                    color: #555;
-                    margin-bottom: 2px;
-                }
-                .materials-list .supplier {
-                    color: #999;
-                    font-style: italic;
-                }
+                .status-badge-modern.na-stanju { background: #e8f5e9; color: #1b5e20; }
+                .status-badge-modern.naručeno { background: #e3f2fd; color: #0d47a1; }
+                .status-badge-modern.nije-naručeno { background: #ffebee; color: #b71c1c; }
+                .status-badge-modern.primljeno { background: #e0f2f1; color: #004d40; }
+                .status-badge-modern.u-upotrebi { background: #fff8e1; color: #ff6f00; }
+                .status-badge-modern.unknown { background: #f5f5f5; color: #616161; }
 
                 /* Signature Area */
                 .signature-area {

@@ -1931,7 +1931,17 @@ export async function getWorkOrder(workOrderId: string): Promise<WorkOrder | nul
     if (woSnap.empty) return null;
 
     const workOrder = woSnap.docs[0].data() as WorkOrder;
-    workOrder.items = itemsSnap.docs.map(doc => ({ ...doc.data() } as WorkOrderItem));
+    const items = itemsSnap.docs.map(doc => ({ ...doc.data() } as WorkOrderItem));
+
+    // Fetch materials for each item
+    for (const item of items) {
+        if (item.Product_ID) {
+            const materials = await getProductMaterials(item.Product_ID);
+            item.materials = materials;
+        }
+    }
+
+    workOrder.items = items;
 
     return workOrder;
 }

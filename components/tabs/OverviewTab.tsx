@@ -1,13 +1,14 @@
 'use client';
 
 import { useState, useMemo } from 'react';
-import type { Project, WorkOrder, Order } from '@/lib/types';
-import { updateProductMaterial } from '@/lib/database';
+import type { Project, WorkOrder, Order, Supplier, ProductMaterial } from '@/lib/types';
+import { updateProductMaterial, createOrder, markMaterialsReceived } from '@/lib/database';
 
 interface OverviewTabProps {
     projects: Project[];
     workOrders: WorkOrder[];
     orders?: Order[];
+    suppliers?: Supplier[];
     showToast: (message: string, type: 'success' | 'error' | 'info') => void;
     onCreateOrder?: (materialIds: string[], supplierName: string) => void;
     onRefresh?: () => void;
@@ -40,7 +41,7 @@ interface OverviewItem {
     DateType?: 'deadline' | 'production' | 'order' | 'received';
 }
 
-export default function OverviewTab({ projects, workOrders, orders = [], showToast, onCreateOrder, onRefresh }: OverviewTabProps) {
+export default function OverviewTab({ projects, workOrders, orders = [], suppliers = [], showToast, onCreateOrder, onRefresh }: OverviewTabProps) {
     const [groupBy, setGroupBy] = useState<GroupBy>('project');
     const [viewMode, setViewMode] = useState<ViewMode>('both');
     const [searchTerm, setSearchTerm] = useState('');
@@ -200,15 +201,15 @@ export default function OverviewTab({ projects, workOrders, orders = [], showToa
                 (project.products || []).forEach(product => {
                     (product.materials || []).forEach(material => {
                         // Determine relevant date based on status
-                        let relevantDate = project.Deadline;
-                        let dateType: 'deadline' | 'order' | 'received' = 'deadline';
+                        let relevantDate: string | undefined = undefined;
+                        let dateType: 'deadline' | 'order' | 'received' | undefined = undefined;
 
                         const orderInfo = materialOrdersMap.get(material.ID);
 
                         if (material.Status === 'Naručeno' && orderInfo) {
                             relevantDate = orderInfo.orderDate;
                             dateType = 'order';
-                        } else if (material.Status === 'Primljeno' && orderInfo) {
+                        } else if ((material.Status === 'Primljeno' || material.Status === 'Na stanju') && orderInfo) {
                             relevantDate = orderInfo.receivedDate || orderInfo.orderDate; // Fallback to order date if received date missing
                             dateType = 'received';
                         }
@@ -377,13 +378,115 @@ export default function OverviewTab({ projects, workOrders, orders = [], showToa
         }
     }
 
-    function handleCreateOrderClick() {
+    // Direct order creation - bypasses wizard
+    async function handleDirectOrderCreation() {
         if (selectedMaterials.size === 0 || !selectedSupplier) return;
-        if (onCreateOrder) {
-            onCreateOrder(Array.from(selectedMaterials), selectedSupplier);
-            // Clear selection after
-            setSelectedMaterials(new Set());
-            setSelectedSupplier('');
+
+        // Find supplier info
+        const supplier = suppliers.find(s => s.Name === selectedSupplier);
+
+        // Gather material details from projects
+        const items: any[] = [];
+        let totalAmount = 0;
+
+        for (const project of projects) {
+            for (const product of project.products || []) {
+                for (const material of product.materials || []) {
+                    if (selectedMaterials.has(material.ID)) {
+                        items.push({
+                            Product_Material_ID: material.ID,
+                            Product_ID: product.Product_ID,
+                            Product_Name: product.Name,
+                            Project_ID: project.Project_ID,
+                            Material_Name: material.Material_Name,
+                            Quantity: material.Quantity,
+                            Unit: material.Unit,
+                            Expected_Price: material.Total_Price || 0,
+                        });
+                        totalAmount += material.Total_Price || 0;
+                    }
+                }
+            }
+        }
+
+        if (items.length === 0) {
+            showToast('Nema materijala za narudžbu', 'error');
+            return;
+        }
+
+        try {
+            const result = await createOrder({
+                Supplier_ID: supplier?.Supplier_ID || '',
+                Supplier_Name: selectedSupplier,
+                Total_Amount: totalAmount,
+                items,
+            });
+
+            if (result.success) {
+                showToast(`Narudžba ${result.data?.Order_Number} kreirana!`, 'success');
+                setSelectedMaterials(new Set());
+                setSelectedSupplier('');
+                onRefresh?.();
+            } else {
+                showToast(result.message, 'error');
+            }
+        } catch (error) {
+            console.error('Direct order creation error:', error);
+            showToast('Greška pri kreiranju narudžbe', 'error');
+        }
+    }
+
+    // Legacy function for compatibility
+    function handleCreateOrderClick() {
+        handleDirectOrderCreation();
+    }
+
+    // Check if all selected materials have status 'Naručeno' (for contextual action)
+    const selectedMaterialsInfo = useMemo(() => {
+        if (selectedMaterials.size === 0) return { allOrdered: false, allUnordered: false };
+
+        let orderedCount = 0;
+        let unorderedCount = 0;
+
+        for (const project of projects) {
+            for (const product of project.products || []) {
+                for (const material of product.materials || []) {
+                    if (selectedMaterials.has(material.ID)) {
+                        if (material.Status === 'Naručeno') {
+                            orderedCount++;
+                        } else if (material.Status === 'Nije naručeno') {
+                            unorderedCount++;
+                        }
+                    }
+                }
+            }
+        }
+
+        return {
+            allOrdered: orderedCount === selectedMaterials.size && orderedCount > 0,
+            allUnordered: unorderedCount === selectedMaterials.size && unorderedCount > 0,
+            orderedCount,
+            unorderedCount,
+        };
+    }, [selectedMaterials, projects]);
+
+    // Handle marking materials as received
+    async function handleMarkAsReceived() {
+        if (selectedMaterials.size === 0) return;
+
+        try {
+            const result = await markMaterialsReceived(Array.from(selectedMaterials));
+            if (result.success) {
+                showToast(`${selectedMaterials.size} materijal(a) označeno kao primljeno!`, 'success');
+                setSelectedMaterials(new Set());
+                setSelectedSupplier('');
+                onRefresh?.();
+            } else {
+                showToast(result.message, 'error');
+            }
+        } catch (error) {
+            console.error('Mark as received error:', error);
+            showToast('Greška pri označavanju materijala', 'error');
         }
     }
 
@@ -654,13 +757,24 @@ export default function OverviewTab({ projects, workOrders, orders = [], showToa
                                 <span className="material-icons-round">inventory</span>
                                 Na stanju
                             </button>
-                            <button
-                                className="btn btn-primary"
-                                onClick={handleCreateOrderClick}
-                            >
-                                <span className="material-icons-round">add_shopping_cart</span>
-                                Kreiraj narudžbu
-                            </button>
+                            {/* Contextual Action Button */}
+                            {selectedMaterialsInfo.allOrdered ? (
+                                <button
+                                    className="btn btn-success"
+                                    onClick={handleMarkAsReceived}
+                                >
+                                    <span className="material-icons-round">check_circle</span>
+                                    Označi kao primljeno
+                                </button>
+                            ) : (
+                                <button
+                                    className="btn btn-primary"
+                                    onClick={handleCreateOrderClick}
+                                >
+                                    <span className="material-icons-round">add_shopping_cart</span>
+                                    Kreiraj narudžbu
+                                </button>
+                            )}
                         </div>
                     </div>
                 )
@@ -1595,6 +1709,8 @@ export default function OverviewTab({ projects, workOrders, orders = [], showToa
                         left: 16px;
                         right: 16px;
                         bottom: 16px;
+                        width: auto;
+                        max-width: none;
                         transform: none;
                         flex-direction: column;
                         gap: 12px;

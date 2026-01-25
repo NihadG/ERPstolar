@@ -1550,6 +1550,29 @@ select:hover,
   border-top: 1px solid var(--border-light);
 }
 
+/* Desktop: Side-by-side layout */
+@media (min-width: 1024px) {
+  .offer-form {
+    display: grid;
+    grid-template-columns: 1fr 360px;
+    /* Main content + Fixed width sidebar */
+    gap: 24px;
+    align-items: start;
+  }
+
+  .offer-form-right {
+    display: flex;
+    flex-direction: column;
+    padding-top: 0;
+    border-top: none;
+    border-left: 1px solid var(--border-light);
+    padding-left: 24px;
+    position: sticky;
+    top: 0;
+    height: fit-content;
+  }
+}
+
 /* Project Selector */
 .offer-project-select {
   margin-bottom: 20px;
@@ -1653,11 +1676,15 @@ select:hover,
 }
 
 /* Product Cards - Ultra Compact */
+/* Product Cards - Compact Redesign */
 .offer-product-card {
   background: #f8f9fa;
-  border-radius: 10px;
-  margin-bottom: 8px;
-  border: 2px solid transparent;
+  border-radius: 8px;
+  /* Reduced radius */
+  margin-bottom: 4px;
+  /* Reduced margin */
+  border: 1px solid #e1e4e8;
+  /* Thinner border */
   transition: all 0.15s ease;
   overflow: hidden;
 }
@@ -1672,9 +1699,15 @@ select:hover,
   display: grid;
   grid-template-columns: auto 1fr auto auto;
   align-items: center;
-  gap: 12px;
-  padding: 10px 14px;
+  gap: 8px;
+  /* Reduced gap */
+  padding: 6px 12px;
+  /* Reduced gap */
+  padding: 2px 6px;
+  /* Ultra reduced padding */
   cursor: pointer;
+  height: 32px;
+  /* Extreme compact height */
 }
 
 .offer-product-card-header input[type="checkbox"] {
@@ -1716,20 +1749,28 @@ select:hover,
 }
 
 .offer-product-cost .value {
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 600;
   color: var(--accent);
 }
 
 /* Product Details (when expanded/included) - Inline Compact */
+/* Product Details (when expanded/included) - Grid Layout */
+/* Product Details - Extreme Dense & Stretched */
 .offer-product-details {
   display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  padding: 10px 14px;
+  flex-wrap: nowrap;
+  gap: 16px;
+  /* Increased gap for better separation when stretched */
+  padding: 4px 12px;
+  /* Balanced padding */
   border-top: 1px solid rgba(0, 0, 0, 0.05);
-  background: #fafbfc;
-  align-items: flex-end;
+  background: #ffffff;
+  align-items: center;
+  justify-content: space-between;
+  /* Stretch content */
+  min-height: 28px;
+  overflow-x: auto;
 }
 
 .offer-product-details .form-group {
@@ -1747,12 +1788,17 @@ select:hover,
 }
 
 .offer-product-details .form-group input {
-  padding: 6px 8px;
-  font-size: 12px;
-  border-radius: 6px;
-  border: 1px solid rgba(0, 0, 0, 0.08);
+  padding: 0 2px;
+  /* Minimal padding */
+  font-size: 10px;
+  border-radius: 2px;
+  border: 1px solid rgba(0, 0, 0, 0.15);
   background: white;
-  width: 70px;
+  width: 40px;
+  /* Ultra reduced width */
+  height: 18px;
+  /* Extreme fixed height */
+  text-align: center;
 }
 
 .offer-product-details .form-group input:focus {
@@ -1761,21 +1807,26 @@ select:hover,
 }
 
 /* Labor Cost Section - Inline */
+/* Labor Cost Section - Minimal */
 .labor-cost-section {
   display: flex;
   align-items: center;
   gap: 8px;
-  background: rgba(52, 199, 89, 0.08);
-  padding: 6px 10px;
-  border-radius: 6px;
-  border: 1px solid rgba(52, 199, 89, 0.12);
-  flex: 1;
+  background: transparent;
+  /* Removed background */
+  padding: 0;
+  border: none;
+  border-left: 1px solid #e1e4e8;
+  /* Divider only */
+  padding-left: 8px;
+  flex: 0 0 auto;
 }
 
 .labor-cost-section .section-label {
   font-size: 9px;
   font-weight: 600;
-  color: #34c759;
+  color: #6b7280;
+  /* Neutral color */
   text-transform: uppercase;
   white-space: nowrap;
 }
@@ -1800,15 +1851,30 @@ select:hover,
 }
 
 .labor-field input {
-  width: 50px;
-  padding: 4px 6px;
-  font-size: 12px;
-  border: 1px solid rgba(0, 0, 0, 0.08);
-  border-radius: 4px;
+  width: 40px;
+  /* Smaller inputs */
+  padding: 0 2px;
+  height: 22px;
+  font-size: 11px;
+  border: 1px solid rgba(0, 0, 0, 0.15);
+  border-radius: 3px;
   background: white;
   text-align: center;
 }
 
+/* Hide Spin Buttons */
+input[type=number]::-webkit-inner-spin-button,
+input[type=number]::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+input[type=number] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+/* Labor Total Display */
 .labor-total {
   display: flex;
   align-items: center;
