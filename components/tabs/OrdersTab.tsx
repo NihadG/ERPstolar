@@ -937,112 +937,128 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
 
     return (
         <div className="orders-page">
-            {/* Sticky Header */}
-            <header className="page-header">
-                {/* Top Row: Title & Search & Main Action */}
+            {/* Page Header */}
+            <div className="page-header">
                 <div className="header-content">
                     <div className="header-text">
-                        <h1>Radni Nalozi</h1>
+                        <h1>Narudžbe</h1>
+                        <p>Upravljajte narudžbama materijala prema dobavljačima.</p>
                     </div>
+                    <div className="header-actions">
+                        <button
+                            className={`filter-toggle ${isFiltersOpen ? 'active' : ''}`}
+                            onClick={() => setIsFiltersOpen(!isFiltersOpen)}
+                        >
+                            <span className="material-icons-round">filter_list</span>
+                            <span>{isFiltersOpen ? 'Sakrij pretragu' : 'Pretraga i filteri'}</span>
+                            <span className="material-icons-round">{isFiltersOpen ? 'expand_less' : 'expand_more'}</span>
+                        </button>
+                        <button className="btn btn-primary" onClick={openWizard}>
+                            <span className="material-icons-round">add</span>
+                            Nova Narudžba
+                        </button>
+                    </div>
+                </div>
+            </div>
 
-                    <div className="header-controls">
-                        {/* Apple-style Search */}
-                        <div className="search-box-apple">
+            {/* Collapsible Control Bar */}
+            <div className={`control-bar ${isFiltersOpen ? 'open' : ''}`}>
+                <div className="control-bar-inner">
+                    <div className="controls-row">
+                        {/* Search */}
+                        <div className="search-box">
                             <span className="material-icons-round">search</span>
                             <input
                                 type="text"
-                                placeholder="Pretraži..."
+                                placeholder="Pretraži po broju ili dobavljaču..."
                                 value={searchTerm}
                                 onChange={(e) => setSearchTerm(e.target.value)}
                             />
                         </div>
 
-                        {/* New Order Button */}
-                        <button className="btn-primary-apple" onClick={openWizard}>
-                            <span className="material-icons-round">add</span>
-                            Novi Nalog
-                        </button>
+                        <div className="divider"></div>
+
+                        {/* Status Pills */}
+                        <div className="status-pills">
+                            {statusOptions.map(opt => (
+                                <button
+                                    key={opt.value}
+                                    className={`status-pill ${statusFilter === opt.value ? 'active' : ''} ${opt.value ? `status-${opt.value.toLowerCase().replace(/\s+/g, '-')}` : ''}`}
+                                    onClick={() => setStatusFilter(opt.value)}
+                                >
+                                    {opt.label}
+                                </button>
+                            ))}
+                        </div>
+
+                        <div className="divider"></div>
+
+                        {/* Grouping */}
+                        <div className="group-control">
+                            <span className="group-label">Grupiši:</span>
+                            <div className="group-dropdown">
+                                <select value={groupBy} onChange={(e) => setGroupBy(e.target.value as GroupBy)}>
+                                    {groupingOptions.map(opt => (
+                                        <option key={opt.value} value={opt.value}>{opt.label}</option>
+                                    ))}
+                                </select>
+                                <span className="material-icons-round">expand_more</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Secondary filter row */}
+                    <div className="controls-row secondary">
+                        {/* Supplier Filter */}
+                        <div className="filter-group">
+                            <label>Dobavljač:</label>
+                            <select value={supplierFilter} onChange={(e) => setSupplierFilter(e.target.value)}>
+                                <option value="">Svi dobavljači</option>
+                                {orderSuppliers.map(s => (
+                                    <option key={s} value={s}>{s}</option>
+                                ))}
+                            </select>
+                        </div>
+
+                        {/* Project Filter */}
+                        <div className="filter-group">
+                            <label>Projekt:</label>
+                            <select value={projectFilter} onChange={(e) => setProjectFilter(e.target.value)}>
+                                <option value="">Svi projekti</option>
+                                {orderProjects.map(p => (
+                                    <option key={p.Project_ID} value={p.Project_ID}>{p.Client_Name}</option>
+                                ))}
+                            </select>
+                        </div>
+
+                        {/* Date Range */}
+                        <div className="filter-group">
+                            <label>Od:</label>
+                            <input
+                                type="date"
+                                value={dateFromFilter}
+                                onChange={(e) => setDateFromFilter(e.target.value)}
+                            />
+                        </div>
+                        <div className="filter-group">
+                            <label>Do:</label>
+                            <input
+                                type="date"
+                                value={dateToFilter}
+                                onChange={(e) => setDateToFilter(e.target.value)}
+                            />
+                        </div>
+
+                        {/* Clear filters */}
+                        {hasActiveFilters && (
+                            <button className="btn btn-text" onClick={clearFilters}>
+                                <span className="material-icons-round">close</span>
+                                Očisti filtere
+                            </button>
+                        )}
                     </div>
                 </div>
-
-                {/* Bottom Row: Horizontal Filters */}
-                <div className="filters-bar">
-                    {/* Status Pills */}
-                    <button
-                        className={`filter-pill ${statusFilter === '' ? 'active' : ''}`}
-                        onClick={() => setStatusFilter('')}
-                    >
-                        Sve
-                    </button>
-                    {ORDER_STATUSES.filter(s => s !== 'Potvrđeno' && s !== 'Isporučeno').map(status => (
-                        <button
-                            key={status}
-                            className={`filter-pill ${statusFilter === status ? 'active' : ''}`}
-                            onClick={() => setStatusFilter(status)}
-                        >
-                            {status}
-                        </button>
-                    ))}
-
-                    <div className="divider-vertical"></div>
-
-                    {/* Group By Dropdown */}
-                    <div className="filter-select-wrapper">
-                        <select
-                            className="filter-select"
-                            value={groupBy}
-                            onChange={(e) => setGroupBy(e.target.value as GroupBy)}
-                        >
-                            {groupingOptions.map(opt => (
-                                <option key={opt.value} value={opt.value}>Grupiši: {opt.label}</option>
-                            ))}
-                        </select>
-                        <span className="material-icons-round filter-select-icon">expand_more</span>
-                    </div>
-
-                    {/* Supplier Filter */}
-                    <div className="filter-select-wrapper">
-                        <select
-                            className="filter-select"
-                            value={supplierFilter}
-                            onChange={(e) => setSupplierFilter(e.target.value)}
-                        >
-                            <option value="">Svi dobavljači</option>
-                            {orderSuppliers.map(s => (
-                                <option key={s} value={s}>{s}</option>
-                            ))}
-                        </select>
-                        <span className="material-icons-round filter-select-icon">expand_more</span>
-                    </div>
-
-                    {/* Project Filter */}
-                    <div className="filter-select-wrapper">
-                        <select
-                            className="filter-select"
-                            value={projectFilter}
-                            onChange={(e) => setProjectFilter(e.target.value)}
-                        >
-                            <option value="">Svi projekti</option>
-                            {orderProjects.map(p => (
-                                <option key={p.Project_ID} value={p.Project_ID}>{p.Client_Name}</option>
-                            ))}
-                        </select>
-                        <span className="material-icons-round filter-select-icon">expand_more</span>
-                    </div>
-
-                    {/* Clear Filters (if active) */}
-                    {hasActiveFilters && (
-                        <button
-                            className="filter-pill"
-                            style={{ color: '#ff3b30' }}
-                            onClick={clearFilters}
-                        >
-                            <span className="material-icons-round" style={{ fontSize: 16, marginRight: 4, verticalAlign: 'text-bottom' }}>close</span>
-                            Očisti
-                        </button>
-                    )}
-                </div>
-            </header>
+            </div>
 
             {/* Grouped Content */}
             <div className="orders-content">

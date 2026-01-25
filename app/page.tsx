@@ -39,44 +39,7 @@ export default function Home() {
     // Command Palette state
     const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
 
-    // Swipe handling state
-    const [touchStart, setTouchStart] = useState<{ x: number, y: number } | null>(null);
 
-    function handleTouchStart(e: React.TouchEvent) {
-        setTouchStart({ x: e.touches[0].clientX, y: e.touches[0].clientY });
-    }
-
-    function handleTouchEnd(e: React.TouchEvent) {
-        if (!touchStart) return;
-
-        const touchEndX = e.changedTouches[0].clientX;
-        const touchEndY = e.changedTouches[0].clientY;
-
-        const diffX = touchEndX - touchStart.x;
-        const diffY = touchEndY - touchStart.y;
-
-        // Reset
-        setTouchStart(null);
-
-        // Ignore if vertical swipe is significant (scrolling)
-        if (Math.abs(diffY) > 50) return;
-
-        const SWIPE_THRESHOLD = 50;
-        const EDGE_THRESHOLD = 50; // Must start within 50px of edge to open
-
-        // Swipe Left (Open Sidebar) - must start from right edge
-        if (diffX < -SWIPE_THRESHOLD) {
-            const screenWidth = window.innerWidth;
-            if (touchStart.x > screenWidth - EDGE_THRESHOLD && !userMenuOpen) {
-                setUserMenuOpen(true);
-            }
-        }
-
-        // Swipe Right (Close Sidebar) - if sidebar is open
-        if (diffX > SWIPE_THRESHOLD && userMenuOpen) {
-            setUserMenuOpen(false);
-        }
-    }
 
     const [appState, setAppState] = useState<AppState>({
         projects: [],
@@ -222,8 +185,6 @@ export default function Home() {
     return (
         <div
             className="app-container"
-            onTouchStart={handleTouchStart}
-            onTouchEnd={handleTouchEnd}
         >
             {/* Sidebar Navigation */}
             <Sidebar
