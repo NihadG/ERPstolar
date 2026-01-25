@@ -294,6 +294,7 @@ export default function WorkOrderExpandedDetail({
                                 const assignment = item.Process_Assignments?.[process];
                                 return (
                                     <div key={process} className="col-process">
+                                        <span className="mobile-label">{process}</span>
                                         {isEditMode ? (
                                             <div className="edit-controls">
                                                 <select
@@ -402,8 +403,10 @@ export default function WorkOrderExpandedDetail({
                 .col-product { flex: 2; padding: 10px 14px; min-width: 200px; border-right: 1px solid #eee; display: flex; flex-direction: column; justify-content: center; }
                 .col-process-header { flex: 1; padding: 10px; text-align: center; border-right: 1px solid #eee; min-width: 120px; }
                 .col-process-header:last-child { border-right: none; }
-                .col-process { flex: 1; padding: 8px; border-right: 1px solid #eee; display: flex; align-items: center; justify-content: center; min-width: 120px; }
+                .col-process { flex: 1; padding: 8px; border-right: 1px solid #eee; display: flex; align-items: center; justify-content: center; min-width: 120px; position: relative; }
                 .col-process:last-child { border-right: none; }
+                
+                .mobile-label { display: none; }
 
                 .prod-name { font-weight: 600; font-size: 13px; color: #333; margin-bottom: 2px; }
                 .prod-sub { font-size: 11px; color: #888; }
@@ -425,12 +428,124 @@ export default function WorkOrderExpandedDetail({
                 .status-select-sm.status-progress { border-color: #bfdbfe; background: #eff6ff; color: #1d4ed8; }
 
                 @media (max-width: 768px) {
+                    .wo-expanded-content {
+                        padding: 16px;
+                    }
+
+                    /* Header / Toolbar */
+                    .wo-expanded-toolbar {
+                        flex-direction: column;
+                        align-items: stretch;
+                        gap: 16px;
+                    }
+
+                    .progress-section {
+                        max-width: 100%;
+                    }
+
+                    .toolbar-actions {
+                        flex-wrap: wrap;
+                        justify-content: flex-end;
+                    }
+                    
+                    .toolbar-actions button {
+                        flex-grow: 1;
+                        justify-content: center;
+                    }
+
+                    /* Matrix to Card Transformation */
+                    .wo-matrix {
+                        border: none;
+                        border-radius: 0;
+                        background: transparent;
+                        display: flex;
+                        flex-direction: column;
+                        gap: 12px;
+                    }
+
                     .matrix-header { display: none; }
-                    .matrix-row { flex-direction: column; padding: 12px; position: relative; }
-                    .col-checkbox { position: absolute; top: 12px; right: 12px; border: none; }
-                    .col-product { border: none; padding: 0 0 12px 0; width: 100%; border-bottom: 1px solid #f0f0f0; margin-bottom: 8px; min-width: 0; }
-                    .col-process { border: none; justify-content: space-between; padding: 4px 0; width: 100%; }
-                    .col-process::before { content: attr(key); font-size: 11px; font-weight: 600; color: #888; margin-right: auto; }
+
+                    .matrix-body {
+                        display: flex;
+                        flex-direction: column;
+                        gap: 12px;
+                    }
+
+                    .matrix-row {
+                        flex-direction: column;
+                        background: #fff;
+                        border: 1px solid #e5e5e5;
+                        border-radius: 12px;
+                        padding: 0;
+                        overflow: hidden;
+                        box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+                    }
+
+                    .col-checkbox {
+                        position: absolute;
+                        top: 12px;
+                        right: 12px;
+                        border: none;
+                        z-index: 2;
+                        width: 24px;
+                        height: 24px;
+                    }
+                    
+                    .col-product {
+                        border: none;
+                        border-bottom: 1px solid #f0f0f0;
+                        padding: 12px 16px;
+                        background: #f9fafb;
+                    }
+
+                    .prod-name { font-size: 15px; }
+                    .prod-sub { font-size: 12px; }
+
+                    /* Process List Grid */
+                    .matrix-row > .col-process {
+                        width: 100%;
+                        border: none;
+                        border-bottom: 1px solid #f5f5f7;
+                        padding: 10px 16px;
+                        display: flex;
+                        justify-content: space-between;
+                        align-items: center;
+                        min-width: 0;
+                    }
+
+                    .col-process:last-child {
+                        border-bottom: none;
+                    }
+
+                    .mobile-label {
+                        display: block;
+                        font-size: 13px;
+                        font-weight: 500;
+                        color: #555;
+                        width: 100px;
+                        flex-shrink: 0;
+                    }
+
+                    .view-status {
+                        flex-direction: row;
+                        align-items: center;
+                    }
+
+                    .status-badge-xs {
+                        padding: 4px 10px;
+                        font-size: 11px;
+                        border-radius: 6px;
+                    }
+
+                    /* Edit Mode Mobile */
+                    .edit-controls {
+                        align-items: flex-end;
+                    }
+                    .status-select-sm, .worker-select-sm {
+                        width: 140px;
+                        padding: 6px;
+                        font-size: 13px;
+                    }
                 }
             `}</style>
         </div>
