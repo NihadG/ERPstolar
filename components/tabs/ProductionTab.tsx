@@ -1292,6 +1292,96 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                     .details-top { flex-direction: column; padding: 10px 12px; }
                     .m-col.product { width: 150px; font-size: 12px; }
                     .m-col.process { min-width: 120px; }
+
+
+                    /* MAIN LIST RESPONSIVE STYLES */
+                    .content-header {
+                        flex-direction: column;
+                        align-items: stretch;
+                        gap: 12px;
+                    }
+                    
+                    .search-box {
+                        width: 100%;
+                    }
+                    
+                    .content-header > div:nth-child(2) {
+                        flex-wrap: wrap;
+                    }
+
+                    .group-control {
+                        flex: 1;
+                    }
+
+                    .filter-select {
+                        flex: 1;
+                    }
+
+                    .btn-primary {
+                        width: 100%;
+                        justify-content: center;
+                    }
+
+                    /* Project Card Mobile */
+                    .project-header {
+                        flex-direction: column;
+                        align-items: flex-start;
+                        gap: 12px;
+                        padding: 12px;
+                        position: relative;
+                    }
+
+                    .expand-btn {
+                        position: absolute;
+                        top: 12px;
+                        right: 12px;
+                    }
+
+                    .project-main-info {
+                        width: 100%;
+                        padding-right: 32px; /* space for expand button */
+                    }
+
+                    .project-title-section {
+                        flex-direction: column;
+                        align-items: flex-start;
+                        gap: 2px;
+                    }
+
+                    .project-details {
+                        flex-wrap: wrap;
+                        gap: 8px;
+                        margin-top: 8px;
+                    }
+
+                    /* Right side container - now bottom row */
+                    .project-header > div:last-child {
+                        width: 100%;
+                        justify-content: space-between;
+                        padding-top: 12px;
+                        border-top: 1px dashed #f0f0f0;
+                        margin-top: 4px;
+                    }
+
+                    .progress-mini {
+                        margin-right: 0;
+                        height: 28px;
+                        font-size: 11px;
+                    }
+
+                    .project-badges {
+                        height: 28px;
+                    }
+
+                    .status-badge {
+                        height: 28px;
+                        font-size: 10px;
+                        padding: 0 8px;
+                    }
+
+                    .project-actions {
+                        margin-left: 0;
+                    }
                 }
             `}</style>
         </div >
