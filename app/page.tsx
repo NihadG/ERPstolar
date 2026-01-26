@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
-import { ChevronRight } from 'lucide-react';
+import { ChevronRight, ChevronLeft } from 'lucide-react';
 import { getAllData } from '@/lib/database';
 import { signOut } from '@/lib/auth';
 import { useAuth } from '@/context/AuthContext';
@@ -212,13 +212,14 @@ export default function Home() {
                             {getUserInitials()}
                         </div>
                     </div>
-                    <button
-                        className="menu-trigger"
-                        onClick={() => setUserMenuOpen(true)}
-                    >
-                        <ChevronRight size={24} color="#1d1d1f" />
-                    </button>
                 </header>
+
+                <button
+                    className="mobile-menu-fab"
+                    onClick={() => setUserMenuOpen(true)}
+                >
+                    <ChevronLeft size={24} color="white" />
+                </button>
 
                 {/* Content */}
                 <main className="content-area">
@@ -326,6 +327,35 @@ export default function Home() {
                     flex-direction: column;
                     min-width: 0;
                     background: #f8fafc;
+                }
+
+                .mobile-menu-fab {
+                    position: fixed;
+                    bottom: 24px;
+                    right: 24px;
+                    width: 56px;
+                    height: 56px;
+                    background: #1d1d1f;
+                    border-radius: 50%;
+                    color: white;
+                    display: none;
+                    align-items: center;
+                    justify-content: center;
+                    box-shadow: 0 4px 20px rgba(0,0,0,0.25);
+                    border: none;
+                    z-index: 900;
+                    cursor: pointer;
+                    transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
+                }
+
+                .mobile-menu-fab:active {
+                    transform: scale(0.92);
+                }
+
+                @media (max-width: 768px) {
+                    .mobile-menu-fab {
+                        display: flex;
+                    }
                 }
 
                 @media (min-width: 769px) {
