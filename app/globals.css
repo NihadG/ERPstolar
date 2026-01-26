@@ -5474,25 +5474,36 @@ input[type=number] {
   .content-header .search-box {
     max-width: 100%;
     width: 100%;
+    background: white;
+    /* Contrast against header bg */
   }
 
   /* Projects List & Cards */
   .projects-list {
-    gap: 12px;
+    gap: 16px;
+    /* Increased gap */
   }
 
   .project-card {
     border-radius: 12px;
+    border: 1px solid rgba(0, 0, 0, 0.08);
+    /* More definition */
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
   }
 
   .project-header {
-    padding: 12px !important;
+    padding: 16px !important;
+    /* Unified padding */
     flex-wrap: wrap;
     gap: 12px !important;
   }
 
   .expand-btn {
-    padding: 6px;
+    padding: 8px;
+    /* Larger touch target */
+    background: #f5f5f7;
+    border-radius: 50%;
+    /* Circular for better look */
     order: 0;
   }
 
@@ -5500,149 +5511,212 @@ input[type=number] {
   .project-main-info {
     order: 1;
     flex: 1 1 auto;
-    /* Allow shrink/grow */
-    width: calc(100% - 40px);
-    /* Account for expand button */
+    width: calc(100% - 50px);
   }
 
   .project-title-section {
     flex-direction: column;
     align-items: flex-start;
-    gap: 4px;
+    gap: 2px;
   }
 
   .project-name {
-    font-size: 16px;
+    font-size: 17px;
+    /* Slightly larger */
+    font-weight: 700;
   }
 
   .project-details {
-    margin-top: 4px;
+    margin-top: 6px;
     flex-direction: column;
     align-items: flex-start;
-    gap: 4px;
+    gap: 6px;
   }
 
   .project-badges {
     order: 2;
     width: 100%;
-    margin-top: 8px;
+    margin-top: 12px;
     justify-content: flex-start;
+    gap: 8px;
   }
 
+  /* Improved Actions Area */
   .project-actions {
     order: 3;
     width: 100%;
+    display: flex;
     justify-content: flex-end;
-    /* Right align actions */
-    margin-top: 12px;
-    border-top: 1px solid rgba(0, 0, 0, 0.04);
-    padding-top: 8px;
+    gap: 12px;
+    margin-top: 16px;
+    border-top: 1px solid rgba(0, 0, 0, 0.06);
+    padding-top: 12px;
+    background: #fafafa;
+    margin-left: -16px;
+    /* Bleed to edge */
+    margin-right: -16px;
+    margin-bottom: -16px;
+    /* Bleed to bottom */
+    padding-left: 16px;
+    padding-right: 16px;
+    padding-bottom: 12px;
+    border-radius: 0 0 12px 12px;
+  }
+
+  .project-actions .icon-btn {
+    background: white;
+    border: 1px solid rgba(0, 0, 0, 0.1);
+    padding: 8px;
+    border-radius: 8px;
   }
 
   /* Products Section - Flattening the nest */
   .project-products {
     padding: 0 !important;
-    border-top: 1px solid rgba(0, 0, 0, 0.05);
-    background: #f9f9fb;
-    /* Slightly darker to differentiate */
+    border-top: none;
+    background: #f2f4f8;
+    /* Distinct background */
+    margin-top: 16px;
+    /* Separation from card body */
   }
 
   .products-header {
-    padding: 12px 16px !important;
+    padding: 14px 16px !important;
     margin-bottom: 0;
     background: #fff;
     border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+    border-top: 1px solid rgba(0, 0, 0, 0.05);
+    /* Top border for separation */
   }
 
   .btn-add-item {
-    padding: 8px 12px;
-    font-size: 12px;
+    padding: 8px 14px;
+    font-size: 13px;
+    background: #f5f5f7;
+    border: none;
+    color: var(--accent);
+    font-weight: 600;
   }
 
   /* Product Cards in Mobile list */
   .product-card {
     border-radius: 0;
-    /* Full width feel */
-    margin-bottom: 1px;
-    /* Separator */
+    margin-bottom: 8px;
+    /* Card style spacing */
     border: none;
-    border-bottom: 1px solid rgba(0, 0, 0, 0.05);
-    box-shadow: none;
-    background: transparent;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
+    background: white;
   }
 
   .product-card:last-child {
-    border-bottom: none;
+    margin-bottom: 0;
   }
 
   .product-header {
-    padding: 12px 16px !important;
+    padding: 16px !important;
     background: white;
-    /* Ensure visible against gray bg */
     flex-wrap: wrap;
-    gap: 8px !important;
+    gap: 12px !important;
+    border-bottom: 1px solid rgba(0, 0, 0, 0.04);
   }
 
   .product-info {
     order: 1;
     width: calc(100% - 40px);
-    /* Leave space for chevron */
   }
 
   .product-name {
-    font-size: 15px;
+    font-size: 16px;
+    font-weight: 600;
+    margin-bottom: 6px;
   }
 
   .product-dims {
-    font-size: 12px;
+    font-size: 13px;
+    background: #f5f5f7;
+    display: inline-block;
+    padding: 2px 6px;
+    border-radius: 4px;
+    margin-top: 4px;
   }
 
   .product-header .status-badge {
     order: 2;
     margin-top: 4px;
+    font-size: 11px;
+    padding: 2px 8px;
   }
 
   .product-header .project-actions {
     order: 3;
     width: 100%;
     justify-content: flex-end;
-    padding-top: 8px;
+    padding-top: 12px;
     margin-top: 8px;
     border-top: 1px dashed rgba(0, 0, 0, 0.05);
+    background: transparent;
+    /* Reset from project level bleed */
+    margin-left: 0;
+    margin-right: 0;
+    margin-bottom: 0;
+    padding-left: 0;
+    padding-right: 0;
+    border-radius: 0;
+  }
+
+  .product-header .project-actions .icon-btn {
+    border: none;
+    /* Cleaner look inside product */
+    background: #f5f5f7;
   }
 
   /* Materials Section - Deepest nest */
   .product-materials {
-    padding: 0 !important;
-    background: #f2f2f5;
+    padding: 12px 16px !important;
+    /* Add padding back for nesting effect */
+    background: #f9fafb;
+    gap: 12px;
   }
 
   .materials-header {
-    padding: 10px 16px;
-    background: #f2f2f5;
+    display: none;
+    /* Hide redundant header inside product */
   }
 
   .material-category-section {
-    border-radius: 0;
-    border: none;
-    border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+    border-radius: 12px;
+    /* Rounded items */
+    border: 1px solid rgba(0, 0, 0, 0.06);
     background: white;
-    margin-bottom: 8px;
+    margin-bottom: 12px;
+    overflow: hidden;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.02);
   }
 
   .category-header {
-    padding: 10px 16px;
-    background: #fff;
+    padding: 10px 14px;
+    background: #fafafa;
+    border-bottom: 1px solid rgba(0, 0, 0, 0.04);
+  }
+
+  .cat-title {
+    font-size: 12px;
+    color: var(--text-secondary);
   }
 
   .category-items {
-    padding: 0 16px;
+    padding: 0;
   }
 
   .material-row {
-    padding: 12px 0;
-    /* Remove side padding inside row since container has it */
-    gap: 8px;
+    padding: 16px;
+    gap: 0;
+    /* Reset gap, use margins */
+    border-bottom: 1px solid rgba(0, 0, 0, 0.04);
+  }
+
+  .material-row:last-child {
+    border-bottom: none;
   }
 
   /* Stack material row columns */
@@ -5653,15 +5727,18 @@ input[type=number] {
   }
 
   .mat-col-name {
-    margin-bottom: 4px;
+    margin-bottom: 10px;
     width: 100%;
+    padding-bottom: 10px;
+    border-bottom: 1px dashed rgba(0, 0, 0, 0.06);
   }
 
   .material-name-text {
-    font-size: 14px;
-    font-weight: 600;
+    font-size: 15px;
+    font-weight: 500;
   }
 
+  /* Key-Value Pair Styling for Mobile Material Rows */
   .mat-col-qty,
   .mat-col-price,
   .mat-col-total,
@@ -5671,33 +5748,55 @@ input[type=number] {
     align-items: center;
     width: 100%;
     padding: 4px 0;
-    font-size: 13px;
-    color: var(--text-secondary);
+    font-size: 14px;
+    color: var(--text-primary);
+  }
+
+  .mat-col-total {
+    margin-top: 4px;
+    padding-top: 8px;
+    border-top: 1px dashed rgba(0, 0, 0, 0.06);
+  }
+
+  .mat-col-total strong {
+    font-size: 16px;
+    color: var(--accent);
   }
 
   .mobile-label {
     display: inline-block;
     min-width: 60px;
+    color: var(--text-tertiary);
+    font-weight: 400;
+    font-size: 13px;
   }
 
   .mat-col-actions {
     width: 100%;
     justify-content: flex-end;
-    margin-top: 8px;
-    padding-top: 8px;
-    border-top: 1px dashed rgba(0, 0, 0, 0.05);
+    margin-top: 12px;
+    padding-top: 0;
+    border-top: none;
+  }
+
+  .status-badge.clickable {
+    padding: 6px 12px;
+    /* Easier to tap */
+    font-size: 13px;
   }
 
   /* Modal optimization for mobile */
   .modal-overlay {
-    padding: 10px;
-    align-items: flex-end;
-    /* Sheet-like on mobile? Or just center */
+    padding: 16px;
+    align-items: center;
+    background: rgba(0, 0, 0, 0.4);
+    backdrop-filter: blur(4px);
   }
 
   .modal-container {
-    max-height: 90vh;
-    border-radius: 16px;
+    max-height: 85vh;
+    border-radius: 20px;
     width: 100% !important;
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
   }
 }
