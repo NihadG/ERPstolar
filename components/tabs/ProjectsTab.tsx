@@ -19,7 +19,7 @@ import Modal from '@/components/ui/Modal';
 import GlassModal, { type GlassModalData } from '@/components/ui/GlassModal';
 import AluDoorModal, { type AluDoorModalData } from '@/components/ui/AluDoorModal';
 import MaterialReportModal from '@/components/ui/MaterialReportModal';
-import { PROJECT_STATUSES, PRODUCTION_MODES, PRODUCTION_STEPS } from '@/lib/types';
+import { PROJECT_STATUSES, PRODUCTION_MODES, PRODUCTION_STEPS, MATERIAL_CATEGORIES } from '@/lib/types';
 
 interface ProjectsTabProps {
     projects: Project[];
@@ -545,123 +545,182 @@ export default function ProjectsTab({ projects, materials, workOrders = [], onRe
                                             </div>
 
                                             {/* Materials Section */}
-                                            <div className={`product-materials ${expandedProducts.has(product.Product_ID) ? 'expanded' : ''}`}>
-                                                <div className="materials-header">
-                                                    <h5>Materijali ({product.materials?.length || 0})</h5>
-                                                    <button className="btn-add-item" onClick={() => openMaterialModal(product.Product_ID)}>
-                                                        <span className="material-icons-round">add</span>
-                                                        Dodaj materijal
-                                                    </button>
-                                                </div>
+                                            {(() => {
+                                                // Group materials logic
+                                                const groups: Record<string, { items: ProductMaterial[], total: number }> = {};
+                                                const productMaterials = product.materials || [];
 
-                                                {product.materials && product.materials.length > 0 && (
-                                                    <div className="materials-table-header">
-                                                        <div className="mat-col-name">Naziv</div>
-                                                        <div className="mat-col-qty">Količina</div>
-                                                        <div className="mat-col-price">Cijena</div>
-                                                        <div className="mat-col-total">Ukupno</div>
-                                                        <div className="mat-col-status">Status</div>
-                                                        <div className="mat-col-actions">Akcije</div>
-                                                    </div>
-                                                )}
+                                                if (productMaterials.length === 0) return null;
 
-                                                {product.materials?.map(material => {
-                                                    const isGlass = material.glassItems && material.glassItems.length > 0;
-                                                    const isAluDoor = material.aluDoorItems && material.aluDoorItems.length > 0;
-                                                    const glassCount = isGlass ? material.glassItems!.reduce((sum, gi) => sum + (gi.Qty || 1), 0) : 0;
-                                                    const aluDoorCount = isAluDoor ? material.aluDoorItems!.reduce((sum, ai) => sum + (ai.Qty || 1), 0) : 0;
+                                                productMaterials.forEach(pm => {
+                                                    let category = 'Ostalo';
 
-                                                    return (
-                                                        <div key={material.ID} className="material-row">
-                                                            <div className="mat-col-name">
-                                                                <span className="material-name-text">{material.Material_Name}</span>
-                                                                {isGlass && <span className="material-indicator glass">🪟 {glassCount} kom</span>}
-                                                                {isAluDoor && <span className="material-indicator alu-door">🚪 {aluDoorCount} kom</span>}
-                                                            </div>
-                                                            <div className="mat-col-qty">
-                                                                <span className="mobile-label">Količina:</span>
-                                                                {material.Quantity} {material.Unit}
-                                                            </div>
-                                                            <div className="mat-col-price">
-                                                                <span className="mobile-label">Cijena:</span>
-                                                                {formatCurrency(material.Unit_Price)}
-                                                            </div>
-                                                            <div className="mat-col-total">
-                                                                <span className="mobile-label">Ukupno:</span>
-                                                                <strong>{formatCurrency(material.Total_Price)}</strong>
-                                                            </div>
-                                                            <div className="mat-col-status">
-                                                                {material.Status === 'Nije naručeno' ? (
-                                                                    <div className="status-dropdown-wrapper">
-                                                                        <span
-                                                                            className={`status-badge ${getStatusClass(material.Status)} clickable`}
-                                                                            onClick={(e) => {
-                                                                                e.stopPropagation();
-                                                                                setStatusDropdownMaterialId(
-                                                                                    statusDropdownMaterialId === material.ID ? null : material.ID
-                                                                                );
-                                                                            }}
-                                                                            title="Klikni za promjenu statusa"
-                                                                        >
-                                                                            {material.Status}
-                                                                            <span className="material-icons-round" style={{ fontSize: '14px', marginLeft: '4px' }}>expand_more</span>
-                                                                        </span>
-                                                                        {statusDropdownMaterialId === material.ID && (
-                                                                            <div className="status-dropdown-menu" onClick={(e) => e.stopPropagation()}>
-                                                                                <button
-                                                                                    className="status-dropdown-item"
-                                                                                    onClick={() => handleMaterialStatusChange(material.ID, 'Na stanju')}
-                                                                                >
-                                                                                    <span className="material-icons-round">inventory</span>
-                                                                                    Na stanju
-                                                                                </button>
-                                                                            </div>
-                                                                        )}
-                                                                    </div>
-                                                                ) : (
-                                                                    <span className={`status-badge ${getStatusClass(material.Status)}`}>
-                                                                        {material.Status}
-                                                                    </span>
-                                                                )}
-                                                            </div>
-                                                            <div className="mat-col-actions">
-                                                                <div className="action-buttons">
-                                                                    {isGlass && (
-                                                                        <button
-                                                                            className="icon-btn"
-                                                                            onClick={() => openGlassModalForEdit(product.Product_ID, material)}
-                                                                            title="Uredi staklo"
-                                                                        >
-                                                                            <span className="material-icons-round">edit</span>
-                                                                        </button>
-                                                                    )}
-                                                                    {isAluDoor && (
-                                                                        <button
-                                                                            className="icon-btn"
-                                                                            onClick={() => openAluDoorModalForEdit(product.Product_ID, material)}
-                                                                            title="Uredi alu vrata"
-                                                                        >
-                                                                            <span className="material-icons-round">edit</span>
-                                                                        </button>
-                                                                    )}
-                                                                    {!isGlass && !isAluDoor && (
-                                                                        <button
-                                                                            className="icon-btn"
-                                                                            onClick={() => openEditMaterialModal(material)}
-                                                                            title="Uredi materijal"
-                                                                        >
-                                                                            <span className="material-icons-round">edit</span>
-                                                                        </button>
-                                                                    )}
-                                                                    <button className="icon-btn danger" onClick={() => handleDeleteMaterial(material.ID)}>
-                                                                        <span className="material-icons-round">delete</span>
-                                                                    </button>
-                                                                </div>
-                                                            </div>
+                                                    // Check specific types first
+                                                    if (pm.glassItems && pm.glassItems.length > 0) category = 'Staklo';
+                                                    else if (pm.aluDoorItems && pm.aluDoorItems.length > 0) category = 'Alu vrata';
+                                                    else {
+                                                        const matDef = materials.find(m => m.Material_ID === pm.Material_ID);
+                                                        if (matDef?.Category) category = matDef.Category;
+                                                    }
+
+                                                    if (!groups[category]) {
+                                                        groups[category] = { items: [], total: 0 };
+                                                    }
+
+                                                    groups[category].items.push(pm);
+                                                    groups[category].total += (pm.Total_Price || 0);
+                                                });
+
+                                                // Sort categories based on MATERIAL_CATEGORIES order
+                                                const sortedCategories = Object.keys(groups).sort((a, b) => {
+                                                    const idxA = MATERIAL_CATEGORIES.indexOf(a);
+                                                    const idxB = MATERIAL_CATEGORIES.indexOf(b);
+                                                    // If not found, put at end
+                                                    return (idxA === -1 ? 999 : idxA) - (idxB === -1 ? 999 : idxB);
+                                                });
+
+                                                // Fix for importing constant name if it differs from local variable name
+                                                // Using MATERIAL_CATEGORIES directly as it is imported.
+
+                                                return (
+                                                    <div className={`product-materials ${expandedProducts.has(product.Product_ID) ? 'expanded' : ''}`}>
+                                                        <div className="materials-header">
+                                                            <h5>Materijali ({productMaterials.length})</h5>
+                                                            <button className="btn-add-item" onClick={() => openMaterialModal(product.Product_ID)}>
+                                                                <span className="material-icons-round">add</span>
+                                                                Dodaj materijal
+                                                            </button>
                                                         </div>
-                                                    );
-                                                })}
-                                            </div>
+
+                                                        {sortedCategories.map(category => {
+                                                            const group = groups[category];
+                                                            return (
+                                                                <div key={category} className="material-category-section">
+                                                                    <div className="category-header">
+                                                                        <div className="cat-title">
+                                                                            <span className="cat-dot"></span>
+                                                                            {category}
+                                                                            <span className="cat-count-badge">{group.items.length}</span>
+                                                                        </div>
+                                                                        <div className="cat-total">
+                                                                            {formatCurrency(group.total)}
+                                                                        </div>
+                                                                    </div>
+
+                                                                    <div className="category-items">
+                                                                        {/* Header for this category table - optional, maybe just for desktop */}
+                                                                        <div className="materials-table-header mini">
+                                                                            <div className="mat-col-name">Naziv</div>
+                                                                            <div className="mat-col-qty">Količina</div>
+                                                                            <div className="mat-col-price">Cijena</div>
+                                                                            <div className="mat-col-total">Ukupno</div>
+                                                                            <div className="mat-col-status">Status</div>
+                                                                            <div className="mat-col-actions"></div>
+                                                                        </div>
+
+                                                                        {group.items.map(material => {
+                                                                            const isGlass = material.glassItems && material.glassItems.length > 0;
+                                                                            const isAluDoor = material.aluDoorItems && material.aluDoorItems.length > 0;
+                                                                            const glassCount = isGlass ? material.glassItems!.reduce((sum, gi) => sum + (gi.Qty || 1), 0) : 0;
+                                                                            const aluDoorCount = isAluDoor ? material.aluDoorItems!.reduce((sum, ai) => sum + (ai.Qty || 1), 0) : 0;
+
+                                                                            return (
+                                                                                <div key={material.ID} className="material-row">
+                                                                                    <div className="mat-col-name">
+                                                                                        <span className="material-name-text">{material.Material_Name}</span>
+                                                                                        {isGlass && <span className="material-indicator glass">🪟 {glassCount} kom</span>}
+                                                                                        {isAluDoor && <span className="material-indicator alu-door">🚪 {aluDoorCount} kom</span>}
+                                                                                    </div>
+                                                                                    <div className="mat-col-qty">
+                                                                                        <span className="mobile-label">Kol:</span>
+                                                                                        {material.Quantity} {material.Unit}
+                                                                                    </div>
+                                                                                    <div className="mat-col-price">
+                                                                                        <span className="mobile-label">Cijena:</span>
+                                                                                        {formatCurrency(material.Unit_Price)}
+                                                                                    </div>
+                                                                                    <div className="mat-col-total">
+                                                                                        <span className="mobile-label">Ukupno:</span>
+                                                                                        <strong>{formatCurrency(material.Total_Price)}</strong>
+                                                                                    </div>
+                                                                                    <div className="mat-col-status">
+                                                                                        {material.Status === 'Nije naručeno' ? (
+                                                                                            <div className="status-dropdown-wrapper">
+                                                                                                <span
+                                                                                                    className={`status-badge ${getStatusClass(material.Status)} clickable`}
+                                                                                                    onClick={(e) => {
+                                                                                                        e.stopPropagation();
+                                                                                                        setStatusDropdownMaterialId(
+                                                                                                            statusDropdownMaterialId === material.ID ? null : material.ID
+                                                                                                        );
+                                                                                                    }}
+                                                                                                    title="Klikni za promjenu statusa"
+                                                                                                >
+                                                                                                    {material.Status}
+                                                                                                    <span className="material-icons-round" style={{ fontSize: '14px', marginLeft: '4px' }}>expand_more</span>
+                                                                                                </span>
+                                                                                                {statusDropdownMaterialId === material.ID && (
+                                                                                                    <div className="status-dropdown-menu" onClick={(e) => e.stopPropagation()}>
+                                                                                                        <button
+                                                                                                            className="status-dropdown-item"
+                                                                                                            onClick={() => handleMaterialStatusChange(material.ID, 'Na stanju')}
+                                                                                                        >
+                                                                                                            <span className="material-icons-round">inventory</span>
+                                                                                                            Na stanju
+                                                                                                        </button>
+                                                                                                    </div>
+                                                                                                )}
+                                                                                            </div>
+                                                                                        ) : (
+                                                                                            <span className={`status-badge ${getStatusClass(material.Status)}`}>
+                                                                                                {material.Status}
+                                                                                            </span>
+                                                                                        )}
+                                                                                    </div>
+                                                                                    <div className="mat-col-actions">
+                                                                                        <div className="action-buttons">
+                                                                                            {isGlass && (
+                                                                                                <button
+                                                                                                    className="icon-btn"
+                                                                                                    onClick={() => openGlassModalForEdit(product.Product_ID, material)}
+                                                                                                    title="Uredi staklo"
+                                                                                                >
+                                                                                                    <span className="material-icons-round">edit</span>
+                                                                                                </button>
+                                                                                            )}
+                                                                                            {isAluDoor && (
+                                                                                                <button
+                                                                                                    className="icon-btn"
+                                                                                                    onClick={() => openAluDoorModalForEdit(product.Product_ID, material)}
+                                                                                                    title="Uredi alu vrata"
+                                                                                                >
+                                                                                                    <span className="material-icons-round">edit</span>
+                                                                                                </button>
+                                                                                            )}
+                                                                                            {!isGlass && !isAluDoor && (
+                                                                                                <button
+                                                                                                    className="icon-btn"
+                                                                                                    onClick={() => openEditMaterialModal(material)}
+                                                                                                    title="Uredi materijal"
+                                                                                                >
+                                                                                                    <span className="material-icons-round">edit</span>
+                                                                                                </button>
+                                                                                            )}
+                                                                                            <button className="icon-btn danger" onClick={() => handleDeleteMaterial(material.ID)}>
+                                                                                                <span className="material-icons-round">delete</span>
+                                                                                            </button>
+                                                                                        </div>
+                                                                                    </div>
+                                                                                </div>
+                                                                            );
+                                                                        })}
+                                                                    </div>
+                                                                </div>
+                                                            );
+                                                        })}
+                                                    </div>
+                                                );
+                                            })()}
                                         </div>
                                     ))}
                                 </div>
