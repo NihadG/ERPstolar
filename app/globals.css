@@ -5452,3 +5452,252 @@ input[type=number] {
     page-break-inside: avoid !important;
   }
 }
+
+/* ============================================
+   MOBILE OPTIMIZATIONS (Max-width 480px)
+   ============================================ */
+@media (max-width: 480px) {
+
+  /* Global Content Fixes */
+  .content {
+    padding: 12px !important;
+    width: 100% !important;
+  }
+
+  .content-header {
+    padding: 16px !important;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+  }
+
+  .content-header .search-box {
+    max-width: 100%;
+    width: 100%;
+  }
+
+  /* Projects List & Cards */
+  .projects-list {
+    gap: 12px;
+  }
+
+  .project-card {
+    border-radius: 12px;
+  }
+
+  .project-header {
+    padding: 12px !important;
+    flex-wrap: wrap;
+    gap: 12px !important;
+  }
+
+  .expand-btn {
+    padding: 6px;
+    order: 0;
+  }
+
+  /* Reorder project header for mobile */
+  .project-main-info {
+    order: 1;
+    flex: 1 1 auto;
+    /* Allow shrink/grow */
+    width: calc(100% - 40px);
+    /* Account for expand button */
+  }
+
+  .project-title-section {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+  }
+
+  .project-name {
+    font-size: 16px;
+  }
+
+  .project-details {
+    margin-top: 4px;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+  }
+
+  .project-badges {
+    order: 2;
+    width: 100%;
+    margin-top: 8px;
+    justify-content: flex-start;
+  }
+
+  .project-actions {
+    order: 3;
+    width: 100%;
+    justify-content: flex-end;
+    /* Right align actions */
+    margin-top: 12px;
+    border-top: 1px solid rgba(0, 0, 0, 0.04);
+    padding-top: 8px;
+  }
+
+  /* Products Section - Flattening the nest */
+  .project-products {
+    padding: 0 !important;
+    border-top: 1px solid rgba(0, 0, 0, 0.05);
+    background: #f9f9fb;
+    /* Slightly darker to differentiate */
+  }
+
+  .products-header {
+    padding: 12px 16px !important;
+    margin-bottom: 0;
+    background: #fff;
+    border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+  }
+
+  .btn-add-item {
+    padding: 8px 12px;
+    font-size: 12px;
+  }
+
+  /* Product Cards in Mobile list */
+  .product-card {
+    border-radius: 0;
+    /* Full width feel */
+    margin-bottom: 1px;
+    /* Separator */
+    border: none;
+    border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+    box-shadow: none;
+    background: transparent;
+  }
+
+  .product-card:last-child {
+    border-bottom: none;
+  }
+
+  .product-header {
+    padding: 12px 16px !important;
+    background: white;
+    /* Ensure visible against gray bg */
+    flex-wrap: wrap;
+    gap: 8px !important;
+  }
+
+  .product-info {
+    order: 1;
+    width: calc(100% - 40px);
+    /* Leave space for chevron */
+  }
+
+  .product-name {
+    font-size: 15px;
+  }
+
+  .product-dims {
+    font-size: 12px;
+  }
+
+  .product-header .status-badge {
+    order: 2;
+    margin-top: 4px;
+  }
+
+  .product-header .project-actions {
+    order: 3;
+    width: 100%;
+    justify-content: flex-end;
+    padding-top: 8px;
+    margin-top: 8px;
+    border-top: 1px dashed rgba(0, 0, 0, 0.05);
+  }
+
+  /* Materials Section - Deepest nest */
+  .product-materials {
+    padding: 0 !important;
+    background: #f2f2f5;
+  }
+
+  .materials-header {
+    padding: 10px 16px;
+    background: #f2f2f5;
+  }
+
+  .material-category-section {
+    border-radius: 0;
+    border: none;
+    border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+    background: white;
+    margin-bottom: 8px;
+  }
+
+  .category-header {
+    padding: 10px 16px;
+    background: #fff;
+  }
+
+  .category-items {
+    padding: 0 16px;
+  }
+
+  .material-row {
+    padding: 12px 0;
+    /* Remove side padding inside row since container has it */
+    gap: 8px;
+  }
+
+  /* Stack material row columns */
+  .material-row {
+    grid-template-columns: 1fr;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .mat-col-name {
+    margin-bottom: 4px;
+    width: 100%;
+  }
+
+  .material-name-text {
+    font-size: 14px;
+    font-weight: 600;
+  }
+
+  .mat-col-qty,
+  .mat-col-price,
+  .mat-col-total,
+  .mat-col-status {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    width: 100%;
+    padding: 4px 0;
+    font-size: 13px;
+    color: var(--text-secondary);
+  }
+
+  .mobile-label {
+    display: inline-block;
+    min-width: 60px;
+  }
+
+  .mat-col-actions {
+    width: 100%;
+    justify-content: flex-end;
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px dashed rgba(0, 0, 0, 0.05);
+  }
+
+  /* Modal optimization for mobile */
+  .modal-overlay {
+    padding: 10px;
+    align-items: flex-end;
+    /* Sheet-like on mobile? Or just center */
+  }
+
+  .modal-container {
+    max-height: 90vh;
+    border-radius: 16px;
+    width: 100% !important;
+  }
+}
