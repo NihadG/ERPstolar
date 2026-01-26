@@ -154,11 +154,6 @@ export default function WorkOrderExpandedDetail({
         setSelectedProducts(new Set());
     }
 
-    function formatDate(dateString: string): string {
-        if (!dateString) return '-';
-        return new Date(dateString).toLocaleDateString('hr-HR');
-    }
-
     function getStatusClass(status: string): string {
         switch (status) {
             case 'Završeno': return 'status-done';
@@ -169,68 +164,68 @@ export default function WorkOrderExpandedDetail({
     }
 
     return (
-        <div className="wo-expanded-content">
-            {/* Toolbar / Header Actions inside expansion */}
-            <div className="wo-expanded-toolbar">
-                <div className="toolbar-info">
-                    <div className="progress-section">
-                        <span className="label">Napredak</span>
-                        <div className="progress-bar">
-                            <div className="bar-fill" style={{ width: `${progress}%` }}></div>
-                        </div>
+        <div className="wo-expanded-container">
+            {/* Header / Toolbar */}
+            <div className="wo-toolbar">
+                <div className="progress-card">
+                    <div className="progress-header">
+                        <span className="label">Ukupni napredak</span>
                         <span className="percent">{progress}%</span>
+                    </div>
+                    <div className="progress-bar-bg">
+                        <div className="progress-bar-fill" style={{ width: `${progress}%` }}></div>
                     </div>
                 </div>
 
-                <div className="toolbar-actions">
+                <div className="actions-card">
                     {isEditMode ? (
-                        <>
-                            <button className="btn-text" onClick={handleCancel}>Otkaži</button>
-                            <button className="btn-primary-sm" onClick={handleSave} disabled={!hasChanges}>
-                                Sačuvaj izmjene
+                        <div className="edit-actions">
+                            <button className="btn-iso btn-cancel" onClick={handleCancel}>Poništi</button>
+                            <button className="btn-iso btn-save" onClick={handleSave} disabled={!hasChanges}>
+                                Sačuvaj
                             </button>
-                        </>
+                        </div>
                     ) : (
-                        <>
+                        <div className="view-actions">
                             {workOrder.Status === 'Nacrt' || workOrder.Status === 'Dodijeljeno' ? (
-                                <button className="btn-secondary-sm" onClick={() => onStart(workOrder.Work_Order_ID)}>
+                                <button className="btn-iso btn-secondary" onClick={() => onStart(workOrder.Work_Order_ID)}>
                                     <span className="material-icons-round">play_arrow</span>
-                                    Pokreni
+                                    <span>Pokreni</span>
                                 </button>
                             ) : null}
 
-                            <button className="btn-secondary-sm" onClick={() => onPrint(workOrder)}>
+                            <button className="btn-iso btn-secondary" onClick={() => onPrint(workOrder)}>
                                 <span className="material-icons-round">print</span>
-                                Printaj
+                                <span>Printaj</span>
                             </button>
 
-                            <button className="btn-secondary-sm" onClick={() => setIsEditMode(true)}>
+                            <button className="btn-iso btn-primary" onClick={() => setIsEditMode(true)}>
                                 <span className="material-icons-round">edit</span>
-                                Uredi
+                                <span>Uredi</span>
                             </button>
 
-                            <button className="btn-icon-danger" onClick={() => onDelete(workOrder.Work_Order_ID)} title="Obriši nalog">
+                            <button className="btn-iso btn-danger-icon" onClick={() => onDelete(workOrder.Work_Order_ID)} title="Obriši nalog">
                                 <span className="material-icons-round">delete</span>
                             </button>
-                        </>
+                        </div>
                     )}
                 </div>
             </div>
 
-            {/* Bulk Edit Toolbar (only in edit mode) */}
+            {/* Bulk Edit Tool (Edit Mode Only) */}
             {isEditMode && selectedProducts.size > 0 && (
-                <div className="bulk-edit-bar">
-                    <div className="bulk-left">
-                        <span className="material-icons-round" style={{ fontSize: '18px' }}>checklist</span>
-                        <strong>{selectedProducts.size}</strong> odabrano
+                <div className="bulk-edit-container">
+                    <div className="bulk-info">
+                        <div className="selection-badge">{selectedProducts.size}</div>
+                        <span>odabrano</span>
                     </div>
-                    <div className="bulk-right">
+                    <div className="bulk-controls">
                         <select
                             value={bulkProcess}
                             onChange={e => setBulkProcess(e.target.value)}
-                            className="mini-select"
+                            className="ios-select"
                         >
-                            <option value="">Proces...</option>
+                            <option value="">Odaberi proces...</option>
                             {workOrder.Production_Steps.map(step => (
                                 <option key={step} value={step}>{step}</option>
                             ))}
@@ -238,314 +233,475 @@ export default function WorkOrderExpandedDetail({
                         <select
                             value={bulkStatus}
                             onChange={e => setBulkStatus(e.target.value)}
-                            className="mini-select"
+                            className="ios-select"
                         >
-                            <option value="">Status...</option>
+                            <option value="">Postavi status...</option>
                             {PROCESS_STATUSES.map(status => (
                                 <option key={status} value={status}>{status}</option>
                             ))}
                         </select>
-                        <button className="btn-primary-xs" onClick={handleBulkApply} disabled={!bulkProcess || !bulkStatus}>
+                        <button className="btn-iso btn-apply" onClick={handleBulkApply} disabled={!bulkProcess || !bulkStatus}>
                             Primijeni
                         </button>
                     </div>
                 </div>
             )}
 
-            {/* Matrix / List View */}
-            <div className="wo-matrix">
-                <div className="matrix-header">
-                    {isEditMode && (
-                        <div className="col-checkbox">
+            {/* Desktop Table View */}
+            <div className="desktop-view">
+                <div className="table-container">
+                    <table className="ios-table">
+                        <thead>
+                            <tr>
+                                {isEditMode && (
+                                    <th className="th-checkbox">
+                                        <input
+                                            type="checkbox"
+                                            className="ios-checkbox"
+                                            checked={selectedProducts.size === localItems.length && localItems.length > 0}
+                                            onChange={(e) => {
+                                                if (e.target.checked) setSelectedProducts(new Set(localItems.map(i => i.ID)));
+                                                else setSelectedProducts(new Set());
+                                            }}
+                                        />
+                                    </th>
+                                )}
+                                <th className="th-product">Proizvod</th>
+                                {workOrder.Production_Steps.map(step => (
+                                    <th key={step} className="th-process">{step}</th>
+                                ))}
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {localItems.map(item => (
+                                <tr key={item.ID} className={isEditMode && selectedProducts.has(item.ID) ? 'selected' : ''}>
+                                    {isEditMode && (
+                                        <td className="td-checkbox">
+                                            <input
+                                                type="checkbox"
+                                                className="ios-checkbox"
+                                                checked={selectedProducts.has(item.ID)}
+                                                onChange={() => handleToggleProduct(item.ID)}
+                                            />
+                                        </td>
+                                    )}
+                                    <td className="td-product">
+                                        <div className="prod-name">{item.Product_Name}</div>
+                                        <div className="prod-meta">{item.Project_Name} • {item.Quantity} kom</div>
+                                    </td>
+                                    {workOrder.Production_Steps.map(process => {
+                                        const assignment = item.Process_Assignments?.[process];
+                                        return (
+                                            <td key={process} className="td-process">
+                                                {isEditMode ? (
+                                                    <div className="cell-edit">
+                                                        <select
+                                                            value={assignment?.Status || 'Na čekanju'}
+                                                            onChange={e => handleStatusChange(item.ID, process, e.target.value)}
+                                                            className={`status-select ${getStatusClass(assignment?.Status || 'Na čekanju')}`}
+                                                        >
+                                                            {PROCESS_STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
+                                                        </select>
+                                                        <select
+                                                            value={assignment?.Worker_ID || ''}
+                                                            onChange={e => handleWorkerChange(item.ID, process, e.target.value)}
+                                                            className="worker-select"
+                                                        >
+                                                            <option value="">Dodijeli radnika...</option>
+                                                            {workers.map(w => <option key={w.Worker_ID} value={w.Worker_ID}>{w.Name}</option>)}
+                                                        </select>
+                                                    </div>
+                                                ) : (
+                                                    <div className="cell-view">
+                                                        <span className={`status-pill ${getStatusClass(assignment?.Status || 'Na čekanju')}`}>
+                                                            {assignment?.Status || 'Na čekanju'}
+                                                        </span>
+                                                        {assignment?.Worker_Name && (
+                                                            <span className="worker-pill">
+                                                                <span className="material-icons-round">person</span>
+                                                                {assignment.Worker_Name}
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                )}
+                                            </td>
+                                        );
+                                    })}
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            {/* Mobile Card View */}
+            <div className="mobile-view">
+                {isEditMode && (
+                    <div className="mobile-select-all">
+                        <label className="checkbox-label">
                             <input
                                 type="checkbox"
+                                className="ios-checkbox"
                                 checked={selectedProducts.size === localItems.length && localItems.length > 0}
                                 onChange={(e) => {
                                     if (e.target.checked) setSelectedProducts(new Set(localItems.map(i => i.ID)));
                                     else setSelectedProducts(new Set());
                                 }}
                             />
-                        </div>
-                    )}
-                    <div className="col-product">Proizvod</div>
-                    {workOrder.Production_Steps.map(step => (
-                        <div key={step} className="col-process-header">{step}</div>
-                    ))}
-                </div>
-
-                <div className="matrix-body">
-                    {localItems.map(item => (
-                        <div key={item.ID} className={`matrix-row ${isEditMode && selectedProducts.has(item.ID) ? 'selected' : ''}`}>
+                            <span>Odaberi sve</span>
+                        </label>
+                    </div>
+                )}
+                {localItems.map(item => (
+                    <div
+                        key={item.ID}
+                        className={`mobile-card ${isEditMode && selectedProducts.has(item.ID) ? 'selected' : ''}`}
+                        onClick={() => {
+                            if (isEditMode) handleToggleProduct(item.ID);
+                        }}
+                    >
+                        <div className="card-header">
+                            <div className="card-title">
+                                <div className="prod-name">{item.Product_Name}</div>
+                                <div className="prod-meta">{item.Project_Name} • {item.Quantity} kom</div>
+                            </div>
                             {isEditMode && (
-                                <div className="col-checkbox">
+                                <div className="card-check">
                                     <input
                                         type="checkbox"
+                                        className="ios-checkbox"
                                         checked={selectedProducts.has(item.ID)}
-                                        onChange={() => handleToggleProduct(item.ID)}
+                                        readOnly
                                     />
                                 </div>
                             )}
-                            <div className="col-product">
-                                <div className="prod-name">{item.Product_Name}</div>
-                                <div className="prod-sub">{item.Project_Name} • {item.Quantity} kom</div>
-                            </div>
+                        </div>
 
+                        <div className="card-steps" onClick={e => e.stopPropagation()}>
                             {workOrder.Production_Steps.map(process => {
                                 const assignment = item.Process_Assignments?.[process];
                                 return (
-                                    <div key={process} className="col-process">
-                                        <span className="mobile-label">{process}</span>
-                                        {isEditMode ? (
-                                            <div className="edit-controls">
-                                                <select
-                                                    value={assignment?.Status || 'Na čekanju'}
-                                                    onChange={e => handleStatusChange(item.ID, process, e.target.value)}
-                                                    className={`status-select-sm ${getStatusClass(assignment?.Status || 'Na čekanju')}`}
-                                                >
-                                                    {PROCESS_STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
-                                                </select>
-                                                <select
-                                                    value={assignment?.Worker_ID || ''}
-                                                    onChange={e => handleWorkerChange(item.ID, process, e.target.value)}
-                                                    className="worker-select-sm"
-                                                >
-                                                    <option value="">-</option>
-                                                    {workers.map(w => <option key={w.Worker_ID} value={w.Worker_ID}>{w.Name}</option>)}
-                                                </select>
-                                            </div>
-                                        ) : (
-                                            <div className="view-status">
-                                                <span className={`status-badge-xs ${getStatusClass(assignment?.Status || 'Na čekanju')}`}>
-                                                    {assignment?.Status || 'Na čekanju'}
-                                                </span>
-                                                {assignment?.Worker_Name && (
-                                                    <span className="worker-label-xs">
-                                                        {assignment.Worker_Name}
+                                    <div key={process} className="step-row">
+                                        <div className="step-label">{process}</div>
+                                        <div className="step-content">
+                                            {isEditMode ? (
+                                                <div className="step-edit">
+                                                    <select
+                                                        value={assignment?.Status || 'Na čekanju'}
+                                                        onChange={e => handleStatusChange(item.ID, process, e.target.value)}
+                                                        className={`status-select ${getStatusClass(assignment?.Status || 'Na čekanju')}`}
+                                                    >
+                                                        {PROCESS_STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
+                                                    </select>
+                                                    <select
+                                                        value={assignment?.Worker_ID || ''}
+                                                        onChange={e => handleWorkerChange(item.ID, process, e.target.value)}
+                                                        className="worker-select"
+                                                    >
+                                                        <option value="">Dodijeli...</option>
+                                                        {workers.map(w => <option key={w.Worker_ID} value={w.Worker_ID}>{w.Name}</option>)}
+                                                    </select>
+                                                </div>
+                                            ) : (
+                                                <div className="step-view">
+                                                    <span className={`status-pill ${getStatusClass(assignment?.Status || 'Na čekanju')}`}>
+                                                        {assignment?.Status || 'Na čekanju'}
                                                     </span>
-                                                )}
-                                            </div>
-                                        )}
+                                                    {assignment?.Worker_Name && (
+                                                        <span className="worker-text">
+                                                            {assignment.Worker_Name}
+                                                        </span>
+                                                    )}
+                                                </div>
+                                            )}
+                                        </div>
                                     </div>
                                 );
                             })}
                         </div>
-                    ))}
-                </div>
+                    </div>
+                ))}
             </div>
 
             <style jsx>{`
-                .wo-expanded-content {
-                    padding: 20px;
-                    background: #fff;
-                    border-top: 1px solid #f0f0f0;
-                    animation: slideDown 0.2s ease-out;
-                }
-                @keyframes slideDown {
-                    from { opacity: 0; transform: translateY(-10px); }
-                    to { opacity: 1; transform: translateY(0); }
+                .wo-expanded-container {
+                    padding: 24px;
+                    background: #f5f5f7;
+                    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
                 }
 
-                .wo-expanded-toolbar {
+                /* Toolbar */
+                .wo-toolbar {
                     display: flex;
-                    justify-content: space-between;
-                    align-items: center;
-                    margin-bottom: 20px;
-                    gap: 20px;
+                    gap: 16px;
+                    margin-bottom: 24px;
                     flex-wrap: wrap;
                 }
 
-                .toolbar-info { flex: 1; }
-                .progress-section { display: flex; align-items: center; gap: 12px; max-width: 300px; }
-                .progress-bar { flex: 1; height: 6px; background: #eee; border-radius: 3px; overflow: hidden; }
-                .bar-fill { height: 100%; background: #34c759; transition: width 0.3s; }
-                .percent { font-size: 12px; font-weight: 600; color: #666; min-width: 30px; }
-                .label { font-size: 12px; color: #888; font-weight: 500; }
+                .progress-card, .actions-card {
+                    background: white;
+                    border-radius: 16px;
+                    padding: 16px 20px;
+                    box-shadow: 0 2px 10px rgba(0,0,0,0.03);
+                    border: 1px solid rgba(0,0,0,0.04);
+                }
 
-                .toolbar-actions { display: flex; align-items: center; gap: 10px; }
+                .progress-card {
+                    flex: 1;
+                    min-width: 250px;
+                    display: flex;
+                    flex-direction: column;
+                    justify-content: center;
+                    gap: 8px;
+                }
 
-                .btn-primary-sm { background: #000; color: white; border: none; padding: 6px 14px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer; }
-                .btn-primary-sm:disabled { opacity: 0.5; }
-                .btn-secondary-sm { background: #f0f0f0; color: #333; border: none; padding: 6px 12px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer; display: flex; align-items: center; gap: 6px; transition: background 0.2s; }
-                .btn-secondary-sm:hover { background: #e5e5e5; }
-                .btn-secondary-sm .material-icons-round { font-size: 16px; }
-                
-                .btn-text { background: none; border: none; color: #666; font-size: 12px; font-weight: 600; cursor: pointer; margin-right: 4px; }
-                .btn-icon-danger { width: 28px; height: 28px; display: flex; align-items: center; justify-content: center; border-radius: 6px; border: none; background: #fff0f0; color: #d32f2f; cursor: pointer; margin-left: 8px; }
-                .btn-icon-danger:hover { background: #fee2e2; }
-                .btn-icon-danger .material-icons-round { font-size: 18px; }
+                .actions-card {
+                    display: flex;
+                    align-items: center;
+                }
 
-                /* Bulk Edit Bar */
-                .bulk-edit-bar {
-                    background: #f8f9fa;
-                    border-radius: 8px;
-                    padding: 8px 12px;
-                    margin-bottom: 16px;
+                .progress-header {
+                    display: flex;
+                    justify-content: space-between;
+                    align-items: baseline;
+                }
+
+                .progress-header .label { font-size: 13px; color: #86868b; font-weight: 500; }
+                .progress-header .percent { font-size: 17px; font-weight: 600; color: #1d1d1f; }
+
+                .progress-bar-bg {
+                    height: 8px;
+                    background: #f5f5f7;
+                    border-radius: 4px;
+                    overflow: hidden;
+                }
+                .progress-bar-fill { height: 100%; background: #34c759; transition: width 0.4s cubic-bezier(0.16, 1, 0.3, 1); }
+
+                /* Buttons */
+                .view-actions, .edit-actions {
+                    display: flex;
+                    gap: 10px;
+                    flex-wrap: wrap;
+                }
+
+                .btn-iso {
+                    height: 36px;
+                    padding: 0 16px;
+                    border-radius: 10px;
+                    font-size: 13px;
+                    font-weight: 500;
+                    border: none;
+                    cursor: pointer;
+                    display: flex;
+                    align-items: center;
+                    gap: 6px;
+                    transition: all 0.2s ease;
+                }
+
+                .btn-iso .material-icons-round { font-size: 16px; }
+
+                .btn-primary { background: #0071e3; color: white; }
+                .btn-primary:hover { background: #0077ed; }
+
+                .btn-secondary { background: #f5f5f7; color: #1d1d1f; }
+                .btn-secondary:hover { background: #e8e8ed; }
+
+                .btn-save { background: #000; color: white; }
+                .btn-cancel { background: transparent; color: #86868b; }
+                .btn-cancel:hover { background: #f5f5f7; color: #1d1d1f; }
+
+                .btn-danger-icon {
+                    width: 36px;
+                    padding: 0;
+                    justify-content: center;
+                    background: #fff0f0;
+                    color: #d32f2f;
+                }
+                .btn-danger-icon:hover { background: #fee2e2; }
+
+                .btn-apply { background: #0071e3; color: white; height: 32px; padding: 0 14px; }
+
+                /* Bulk Edit */
+                .bulk-edit-container {
+                    background: white;
+                    border-radius: 12px;
+                    padding: 12px 16px;
+                    margin-bottom: 24px;
                     display: flex;
                     justify-content: space-between;
                     align-items: center;
-                    border: 1px solid #e0e0e0;
+                    box-shadow: 0 2px 10px rgba(0,0,0,0.03);
+                    flex-wrap: wrap;
+                    gap: 12px;
                 }
-                .bulk-left { display: flex; align-items: center; gap: 8px; font-size: 12px; color: #555; }
-                .bulk-right { display: flex; align-items: center; gap: 8px; }
-                .mini-select { padding: 4px 8px; border-radius: 6px; border: 1px solid #ddd; font-size: 11px; outline: none; background: white; }
-                .btn-primary-xs { background: #0071e3; color: white; border: none; padding: 4px 10px; border-radius: 4px; font-size: 11px; font-weight: 600; cursor: pointer; }
-                .btn-primary-xs:disabled { opacity: 0.5; background: #999; }
 
-                /* Matrix styles */
-                .wo-matrix { border: 1px solid #e5e5e5; border-radius: 8px; overflow: hidden; }
-                .matrix-header { display: flex; background: #f9fafb; border-bottom: 1px solid #e5e5e5; padding: 0; font-size: 11px; font-weight: 600; color: #666; }
-                .matrix-row { display: flex; border-bottom: 1px solid #f0f0f0; transition: background 0.1s; }
-                .matrix-row:last-child { border-bottom: none; }
-                .matrix-row:hover { background: #fafafa; }
-                .matrix-row.selected { background: #f0f7ff; }
+                .bulk-info { display: flex; align-items: center; gap: 8px; font-size: 13px; color: #1d1d1f; }
+                .selection-badge {
+                    background: #000; color: white; font-weight: 600;
+                    width: 20px; height: 20px; border-radius: 10px;
+                    display: flex; align-items: center; justify-content: center; font-size: 11px;
+                }
 
-                .col-checkbox { width: 40px; display: flex; align-items: center; justify-content: center; border-right: 1px solid #eee; }
-                .col-product { flex: 2; padding: 10px 14px; min-width: 200px; border-right: 1px solid #eee; display: flex; flex-direction: column; justify-content: center; }
-                .col-process-header { flex: 1; padding: 10px; text-align: center; border-right: 1px solid #eee; min-width: 120px; }
-                .col-process-header:last-child { border-right: none; }
-                .col-process { flex: 1; padding: 8px; border-right: 1px solid #eee; display: flex; align-items: center; justify-content: center; min-width: 120px; position: relative; }
-                .col-process:last-child { border-right: none; }
-                
-                .mobile-label { display: none; }
+                .bulk-controls { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 
-                .prod-name { font-weight: 600; font-size: 13px; color: #333; margin-bottom: 2px; }
-                .prod-sub { font-size: 11px; color: #888; }
+                .ios-select {
+                    height: 32px;
+                    padding: 0 10px;
+                    border-radius: 8px;
+                    border: 1px solid #d2d2d7;
+                    font-size: 12px;
+                    background: white;
+                    color: #1d1d1f;
+                    outline: none;
+                }
 
-                /* Status Styles */
-                .status-badge-xs { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.3px; }
-                .status-pending { background: #fff8e1; color: #b45309; }
-                .status-progress { background: #eff6ff; color: #1d4ed8; }
-                .status-done { background: #f0fdf4; color: #15803d; }
-                .status-delayed { background: #fef2f2; color: #b91c1c; }
+                /* Table View (Desktop) */
+                .desktop-view { display: block; }
+                .mobile-view { display: none; }
 
-                .view-status { display: flex; flex-direction: column; align-items: center; gap: 4px; }
-                .worker-label-xs { font-size: 10px; color: #666; background: #f5f5f7; padding: 1px 6px; border-radius: 4px; }
+                .table-container {
+                    background: white;
+                    border-radius: 16px;
+                    box-shadow: 0 4px 16px rgba(0,0,0,0.04);
+                    overflow: hidden;
+                    overflow-x: auto;
+                }
 
-                /* Edit inputs */
-                .edit-controls { display: flex; flex-direction: column; gap: 4px; width: 100%; }
-                .status-select-sm, .worker-select-sm { width: 100%; padding: 3px; font-size: 11px; border: 1px solid #ddd; border-radius: 4px; background: white; }
-                .status-select-sm.status-done { border-color: #bbf7d0; background: #f0fdf4; color: #15803d; }
-                .status-select-sm.status-progress { border-color: #bfdbfe; background: #eff6ff; color: #1d4ed8; }
+                .ios-table {
+                    width: 100%;
+                    border-collapse: collapse;
+                    min-width: 800px;
+                }
 
+                .ios-table th {
+                    text-align: left;
+                    padding: 14px 16px;
+                    font-size: 12px;
+                    font-weight: 600;
+                    color: #86868b;
+                    border-bottom: 1px solid #e5e5e5;
+                    background: #fafafa;
+                    white-space: nowrap;
+                }
+
+                .ios-table td {
+                    padding: 14px 16px;
+                    border-bottom: 1px solid #f0f0f0;
+                    vertical-align: top;
+                }
+
+                .ios-table tr:hover td { background: #fafafa; }
+                .ios-table tr:last-child td { border-bottom: none; }
+                .ios-table tr.selected td { background: #f2f7ff; }
+
+                .th-checkbox, .td-checkbox { width: 40px; text-align: center; }
+                .th-product, .td-product { max-width: 250px; }
+                .th-process, .td-process { min-width: 140px; }
+
+                .prod-name { font-size: 14px; font-weight: 600; color: #1d1d1f; margin-bottom: 2px; }
+                .prod-meta { font-size: 12px; color: #86868b; }
+
+                .status-pill {
+                    display: inline-flex;
+                    padding: 4px 10px;
+                    border-radius: 12px;
+                    font-size: 11px;
+                    font-weight: 500;
+                    white-space: nowrap;
+                }
+
+                .status-pending { background: #f5f5f7; color: #666; }
+                .status-progress { background: #e3f2fd; color: #0071e3; }
+                .status-done { background: #e8f5e9; color: #34c759; }
+                .status-delayed { background: #ffebee; color: #d32f2f; }
+
+                .worker-pill {
+                    display: flex;
+                    align-items: center;
+                    gap: 4px;
+                    font-size: 11px;
+                    color: #666;
+                    background: #f5f5f7;
+                    padding: 2px 8px;
+                    border-radius: 6px;
+                    margin-top: 6px;
+                    width: fit-content;
+                }
+                .worker-pill .material-icons-round { font-size: 12px; }
+
+                /* Cell Edit/View */
+                .cell-view { display: flex; flex-direction: column; gap: 4px; }
+                .cell-edit { display: flex; flex-direction: column; gap: 6px; }
+
+                .status-select, .worker-select {
+                    width: 100%;
+                    padding: 6px;
+                    border-radius: 6px;
+                    border: 1px solid #e5e5e5;
+                    font-size: 12px;
+                    outline: none;
+                }
+                .status-select.status-done { color: #34c759; border-color: #ccebd2; background: #e8f5e9; }
+                .status-select.status-progress { color: #0071e3; border-color: #cce4f7; background: #e3f2fd; }
+
+                /* Mobile View */
                 @media (max-width: 768px) {
-                    .wo-expanded-content {
+                    .wo-expanded-container { padding: 16px; background: #f2f2f7; }
+                    .desktop-view { display: none; }
+                    .mobile-view { display: flex; flex-direction: column; gap: 12px; }
+
+                    .wo-toolbar { flex-direction: column; gap: 12px; margin-bottom: 20px; }
+                    .progress-card { min-width: auto; }
+                    .actions-card { flex-wrap: wrap; justify-content: space-between; }
+                    .view-actions button { flex: 1; justify-content: center; }
+
+                    .mobile-select-all {
+                        padding: 0 4px;
+                        margin-bottom: 8px;
+                    }
+                    .checkbox-label { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 500; }
+
+                    .mobile-card {
+                        background: white;
+                        border-radius: 16px;
                         padding: 16px;
-                    }
-
-                    /* Header / Toolbar */
-                    .wo-expanded-toolbar {
-                        flex-direction: column;
-                        align-items: stretch;
-                        gap: 16px;
-                    }
-
-                    .progress-section {
-                        max-width: 100%;
-                    }
-
-                    .toolbar-actions {
-                        flex-wrap: wrap;
-                        justify-content: flex-end;
-                    }
-                    
-                    .toolbar-actions button {
-                        flex-grow: 1;
-                        justify-content: center;
-                    }
-
-                    /* Matrix to Card Transformation */
-                    .wo-matrix {
-                        border: none;
-                        border-radius: 0;
-                        background: transparent;
-                        display: flex;
-                        flex-direction: column;
-                        gap: 12px;
-                    }
-
-                    .matrix-header { display: none; }
-
-                    .matrix-body {
-                        display: flex;
-                        flex-direction: column;
-                        gap: 12px;
-                    }
-
-                    .matrix-row {
-                        flex-direction: column;
-                        background: #fff;
-                        border: 1px solid #e5e5e5;
-                        border-radius: 12px;
-                        padding: 0;
-                        overflow: hidden;
                         box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+                        border: 1px solid transparent;
+                        transition: all 0.2s;
                     }
+                    .mobile-card.selected { border-color: #0071e3; background: #f7fbff; }
 
-                    .col-checkbox {
-                        position: absolute;
-                        top: 12px;
-                        right: 12px;
-                        border: none;
-                        z-index: 2;
-                        width: 24px;
-                        height: 24px;
-                    }
-                    
-                    .col-product {
-                        border: none;
-                        border-bottom: 1px solid #f0f0f0;
-                        padding: 12px 16px;
-                        background: #f9fafb;
-                    }
-
-                    .prod-name { font-size: 15px; }
-                    .prod-sub { font-size: 12px; }
-
-                    /* Process List Grid */
-                    .matrix-row > .col-process {
-                        width: 100%;
-                        border: none;
+                    .card-header {
+                        display: flex;
+                        justify-content: space-between;
+                        align-items: flex-start;
+                        margin-bottom: 16px;
+                        padding-bottom: 12px;
                         border-bottom: 1px solid #f5f5f7;
-                        padding: 10px 16px;
+                    }
+
+                    .card-steps { display: flex; flex-direction: column; gap: 12px; }
+
+                    .step-row {
                         display: flex;
                         justify-content: space-between;
                         align-items: center;
-                        min-width: 0;
-                    }
-
-                    .col-process:last-child {
-                        border-bottom: none;
-                    }
-
-                    .mobile-label {
-                        display: block;
-                        font-size: 13px;
-                        font-weight: 500;
-                        color: #555;
-                        width: 100px;
-                        flex-shrink: 0;
-                    }
-
-                    .view-status {
-                        flex-direction: row;
-                        align-items: center;
-                    }
-
-                    .status-badge-xs {
-                        padding: 4px 10px;
-                        font-size: 11px;
-                        border-radius: 6px;
-                    }
-
-                    /* Edit Mode Mobile */
-                    .edit-controls {
-                        align-items: flex-end;
-                    }
-                    .status-select-sm, .worker-select-sm {
-                        width: 140px;
-                        padding: 6px;
                         font-size: 13px;
                     }
+
+                    .step-label { color: #86868b; font-weight: 500; flex: 1; }
+                    .step-content { flex: 1.5; display: flex; justify-content: flex-end; }
+                    
+                    .step-view { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+                    .worker-text { font-size: 11px; color: #666; }
+
+                    .step-edit { width: 100%; display: flex; flex-direction: column; gap: 6px; }
+
+                    /* Bulk Edit Mobile */
+                    .bulk-edit-container { flex-direction: column; align-items: stretch; }
+                    .bulk-controls { flex-direction: column; width: 100%; }
+                    .ios-select { width: 100%; }
+                    .btn-apply { width: 100%; }
                 }
             `}</style>
         </div>

@@ -4,13 +4,14 @@
     top: 0;
     left: 0;
     height: 100vh;
-    width: 280px;
+    width: 260px;
+    /* Slightly narrower for sleeker look */
     background: #ffffff;
     border-right: 1px solid var(--border-light);
     display: flex;
     flex-direction: column;
     z-index: 1000;
-    transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1), transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    transition: width 0.3s cubic-bezier(0.2, 0, 0, 1), transform 0.3s cubic-bezier(0.2, 0, 0, 1);
 }
 
 /* Collapsed State */
@@ -19,7 +20,7 @@
 }
 
 .sidebar.collapsed .sidebar-header {
-    padding: 16px;
+    padding: 20px 16px;
     justify-content: center;
 }
 
@@ -47,13 +48,16 @@
 
 .sidebar.collapsed .avatar {
     margin: 0;
+    width: 32px;
+    height: 32px;
+    font-size: 13px;
 }
 
 /* Collapse Button */
 .collapse-btn {
     border: none;
     background: transparent;
-    color: var(--text-secondary);
+    color: var(--text-tertiary);
     cursor: pointer;
     padding: 6px;
     border-radius: 8px;
@@ -71,14 +75,14 @@
 .sidebar.collapsed .collapse-btn {
     position: absolute;
     right: -12px;
-    top: 50%;
-    transform: translateY(-50%);
+    top: 32px;
     background: white;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
     border: 1px solid var(--border-light);
     width: 24px;
     height: 24px;
     padding: 0;
+    z-index: 10;
 }
 
 /* Nav Divider and Section Label */
@@ -86,18 +90,20 @@
     height: 1px;
     background: var(--border-light);
     margin: 8px 16px;
+    opacity: 0.6;
 }
 
 .sidebar.collapsed .nav-divider {
-    margin: 8px 8px;
+    margin: 8px 12px;
 }
 
 .nav-section-label {
-    padding: 8px 16px;
+    padding: 12px 20px 8px;
     font-size: 11px;
-    color: #888;
+    color: var(--text-tertiary);
     font-weight: 600;
     text-transform: uppercase;
+    letter-spacing: 0.5px;
 }
 
 .nav-section-label.clickable {
@@ -112,8 +118,7 @@
 }
 
 .nav-section-label.clickable:hover {
-    color: var(--text-primary);
-    background: var(--surface-hover);
+    color: var(--text-secondary);
 }
 
 @media (max-width: 768px) {
@@ -122,7 +127,7 @@
     }
 
     .sidebar.collapsed {
-        width: 280px;
+        width: 260px;
     }
 }
 
@@ -143,8 +148,7 @@
 
 /* Sidebar Header */
 .sidebar-header {
-    padding: 24px;
-    border-bottom: 1px solid var(--border-light);
+    padding: 24px 20px;
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -158,17 +162,18 @@
 
 .logo-icon {
     background: var(--accent);
-    padding: 8px;
-    border-radius: 12px;
+    width: 36px;
+    height: 36px;
+    border-radius: 10px;
     display: flex;
     align-items: center;
     justify-content: center;
-    color: white;
-    box-shadow: 0 4px 12px rgba(0, 113, 227, 0.2);
+    box-shadow: 0 4px 10px rgba(0, 113, 227, 0.25);
+    background: linear-gradient(135deg, #0071e3 0%, #0077ed 100%);
 }
 
 .logo-text {
-    font-size: 18px;
+    font-size: 17px;
     font-weight: 700;
     color: var(--text-primary);
     letter-spacing: -0.5px;
@@ -191,28 +196,30 @@
 /* Navigation Items */
 .sidebar-nav {
     flex: 1;
-    padding: 16px;
+    padding: 8px 12px;
     overflow-y: auto;
     display: flex;
     flex-direction: column;
-    gap: 6px;
+    gap: 4px;
 }
 
 .nav-item {
     display: flex;
     align-items: center;
     gap: 12px;
-    padding: 12px 16px;
-    border-radius: 12px;
+    padding: 10px 12px;
+    border-radius: 10px;
     color: var(--text-secondary);
     cursor: pointer;
-    transition: all 0.2s ease;
+    transition: all 0.2s cubic-bezier(0.2, 0, 0, 1);
     border: none;
     background: transparent;
     width: 100%;
     text-align: left;
     font-size: 14px;
     font-weight: 500;
+    position: relative;
+    overflow: hidden;
 }
 
 .nav-item:hover {
@@ -221,56 +228,88 @@
 }
 
 .nav-item.active {
-    background: #eff6ff;
-    color: var(--accent);
+    background: rgba(var(--item-color-rgb, 0, 113, 227), 0.1);
+    /* Fallback if CSS variables aren't supported/parsed correctly for some reason, though they should be */
+    background: var(--item-color);
+    color: white;
     font-weight: 600;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
 }
 
-.nav-item .material-icons-round {
-    font-size: 20px;
+/* We need to apply the color variable via style prop in React, 
+   but for the hover effect on non-active items, we might want a colored icon */
+.nav-item:not(.active):hover .nav-icon-wrapper {
+    color: var(--item-color);
 }
 
-.nav-item .tab-lock {
-    font-size: 16px;
-    margin-left: auto;
+.nav-item.active .nav-icon-wrapper {
+    color: white;
+}
+
+.nav-icon-wrapper {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: color 0.2s;
+    color: var(--text-secondary);
+}
+
+.sidebar.collapsed .nav-item .nav-icon-wrapper {
+    margin: 0 auto;
+}
+
+.nav-label {
+    white-space: nowrap;
+    opacity: 1;
+    transition: opacity 0.2s;
+    flex: 1;
+}
+
+.tab-lock {
     opacity: 0.5;
+}
+
+.nav-item.active .tab-lock {
+    opacity: 0.8;
+    color: rgba(255, 255, 255, 0.8);
 }
 
 /* User Profile Section */
 .user-profile {
     padding: 16px;
     border-top: 1px solid var(--border-light);
-    background: #f8fafc;
+    background: #ffffff;
 }
 
 .profile-card {
     display: flex;
     align-items: center;
     gap: 12px;
-    padding: 12px;
+    padding: 10px;
     border-radius: 12px;
     cursor: pointer;
     transition: all 0.2s;
+    border: 1px solid transparent;
 }
 
 .profile-card:hover {
-    background: white;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+    background: var(--surface);
+    border-color: var(--border-light);
 }
 
 .avatar {
     width: 36px;
     height: 36px;
-    border-radius: 50%;
-    background: linear-gradient(135deg, #e3f2fd 0%, #bbdefb 100%);
-    color: var(--accent);
+    border-radius: 10px;
+    /* Squircle */
+    background: #f1f5f9;
+    color: var(--text-secondary);
     display: flex;
     align-items: center;
     justify-content: center;
-    font-weight: 700;
+    font-weight: 600;
     font-size: 14px;
-    border: 2px solid white;
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+    border: 1px solid rgba(0, 0, 0, 0.05);
 }
 
 .user-info {
@@ -291,19 +330,28 @@
 .user-email {
     display: block;
     font-size: 12px;
-    color: var(--text-secondary);
+    color: var(--text-tertiary);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+}
+
+.settings-icon {
+    color: var(--text-tertiary);
+    transition: color 0.2s;
+}
+
+.profile-card:hover .settings-icon {
+    color: var(--text-primary);
 }
 
 /* Mobile Overlay */
 .mobile-overlay {
     position: fixed;
     inset: 0;
-    background: rgba(0, 0, 0, 0.5);
+    background: rgba(0, 0, 0, 0.3);
     z-index: 999;
-    backdrop-filter: blur(4px);
+    backdrop-filter: blur(2px);
     opacity: 0;
     pointer-events: none;
     transition: opacity 0.3s;
@@ -357,8 +405,17 @@
 
 .nav-shortcut {
     font-size: 10px;
-    color: var(--text-secondary);
+    color: var(--text-tertiary);
     font-weight: 500;
+    background: rgba(0, 0, 0, 0.05);
+    padding: 2px 6px;
+    border-radius: 4px;
+    margin-top: 2px;
+}
+
+.nav-item.active .nav-shortcut {
+    color: rgba(255, 255, 255, 0.8);
+    background: rgba(255, 255, 255, 0.2);
 }
 
 .sidebar.collapsed .nav-item.search-btn {

@@ -1,6 +1,23 @@
 import React from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/context/AuthContext';
+import {
+    LayoutDashboard,
+    FolderOpen,
+    FileText,
+    ShoppingCart,
+    HardHat,
+    Package2,
+    Users,
+    Store,
+    Search,
+    ChevronLeft,
+    ChevronRight,
+    Settings,
+    Grid,
+    ChevronDown,
+    Lock
+} from 'lucide-react';
 import './Sidebar.css';
 
 interface SidebarProps {
@@ -16,67 +33,81 @@ interface SidebarProps {
 const Sidebar: React.FC<SidebarProps> = ({ activeTab, onTabChange, isOpen, onClose, isCollapsed, onToggleCollapse, onOpenSearch }) => {
     const router = useRouter();
     const { user, organization, hasModule, signOut } = useAuth();
-
-    // Default collapsed as requested ("close it so I can expand when needed")
     const [isManagementExpanded, setIsManagementExpanded] = React.useState(false);
-
-    const handleLogout = async () => {
-        await signOut();
-        router.push('/login');
-    };
 
     const getUserInitials = () => {
         if (!user?.Name) return '?';
         return user.Name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2);
     };
 
-    const NavItem = ({ id, icon, label, locked = false }: { id: string, icon: string, label: string, locked?: boolean }) => (
-        <button
-            className={`nav-item ${activeTab === id ? 'active' : ''}`}
-            onClick={() => {
-                if (!locked) {
-                    onTabChange(id);
-                    if (window.innerWidth <= 768) {
-                        onClose();
+    const navColors: Record<string, string> = {
+        projects: '#007AFF', // Blue
+        overview: '#AF52DE', // Purple
+        offers: '#FF9500',   // Orange
+        orders: '#34C759',   // Green
+        production: '#FF2D55', // Pink/Red
+        materials: '#5856D6', // Indigo
+        workers: '#00C7BE',   // Teal
+        suppliers: '#FFCC00', // Yellow
+    };
+
+    const NavItem = ({ id, icon: Icon, label, locked = false }: { id: string, icon: any, label: string, locked?: boolean }) => {
+        const isActive = activeTab === id;
+        const color = navColors[id] || '#8E8E93';
+
+        return (
+            <button
+                className={`nav-item ${isActive ? 'active' : ''}`}
+                onClick={() => {
+                    if (!locked) {
+                        onTabChange(id);
+                        if (window.innerWidth <= 768) {
+                            onClose();
+                        }
                     }
-                }
-            }}
-            disabled={locked}
-            title={isCollapsed ? label : undefined}
-        >
-            <span className="material-icons-round">{icon}</span>
-            {!isCollapsed && <span className="nav-label">{label}</span>}
-            {!isCollapsed && locked && <span className="material-icons-round tab-lock">lock</span>}
-        </button>
-    );
+                }}
+                disabled={locked}
+                title={isCollapsed ? label : undefined}
+                style={{
+                    '--item-color': color,
+                } as React.CSSProperties}
+            >
+                <div className="nav-icon-wrapper">
+                    <Icon strokeWidth={isActive ? 2.5 : 2} size={20} />
+                </div>
+                {!isCollapsed && <span className="nav-label">{label}</span>}
+                {!isCollapsed && locked && <Lock size={14} className="tab-lock" />}
+            </button>
+        );
+    };
 
     return (
         <>
-            {/* Mobile Overlay */}
             <div
                 className={`mobile-overlay ${isOpen ? 'open' : ''}`}
                 onClick={onClose}
             />
 
-            {/* Sidebar */}
             <aside className={`sidebar ${isOpen ? 'open' : ''} ${isCollapsed ? 'collapsed' : ''}`}>
-                {/* Header */}
                 <div className="sidebar-header">
                     <div className="logo-section">
                         <div className="logo-icon">
-                            <span className="material-icons-round">grid_view</span>
+                            <Grid size={24} color="white" />
                         </div>
                         {!isCollapsed && <span className="logo-text">Furniture Prod.</span>}
                     </div>
-                    <button className="collapse-btn" onClick={onToggleCollapse} title={isCollapsed ? 'Proširi' : 'Smanji'}>
-                        <span className="material-icons-round">{isCollapsed ? 'chevron_right' : 'chevron_left'}</span>
-                    </button>
+
+                    <div className="header-actions">
+                        <button className="collapse-btn" onClick={onToggleCollapse} title={isCollapsed ? 'Proširi' : 'Smanji'}>
+                            {isCollapsed ? <ChevronRight size={18} /> : <ChevronLeft size={18} />}
+                        </button>
+                    </div>
+
                     <button className="close-btn" onClick={onClose}>
                         <span className="material-icons-round">close</span>
                     </button>
                 </div>
 
-                {/* Navigation */}
                 <nav className="sidebar-nav">
                     <button
                         className="nav-item search-btn"
@@ -86,7 +117,9 @@ const Sidebar: React.FC<SidebarProps> = ({ activeTab, onTabChange, isOpen, onClo
                         }}
                         title={isCollapsed ? "Pretraga (Ctrl+K)" : undefined}
                     >
-                        <span className="material-icons-round">search</span>
+                        <div className="nav-icon-wrapper">
+                            <Search size={20} />
+                        </div>
                         {!isCollapsed && (
                             <div className="nav-label-group">
                                 <span className="nav-label">Pretraga</span>
@@ -97,21 +130,21 @@ const Sidebar: React.FC<SidebarProps> = ({ activeTab, onTabChange, isOpen, onClo
 
                     <div className="nav-divider"></div>
 
-                    <NavItem id="projects" icon="folder" label="Projekti" />
-                    <NavItem id="overview" icon="dashboard" label="Pregled" />
+                    <NavItem id="projects" icon={FolderOpen} label="Projekti" />
+                    <NavItem id="overview" icon={LayoutDashboard} label="Pregled" />
                     <NavItem
                         id="offers"
-                        icon="description"
+                        icon={FileText}
                         label="Ponude"
                         locked={!hasModule('offers')}
                     />
                     <NavItem
                         id="orders"
-                        icon="local_shipping"
+                        icon={ShoppingCart}
                         label="Narudžbe"
                         locked={!hasModule('orders')}
                     />
-                    <NavItem id="production" icon="engineering" label="Proizvodnja" />
+                    <NavItem id="production" icon={HardHat} label="Proizvodnja" />
 
                     <div className="nav-divider"></div>
 
@@ -122,26 +155,27 @@ const Sidebar: React.FC<SidebarProps> = ({ activeTab, onTabChange, isOpen, onClo
                             title={isManagementExpanded ? "Sklopi" : "Proširi"}
                         >
                             <span>Upravljanje</span>
-                            <span className="material-icons-round" style={{ fontSize: '16px' }}>
-                                {isManagementExpanded ? 'expand_more' : 'chevron_right'}
-                            </span>
+                            <ChevronDown
+                                size={14}
+                                style={{
+                                    transform: isManagementExpanded ? 'rotate(180deg)' : 'rotate(0deg)',
+                                    transition: 'transform 0.2s'
+                                }}
+                            />
                         </button>
                     ) : (
-                        <div className="nav-divider"></div> // Extra spacer in collapsed mode if needed, or just nothing? 
-                        // Actually, let's just keep the divider above.
-                        // In collapsed mode, we don't show the label.
+                        <div className="nav-divider"></div>
                     )}
 
                     {(isManagementExpanded || isCollapsed) && (
                         <>
-                            <NavItem id="materials" icon="inventory_2" label="Materijali" />
-                            <NavItem id="workers" icon="people" label="Radnici" />
-                            <NavItem id="suppliers" icon="store" label="Dobavljači" />
+                            <NavItem id="materials" icon={Package2} label="Materijali" />
+                            <NavItem id="workers" icon={Users} label="Radnici" />
+                            <NavItem id="suppliers" icon={Store} label="Dobavljači" />
                         </>
                     )}
                 </nav>
 
-                {/* User Profile */}
                 <div className="user-profile">
                     <div className="profile-card" onClick={() => router.push('/settings')} title={isCollapsed ? user?.Name : undefined}>
                         <div className="avatar">
@@ -153,7 +187,7 @@ const Sidebar: React.FC<SidebarProps> = ({ activeTab, onTabChange, isOpen, onClo
                                     <span className="user-name">{user?.Name}</span>
                                     <span className="user-email">{user?.Email}</span>
                                 </div>
-                                <span className="material-icons-round" style={{ color: '#94a3b8' }}>settings</span>
+                                <Settings size={18} className="settings-icon" />
                             </>
                         )}
                     </div>

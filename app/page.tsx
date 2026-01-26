@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
+import { ChevronRight } from 'lucide-react';
 import { getAllData } from '@/lib/database';
 import { signOut } from '@/lib/auth';
 import { useAuth } from '@/context/AuthContext';
@@ -215,7 +216,7 @@ export default function Home() {
                         className="menu-trigger"
                         onClick={() => setUserMenuOpen(true)}
                     >
-                        <span className="material-icons-round">menu</span>
+                        <ChevronRight size={24} color="#1d1d1f" />
                     </button>
                 </header>
 
