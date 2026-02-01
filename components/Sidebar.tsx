@@ -16,7 +16,9 @@ import {
     Settings,
     Grid,
     ChevronDown,
-    Lock
+    Lock,
+    Calendar,
+    CheckSquare
 } from 'lucide-react';
 import './Sidebar.css';
 
@@ -49,6 +51,8 @@ const Sidebar: React.FC<SidebarProps> = ({ activeTab, onTabChange, isOpen, onClo
         materials: '#5856D6', // Indigo
         workers: '#00C7BE',   // Teal
         suppliers: '#FFCC00', // Yellow
+        attendance: '#FF3B30', // Red
+        tasks: '#1D3557', // Deep Blue
     };
 
     const NavItem = ({ id, icon: Icon, label, locked = false }: { id: string, icon: any, label: string, locked?: boolean }) => {
@@ -145,6 +149,8 @@ const Sidebar: React.FC<SidebarProps> = ({ activeTab, onTabChange, isOpen, onClo
                         locked={!hasModule('orders')}
                     />
                     <NavItem id="production" icon={HardHat} label="Proizvodnja" />
+                    <NavItem id="attendance" icon={Calendar} label="Šihtarica" />
+                    <NavItem id="tasks" icon={CheckSquare} label="Zadaci" />
 
                     <div className="nav-divider"></div>
 

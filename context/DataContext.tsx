@@ -45,6 +45,8 @@ const initialAppState: AppState = {
     productMaterials: [],
     glassItems: [],
     aluDoorItems: [],
+    workLogs: [],
+    tasks: [],
 };
 
 // ============================================
@@ -76,6 +78,7 @@ export function DataProvider({ children }: DataProviderProps) {
         materials: ['materials'],
         workers: ['workers'],
         suppliers: ['suppliers'],
+        tasks: ['tasks', 'projects', 'workers'],
     };
 
     // Load data for a specific tab (lazy loading)
@@ -94,7 +97,7 @@ export function DataProvider({ children }: DataProviderProps) {
                 const allData = await getAllData();
                 setAppState(allData);
                 // Mark all tabs as loaded since we loaded all data
-                setLoadedTabs(new Set(['projects', 'overview', 'offers', 'orders', 'production', 'materials', 'workers', 'suppliers']));
+                setLoadedTabs(new Set(['projects', 'overview', 'offers', 'orders', 'production', 'materials', 'workers', 'suppliers', 'tasks']));
             } else {
                 // Mark this tab as loaded
                 setLoadedTabs(prev => new Set(prev).add(tabName));
@@ -112,7 +115,7 @@ export function DataProvider({ children }: DataProviderProps) {
         try {
             const allData = await getAllData();
             setAppState(allData);
-            setLoadedTabs(new Set(['projects', 'overview', 'offers', 'orders', 'production', 'materials', 'workers', 'suppliers']));
+            setLoadedTabs(new Set(['projects', 'overview', 'offers', 'orders', 'production', 'materials', 'workers', 'suppliers', 'tasks']));
         } catch (error) {
             console.error('Error loading all data:', error);
         } finally {

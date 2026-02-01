@@ -29,6 +29,10 @@ import type {
     Worker,
     WorkOrder,
     WorkOrderItem,
+    WorkerAttendance,
+    WorkLog,
+    Task,
+
     AppState,
 } from './types';
 
@@ -63,6 +67,9 @@ const COLLECTIONS = {
     WORKERS: 'workers',
     WORK_ORDERS: 'work_orders',
     WORK_ORDER_ITEMS: 'work_order_items',
+    WORKER_ATTENDANCE: 'worker_attendance',
+    WORK_LOGS: 'work_logs',
+    TASKS: 'tasks',
 };
 
 // ============================================
@@ -113,6 +120,8 @@ export async function getAllData(): Promise<AppState> {
             offerExtrasSnap,
             workOrdersSnap,
             workOrderItemsSnap,
+            workLogsSnap,
+            tasksSnap,
         ] = await Promise.all([
             getDocs(collection(db, COLLECTIONS.PROJECTS)),
             getDocs(collection(db, COLLECTIONS.PRODUCTS)),
@@ -129,6 +138,8 @@ export async function getAllData(): Promise<AppState> {
             getDocs(collection(db, COLLECTIONS.OFFER_EXTRAS)),
             getDocs(collection(db, COLLECTIONS.WORK_ORDERS)),
             getDocs(collection(db, COLLECTIONS.WORK_ORDER_ITEMS)),
+            getDocs(collection(db, COLLECTIONS.WORK_LOGS)),
+            getDocs(collection(db, COLLECTIONS.TASKS)),
         ]);
 
         const projects = projectsSnap.docs.map(doc => ({ ...doc.data() } as Project));
@@ -145,44 +156,129 @@ export async function getAllData(): Promise<AppState> {
         const offerProducts = offerProductsSnap.docs.map(doc => ({ ...doc.data() } as OfferProduct));
         const offerExtras = offerExtrasSnap.docs.map(doc => ({ ...doc.data() } as OfferExtra));
         const workOrders = workOrdersSnap.docs.map(doc => ({ ...doc.data() } as WorkOrder));
+        const workLogs = workLogsSnap.docs.map(doc => ({ ...doc.data() } as WorkLog));
         const workOrderItems = workOrderItemsSnap.docs.map(doc => ({ ...doc.data() } as WorkOrderItem));
+        const tasks = tasksSnap.docs.map(doc => ({ ...doc.data() } as Task));
 
-        // Attach glass items and alu door items to product materials
-        productMaterials.forEach(pm => {
-            pm.glassItems = glassItems.filter(gi => gi.Product_Material_ID === pm.ID);
-            pm.aluDoorItems = aluDoorItems.filter(adi => adi.Product_Material_ID === pm.ID);
+        // ============================================
+        // OPTIMIZATION: Build Maps for O(1) lookups instead of O(n²) filters
+        // ============================================
+
+        // Group glass items by Product_Material_ID
+        const glassItemsByMaterial = new Map<string, GlassItem[]>();
+        glassItems.forEach(gi => {
+            const key = gi.Product_Material_ID;
+            if (!glassItemsByMaterial.has(key)) glassItemsByMaterial.set(key, []);
+            glassItemsByMaterial.get(key)!.push(gi);
         });
 
-        // Attach products to projects
+        // Group alu door items by Product_Material_ID
+        const aluDoorItemsByMaterial = new Map<string, AluDoorItem[]>();
+        aluDoorItems.forEach(adi => {
+            const key = adi.Product_Material_ID;
+            if (!aluDoorItemsByMaterial.has(key)) aluDoorItemsByMaterial.set(key, []);
+            aluDoorItemsByMaterial.get(key)!.push(adi);
+        });
+
+        // Group product materials by Product_ID
+        const materialsByProduct = new Map<string, ProductMaterial[]>();
+        productMaterials.forEach(pm => {
+            // Attach glass/alu items using pre-built maps (O(1) lookup)
+            pm.glassItems = glassItemsByMaterial.get(pm.ID) || [];
+            pm.aluDoorItems = aluDoorItemsByMaterial.get(pm.ID) || [];
+
+            const key = pm.Product_ID;
+            if (!materialsByProduct.has(key)) materialsByProduct.set(key, []);
+            materialsByProduct.get(key)!.push(pm);
+        });
+
+        // Group products by Project_ID
+        const productsByProject = new Map<string, Product[]>();
+        products.forEach(p => {
+            // Attach materials using pre-built map (O(1) lookup)
+            p.materials = materialsByProduct.get(p.Product_ID) || [];
+
+            const key = p.Project_ID;
+            if (!productsByProject.has(key)) productsByProject.set(key, []);
+            productsByProject.get(key)!.push(p);
+        });
+
+        // Group offers by Project_ID
+        const offersByProject = new Map<string, Offer[]>();
+        offers.forEach(o => {
+            const key = o.Project_ID;
+            if (!offersByProject.has(key)) offersByProject.set(key, []);
+            offersByProject.get(key)!.push(o);
+        });
+
+        // Group offer products by Offer_ID
+        const offerProductsByOffer = new Map<string, OfferProduct[]>();
+        offerProducts.forEach(op => {
+            const key = op.Offer_ID;
+            if (!offerProductsByOffer.has(key)) offerProductsByOffer.set(key, []);
+            offerProductsByOffer.get(key)!.push(op);
+        });
+
+        // Group offer extras by Offer_Product_ID
+        const extrasByOfferProduct = new Map<string, OfferExtra[]>();
+        offerExtras.forEach(e => {
+            const key = e.Offer_Product_ID;
+            if (!extrasByOfferProduct.has(key)) extrasByOfferProduct.set(key, []);
+            extrasByOfferProduct.get(key)!.push(e);
+        });
+
+        // Group order items by Order_ID
+        const itemsByOrder = new Map<string, OrderItem[]>();
+        orderItems.forEach(item => {
+            const key = item.Order_ID;
+            if (!itemsByOrder.has(key)) itemsByOrder.set(key, []);
+            itemsByOrder.get(key)!.push(item);
+        });
+
+        // Group work order items by Work_Order_ID
+        const itemsByWorkOrder = new Map<string, WorkOrderItem[]>();
+        workOrderItems.forEach(item => {
+            const key = item.Work_Order_ID;
+            if (!itemsByWorkOrder.has(key)) itemsByWorkOrder.set(key, []);
+            itemsByWorkOrder.get(key)!.push(item);
+        });
+
+        // Build projects map for quick lookup
+        const projectsMap = new Map<string, Project>();
+        projects.forEach(p => projectsMap.set(p.Project_ID, p));
+
+        // ============================================
+        // Attach related data using O(1) Map lookups
+        // ============================================
+
+        // Attach products and offers to projects
         projects.forEach(project => {
-            project.products = products.filter(p => p.Project_ID === project.Project_ID);
-            project.products.forEach(product => {
-                product.materials = productMaterials.filter(m => m.Product_ID === product.Product_ID);
-            });
+            project.products = productsByProject.get(project.Project_ID) || [];
+            project.offers = offersByProject.get(project.Project_ID) || [];
         });
 
         // Add client info and products to offers
         offers.forEach(offer => {
-            const project = projects.find(p => p.Project_ID === offer.Project_ID);
+            const project = projectsMap.get(offer.Project_ID);
             if (project) {
                 offer.Client_Name = project.Client_Name;
             }
             // Attach offer products with their extras
-            const prods = offerProducts.filter(op => op.Offer_ID === offer.Offer_ID);
+            const prods = offerProductsByOffer.get(offer.Offer_ID) || [];
             prods.forEach(prod => {
-                (prod as any).extras = offerExtras.filter(e => e.Offer_Product_ID === prod.ID);
+                (prod as any).extras = extrasByOfferProduct.get(prod.ID) || [];
             });
             (offer as any).products = prods;
         });
 
         // Attach items to orders
         orders.forEach(order => {
-            order.items = orderItems.filter(item => item.Order_ID === order.Order_ID);
+            order.items = itemsByOrder.get(order.Order_ID) || [];
         });
 
         // Attach items to work orders
         workOrders.forEach(wo => {
-            wo.items = workOrderItems.filter(item => item.Work_Order_ID === wo.Work_Order_ID);
+            wo.items = itemsByWorkOrder.get(wo.Work_Order_ID) || [];
         });
 
         return {
@@ -197,6 +293,8 @@ export async function getAllData(): Promise<AppState> {
             productMaterials,
             glassItems,
             aluDoorItems,
+            workLogs,
+            tasks,
         };
     } catch (error) {
         console.error('getAllData error:', error);
@@ -212,6 +310,8 @@ export async function getAllData(): Promise<AppState> {
             productMaterials: [],
             glassItems: [],
             aluDoorItems: [],
+            workLogs: [],
+            tasks: [],
         };
     }
 }
@@ -964,13 +1064,49 @@ export async function updateOfferStatus(offerId: string, status: string): Promis
 
         if (!snapshot.empty) {
             const updateData: Record<string, unknown> = { Status: status };
+            const offer = snapshot.docs[0].data() as Offer;
+
+            // Sync project status based on offer status
+            if (status === 'Poslano' && offer.Project_ID) {
+                // When offer is sent, project moves from Nacrt to Ponuđeno
+                const project = await getProject(offer.Project_ID);
+                if (project && project.Status === 'Nacrt') {
+                    await updateProjectStatus(offer.Project_ID, 'Ponuđeno');
+                }
+            }
 
             if (status === 'Prihvaćeno') {
                 updateData.Accepted_Date = new Date().toISOString();
 
-                const offer = snapshot.docs[0].data() as Offer;
                 if (offer.Project_ID) {
                     await updateProjectStatus(offer.Project_ID, 'Odobreno');
+                }
+            }
+
+            // When offer is rejected, check if ALL offers for project are rejected/expired
+            if ((status === 'Odbijeno' || status === 'Isteklo') && offer.Project_ID) {
+                const allOffersQuery = query(
+                    collection(db, COLLECTIONS.OFFERS),
+                    where('Project_ID', '==', offer.Project_ID)
+                );
+                const allOffersSnap = await getDocs(allOffersQuery);
+
+                // Check if all offers are now rejected or expired
+                const allRejectedOrExpired = allOffersSnap.docs.every(doc => {
+                    const offerData = doc.data();
+                    // Current offer will have old status, so check if it's this offer
+                    if (offerData.Offer_ID === offerId) {
+                        return true; // This one is being rejected
+                    }
+                    return offerData.Status === 'Odbijeno' || offerData.Status === 'Isteklo';
+                });
+
+                if (allRejectedOrExpired) {
+                    const project = await getProject(offer.Project_ID);
+                    // Only set to Otkazano if project is still in Ponuđeno stage
+                    if (project && project.Status === 'Ponuđeno') {
+                        await updateProjectStatus(offer.Project_ID, 'Otkazano');
+                    }
                 }
             }
 
@@ -1313,21 +1449,8 @@ export async function markMaterialsReceived(orderItemIds: string[]): Promise<{ s
             }
         }
 
-        // Check if all materials for project are received
-        for (const projectId of Array.from(affectedProjects)) {
-            const project = await getProject(projectId);
-            if (!project) continue;
-
-            const allReceived = (project.products || []).every(product => {
-                return (product.materials || []).every(m =>
-                    m.Status === 'Primljeno' || m.Status === 'U upotrebi' || m.Status === 'Instalirano'
-                );
-            });
-
-            if (allReceived) {
-                await updateProjectStatus(projectId, 'Sklapanje');
-            }
-        }
+        // Note: Project status sync is now handled by syncProjectStatus() 
+        // based on work order item progress, not material receipt
 
         return { success: true, message: 'Materijali primljeni' };
     } catch (error) {
@@ -1950,15 +2073,25 @@ export async function createWorkOrder(data: {
     Production_Steps: string[];
     Due_Date?: string;
     Notes?: string;
+    Total_Value?: number;
+    Material_Cost?: number;
+    Labor_Cost?: number;
+    Profit?: number;
+    Profit_Margin?: number;
     items: {
         Product_ID: string;
         Product_Name: string;
         Project_ID: string;
         Project_Name: string;
         Quantity: number;
+        Product_Value?: number;
+        Material_Cost?: number;
+        Planned_Labor_Cost?: number;
         Process_Assignments?: Record<string, {
             Worker_ID?: string;
             Worker_Name?: string;
+            Helpers?: { Worker_ID: string; Worker_Name: string; }[];
+            Days_Worked?: number;
         }>;
     }[];
 }): Promise<{ success: boolean; data?: { Work_Order_ID: string; Work_Order_Number: string }; message: string }> {
@@ -1971,9 +2104,14 @@ export async function createWorkOrder(data: {
             Work_Order_Number: workOrderNumber,
             Created_Date: new Date().toISOString(),
             Due_Date: data.Due_Date || '',
-            Status: 'Nacrt',
+            Status: 'Na čekanju',
             Production_Steps: data.Production_Steps,
             Notes: data.Notes || '',
+            ...(data.Total_Value && { Total_Value: data.Total_Value }),
+            ...(data.Material_Cost && { Material_Cost: data.Material_Cost }),
+            ...(data.Labor_Cost && { Labor_Cost: data.Labor_Cost }),
+            ...(data.Profit && { Profit: data.Profit }),
+            ...(data.Profit_Margin && { Profit_Margin: data.Profit_Margin }),
         };
 
         await addDoc(collection(db, COLLECTIONS.WORK_ORDERS), workOrder);
@@ -1986,10 +2124,19 @@ export async function createWorkOrder(data: {
             data.Production_Steps.forEach(proc => {
                 processAssignments[proc] = {
                     Status: 'Na čekanju',
-                    Worker_ID: item.Process_Assignments?.[proc]?.Worker_ID,
-                    Worker_Name: item.Process_Assignments?.[proc]?.Worker_Name,
+                    Worker_ID: item.Process_Assignments?.[proc]?.Worker_ID || null,
+                    Worker_Name: item.Process_Assignments?.[proc]?.Worker_Name || null,
                 };
             });
+
+            // Build Processes array from input (new format)
+            const processes = (item as any).Processes || data.Production_Steps.map(proc => ({
+                Process_Name: proc,
+                Status: 'Na čekanju',
+                Worker_ID: item.Process_Assignments?.[proc]?.Worker_ID || undefined,
+                Worker_Name: item.Process_Assignments?.[proc]?.Worker_Name || undefined,
+                Helpers: item.Process_Assignments?.[proc]?.Helpers || undefined,
+            }));
 
             const workOrderItem: WorkOrderItem = {
                 ID: generateUUID(),
@@ -2001,6 +2148,11 @@ export async function createWorkOrder(data: {
                 Quantity: item.Quantity,
                 Status: 'Na čekanju',
                 Process_Assignments: processAssignments,
+                Processes: processes,
+                // Cost and value fields for profit calculation
+                Product_Value: item.Product_Value,
+                Material_Cost: item.Material_Cost,
+                Planned_Labor_Cost: item.Planned_Labor_Cost,
             };
             await addDoc(collection(db, COLLECTIONS.WORK_ORDER_ITEMS), workOrderItem);
         }
@@ -2096,22 +2248,10 @@ export async function completeWorkOrderItem(itemId: string, productionStep: stri
             const nextStatus = statusMap[productionStep] || 'Spremno';
             await updateDoc(productSnap.docs[0].ref, { Status: nextStatus });
 
-            // Check if all products in project are done
-            const projectId = item.Project_ID;
-            const allProductsQ = query(collection(db, COLLECTIONS.PRODUCTS), where('Project_ID', '==', projectId));
-            const allProductsSnap = await getDocs(allProductsQ);
-
-            const allDone = allProductsSnap.docs.every(doc => {
-                const status = doc.data().Status;
-                return status === 'Spremno' || status === 'Instalirano';
-            });
-
-            if (allDone) {
-                const projectQ = query(collection(db, COLLECTIONS.PROJECTS), where('Project_ID', '==', projectId));
-                const projectSnap = await getDocs(projectQ);
-                if (!projectSnap.empty) {
-                    await updateDoc(projectSnap.docs[0].ref, { Status: 'Završeno' });
-                }
+            // Sync project status using centralized function
+            if (item.Project_ID) {
+                const { syncProjectStatus } = await import('./attendance');
+                await syncProjectStatus(item.Project_ID);
             }
         }
 
@@ -2124,12 +2264,48 @@ export async function completeWorkOrderItem(itemId: string, productionStep: stri
 
 export async function deleteWorkOrder(workOrderId: string): Promise<{ success: boolean; message: string }> {
     try {
-        // Delete items first
+        // Get items first to reset product statuses
         const itemsQ = query(collection(db, COLLECTIONS.WORK_ORDER_ITEMS), where('Work_Order_ID', '==', workOrderId));
         const itemsSnap = await getDocs(itemsQ);
 
+        // Reset product statuses in projects before deleting
+        const projectUpdates = new Map<string, Map<string, string>>();
+
+        for (const itemDoc of itemsSnap.docs) {
+            const item = itemDoc.data();
+            if (item.Project_ID && item.Product_ID) {
+                if (!projectUpdates.has(item.Project_ID)) {
+                    projectUpdates.set(item.Project_ID, new Map());
+                }
+                projectUpdates.get(item.Project_ID)!.set(item.Product_ID, 'Čeka proizvodnju');
+            }
+        }
+
+        // Update each project's products to reset status
+        const entries = Array.from(projectUpdates.entries());
+        for (const [projectId, productStatuses] of entries) {
+            const projectQ = query(collection(db, COLLECTIONS.PROJECTS), where('Project_ID', '==', projectId));
+            const projectSnap = await getDocs(projectQ);
+
+            if (!projectSnap.empty) {
+                const projectData = projectSnap.docs[0].data();
+                const products = projectData.products || [];
+
+                const updatedProducts = products.map((p: any) => {
+                    const newStatus = productStatuses.get(p.Product_ID);
+                    if (newStatus) {
+                        return { ...p, Status: newStatus, Work_Order_Quantity: 0 };
+                    }
+                    return p;
+                });
+
+                await updateDoc(projectSnap.docs[0].ref, { products: updatedProducts });
+            }
+        }
+
+        // Delete items
         const batch = writeBatch(db);
-        itemsSnap.docs.forEach(doc => batch.delete(doc.ref));
+        itemsSnap.docs.forEach(docRef => batch.delete(docRef.ref));
 
         // Delete work order
         const woQ = query(collection(db, COLLECTIONS.WORK_ORDERS), where('Work_Order_ID', '==', workOrderId));
@@ -2212,6 +2388,7 @@ export async function updateWorkOrder(workOrderId: string, updates: Partial<Work
         if (updates.Status) updateData.Status = updates.Status;
         if (updates.Due_Date) updateData.Due_Date = updates.Due_Date;
         if (updates.Notes !== undefined) updateData.Notes = updates.Notes;
+        if (updates.Production_Steps) updateData.Production_Steps = updates.Production_Steps;
 
         if (updates.Status === 'Završeno' && !updates.Completed_Date) {
             updateData.Completed_Date = new Date().toISOString();
@@ -2259,3 +2436,293 @@ export async function updateWorkOrder(workOrderId: string, updates: Partial<Work
     }
 }
 
+// ============================================
+// WORK LOGS CRUD - Real-time Profit Tracking
+// ============================================
+
+/**
+ * Create a new work log entry
+ * Records which worker worked on which product on which day
+ */
+export async function createWorkLog(data: {
+    Worker_ID: string;
+    Worker_Name: string;
+    Daily_Rate: number;
+    Work_Order_ID: string;
+    Work_Order_Item_ID: string;
+    Product_ID: string;
+    SubTask_ID?: string;
+    Process_Name?: string;
+    Hours_Worked?: number;
+    Is_From_Attendance?: boolean;
+    Notes?: string;
+    Date?: string;
+}): Promise<{ success: boolean; data?: { WorkLog_ID: string }; message: string }> {
+    try {
+        const firestore = getDb();
+        const now = new Date().toISOString();
+        const today = now.split('T')[0]; // YYYY-MM-DD
+
+        const workLogData: WorkLog = {
+            WorkLog_ID: generateUUID(),
+            Date: data.Date || today,
+            Worker_ID: data.Worker_ID,
+            Worker_Name: data.Worker_Name,
+            Daily_Rate: data.Daily_Rate,
+            Hours_Worked: data.Hours_Worked ?? 8,
+            Work_Order_ID: data.Work_Order_ID,
+            Work_Order_Item_ID: data.Work_Order_Item_ID,
+            Product_ID: data.Product_ID,
+            SubTask_ID: data.SubTask_ID,
+            Process_Name: data.Process_Name,
+            Is_From_Attendance: data.Is_From_Attendance ?? false,
+            Notes: data.Notes,
+            Created_At: now,
+        };
+
+        // Remove undefined fields
+        Object.keys(workLogData).forEach(key =>
+            (workLogData as any)[key] === undefined && delete (workLogData as any)[key]
+        );
+
+        await addDoc(collection(firestore, COLLECTIONS.WORK_LOGS), workLogData);
+
+        return { success: true, data: { WorkLog_ID: workLogData.WorkLog_ID }, message: 'Work log evidentiran' };
+    } catch (error) {
+        console.error('createWorkLog error:', error);
+        return { success: false, message: 'Greška pri kreiranju work loga' };
+    }
+}
+
+/**
+ * Get all work logs for a specific work order item (product)
+ */
+export async function getWorkLogsForItem(workOrderItemId: string): Promise<WorkLog[]> {
+    try {
+        const firestore = getDb();
+        const q = query(
+            collection(firestore, COLLECTIONS.WORK_LOGS),
+            where('Work_Order_Item_ID', '==', workOrderItemId)
+        );
+        const snapshot = await getDocs(q);
+        return snapshot.docs.map(doc => doc.data() as WorkLog);
+    } catch (error) {
+        console.error('getWorkLogsForItem error:', error);
+        return [];
+    }
+}
+
+/**
+ * Get all work logs for an entire work order
+ */
+export async function getWorkLogsForWorkOrder(workOrderId: string): Promise<WorkLog[]> {
+    try {
+        const firestore = getDb();
+        const q = query(
+            collection(firestore, COLLECTIONS.WORK_LOGS),
+            where('Work_Order_ID', '==', workOrderId)
+        );
+        const snapshot = await getDocs(q);
+        return snapshot.docs.map(doc => doc.data() as WorkLog);
+    } catch (error) {
+        console.error('getWorkLogsForWorkOrder error:', error);
+        return [];
+    }
+}
+
+/**
+ * Calculate total labor cost for a work order item
+ * Returns sum of all daily rates for all work logs
+ */
+export async function calculateItemLaborCost(workOrderItemId: string): Promise<{
+    totalCost: number;
+    totalDays: number;
+    workerBreakdown: { workerId: string; workerName: string; days: number; cost: number }[];
+}> {
+    try {
+        const logs = await getWorkLogsForItem(workOrderItemId);
+
+        // Group by worker
+        const workerMap = new Map<string, { workerName: string; days: number; cost: number }>();
+
+        for (const log of logs) {
+            const existing = workerMap.get(log.Worker_ID);
+            if (existing) {
+                existing.days += 1;
+                existing.cost += log.Daily_Rate;
+            } else {
+                workerMap.set(log.Worker_ID, {
+                    workerName: log.Worker_Name,
+                    days: 1,
+                    cost: log.Daily_Rate,
+                });
+            }
+        }
+
+        const workerBreakdown = Array.from(workerMap.entries()).map(([workerId, data]) => ({
+            workerId,
+            workerName: data.workerName,
+            days: data.days,
+            cost: data.cost,
+        }));
+
+        const totalCost = logs.reduce((sum, log) => sum + log.Daily_Rate, 0);
+        const totalDays = logs.length;
+
+        return { totalCost, totalDays, workerBreakdown };
+    } catch (error) {
+        console.error('calculateItemLaborCost error:', error);
+        return { totalCost: 0, totalDays: 0, workerBreakdown: [] };
+    }
+}
+
+/**
+ * Delete a work log entry
+ */
+export async function deleteWorkLog(workLogId: string): Promise<{ success: boolean; message: string }> {
+    try {
+        const firestore = getDb();
+        const q = query(
+            collection(firestore, COLLECTIONS.WORK_LOGS),
+            where('WorkLog_ID', '==', workLogId)
+        );
+        const snapshot = await getDocs(q);
+
+        if (snapshot.empty) {
+            return { success: false, message: 'Work log nije pronađen' };
+        }
+
+        await deleteDoc(snapshot.docs[0].ref);
+        return { success: true, message: 'Work log obrisan' };
+    } catch (error) {
+        console.error('deleteWorkLog error:', error);
+        return { success: false, message: 'Greška pri brisanju work loga' };
+    }
+}
+
+/**
+ * Check if a work log already exists for a worker/item/date combination
+ * Prevents duplicate entries
+ */
+export async function workLogExists(workerId: string, workOrderItemId: string, date: string): Promise<boolean> {
+    try {
+        const firestore = getDb();
+        const q = query(
+            collection(firestore, COLLECTIONS.WORK_LOGS),
+            where('Worker_ID', '==', workerId),
+            where('Work_Order_Item_ID', '==', workOrderItemId),
+            where('Date', '==', date)
+        );
+        const snapshot = await getDocs(q);
+        return !snapshot.empty;
+    } catch (error) {
+        console.error('workLogExists error:', error);
+        return false;
+    }
+}
+
+// ============================================
+// TASKS CRUD
+// ============================================
+
+export async function getTasks(): Promise<Task[]> {
+    const firestore = getDb();
+    const snapshot = await getDocs(collection(firestore, COLLECTIONS.TASKS));
+    return snapshot.docs.map(doc => ({ ...doc.data() } as Task));
+}
+
+export async function getTask(taskId: string): Promise<Task | null> {
+    const firestore = getDb();
+    const q = query(collection(firestore, COLLECTIONS.TASKS), where('Task_ID', '==', taskId));
+    const snapshot = await getDocs(q);
+    if (snapshot.empty) return null;
+    return snapshot.docs[0].data() as Task;
+}
+
+export async function saveTask(data: Partial<Task>): Promise<{ success: boolean; data?: { Task_ID: string }; message: string }> {
+    try {
+        const firestore = getDb();
+        const isNew = !data.Task_ID;
+
+        // Remove undefined values - Firebase doesn't accept undefined
+        const cleanData = Object.fromEntries(
+            Object.entries(data).filter(([_, value]) => value !== undefined)
+        ) as Partial<Task>;
+
+        if (isNew) {
+            cleanData.Task_ID = generateUUID();
+            cleanData.Created_Date = new Date().toISOString();
+            cleanData.Status = cleanData.Status || 'pending';
+            cleanData.Priority = cleanData.Priority || 'medium';
+            cleanData.Category = cleanData.Category || 'general';
+            cleanData.Links = cleanData.Links || [];
+            cleanData.Checklist = cleanData.Checklist || [];
+            await addDoc(collection(firestore, COLLECTIONS.TASKS), cleanData);
+        } else {
+            const q = query(collection(firestore, COLLECTIONS.TASKS), where('Task_ID', '==', cleanData.Task_ID));
+            const snapshot = await getDocs(q);
+            if (!snapshot.empty) {
+                await updateDoc(snapshot.docs[0].ref, cleanData as Record<string, unknown>);
+            }
+        }
+
+        return { success: true, data: { Task_ID: cleanData.Task_ID! }, message: isNew ? 'Zadatak kreiran' : 'Zadatak ažuriran' };
+    } catch (error) {
+        console.error('saveTask error:', error);
+        return { success: false, message: 'Greška pri spremanju zadatka' };
+    }
+}
+
+export async function deleteTask(taskId: string): Promise<{ success: boolean; message: string }> {
+    try {
+        const firestore = getDb();
+        const q = query(collection(firestore, COLLECTIONS.TASKS), where('Task_ID', '==', taskId));
+        const snapshot = await getDocs(q);
+        if (!snapshot.empty) {
+            await deleteDoc(snapshot.docs[0].ref);
+        }
+        return { success: true, message: 'Zadatak obrisan' };
+    } catch (error) {
+        console.error('deleteTask error:', error);
+        return { success: false, message: 'Greška pri brisanju zadatka' };
+    }
+}
+
+export async function updateTaskStatus(taskId: string, status: Task['Status']): Promise<{ success: boolean; message: string }> {
+    try {
+        const firestore = getDb();
+        const q = query(collection(firestore, COLLECTIONS.TASKS), where('Task_ID', '==', taskId));
+        const snapshot = await getDocs(q);
+        if (!snapshot.empty) {
+            const updates: Record<string, unknown> = { Status: status };
+            if (status === 'completed') {
+                updates.Completed_Date = new Date().toISOString();
+            }
+            await updateDoc(snapshot.docs[0].ref, updates);
+        }
+        return { success: true, message: 'Status ažuriran' };
+    } catch (error) {
+        console.error('updateTaskStatus error:', error);
+        return { success: false, message: 'Greška pri ažuriranju statusa' };
+    }
+}
+
+export async function toggleTaskChecklistItem(taskId: string, checklistItemId: string): Promise<{ success: boolean; message: string }> {
+    try {
+        const firestore = getDb();
+        const q = query(collection(firestore, COLLECTIONS.TASKS), where('Task_ID', '==', taskId));
+        const snapshot = await getDocs(q);
+        if (!snapshot.empty) {
+            const task = snapshot.docs[0].data() as Task;
+            const checklist = task.Checklist || [];
+            const updatedChecklist = checklist.map(item =>
+                item.id === checklistItemId ? { ...item, completed: !item.completed } : item
+            );
+            await updateDoc(snapshot.docs[0].ref, { Checklist: updatedChecklist });
+        }
+        return { success: true, message: 'Checklist ažuriran' };
+    } catch (error) {
+        console.error('toggleTaskChecklistItem error:', error);
+        return { success: false, message: 'Greška pri ažuriranju checkliste' };
+    }
+}

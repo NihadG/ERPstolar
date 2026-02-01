@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import type { Project, Material, Product, ProductMaterial, WorkOrder } from '@/lib/types';
+import type { Project, Material, Product, ProductMaterial, WorkOrder, Offer, OfferProduct, WorkLog } from '@/lib/types';
 import {
     saveProject,
     deleteProject,
@@ -18,22 +18,37 @@ import {
 import Modal from '@/components/ui/Modal';
 import GlassModal, { type GlassModalData } from '@/components/ui/GlassModal';
 import AluDoorModal, { type AluDoorModalData } from '@/components/ui/AluDoorModal';
-import MaterialReportModal from '@/components/ui/MaterialReportModal';
-import { PROJECT_STATUSES, PRODUCTION_MODES, PRODUCTION_STEPS, MATERIAL_CATEGORIES } from '@/lib/types';
+
+import ProductTimelineModal from '@/components/ui/ProductTimelineModal';
+import { PROJECT_STATUSES, PRODUCTION_STEPS, MATERIAL_CATEGORIES } from '@/lib/types';
 
 interface ProjectsTabProps {
     projects: Project[];
     materials: Material[];
     workOrders: WorkOrder[];
+    offers?: Offer[];
+    workLogs?: WorkLog[];
     onRefresh: () => void;
     showToast: (message: string, type: 'success' | 'error' | 'info') => void;
+    onNavigateToTasks?: (projectId: string) => void;  // Navigate to tasks filtered by project
 }
 
-export default function ProjectsTab({ projects, materials, workOrders = [], onRefresh, showToast }: ProjectsTabProps) {
+export default function ProjectsTab({ projects, materials, workOrders = [], offers = [], workLogs = [], onRefresh, showToast, onNavigateToTasks }: ProjectsTabProps) {
     const [searchTerm, setSearchTerm] = useState('');
     const [statusFilter, setStatusFilter] = useState('');
     const [expandedProjectId, setExpandedProjectId] = useState<string | null>(null);
     const [expandedProducts, setExpandedProducts] = useState<Set<string>>(new Set());
+    const [expandedStatusGroups, setExpandedStatusGroups] = useState<Set<string>>(new Set());
+
+    function toggleStatusGroup(status: string) {
+        const newExpanded = new Set(expandedStatusGroups);
+        if (newExpanded.has(status)) {
+            newExpanded.delete(status);
+        } else {
+            newExpanded.add(status);
+        }
+        setExpandedStatusGroups(newExpanded);
+    }
 
     // Modal states
     const [projectModal, setProjectModal] = useState(false);
@@ -41,8 +56,7 @@ export default function ProjectsTab({ projects, materials, workOrders = [], onRe
     const [materialModal, setMaterialModal] = useState(false);
     const [glassModal, setGlassModal] = useState(false);
     const [aluDoorModal, setAluDoorModal] = useState(false);
-    const [reportModal, setReportModal] = useState(false);
-    const [reportProject, setReportProject] = useState<Project | null>(null);
+
 
     // Form states
     const [editingProject, setEditingProject] = useState<Partial<Project> | null>(null);
@@ -63,9 +77,13 @@ export default function ProjectsTab({ projects, materials, workOrders = [], onRe
     const [editingMaterial, setEditingMaterial] = useState<ProductMaterial | null>(null);
     const [editMaterialQty, setEditMaterialQty] = useState(0);
     const [editMaterialPrice, setEditMaterialPrice] = useState(0);
+    const [editMaterialIsEssential, setEditMaterialIsEssential] = useState(false);
 
     // Material status dropdown
     const [statusDropdownMaterialId, setStatusDropdownMaterialId] = useState<string | null>(null);
+
+    // Product Timeline Modal
+    const [timelineProduct, setTimelineProduct] = useState<{ product: Product; sellingPrice?: number; materialCost?: number; laborCost?: number; profit?: number; profitMargin?: number } | null>(null);
 
     // Filter projects
     const filteredProjects = projects.filter(project => {
@@ -74,6 +92,33 @@ export default function ProjectsTab({ projects, materials, workOrders = [], onRe
         const matchesStatus = !statusFilter || project.Status === statusFilter;
         return matchesSearch && matchesStatus;
     });
+
+    // Status order: Active workflow first, then terminal states
+    // Nacrt → Ponuđeno → Odobreno → U proizvodnji (workflow order)
+    // Završeno and Otkazano always last (terminal states)
+    const STATUS_ORDER = ['Nacrt', 'Ponuđeno', 'Odobreno', 'U proizvodnji', 'Završeno', 'Otkazano'];
+
+    // Group projects by status
+    const groupedProjects = STATUS_ORDER.reduce((acc, status) => {
+        const projectsInStatus = filteredProjects.filter(p => p.Status === status);
+        if (projectsInStatus.length > 0) {
+            acc.push({ status, projects: projectsInStatus });
+        }
+        return acc;
+    }, [] as { status: string; projects: Project[] }[]);
+
+    // Status badge colors for group headers
+    const getStatusColor = (status: string) => {
+        switch (status) {
+            case 'Nacrt': return { bg: '#f3f4f6', color: '#6b7280', border: '#d1d5db' };
+            case 'Ponuđeno': return { bg: '#fef3c7', color: '#d97706', border: '#fcd34d' };
+            case 'Odobreno': return { bg: '#dbeafe', color: '#2563eb', border: '#93c5fd' };
+            case 'U proizvodnji': return { bg: '#ede9fe', color: '#7c3aed', border: '#c4b5fd' };
+            case 'Završeno': return { bg: '#dcfce7', color: '#15803d', border: '#86efac' };
+            case 'Otkazano': return { bg: '#fee2e2', color: '#dc2626', border: '#fca5a5' };
+            default: return { bg: '#f3f4f6', color: '#6b7280', border: '#d1d5db' };
+        }
+    };
 
     function toggleProject(projectId: string) {
         // Toggle: if already expanded, collapse; otherwise expand this one (and hide others)
@@ -310,6 +355,7 @@ export default function ProjectsTab({ projects, materials, workOrders = [], onRe
         setEditingMaterial(material);
         setEditMaterialQty(material.Quantity);
         setEditMaterialPrice(material.Unit_Price);
+        setEditMaterialIsEssential(material.Is_Essential || false);
         setEditMaterialModal(true);
     }
 
@@ -320,7 +366,8 @@ export default function ProjectsTab({ projects, materials, workOrders = [], onRe
         const result = await updateProductMaterial(editingMaterial.ID, {
             Quantity: editMaterialQty,
             Unit_Price: editMaterialPrice,
-            Total_Price: editMaterialQty * editMaterialPrice
+            Total_Price: editMaterialQty * editMaterialPrice,
+            Is_Essential: editMaterialIsEssential
         });
 
         if (result.success) {
@@ -359,64 +406,35 @@ export default function ProjectsTab({ projects, materials, workOrders = [], onRe
     }
 
     function getProductStatus(product: Product): string {
-        // Find if product is in any active work order
-        // Sort by created date desc to get latest
-        const allWorkOrders = [...workOrders].sort((a, b) =>
-            new Date(b.Created_Date).getTime() - new Date(a.Created_Date).getTime()
-        );
+        const status = product.Status || 'Na čekanju';
 
-        for (const wo of allWorkOrders) {
-            const item = wo.items?.find(i => i.Product_ID === product.Product_ID);
-            if (item) {
-                // If item has specific process status
-                if (item.Process_Assignments) {
-                    // Check order of steps: Rezanje -> Kantiranje -> Bušenje -> Sklapanje
-                    // Find the "deepest" active step
+        // Simplify to 3 states for display in Projects tab:
+        // 1. Na čekanju - waiting for production
+        // 2. U proizvodnji - any production step in progress
+        // 3. Završeno - production complete
 
-                    // First check if any is "U toku"
-                    for (const step of PRODUCTION_STEPS) {
-                        if (item.Process_Assignments[step]?.Status === 'U toku') {
-                            return step; // E.g., "Rezanje"
-                        }
-                    }
+        const waitingStatuses = ['Na čekanju', 'Materijali naručeni', 'Materijali spremni', 'Čeka proizvodnju'];
+        const inProductionStatuses = ['Rezanje', 'Kantiranje', 'Bušenje', 'Sklapanje', 'U proizvodnji'];
+        const completedStatuses = ['Spremno', 'Instalirano', 'Završeno'];
 
-                    // If none in progress, find the last "Završeno" one and show next, 
-                    // or if all finished, show "Spremno"
-                    let lastFinishedIndex = -1;
-                    for (let i = 0; i < PRODUCTION_STEPS.length; i++) {
-                        const step = PRODUCTION_STEPS[i];
-                        if (item.Process_Assignments[step]?.Status === 'Završeno') {
-                            lastFinishedIndex = i;
-                        }
-                    }
-
-                    if (lastFinishedIndex === PRODUCTION_STEPS.length - 1) {
-                        return 'Spremno';
-                    }
-
-                    if (lastFinishedIndex >= 0) {
-                        // Return the next step
-                        return PRODUCTION_STEPS[lastFinishedIndex + 1];
-                    }
-
-                    // If assigned but partially started/waiting
-                    return 'U proizvodnji';
-                }
-
-                // Fallback to item status if no process details
-                if (item.Status && item.Status !== 'Nacrt') {
-                    return item.Status;
-                }
-            }
+        if (waitingStatuses.includes(status)) {
+            return 'Na čekanju';
+        }
+        if (inProductionStatuses.includes(status)) {
+            return 'U proizvodnji';
+        }
+        if (completedStatuses.includes(status)) {
+            return 'Završeno';
         }
 
-        return product.Status || 'Na čekanju';
+        // Default fallback
+        return 'Na čekanju';
     }
 
     return (
         <div className="tab-content active" id="projects-content">
-            <div className="content-header">
-                <div className="search-box">
+            <div className="content-header projects-toolbar">
+                <div className="glass-search">
                     <span className="material-icons-round">search</span>
                     <input
                         type="text"
@@ -426,7 +444,7 @@ export default function ProjectsTab({ projects, materials, workOrders = [], onRe
                     />
                 </div>
                 <select
-                    className="filter-select"
+                    className="glass-select-standalone"
                     value={statusFilter}
                     onChange={(e) => setStatusFilter(e.target.value)}
                 >
@@ -435,7 +453,7 @@ export default function ProjectsTab({ projects, materials, workOrders = [], onRe
                         <option key={status} value={status}>{status}</option>
                     ))}
                 </select>
-                <button className="btn btn-primary" onClick={() => openProjectModal()}>
+                <button className="glass-btn glass-btn-primary" onClick={() => openProjectModal()}>
                     <span className="material-icons-round">add</span>
                     Novi Projekat
                 </button>
@@ -448,12 +466,9 @@ export default function ProjectsTab({ projects, materials, workOrders = [], onRe
                         <h3>Nema projekata</h3>
                         <p>Kreirajte prvi projekat klikom na "Novi Projekat"</p>
                     </div>
-                ) : (
+                ) : expandedProjectId ? (
                     // When a project is expanded, only show that project for cleaner view
-                    (expandedProjectId
-                        ? filteredProjects.filter(p => p.Project_ID === expandedProjectId)
-                        : filteredProjects
-                    ).map(project => {
+                    filteredProjects.filter(p => p.Project_ID === expandedProjectId).map(project => {
                         const totalProducts = project.products?.length || 0;
                         const totalCost = project.products?.reduce((sum, p) => sum + (p.Material_Cost || 0), 0) || 0;
 
@@ -484,18 +499,14 @@ export default function ProjectsTab({ projects, materials, workOrders = [], onRe
                                             <span className={`status-badge ${getStatusClass(project.Status)}`}>
                                                 {project.Status}
                                             </span>
-                                            <span className="mode-badge">
-                                                {project.Production_Mode === 'PreCut' ? 'Gotovi elementi' : 'Vlastita obrada'}
-                                            </span>
                                         </div>
 
                                         <div className="project-actions" onClick={(e) => e.stopPropagation()}>
-                                            <button className="icon-btn" onClick={() => {
-                                                setReportProject(project);
-                                                setReportModal(true);
-                                            }} title="Izvještaj o materijalima">
-                                                <span className="material-icons-round">summarize</span>
-                                            </button>
+                                            {onNavigateToTasks && (
+                                                <button className="icon-btn" onClick={() => onNavigateToTasks(project.Project_ID)} title="Zadaci za ovaj projekat">
+                                                    <span className="material-icons-round">task_alt</span>
+                                                </button>
+                                            )}
                                             <button className="icon-btn" onClick={() => openProjectModal(project)}>
                                                 <span className="material-icons-round">edit</span>
                                             </button>
@@ -534,6 +545,92 @@ export default function ProjectsTab({ projects, materials, workOrders = [], onRe
                                                 <span className={`status-badge ${getStatusClass(getProductStatus(product))}`}>
                                                     {getProductStatus(product)}
                                                 </span>
+                                                {/* Profit Badge */}
+                                                {(() => {
+                                                    // Find OfferProduct from accepted offers and calculate full costs
+                                                    let sellingPrice: number | undefined;
+                                                    let materialCost: number | undefined;
+                                                    let offerRef: Offer | undefined;
+                                                    const acceptedOffers = offers.filter(o => o.Status === 'Prihvaćeno');
+                                                    for (const offer of acceptedOffers) {
+                                                        const offerProduct = (offer.products || []).find(op => op.Product_ID === product.Product_ID);
+                                                        if (offerProduct) {
+                                                            offerRef = offer;
+                                                            sellingPrice = offerProduct.Selling_Price || offerProduct.Total_Price;
+
+                                                            // All cost components
+                                                            materialCost = (offerProduct.Material_Cost || 0);
+
+                                                            // Add LED, Grouting, Sink, Extras costs
+                                                            const ledCost = offerProduct.LED_Total || 0;
+                                                            const groutingCost = offerProduct.Grouting ? (offerProduct.Grouting_Price || 0) : 0;
+                                                            const sinkCost = offerProduct.Sink_Faucet ? (offerProduct.Sink_Faucet_Price || 0) : 0;
+                                                            const extrasCost = ((offerProduct as any).extras || []).reduce((sum: number, e: any) =>
+                                                                sum + (e.Total || e.total || 0), 0);
+
+                                                            materialCost = materialCost + ledCost + groutingCost + sinkCost + extrasCost;
+                                                            break;
+                                                        }
+                                                    }
+
+                                                    // Calculate labor cost from workLogs
+                                                    const productWorkLogs = workLogs.filter(wl => wl.Product_ID === product.Product_ID);
+                                                    const laborCost = productWorkLogs.reduce((sum, wl) => sum + (wl.Daily_Rate || 0), 0);
+
+                                                    // Calculate profit if we have selling price
+                                                    if (sellingPrice && sellingPrice > 0) {
+                                                        // Calculate proportional transport/discount
+                                                        let transportShare = 0;
+                                                        let discountShare = 0;
+
+                                                        if (offerRef) {
+                                                            const offerSubtotal = offerRef.Subtotal || 0;
+                                                            if (offerSubtotal > 0) {
+                                                                const productRatio = sellingPrice / offerSubtotal;
+                                                                transportShare = (offerRef.Transport_Cost || 0) * productRatio;
+                                                                discountShare = offerRef.Onsite_Assembly ?
+                                                                    (offerRef.Onsite_Discount || 0) * productRatio : 0;
+                                                            }
+                                                        }
+
+                                                        // Profit = Selling Price - Costs (material + labor)
+                                                        // Transport is pass-through, not production profit
+                                                        const profit = sellingPrice - (materialCost || 0) - laborCost;
+                                                        const profitMargin = sellingPrice > 0 ? (profit / sellingPrice) * 100 : 0;
+
+                                                        return (
+                                                            <span
+                                                                className="profit-badge"
+                                                                style={{
+                                                                    display: 'inline-flex',
+                                                                    alignItems: 'center',
+                                                                    gap: '4px',
+                                                                    padding: '4px 10px',
+                                                                    borderRadius: '6px',
+                                                                    background: profitMargin >= 30 ? 'rgba(16, 185, 129, 0.1)' :
+                                                                        profitMargin >= 15 ? 'rgba(245, 158, 11, 0.1)' : 'rgba(239, 68, 68, 0.1)',
+                                                                    color: profitMargin >= 30 ? '#10b981' :
+                                                                        profitMargin >= 15 ? '#f59e0b' : '#ef4444',
+                                                                    fontWeight: 600,
+                                                                    fontSize: '12px',
+                                                                    marginLeft: '8px',
+                                                                    cursor: 'pointer'
+                                                                }}
+                                                                title="Klikni za detaljan izvještaj"
+                                                                onClick={(e) => {
+                                                                    e.stopPropagation();
+                                                                    setTimelineProduct({ product, sellingPrice, materialCost, laborCost, profit, profitMargin });
+                                                                }}
+                                                            >
+                                                                <span className="material-icons-round" style={{ fontSize: '14px' }}>
+                                                                    {profitMargin >= 30 ? 'trending_up' : profitMargin >= 15 ? 'trending_flat' : 'trending_down'}
+                                                                </span>
+                                                                {profit.toLocaleString('hr-HR')} KM ({profitMargin.toFixed(0)}%)
+                                                            </span>
+                                                        );
+                                                    }
+                                                    return null;
+                                                })()}
                                                 <div className="project-actions" onClick={(e) => e.stopPropagation()}>
                                                     <button className="icon-btn" onClick={() => openProductModal(project.Project_ID, product)}>
                                                         <span className="material-icons-round">edit</span>
@@ -549,8 +646,6 @@ export default function ProjectsTab({ projects, materials, workOrders = [], onRe
                                                 // Group materials logic
                                                 const groups: Record<string, { items: ProductMaterial[], total: number }> = {};
                                                 const productMaterials = product.materials || [];
-
-                                                if (productMaterials.length === 0) return null;
 
                                                 productMaterials.forEach(pm => {
                                                     let category = 'Ostalo';
@@ -592,6 +687,12 @@ export default function ProjectsTab({ projects, materials, workOrders = [], onRe
                                                             </button>
                                                         </div>
 
+                                                        {productMaterials.length === 0 && (
+                                                            <div style={{ padding: '24px', textAlign: 'center', color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
+                                                                Nema dodanih materijala. Kliknite na "Dodaj materijal" za početak.
+                                                            </div>
+                                                        )}
+
                                                         {sortedCategories.map(category => {
                                                             const group = groups[category];
                                                             return (
@@ -628,6 +729,7 @@ export default function ProjectsTab({ projects, materials, workOrders = [], onRe
                                                                                 <div key={material.ID} className="material-row">
                                                                                     <div className="mat-col-name">
                                                                                         <span className="material-name-text">{material.Material_Name}</span>
+                                                                                        {material.Is_Essential && <span className="material-indicator essential" title="Esencijalni materijal">⚠️</span>}
                                                                                         {isGlass && <span className="material-indicator glass">🪟 {glassCount} kom</span>}
                                                                                         {isAluDoor && <span className="material-indicator alu-door">🚪 {aluDoorCount} kom</span>}
                                                                                     </div>
@@ -727,6 +829,130 @@ export default function ProjectsTab({ projects, materials, workOrders = [], onRe
                             </div>
                         );
                     })
+                ) : (
+                    // Grouped view by status when no project is expanded
+                    groupedProjects.map(group => (
+                        <div key={group.status} className="status-group" style={{ marginBottom: '24px' }}>
+                            <div
+                                className="status-group-header"
+                                onClick={() => toggleStatusGroup(group.status)}
+                                style={{
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '12px',
+                                    padding: '8px 12px',
+                                    borderRadius: '8px',
+                                    marginBottom: '4px',
+                                    background: expandedStatusGroups.has(group.status) ? getStatusColor(group.status).bg : 'transparent',
+                                    border: `1px solid ${expandedStatusGroups.has(group.status) ? getStatusColor(group.status).border : 'transparent'}`,
+                                    cursor: 'pointer',
+                                    userSelect: 'none',
+                                    transition: 'all 0.2s ease',
+                                    width: '100%'
+                                }}
+                                onMouseEnter={(e) => {
+                                    if (!expandedStatusGroups.has(group.status)) {
+                                        e.currentTarget.style.background = 'rgba(0,0,0,0.02)';
+                                    }
+                                }}
+                                onMouseLeave={(e) => {
+                                    if (!expandedStatusGroups.has(group.status)) {
+                                        e.currentTarget.style.background = 'transparent';
+                                    }
+                                }}
+                            >
+                                <div style={{
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    width: '24px',
+                                    height: '24px',
+                                    borderRadius: '6px',
+                                    background: getStatusColor(group.status).bg,
+                                    color: getStatusColor(group.status).color
+                                }}>
+                                    <span
+                                        className="material-icons-round"
+                                        style={{
+                                            fontSize: '18px',
+                                            transition: 'transform 0.2s ease',
+                                            transform: expandedStatusGroups.has(group.status) ? 'rotate(90deg)' : 'rotate(0deg)'
+                                        }}
+                                    >
+                                        chevron_right
+                                    </span>
+                                </div>
+                                <span
+                                    style={{
+                                        fontWeight: 600,
+                                        fontSize: '14px',
+                                        color: '#1e293b'
+                                    }}
+                                >
+                                    {group.status}
+                                </span>
+                                <div style={{ flex: 1, height: '1px', background: '#e2e8f0', margin: '0 16px' }}></div>
+                                <span
+                                    style={{
+                                        fontSize: '12px',
+                                        color: getStatusColor(group.status).color,
+                                        fontWeight: 500,
+                                        background: getStatusColor(group.status).bg,
+                                        padding: '2px 8px',
+                                        borderRadius: '10px',
+                                        border: `1px solid ${getStatusColor(group.status).border}`
+                                    }}
+                                >
+                                    {group.projects.length} {group.projects.length === 1 ? 'projekat' : 'projekata'}
+                                </span>
+                            </div>
+                            {expandedStatusGroups.has(group.status) && group.projects.map(project => {
+                                const totalProducts = project.products?.length || 0;
+                                const totalCost = project.products?.reduce((sum, p) => sum + (p.Material_Cost || 0), 0) || 0;
+
+                                return (
+                                    <div key={project.Project_ID} className="project-card">
+                                        <div className="project-header" onClick={() => toggleProject(project.Project_ID)}>
+                                            <button className={`expand-btn ${expandedProjectId === project.Project_ID ? 'expanded' : ''}`}>
+                                                <span className="material-icons-round">chevron_right</span>
+                                            </button>
+
+                                            <div className="project-main-info">
+                                                <div className="project-title-section">
+                                                    <div className="project-name">{project.Client_Name}</div>
+                                                    <div className="project-badges">
+                                                    </div>
+                                                </div>
+                                                <div className="project-details">
+                                                    {project.Address && <div className="project-client">{project.Address}</div>}
+                                                    <div className="project-summary">
+                                                        <span className="summary-item">
+                                                            <span className="material-icons-round">inventory_2</span>
+                                                            {totalProducts} {totalProducts === 1 ? 'proizvod' : 'proizvoda'}
+                                                        </span>
+                                                    </div>
+                                                </div>
+                                            </div>
+
+                                            <div className="project-actions" onClick={(e) => e.stopPropagation()}>
+                                                {onNavigateToTasks && (
+                                                    <button className="icon-btn" onClick={() => onNavigateToTasks(project.Project_ID)} title="Zadaci za ovaj projekat">
+                                                        <span className="material-icons-round">task_alt</span>
+                                                    </button>
+                                                )}
+                                                <button className="icon-btn" onClick={() => openProjectModal(project)}>
+                                                    <span className="material-icons-round">edit</span>
+                                                </button>
+                                                <button className="icon-btn danger" onClick={() => handleDeleteProject(project.Project_ID)}>
+                                                    <span className="material-icons-round">delete</span>
+                                                </button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    ))
                 )}
             </div>
 
@@ -738,7 +964,7 @@ export default function ProjectsTab({ projects, materials, workOrders = [], onRe
                 footer={
                     <>
                         <button className="btn btn-secondary" onClick={() => setProjectModal(false)}>Otkaži</button>
-                        <button className="btn btn-primary" onClick={handleSaveProject}>Sačuvaj</button>
+                        <button className="glass-btn glass-btn-primary" onClick={handleSaveProject}>Sačuvaj</button>
                     </>
                 }
             >
@@ -777,16 +1003,7 @@ export default function ProjectsTab({ projects, materials, workOrders = [], onRe
                     />
                 </div>
                 <div className="form-row">
-                    <div className="form-group">
-                        <label>Način proizvodnje</label>
-                        <select
-                            value={editingProject?.Production_Mode || 'PreCut'}
-                            onChange={(e) => setEditingProject({ ...editingProject, Production_Mode: e.target.value as 'PreCut' | 'InHouse' })}
-                        >
-                            <option value="PreCut">Gotovi elementi</option>
-                            <option value="InHouse">Vlastita obrada</option>
-                        </select>
-                    </div>
+
                     <div className="form-group">
                         <label>Rok</label>
                         <input
@@ -962,13 +1179,6 @@ export default function ProjectsTab({ projects, materials, workOrders = [], onRe
                 onSave={handleSaveAluDoor}
             />
 
-            {/* Material Report Modal */}
-            <MaterialReportModal
-                isOpen={reportModal}
-                onClose={() => setReportModal(false)}
-                project={reportProject}
-                allMaterials={materials}
-            />
 
             {/* Edit Material Modal */}
             <Modal
@@ -983,53 +1193,278 @@ export default function ProjectsTab({ projects, materials, workOrders = [], onRe
                 }
             >
                 {editingMaterial && (
-                    <>
-                        <div className="form-group">
-                            <label>Materijal</label>
-                            <input
-                                type="text"
-                                value={editingMaterial.Material_Name}
-                                readOnly
-                                disabled
-                            />
-                        </div>
-                        <div className="form-row">
-                            <div className="form-group">
-                                <label>Količina *</label>
-                                <input
-                                    type="number"
-                                    step="0.01"
-                                    min="0"
-                                    value={editMaterialQty}
-                                    onChange={(e) => setEditMaterialQty(parseFloat(e.target.value) || 0)}
-                                />
-                            </div>
-                            <div className="form-group">
-                                <label>Jedinica</label>
-                                <input
-                                    type="text"
-                                    readOnly
-                                    disabled
-                                    value={editingMaterial.Unit || ''}
-                                />
+                    <div className="edit-modal-content">
+                        <div className="modal-header-info">
+                            <div className="header-icon">📦</div>
+                            <div className="header-details">
+                                <div className="header-title">{editingMaterial.Material_Name}</div>
+                                <div className="header-subtitle">Uređivanje detalja materijala</div>
                             </div>
                         </div>
-                        <div className="form-group">
-                            <label>Cijena po jedinici (KM)</label>
-                            <input
-                                type="number"
-                                step="0.01"
-                                min="0"
-                                value={editMaterialPrice}
-                                onChange={(e) => setEditMaterialPrice(parseFloat(e.target.value) || 0)}
-                            />
+
+                        <div className="modal-form-grid">
+                            <div className="form-field">
+                                <label>Količina <span className="required">*</span></label>
+                                <div className="input-wrapper">
+                                    <input
+                                        type="number"
+                                        step="0.01"
+                                        min="0"
+                                        value={editMaterialQty}
+                                        onChange={(e) => setEditMaterialQty(parseFloat(e.target.value) || 0)}
+                                        placeholder="0"
+                                    />
+                                    <span className="unit-badge">{editingMaterial.Unit || 'kom'}</span>
+                                </div>
+                            </div>
+
+                            <div className="form-field">
+                                <label>Cijena po jedinici</label>
+                                <div className="input-wrapper">
+                                    <input
+                                        type="number"
+                                        step="0.01"
+                                        min="0"
+                                        value={editMaterialPrice}
+                                        onChange={(e) => setEditMaterialPrice(parseFloat(e.target.value) || 0)}
+                                        placeholder="0.00"
+                                    />
+                                    <span className="currency-badge">KM</span>
+                                </div>
+                            </div>
                         </div>
-                        <div className="form-group">
-                            <label>Ukupno: <strong>{(editMaterialQty * editMaterialPrice).toFixed(2)} KM</strong></label>
+
+                        <div className="total-price-card">
+                            <span className="total-label">UKUPNA VRIJEDNOST</span>
+                            <span className="total-amount">
+                                {(editMaterialQty * editMaterialPrice).toFixed(2)}
+                                <span className="total-currency">KM</span>
+                            </span>
                         </div>
-                    </>
+
+                        <label className={`essential-card ${editMaterialIsEssential ? 'active' : ''}`}>
+                            <div className="checkbox-wrapper">
+                                <input
+                                    type="checkbox"
+                                    checked={editMaterialIsEssential}
+                                    onChange={(e) => setEditMaterialIsEssential(e.target.checked)}
+                                />
+                            </div>
+                            <div className="essential-content">
+                                <div className="essential-title">
+                                    <span className="warning-icon">⚠️</span>
+                                    Esencijalni materijal
+                                </div>
+                                <div className="essential-description">
+                                    Označavanjem ovog materijala kao esencijalnog sprječavate početak proizvodnje dok se materijal ne zaprimi na stanje.
+                                </div>
+                            </div>
+                        </label>
+                    </div>
                 )}
             </Modal>
+
+            {/* Product Timeline Modal */}
+            <ProductTimelineModal
+                isOpen={timelineProduct !== null}
+                onClose={() => setTimelineProduct(null)}
+                productId={timelineProduct?.product.Product_ID || ''}
+                productName={timelineProduct?.product.Name || ''}
+                workLogs={workLogs.filter(wl => wl.Product_ID === timelineProduct?.product.Product_ID)}
+                sellingPrice={timelineProduct?.sellingPrice}
+                materialCost={timelineProduct?.materialCost}
+                laborCost={timelineProduct?.laborCost}
+                profit={timelineProduct?.profit}
+                profitMargin={timelineProduct?.profitMargin}
+            />
+
+            <style jsx>{`
+                .edit-modal-content {
+                    display: flex;
+                    flex-direction: column;
+                    gap: 24px;
+                }
+
+                .modal-header-info {
+                    display: flex;
+                    align-items: center;
+                    gap: 16px;
+                    padding: 20px;
+                    background: linear-gradient(135deg, #f8fafc 0%, #eff6ff 100%);
+                    border-radius: 12px;
+                    border: 1px solid #e2e8f0;
+                }
+
+                .header-icon {
+                    font-size: 28px;
+                    background: white;
+                    width: 48px;
+                    height: 48px;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    border-radius: 10px;
+                    box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+                }
+
+                .header-title {
+                    font-size: 16px;
+                    font-weight: 600;
+                    color: #0f172a;
+                    margin-bottom: 2px;
+                }
+
+                .header-subtitle {
+                    font-size: 13px;
+                    color: #64748b;
+                }
+
+                .modal-form-grid {
+                    display: grid;
+                    grid-template-columns: 1fr 1fr;
+                    gap: 20px;
+                }
+
+                .form-field {
+                    display: flex;
+                    flex-direction: column;
+                    gap: 8px;
+                }
+
+                .form-field label {
+                    font-size: 11px;
+                    font-weight: 600;
+                    text-transform: uppercase;
+                    color: #64748b;
+                    letter-spacing: 0.5px;
+                }
+
+                .required { color: #ef4444; }
+
+                .input-wrapper {
+                    position: relative;
+                    display: flex;
+                    align-items: center;
+                }
+
+                .input-wrapper input {
+                    width: 100%;
+                    padding: 12px 16px;
+                    padding-right: 50px;
+                    border: 1px solid #e2e8f0;
+                    border-radius: 8px;
+                    font-size: 15px;
+                    font-weight: 500;
+                    color: #0f172a;
+                    transition: all 0.2s;
+                    outline: none;
+                }
+
+                .input-wrapper input:focus {
+                    border-color: #3b82f6;
+                    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+                }
+
+                .unit-badge, .currency-badge {
+                    position: absolute;
+                    right: 12px;
+                    color: #94a3b8;
+                    font-size: 13px;
+                    font-weight: 500;
+                    pointer-events: none;
+                }
+
+                .total-price-card {
+                    background: #f0fdf4;
+                    border: 1px solid #bbf7d0;
+                    border-radius: 12px;
+                    padding: 20px;
+                    display: flex;
+                    justify-content: space-between;
+                    align-items: center;
+                }
+
+                .total-label {
+                    font-size: 12px;
+                    font-weight: 700;
+                    color: #15803d;
+                    text-transform: uppercase;
+                    letter-spacing: 0.5px;
+                }
+
+                .total-amount {
+                    font-size: 24px;
+                    font-weight: 700;
+                    color: #166534;
+                }
+
+                .total-currency {
+                    font-size: 14px;
+                    color: #16a34a;
+                    margin-left: 6px;
+                    font-weight: 600;
+                }
+
+                .essential-card {
+                    display: flex;
+                    gap: 16px;
+                    padding: 20px;
+                    border: 1px solid #e2e8f0;
+                    border-radius: 12px;
+                    cursor: pointer;
+                    transition: all 0.2s;
+                    align-items: flex-start;
+                }
+
+                .essential-card:hover {
+                    background: #f8fafc;
+                    border-color: #cbd5e1;
+                }
+
+                .essential-card.active {
+                    background: #fffbeb;
+                    border-color: #fcd34d;
+                }
+
+                .checkbox-wrapper input {
+                    width: 24px;
+                    height: 24px;
+                    accent-color: #d97706;
+                    margin-top: 2px;
+                    cursor: pointer;
+                    border-radius: 6px;
+                }
+
+                .essential-content {
+                    flex: 1;
+                }
+
+                .essential-title {
+                    display: flex;
+                    align-items: center;
+                    gap: 10px;
+                    font-size: 13px;
+                    font-weight: 700;
+                    text-transform: uppercase;
+                    color: #0f172a;
+                    margin-bottom: 4px;
+                    letter-spacing: 0.5px;
+                }
+
+                .warning-icon {
+                    font-size: 16px;
+                    color: #f59e0b;
+                }
+
+                .essential-description {
+                    font-size: 12px;
+                    font-weight: 500;
+                    color: #64748b;
+                    line-height: 1.5;
+                    text-transform: none;
+                    letter-spacing: normal;
+                }
+            `}</style>
         </div>
     );
 }

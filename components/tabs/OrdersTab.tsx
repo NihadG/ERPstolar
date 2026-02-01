@@ -44,6 +44,10 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
     const [selectedSupplierId, setSelectedSupplierId] = useState('');
     const [selectedMaterialIds, setSelectedMaterialIds] = useState<Set<string>>(new Set());
 
+    // Custom quantity state for materials
+    const [orderQuantities, setOrderQuantities] = useState<Record<string, number>>({});
+    const [onStockQuantities, setOnStockQuantities] = useState<Record<string, number>>({});
+
     // Expanded Order State
     const [expandedOrderId, setExpandedOrderId] = useState<string | null>(null);
     const [editMode, setEditMode] = useState(false);
@@ -375,6 +379,8 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
         setSelectedProductIds(new Set());
         setSelectedSupplierId('');
         setSelectedMaterialIds(new Set());
+        setOrderQuantities({});
+        setOnStockQuantities({});
         setWizardModal(true);
     }
 
@@ -451,15 +457,23 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
         const items = Array.from(selectedMaterialIds).map(materialId => {
             const material = filteredMaterials.find(m => m.ID === materialId);
             const product = availableProducts.find(p => p.Product_ID === material?.Product_ID);
+
+            // Use custom order quantity if set, otherwise default to needed amount
+            const onStock = onStockQuantities[materialId] ?? (material?.On_Stock || 0);
+            const orderQty = orderQuantities[materialId] ?? Math.max(0, (material?.Quantity || 0) - onStock);
+            const unitPrice = material?.Unit_Price || ((material?.Total_Price || 0) / (material?.Quantity || 1));
+            const orderPrice = orderQty * unitPrice;
+
             return {
                 Product_Material_ID: materialId,
                 Product_ID: material?.Product_ID || '',
                 Product_Name: material?.Product_Name || '',
                 Project_ID: product?.Project_ID || '',
                 Material_Name: material?.Material_Name || '',
-                Quantity: material?.Quantity || 0,
+                Quantity: orderQty,
+                Total_Needed: material?.Quantity || 0,
                 Unit: material?.Unit || '',
-                Expected_Price: material?.Total_Price || 0,
+                Expected_Price: orderPrice,
             };
         });
 
@@ -939,21 +953,21 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
         <div className="orders-page">
             {/* Page Header */}
             <div className="page-header">
-                <div className="header-content">
+                <div className="header-content" style={{ padding: '0 24px' }}>
                     <div className="header-text">
                         <h1>Narudžbe</h1>
                         <p>Upravljajte narudžbama materijala prema dobavljačima.</p>
                     </div>
                     <div className="header-actions">
                         <button
-                            className={`filter-toggle ${isFiltersOpen ? 'active' : ''}`}
+                            className={`glass-btn ${isFiltersOpen ? 'active' : ''}`}
                             onClick={() => setIsFiltersOpen(!isFiltersOpen)}
                         >
                             <span className="material-icons-round">filter_list</span>
                             <span>{isFiltersOpen ? 'Sakrij pretragu' : 'Pretraga i filteri'}</span>
                             <span className="material-icons-round">{isFiltersOpen ? 'expand_less' : 'expand_more'}</span>
                         </button>
-                        <button className="btn btn-primary" onClick={openWizard}>
+                        <button className="glass-btn glass-btn-primary" onClick={openWizard}>
                             <span className="material-icons-round">add</span>
                             Nova Narudžba
                         </button>
@@ -963,10 +977,10 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
 
             {/* Collapsible Control Bar */}
             <div className={`control-bar ${isFiltersOpen ? 'open' : ''}`}>
-                <div className="control-bar-inner">
+                <div className="control-bar-inner" style={{ padding: '16px 24px' }}>
                     <div className="controls-row">
                         {/* Search */}
-                        <div className="search-box">
+                        <div className="glass-search">
                             <span className="material-icons-round">search</span>
                             <input
                                 type="text"
@@ -1299,6 +1313,10 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
                 selectedTotal={selectedTotal}
                 formatCurrency={formatCurrency}
                 handleCreateOrder={handleCreateOrder}
+                orderQuantities={orderQuantities}
+                onStockQuantities={onStockQuantities}
+                setOrderQuantity={(id, qty) => setOrderQuantities(prev => ({ ...prev, [id]: qty }))}
+                setOnStockQuantity={(id, qty) => setOnStockQuantities(prev => ({ ...prev, [id]: qty }))}
             />
         </div>
     );

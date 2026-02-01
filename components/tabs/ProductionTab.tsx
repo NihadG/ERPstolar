@@ -3,6 +3,7 @@
 import { useState, useMemo, useEffect } from 'react';
 import type { WorkOrder, Project, Worker } from '@/lib/types';
 import { createWorkOrder, deleteWorkOrder, startWorkOrder, getWorkOrder, updateWorkOrder } from '@/lib/database';
+import { repairAllProductStatuses } from '@/lib/attendance';
 import Modal from '@/components/ui/Modal';
 import WorkOrderExpandedDetail from '@/components/ui/WorkOrderExpandedDetail';
 import WorkOrderPrintTemplate from '@/components/ui/WorkOrderPrintTemplate';
@@ -22,8 +23,12 @@ interface ProductSelection {
     Project_ID: string;
     Project_Name: string;
     Quantity: number;
+    Work_Order_Quantity: number;
+    Unit_Price?: number;          // Product price from offer
+    Material_Cost?: number;       // Sum of material costs
     Status: string;
     assignments: Record<string, string>;
+    helperAssignments: Record<string, string[]>;
 }
 
 export default function ProductionTab({ workOrders, projects, workers, onRefresh, showToast }: ProductionTabProps) {
@@ -77,7 +82,7 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
     }, [projects, projectSearch]);
 
     // Grouping State
-    type GroupBy = 'none' | 'status' | 'project' | 'date';
+    type GroupBy = 'none' | 'status' | 'project' | 'date' | 'worker';
     const [groupBy, setGroupBy] = useState<GroupBy>('none');
     const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
 
@@ -85,7 +90,8 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
         { value: 'none', label: 'Bez grupisanja' },
         { value: 'status', label: 'Po statusu' },
         { value: 'project', label: 'Po projektu' },
-        { value: 'date', label: 'Po datumu' }
+        { value: 'date', label: 'Po datumu' },
+        { value: 'worker', label: 'Po radniku' }
     ];
 
     // Filter Logic
@@ -99,9 +105,55 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
     const groupedWorkOrders = useMemo(() => {
         if (groupBy === 'none') return [];
 
-        const groups: Record<string, { key: string; label: string; count: number; items: WorkOrder[] }> = {};
+        const groups: Record<string, { key: string; label: string; count: number; totalValue: number; items: WorkOrder[] }> = {};
 
         filteredWorkOrders.forEach(wo => {
+            // For worker grouping, one order can appear in multiple groups
+            if (groupBy === 'worker') {
+                const workerIds = new Set<string>();
+                wo.items?.forEach(item => {
+                    // Check new Processes field first
+                    if (item.Processes) {
+                        item.Processes.forEach(p => {
+                            if (p.Worker_ID) workerIds.add(p.Worker_ID);
+                        });
+                    }
+                    // Fallback to legacy assignments
+                    else {
+                        Object.values(item.Process_Assignments || {}).forEach(assignment => {
+                            if (assignment.Worker_ID) workerIds.add(assignment.Worker_ID);
+                            assignment.Helpers?.forEach((h: { Worker_ID: string; Worker_Name: string }) => workerIds.add(h.Worker_ID));
+                        });
+                    }
+                });
+
+                if (workerIds.size === 0) {
+                    // No workers assigned
+                    const key = 'unassigned';
+                    if (!groups[key]) {
+                        groups[key] = { key, label: 'Nedodijeljeno', count: 0, totalValue: 0, items: [] };
+                    }
+                    groups[key].items.push(wo);
+                    groups[key].count++;
+                    groups[key].totalValue += wo.Total_Value || 0;
+                } else {
+                    workerIds.forEach(workerId => {
+                        const worker = workers.find(w => w.Worker_ID === workerId);
+                        const key = workerId;
+                        const label = worker?.Name || 'Nepoznat';
+                        if (!groups[key]) {
+                            groups[key] = { key, label, count: 0, totalValue: 0, items: [] };
+                        }
+                        if (!groups[key].items.some(i => i.Work_Order_ID === wo.Work_Order_ID)) {
+                            groups[key].items.push(wo);
+                            groups[key].count++;
+                            groups[key].totalValue += wo.Total_Value || 0;
+                        }
+                    });
+                }
+                return;
+            }
+
             let key = '';
             let label = '';
 
@@ -115,29 +167,32 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                     label = wo.items?.[0]?.Project_Name || 'Nepoznat projekat';
                     break;
                 case 'date':
-                    // Group by exact date for now, could be by month/week
                     key = wo.Created_Date ? wo.Created_Date.split('T')[0] : 'unknown';
                     label = wo.Created_Date ? formatDate(wo.Created_Date) : 'Nepoznat datum';
                     break;
             }
 
             if (!groups[key]) {
-                groups[key] = { key, label, count: 0, items: [] };
+                groups[key] = { key, label, count: 0, totalValue: 0, items: [] };
             }
             groups[key].items.push(wo);
             groups[key].count++;
+            groups[key].totalValue += wo.Total_Value || 0;
         });
 
         // Sort groups
         return Object.values(groups).sort((a, b) => {
-            if (groupBy === 'date') return b.key.localeCompare(a.key); // Newest first
+            if (groupBy === 'date') return b.key.localeCompare(a.key);
             if (groupBy === 'status') {
-                // Custom order for status can be added here
                 return WORK_ORDER_STATUSES.indexOf(a.key) - WORK_ORDER_STATUSES.indexOf(b.key);
+            }
+            if (groupBy === 'worker') {
+                // Sort by total value descending (most productive first)
+                return b.totalValue - a.totalValue;
             }
             return a.label.localeCompare(b.label);
         });
-    }, [filteredWorkOrders, groupBy]);
+    }, [filteredWorkOrders, groupBy, workers]);
 
     function toggleGroup(groupKey: string) {
         const newCollapsed = new Set(collapsedGroups);
@@ -153,7 +208,6 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
     const [createModal, setCreateModal] = useState(false);
     const [activeStep, setActiveStep] = useState(0); // 0: Projects, 1: Products, 2: Processes, 3: Details
 
-    // Data State
     // Data State
     const [selectedProjectIds, setSelectedProjectIds] = useState<string[]>([]);
     const [selectedProducts, setSelectedProducts] = useState<ProductSelection[]>([]);
@@ -181,14 +235,33 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
         projects.forEach(project => {
             if (selectedProjectIds.length > 0 && !selectedProjectIds.includes(project.Project_ID)) return;
             (project.products || []).forEach(product => {
-                products.push({
-                    Product_ID: product.Product_ID,
-                    Product_Name: product.Name,
-                    Project_ID: project.Project_ID,
-                    Project_Name: project.Client_Name,
-                    Quantity: product.Quantity || 1,
-                    Status: product.Status,
+                // Calculate quantity already used in work orders
+                let usedQuantity = 0;
+                workOrders.forEach(wo => {
+                    if (wo.Status === 'Otkazano') return; // Skip cancelled orders
+                    wo.items?.forEach(item => {
+                        if (item.Product_ID === product.Product_ID) {
+                            usedQuantity += item.Quantity || 0;
+                        }
+                    });
                 });
+
+                const totalQuantity = product.Quantity || 1;
+                const availableQuantity = totalQuantity - usedQuantity;
+
+                // Only include products with remaining quantity
+                if (availableQuantity > 0) {
+                    products.push({
+                        Product_ID: product.Product_ID,
+                        Product_Name: product.Name,
+                        Project_ID: project.Project_ID,
+                        Project_Name: project.Client_Name,
+                        Quantity: availableQuantity,  // Show available, not total
+                        TotalQuantity: totalQuantity,
+                        UsedQuantity: usedQuantity,
+                        Status: product.Status,
+                    });
+                }
             });
         });
 
@@ -200,7 +273,7 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
             );
         }
         return products;
-    }, [projects, selectedProjectIds, productSearch]);
+    }, [projects, selectedProjectIds, productSearch, workOrders]);
 
     function getStatusClass(status: string): string {
         return 'status-' + status.toLowerCase().replace(/\s+/g, '-').replace(/č/g, 'c').replace(/ć/g, 'c').replace(/š/g, 's').replace(/ž/g, 'z').replace(/đ/g, 'd');
@@ -260,8 +333,16 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
         if (exists) {
             setSelectedProducts(selectedProducts.filter(p => p.Product_ID !== product.Product_ID));
         } else {
-            const newProduct: ProductSelection = { ...product, assignments: {} };
-            selectedProcesses.forEach(proc => newProduct.assignments[proc] = '');
+            const newProduct: ProductSelection = {
+                ...product,
+                Work_Order_Quantity: product.Quantity || 1,
+                assignments: {},
+                helperAssignments: {}
+            };
+            selectedProcesses.forEach(proc => {
+                newProduct.assignments[proc] = '';
+                newProduct.helperAssignments[proc] = [];
+            });
             setSelectedProducts([...selectedProducts, newProduct]);
         }
     }
@@ -269,7 +350,9 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
     function selectAllProducts() {
         const newProducts: ProductSelection[] = eligibleProducts.map(p => ({
             ...p,
-            assignments: selectedProcesses.reduce((acc, proc) => ({ ...acc, [proc]: '' }), {}),
+            Work_Order_Quantity: p.Quantity || 1,
+            assignments: selectedProcesses.reduce((acc: Record<string, string>, proc) => ({ ...acc, [proc]: '' }), {}),
+            helperAssignments: selectedProcesses.reduce((acc: Record<string, string[]>, proc) => ({ ...acc, [proc]: [] }), {}),
         }));
         setSelectedProducts(newProducts);
     }
@@ -279,13 +362,17 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
             setSelectedProcesses(selectedProcesses.filter(p => p !== process));
             setSelectedProducts(selectedProducts.map(p => {
                 const newAssignments = { ...p.assignments };
+                const newHelperAssignments = { ...p.helperAssignments };
                 delete newAssignments[process];
-                return { ...p, assignments: newAssignments };
+                delete newHelperAssignments[process];
+                return { ...p, assignments: newAssignments, helperAssignments: newHelperAssignments };
             }));
         } else {
             setSelectedProcesses([...selectedProcesses, process]);
             setSelectedProducts(selectedProducts.map(p => ({
-                ...p, assignments: { ...p.assignments, [process]: '' }
+                ...p,
+                assignments: { ...p.assignments, [process]: '' },
+                helperAssignments: { ...p.helperAssignments, [process]: [] }
             })));
         }
     }
@@ -298,13 +385,30 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
             return;
         }
         setSelectedProcesses([...selectedProcesses, proc]);
-        setSelectedProducts(selectedProducts.map(p => ({ ...p, assignments: { ...p.assignments, [proc]: '' } })));
+        setSelectedProducts(selectedProducts.map(p => ({
+            ...p,
+            assignments: { ...p.assignments, [proc]: '' },
+            helperAssignments: { ...p.helperAssignments, [proc]: [] }
+        })));
         setCustomProcessInput('');
     }
 
     function assignWorker(productId: string, process: string, workerId: string) {
         setSelectedProducts(selectedProducts.map(p => {
             if (p.Product_ID === productId) return { ...p, assignments: { ...p.assignments, [process]: workerId } };
+            return p;
+        }));
+    }
+
+    function toggleHelper(productId: string, process: string, helperId: string) {
+        setSelectedProducts(selectedProducts.map(p => {
+            if (p.Product_ID === productId) {
+                const currentHelpers = p.helperAssignments[process] || [];
+                const newHelpers = currentHelpers.includes(helperId)
+                    ? currentHelpers.filter(id => id !== helperId)
+                    : [...currentHelpers, helperId];
+                return { ...p, helperAssignments: { ...p.helperAssignments, [process]: newHelpers } };
+            }
             return p;
         }));
     }
@@ -318,27 +422,92 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
     async function handleCreateWorkOrder() {
         if (selectedProducts.length === 0) return;
 
-        const items = selectedProducts.map(p => ({
-            Product_ID: p.Product_ID,
-            Product_Name: p.Product_Name,
-            Project_ID: p.Project_ID,
-            Project_Name: p.Project_Name,
-            Quantity: p.Quantity,
-            Process_Assignments: Object.entries(p.assignments).reduce((acc, [proc, workerId]) => {
-                const worker = workers.find(w => w.Worker_ID === workerId);
-                acc[proc] = {
-                    Status: 'Na čekanju',
-                    ...(workerId && { Worker_ID: workerId }),
-                    ...(worker && { Worker_Name: worker.Name }),
-                };
-                return acc;
-            }, {} as any),
-        }));
+        // Calculate Total_Value and Material_Cost from products
+        let totalValue = 0;
+        let materialCost = 0;
+
+        selectedProducts.forEach(p => {
+            // Get product data from project
+            const project = projects.find(proj => proj.Project_ID === p.Project_ID);
+            const product = project?.products?.find(prod => prod.Product_ID === p.Product_ID);
+
+            // Get offer product for selling price
+            const offer = project?.offers?.find(o => o.Status === 'Prihvaćeno');
+            const offerProduct = offer?.products?.find(op => op.Product_ID === p.Product_ID);
+
+            // Calculate value (Selling_Price × quantity ratio)
+            const qtyRatio = p.Work_Order_Quantity / p.Quantity;
+            if (offerProduct?.Selling_Price) {
+                totalValue += offerProduct.Selling_Price * p.Work_Order_Quantity;
+            }
+
+            // Calculate material cost from product materials
+            if (product?.materials) {
+                const productMaterialCost = product.materials.reduce((sum, m) =>
+                    sum + (m.Unit_Price * m.Quantity), 0);
+                materialCost += productMaterialCost * qtyRatio;
+            }
+        });
+
+        const items = selectedProducts.map(p => {
+            // Get offer product for Product_Value
+            const project = projects.find(proj => proj.Project_ID === p.Project_ID);
+            const offer = project?.offers?.find(o => o.Status === 'Prihvaćeno');
+            const offerProduct = offer?.products?.find(op => op.Product_ID === p.Product_ID);
+            const product = project?.products?.find(prod => prod.Product_ID === p.Product_ID);
+
+            // Calculate per-item material cost
+            const qtyRatio = p.Work_Order_Quantity / p.Quantity;
+            let itemMaterialCost = 0;
+            if (product?.materials) {
+                const productMaterialCost = product.materials.reduce((sum, m) =>
+                    sum + (m.Unit_Price * m.Quantity), 0);
+                itemMaterialCost = productMaterialCost * qtyRatio;
+            }
+
+            return {
+                Product_ID: p.Product_ID,
+                Product_Name: p.Product_Name,
+                Project_ID: p.Project_ID,
+                Project_Name: p.Project_Name,
+                Quantity: p.Work_Order_Quantity,
+                Total_Product_Quantity: p.Quantity,
+                Product_Value: offerProduct?.Selling_Price ? offerProduct.Selling_Price * p.Work_Order_Quantity : undefined,
+                Material_Cost: itemMaterialCost > 0 ? itemMaterialCost : undefined,
+                Processes: selectedProcesses.map(proc => {
+                    const workerId = p.assignments[proc];
+                    const worker = workers.find(w => w.Worker_ID === workerId);
+                    return {
+                        Process_Name: proc,
+                        Status: 'Na čekanju',
+                        Worker_ID: workerId || undefined,
+                        Worker_Name: worker?.Name || undefined,
+                        Helpers: (p.helperAssignments?.[proc] || []).map(hId => {
+                            const h = workers.find(w => w.Worker_ID === hId);
+                            return {
+                                Worker_ID: hId,
+                                Worker_Name: h?.Name || 'Nepoznat'
+                            };
+                        })
+                    };
+                }),
+                // Legacy support but simplified
+                Process_Assignments: {},
+            };
+        });
+
+        // Calculate initial profit (labor will be added later when work is completed)
+        const profit = totalValue - materialCost;
+        const profitMargin = totalValue > 0 ? (profit / totalValue) * 100 : 0;
 
         const result = await createWorkOrder({
             Production_Steps: selectedProcesses,
             Due_Date: dueDate,
             Notes: notes,
+            Total_Value: totalValue > 0 ? totalValue : undefined,
+            Material_Cost: materialCost > 0 ? materialCost : undefined,
+            Profit: profit > 0 ? profit : undefined,
+            Profit_Margin: profitMargin > 0 ? profitMargin : undefined,
             items: items as any,
         });
 
@@ -374,6 +543,71 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
     }
 
     async function handleStartWorkOrder(workOrderId: string) {
+        // Get the work order to validate
+        const wo = workOrders.find(w => w.Work_Order_ID === workOrderId);
+        if (!wo) {
+            showToast('Nalog nije pronađen', 'error');
+            return;
+        }
+
+        // VALIDATION 1: Check essential materials are received
+        const missingMaterials: string[] = [];
+        for (const item of wo.items || []) {
+            // Get product materials from projects
+            const project = projects.find(p => p.Project_ID === item.Project_ID);
+            const product = project?.products?.find(pr => pr.Product_ID === item.Product_ID);
+
+            if (product?.materials) {
+                const missing = product.materials.filter(
+                    m => m.Is_Essential && m.Status !== 'Primljeno' && m.Status !== 'U upotrebi'
+                );
+                missing.forEach(m => missingMaterials.push(`${item.Product_Name}: ${m.Material_Name}`));
+            }
+        }
+
+        if (missingMaterials.length > 0) {
+            showToast(`Esencijalni materijali nisu spremni: ${missingMaterials.join(', ')}`, 'error');
+            return;
+        }
+
+        // VALIDATION 2: Check ALL workers (all processes + helpers) are present today
+        const { canWorkerStartProcess } = await import('@/lib/attendance');
+        const workerIssues: string[] = [];
+        const checkedWorkers = new Set<string>(); // Avoid duplicate checks
+
+        for (const item of wo.items || []) {
+            // Check all process workers and their helpers
+            for (const process of item.Processes || []) {
+                // Check main worker
+                if (process.Worker_ID && !checkedWorkers.has(process.Worker_ID)) {
+                    checkedWorkers.add(process.Worker_ID);
+                    const availability = await canWorkerStartProcess(process.Worker_ID);
+                    if (!availability.allowed) {
+                        workerIssues.push(`${process.Worker_Name} (${process.Process_Name}) - ${availability.reason}`);
+                    }
+                }
+
+                // Check helpers for this process
+                if (process.Helpers && process.Helpers.length > 0) {
+                    for (const helper of process.Helpers) {
+                        if (helper.Worker_ID && !checkedWorkers.has(helper.Worker_ID)) {
+                            checkedWorkers.add(helper.Worker_ID);
+                            const availability = await canWorkerStartProcess(helper.Worker_ID);
+                            if (!availability.allowed) {
+                                workerIssues.push(`${helper.Worker_Name} (pomoćnik za ${process.Process_Name}) - ${availability.reason}`);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if (workerIssues.length > 0) {
+            showToast(`Radnici nisu prisutni: ${workerIssues.join(', ')}`, 'error');
+            return;
+        }
+
+        // All validations passed, start the work order
         const res = await startWorkOrder(workOrderId);
         if (res.success) {
             showToast('Nalog pokrenut', 'success');
@@ -387,20 +621,66 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
         const isExpanded = expandedOrderId === wo.Work_Order_ID;
         const totalItems = wo.items?.length || 0;
 
-        // Calculate stats
-        const totalSteps = totalItems * (wo.Production_Steps?.length || 0);
-        let completedSteps = 0;
-        if (totalSteps > 0) {
-            wo.items?.forEach(item => {
-                wo.Production_Steps?.forEach(step => {
-                    if (item.Process_Assignments?.[step]?.Status === 'Završeno') completedSteps++;
+        // Extract all workers from this work order (using new Processes structure)
+        const orderWorkers = new Map<string, { name: string; isMain: boolean; helperCount: number }>();
+        wo.items?.forEach(item => {
+            // Check new Processes field
+            if (item.Processes) {
+                item.Processes.forEach(p => {
+                    if (p.Worker_ID && p.Worker_Name) {
+                        orderWorkers.set(p.Worker_ID, {
+                            name: p.Worker_Name,
+                            isMain: true,
+                            helperCount: 0
+                        });
+                    }
                 });
-            });
-        }
-        const percent = totalSteps > 0 ? Math.round((completedSteps / totalSteps) * 100) : 0;
+            }
+            // Fallback for legacy data
+            else if (item.Process_Assignments) {
+                Object.values(item.Process_Assignments).forEach(assignment => {
+                    if (assignment.Worker_ID && assignment.Worker_Name) {
+                        orderWorkers.set(assignment.Worker_ID, {
+                            name: assignment.Worker_Name,
+                            isMain: true,
+                            helperCount: assignment.Helpers?.length || 0
+                        });
+                    }
+                });
+            }
+        });
+
+        // Get main workers only for display
+        const mainWorkers = Array.from(orderWorkers.entries())
+            .filter(([, v]) => v.isMain)
+            .slice(0, 3); // Show up to 3 workers
+        const totalHelpers = 0; // Simplified for new view
+
+        const formatValue = (value?: number) =>
+            value ? `${value.toLocaleString('hr-HR', { minimumFractionDigits: 0, maximumFractionDigits: 0 })} KM` : null;
+
+        const getStatusDetails = (status: string) => {
+            switch (status) {
+                case 'Završeno': return { color: '#10b981', icon: 'check_circle', bg: 'linear-gradient(135deg, rgba(16, 185, 129, 0.1), rgba(16, 185, 129, 0.2))' };
+                case 'U toku': return { color: '#3b82f6', icon: 'trending_up', bg: 'linear-gradient(135deg, rgba(59, 130, 246, 0.1), rgba(59, 130, 246, 0.2))' };
+                case 'Na čekanju': return { color: '#f59e0b', icon: 'schedule', bg: 'linear-gradient(135deg, rgba(245, 158, 11, 0.1), rgba(245, 158, 11, 0.2))' };
+                case 'Otkazano': return { color: '#ef4444', icon: 'cancel', bg: 'linear-gradient(135deg, rgba(239, 68, 68, 0.1), rgba(239, 68, 68, 0.2))' };
+                case 'Dodijeljeno': return { color: '#8b5cf6', icon: 'assignment_ind', bg: 'linear-gradient(135deg, rgba(139, 92, 246, 0.1), rgba(139, 92, 246, 0.2))' };
+                default: return { color: '#9ca3af', icon: 'help_outline', bg: 'linear-gradient(135deg, rgba(156, 163, 175, 0.1), rgba(156, 163, 175, 0.2))' };
+            }
+        };
+
+        const statusDetails = getStatusDetails(wo.Status);
 
         return (
-            <div key={wo.Work_Order_ID} className={`project-card ${isExpanded ? 'active' : ''}`}>
+            <div key={wo.Work_Order_ID} className={`project-card ${isExpanded ? 'active' : ''}`}
+                style={{
+                    background: `linear-gradient(90deg, ${statusDetails.color}33 0%, transparent 200px), white`,
+                    position: 'relative',
+                    overflow: 'hidden',
+                    border: 'none', // Remove the thin frame
+                    boxShadow: '0 4px 20px rgba(0, 0, 0, 0.08)' // Slightly enhance shadow to maintain definition
+                }}>
                 <div className="project-header" onClick={() => toggleWorkOrder(wo.Work_Order_ID)}>
                     <button className={`expand-btn ${isExpanded ? 'expanded' : ''}`}>
                         <span className="material-icons-round">chevron_right</span>
@@ -408,8 +688,65 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
 
                     <div className="project-main-info">
                         <div className="project-title-section">
-                            <div className="project-name">{wo.Work_Order_Number}</div>
-                            {wo.items?.[0]?.Project_Name && <div className="project-client">{wo.items[0].Project_Name}</div>}
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                <div className="project-name">{wo.Work_Order_Number}</div>
+                                <span style={{
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '3px',
+                                    fontSize: '10px',
+                                    fontWeight: 600,
+                                    padding: '2px 8px',
+                                    borderRadius: '12px',
+                                    background: statusDetails.bg,
+                                    color: statusDetails.color,
+                                    border: `1px solid ${statusDetails.color}30`,
+                                    textTransform: 'uppercase',
+                                    letterSpacing: '0.3px',
+                                    height: '20px'
+                                }}>
+                                    <span className="material-icons-round" style={{ fontSize: '12px' }}>{statusDetails.icon}</span>
+                                    {wo.Status}
+                                </span>
+
+                                {/* Active Groups Badge */}
+                                {(() => {
+                                    let activeGroups = 0;
+                                    wo.items?.forEach(item => {
+                                        if (item.SubTasks && item.SubTasks.length > 0) {
+                                            // Count subtasks that are In Progress
+                                            activeGroups += item.SubTasks.filter(st => st.Status === 'U toku').length;
+                                        } else if (item.Status === 'U toku') {
+                                            // Item itself is active
+                                            activeGroups += 1;
+                                        }
+                                    });
+
+                                    if (activeGroups > 0) {
+                                        return (
+                                            <span style={{
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                gap: '3px',
+                                                fontSize: '10px',
+                                                fontWeight: 500,
+                                                padding: '2px 8px',
+                                                borderRadius: '12px',
+                                                background: '#f3f4f6',
+                                                color: '#4b5563',
+                                                border: '1px solid #e5e7eb',
+                                                height: '20px',
+                                                marginLeft: '4px'
+                                            }} title={`${activeGroups} aktivnih grupa u proizvodnji`}>
+                                                <span className="material-icons-round" style={{ fontSize: '12px' }}>layers</span>
+                                                {activeGroups}
+                                            </span>
+                                        );
+                                    }
+                                    return null;
+                                })()}
+                            </div>
+                            {/* Client name moved to right side */}
                         </div>
                         <div className="project-details">
                             <div className="project-summary">
@@ -419,32 +756,70 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                                 </span>
                                 <span className="summary-item">
                                     <span className="material-icons-round">calendar_today</span>
-                                    {formatDate(wo.Due_Date)}
+                                    {wo.Due_Date ? formatDate(wo.Due_Date) : '-'}
                                 </span>
+                                {mainWorkers.length > 0 && (
+                                    <span className="summary-item" style={{ color: 'var(--primary-color)' }}>
+                                        <span className="material-icons-round">person</span>
+                                        {mainWorkers.map(([, w]) => w.name.split(' ')[0]).join(', ')}
+                                    </span>
+                                )}
+                                {/* Real-time Profit Display */}
+                                {(() => {
+                                    const totalValue = wo.items?.reduce((sum, item) => sum + (item.Product_Value || 0), 0) || 0;
+                                    const materialCost = wo.items?.reduce((sum, item) => sum + (item.Material_Cost || 0), 0) || 0;
+                                    const laborCost = wo.items?.reduce((sum, item) => sum + (item.Actual_Labor_Cost || 0), 0) || 0;
+                                    const profit = totalValue - materialCost - laborCost;
+                                    const profitMargin = totalValue > 0 ? (profit / totalValue) * 100 : 0;
+
+                                    if (totalValue === 0) return null;
+
+                                    // Color coding
+                                    const profitColor = profitMargin >= 30 ? '#10b981' : profitMargin >= 15 ? '#f59e0b' : '#ef4444';
+                                    const profitBg = profitMargin >= 30 ? 'rgba(16, 185, 129, 0.1)' : profitMargin >= 15 ? 'rgba(245, 158, 11, 0.1)' : 'rgba(239, 68, 68, 0.1)';
+
+                                    return (
+                                        <span
+                                            className="summary-item"
+                                            style={{
+                                                color: profitColor,
+                                                background: profitBg,
+                                                padding: '4px 10px',
+                                                borderRadius: '6px',
+                                                fontWeight: 600
+                                            }}
+                                            title={`Cijena: ${formatValue(totalValue)} | Materijal: ${formatValue(materialCost)} | Rad: ${formatValue(laborCost)}`}
+                                        >
+                                            <span className="material-icons-round" style={{ fontSize: '16px' }}>
+                                                {profitMargin >= 30 ? 'trending_up' : profitMargin >= 15 ? 'trending_flat' : 'trending_down'}
+                                            </span>
+                                            {formatValue(profit)} ({profitMargin.toFixed(0)}%)
+                                        </span>
+                                    );
+                                })()}
                             </div>
                         </div>
                     </div>
 
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-                        <div className="progress-mini">
-                            <div className="progress-text">{percent}%</div>
-                            <div className="progress-circle" style={{ background: `conic-gradient(#34c759 ${percent}%, #f0f0f0 0)` }}></div>
-                        </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                        {wo.items?.[0]?.Project_Name && (
+                            <div className="project-client" style={{ marginRight: '8px' }}>
+                                {wo.items[0].Project_Name}
+                            </div>
+                        )}
 
-                        <div className="project-badges">
-                            <span className={`status-badge ${getStatusClass(wo.Status)}`}>
-                                {wo.Status}
-                            </span>
-                        </div>
-
-                        <div className="project-actions" onClick={(e) => e.stopPropagation()}>
-                            <button className="icon-btn" onClick={() => handlePrintWorkOrder(wo)} title="Printaj">
-                                <span className="material-icons-round">print</span>
-                            </button>
-                            <button className="icon-btn danger" onClick={() => handleDeleteWorkOrder(wo.Work_Order_ID)}>
-                                <span className="material-icons-round">delete</span>
-                            </button>
-                        </div>
+                        <button className="icon-btn" title="Printaj Nalog" onClick={(e) => {
+                            e.stopPropagation();
+                            handlePrintWorkOrder(wo);
+                        }}>
+                            <span className="material-icons-round">print</span>
+                        </button>
+                        <button className="icon-btn delete" title="Obriši Nalog" onClick={(e) => {
+                            e.stopPropagation();
+                            handleDeleteWorkOrder(wo.Work_Order_ID);
+                        }}>
+                            <span className="material-icons-round">delete</span>
+                        </button>
                     </div>
                 </div>
 
@@ -457,6 +832,7 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                         onPrint={handlePrintWorkOrder}
                         onDelete={handleDeleteWorkOrder}
                         onStart={handleStartWorkOrder}
+                        onRefresh={onRefresh}
                     />
                 )}
             </div>
@@ -465,20 +841,21 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
 
     return (
         <div className="tab-content active">
-            <div className="content-header">
-                <div className="search-box">
+            <div className="content-header" style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap', padding: '16px 24px' }}>
+                {/* Glass Search */}
+                <div className="glass-search">
                     <span className="material-icons-round">search</span>
                     <input type="text" placeholder="Pretraži radne naloge..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
                 </div>
 
-                <div style={{ display: 'flex', gap: '8px' }}>
+                {/* Glass Controls Group */}
+                <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
                     {/* Grouping Control */}
-                    <div className="group-control" style={{ display: 'flex', alignItems: 'center', gap: '8px', background: 'white', padding: '0 12px', borderRadius: '8px', border: '1px solid #e0e0e0', height: '40px' }}>
-                        <span style={{ fontSize: '13px', color: '#666', fontWeight: 500 }}>Grupiši:</span>
+                    <div className="glass-control-group">
+                        <span className="control-label">Grupiši:</span>
                         <select
                             value={groupBy}
                             onChange={(e) => setGroupBy(e.target.value as GroupBy)}
-                            style={{ border: 'none', background: 'transparent', fontSize: '13px', fontWeight: 600, color: '#333', cursor: 'pointer', outline: 'none' }}
                         >
                             {groupingOptions.map(opt => (
                                 <option key={opt.value} value={opt.value}>{opt.label}</option>
@@ -486,13 +863,37 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                         </select>
                     </div>
 
-                    <select className="filter-select" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+                    {/* Status Filter */}
+                    <select className="glass-select-standalone" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
                         <option value="">Svi statusi</option>
                         {WORK_ORDER_STATUSES.map(status => <option key={status} value={status}>{status}</option>)}
                     </select>
                 </div>
 
-                <button className="btn btn-primary" onClick={openCreateModal}><span className="material-icons-round">add</span>Novi Radni Nalog</button>
+                {/* Action Buttons */}
+                <div style={{ display: 'flex', gap: '10px', marginLeft: 'auto' }}>
+                    <button
+                        className="glass-btn"
+                        onClick={async () => {
+                            showToast('Sinkronizacija u toku...', 'info');
+                            const result = await repairAllProductStatuses();
+                            if (result.success) {
+                                showToast(result.message, 'success');
+                                onRefresh();
+                            } else {
+                                showToast(result.message, 'error');
+                            }
+                        }}
+                        title="Sinkroniziraj statuse svih proizvoda sa radnim nalozima"
+                    >
+                        <span className="material-icons-round">sync</span>
+                        Sinkroniziraj Statuse
+                    </button>
+                    <button className="glass-btn glass-btn-primary" onClick={openCreateModal}>
+                        <span className="material-icons-round">add</span>
+                        Novi Radni Nalog
+                    </button>
+                </div>
             </div>
 
             <div className="orders-list">
@@ -510,10 +911,13 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                                     style={{
                                         display: 'flex',
                                         alignItems: 'center',
-                                        gap: '8px',
-                                        padding: '12px 0',
+                                        gap: '12px',
+                                        padding: '12px 16px',
                                         cursor: 'pointer',
-                                        userSelect: 'none'
+                                        userSelect: 'none',
+                                        background: groupBy === 'worker' ? 'linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%)' : 'transparent',
+                                        borderRadius: '12px',
+                                        border: groupBy === 'worker' ? '1px solid #e2e8f0' : 'none'
                                     }}
                                 >
                                     <span className="material-icons-round" style={{
@@ -523,21 +927,68 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                                     }}>
                                         expand_more
                                     </span>
-                                    <h3 style={{ margin: 0, fontSize: '16px', fontWeight: 600, color: '#1d1d1f' }}>{group.label}</h3>
-                                    <span style={{
-                                        background: '#f5f5f7',
-                                        padding: '2px 8px',
-                                        borderRadius: '12px',
-                                        fontSize: '12px',
-                                        fontWeight: 600,
-                                        color: '#666'
-                                    }}>
-                                        {group.count}
-                                    </span>
+
+                                    {groupBy === 'worker' && group.key !== 'unassigned' && (
+                                        <div style={{
+                                            width: '36px',
+                                            height: '36px',
+                                            borderRadius: '50%',
+                                            background: 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            justifyContent: 'center',
+                                            color: 'white',
+                                            fontWeight: 600,
+                                            fontSize: '14px'
+                                        }}>
+                                            {group.label.split(' ').map(w => w[0]).slice(0, 2).join('')}
+                                        </div>
+                                    )}
+
+                                    <div style={{ flex: 1 }}>
+                                        <h3 style={{ margin: 0, fontSize: '16px', fontWeight: 600, color: '#1d1d1f' }}>
+                                            {group.label}
+                                        </h3>
+                                        {groupBy === 'worker' && (
+                                            <span style={{ fontSize: '12px', color: '#64748b' }}>
+                                                {group.count} {group.count === 1 ? 'nalog' : group.count < 5 ? 'naloga' : 'naloga'}
+                                            </span>
+                                        )}
+                                    </div>
+
+                                    {groupBy !== 'worker' && (
+                                        <span style={{
+                                            background: '#f5f5f7',
+                                            padding: '2px 8px',
+                                            borderRadius: '12px',
+                                            fontSize: '12px',
+                                            fontWeight: 600,
+                                            color: '#666'
+                                        }}>
+                                            {group.count}
+                                        </span>
+                                    )}
+
+                                    {groupBy === 'worker' && group.totalValue > 0 && (
+                                        <div style={{
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            gap: '6px',
+                                            background: '#dcfce7',
+                                            padding: '6px 12px',
+                                            borderRadius: '8px',
+                                            fontWeight: 600,
+                                            fontSize: '14px',
+                                            color: '#15803d'
+                                        }}>
+                                            <span className="material-icons-round" style={{ fontSize: '16px' }}>payments</span>
+                                            {group.totalValue.toLocaleString('hr-HR')} KM
+                                        </div>
+                                    )}
                                 </div>
 
                                 {!collapsedGroups.has(group.key) && (
-                                    <div className="group-items" style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                                    <div className="group-items" style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginTop: '12px' }}>
                                         {group.items.map(wo => renderWorkOrderCard(wo))}
                                     </div>
                                 )}
@@ -629,10 +1080,12 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                     display: flex; 
                     align-items: center; 
                 }
-                .status-nacrt { background: #f5f5f7; color: #666; }
-                .status-u-toku { background: #e3f2fd; color: #0d47a1; }
-                .status-zavrseno { background: #dcfce7; color: #166534; }
-                .status-na-cekanju { background: #fff7ed; color: #c2410c; }
+                .status-nacrt { background: #f3f4f6; color: #6b7280; }
+                .status-dodijeljeno { background: #dbeafe; color: #1d4ed8; }
+                .status-u-toku { background: #fef3c7; color: #b45309; }
+                .status-završeno, .status-zavrseno { background: #dcfce7; color: #15803d; }
+                .status-otkazano { background: #fee2e2; color: #dc2626; }
+                .status-na-čekanju, .status-na-cekanju { background: #fff7ed; color: #c2410c; }
 
             `}</style>
 
@@ -740,20 +1193,73 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                                 </div>
                                 <div className="wz-list-scroll">
                                     <div className="wz-list">
-                                        {eligibleProducts.map(prod => (
-                                            <div key={prod.Product_ID}
-                                                className={`wz-list-item ${selectedProducts.some(p => p.Product_ID === prod.Product_ID) ? 'selected' : ''}`}
-                                                onClick={() => toggleProduct(prod)}>
-                                                <span className="material-icons-round icon-check">
-                                                    {selectedProducts.some(p => p.Product_ID === prod.Product_ID) ? 'check_box' : 'check_box_outline_blank'}
-                                                </span>
-                                                <div className="li-content">
-                                                    <span className="li-title">{prod.Product_Name}</span>
-                                                    <span className="li-sub">{prod.Project_Name}</span>
+                                        {eligibleProducts.map(prod => {
+                                            const isSelected = selectedProducts.some(p => p.Product_ID === prod.Product_ID);
+                                            const selectedProd = selectedProducts.find(p => p.Product_ID === prod.Product_ID);
+
+                                            return (
+                                                <div key={prod.Product_ID}
+                                                    className={`wz-list-item ${isSelected ? 'selected' : ''}`}
+                                                    style={{ flexDirection: 'column', alignItems: 'stretch', gap: '8px' }}>
+                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}
+                                                        onClick={() => toggleProduct(prod)}>
+                                                        <span className="material-icons-round icon-check">
+                                                            {isSelected ? 'check_box' : 'check_box_outline_blank'}
+                                                        </span>
+                                                        <div className="li-content">
+                                                            <span className="li-title">{prod.Product_Name}</span>
+                                                            <span className="li-sub">{prod.Project_Name}</span>
+                                                        </div>
+                                                        <span className="li-qty">{prod.Quantity} kom</span>
+                                                    </div>
+
+                                                    {isSelected && selectedProd && (
+                                                        <div style={{
+                                                            display: 'flex',
+                                                            alignItems: 'center',
+                                                            gap: '12px',
+                                                            marginLeft: '36px',
+                                                            padding: '8px 12px',
+                                                            background: 'var(--bg-tertiary)',
+                                                            borderRadius: '6px'
+                                                        }}>
+                                                            <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
+                                                                Ukupno: {prod.Quantity} kom
+                                                            </span>
+                                                            <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>•</span>
+                                                            <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>U nalog:</span>
+                                                            <input
+                                                                type="number"
+                                                                min="1"
+                                                                max={prod.Quantity}
+                                                                value={selectedProd.Work_Order_Quantity}
+                                                                onClick={(e) => e.stopPropagation()}
+                                                                onChange={(e) => {
+                                                                    e.stopPropagation();
+                                                                    const newQty = Math.max(1, Math.min(prod.Quantity, parseInt(e.target.value) || 1));
+                                                                    setSelectedProducts(selectedProducts.map(p =>
+                                                                        p.Product_ID === prod.Product_ID
+                                                                            ? { ...p, Work_Order_Quantity: newQty }
+                                                                            : p
+                                                                    ));
+                                                                }}
+                                                                style={{
+                                                                    width: '70px',
+                                                                    padding: '4px 8px',
+                                                                    border: '1px solid var(--border-color)',
+                                                                    borderRadius: '4px',
+                                                                    fontSize: '14px',
+                                                                    fontWeight: 600,
+                                                                    textAlign: 'center',
+                                                                    background: 'var(--bg-primary)'
+                                                                }}
+                                                            />
+                                                            <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>kom</span>
+                                                        </div>
+                                                    )}
                                                 </div>
-                                                <span className="li-qty">{prod.Quantity} kom</span>
-                                            </div>
-                                        ))}
+                                            );
+                                        })}
                                     </div>
                                 </div>
                             </div>
@@ -816,15 +1322,56 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                                                     <strong>{prod.Product_Name}</strong>
                                                     <small>{prod.Project_Name}</small>
                                                 </div>
-                                                {selectedProcesses.map(proc => (
-                                                    <div key={proc} className="m-col process">
-                                                        <select value={prod.assignments[proc] || ''} onChange={e => assignWorker(prod.Product_ID, proc, e.target.value)}
-                                                            className={prod.assignments[proc] ? 'filled' : ''}>
-                                                            <option value="">—</option>
-                                                            {workers.map(w => <option key={w.Worker_ID} value={w.Worker_ID}>{w.Name}</option>)}
-                                                        </select>
-                                                    </div>
-                                                ))}
+                                                {selectedProcesses.map(proc => {
+                                                    const mainWorkerId = prod.assignments[proc];
+                                                    const helpers = prod.helperAssignments?.[proc] || [];
+                                                    const availableHelpers = workers.filter(w =>
+                                                        w.Worker_ID !== mainWorkerId
+                                                    );
+
+                                                    return (
+                                                        <div key={proc} className="m-col process" style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                                                            <select
+                                                                value={mainWorkerId || ''}
+                                                                onChange={e => assignWorker(prod.Product_ID, proc, e.target.value)}
+                                                                className={mainWorkerId ? 'filled' : ''}
+                                                                style={{ marginBottom: '4px' }}
+                                                            >
+                                                                <option value="">— Glavni —</option>
+                                                                {workers.filter(w => w.Worker_Type === 'Glavni' || !w.Worker_Type).map(w => (
+                                                                    <option key={w.Worker_ID} value={w.Worker_ID}>{w.Name}</option>
+                                                                ))}
+                                                            </select>
+
+                                                            {mainWorkerId && availableHelpers.length > 0 && (
+                                                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
+                                                                    {availableHelpers.slice(0, 4).map(helper => {
+                                                                        const isSelected = helpers.includes(helper.Worker_ID);
+                                                                        return (
+                                                                            <button
+                                                                                key={helper.Worker_ID}
+                                                                                type="button"
+                                                                                onClick={() => toggleHelper(prod.Product_ID, proc, helper.Worker_ID)}
+                                                                                style={{
+                                                                                    padding: '2px 6px',
+                                                                                    fontSize: '10px',
+                                                                                    borderRadius: '4px',
+                                                                                    border: isSelected ? '1px solid #6366f1' : '1px solid #e0e0e0',
+                                                                                    background: isSelected ? '#eef2ff' : '#f9fafb',
+                                                                                    color: isSelected ? '#4f46e5' : '#666',
+                                                                                    cursor: 'pointer',
+                                                                                    fontWeight: isSelected ? 600 : 400
+                                                                                }}
+                                                                            >
+                                                                                {isSelected ? '✓ ' : '+'}{helper.Name.split(' ')[0]}
+                                                                            </button>
+                                                                        );
+                                                                    })}
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                    );
+                                                })}
                                             </div>
                                         ))}
                                     </div>

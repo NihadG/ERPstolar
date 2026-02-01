@@ -4,7 +4,7 @@ import { useState } from 'react';
 import type { Worker } from '@/lib/types';
 import { saveWorker, deleteWorker } from '@/lib/database';
 import Modal from '@/components/ui/Modal';
-import { WORKER_ROLES } from '@/lib/types';
+import { WORKER_ROLES, WORKER_TYPES } from '@/lib/types';
 
 interface WorkersTabProps {
     workers: Worker[];
@@ -17,7 +17,7 @@ export default function WorkersTab({ workers, onRefresh, showToast }: WorkersTab
     const [editingWorker, setEditingWorker] = useState<Partial<Worker> | null>(null);
 
     function openWorkerModal(worker?: Worker) {
-        setEditingWorker(worker || { Role: 'Opći', Status: 'Dostupan' });
+        setEditingWorker(worker || { Role: 'Opći', Status: 'Dostupan', Worker_Type: 'Glavni' });
         setWorkerModal(true);
     }
 
@@ -71,7 +71,23 @@ export default function WorkersTab({ workers, onRefresh, showToast }: WorkersTab
                             <div className="simple-card-info">
                                 <div className="simple-card-title">{worker.Name}</div>
                                 <div className="simple-card-subtitle">
+                                    <span style={{
+                                        background: worker.Worker_Type === 'Pomoćnik' ? '#e0e7ff' : '#dcfce7',
+                                        color: worker.Worker_Type === 'Pomoćnik' ? '#3730a3' : '#166534',
+                                        padding: '2px 6px',
+                                        borderRadius: '4px',
+                                        fontSize: '10px',
+                                        fontWeight: 600,
+                                        marginRight: '6px'
+                                    }}>
+                                        {worker.Worker_Type || 'Glavni'}
+                                    </span>
                                     {worker.Role} • {worker.Phone || 'Bez telefona'}
+                                    {worker.Daily_Rate && (
+                                        <span style={{ marginLeft: '8px', color: '#10b981', fontWeight: 600 }}>
+                                            {worker.Daily_Rate} KM/dan
+                                        </span>
+                                    )}
                                 </div>
                             </div>
                             <div className="simple-card-meta">
@@ -114,6 +130,17 @@ export default function WorkersTab({ workers, onRefresh, showToast }: WorkersTab
                 </div>
                 <div className="form-row">
                     <div className="form-group">
+                        <label>Tip Radnika</label>
+                        <select
+                            value={editingWorker?.Worker_Type || 'Glavni'}
+                            onChange={(e) => setEditingWorker({ ...editingWorker, Worker_Type: e.target.value as 'Glavni' | 'Pomoćnik' })}
+                        >
+                            {WORKER_TYPES.map(type => (
+                                <option key={type} value={type}>{type}</option>
+                            ))}
+                        </select>
+                    </div>
+                    <div className="form-group">
                         <label>Uloga</label>
                         <select
                             value={editingWorker?.Role || 'Opći'}
@@ -124,6 +151,8 @@ export default function WorkersTab({ workers, onRefresh, showToast }: WorkersTab
                             ))}
                         </select>
                     </div>
+                </div>
+                <div className="form-row">
                     <div className="form-group">
                         <label>Telefon</label>
                         <input
@@ -131,6 +160,30 @@ export default function WorkersTab({ workers, onRefresh, showToast }: WorkersTab
                             value={editingWorker?.Phone || ''}
                             onChange={(e) => setEditingWorker({ ...editingWorker, Phone: e.target.value })}
                         />
+                    </div>
+                    <div className="form-group">
+                        <label>Dnevnica (KM)</label>
+                        <input
+                            type="number"
+                            min="0"
+                            step="10"
+                            placeholder="npr. 80"
+                            value={editingWorker?.Daily_Rate || ''}
+                            onChange={(e) => setEditingWorker({ ...editingWorker, Daily_Rate: parseFloat(e.target.value) || 0 })}
+                        />
+                    </div>
+                </div>
+                <div className="form-row">
+                    <div className="form-group">
+                        <label>Status</label>
+                        <select
+                            value={editingWorker?.Status || 'Dostupan'}
+                            onChange={(e) => setEditingWorker({ ...editingWorker, Status: e.target.value })}
+                        >
+                            <option value="Dostupan">Dostupan</option>
+                            <option value="Zauzet">Zauzet</option>
+                            <option value="Na godišnjem">Na godišnjem</option>
+                        </select>
                     </div>
                 </div>
             </Modal>

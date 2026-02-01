@@ -1,14 +1,17 @@
 'use client';
 
 import { useState, useMemo } from 'react';
-import type { Project, WorkOrder, Order, Supplier, ProductMaterial } from '@/lib/types';
+import type { Project, WorkOrder, Order, Supplier, ProductMaterial, Offer, OfferProduct, WorkLog } from '@/lib/types';
 import { updateProductMaterial, createOrder, markMaterialsReceived } from '@/lib/database';
+import ProductTimelineModal from '@/components/ui/ProductTimelineModal';
 
 interface OverviewTabProps {
     projects: Project[];
     workOrders: WorkOrder[];
     orders?: Order[];
     suppliers?: Supplier[];
+    offers?: Offer[];
+    workLogs?: WorkLog[];
     showToast: (message: string, type: 'success' | 'error' | 'info') => void;
     onCreateOrder?: (materialIds: string[], supplierName: string) => void;
     onRefresh?: () => void;
@@ -39,9 +42,15 @@ interface OverviewItem {
     // Date fields
     RelevantDate?: string;
     DateType?: 'deadline' | 'production' | 'order' | 'received';
+    // Profit fields (for products only)
+    Selling_Price?: number;
+    Material_Cost?: number;
+    Labor_Cost?: number;
+    Profit?: number;
+    Profit_Margin?: number;
 }
 
-export default function OverviewTab({ projects, workOrders, orders = [], suppliers = [], showToast, onCreateOrder, onRefresh }: OverviewTabProps) {
+export default function OverviewTab({ projects, workOrders, orders = [], suppliers = [], offers = [], workLogs = [], showToast, onCreateOrder, onRefresh }: OverviewTabProps) {
     const [groupBy, setGroupBy] = useState<GroupBy>('project');
     const [viewMode, setViewMode] = useState<ViewMode>('both');
     const [searchTerm, setSearchTerm] = useState('');
@@ -52,6 +61,9 @@ export default function OverviewTab({ projects, workOrders, orders = [], supplie
     // Material selection for orders
     const [selectedMaterials, setSelectedMaterials] = useState<Set<string>>(new Set());
     const [selectedSupplier, setSelectedSupplier] = useState<string>('');
+
+    // Product Timeline Modal
+    const [timelineProduct, setTimelineProduct] = useState<OverviewItem | null>(null);
 
     // Contextual grouping options based on viewMode
     const groupingOptions = useMemo(() => {
@@ -177,21 +189,111 @@ export default function OverviewTab({ projects, workOrders, orders = [], supplie
             // Add products
             if (viewMode === 'products' || viewMode === 'both') {
                 (project.products || []).forEach(product => {
-                    // Derive actual status and date from work orders
-                    const { status, date } = getProductDetails(product.Product_ID, workOrders);
+                    // Normalize status - only valid values are: Na čekanju, U proizvodnji, Završeno
+                    let dbStatus = product.Status || 'Na čekanju';
+
+                    // Map any non-standard status to valid product status
+                    if (dbStatus === 'Čeka proizvodnju') {
+                        dbStatus = 'Na čekanju';
+                    } else if (!['Na čekanju', 'U proizvodnji', 'Završeno'].includes(dbStatus)) {
+                        // If status is a process name (like 'Rezanje') or anything else, it means work is in progress
+                        dbStatus = 'U proizvodnji';
+                    }
+
+                    // But still get date from work orders logic
+                    const { date } = getProductDetails(product.Product_ID, workOrders);
+
+                    // Calculate profit from offers and workLogs
+                    let sellingPrice: number | undefined;
+                    let materialCost: number | undefined;
+                    let laborCost: number | undefined;
+                    let profit: number | undefined;
+                    let profitMargin: number | undefined;
+
+                    // Find OfferProduct from accepted offers and get all cost components
+                    const acceptedOffers = offers.filter(o => o.Status === 'Prihvaćeno');
+                    let offerRef: Offer | undefined;
+                    let offerProductRef: OfferProduct | undefined;
+
+                    for (const offer of acceptedOffers) {
+                        const offerProduct = (offer.products || []).find(op => op.Product_ID === product.Product_ID);
+                        if (offerProduct) {
+                            offerRef = offer;
+                            offerProductRef = offerProduct;
+                            sellingPrice = offerProduct.Selling_Price || offerProduct.Total_Price;
+
+                            // All cost components
+                            materialCost = (offerProduct.Material_Cost || 0);
+
+                            // Add LED cost
+                            const ledCost = offerProduct.LED_Total || 0;
+
+                            // Add Grouting cost
+                            const groutingCost = offerProduct.Grouting ? (offerProduct.Grouting_Price || 0) : 0;
+
+                            // Add Sink/Faucet cost
+                            const sinkCost = offerProduct.Sink_Faucet ? (offerProduct.Sink_Faucet_Price || 0) : 0;
+
+                            // Add extras cost
+                            const extrasCost = ((offerProduct as any).extras || []).reduce((sum: number, e: any) =>
+                                sum + (e.Total || e.total || 0), 0);
+
+                            // Total material + services cost
+                            materialCost = materialCost + ledCost + groutingCost + sinkCost + extrasCost;
+
+                            break;
+                        }
+                    }
+
+                    // Calculate labor cost from workLogs
+                    const productWorkLogs = workLogs.filter(wl => wl.Product_ID === product.Product_ID);
+                    if (productWorkLogs.length > 0) {
+                        laborCost = productWorkLogs.reduce((sum, wl) => sum + (wl.Daily_Rate || 0), 0);
+                    }
+
+                    // Calculate profit if we have selling price
+                    if (sellingPrice && sellingPrice > 0) {
+                        const matCost = materialCost || 0;
+                        const labCost = laborCost || 0;
+
+                        // Calculate proportional transport/discount share
+                        let transportShare = 0;
+                        let discountShare = 0;
+
+                        if (offerRef && offerProductRef) {
+                            const offerSubtotal = offerRef.Subtotal || 0;
+                            if (offerSubtotal > 0) {
+                                const productRatio = sellingPrice / offerSubtotal;
+                                transportShare = (offerRef.Transport_Cost || 0) * productRatio;
+                                discountShare = offerRef.Onsite_Assembly ?
+                                    (offerRef.Onsite_Discount || 0) * productRatio : 0;
+                            }
+                        }
+
+                        // Profit = Selling Price - Costs (material + labor)
+                        // Transport is a pass-through cost, not included in production profit
+                        profit = sellingPrice - matCost - labCost;
+                        profitMargin = sellingPrice > 0 ? (profit / sellingPrice) * 100 : 0;
+                    }
 
                     items.push({
                         type: 'product',
                         Product_ID: product.Product_ID,
                         Product_Name: product.Name,
-                        Product_Status: status,
+                        Product_Status: dbStatus,
                         Product_Quantity: product.Quantity,
                         Project_ID: project.Project_ID,
                         Project_Name: project.Client_Name,
                         Client_Name: project.Client_Name,
                         Deadline: project.Deadline,
                         RelevantDate: date,
-                        DateType: 'production'
+                        DateType: 'production',
+                        // Profit fields
+                        Selling_Price: sellingPrice,
+                        Material_Cost: materialCost,
+                        Labor_Cost: laborCost,
+                        Profit: profit,
+                        Profit_Margin: profitMargin,
                     });
                 });
             }
@@ -654,6 +756,7 @@ export default function OverviewTab({ projects, workOrders, orders = [], supplie
                                             <div className="col-naziv">NAZIV</div>
                                             <div className="col-kol">KOL.</div>
                                             <div className="col-projekt">PROJEKT</div>
+                                            <div className="col-profit">PROFIT</div>
                                             <div className="col-datum">DATUM</div>
                                         </div>
 
@@ -697,6 +800,49 @@ export default function OverviewTab({ projects, workOrders, orders = [], supplie
                                                     <span className="kol-unit">{item.type === 'material' ? (item.Material_Unit || 'kom') : 'KOM'}</span>
                                                 </div>
                                                 <div className="col-projekt">{item.Client_Name}</div>
+                                                {/* Profit column - only for products with profit data */}
+                                                {item.type === 'product' && item.Profit !== undefined ? (
+                                                    <div
+                                                        className="col-profit"
+                                                        style={{
+                                                            display: 'flex',
+                                                            alignItems: 'center',
+                                                            gap: '6px',
+                                                            padding: '4px 8px',
+                                                            borderRadius: '6px',
+                                                            background: item.Profit_Margin! >= 30 ? 'rgba(16, 185, 129, 0.1)' :
+                                                                item.Profit_Margin! >= 15 ? 'rgba(245, 158, 11, 0.1)' : 'rgba(239, 68, 68, 0.1)',
+                                                            color: item.Profit_Margin! >= 30 ? '#10b981' :
+                                                                item.Profit_Margin! >= 15 ? '#f59e0b' : '#ef4444',
+                                                            fontWeight: 600,
+                                                            fontSize: '12px',
+                                                            minWidth: '100px',
+                                                            cursor: 'pointer'
+                                                        }}
+                                                        title="Klikni za detaljan izvještaj"
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            setTimelineProduct(item);
+                                                        }}
+                                                    >
+                                                        <span className="material-icons-round" style={{ fontSize: '14px' }}>
+                                                            {item.Profit_Margin! >= 30 ? 'trending_up' :
+                                                                item.Profit_Margin! >= 15 ? 'trending_flat' : 'trending_down'}
+                                                        </span>
+                                                        {item.Profit.toLocaleString('hr-HR')} KM
+                                                        <span style={{ opacity: 0.7, fontSize: '11px' }}>({item.Profit_Margin?.toFixed(0)}%)</span>
+                                                    </div>
+                                                ) : item.type === 'product' ? (
+                                                    <div className="col-profit" style={{
+                                                        color: '#9ca3af',
+                                                        fontSize: '12px',
+                                                        minWidth: '100px'
+                                                    }}>
+                                                        <span className="material-icons-round" style={{ fontSize: '14px' }}>remove</span>
+                                                    </div>
+                                                ) : (
+                                                    <div className="col-profit" style={{ minWidth: '100px' }}></div>
+                                                )}
                                                 <div className="col-datum">
                                                     <span className="material-icons-round" style={{
                                                         color: item.DateType === 'received' ? '#10b981' :
@@ -779,6 +925,20 @@ export default function OverviewTab({ projects, workOrders, orders = [], supplie
                     </div>
                 )
             }
+
+            {/* Product Timeline Modal */}
+            <ProductTimelineModal
+                isOpen={timelineProduct !== null}
+                onClose={() => setTimelineProduct(null)}
+                productId={timelineProduct?.Product_ID || ''}
+                productName={timelineProduct?.Product_Name || ''}
+                workLogs={workLogs.filter(wl => wl.Product_ID === timelineProduct?.Product_ID)}
+                sellingPrice={timelineProduct?.Selling_Price}
+                materialCost={timelineProduct?.Material_Cost}
+                laborCost={timelineProduct?.Labor_Cost}
+                profit={timelineProduct?.Profit}
+                profitMargin={timelineProduct?.Profit_Margin}
+            />
 
             <style jsx>{`
                 /* Overview Page Layout */
@@ -1133,7 +1293,7 @@ export default function OverviewTab({ projects, workOrders, orders = [], supplie
                 /* List Header */
                 .list-header {
                     display: grid;
-                    grid-template-columns: 2fr 100px 1fr 120px;
+                    grid-template-columns: 2.5fr 80px 1.5fr 140px 120px;
                     gap: 16px;
                     padding: 12px 20px;
                     background: #f9fafb;
@@ -1146,13 +1306,13 @@ export default function OverviewTab({ projects, workOrders, orders = [], supplie
                 }
 
                 .list-header.with-checkbox {
-                    grid-template-columns: 40px 2fr 100px 1fr 120px;
+                    grid-template-columns: 40px 2.5fr 80px 1.5fr 140px 120px;
                 }
 
                 /* List Item */
                 .list-item {
                     display: grid;
-                    grid-template-columns: 2fr 100px 1fr 120px;
+                    grid-template-columns: 2.5fr 80px 1.5fr 140px 120px;
                     gap: 16px;
                     padding: 14px 20px;
                     border-bottom: 1px solid #f3f4f6;
@@ -1161,7 +1321,7 @@ export default function OverviewTab({ projects, workOrders, orders = [], supplie
                 }
 
                 .list-item.with-checkbox {
-                    grid-template-columns: 40px 2fr 100px 1fr 120px;
+                    grid-template-columns: 40px 2.5fr 80px 1.5fr 140px 120px;
                 }
 
                 .list-item.selected {

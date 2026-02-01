@@ -88,9 +88,22 @@ export default function PricingPage() {
     return (
         <div className="pricing-page">
             <nav className="pricing-nav">
-                <Link href="/" className="back-link">
-                    <span className="material-icons-round">arrow_back</span>
-                    Nazad na aplikaciju
+                <Link href="/" className="back-button" style={{
+                    textDecoration: 'none',
+                    color: 'white',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '10px',
+                    padding: '10px 20px',
+                    borderRadius: '50px',
+                    background: 'rgba(255, 255, 255, 0.15)',
+                    backdropFilter: 'blur(10px)',
+                    fontSize: '14px',
+                    fontWeight: '600',
+                    transition: 'all 0.2s'
+                }}>
+                    <span className="material-icons-round" style={{ fontSize: '20px' }}>arrow_back</span>
+                    <span>Nazad na aplikaciju</span>
                 </Link>
             </nav>
 
@@ -159,19 +172,25 @@ export default function PricingPage() {
                     margin: 0 auto 40px;
                 }
 
-                .back-link {
+                .back-button {
                     display: inline-flex;
                     align-items: center;
-                    gap: 8px;
+                    gap: 10px;
                     color: white;
-                    text-decoration: none;
-                    font-weight: 500;
-                    opacity: 0.9;
-                    transition: opacity 0.2s;
+                    text-decoration: none !important;
+                    font-size: 14px;
+                    font-weight: 600;
+                    padding: 10px 20px;
+                    borderRadius: 50px;
+                    background: rgba(255, 255, 255, 0.15);
+                    backdropFilter: blur(10px);
+                    transition: all 0.2s;
                 }
 
-                .back-link:hover {
-                    opacity: 1;
+                .back-button:hover,
+                a.back-button:hover {
+                    background: rgba(255, 255, 255, 0.25);
+                    transform: translateX(-2px);
                 }
 
                 .pricing-header {
@@ -359,6 +378,6 @@ export default function PricingPage() {
                     }
                 }
             `}</style>
-        </div>
+        </div >
     );
 }

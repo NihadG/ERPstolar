@@ -28,7 +28,9 @@ interface Material {
     Project_Name: string;
     Quantity: number;
     Unit: string;
+    Unit_Price: number;
     Total_Price: number;
+    On_Stock?: number;
 }
 
 interface OrderWizardModalProps {
@@ -54,6 +56,11 @@ interface OrderWizardModalProps {
     selectedTotal: number;
     formatCurrency: (value: number) => string;
     handleCreateOrder: () => void;
+    // New props for custom quantities
+    orderQuantities: Record<string, number>;
+    onStockQuantities: Record<string, number>;
+    setOrderQuantity: (materialId: string, quantity: number) => void;
+    setOnStockQuantity: (materialId: string, quantity: number) => void;
 }
 
 export function OrderWizardModal({
@@ -78,7 +85,11 @@ export function OrderWizardModal({
     selectAllMaterials,
     selectedTotal,
     formatCurrency,
-    handleCreateOrder
+    handleCreateOrder,
+    orderQuantities,
+    onStockQuantities,
+    setOrderQuantity,
+    setOnStockQuantity
 }: OrderWizardModalProps) {
     const canGoNext =
         (wizardStep === 1 && selectedProjectIds.size > 0) ||
@@ -93,7 +104,7 @@ export function OrderWizardModal({
                     <div className="wizard-nav-left">
                         {wizardStep > 1 && (
                             <button
-                                className="btn btn-secondary wizard-nav-btn"
+                                className="glass-btn wizard-nav-btn"
                                 onClick={() => setWizardStep(wizardStep - 1)}
                             >
                                 <span className="material-icons-round">arrow_back</span>
@@ -116,7 +127,7 @@ export function OrderWizardModal({
                     <div className="wizard-nav-right">
                         {wizardStep === 4 ? (
                             <button
-                                className="btn btn-primary wizard-nav-btn"
+                                className="glass-btn glass-btn-primary wizard-nav-btn"
                                 onClick={handleCreateOrder}
                                 disabled={selectedMaterialIds.size === 0}
                             >
@@ -125,7 +136,7 @@ export function OrderWizardModal({
                             </button>
                         ) : (
                             <button
-                                className="btn btn-primary wizard-nav-btn"
+                                className="glass-btn glass-btn-primary wizard-nav-btn"
                                 onClick={() => setWizardStep(wizardStep + 1)}
                                 disabled={!canGoNext}
                             >
@@ -279,25 +290,122 @@ export function OrderWizardModal({
                                 </div>
                             </div>
                             <div className="wizard-list-container">
-                                {filteredMaterials.map((material, idx) => (
-                                    <div
-                                        key={material.ID}
-                                        onClick={() => toggleMaterial(material.ID)}
-                                        className={`wizard-list-item material-item ${selectedMaterialIds.has(material.ID) ? 'selected' : ''}`}
-                                    >
-                                        <span className="material-icons-round check-icon">
-                                            {selectedMaterialIds.has(material.ID) ? 'check_box' : 'check_box_outline_blank'}
-                                        </span>
-                                        <div style={{ flex: 1 }}>
-                                            <div className="item-title">{material.Material_Name}</div>
-                                            <div className="item-subtitle">{material.Product_Name} • {material.Project_Name}</div>
+                                {filteredMaterials.map((material, idx) => {
+                                    const onStock = onStockQuantities[material.ID] ?? (material.On_Stock || 0);
+                                    const orderQty = orderQuantities[material.ID] ?? Math.max(0, material.Quantity - onStock);
+                                    const unitPrice = material.Unit_Price || (material.Total_Price / material.Quantity) || 0;
+                                    const orderTotal = orderQty * unitPrice;
+
+                                    return (
+                                        <div
+                                            key={material.ID}
+                                            className={`wizard-list-item material-item ${selectedMaterialIds.has(material.ID) ? 'selected' : ''}`}
+                                            style={{ flexDirection: 'column', alignItems: 'stretch', gap: '12px' }}
+                                        >
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                                                <span
+                                                    className="material-icons-round check-icon"
+                                                    onClick={(e) => { e.stopPropagation(); toggleMaterial(material.ID); }}
+                                                    style={{ cursor: 'pointer' }}
+                                                >
+                                                    {selectedMaterialIds.has(material.ID) ? 'check_box' : 'check_box_outline_blank'}
+                                                </span>
+                                                <div style={{ flex: 1 }}>
+                                                    <div className="item-title">{material.Material_Name}</div>
+                                                    <div className="item-subtitle">{material.Product_Name} • {material.Project_Name}</div>
+                                                </div>
+                                            </div>
+
+                                            {selectedMaterialIds.has(material.ID) && (
+                                                <div style={{
+                                                    display: 'grid',
+                                                    gridTemplateColumns: 'repeat(3, 1fr)',
+                                                    gap: '12px',
+                                                    padding: '12px',
+                                                    background: 'var(--bg-tertiary)',
+                                                    borderRadius: '8px',
+                                                    marginLeft: '36px'
+                                                }}>
+                                                    <div>
+                                                        <label style={{ fontSize: '11px', color: 'var(--text-secondary)', marginBottom: '4px', display: 'block' }}>
+                                                            Potrebno
+                                                        </label>
+                                                        <div style={{ fontWeight: 600, fontSize: '14px' }}>
+                                                            {material.Quantity} {material.Unit}
+                                                        </div>
+                                                    </div>
+                                                    <div>
+                                                        <label style={{ fontSize: '11px', color: 'var(--text-secondary)', marginBottom: '4px', display: 'block' }}>
+                                                            Na stanju
+                                                        </label>
+                                                        <input
+                                                            type="number"
+                                                            min="0"
+                                                            max={material.Quantity}
+                                                            value={onStock}
+                                                            onChange={(e) => {
+                                                                e.stopPropagation();
+                                                                const newStock = Math.max(0, parseFloat(e.target.value) || 0);
+                                                                setOnStockQuantity(material.ID, newStock);
+                                                                // Auto-adjust order quantity
+                                                                const newOrderQty = Math.max(0, material.Quantity - newStock);
+                                                                setOrderQuantity(material.ID, newOrderQty);
+                                                            }}
+                                                            onClick={(e) => e.stopPropagation()}
+                                                            style={{
+                                                                width: '100%',
+                                                                padding: '8px 10px',
+                                                                border: '1px solid var(--border-color)',
+                                                                borderRadius: '6px',
+                                                                fontSize: '14px',
+                                                                background: 'var(--bg-primary)'
+                                                            }}
+                                                        />
+                                                    </div>
+                                                    <div>
+                                                        <label style={{ fontSize: '11px', color: 'var(--text-secondary)', marginBottom: '4px', display: 'block' }}>
+                                                            Naruči
+                                                        </label>
+                                                        <input
+                                                            type="number"
+                                                            min="0"
+                                                            value={orderQty}
+                                                            onChange={(e) => {
+                                                                e.stopPropagation();
+                                                                setOrderQuantity(material.ID, Math.max(0, parseFloat(e.target.value) || 0));
+                                                            }}
+                                                            onClick={(e) => e.stopPropagation()}
+                                                            style={{
+                                                                width: '100%',
+                                                                padding: '8px 10px',
+                                                                border: '1px solid var(--border-color)',
+                                                                borderRadius: '6px',
+                                                                fontSize: '14px',
+                                                                background: 'var(--bg-primary)',
+                                                                fontWeight: 600
+                                                            }}
+                                                        />
+                                                    </div>
+                                                    <div style={{ gridColumn: 'span 3', display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingTop: '8px', borderTop: '1px solid var(--border-color)' }}>
+                                                        <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
+                                                            {unitPrice.toFixed(2)} KM/{material.Unit} × {orderQty} {material.Unit}
+                                                        </span>
+                                                        <span style={{ fontWeight: 600, fontSize: '14px' }}>
+                                                            = {formatCurrency(orderTotal)}
+                                                        </span>
+                                                    </div>
+                                                </div>
+                                            )}
+
+                                            {!selectedMaterialIds.has(material.ID) && (
+                                                <div style={{ marginLeft: '36px', display: 'flex', gap: '16px', fontSize: '13px', color: 'var(--text-secondary)' }}>
+                                                    <span>{material.Quantity} {material.Unit}</span>
+                                                    <span>{formatCurrency(material.Total_Price)}</span>
+                                                </div>
+                                            )}
                                         </div>
-                                        <div className="item-meta">
-                                            <div className="item-qty">{material.Quantity} {material.Unit}</div>
-                                            <div className="item-price">{formatCurrency(material.Total_Price)}</div>
-                                        </div>
-                                    </div>
-                                ))}
+                                    );
+                                })}
                             </div>
                             {filteredMaterials.length === 0 && (
                                 <div style={{ textAlign: 'center', padding: '60px 20px', color: 'var(--text-secondary)' }}>

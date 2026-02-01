@@ -10,10 +10,10 @@ export interface Project {
     Address: string;
     Notes: string;
     Status: string;
-    Production_Mode: 'PreCut' | 'InHouse';
     Created_Date: string;
     Deadline: string;
     products?: Product[];
+    offers?: Offer[];
 }
 
 export interface Product {
@@ -25,6 +25,7 @@ export interface Product {
     Depth: number;
     Quantity: number;
     Status: string;
+    Work_Order_Quantity?: number;  // Quantity already in work orders
     Material_Cost: number;
     Notes: string;
     materials?: ProductMaterial[];
@@ -54,6 +55,10 @@ export interface ProductMaterial {
     Status: string;
     Supplier: string;
     Order_ID: string;
+    Is_Essential?: boolean;        // Must be ready before work order can start
+    On_Stock?: number;
+    Ordered_Quantity?: number;
+    Received_Quantity?: number;
     glassItems?: GlassItem[];
     aluDoorItems?: AluDoorItem[];
 }
@@ -192,20 +197,58 @@ export interface Worker {
     Worker_ID: string;
     Name: string;
     Role: string;
+    Worker_Type: 'Glavni' | 'Pomoćnik';
     Phone: string;
     Status: string;
+    Daily_Rate?: number;      // Dnevnica u KM
+    Specializations?: string[];
+}
+
+// ============================================
+// TASK TYPES (Enhanced)
+// ============================================
+
+export type TaskPriority = 'low' | 'medium' | 'high' | 'urgent';
+export type TaskCategory = 'general' | 'manufacturing' | 'ordering' | 'installation' | 'design' | 'meeting' | 'reminder';
+
+export interface TaskLink {
+    Entity_Type: 'project' | 'product' | 'material' | 'work_order' | 'worker' | 'order';
+    Entity_ID: string;
+    Entity_Name: string;
+}
+
+export interface ChecklistItem {
+    id: string;
+    text: string;
+    completed: boolean;
 }
 
 export interface Task {
     Task_ID: string;
-    Project_ID: string;
-    Product_ID: string;
-    Worker_ID: string;
-    Task_Type: string;
+    Title: string;
     Description: string;
-    Status: string;
-    Due_Date: string;
-    Completed_Date: string;
+    Status: 'pending' | 'in_progress' | 'completed' | 'cancelled';
+    Priority: TaskPriority;
+    Category: TaskCategory;
+
+    // Dates
+    Created_Date: string;
+    Due_Date?: string;
+    Reminder_Date?: string;
+    Completed_Date?: string;
+
+    // Entity Links (flexible linking system)
+    Links: TaskLink[];
+
+    // Assignment
+    Assigned_Worker_ID?: string;
+    Assigned_Worker_Name?: string;
+
+    // Notes
+    Notes?: string;
+
+    // Checklist items for sub-tasks
+    Checklist?: ChecklistItem[];
 }
 
 export interface WorkOrder {
@@ -213,11 +256,56 @@ export interface WorkOrder {
     Work_Order_Number: string;
     Created_Date: string;
     Due_Date: string;
-    Status: string;
-    Production_Steps: string[]; // Changed from single step to array of steps
+    Status: 'Na čekanju' | 'U toku' | 'Završeno' | 'Otkazano';
+    Production_Steps: string[];
     Notes: string;
-    Completed_Date?: string;
+
+    // DATUMI (agregat iz items)
+    Started_At?: string;           // Najraniji Started_At iz items
+    Completed_Date?: string;       // Legacy field (use Completed_At)
+    Completed_At?: string;         // Najkasniji Completed_At iz items
+
+    // TROŠKOVI (agregat iz items)
+    Total_Value?: number;          // Ukupna vrijednost iz ponude
+    Material_Cost?: number;        // Ukupan trošak materijala
+    Planned_Labor_Cost?: number;   // Suma svih planiranih troškova rada
+    Actual_Labor_Cost?: number;    // Suma stvarnih troškova rada (iz Attendance)
+    Labor_Cost?: number;           // Legacy field (use Actual_Labor_Cost)
+
+    // PROFIT
+    Profit?: number;               // Total_Value - Material_Cost - Actual_Labor_Cost
+    Profit_Margin?: number;        // (Profit / Total_Value) × 100
+    Labor_Cost_Variance?: number;  // Planned_Labor_Cost - Actual_Labor_Cost
+
     items?: WorkOrderItem[];
+}
+
+// Status procesa za pojedinačni proizvod u radnom nalogu
+export interface ItemProcessStatus {
+    Process_Name: string;
+    Status: 'Na čekanju' | 'U toku' | 'Završeno' | 'Odloženo';
+    Started_At?: string;
+    Completed_At?: string;
+    Duration_Minutes?: number;
+    Worker_ID?: string;
+    Worker_Name?: string;
+    Helpers?: {
+        Worker_ID: string;
+        Worker_Name: string;
+    }[];
+}
+
+// Sub-task za split proizvoda - omogućava podjelu količine na više dijelova
+export interface SubTask {
+    SubTask_ID: string;
+    Quantity: number;                   // Koliko komada ovaj sub-task pokriva
+    Current_Process: string;            // Naziv trenutnog aktivnog procesa
+    Status: 'Na čekanju' | 'U toku' | 'Završeno';
+    Started_At?: string;
+    Completed_At?: string;
+    Worker_ID?: string;
+    Worker_Name?: string;
+    Notes?: string;
 }
 
 export interface WorkOrderItem {
@@ -228,30 +316,143 @@ export interface WorkOrderItem {
     Project_ID: string;
     Project_Name: string;
     Quantity: number;
-    Status: string;
-    // Process assignments: { 'Rezanje': { Worker_ID: '...', Status: 'U toku' }, ... }
-    Process_Assignments?: Record<string, {
-        Worker_ID?: string;
-        Worker_Name?: string;
-        Status: string; // 'Na čekanju' | 'U toku' | 'Završeno'
-    }>;
+    Total_Product_Quantity?: number;  // Total quantity of the product (from project)
+
+    // STATUS I DATUMI
+    Status: 'Na čekanju' | 'U toku' | 'Završeno';
+    Is_Paused?: boolean;          // If true, daily rates won't accrue
+    Started_At?: string;      // ISO timestamp kada je započeto
+    Completed_At?: string;    // ISO timestamp kada je završeno
+
+    // PROCESI ZA OVAJ PROIZVOD (legacy - za backward compatibility)
+    Processes?: ItemProcessStatus[];
+
+    // SUB-TASKS - Za split proizvoda po količini
+    SubTasks?: SubTask[];
+
+    // DODIJELJENI RADNICI
+    Assigned_Workers?: {
+        Worker_ID: string;
+        Worker_Name: string;
+        Daily_Rate: number;   // Dnevnica radnika
+    }[];
+
+    // TROŠKOVI RADA
+    Planned_Labor_Workers?: number;   // Broj radnika (iz ponude)
+    Planned_Labor_Days?: number;      // Broj dana (iz ponude)
+    Planned_Labor_Rate?: number;      // Prosječna dnevnica (iz ponude)
+    Planned_Labor_Cost?: number;      // Workers × Days × Rate
+    Actual_Labor_Cost?: number;       // Kalkulisano iz Attendance
+
+    // VRIJEDNOST I MATERIJAL
+    Product_Value?: number;    // Cijena proizvoda iz ponude
+    Material_Cost?: number;    // Trošak materijala za ovaj proizvod
+
+    // NAPOMENE
+    Notes?: string;
+
+    // LEGACY - Za backward compatibility, brišemo kasnije
+    Process_Assignments?: Record<string, any>;
+
     materials?: ProductMaterial[]; // Materials for this product (for print template)
+}
+
+
+
+export interface WorkerAttendance {
+    Attendance_ID: string;
+    Worker_ID: string;
+    Worker_Name: string;
+    Date: string;                        // YYYY-MM-DD format
+
+    // Attendance status
+    Status: 'Prisutan' | 'Odsutan' | 'Bolovanje' | 'Odmor' | 'Teren' | 'Vikend';
+
+    // Work details (only if Status = 'Prisutan' or 'Teren')
+    Hours_Worked?: number;               // If different from standard 8h
+    Is_Overtime?: boolean;
+    Overtime_Hours?: number;
+
+    // Notes
+    Notes?: string | null;                      // Razlog odsutnosti, lokacija terena, etc.
+
+    Created_Date: string;
+    Modified_Date?: string;
+}
+
+// ============================================
+// WORK LOG - Evidencija rada po proizvodu
+// ============================================
+
+export interface WorkLog {
+    WorkLog_ID: string;
+    Date: string;                    // YYYY-MM-DD format
+
+    // Radnik
+    Worker_ID: string;
+    Worker_Name: string;
+    Daily_Rate: number;              // Snimljena dnevnica tog dana
+    Hours_Worked: number;            // Default 8, može biti manje/više
+
+    // Veza sa proizvodom
+    Work_Order_ID: string;
+    Work_Order_Item_ID: string;      // Koji proizvod u radnom nalogu
+    Product_ID: string;              // Referenca na originalni proizvod
+    SubTask_ID?: string;             // Ako je split, koja grupa
+
+    // Proces na kojem je radnik radio
+    Process_Name?: string;           // Rezanje, Kantiranje, etc.
+
+    // Status i metadata
+    Is_From_Attendance: boolean;     // Da li je automatski kreirano iz sihtarice
+    Notes?: string;
+
+    Created_At: string;
+    Modified_At?: string;
 }
 
 // ============================================
 // CONSTANTS
 // ============================================
 
-export const PROJECT_STATUSES = ['Nacrt', 'Ponuđeno', 'Odobreno', 'U proizvodnji', 'Sklapanje', 'Montaža', 'Završeno', 'Otkazano'];
+export const PROJECT_STATUSES = ['Nacrt', 'Ponuđeno', 'Odobreno', 'U proizvodnji', 'Završeno', 'Otkazano'];
 export const PRODUCT_STATUSES = ['Na čekanju', 'Materijali naručeni', 'Materijali spremni', 'Rezanje', 'Kantiranje', 'Bušenje', 'Sklapanje', 'Spremno', 'Instalirano'];
 export const MATERIAL_STATUSES = ['Nije naručeno', 'Na stanju', 'Naručeno', 'Primljeno', 'U upotrebi', 'Instalirano'];
 export const OFFER_STATUSES = ['Nacrt', 'Poslano', 'Prihvaćeno', 'Odbijeno', 'Isteklo', 'Revidirano'];
 export const ORDER_STATUSES = ['Nacrt', 'Poslano', 'Potvrđeno', 'Isporučeno', 'Primljeno', 'Djelomično'];
 export const MATERIAL_CATEGORIES = ['Ploča', 'Kanttraka', 'Okovi', 'Vijci', 'Šarke', 'Ladičari', 'Ručke', 'LED', 'Staklo', 'Alu vrata', 'Ostalo'];
-export const PRODUCTION_MODES = ['PreCut', 'InHouse'];
 export const WORKER_ROLES = ['Rezač', 'Kantiranje', 'Bušenje', 'Montaža', 'Instalacija', 'Opći'];
-export const WORK_ORDER_STATUSES = ['Nacrt', 'Dodijeljeno', 'U toku', 'Završeno', 'Otkazano'];
+export const WORKER_TYPES = ['Glavni', 'Pomoćnik'] as const;
+export const WORK_ORDER_STATUSES = ['Na čekanju', 'U toku', 'Završeno', 'Otkazano'];
 export const PRODUCTION_STEPS = ['Rezanje', 'Kantiranje', 'Bušenje', 'Sklapanje'];
+export const ATTENDANCE_STATUSES = ['Prisutan', 'Odsutan', 'Bolovanje', 'Odmor', 'Teren', 'Vikend', 'Praznik'] as const;
+export const PROCESS_STATUSES = ['Na čekanju', 'U toku', 'Odloženo', 'Završeno'] as const;
+
+// Task constants
+export const TASK_STATUSES = ['pending', 'in_progress', 'completed', 'cancelled'] as const;
+export const TASK_PRIORITIES = ['low', 'medium', 'high', 'urgent'] as const;
+export const TASK_CATEGORIES = ['general', 'manufacturing', 'ordering', 'installation', 'design', 'meeting', 'reminder'] as const;
+export const TASK_PRIORITY_LABELS: Record<TaskPriority, string> = {
+    low: 'Nizak',
+    medium: 'Srednji',
+    high: 'Visok',
+    urgent: 'Hitan'
+};
+export const TASK_STATUS_LABELS: Record<string, string> = {
+    pending: 'Na čekanju',
+    in_progress: 'U toku',
+    completed: 'Završeno',
+    cancelled: 'Otkazano'
+};
+export const TASK_CATEGORY_LABELS: Record<TaskCategory, string> = {
+    general: 'Općenito',
+    manufacturing: 'Proizvodnja',
+    ordering: 'Narudžba',
+    installation: 'Instalacija',
+    design: 'Dizajn',
+    meeting: 'Sastanak',
+    reminder: 'Podsjetnik'
+};
 
 // ============================================
 // APP STATE TYPE
@@ -269,6 +470,8 @@ export interface AppState {
     productMaterials: ProductMaterial[];
     glassItems: GlassItem[];
     aluDoorItems: AluDoorItem[];
+    workLogs: WorkLog[];
+    tasks: Task[];
 }
 
 // ============================================

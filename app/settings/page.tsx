@@ -5,6 +5,12 @@ import { useRouter } from 'next/navigation';
 import { useAuth } from '@/context/AuthContext';
 import Link from 'next/link';
 
+const PLAN_NAMES: Record<string, { name: string; color: string; icon: string }> = {
+    free: { name: 'Besplatni', color: '#86868b', icon: 'star_outline' },
+    professional: { name: 'Professional', color: '#667eea', icon: 'workspace_premium' },
+    enterprise: { name: 'Enterprise', color: '#34c759', icon: 'verified' },
+};
+
 export const dynamic = 'force-dynamic';
 
 interface CompanyInfo {
@@ -49,8 +55,11 @@ const DEFAULT_SETTINGS: AppSettings = {
 
 export default function SettingsPage() {
     const router = useRouter();
-    const { user, loading: authLoading, firebaseUser } = useAuth();
+    const { user, loading: authLoading, firebaseUser, organization } = useAuth();
     const fileInputRef = useRef<HTMLInputElement>(null);
+
+    const currentPlan = organization?.Subscription_Plan || 'free';
+    const planInfo = PLAN_NAMES[currentPlan] || PLAN_NAMES.free;
 
     const [companyInfo, setCompanyInfo] = useState<CompanyInfo>(DEFAULT_COMPANY);
     const [appSettings, setAppSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
@@ -149,9 +158,26 @@ export default function SettingsPage() {
     return (
         <div className="settings-page">
             <nav className="settings-nav">
-                <Link href="/" className="back-link">
-                    <span className="material-icons-round">arrow_back</span>
-                    Nazad na aplikaciju
+                <Link
+                    href="/"
+                    className="back-button"
+                    style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '10px',
+                        color: 'var(--text-primary)',
+                        textDecoration: 'none',
+                        fontSize: '14px',
+                        fontWeight: '600',
+                        padding: '10px 18px',
+                        borderRadius: '50px',
+                        background: 'rgba(0, 0, 0, 0.05)',
+                        border: '1px solid transparent',
+                        transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)'
+                    }}
+                >
+                    <span className="material-icons-round" style={{ fontSize: '20px' }}>arrow_back</span>
+                    <span>Nazad na aplikaciju</span>
                 </Link>
                 <h1>Postavke</h1>
             </nav>
@@ -168,6 +194,43 @@ export default function SettingsPage() {
             <div className="settings-layout">
                 {/* Sidebar */}
                 <aside className="settings-sidebar">
+                    {/* Plan Card */}
+                    <div className="plan-card">
+                        <div className="plan-header">
+                            <div className="plan-icon">
+                                <span className="material-icons-round">{planInfo.icon}</span>
+                            </div>
+                            <div className="plan-meta">
+                                <span className="plan-label">AKTIVNI PLAN</span>
+                                <span className="plan-name">{planInfo.name}</span>
+                            </div>
+                        </div>
+                        <Link
+                            href="/pricing"
+                            className="plan-button"
+                            style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'space-between',
+                                padding: '12px 18px',
+                                background: 'white',
+                                borderRadius: '14px',
+                                color: '#4a4a4e',
+                                textDecoration: 'none',
+                                fontSize: '13px',
+                                fontWeight: '600',
+                                transition: 'all 0.2s ease',
+                                border: '1px solid rgba(0, 0, 0, 0.05)',
+                                boxShadow: '0 2px 8px rgba(0, 0, 0, 0.04)'
+                            }}
+                        >
+                            <span>Upravljanje pretplatom</span>
+                            <span className="material-icons-round" style={{ fontSize: '16px' }}>arrow_forward</span>
+                        </Link>
+                    </div>
+
+                    <div className="sidebar-divider"></div>
+
                     <button
                         className={`sidebar-item ${activeSection === 'company' ? 'active' : ''}`}
                         onClick={() => setActiveSection('company')}
@@ -415,62 +478,141 @@ export default function SettingsPage() {
                 .settings-nav {
                     display: flex;
                     align-items: center;
-                    gap: 24px;
-                    padding: 16px 24px;
+                    gap: 32px;
+                    padding: 24px 32px;
                     background: var(--background);
                     border-bottom: 1px solid var(--border-light);
                 }
 
-                .back-link {
-                    display: flex;
+                .back-button {
+                    display: inline-flex;
                     align-items: center;
-                    gap: 8px;
-                    color: var(--text-secondary);
-                    text-decoration: none;
+                    gap: 10px;
+                    color: var(--text-primary);
+                    text-decoration: none !important;
                     font-size: 14px;
-                    transition: color 0.2s;
+                    font-weight: 600;
+                    padding: 10px 18px;
+                    border-radius: 50px;
+                    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+                    background: rgba(0, 0, 0, 0.05);
+                    border: 1px solid transparent;
                 }
 
-                .back-link:hover {
-                    color: var(--accent);
+                .back-button:hover,
+                a.back-button:hover {
+                    background: rgba(0, 0, 0, 0.08);
+                    transform: translateX(-2px);
+                }
+
+                .back-button .material-icons-round {
+                    font-size: 20px;
                 }
 
                 .settings-nav h1 {
-                    font-size: 20px;
-                    font-weight: 600;
-                }
-
-                .settings-message {
-                    display: flex;
-                    align-items: center;
-                    gap: 10px;
-                    padding: 14px 24px;
-                    margin: 16px 24px;
-                    border-radius: 12px;
-                    font-size: 14px;
-                }
-
-                .settings-message.success {
-                    background: var(--success-bg);
-                    color: var(--success);
-                }
-
-                .settings-message.error {
-                    background: var(--error-bg);
-                    color: var(--error);
+                    font-size: 24px;
+                    font-weight: 700;
+                    letter-spacing: -0.5px;
                 }
 
                 .settings-layout {
                     display: flex;
-                    max-width: 1200px;
+                    max-width: 1300px;
                     margin: 0 auto;
-                    padding: 24px;
-                    gap: 32px;
+                    padding: 32px;
+                    gap: 48px;
                 }
 
                 .settings-sidebar {
-                    width: 240px;
+                    width: 280px;
                     flex-shrink: 0;
+                    display: flex;
+                    flex-direction: column;
+                    gap: 8px;
+                }
+
+                .plan-card {
+                    background: linear-gradient(135deg, #f8f9ff 0%, #f0f2ff 100%);
+                    border-radius: 20px;
+                    padding: 24px;
+                    border: 1px solid rgba(102, 126, 234, 0.15);
+                    margin-bottom: 16px;
+                    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.02);
+                }
+
+                .plan-header {
+                    display: flex;
+                    align-items: center;
+                    gap: 16px;
+                    margin-bottom: 20px;
+                }
+
+                .plan-icon {
+                    width: 48px;
+                    height: 48px;
+                    background: white;
+                    border-radius: 14px;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    box-shadow: 0 8px 20px rgba(102, 126, 234, 0.12);
+                }
+
+                .plan-icon .material-icons-round {
+                    font-size: 28px;
+                    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                    -webkit-background-clip: text;
+                    -webkit-text-fill-color: transparent;
+                }
+
+                .plan-meta {
+                    display: flex;
+                    flex-direction: column;
+                    gap: 2px;
+                }
+
+                .plan-label {
+                    font-size: 10px;
+                    font-weight: 800;
+                    color: #7c7c8c;
+                    letter-spacing: 1px;
+                }
+
+                .plan-name {
+                    font-size: 18px;
+                    font-weight: 700;
+                    color: #1d1d1f;
+                }
+
+                .plan-button {
+                    display: flex;
+                    align-items: center;
+                    justify-content: space-between;
+                    padding: 12px 18px;
+                    background: white;
+                    border-radius: 14px;
+                    color: #4a4a4e;
+                    text-decoration: none !important;
+                    font-size: 13px;
+                    font-weight: 600;
+                    transition: all 0.2s ease;
+                    border: 1px solid rgba(0, 0, 0, 0.05);
+                    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+                }
+
+                .plan-button:hover,
+                a.plan-button:hover {
+                    background: #fdfdff;
+                    border-color: rgba(102, 126, 234, 0.2);
+                    color: var(--accent);
+                    box-shadow: 0 4px 12px rgba(102, 126, 234, 0.1);
+                }
+
+                .sidebar-divider {
+                    height: 1px;
+                    background: var(--border-light);
+                    margin: 8px 12px 16px;
+                    opacity: 0.6;
                 }
 
                 .sidebar-item {
@@ -478,30 +620,36 @@ export default function SettingsPage() {
                     align-items: center;
                     gap: 12px;
                     width: 100%;
-                    padding: 14px 16px;
+                    padding: 12px 16px;
                     border: none;
-                    background: none;
+                    background: transparent;
                     border-radius: 12px;
-                    font-size: 14px;
+                    font-size: 15px;
                     font-weight: 500;
                     color: var(--text-secondary);
                     cursor: pointer;
-                    transition: all 0.2s;
+                    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
                     text-align: left;
                 }
 
                 .sidebar-item:hover {
-                    background: var(--background);
+                    background: rgba(0, 0, 0, 0.03);
                     color: var(--text-primary);
                 }
 
                 .sidebar-item.active {
-                    background: var(--accent);
-                    color: white;
+                    background: var(--accent-light);
+                    color: var(--accent);
+                    font-weight: 600;
                 }
 
                 .sidebar-item .material-icons-round {
-                    font-size: 20px;
+                    font-size: 22px;
+                    opacity: 0.8;
+                }
+
+                .sidebar-item.active .material-icons-round {
+                    opacity: 1;
                 }
 
                 .settings-content {
@@ -703,9 +851,19 @@ export default function SettingsPage() {
                     .settings-sidebar {
                         width: 100%;
                         display: flex;
+                        flex-wrap: wrap;
                         gap: 8px;
-                        overflow-x: auto;
                         padding-bottom: 8px;
+                    }
+
+                    .plan-card {
+                        width: 100%;
+                        flex-shrink: 0;
+                        margin-bottom: 4px;
+                    }
+
+                    .sidebar-divider {
+                        display: none;
                     }
 
                     .sidebar-item {

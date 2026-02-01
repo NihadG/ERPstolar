@@ -1159,8 +1159,8 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
 
     return (
         <div className="tab-content active" id="offers-content">
-            <div className="content-header">
-                <div className="search-box">
+            <div className="content-header" style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap', padding: '16px 24px' }}>
+                <div className="glass-search">
                     <span className="material-icons-round">search</span>
                     <input
                         type="text"
@@ -1170,7 +1170,7 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
                     />
                 </div>
                 <select
-                    className="filter-select"
+                    className="glass-select-standalone"
                     value={statusFilter}
                     onChange={(e) => setStatusFilter(e.target.value)}
                 >
@@ -1179,10 +1179,12 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
                         <option key={status} value={status}>{status}</option>
                     ))}
                 </select>
-                <button className="btn btn-primary" onClick={openCreateModal}>
-                    <span className="material-icons-round">add</span>
-                    Nova Ponuda
-                </button>
+                <div style={{ marginLeft: 'auto' }}>
+                    <button className="glass-btn glass-btn-primary" onClick={openCreateModal}>
+                        <span className="material-icons-round">add</span>
+                        Nova Ponuda
+                    </button>
+                </div>
             </div>
 
             <div className="offers-list">
@@ -1283,7 +1285,7 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
                             setCurrentOffer(null);
                         }}>Otkaži</button>
                         <button
-                            className="btn btn-primary"
+                            className="glass-btn glass-btn-primary"
                             onClick={handleSaveOffer}
                             disabled={!selectedProjectId || offerProducts.filter(p => p.included).length === 0}
                         >

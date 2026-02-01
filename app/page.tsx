@@ -18,6 +18,8 @@ import ProductionTab from '@/components/tabs/ProductionTab';
 import MaterialsTab from '@/components/tabs/MaterialsTab';
 import WorkersTab from '@/components/tabs/WorkersTab';
 import SuppliersTab from '@/components/tabs/SuppliersTab';
+import AttendanceTab from '@/components/tabs/AttendanceTab';
+import TasksTab from '@/components/tabs/TasksTab';
 import Toast from '@/components/ui/Toast';
 import LoadingOverlay from '@/components/ui/LoadingOverlay';
 import ModuleGuard from '@/components/auth/ModuleGuard';
@@ -40,6 +42,23 @@ export default function Home() {
     // Command Palette state
     const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
 
+    // Tasks filter state for cross-tab navigation
+    const [tasksProjectFilter, setTasksProjectFilter] = useState<string | null>(null);
+
+    // Handler to navigate to tasks filtered by project
+    const handleNavigateToTasks = (projectId: string) => {
+        setTasksProjectFilter(projectId);
+        setActiveTab('tasks');
+    };
+
+    // Clear filter when manually switching to tasks tab
+    const handleTabChange = (tab: string) => {
+        if (tab !== 'tasks') {
+            setTasksProjectFilter(null);
+        }
+        setActiveTab(tab);
+    };
+
 
 
     const [appState, setAppState] = useState<AppState>({
@@ -54,6 +73,8 @@ export default function Home() {
         productMaterials: [],
         glassItems: [],
         aluDoorItems: [],
+        workLogs: [],
+        tasks: [],
     });
 
     // Refs for click-outside detection
@@ -228,8 +249,11 @@ export default function Home() {
                             projects={appState.projects}
                             materials={appState.materials}
                             workOrders={appState.workOrders}
+                            offers={appState.offers}
+                            workLogs={appState.workLogs}
                             onRefresh={loadData}
                             showToast={showToast}
+                            onNavigateToTasks={handleNavigateToTasks}
                         />
                     )}
 
@@ -239,6 +263,8 @@ export default function Home() {
                             workOrders={appState.workOrders}
                             orders={appState.orders}
                             suppliers={appState.suppliers}
+                            offers={appState.offers}
+                            workLogs={appState.workLogs}
                             showToast={showToast}
                             onCreateOrder={handleCreateOrderFromOverview}
                             onRefresh={loadData}
@@ -302,6 +328,29 @@ export default function Home() {
                             suppliers={appState.suppliers}
                             onRefresh={loadData}
                             showToast={showToast}
+                        />
+                    )}
+
+                    {activeTab === 'attendance' && (
+                        <AttendanceTab
+                            workers={appState.workers}
+                            onRefresh={loadData}
+                            showToast={showToast}
+                        />
+                    )}
+
+                    {activeTab === 'tasks' && (
+                        <TasksTab
+                            tasks={appState.tasks}
+                            projects={appState.projects}
+                            workers={appState.workers}
+                            materials={appState.materials}
+                            workOrders={appState.workOrders}
+                            orders={appState.orders}
+                            onRefresh={loadData}
+                            showToast={showToast}
+                            projectFilter={tasksProjectFilter}
+                            onClearFilter={() => setTasksProjectFilter(null)}
                         />
                     )}
                 </main>

@@ -1,11 +1,12 @@
 'use client';
 
 import { useState, useEffect, ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 
 interface ModalProps {
     isOpen: boolean;
     onClose: () => void;
-    title: string;
+    title: ReactNode;
     children: ReactNode;
     footer?: ReactNode;
     size?: 'default' | 'large' | 'xl' | 'fullscreen';
@@ -13,6 +14,32 @@ interface ModalProps {
 }
 
 export default function Modal({ isOpen, onClose, title, children, footer, size = 'default', zIndex }: ModalProps) {
+    const [shouldRender, setShouldRender] = useState(isOpen);
+    const [animationClass, setAnimationClass] = useState('');
+    const [mounted, setMounted] = useState(false);
+
+    useEffect(() => {
+        setMounted(true);
+        return () => setMounted(false);
+    }, []);
+
+    useEffect(() => {
+        if (isOpen) {
+            setShouldRender(true);
+            // Small delay to trigger animation
+            requestAnimationFrame(() => {
+                requestAnimationFrame(() => {
+                    setAnimationClass('active');
+                });
+            });
+        } else {
+            setAnimationClass('');
+            // Wait for animation to complete before unmounting
+            const timer = setTimeout(() => setShouldRender(false), 200);
+            return () => clearTimeout(timer);
+        }
+    }, [isOpen]);
+
     useEffect(() => {
         const handleEscape = (e: KeyboardEvent) => {
             if (e.key === 'Escape') onClose();
@@ -29,6 +56,8 @@ export default function Modal({ isOpen, onClose, title, children, footer, size =
         };
     }, [isOpen, onClose]);
 
+    if (!mounted || !shouldRender) return null;
+
     const sizeClass = size === 'large' ? 'modal-large' :
         size === 'xl' ? 'modal-xl' :
             size === 'fullscreen' ? 'modal-fullscreen' : '';
@@ -36,15 +65,15 @@ export default function Modal({ isOpen, onClose, title, children, footer, size =
     const overlayStyle = zIndex ? { zIndex: zIndex } : {};
     const modalStyle = zIndex ? { zIndex: zIndex + 1 } : {};
 
-    return (
+    return createPortal(
         <>
             <div
-                className={`modal-overlay ${isOpen ? 'active' : ''}`}
+                className={`modal-overlay ${animationClass}`}
                 onClick={onClose}
                 style={overlayStyle}
             />
             <div
-                className={`modal ${sizeClass} ${isOpen ? 'active' : ''}`}
+                className={`modal ${sizeClass} ${animationClass}`}
                 style={modalStyle}
             >
                 {title && (
@@ -64,6 +93,8 @@ export default function Modal({ isOpen, onClose, title, children, footer, size =
                     </div>
                 )}
             </div>
-        </>
+        </>,
+        document.body
     );
 }
+
