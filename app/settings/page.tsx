@@ -55,7 +55,7 @@ const DEFAULT_SETTINGS: AppSettings = {
 
 export default function SettingsPage() {
     const router = useRouter();
-    const { user, loading: authLoading, firebaseUser, organization } = useAuth();
+    const { user, loading: authLoading, firebaseUser, organization, signOut } = useAuth();
     const fileInputRef = useRef<HTMLInputElement>(null);
 
     const currentPlan = organization?.Subscription_Plan || 'free';
@@ -244,6 +244,16 @@ export default function SettingsPage() {
                     >
                         <span className="material-icons-round">description</span>
                         Dokumenti
+                    </button>
+
+                    <div className="sidebar-divider"></div>
+
+                    <button
+                        className="sidebar-item danger"
+                        onClick={() => signOut()}
+                    >
+                        <span className="material-icons-round">logout</span>
+                        Odjavi se
                     </button>
                 </aside>
 
@@ -641,6 +651,16 @@ export default function SettingsPage() {
                     background: var(--accent-light);
                     color: var(--accent);
                     font-weight: 600;
+                }
+
+                .sidebar-item.danger {
+                    color: var(--error);
+                    margin-top: auto;
+                }
+
+                .sidebar-item.danger:hover {
+                    background: var(--error-bg);
+                    color: var(--error);
                 }
 
                 .sidebar-item .material-icons-round {
