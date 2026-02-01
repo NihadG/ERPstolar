@@ -12,6 +12,7 @@ import {
     getWorkOrders,
     getAllData,
 } from '@/lib/database';
+import { useAuth } from './AuthContext';
 
 // ============================================
 // TYPES
@@ -22,6 +23,7 @@ interface DataContextType {
     appState: AppState;
     loading: boolean;
     loadedTabs: Set<string>;
+    organizationId: string | null; // Expose for components that need direct database calls
 
     // Actions
     loadTabData: (tabName: string) => Promise<void>;
@@ -64,6 +66,9 @@ interface DataProviderProps {
 }
 
 export function DataProvider({ children }: DataProviderProps) {
+    const { organization } = useAuth();
+    const organizationId = organization?.Organization_ID || null;
+
     const [appState, setAppState] = useState<AppState>(initialAppState);
     const [loading, setLoading] = useState(false);
     const [loadedTabs, setLoadedTabs] = useState<Set<string>>(new Set());
@@ -83,8 +88,8 @@ export function DataProvider({ children }: DataProviderProps) {
 
     // Load data for a specific tab (lazy loading)
     const loadTabData = useCallback(async (tabName: string) => {
-        // Skip if already loaded
-        if (loadedTabs.has(tabName)) {
+        // Skip if already loaded or no organizationId
+        if (loadedTabs.has(tabName) || !organizationId) {
             return;
         }
 
@@ -94,7 +99,7 @@ export function DataProvider({ children }: DataProviderProps) {
             // For now, load all data on first tab load to ensure consistency
             // In future, we can optimize to load only required collections
             if (loadedTabs.size === 0) {
-                const allData = await getAllData();
+                const allData = await getAllData(organizationId);
                 setAppState(allData);
                 // Mark all tabs as loaded since we loaded all data
                 setLoadedTabs(new Set(['projects', 'overview', 'offers', 'orders', 'production', 'materials', 'workers', 'suppliers', 'tasks']));
@@ -107,13 +112,15 @@ export function DataProvider({ children }: DataProviderProps) {
         } finally {
             setLoading(false);
         }
-    }, [loadedTabs]);
+    }, [loadedTabs, organizationId]);
 
     // Load all data (for initial load or full refresh)
     const loadAllData = useCallback(async () => {
+        if (!organizationId) return;
+
         setLoading(true);
         try {
-            const allData = await getAllData();
+            const allData = await getAllData(organizationId);
             setAppState(allData);
             setLoadedTabs(new Set(['projects', 'overview', 'offers', 'orders', 'production', 'materials', 'workers', 'suppliers', 'tasks']));
         } catch (error) {
@@ -121,7 +128,7 @@ export function DataProvider({ children }: DataProviderProps) {
         } finally {
             setLoading(false);
         }
-    }, []);
+    }, [organizationId]);
 
     // Refresh all data (invalidate cache and reload)
     const refreshData = useCallback(async () => {
@@ -152,6 +159,7 @@ export function DataProvider({ children }: DataProviderProps) {
         appState,
         loading,
         loadedTabs,
+        organizationId, // Expose organizationId for components
         loadTabData,
         loadAllData,
         refreshData,
@@ -193,3 +201,4 @@ export function useTabData(tabName: string) {
 
     return { loading, isLoaded: isTabLoaded(tabName) };
 }
+

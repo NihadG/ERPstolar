@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import type { Supplier } from '@/lib/types';
 import { saveSupplier, deleteSupplier } from '@/lib/database';
+import { useData } from '@/context/DataContext';
 import Modal from '@/components/ui/Modal';
 
 interface SuppliersTabProps {
@@ -12,6 +13,7 @@ interface SuppliersTabProps {
 }
 
 export default function SuppliersTab({ suppliers, onRefresh, showToast }: SuppliersTabProps) {
+    const { organizationId } = useData();
     const [supplierModal, setSupplierModal] = useState(false);
     const [editingSupplier, setEditingSupplier] = useState<Partial<Supplier> | null>(null);
 
@@ -25,8 +27,12 @@ export default function SuppliersTab({ suppliers, onRefresh, showToast }: Suppli
             showToast('Unesite naziv dobavljača', 'error');
             return;
         }
+        if (!organizationId) {
+            showToast('Organization ID is required', 'error');
+            return;
+        }
 
-        const result = await saveSupplier(editingSupplier);
+        const result = await saveSupplier(editingSupplier, organizationId);
         if (result.success) {
             showToast(result.message, 'success');
             setSupplierModal(false);
@@ -38,8 +44,12 @@ export default function SuppliersTab({ suppliers, onRefresh, showToast }: Suppli
 
     async function handleDeleteSupplier(supplierId: string) {
         if (!confirm('Jeste li sigurni da želite obrisati ovog dobavljača?')) return;
+        if (!organizationId) {
+            showToast('Organization ID is required', 'error');
+            return;
+        }
 
-        const result = await deleteSupplier(supplierId);
+        const result = await deleteSupplier(supplierId, organizationId);
         if (result.success) {
             showToast(result.message, 'success');
             onRefresh();

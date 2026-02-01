@@ -4,6 +4,7 @@
 
 export interface Project {
     Project_ID: string;
+    Organization_ID: string;  // Multi-tenancy: isolate data by organization
     Client_Name: string;
     Client_Phone: string;
     Client_Email: string;
@@ -18,6 +19,7 @@ export interface Project {
 
 export interface Product {
     Product_ID: string;
+    Organization_ID: string;  // Multi-tenancy: isolate data by organization
     Project_ID: string;
     Name: string;
     Height: number;
@@ -33,6 +35,7 @@ export interface Product {
 
 export interface Material {
     Material_ID: string;
+    Organization_ID: string;  // Multi-tenancy: isolate data by organization
     Name: string;
     Category: string;
     Unit: string;
@@ -45,6 +48,7 @@ export interface Material {
 
 export interface ProductMaterial {
     ID: string;
+    Organization_ID: string;  // Multi-tenancy: isolate data by organization
     Product_ID: string;
     Material_ID: string;
     Material_Name: string;
@@ -101,6 +105,7 @@ export interface AluDoorItem {
 
 export interface Offer {
     Offer_ID: string;
+    Organization_ID: string;  // Multi-tenancy: isolate data by organization
     Project_ID: string;
     Offer_Number: string;
     Created_Date: string;
@@ -155,6 +160,7 @@ export interface OfferExtra {
 
 export interface Order {
     Order_ID: string;
+    Organization_ID: string;  // Multi-tenancy: isolate data by organization
     Order_Number: string;
     Supplier_ID: string;
     Supplier_Name: string;
@@ -185,16 +191,19 @@ export interface OrderItem {
 
 export interface Supplier {
     Supplier_ID: string;
+    Organization_ID: string;  // Multi-tenancy: isolate data by organization
     Name: string;
     Contact_Person: string;
     Phone: string;
     Email: string;
     Address: string;
     Categories: string;
+    JIB?: string;
 }
 
 export interface Worker {
     Worker_ID: string;
+    Organization_ID: string;  // Multi-tenancy: isolate data by organization
     Name: string;
     Role: string;
     Worker_Type: 'Glavni' | 'Pomoćnik';
@@ -225,6 +234,7 @@ export interface ChecklistItem {
 
 export interface Task {
     Task_ID: string;
+    Organization_ID: string;  // Multi-tenancy: isolate data by organization
     Title: string;
     Description: string;
     Status: 'pending' | 'in_progress' | 'completed' | 'cancelled';
@@ -253,6 +263,7 @@ export interface Task {
 
 export interface WorkOrder {
     Work_Order_ID: string;
+    Organization_ID: string;  // Multi-tenancy: isolate data by organization
     Work_Order_Number: string;
     Created_Date: string;
     Due_Date: string;
@@ -361,6 +372,7 @@ export interface WorkOrderItem {
 
 export interface WorkerAttendance {
     Attendance_ID: string;
+    Organization_ID: string;  // Multi-tenancy: isolate data by organization
     Worker_ID: string;
     Worker_Name: string;
     Date: string;                        // YYYY-MM-DD format
@@ -386,6 +398,7 @@ export interface WorkerAttendance {
 
 export interface WorkLog {
     WorkLog_ID: string;
+    Organization_ID: string;  // Multi-tenancy: isolate data by organization
     Date: string;                    // YYYY-MM-DD format
 
     // Radnik
@@ -420,7 +433,7 @@ export const PRODUCT_STATUSES = ['Na čekanju', 'Materijali naručeni', 'Materij
 export const MATERIAL_STATUSES = ['Nije naručeno', 'Na stanju', 'Naručeno', 'Primljeno', 'U upotrebi', 'Instalirano'];
 export const OFFER_STATUSES = ['Nacrt', 'Poslano', 'Prihvaćeno', 'Odbijeno', 'Isteklo', 'Revidirano'];
 export const ORDER_STATUSES = ['Nacrt', 'Poslano', 'Potvrđeno', 'Isporučeno', 'Primljeno', 'Djelomično'];
-export const MATERIAL_CATEGORIES = ['Ploča', 'Kanttraka', 'Okovi', 'Vijci', 'Šarke', 'Ladičari', 'Ručke', 'LED', 'Staklo', 'Alu vrata', 'Ostalo'];
+export const MATERIAL_CATEGORIES = ['Ploče i trake', 'Okovi', 'Staklo', 'Alu vrata', 'Ostalo'];
 export const WORKER_ROLES = ['Rezač', 'Kantiranje', 'Bušenje', 'Montaža', 'Instalacija', 'Opći'];
 export const WORKER_TYPES = ['Glavni', 'Pomoćnik'] as const;
 export const WORK_ORDER_STATUSES = ['Na čekanju', 'U toku', 'Završeno', 'Otkazano'];

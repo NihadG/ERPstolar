@@ -24,6 +24,7 @@ import {
     Users
 } from 'lucide-react';
 import Modal from '@/components/ui/Modal';
+import { useData } from '@/context/DataContext';
 
 interface AttendanceTabProps {
     workers: Worker[];
@@ -32,6 +33,7 @@ interface AttendanceTabProps {
 }
 
 export default function AttendanceTab({ workers, onRefresh, showToast }: AttendanceTabProps) {
+    const { organizationId } = useData();
     // State for infinity scroll
     const [loadedMonths, setLoadedMonths] = useState<{ year: number; month: number }[]>([
         { year: new Date().getFullYear(), month: new Date().getMonth() }, // Previous month
@@ -83,7 +85,7 @@ export default function AttendanceTab({ workers, onRefresh, showToast }: Attenda
 
         try {
             setLoading(true);
-            const data = await getAllAttendanceByMonth(year.toString(), month.toString());
+            const data = await getAllAttendanceByMonth(year.toString(), month.toString(), organizationId || undefined);
             setAttendanceCache(prev => ({ ...prev, [key]: data }));
         } catch (error) {
             console.error('Error loading month:', year, month, error);
@@ -245,7 +247,8 @@ export default function AttendanceTab({ workers, onRefresh, showToast }: Attenda
                 Date: selectedCell.date,
                 Status: finalStatus as any,
                 Notes: finalNotes,
-                Created_Date: new Date().toISOString()
+                Created_Date: new Date().toISOString(),
+                Organization_ID: organizationId || ''
             };
 
             // Remove old, add new
@@ -372,7 +375,8 @@ export default function AttendanceTab({ workers, onRefresh, showToast }: Attenda
                 Date: bulkEditDate.dateStr,
                 Status: bulkStatuses[worker.Worker_ID] as any,
                 Notes: null,
-                Created_Date: new Date().toISOString()
+                Created_Date: new Date().toISOString(),
+                Organization_ID: organizationId || ''
             }));
 
             // Remove old for this day, add new

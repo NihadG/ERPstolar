@@ -4,6 +4,7 @@ import { useState, useMemo, useEffect } from 'react';
 import type { WorkOrder, Project, Worker } from '@/lib/types';
 import { createWorkOrder, deleteWorkOrder, startWorkOrder, getWorkOrder, updateWorkOrder } from '@/lib/database';
 import { repairAllProductStatuses } from '@/lib/attendance';
+import { useData } from '@/context/DataContext';
 import Modal from '@/components/ui/Modal';
 import WorkOrderExpandedDetail from '@/components/ui/WorkOrderExpandedDetail';
 import WorkOrderPrintTemplate from '@/components/ui/WorkOrderPrintTemplate';
@@ -32,6 +33,7 @@ interface ProductSelection {
 }
 
 export default function ProductionTab({ workOrders, projects, workers, onRefresh, showToast }: ProductionTabProps) {
+    const { organizationId } = useData();
     const [searchTerm, setSearchTerm] = useState('');
     const [statusFilter, setStatusFilter] = useState('');
     const [projectSearch, setProjectSearch] = useState('');
@@ -509,7 +511,7 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
             Profit: profit > 0 ? profit : undefined,
             Profit_Margin: profitMargin > 0 ? profitMargin : undefined,
             items: items as any,
-        });
+        }, organizationId || '');
 
         if (result.success) {
             showToast(`Radni nalog ${result.data?.Work_Order_Number} kreiran`, 'success');
@@ -522,7 +524,7 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
 
     // View/Edit/Delete/Print logic
     async function handleUpdateWorkOrder(workOrderId: string, updates: any) {
-        const res = await updateWorkOrder(workOrderId, updates);
+        const res = await updateWorkOrder(workOrderId, updates, organizationId || '');
         if (res.success) {
             showToast(res.message, 'success');
             onRefresh();
@@ -538,7 +540,7 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
 
     async function handleDeleteWorkOrder(workOrderId: string) {
         if (!confirm('Obriši radni nalog?')) return;
-        const res = await deleteWorkOrder(workOrderId);
+        const res = await deleteWorkOrder(workOrderId, organizationId || '');
         if (res.success) { showToast(res.message, 'success'); onRefresh(); } else showToast(res.message, 'error');
     }
 
@@ -608,7 +610,7 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
         }
 
         // All validations passed, start the work order
-        const res = await startWorkOrder(workOrderId);
+        const res = await startWorkOrder(workOrderId, organizationId || '');
         if (res.success) {
             showToast('Nalog pokrenut', 'success');
             onRefresh();

@@ -25,6 +25,7 @@ import LoadingOverlay from '@/components/ui/LoadingOverlay';
 import ModuleGuard from '@/components/auth/ModuleGuard';
 import Sidebar from '@/components/Sidebar';
 import CommandPalette, { type CommandPaletteItem } from '@/components/ui/CommandPalette';
+import AIImportWizard from '@/components/AIImportWizard';
 
 export const dynamic = 'force-dynamic';
 
@@ -41,6 +42,9 @@ export default function Home() {
 
     // Command Palette state
     const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
+
+    // AI Import Wizard state
+    const [aiImportOpen, setAiImportOpen] = useState(false);
 
     // Tasks filter state for cross-tab navigation
     const [tasksProjectFilter, setTasksProjectFilter] = useState<string | null>(null);
@@ -136,15 +140,20 @@ export default function Home() {
     }, [authLoading, firebaseUser, router]);
 
     useEffect(() => {
-        if (firebaseUser) {
+        if (firebaseUser && organization?.Organization_ID) {
             loadData();
         }
-    }, [firebaseUser]);
+    }, [firebaseUser, organization]);
 
     async function loadData() {
+        if (!organization?.Organization_ID) {
+            // Wait for organization to be loaded
+            return;
+        }
+
         setLoading(true);
         try {
-            const data = await getAllData();
+            const data = await getAllData(organization.Organization_ID);
             setAppState(data);
         } catch (error) {
             console.error('Error loading data:', error);
@@ -217,6 +226,7 @@ export default function Home() {
                 isCollapsed={sidebarCollapsed}
                 onToggleCollapse={() => setSidebarCollapsed(!sidebarCollapsed)}
                 onOpenSearch={() => setCommandPaletteOpen(true)}
+                onOpenAIImport={() => setAiImportOpen(true)}
             />
 
             {/* Main Content Area */}
@@ -445,6 +455,7 @@ export default function Home() {
                     { id: 'action-overview', type: 'action', title: 'Idi na Pregled', action: () => setActiveTab('overview') },
                     { id: 'action-offers', type: 'action', title: 'Idi na Ponude', action: () => setActiveTab('offers') },
                     { id: 'action-production', type: 'action', title: 'Idi na Proizvodnju', action: () => setActiveTab('production') },
+                    { id: 'action-ai-import', type: 'action', title: '✨ AI Import Wizard', action: () => setAiImportOpen(true) },
                     // Projects
                     ...appState.projects.map(p => ({
                         id: `project-${p.Project_ID}`,
@@ -466,6 +477,19 @@ export default function Home() {
                     if (item.action) item.action();
                 }}
             />
+
+            {/* AI Import Wizard */}
+            {organization?.Organization_ID && (
+                <AIImportWizard
+                    isOpen={aiImportOpen}
+                    onClose={() => setAiImportOpen(false)}
+                    organizationId={organization.Organization_ID}
+                    onImportComplete={() => {
+                        loadData();
+                        showToast('Import završen uspješno!', 'success');
+                    }}
+                />
+            )}
         </div>
     );
 }

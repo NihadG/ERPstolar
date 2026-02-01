@@ -99,11 +99,33 @@ export function generateOrderNumber(): string {
 }
 
 // ============================================
-// GET ALL DATA (Optimized single fetch)
+// GET ALL DATA (Optimized single fetch with multi-tenancy)
 // ============================================
 
-export async function getAllData(): Promise<AppState> {
+export async function getAllData(organizationId: string): Promise<AppState> {
+    if (!organizationId) {
+        console.error('getAllData: organizationId is required for multi-tenancy');
+        return {
+            projects: [],
+            products: [],
+            materials: [],
+            suppliers: [],
+            workers: [],
+            offers: [],
+            orders: [],
+            workOrders: [],
+            productMaterials: [],
+            glassItems: [],
+            aluDoorItems: [],
+            workLogs: [],
+            tasks: [],
+        };
+    }
+
     try {
+        // All queries filter by Organization_ID for multi-tenancy security
+        const orgFilter = where('Organization_ID', '==', organizationId);
+
         const [
             projectsSnap,
             productsSnap,
@@ -123,23 +145,23 @@ export async function getAllData(): Promise<AppState> {
             workLogsSnap,
             tasksSnap,
         ] = await Promise.all([
-            getDocs(collection(db, COLLECTIONS.PROJECTS)),
-            getDocs(collection(db, COLLECTIONS.PRODUCTS)),
-            getDocs(collection(db, COLLECTIONS.MATERIALS_DB)),
-            getDocs(collection(db, COLLECTIONS.SUPPLIERS)),
-            getDocs(collection(db, COLLECTIONS.WORKERS)),
-            getDocs(collection(db, COLLECTIONS.OFFERS)),
-            getDocs(collection(db, COLLECTIONS.ORDERS)),
-            getDocs(collection(db, COLLECTIONS.PRODUCT_MATERIALS)),
-            getDocs(collection(db, COLLECTIONS.ORDER_ITEMS)),
-            getDocs(collection(db, COLLECTIONS.GLASS_ITEMS)),
-            getDocs(collection(db, COLLECTIONS.ALU_DOOR_ITEMS)),
-            getDocs(collection(db, COLLECTIONS.OFFER_PRODUCTS)),
-            getDocs(collection(db, COLLECTIONS.OFFER_EXTRAS)),
-            getDocs(collection(db, COLLECTIONS.WORK_ORDERS)),
-            getDocs(collection(db, COLLECTIONS.WORK_ORDER_ITEMS)),
-            getDocs(collection(db, COLLECTIONS.WORK_LOGS)),
-            getDocs(collection(db, COLLECTIONS.TASKS)),
+            getDocs(query(collection(db, COLLECTIONS.PROJECTS), orgFilter)),
+            getDocs(query(collection(db, COLLECTIONS.PRODUCTS), orgFilter)),
+            getDocs(query(collection(db, COLLECTIONS.MATERIALS_DB), orgFilter)),
+            getDocs(query(collection(db, COLLECTIONS.SUPPLIERS), orgFilter)),
+            getDocs(query(collection(db, COLLECTIONS.WORKERS), orgFilter)),
+            getDocs(query(collection(db, COLLECTIONS.OFFERS), orgFilter)),
+            getDocs(query(collection(db, COLLECTIONS.ORDERS), orgFilter)),
+            getDocs(query(collection(db, COLLECTIONS.PRODUCT_MATERIALS), orgFilter)),
+            getDocs(query(collection(db, COLLECTIONS.ORDER_ITEMS), orgFilter)),
+            getDocs(query(collection(db, COLLECTIONS.GLASS_ITEMS), orgFilter)),
+            getDocs(query(collection(db, COLLECTIONS.ALU_DOOR_ITEMS), orgFilter)),
+            getDocs(query(collection(db, COLLECTIONS.OFFER_PRODUCTS), orgFilter)),
+            getDocs(query(collection(db, COLLECTIONS.OFFER_EXTRAS), orgFilter)),
+            getDocs(query(collection(db, COLLECTIONS.WORK_ORDERS), orgFilter)),
+            getDocs(query(collection(db, COLLECTIONS.WORK_ORDER_ITEMS), orgFilter)),
+            getDocs(query(collection(db, COLLECTIONS.WORK_LOGS), orgFilter)),
+            getDocs(query(collection(db, COLLECTIONS.TASKS), orgFilter)),
         ]);
 
         const projects = projectsSnap.docs.map(doc => ({ ...doc.data() } as Project));
@@ -317,38 +339,59 @@ export async function getAllData(): Promise<AppState> {
 }
 
 // ============================================
-// PROJECTS CRUD
+// PROJECTS CRUD (Multi-tenancy enabled)
 // ============================================
 
-export async function getProjects(): Promise<Project[]> {
-    const snapshot = await getDocs(collection(db, COLLECTIONS.PROJECTS));
+export async function getProjects(organizationId: string): Promise<Project[]> {
+    if (!organizationId) return [];
+    const q = query(collection(db, COLLECTIONS.PROJECTS), where('Organization_ID', '==', organizationId));
+    const snapshot = await getDocs(q);
     return snapshot.docs.map(doc => ({ ...doc.data() } as Project));
 }
 
-export async function getProject(projectId: string): Promise<Project | null> {
-    const q = query(collection(db, COLLECTIONS.PROJECTS), where('Project_ID', '==', projectId));
+export async function getProject(projectId: string, organizationId: string): Promise<Project | null> {
+    if (!organizationId) return null;
+    const q = query(
+        collection(db, COLLECTIONS.PROJECTS),
+        where('Project_ID', '==', projectId),
+        where('Organization_ID', '==', organizationId)
+    );
     const snapshot = await getDocs(q);
     if (snapshot.empty) return null;
 
     const project = snapshot.docs[0].data() as Project;
-    project.products = await getProductsByProject(projectId);
+    project.products = await getProductsByProject(projectId, organizationId);
     return project;
 }
 
-export async function saveProject(data: Partial<Project>): Promise<{ success: boolean; data?: { Project_ID: string }; message: string }> {
+export async function saveProject(data: Partial<Project>, organizationId: string): Promise<{ success: boolean; data?: { Project_ID: string }; message: string }> {
+    if (!organizationId) {
+        return { success: false, message: 'Organization ID is required' };
+    }
+
     try {
         const isNew = !data.Project_ID;
 
         if (isNew) {
             data.Project_ID = generateUUID();
+            data.Organization_ID = organizationId;  // Set organization for new projects
             data.Created_Date = new Date().toISOString();
             data.Status = data.Status || 'Nacrt';
             await addDoc(collection(db, COLLECTIONS.PROJECTS), data);
         } else {
-            const q = query(collection(db, COLLECTIONS.PROJECTS), where('Project_ID', '==', data.Project_ID));
+            // Verify project belongs to this organization before updating
+            const q = query(
+                collection(db, COLLECTIONS.PROJECTS),
+                where('Project_ID', '==', data.Project_ID),
+                where('Organization_ID', '==', organizationId)
+            );
             const snapshot = await getDocs(q);
             if (!snapshot.empty) {
-                await updateDoc(snapshot.docs[0].ref, data as Record<string, unknown>);
+                // Don't allow changing Organization_ID
+                const { Organization_ID, ...updateData } = data;
+                await updateDoc(snapshot.docs[0].ref, updateData as Record<string, unknown>);
+            } else {
+                return { success: false, message: 'Projekat nije pronađen ili nemate pristup' };
             }
         }
 
@@ -359,16 +402,24 @@ export async function saveProject(data: Partial<Project>): Promise<{ success: bo
     }
 }
 
-export async function deleteProject(projectId: string): Promise<{ success: boolean; message: string }> {
+export async function deleteProject(projectId: string, organizationId: string): Promise<{ success: boolean; message: string }> {
+    if (!organizationId) {
+        return { success: false, message: 'Organization ID is required' };
+    }
+
     try {
         // Delete all related products first
-        const products = await getProductsByProject(projectId);
+        const products = await getProductsByProject(projectId, organizationId);
         for (const product of products) {
-            await deleteProduct(product.Product_ID);
+            await deleteProduct(product.Product_ID, organizationId);
         }
 
-        // Delete project
-        const q = query(collection(db, COLLECTIONS.PROJECTS), where('Project_ID', '==', projectId));
+        // Delete project (with organization check)
+        const q = query(
+            collection(db, COLLECTIONS.PROJECTS),
+            where('Project_ID', '==', projectId),
+            where('Organization_ID', '==', organizationId)
+        );
         const snapshot = await getDocs(q);
         if (!snapshot.empty) {
             await deleteDoc(snapshot.docs[0].ref);
@@ -381,9 +432,17 @@ export async function deleteProject(projectId: string): Promise<{ success: boole
     }
 }
 
-export async function updateProjectStatus(projectId: string, status: string): Promise<{ success: boolean; message: string }> {
+export async function updateProjectStatus(projectId: string, status: string, organizationId: string): Promise<{ success: boolean; message: string }> {
+    if (!organizationId) {
+        return { success: false, message: 'Organization ID is required' };
+    }
+
     try {
-        const q = query(collection(db, COLLECTIONS.PROJECTS), where('Project_ID', '==', projectId));
+        const q = query(
+            collection(db, COLLECTIONS.PROJECTS),
+            where('Project_ID', '==', projectId),
+            where('Organization_ID', '==', organizationId)
+        );
         const snapshot = await getDocs(q);
         if (!snapshot.empty) {
             await updateDoc(snapshot.docs[0].ref, { Status: status });
@@ -396,46 +455,66 @@ export async function updateProjectStatus(projectId: string, status: string): Pr
 }
 
 // ============================================
-// PRODUCTS CRUD
+// PRODUCTS CRUD (Multi-tenancy enabled)
 // ============================================
 
-export async function getProductsByProject(projectId: string): Promise<Product[]> {
-    const q = query(collection(db, COLLECTIONS.PRODUCTS), where('Project_ID', '==', projectId));
+export async function getProductsByProject(projectId: string, organizationId: string): Promise<Product[]> {
+    if (!organizationId) return [];
+    const q = query(
+        collection(db, COLLECTIONS.PRODUCTS),
+        where('Project_ID', '==', projectId),
+        where('Organization_ID', '==', organizationId)
+    );
     const snapshot = await getDocs(q);
 
     const products = snapshot.docs.map(doc => ({ ...doc.data() } as Product));
 
     for (const product of products) {
-        product.materials = await getProductMaterials(product.Product_ID);
+        product.materials = await getProductMaterials(product.Product_ID, organizationId);
     }
 
     return products;
 }
 
-export async function getProduct(productId: string): Promise<Product | null> {
-    const q = query(collection(db, COLLECTIONS.PRODUCTS), where('Product_ID', '==', productId));
+export async function getProduct(productId: string, organizationId: string): Promise<Product | null> {
+    if (!organizationId) return null;
+    const q = query(
+        collection(db, COLLECTIONS.PRODUCTS),
+        where('Product_ID', '==', productId),
+        where('Organization_ID', '==', organizationId)
+    );
     const snapshot = await getDocs(q);
     if (snapshot.empty) return null;
 
     const product = snapshot.docs[0].data() as Product;
-    product.materials = await getProductMaterials(productId);
+    product.materials = await getProductMaterials(productId, organizationId);
     return product;
 }
 
-export async function saveProduct(data: Partial<Product>): Promise<{ success: boolean; data?: { Product_ID: string }; message: string }> {
+export async function saveProduct(data: Partial<Product>, organizationId: string): Promise<{ success: boolean; data?: { Product_ID: string }; message: string }> {
+    if (!organizationId) {
+        return { success: false, message: 'Organization ID is required' };
+    }
+
     try {
         const isNew = !data.Product_ID;
 
         if (isNew) {
             data.Product_ID = generateUUID();
+            data.Organization_ID = organizationId;
             data.Status = data.Status || 'Na čekanju';
             data.Material_Cost = 0;
             await addDoc(collection(db, COLLECTIONS.PRODUCTS), data);
         } else {
-            const q = query(collection(db, COLLECTIONS.PRODUCTS), where('Product_ID', '==', data.Product_ID));
+            const q = query(
+                collection(db, COLLECTIONS.PRODUCTS),
+                where('Product_ID', '==', data.Product_ID),
+                where('Organization_ID', '==', organizationId)
+            );
             const snapshot = await getDocs(q);
             if (!snapshot.empty) {
-                await updateDoc(snapshot.docs[0].ref, data as Record<string, unknown>);
+                const { Organization_ID, ...updateData } = data;
+                await updateDoc(snapshot.docs[0].ref, updateData as Record<string, unknown>);
             }
         }
 
@@ -446,13 +525,21 @@ export async function saveProduct(data: Partial<Product>): Promise<{ success: bo
     }
 }
 
-export async function deleteProduct(productId: string): Promise<{ success: boolean; message: string }> {
+export async function deleteProduct(productId: string, organizationId: string): Promise<{ success: boolean; message: string }> {
+    if (!organizationId) {
+        return { success: false, message: 'Organization ID is required' };
+    }
+
     try {
         // Delete all related materials first
-        await deleteProductMaterials(productId);
+        await deleteProductMaterials(productId, organizationId);
 
         // Delete product
-        const q = query(collection(db, COLLECTIONS.PRODUCTS), where('Product_ID', '==', productId));
+        const q = query(
+            collection(db, COLLECTIONS.PRODUCTS),
+            where('Product_ID', '==', productId),
+            where('Organization_ID', '==', organizationId)
+        );
         const snapshot = await getDocs(q);
         if (!snapshot.empty) {
             await deleteDoc(snapshot.docs[0].ref);
@@ -465,9 +552,17 @@ export async function deleteProduct(productId: string): Promise<{ success: boole
     }
 }
 
-export async function updateProductStatus(productId: string, status: string): Promise<{ success: boolean; message: string }> {
+export async function updateProductStatus(productId: string, status: string, organizationId: string): Promise<{ success: boolean; message: string }> {
+    if (!organizationId) {
+        return { success: false, message: 'Organization ID is required' };
+    }
+
     try {
-        const q = query(collection(db, COLLECTIONS.PRODUCTS), where('Product_ID', '==', productId));
+        const q = query(
+            collection(db, COLLECTIONS.PRODUCTS),
+            where('Product_ID', '==', productId),
+            where('Organization_ID', '==', organizationId)
+        );
         const snapshot = await getDocs(q);
         if (!snapshot.empty) {
             await updateDoc(snapshot.docs[0].ref, { Status: status });
@@ -479,30 +574,46 @@ export async function updateProductStatus(productId: string, status: string): Pr
     }
 }
 
-export async function recalculateProductCost(productId: string): Promise<number> {
-    const materials = await getProductMaterials(productId);
+export async function recalculateProductCost(productId: string, organizationId: string): Promise<number> {
+    if (!organizationId) return 0;
+
+    const materials = await getProductMaterials(productId, organizationId);
     const totalCost = materials.reduce((sum, m) => sum + (m.Total_Price || 0), 0);
 
-    const q = query(collection(db, COLLECTIONS.PRODUCTS), where('Product_ID', '==', productId));
+    const q = query(
+        collection(db, COLLECTIONS.PRODUCTS),
+        where('Product_ID', '==', productId),
+        where('Organization_ID', '==', organizationId)
+    );
     const snapshot = await getDocs(q);
     if (!snapshot.empty) {
         await updateDoc(snapshot.docs[0].ref, { Material_Cost: totalCost });
     }
 
+
     return totalCost;
 }
 
 // ============================================
-// PRODUCT MATERIALS CRUD
+// PRODUCT MATERIALS CRUD (Multi-tenancy enabled)
 // ============================================
 
-export async function getProductMaterials(productId: string): Promise<ProductMaterial[]> {
-    const q = query(collection(db, COLLECTIONS.PRODUCT_MATERIALS), where('Product_ID', '==', productId));
+export async function getProductMaterials(productId: string, organizationId: string): Promise<ProductMaterial[]> {
+    if (!organizationId) return [];
+    const q = query(
+        collection(db, COLLECTIONS.PRODUCT_MATERIALS),
+        where('Product_ID', '==', productId),
+        where('Organization_ID', '==', organizationId)
+    );
     const snapshot = await getDocs(q);
     return snapshot.docs.map(doc => ({ ...doc.data() } as ProductMaterial));
 }
 
-export async function addMaterialToProduct(data: Partial<ProductMaterial>): Promise<{ success: boolean; data?: { ID: string }; message: string }> {
+export async function addMaterialToProduct(data: Partial<ProductMaterial>, organizationId: string): Promise<{ success: boolean; data?: { ID: string }; message: string }> {
+    if (!organizationId) {
+        return { success: false, message: 'Organization ID is required' };
+    }
+
     try {
         const quantity = data.Quantity || 0;
         const unitPrice = data.Unit_Price || 0;
@@ -510,13 +621,14 @@ export async function addMaterialToProduct(data: Partial<ProductMaterial>): Prom
 
         if (!data.ID) {
             data.ID = generateUUID();
+            data.Organization_ID = organizationId;
             data.Status = data.Status || 'Nije naručeno';
         }
 
         await addDoc(collection(db, COLLECTIONS.PRODUCT_MATERIALS), data);
 
         if (data.Product_ID) {
-            await recalculateProductCost(data.Product_ID);
+            await recalculateProductCost(data.Product_ID, organizationId);
         }
 
         return { success: true, data: { ID: data.ID }, message: 'Materijal dodan' };
@@ -526,9 +638,17 @@ export async function addMaterialToProduct(data: Partial<ProductMaterial>): Prom
     }
 }
 
-export async function updateProductMaterial(materialId: string, data: Partial<ProductMaterial>): Promise<{ success: boolean; message: string }> {
+export async function updateProductMaterial(materialId: string, data: Partial<ProductMaterial>, organizationId: string): Promise<{ success: boolean; message: string }> {
+    if (!organizationId) {
+        return { success: false, message: 'Organization ID is required' };
+    }
+
     try {
-        const q = query(collection(db, COLLECTIONS.PRODUCT_MATERIALS), where('ID', '==', materialId));
+        const q = query(
+            collection(db, COLLECTIONS.PRODUCT_MATERIALS),
+            where('ID', '==', materialId),
+            where('Organization_ID', '==', organizationId)
+        );
         const snapshot = await getDocs(q);
 
         if (snapshot.empty) {
@@ -542,10 +662,11 @@ export async function updateProductMaterial(materialId: string, data: Partial<Pr
         const unitPrice = merged.Unit_Price || 0;
         merged.Total_Price = quantity * unitPrice;
 
-        await updateDoc(snapshot.docs[0].ref, merged as Record<string, unknown>);
+        const { Organization_ID, ...updateData } = merged;
+        await updateDoc(snapshot.docs[0].ref, updateData as Record<string, unknown>);
 
         if (merged.Product_ID) {
-            await recalculateProductCost(merged.Product_ID);
+            await recalculateProductCost(merged.Product_ID, organizationId);
         }
 
         return { success: true, message: 'Materijal ažuriran' };
@@ -555,9 +676,17 @@ export async function updateProductMaterial(materialId: string, data: Partial<Pr
     }
 }
 
-export async function deleteProductMaterial(materialId: string): Promise<{ success: boolean; message: string }> {
+export async function deleteProductMaterial(materialId: string, organizationId: string): Promise<{ success: boolean; message: string }> {
+    if (!organizationId) {
+        return { success: false, message: 'Organization ID is required' };
+    }
+
     try {
-        const q = query(collection(db, COLLECTIONS.PRODUCT_MATERIALS), where('ID', '==', materialId));
+        const q = query(
+            collection(db, COLLECTIONS.PRODUCT_MATERIALS),
+            where('ID', '==', materialId),
+            where('Organization_ID', '==', organizationId)
+        );
         const snapshot = await getDocs(q);
 
         if (!snapshot.empty) {
@@ -565,7 +694,7 @@ export async function deleteProductMaterial(materialId: string): Promise<{ succe
             await deleteDoc(snapshot.docs[0].ref);
 
             if (productId) {
-                await recalculateProductCost(productId);
+                await recalculateProductCost(productId, organizationId);
             }
         }
 
@@ -576,8 +705,13 @@ export async function deleteProductMaterial(materialId: string): Promise<{ succe
     }
 }
 
-export async function deleteProductMaterials(productId: string): Promise<void> {
-    const q = query(collection(db, COLLECTIONS.PRODUCT_MATERIALS), where('Product_ID', '==', productId));
+export async function deleteProductMaterials(productId: string, organizationId: string): Promise<void> {
+    if (!organizationId) return;
+    const q = query(
+        collection(db, COLLECTIONS.PRODUCT_MATERIALS),
+        where('Product_ID', '==', productId),
+        where('Organization_ID', '==', organizationId)
+    );
     const snapshot = await getDocs(q);
 
     const batch = writeBatch(db);
@@ -586,26 +720,38 @@ export async function deleteProductMaterials(productId: string): Promise<void> {
 }
 
 // ============================================
-// MATERIALS DATABASE CRUD
+// MATERIALS DATABASE CRUD (Multi-tenancy enabled)
 // ============================================
 
-export async function getMaterialsCatalog(): Promise<Material[]> {
-    const snapshot = await getDocs(collection(db, COLLECTIONS.MATERIALS_DB));
+export async function getMaterialsCatalog(organizationId: string): Promise<Material[]> {
+    if (!organizationId) return [];
+    const q = query(collection(db, COLLECTIONS.MATERIALS_DB), where('Organization_ID', '==', organizationId));
+    const snapshot = await getDocs(q);
     return snapshot.docs.map(doc => ({ ...doc.data() } as Material));
 }
 
-export async function saveMaterial(data: Partial<Material>): Promise<{ success: boolean; data?: { Material_ID: string }; message: string }> {
+export async function saveMaterial(data: Partial<Material>, organizationId: string): Promise<{ success: boolean; data?: { Material_ID: string }; message: string }> {
+    if (!organizationId) {
+        return { success: false, message: 'Organization ID is required' };
+    }
+
     try {
         const isNew = !data.Material_ID;
 
         if (isNew) {
             data.Material_ID = generateUUID();
+            data.Organization_ID = organizationId;
             await addDoc(collection(db, COLLECTIONS.MATERIALS_DB), data);
         } else {
-            const q = query(collection(db, COLLECTIONS.MATERIALS_DB), where('Material_ID', '==', data.Material_ID));
+            const q = query(
+                collection(db, COLLECTIONS.MATERIALS_DB),
+                where('Material_ID', '==', data.Material_ID),
+                where('Organization_ID', '==', organizationId)
+            );
             const snapshot = await getDocs(q);
             if (!snapshot.empty) {
-                await updateDoc(snapshot.docs[0].ref, data as Record<string, unknown>);
+                const { Organization_ID, ...updateData } = data;
+                await updateDoc(snapshot.docs[0].ref, updateData as Record<string, unknown>);
             }
         }
 
@@ -616,9 +762,17 @@ export async function saveMaterial(data: Partial<Material>): Promise<{ success: 
     }
 }
 
-export async function deleteMaterial(materialId: string): Promise<{ success: boolean; message: string }> {
+export async function deleteMaterial(materialId: string, organizationId: string): Promise<{ success: boolean; message: string }> {
+    if (!organizationId) {
+        return { success: false, message: 'Organization ID is required' };
+    }
+
     try {
-        const q = query(collection(db, COLLECTIONS.MATERIALS_DB), where('Material_ID', '==', materialId));
+        const q = query(
+            collection(db, COLLECTIONS.MATERIALS_DB),
+            where('Material_ID', '==', materialId),
+            where('Organization_ID', '==', organizationId)
+        );
         const snapshot = await getDocs(q);
         if (!snapshot.empty) {
             await deleteDoc(snapshot.docs[0].ref);
@@ -631,26 +785,38 @@ export async function deleteMaterial(materialId: string): Promise<{ success: boo
 }
 
 // ============================================
-// SUPPLIERS CRUD
+// SUPPLIERS CRUD (Multi-tenancy enabled)
 // ============================================
 
-export async function getSuppliers(): Promise<Supplier[]> {
-    const snapshot = await getDocs(collection(db, COLLECTIONS.SUPPLIERS));
+export async function getSuppliers(organizationId: string): Promise<Supplier[]> {
+    if (!organizationId) return [];
+    const q = query(collection(db, COLLECTIONS.SUPPLIERS), where('Organization_ID', '==', organizationId));
+    const snapshot = await getDocs(q);
     return snapshot.docs.map(doc => ({ ...doc.data() } as Supplier));
 }
 
-export async function saveSupplier(data: Partial<Supplier>): Promise<{ success: boolean; data?: { Supplier_ID: string }; message: string }> {
+export async function saveSupplier(data: Partial<Supplier>, organizationId: string): Promise<{ success: boolean; data?: { Supplier_ID: string }; message: string }> {
+    if (!organizationId) {
+        return { success: false, message: 'Organization ID is required' };
+    }
+
     try {
         const isNew = !data.Supplier_ID;
 
         if (isNew) {
             data.Supplier_ID = generateUUID();
+            data.Organization_ID = organizationId;
             await addDoc(collection(db, COLLECTIONS.SUPPLIERS), data);
         } else {
-            const q = query(collection(db, COLLECTIONS.SUPPLIERS), where('Supplier_ID', '==', data.Supplier_ID));
+            const q = query(
+                collection(db, COLLECTIONS.SUPPLIERS),
+                where('Supplier_ID', '==', data.Supplier_ID),
+                where('Organization_ID', '==', organizationId)
+            );
             const snapshot = await getDocs(q);
             if (!snapshot.empty) {
-                await updateDoc(snapshot.docs[0].ref, data as Record<string, unknown>);
+                const { Organization_ID, ...updateData } = data;
+                await updateDoc(snapshot.docs[0].ref, updateData as Record<string, unknown>);
             }
         }
 
@@ -661,9 +827,17 @@ export async function saveSupplier(data: Partial<Supplier>): Promise<{ success: 
     }
 }
 
-export async function deleteSupplier(supplierId: string): Promise<{ success: boolean; message: string }> {
+export async function deleteSupplier(supplierId: string, organizationId: string): Promise<{ success: boolean; message: string }> {
+    if (!organizationId) {
+        return { success: false, message: 'Organization ID is required' };
+    }
+
     try {
-        const q = query(collection(db, COLLECTIONS.SUPPLIERS), where('Supplier_ID', '==', supplierId));
+        const q = query(
+            collection(db, COLLECTIONS.SUPPLIERS),
+            where('Supplier_ID', '==', supplierId),
+            where('Organization_ID', '==', organizationId)
+        );
         const snapshot = await getDocs(q);
         if (!snapshot.empty) {
             await deleteDoc(snapshot.docs[0].ref);
@@ -676,27 +850,39 @@ export async function deleteSupplier(supplierId: string): Promise<{ success: boo
 }
 
 // ============================================
-// WORKERS CRUD
+// WORKERS CRUD (Multi-tenancy enabled)
 // ============================================
 
-export async function getWorkers(): Promise<Worker[]> {
-    const snapshot = await getDocs(collection(db, COLLECTIONS.WORKERS));
+export async function getWorkers(organizationId: string): Promise<Worker[]> {
+    if (!organizationId) return [];
+    const q = query(collection(db, COLLECTIONS.WORKERS), where('Organization_ID', '==', organizationId));
+    const snapshot = await getDocs(q);
     return snapshot.docs.map(doc => ({ ...doc.data() } as Worker));
 }
 
-export async function saveWorker(data: Partial<Worker>): Promise<{ success: boolean; data?: { Worker_ID: string }; message: string }> {
+export async function saveWorker(data: Partial<Worker>, organizationId: string): Promise<{ success: boolean; data?: { Worker_ID: string }; message: string }> {
+    if (!organizationId) {
+        return { success: false, message: 'Organization ID is required' };
+    }
+
     try {
         const isNew = !data.Worker_ID;
 
         if (isNew) {
             data.Worker_ID = generateUUID();
+            data.Organization_ID = organizationId;
             data.Status = data.Status || 'Dostupan';
             await addDoc(collection(db, COLLECTIONS.WORKERS), data);
         } else {
-            const q = query(collection(db, COLLECTIONS.WORKERS), where('Worker_ID', '==', data.Worker_ID));
+            const q = query(
+                collection(db, COLLECTIONS.WORKERS),
+                where('Worker_ID', '==', data.Worker_ID),
+                where('Organization_ID', '==', organizationId)
+            );
             const snapshot = await getDocs(q);
             if (!snapshot.empty) {
-                await updateDoc(snapshot.docs[0].ref, data as Record<string, unknown>);
+                const { Organization_ID, ...updateData } = data;
+                await updateDoc(snapshot.docs[0].ref, updateData as Record<string, unknown>);
             }
         }
 
@@ -707,9 +893,17 @@ export async function saveWorker(data: Partial<Worker>): Promise<{ success: bool
     }
 }
 
-export async function deleteWorker(workerId: string): Promise<{ success: boolean; message: string }> {
+export async function deleteWorker(workerId: string, organizationId: string): Promise<{ success: boolean; message: string }> {
+    if (!organizationId) {
+        return { success: false, message: 'Organization ID is required' };
+    }
+
     try {
-        const q = query(collection(db, COLLECTIONS.WORKERS), where('Worker_ID', '==', workerId));
+        const q = query(
+            collection(db, COLLECTIONS.WORKERS),
+            where('Worker_ID', '==', workerId),
+            where('Organization_ID', '==', organizationId)
+        );
         const snapshot = await getDocs(q);
         if (!snapshot.empty) {
             await deleteDoc(snapshot.docs[0].ref);
@@ -722,20 +916,35 @@ export async function deleteWorker(workerId: string): Promise<{ success: boolean
 }
 
 // ============================================
-// OFFERS CRUD
+// OFFERS CRUD (Multi-tenancy enabled)
 // ============================================
 
-export async function getOffers(): Promise<Offer[]> {
-    const snapshot = await getDocs(collection(db, COLLECTIONS.OFFERS));
+export async function getOffers(organizationId: string): Promise<Offer[]> {
+    if (!organizationId) return [];
+    const q = query(collection(db, COLLECTIONS.OFFERS), where('Organization_ID', '==', organizationId));
+    const snapshot = await getDocs(q);
     return snapshot.docs.map(doc => ({ ...doc.data() } as Offer));
 }
 
-export async function getOffer(offerId: string): Promise<Offer | null> {
+export async function getOffer(offerId: string, organizationId: string): Promise<Offer | null> {
+    if (!organizationId) return null;
+
     // Fetch offer, products, extras, and project in parallel for better performance
     const [offerSnap, productsSnap, extrasSnap] = await Promise.all([
-        getDocs(query(collection(db, COLLECTIONS.OFFERS), where('Offer_ID', '==', offerId))),
-        getDocs(query(collection(db, COLLECTIONS.OFFER_PRODUCTS), where('Offer_ID', '==', offerId))),
-        getDocs(collection(db, COLLECTIONS.OFFER_EXTRAS)),
+        getDocs(query(
+            collection(db, COLLECTIONS.OFFERS),
+            where('Offer_ID', '==', offerId),
+            where('Organization_ID', '==', organizationId)
+        )),
+        getDocs(query(
+            collection(db, COLLECTIONS.OFFER_PRODUCTS),
+            where('Offer_ID', '==', offerId),
+            where('Organization_ID', '==', organizationId)
+        )),
+        getDocs(query(
+            collection(db, COLLECTIONS.OFFER_EXTRAS),
+            where('Organization_ID', '==', organizationId)
+        )),
     ]);
 
     if (offerSnap.empty) return null;
@@ -752,7 +961,11 @@ export async function getOffer(offerId: string): Promise<Offer | null> {
     offer.products = products;
 
     // Fetch project for client name (just the project, not its products)
-    const projectSnap = await getDocs(query(collection(db, COLLECTIONS.PROJECTS), where('Project_ID', '==', offer.Project_ID)));
+    const projectSnap = await getDocs(query(
+        collection(db, COLLECTIONS.PROJECTS),
+        where('Project_ID', '==', offer.Project_ID),
+        where('Organization_ID', '==', organizationId)
+    ));
     if (!projectSnap.empty) {
         offer.Client_Name = projectSnap.docs[0].data().Client_Name;
     }
@@ -760,11 +973,20 @@ export async function getOffer(offerId: string): Promise<Offer | null> {
     return offer;
 }
 
-export async function getOfferProducts(offerId: string): Promise<OfferProduct[]> {
+export async function getOfferProducts(offerId: string, organizationId: string): Promise<OfferProduct[]> {
+    if (!organizationId) return [];
+
     // Fetch products and all extras in parallel
     const [productsSnap, extrasSnap] = await Promise.all([
-        getDocs(query(collection(db, COLLECTIONS.OFFER_PRODUCTS), where('Offer_ID', '==', offerId))),
-        getDocs(collection(db, COLLECTIONS.OFFER_EXTRAS)),
+        getDocs(query(
+            collection(db, COLLECTIONS.OFFER_PRODUCTS),
+            where('Offer_ID', '==', offerId),
+            where('Organization_ID', '==', organizationId)
+        )),
+        getDocs(query(
+            collection(db, COLLECTIONS.OFFER_EXTRAS),
+            where('Organization_ID', '==', organizationId)
+        )),
     ]);
 
     const allExtras = extrasSnap.docs.map(doc => ({ ...doc.data() } as OfferExtra));
@@ -777,13 +999,23 @@ export async function getOfferProducts(offerId: string): Promise<OfferProduct[]>
     return products;
 }
 
-export async function getOfferProductExtras(offerProductId: string): Promise<OfferExtra[]> {
-    const q = query(collection(db, COLLECTIONS.OFFER_EXTRAS), where('Offer_Product_ID', '==', offerProductId));
+export async function getOfferProductExtras(offerProductId: string, organizationId: string): Promise<OfferExtra[]> {
+    if (!organizationId) return [];
+
+    const q = query(
+        collection(db, COLLECTIONS.OFFER_EXTRAS),
+        where('Offer_Product_ID', '==', offerProductId),
+        where('Organization_ID', '==', organizationId)
+    );
     const snapshot = await getDocs(q);
     return snapshot.docs.map(doc => ({ ...doc.data() } as OfferExtra));
 }
 
-export async function createOfferWithProducts(offerData: any): Promise<{ success: boolean; data?: { Offer_ID: string; Offer_Number: string }; message: string }> {
+export async function createOfferWithProducts(offerData: any, organizationId: string): Promise<{ success: boolean; data?: { Offer_ID: string; Offer_Number: string }; message: string }> {
+    if (!organizationId) {
+        return { success: false, message: 'Organization ID is required' };
+    }
+
     try {
         const offerId = generateUUID();
         const offerNumber = generateOfferNumber();
@@ -817,6 +1049,7 @@ export async function createOfferWithProducts(offerData: any): Promise<{ success
 
         const offer: Offer = {
             Offer_ID: offerId,
+            Organization_ID: organizationId,
             Project_ID: offerData.Project_ID,
             Offer_Number: offerNumber,
             Created_Date: new Date().toISOString(),
@@ -844,8 +1077,9 @@ export async function createOfferWithProducts(offerData: any): Promise<{ success
             const sellingPrice = materialCost + margin + extrasTotal + laborTotal;
             const totalPrice = sellingPrice * quantity;
 
-            const offerProduct: OfferProduct = {
+            const offerProduct: OfferProduct & { Organization_ID: string } = {
                 ID: productId,
+                Organization_ID: organizationId,
                 Offer_ID: offerId,
                 Product_ID: product.Product_ID,
                 Product_Name: product.Product_Name,
@@ -871,8 +1105,9 @@ export async function createOfferWithProducts(offerData: any): Promise<{ success
 
             // Add extras for this product
             for (const extra of product.Extras || []) {
-                const extraDoc: OfferExtra = {
+                const extraDoc: OfferExtra & { Organization_ID: string } = {
                     ID: generateUUID(),
+                    Organization_ID: organizationId,
                     Offer_Product_ID: productId,
                     Name: extra.name,
                     Quantity: parseFloat(extra.qty) || 1,
@@ -892,16 +1127,25 @@ export async function createOfferWithProducts(offerData: any): Promise<{ success
     }
 }
 
-export async function saveOffer(data: Partial<Offer>): Promise<{ success: boolean; message: string }> {
+export async function saveOffer(data: Partial<Offer>, organizationId: string): Promise<{ success: boolean; message: string }> {
+    if (!organizationId) {
+        return { success: false, message: 'Organization ID is required' };
+    }
+
     try {
-        const q = query(collection(db, COLLECTIONS.OFFERS), where('Offer_ID', '==', data.Offer_ID));
+        const q = query(
+            collection(db, COLLECTIONS.OFFERS),
+            where('Offer_ID', '==', data.Offer_ID),
+            where('Organization_ID', '==', organizationId)
+        );
         const snapshot = await getDocs(q);
 
         if (snapshot.empty) {
             return { success: false, message: 'Ponuda nije pronađena' };
         }
 
-        await updateDoc(snapshot.docs[0].ref, data as Record<string, unknown>);
+        const { Organization_ID, ...updateData } = data;
+        await updateDoc(snapshot.docs[0].ref, updateData as Record<string, unknown>);
         return { success: true, message: 'Ponuda sačuvana' };
     } catch (error) {
         console.error('saveOffer error:', error);
@@ -909,7 +1153,11 @@ export async function saveOffer(data: Partial<Offer>): Promise<{ success: boolea
     }
 }
 
-export async function updateOfferWithProducts(offerData: any): Promise<{ success: boolean; message: string }> {
+export async function updateOfferWithProducts(offerData: any, organizationId: string): Promise<{ success: boolean; message: string }> {
+    if (!organizationId) {
+        return { success: false, message: 'Organization ID is required' };
+    }
+
     try {
         const offerId = offerData.Offer_ID;
         if (!offerId) {
@@ -917,7 +1165,11 @@ export async function updateOfferWithProducts(offerData: any): Promise<{ success
         }
 
         // Find existing offer
-        const offerQ = query(collection(db, COLLECTIONS.OFFERS), where('Offer_ID', '==', offerId));
+        const offerQ = query(
+            collection(db, COLLECTIONS.OFFERS),
+            where('Offer_ID', '==', offerId),
+            where('Organization_ID', '==', organizationId)
+        );
         const offerSnap = await getDocs(offerQ);
         if (offerSnap.empty) {
             return { success: false, message: 'Ponuda nije pronađena' };
@@ -959,13 +1211,21 @@ export async function updateOfferWithProducts(offerData: any): Promise<{ success
         });
 
         // Delete existing offer products and their extras
-        const productsQ = query(collection(db, COLLECTIONS.OFFER_PRODUCTS), where('Offer_ID', '==', offerId));
+        const productsQ = query(
+            collection(db, COLLECTIONS.OFFER_PRODUCTS),
+            where('Offer_ID', '==', offerId),
+            where('Organization_ID', '==', organizationId)
+        );
         const productsSnap = await getDocs(productsQ);
 
         for (const productDoc of productsSnap.docs) {
             const productData = productDoc.data();
             // Delete extras for this product
-            const extrasQ = query(collection(db, COLLECTIONS.OFFER_EXTRAS), where('Offer_Product_ID', '==', productData.ID));
+            const extrasQ = query(
+                collection(db, COLLECTIONS.OFFER_EXTRAS),
+                where('Offer_Product_ID', '==', productData.ID),
+                where('Organization_ID', '==', organizationId)
+            );
             const extrasSnap = await getDocs(extrasQ);
             for (const extraDoc of extrasSnap.docs) {
                 await deleteDoc(extraDoc.ref);
@@ -985,8 +1245,9 @@ export async function updateOfferWithProducts(offerData: any): Promise<{ success
             const sellingPrice = materialCost + margin + extrasTotal + laborTotal;
             const totalPrice = sellingPrice * quantity;
 
-            const offerProduct: OfferProduct = {
+            const offerProduct: OfferProduct & { Organization_ID: string } = {
                 ID: productId,
+                Organization_ID: organizationId,
                 Offer_ID: offerId,
                 Product_ID: product.Product_ID,
                 Product_Name: product.Product_Name,
@@ -1012,8 +1273,9 @@ export async function updateOfferWithProducts(offerData: any): Promise<{ success
 
             // Add extras for this product
             for (const extra of product.Extras || []) {
-                const extraDoc: OfferExtra = {
+                const extraDoc: OfferExtra & { Organization_ID: string } = {
                     ID: generateUUID(),
+                    Organization_ID: organizationId,
                     Offer_Product_ID: productId,
                     Name: extra.name,
                     Quantity: parseFloat(extra.qty) || 1,
@@ -1033,10 +1295,18 @@ export async function updateOfferWithProducts(offerData: any): Promise<{ success
     }
 }
 
-export async function deleteOffer(offerId: string): Promise<{ success: boolean; message: string }> {
+export async function deleteOffer(offerId: string, organizationId: string): Promise<{ success: boolean; message: string }> {
+    if (!organizationId) {
+        return { success: false, message: 'Organization ID is required' };
+    }
+
     try {
         // Delete offer products first
-        const productsQ = query(collection(db, COLLECTIONS.OFFER_PRODUCTS), where('Offer_ID', '==', offerId));
+        const productsQ = query(
+            collection(db, COLLECTIONS.OFFER_PRODUCTS),
+            where('Offer_ID', '==', offerId),
+            where('Organization_ID', '==', organizationId)
+        );
         const productsSnap = await getDocs(productsQ);
 
         const batch = writeBatch(db);
@@ -1044,7 +1314,11 @@ export async function deleteOffer(offerId: string): Promise<{ success: boolean; 
         await batch.commit();
 
         // Delete offer
-        const q = query(collection(db, COLLECTIONS.OFFERS), where('Offer_ID', '==', offerId));
+        const q = query(
+            collection(db, COLLECTIONS.OFFERS),
+            where('Offer_ID', '==', offerId),
+            where('Organization_ID', '==', organizationId)
+        );
         const snapshot = await getDocs(q);
         if (!snapshot.empty) {
             await deleteDoc(snapshot.docs[0].ref);
@@ -1057,9 +1331,17 @@ export async function deleteOffer(offerId: string): Promise<{ success: boolean; 
     }
 }
 
-export async function updateOfferStatus(offerId: string, status: string): Promise<{ success: boolean; message: string }> {
+export async function updateOfferStatus(offerId: string, status: string, organizationId: string): Promise<{ success: boolean; message: string }> {
+    if (!organizationId) {
+        return { success: false, message: 'Organization ID is required' };
+    }
+
     try {
-        const q = query(collection(db, COLLECTIONS.OFFERS), where('Offer_ID', '==', offerId));
+        const q = query(
+            collection(db, COLLECTIONS.OFFERS),
+            where('Offer_ID', '==', offerId),
+            where('Organization_ID', '==', organizationId)
+        );
         const snapshot = await getDocs(q);
 
         if (!snapshot.empty) {
@@ -1069,9 +1351,9 @@ export async function updateOfferStatus(offerId: string, status: string): Promis
             // Sync project status based on offer status
             if (status === 'Poslano' && offer.Project_ID) {
                 // When offer is sent, project moves from Nacrt to Ponuđeno
-                const project = await getProject(offer.Project_ID);
+                const project = await getProject(offer.Project_ID, organizationId);
                 if (project && project.Status === 'Nacrt') {
-                    await updateProjectStatus(offer.Project_ID, 'Ponuđeno');
+                    await updateProjectStatus(offer.Project_ID, 'Ponuđeno', organizationId);
                 }
             }
 
@@ -1079,7 +1361,7 @@ export async function updateOfferStatus(offerId: string, status: string): Promis
                 updateData.Accepted_Date = new Date().toISOString();
 
                 if (offer.Project_ID) {
-                    await updateProjectStatus(offer.Project_ID, 'Odobreno');
+                    await updateProjectStatus(offer.Project_ID, 'Odobreno', organizationId);
                 }
             }
 
@@ -1087,7 +1369,8 @@ export async function updateOfferStatus(offerId: string, status: string): Promis
             if ((status === 'Odbijeno' || status === 'Isteklo') && offer.Project_ID) {
                 const allOffersQuery = query(
                     collection(db, COLLECTIONS.OFFERS),
-                    where('Project_ID', '==', offer.Project_ID)
+                    where('Project_ID', '==', offer.Project_ID),
+                    where('Organization_ID', '==', organizationId)
                 );
                 const allOffersSnap = await getDocs(allOffersQuery);
 
@@ -1102,10 +1385,10 @@ export async function updateOfferStatus(offerId: string, status: string): Promis
                 });
 
                 if (allRejectedOrExpired) {
-                    const project = await getProject(offer.Project_ID);
+                    const project = await getProject(offer.Project_ID, organizationId);
                     // Only set to Otkazano if project is still in Ponuđeno stage
                     if (project && project.Status === 'Ponuđeno') {
-                        await updateProjectStatus(offer.Project_ID, 'Otkazano');
+                        await updateProjectStatus(offer.Project_ID, 'Otkazano', organizationId);
                     }
                 }
             }
@@ -1121,37 +1404,54 @@ export async function updateOfferStatus(offerId: string, status: string): Promis
 }
 
 // ============================================
-// ORDERS CRUD
+// ORDERS CRUD (Multi-tenancy enabled)
 // ============================================
 
-export async function getOrders(): Promise<Order[]> {
-    const snapshot = await getDocs(collection(db, COLLECTIONS.ORDERS));
+export async function getOrders(organizationId: string): Promise<Order[]> {
+    if (!organizationId) return [];
+    const q = query(collection(db, COLLECTIONS.ORDERS), where('Organization_ID', '==', organizationId));
+    const snapshot = await getDocs(q);
     return snapshot.docs.map(doc => ({ ...doc.data() } as Order));
 }
 
-export async function getOrder(orderId: string): Promise<Order | null> {
-    const q = query(collection(db, COLLECTIONS.ORDERS), where('Order_ID', '==', orderId));
+export async function getOrder(orderId: string, organizationId: string): Promise<Order | null> {
+    if (!organizationId) return null;
+    const q = query(
+        collection(db, COLLECTIONS.ORDERS),
+        where('Order_ID', '==', orderId),
+        where('Organization_ID', '==', organizationId)
+    );
     const snapshot = await getDocs(q);
     if (snapshot.empty) return null;
 
     const order = snapshot.docs[0].data() as Order;
-    order.items = await getOrderItems(orderId);
+    order.items = await getOrderItems(orderId, organizationId);
     return order;
 }
 
-export async function getOrderItems(orderId: string): Promise<OrderItem[]> {
-    const q = query(collection(db, COLLECTIONS.ORDER_ITEMS), where('Order_ID', '==', orderId));
+export async function getOrderItems(orderId: string, organizationId: string): Promise<OrderItem[]> {
+    if (!organizationId) return [];
+    const q = query(
+        collection(db, COLLECTIONS.ORDER_ITEMS),
+        where('Order_ID', '==', orderId),
+        where('Organization_ID', '==', organizationId)
+    );
     const snapshot = await getDocs(q);
     return snapshot.docs.map(doc => ({ ...doc.data() } as OrderItem));
 }
 
-export async function createOrder(data: Partial<Order> & { items?: Partial<OrderItem>[] }): Promise<{ success: boolean; data?: { Order_ID: string; Order_Number: string }; message: string }> {
+export async function createOrder(data: Partial<Order> & { items?: Partial<OrderItem>[] }, organizationId: string): Promise<{ success: boolean; data?: { Order_ID: string; Order_Number: string }; message: string }> {
+    if (!organizationId) {
+        return { success: false, message: 'Organization ID is required' };
+    }
+
     try {
         const orderId = generateUUID();
         const orderNumber = generateOrderNumber();
 
         const order: Order = {
             Order_ID: orderId,
+            Organization_ID: organizationId,
             Order_Number: orderNumber,
             Supplier_ID: data.Supplier_ID || '',
             Supplier_Name: data.Supplier_Name || '',
@@ -1166,8 +1466,9 @@ export async function createOrder(data: Partial<Order> & { items?: Partial<Order
 
         // Add items
         for (const item of data.items || []) {
-            const orderItem: OrderItem = {
+            const orderItem: OrderItem & { Organization_ID: string } = {
                 ID: generateUUID(),
+                Organization_ID: organizationId,
                 Order_ID: orderId,
                 Product_Material_ID: item.Product_Material_ID || '',
                 Product_ID: item.Product_ID || '',
@@ -1186,7 +1487,7 @@ export async function createOrder(data: Partial<Order> & { items?: Partial<Order
 
             // Update material status
             if (item.Product_Material_ID) {
-                await updateProductMaterial(item.Product_Material_ID, { Status: 'Naručeno', Order_ID: orderId });
+                await updateProductMaterial(item.Product_Material_ID, { Status: 'Naručeno', Order_ID: orderId }, organizationId);
             }
         }
 
@@ -1197,16 +1498,25 @@ export async function createOrder(data: Partial<Order> & { items?: Partial<Order
     }
 }
 
-export async function saveOrder(data: Partial<Order>): Promise<{ success: boolean; message: string }> {
+export async function saveOrder(data: Partial<Order>, organizationId: string): Promise<{ success: boolean; message: string }> {
+    if (!organizationId) {
+        return { success: false, message: 'Organization ID is required' };
+    }
+
     try {
-        const q = query(collection(db, COLLECTIONS.ORDERS), where('Order_ID', '==', data.Order_ID));
+        const q = query(
+            collection(db, COLLECTIONS.ORDERS),
+            where('Order_ID', '==', data.Order_ID),
+            where('Organization_ID', '==', organizationId)
+        );
         const snapshot = await getDocs(q);
 
         if (snapshot.empty) {
             return { success: false, message: 'Narudžba nije pronađena' };
         }
 
-        await updateDoc(snapshot.docs[0].ref, data as Record<string, unknown>);
+        const { Organization_ID, ...updateData } = data;
+        await updateDoc(snapshot.docs[0].ref, updateData as Record<string, unknown>);
         return { success: true, message: 'Narudžba sačuvana' };
     } catch (error) {
         console.error('saveOrder error:', error);
@@ -1214,10 +1524,18 @@ export async function saveOrder(data: Partial<Order>): Promise<{ success: boolea
     }
 }
 
-export async function deleteOrder(orderId: string): Promise<{ success: boolean; message: string }> {
+export async function deleteOrder(orderId: string, organizationId: string): Promise<{ success: boolean; message: string }> {
+    if (!organizationId) {
+        return { success: false, message: 'Organization ID is required' };
+    }
+
     try {
         // Delete order items first
-        const itemsQ = query(collection(db, COLLECTIONS.ORDER_ITEMS), where('Order_ID', '==', orderId));
+        const itemsQ = query(
+            collection(db, COLLECTIONS.ORDER_ITEMS),
+            where('Order_ID', '==', orderId),
+            where('Organization_ID', '==', organizationId)
+        );
         const itemsSnap = await getDocs(itemsQ);
 
         const batch = writeBatch(db);
@@ -1225,7 +1543,11 @@ export async function deleteOrder(orderId: string): Promise<{ success: boolean; 
         await batch.commit();
 
         // Delete order
-        const q = query(collection(db, COLLECTIONS.ORDERS), where('Order_ID', '==', orderId));
+        const q = query(
+            collection(db, COLLECTIONS.ORDERS),
+            where('Order_ID', '==', orderId),
+            where('Organization_ID', '==', organizationId)
+        );
         const snapshot = await getDocs(q);
         if (!snapshot.empty) {
             await deleteDoc(snapshot.docs[0].ref);
@@ -1238,9 +1560,17 @@ export async function deleteOrder(orderId: string): Promise<{ success: boolean; 
     }
 }
 
-export async function updateOrderStatus(orderId: string, status: string): Promise<{ success: boolean; message: string }> {
+export async function updateOrderStatus(orderId: string, status: string, organizationId: string): Promise<{ success: boolean; message: string }> {
+    if (!organizationId) {
+        return { success: false, message: 'Organization ID is required' };
+    }
+
     try {
-        const q = query(collection(db, COLLECTIONS.ORDERS), where('Order_ID', '==', orderId));
+        const q = query(
+            collection(db, COLLECTIONS.ORDERS),
+            where('Order_ID', '==', orderId),
+            where('Organization_ID', '==', organizationId)
+        );
         const snapshot = await getDocs(q);
 
         if (!snapshot.empty) {
@@ -1355,13 +1685,21 @@ export async function saveAluDoorItems(productMaterialId: string, items: Partial
 }
 
 // ============================================
-// ORDER STATUS AUTOMATION
+// ORDER STATUS AUTOMATION (Multi-tenancy enabled)
 // ============================================
 
-export async function markOrderSent(orderId: string): Promise<{ success: boolean; message: string }> {
+export async function markOrderSent(orderId: string, organizationId: string): Promise<{ success: boolean; message: string }> {
+    if (!organizationId) {
+        return { success: false, message: 'Organization ID is required' };
+    }
+
     try {
         // Update order status
-        const orderQ = query(collection(db, COLLECTIONS.ORDERS), where('Order_ID', '==', orderId));
+        const orderQ = query(
+            collection(db, COLLECTIONS.ORDERS),
+            where('Order_ID', '==', orderId),
+            where('Organization_ID', '==', organizationId)
+        );
         const orderSnap = await getDocs(orderQ);
 
         if (orderSnap.empty) {
@@ -1371,14 +1709,14 @@ export async function markOrderSent(orderId: string): Promise<{ success: boolean
         await updateDoc(orderSnap.docs[0].ref, { Status: 'Poslano' });
 
         // Get order items and update material statuses
-        const items = await getOrderItems(orderId);
+        const items = await getOrderItems(orderId, organizationId);
         const affectedProducts = new Set<string>();
         const affectedProjects = new Set<string>();
 
         for (const item of items) {
             if (item.Product_Material_ID) {
                 // Update material status to "Naručeno"
-                await updateProductMaterial(item.Product_Material_ID, { Status: 'Naručeno', Order_ID: orderId });
+                await updateProductMaterial(item.Product_Material_ID, { Status: 'Naručeno', Order_ID: orderId }, organizationId);
 
                 if (item.Product_ID) affectedProducts.add(item.Product_ID);
                 if (item.Project_ID) affectedProjects.add(item.Project_ID);
@@ -1387,17 +1725,17 @@ export async function markOrderSent(orderId: string): Promise<{ success: boolean
 
         // Update product statuses
         for (const productId of Array.from(affectedProducts)) {
-            const product = await getProduct(productId);
+            const product = await getProduct(productId, organizationId);
             if (product && product.Status === 'Na čekanju') {
-                await updateProductStatus(productId, 'Materijali naručeni');
+                await updateProductStatus(productId, 'Materijali naručeni', organizationId);
             }
         }
 
         // Update project statuses
         for (const projectId of Array.from(affectedProjects)) {
-            const project = await getProject(projectId);
+            const project = await getProject(projectId, organizationId);
             if (project && project.Status === 'Odobreno') {
-                await updateProjectStatus(projectId, 'U proizvodnji');
+                await updateProjectStatus(projectId, 'U proizvodnji', organizationId);
             }
         }
 
@@ -1408,14 +1746,22 @@ export async function markOrderSent(orderId: string): Promise<{ success: boolean
     }
 }
 
-export async function markMaterialsReceived(orderItemIds: string[]): Promise<{ success: boolean; message: string }> {
+export async function markMaterialsReceived(orderItemIds: string[], organizationId: string): Promise<{ success: boolean; message: string }> {
+    if (!organizationId) {
+        return { success: false, message: 'Organization ID is required' };
+    }
+
     try {
         const affectedProducts = new Set<string>();
         const affectedProjects = new Set<string>();
 
         for (const itemId of orderItemIds) {
-            // Find order item
-            const itemQ = query(collection(db, COLLECTIONS.ORDER_ITEMS), where('ID', '==', itemId));
+            // Find order item with organization filter
+            const itemQ = query(
+                collection(db, COLLECTIONS.ORDER_ITEMS),
+                where('ID', '==', itemId),
+                where('Organization_ID', '==', organizationId)
+            );
             const itemSnap = await getDocs(itemQ);
 
             if (itemSnap.empty) continue;
@@ -1430,7 +1776,7 @@ export async function markMaterialsReceived(orderItemIds: string[]): Promise<{ s
 
             // Update material status
             if (item.Product_Material_ID) {
-                await updateProductMaterial(item.Product_Material_ID, { Status: 'Primljeno' });
+                await updateProductMaterial(item.Product_Material_ID, { Status: 'Primljeno' }, organizationId);
             }
 
             if (item.Product_ID) affectedProducts.add(item.Product_ID);
@@ -1439,13 +1785,13 @@ export async function markMaterialsReceived(orderItemIds: string[]): Promise<{ s
 
         // Check if all materials for products are received
         for (const productId of Array.from(affectedProducts)) {
-            const materials = await getProductMaterials(productId);
+            const materials = await getProductMaterials(productId, organizationId);
             const allReceived = materials.every(m =>
                 m.Status === 'Primljeno' || m.Status === 'U upotrebi' || m.Status === 'Instalirano'
             );
 
             if (allReceived) {
-                await updateProductStatus(productId, 'Materijali spremni');
+                await updateProductStatus(productId, 'Materijali spremni', organizationId);
             }
         }
 
@@ -1460,10 +1806,18 @@ export async function markMaterialsReceived(orderItemIds: string[]): Promise<{ s
 }
 
 // Delete specific order items by their IDs
-export async function deleteOrderItemsByIds(itemIds: string[]): Promise<{ success: boolean; message: string }> {
+export async function deleteOrderItemsByIds(itemIds: string[], organizationId: string): Promise<{ success: boolean; message: string }> {
+    if (!organizationId) {
+        return { success: false, message: 'Organization ID is required' };
+    }
+
     try {
         for (const itemId of itemIds) {
-            const itemQ = query(collection(db, COLLECTIONS.ORDER_ITEMS), where('ID', '==', itemId));
+            const itemQ = query(
+                collection(db, COLLECTIONS.ORDER_ITEMS),
+                where('ID', '==', itemId),
+                where('Organization_ID', '==', organizationId)
+            );
             const itemSnap = await getDocs(itemQ);
 
             if (itemSnap.empty) continue;
@@ -1472,7 +1826,7 @@ export async function deleteOrderItemsByIds(itemIds: string[]): Promise<{ succes
 
             // Reset material status to "Nije naručeno" and clear Order_ID
             if (item.Product_Material_ID) {
-                await updateProductMaterial(item.Product_Material_ID, { Status: 'Nije naručeno', Order_ID: '' });
+                await updateProductMaterial(item.Product_Material_ID, { Status: 'Nije naručeno', Order_ID: '' }, organizationId);
             }
 
             // Delete the order item
@@ -1487,9 +1841,17 @@ export async function deleteOrderItemsByIds(itemIds: string[]): Promise<{ succes
 }
 
 // Update a single order item (e.g., quantity, notes)
-export async function updateOrderItem(itemId: string, data: Partial<OrderItem>): Promise<{ success: boolean; message: string }> {
+export async function updateOrderItem(itemId: string, data: Partial<OrderItem>, organizationId: string): Promise<{ success: boolean; message: string }> {
+    if (!organizationId) {
+        return { success: false, message: 'Organization ID is required' };
+    }
+
     try {
-        const itemQ = query(collection(db, COLLECTIONS.ORDER_ITEMS), where('ID', '==', itemId));
+        const itemQ = query(
+            collection(db, COLLECTIONS.ORDER_ITEMS),
+            where('ID', '==', itemId),
+            where('Organization_ID', '==', organizationId)
+        );
         const itemSnap = await getDocs(itemQ);
 
         if (itemSnap.empty) {
@@ -1506,14 +1868,22 @@ export async function updateOrderItem(itemId: string, data: Partial<OrderItem>):
 }
 
 // Recalculate order total after item changes
-export async function recalculateOrderTotal(orderId: string): Promise<{ success: boolean; message: string }> {
+export async function recalculateOrderTotal(orderId: string, organizationId: string): Promise<{ success: boolean; message: string }> {
+    if (!organizationId) {
+        return { success: false, message: 'Organization ID is required' };
+    }
+
     try {
-        const items = await getOrderItems(orderId);
+        const items = await getOrderItems(orderId, organizationId);
         const total = items.reduce((sum, item) => {
             return sum + ((item.Quantity || 0) * (item.Expected_Price || 0));
         }, 0);
 
-        const orderQ = query(collection(db, COLLECTIONS.ORDERS), where('Order_ID', '==', orderId));
+        const orderQ = query(
+            collection(db, COLLECTIONS.ORDERS),
+            where('Order_ID', '==', orderId),
+            where('Organization_ID', '==', organizationId)
+        );
         const orderSnap = await getDocs(orderQ);
 
         if (!orderSnap.empty) {
@@ -1587,7 +1957,10 @@ export interface AddGlassMaterialData {
     }>;
 }
 
-export async function addGlassMaterialToProduct(data: AddGlassMaterialData): Promise<{ success: boolean; data?: { productMaterialId: string; itemCount: number; totalArea: number; totalPrice: number }; message: string }> {
+export async function addGlassMaterialToProduct(data: AddGlassMaterialData, organizationId: string): Promise<{ success: boolean; data?: { productMaterialId: string; itemCount: number; totalArea: number; totalPrice: number }; message: string }> {
+    if (!organizationId) {
+        return { success: false, message: 'Organization ID is required' };
+    }
     try {
         const pricePerM2 = data.unitPrice || 0;
         const items = data.items || [];
@@ -1654,7 +2027,7 @@ export async function addGlassMaterialToProduct(data: AddGlassMaterialData): Pro
 
         // Recalculate product cost
         if (data.productId) {
-            await recalculateProductCost(data.productId);
+            await recalculateProductCost(data.productId, organizationId);
         }
 
         return {
@@ -1685,7 +2058,10 @@ export interface UpdateGlassMaterialData {
     }>;
 }
 
-export async function updateGlassMaterial(data: UpdateGlassMaterialData): Promise<{ success: boolean; data?: { productMaterialId: string; itemCount: number; totalArea: number; totalPrice: number }; message: string }> {
+export async function updateGlassMaterial(data: UpdateGlassMaterialData, organizationId: string): Promise<{ success: boolean; data?: { productMaterialId: string; itemCount: number; totalArea: number; totalPrice: number }; message: string }> {
+    if (!organizationId) {
+        return { success: false, message: 'Organization ID is required' };
+    }
     try {
         const productMaterialId = data.productMaterialId;
         const pricePerM2 = data.unitPrice || 0;
@@ -1743,7 +2119,7 @@ export async function updateGlassMaterial(data: UpdateGlassMaterialData): Promis
 
         // Recalculate product cost
         if (productId) {
-            await recalculateProductCost(productId);
+            await recalculateProductCost(productId, organizationId);
         }
 
         return {
@@ -1798,7 +2174,10 @@ export interface AddAluDoorMaterialData {
     }>;
 }
 
-export async function addAluDoorMaterialToProduct(data: AddAluDoorMaterialData): Promise<{ success: boolean; data?: { productMaterialId: string; itemCount: number; totalQty: number; totalArea: number; totalPrice: number }; message: string }> {
+export async function addAluDoorMaterialToProduct(data: AddAluDoorMaterialData, organizationId: string): Promise<{ success: boolean; data?: { productMaterialId: string; itemCount: number; totalQty: number; totalArea: number; totalPrice: number }; message: string }> {
+    if (!organizationId) {
+        return { success: false, message: 'Organization ID is required' };
+    }
     try {
         const pricePerM2 = data.unitPrice || 200;
         const items = data.items || [];
@@ -1877,7 +2256,7 @@ export async function addAluDoorMaterialToProduct(data: AddAluDoorMaterialData):
 
         // Recalculate product cost
         if (data.productId) {
-            await recalculateProductCost(data.productId);
+            await recalculateProductCost(data.productId, organizationId);
         }
 
         return {
@@ -1917,7 +2296,10 @@ export interface UpdateAluDoorMaterialData {
     }>;
 }
 
-export async function updateAluDoorMaterial(data: UpdateAluDoorMaterialData): Promise<{ success: boolean; data?: { productMaterialId: string; itemCount: number; totalQty: number; totalArea: number; totalPrice: number }; message: string }> {
+export async function updateAluDoorMaterial(data: UpdateAluDoorMaterialData, organizationId: string): Promise<{ success: boolean; data?: { productMaterialId: string; itemCount: number; totalQty: number; totalArea: number; totalPrice: number }; message: string }> {
+    if (!organizationId) {
+        return { success: false, message: 'Organization ID is required' };
+    }
     try {
         const productMaterialId = data.productMaterialId;
         const pricePerM2 = data.unitPrice || 200;
@@ -1987,7 +2369,7 @@ export async function updateAluDoorMaterial(data: UpdateAluDoorMaterialData): Pr
 
         // Recalculate product cost
         if (productId) {
-            await recalculateProductCost(productId);
+            await recalculateProductCost(productId, organizationId);
         }
 
         return {
@@ -2017,7 +2399,7 @@ export async function deleteAluDoorItemsByMaterial(productMaterialId: string): P
 }
 
 // ============================================
-// WORK ORDERS CRUD
+// WORK ORDERS CRUD (Multi-tenancy enabled)
 // ============================================
 
 export function generateWorkOrderNumber(): string {
@@ -2029,10 +2411,12 @@ export function generateWorkOrderNumber(): string {
     return `RN-${year}${month}${day}-${random}`;
 }
 
-export async function getWorkOrders(): Promise<WorkOrder[]> {
+export async function getWorkOrders(organizationId: string): Promise<WorkOrder[]> {
+    if (!organizationId) return [];
+
     const [workOrdersSnap, itemsSnap] = await Promise.all([
-        getDocs(collection(db, COLLECTIONS.WORK_ORDERS)),
-        getDocs(collection(db, COLLECTIONS.WORK_ORDER_ITEMS)),
+        getDocs(query(collection(db, COLLECTIONS.WORK_ORDERS), where('Organization_ID', '==', organizationId))),
+        getDocs(query(collection(db, COLLECTIONS.WORK_ORDER_ITEMS), where('Organization_ID', '==', organizationId))),
     ]);
 
     const items = itemsSnap.docs.map(doc => ({ ...doc.data() } as WorkOrderItem));
@@ -2045,10 +2429,20 @@ export async function getWorkOrders(): Promise<WorkOrder[]> {
     return workOrders;
 }
 
-export async function getWorkOrder(workOrderId: string): Promise<WorkOrder | null> {
+export async function getWorkOrder(workOrderId: string, organizationId: string): Promise<WorkOrder | null> {
+    if (!organizationId) return null;
+
     const [woSnap, itemsSnap] = await Promise.all([
-        getDocs(query(collection(db, COLLECTIONS.WORK_ORDERS), where('Work_Order_ID', '==', workOrderId))),
-        getDocs(query(collection(db, COLLECTIONS.WORK_ORDER_ITEMS), where('Work_Order_ID', '==', workOrderId))),
+        getDocs(query(
+            collection(db, COLLECTIONS.WORK_ORDERS),
+            where('Work_Order_ID', '==', workOrderId),
+            where('Organization_ID', '==', organizationId)
+        )),
+        getDocs(query(
+            collection(db, COLLECTIONS.WORK_ORDER_ITEMS),
+            where('Work_Order_ID', '==', workOrderId),
+            where('Organization_ID', '==', organizationId)
+        )),
     ]);
 
     if (woSnap.empty) return null;
@@ -2059,7 +2453,7 @@ export async function getWorkOrder(workOrderId: string): Promise<WorkOrder | nul
     // Fetch materials for each item
     for (const item of items) {
         if (item.Product_ID) {
-            const materials = await getProductMaterials(item.Product_ID);
+            const materials = await getProductMaterials(item.Product_ID, organizationId);
             item.materials = materials;
         }
     }
@@ -2094,13 +2488,18 @@ export async function createWorkOrder(data: {
             Days_Worked?: number;
         }>;
     }[];
-}): Promise<{ success: boolean; data?: { Work_Order_ID: string; Work_Order_Number: string }; message: string }> {
+}, organizationId: string): Promise<{ success: boolean; data?: { Work_Order_ID: string; Work_Order_Number: string }; message: string }> {
+    if (!organizationId) {
+        return { success: false, message: 'Organization ID is required' };
+    }
+
     try {
         const workOrderId = generateUUID();
         const workOrderNumber = generateWorkOrderNumber();
 
         const workOrder: WorkOrder = {
             Work_Order_ID: workOrderId,
+            Organization_ID: organizationId,
             Work_Order_Number: workOrderNumber,
             Created_Date: new Date().toISOString(),
             Due_Date: data.Due_Date || '',
@@ -2138,8 +2537,9 @@ export async function createWorkOrder(data: {
                 Helpers: item.Process_Assignments?.[proc]?.Helpers || undefined,
             }));
 
-            const workOrderItem: WorkOrderItem = {
+            const workOrderItem: WorkOrderItem & { Organization_ID: string } = {
                 ID: generateUUID(),
+                Organization_ID: organizationId,
                 Work_Order_ID: workOrderId,
                 Product_ID: item.Product_ID,
                 Product_Name: item.Product_Name,
@@ -2164,9 +2564,17 @@ export async function createWorkOrder(data: {
     }
 }
 
-export async function updateWorkOrderStatus(workOrderId: string, status: string): Promise<{ success: boolean; message: string }> {
+export async function updateWorkOrderStatus(workOrderId: string, status: string, organizationId: string): Promise<{ success: boolean; message: string }> {
+    if (!organizationId) {
+        return { success: false, message: 'Organization ID is required' };
+    }
+
     try {
-        const q = query(collection(db, COLLECTIONS.WORK_ORDERS), where('Work_Order_ID', '==', workOrderId));
+        const q = query(
+            collection(db, COLLECTIONS.WORK_ORDERS),
+            where('Work_Order_ID', '==', workOrderId),
+            where('Organization_ID', '==', organizationId)
+        );
         const snapshot = await getDocs(q);
 
         if (snapshot.empty) {
@@ -2186,9 +2594,17 @@ export async function updateWorkOrderStatus(workOrderId: string, status: string)
     }
 }
 
-export async function updateWorkOrderItemStatus(itemId: string, status: string): Promise<{ success: boolean; message: string }> {
+export async function updateWorkOrderItemStatus(itemId: string, status: string, organizationId: string): Promise<{ success: boolean; message: string }> {
+    if (!organizationId) {
+        return { success: false, message: 'Organization ID is required' };
+    }
+
     try {
-        const q = query(collection(db, COLLECTIONS.WORK_ORDER_ITEMS), where('ID', '==', itemId));
+        const q = query(
+            collection(db, COLLECTIONS.WORK_ORDER_ITEMS),
+            where('ID', '==', itemId),
+            where('Organization_ID', '==', organizationId)
+        );
         const snapshot = await getDocs(q);
 
         if (snapshot.empty) {
@@ -2203,9 +2619,17 @@ export async function updateWorkOrderItemStatus(itemId: string, status: string):
     }
 }
 
-export async function assignWorkerToItem(itemId: string, workerId: string, workerName: string): Promise<{ success: boolean; message: string }> {
+export async function assignWorkerToItem(itemId: string, workerId: string, workerName: string, organizationId: string): Promise<{ success: boolean; message: string }> {
+    if (!organizationId) {
+        return { success: false, message: 'Organization ID is required' };
+    }
+
     try {
-        const q = query(collection(db, COLLECTIONS.WORK_ORDER_ITEMS), where('ID', '==', itemId));
+        const q = query(
+            collection(db, COLLECTIONS.WORK_ORDER_ITEMS),
+            where('ID', '==', itemId),
+            where('Organization_ID', '==', organizationId)
+        );
         const snapshot = await getDocs(q);
 
         if (snapshot.empty) {
@@ -2220,10 +2644,18 @@ export async function assignWorkerToItem(itemId: string, workerId: string, worke
     }
 }
 
-export async function completeWorkOrderItem(itemId: string, productionStep: string): Promise<{ success: boolean; message: string }> {
+export async function completeWorkOrderItem(itemId: string, productionStep: string, organizationId: string): Promise<{ success: boolean; message: string }> {
+    if (!organizationId) {
+        return { success: false, message: 'Organization ID is required' };
+    }
+
     try {
         // Update item status
-        const itemQ = query(collection(db, COLLECTIONS.WORK_ORDER_ITEMS), where('ID', '==', itemId));
+        const itemQ = query(
+            collection(db, COLLECTIONS.WORK_ORDER_ITEMS),
+            where('ID', '==', itemId),
+            where('Organization_ID', '==', organizationId)
+        );
         const itemSnap = await getDocs(itemQ);
 
         if (itemSnap.empty) {
@@ -2234,7 +2666,11 @@ export async function completeWorkOrderItem(itemId: string, productionStep: stri
         await updateDoc(itemSnap.docs[0].ref, { Status: 'Završeno' });
 
         // Update product status based on production step
-        const productQ = query(collection(db, COLLECTIONS.PRODUCTS), where('Product_ID', '==', item.Product_ID));
+        const productQ = query(
+            collection(db, COLLECTIONS.PRODUCTS),
+            where('Product_ID', '==', item.Product_ID),
+            where('Organization_ID', '==', organizationId)
+        );
         const productSnap = await getDocs(productQ);
 
         if (!productSnap.empty) {
@@ -2251,7 +2687,7 @@ export async function completeWorkOrderItem(itemId: string, productionStep: stri
             // Sync project status using centralized function
             if (item.Project_ID) {
                 const { syncProjectStatus } = await import('./attendance');
-                await syncProjectStatus(item.Project_ID);
+                await syncProjectStatus(item.Project_ID, organizationId);
             }
         }
 
@@ -2262,10 +2698,18 @@ export async function completeWorkOrderItem(itemId: string, productionStep: stri
     }
 }
 
-export async function deleteWorkOrder(workOrderId: string): Promise<{ success: boolean; message: string }> {
+export async function deleteWorkOrder(workOrderId: string, organizationId: string): Promise<{ success: boolean; message: string }> {
+    if (!organizationId) {
+        return { success: false, message: 'Organization ID is required' };
+    }
+
     try {
         // Get items first to reset product statuses
-        const itemsQ = query(collection(db, COLLECTIONS.WORK_ORDER_ITEMS), where('Work_Order_ID', '==', workOrderId));
+        const itemsQ = query(
+            collection(db, COLLECTIONS.WORK_ORDER_ITEMS),
+            where('Work_Order_ID', '==', workOrderId),
+            where('Organization_ID', '==', organizationId)
+        );
         const itemsSnap = await getDocs(itemsQ);
 
         // Reset product statuses in projects before deleting
@@ -2284,7 +2728,11 @@ export async function deleteWorkOrder(workOrderId: string): Promise<{ success: b
         // Update each project's products to reset status
         const entries = Array.from(projectUpdates.entries());
         for (const [projectId, productStatuses] of entries) {
-            const projectQ = query(collection(db, COLLECTIONS.PROJECTS), where('Project_ID', '==', projectId));
+            const projectQ = query(
+                collection(db, COLLECTIONS.PROJECTS),
+                where('Project_ID', '==', projectId),
+                where('Organization_ID', '==', organizationId)
+            );
             const projectSnap = await getDocs(projectQ);
 
             if (!projectSnap.empty) {
@@ -2308,7 +2756,11 @@ export async function deleteWorkOrder(workOrderId: string): Promise<{ success: b
         itemsSnap.docs.forEach(docRef => batch.delete(docRef.ref));
 
         // Delete work order
-        const woQ = query(collection(db, COLLECTIONS.WORK_ORDERS), where('Work_Order_ID', '==', workOrderId));
+        const woQ = query(
+            collection(db, COLLECTIONS.WORK_ORDERS),
+            where('Work_Order_ID', '==', workOrderId),
+            where('Organization_ID', '==', organizationId)
+        );
         const woSnap = await getDocs(woQ);
         if (!woSnap.empty) {
             batch.delete(woSnap.docs[0].ref);
@@ -2322,9 +2774,17 @@ export async function deleteWorkOrder(workOrderId: string): Promise<{ success: b
     }
 }
 
-export async function startWorkOrder(workOrderId: string): Promise<{ success: boolean; message: string }> {
+export async function startWorkOrder(workOrderId: string, organizationId: string): Promise<{ success: boolean; message: string }> {
+    if (!organizationId) {
+        return { success: false, message: 'Organization ID is required' };
+    }
+
     try {
-        const q = query(collection(db, COLLECTIONS.WORK_ORDERS), where('Work_Order_ID', '==', workOrderId));
+        const q = query(
+            collection(db, COLLECTIONS.WORK_ORDERS),
+            where('Work_Order_ID', '==', workOrderId),
+            where('Organization_ID', '==', organizationId)
+        );
         const snapshot = await getDocs(q);
 
         if (snapshot.empty) {
@@ -2334,7 +2794,11 @@ export async function startWorkOrder(workOrderId: string): Promise<{ success: bo
         await updateDoc(snapshot.docs[0].ref, { Status: 'U toku' });
 
         // Update all items to "U toku"
-        const itemsQ = query(collection(db, COLLECTIONS.WORK_ORDER_ITEMS), where('Work_Order_ID', '==', workOrderId));
+        const itemsQ = query(
+            collection(db, COLLECTIONS.WORK_ORDER_ITEMS),
+            where('Work_Order_ID', '==', workOrderId),
+            where('Organization_ID', '==', organizationId)
+        );
         const itemsSnap = await getDocs(itemsQ);
 
         for (const itemDoc of itemsSnap.docs) {
@@ -2347,14 +2811,22 @@ export async function startWorkOrder(workOrderId: string): Promise<{ success: bo
         const wo = snapshot.docs[0].data() as WorkOrder;
         for (const itemDoc of itemsSnap.docs) {
             const item = itemDoc.data() as WorkOrderItem;
-            const productQ = query(collection(db, COLLECTIONS.PRODUCTS), where('Product_ID', '==', item.Product_ID));
+            const productQ = query(
+                collection(db, COLLECTIONS.PRODUCTS),
+                where('Product_ID', '==', item.Product_ID),
+                where('Organization_ID', '==', organizationId)
+            );
             const productSnap = await getDocs(productQ);
             if (!productSnap.empty) {
                 await updateDoc(productSnap.docs[0].ref, { Status: wo.Production_Steps[0] });
             }
 
             // Update project to "U proizvodnji" if not already
-            const projectQ = query(collection(db, COLLECTIONS.PROJECTS), where('Project_ID', '==', item.Project_ID));
+            const projectQ = query(
+                collection(db, COLLECTIONS.PROJECTS),
+                where('Project_ID', '==', item.Project_ID),
+                where('Organization_ID', '==', organizationId)
+            );
             const projectSnap = await getDocs(projectQ);
             if (!projectSnap.empty) {
                 const currentStatus = projectSnap.docs[0].data().Status;
@@ -2371,10 +2843,18 @@ export async function startWorkOrder(workOrderId: string): Promise<{ success: bo
     }
 }
 
-export async function updateWorkOrder(workOrderId: string, updates: Partial<WorkOrder>): Promise<{ success: boolean; message: string; data?: WorkOrder }> {
+export async function updateWorkOrder(workOrderId: string, updates: Partial<WorkOrder>, organizationId: string): Promise<{ success: boolean; message: string; data?: WorkOrder }> {
+    if (!organizationId) {
+        return { success: false, message: 'Organization ID is required' };
+    }
+
     try {
         const db = getDb();
-        const q = query(collection(db, COLLECTIONS.WORK_ORDERS), where('Work_Order_ID', '==', workOrderId));
+        const q = query(
+            collection(db, COLLECTIONS.WORK_ORDERS),
+            where('Work_Order_ID', '==', workOrderId),
+            where('Organization_ID', '==', organizationId)
+        );
         const snapshot = await getDocs(q);
 
         if (snapshot.empty) {
@@ -2400,7 +2880,11 @@ export async function updateWorkOrder(workOrderId: string, updates: Partial<Work
 
         // Update items if provided
         if (updates.items && Array.isArray(updates.items)) {
-            const itemsQ = query(collection(db, COLLECTIONS.WORK_ORDER_ITEMS), where('Work_Order_ID', '==', workOrderId));
+            const itemsQ = query(
+                collection(db, COLLECTIONS.WORK_ORDER_ITEMS),
+                where('Work_Order_ID', '==', workOrderId),
+                where('Organization_ID', '==', organizationId)
+            );
             const itemsSnap = await getDocs(itemsQ);
 
             // Create a map of existing items
@@ -2427,7 +2911,7 @@ export async function updateWorkOrder(workOrderId: string, updates: Partial<Work
         }
 
         // Fetch updated work order
-        const updatedWO = await getWorkOrder(workOrderId);
+        const updatedWO = await getWorkOrder(workOrderId, organizationId);
 
         return { success: true, message: 'Radni nalog ažuriran', data: updatedWO || undefined };
     } catch (error) {
@@ -2437,7 +2921,7 @@ export async function updateWorkOrder(workOrderId: string, updates: Partial<Work
 }
 
 // ============================================
-// WORK LOGS CRUD - Real-time Profit Tracking
+// WORK LOGS CRUD - Real-time Profit Tracking (Multi-tenancy enabled)
 // ============================================
 
 /**
@@ -2457,7 +2941,11 @@ export async function createWorkLog(data: {
     Is_From_Attendance?: boolean;
     Notes?: string;
     Date?: string;
-}): Promise<{ success: boolean; data?: { WorkLog_ID: string }; message: string }> {
+}, organizationId: string): Promise<{ success: boolean; data?: { WorkLog_ID: string }; message: string }> {
+    if (!organizationId) {
+        return { success: false, message: 'Organization ID is required' };
+    }
+
     try {
         const firestore = getDb();
         const now = new Date().toISOString();
@@ -2465,6 +2953,7 @@ export async function createWorkLog(data: {
 
         const workLogData: WorkLog = {
             WorkLog_ID: generateUUID(),
+            Organization_ID: organizationId,
             Date: data.Date || today,
             Worker_ID: data.Worker_ID,
             Worker_Name: data.Worker_Name,
@@ -2497,12 +2986,15 @@ export async function createWorkLog(data: {
 /**
  * Get all work logs for a specific work order item (product)
  */
-export async function getWorkLogsForItem(workOrderItemId: string): Promise<WorkLog[]> {
+export async function getWorkLogsForItem(workOrderItemId: string, organizationId: string): Promise<WorkLog[]> {
+    if (!organizationId) return [];
+
     try {
         const firestore = getDb();
         const q = query(
             collection(firestore, COLLECTIONS.WORK_LOGS),
-            where('Work_Order_Item_ID', '==', workOrderItemId)
+            where('Work_Order_Item_ID', '==', workOrderItemId),
+            where('Organization_ID', '==', organizationId)
         );
         const snapshot = await getDocs(q);
         return snapshot.docs.map(doc => doc.data() as WorkLog);
@@ -2515,12 +3007,15 @@ export async function getWorkLogsForItem(workOrderItemId: string): Promise<WorkL
 /**
  * Get all work logs for an entire work order
  */
-export async function getWorkLogsForWorkOrder(workOrderId: string): Promise<WorkLog[]> {
+export async function getWorkLogsForWorkOrder(workOrderId: string, organizationId: string): Promise<WorkLog[]> {
+    if (!organizationId) return [];
+
     try {
         const firestore = getDb();
         const q = query(
             collection(firestore, COLLECTIONS.WORK_LOGS),
-            where('Work_Order_ID', '==', workOrderId)
+            where('Work_Order_ID', '==', workOrderId),
+            where('Organization_ID', '==', organizationId)
         );
         const snapshot = await getDocs(q);
         return snapshot.docs.map(doc => doc.data() as WorkLog);
@@ -2534,13 +3029,17 @@ export async function getWorkLogsForWorkOrder(workOrderId: string): Promise<Work
  * Calculate total labor cost for a work order item
  * Returns sum of all daily rates for all work logs
  */
-export async function calculateItemLaborCost(workOrderItemId: string): Promise<{
+export async function calculateItemLaborCost(workOrderItemId: string, organizationId: string): Promise<{
     totalCost: number;
     totalDays: number;
     workerBreakdown: { workerId: string; workerName: string; days: number; cost: number }[];
 }> {
+    if (!organizationId) {
+        return { totalCost: 0, totalDays: 0, workerBreakdown: [] };
+    }
+
     try {
-        const logs = await getWorkLogsForItem(workOrderItemId);
+        const logs = await getWorkLogsForItem(workOrderItemId, organizationId);
 
         // Group by worker
         const workerMap = new Map<string, { workerName: string; days: number; cost: number }>();
@@ -2622,24 +3121,34 @@ export async function workLogExists(workerId: string, workOrderItemId: string, d
 }
 
 // ============================================
-// TASKS CRUD
+// TASKS CRUD (Multi-tenancy enabled)
 // ============================================
 
-export async function getTasks(): Promise<Task[]> {
+export async function getTasks(organizationId: string): Promise<Task[]> {
+    if (!organizationId) return [];
     const firestore = getDb();
-    const snapshot = await getDocs(collection(firestore, COLLECTIONS.TASKS));
+    const q = query(collection(firestore, COLLECTIONS.TASKS), where('Organization_ID', '==', organizationId));
+    const snapshot = await getDocs(q);
     return snapshot.docs.map(doc => ({ ...doc.data() } as Task));
 }
 
-export async function getTask(taskId: string): Promise<Task | null> {
+export async function getTask(taskId: string, organizationId: string): Promise<Task | null> {
+    if (!organizationId) return null;
     const firestore = getDb();
-    const q = query(collection(firestore, COLLECTIONS.TASKS), where('Task_ID', '==', taskId));
+    const q = query(
+        collection(firestore, COLLECTIONS.TASKS),
+        where('Task_ID', '==', taskId),
+        where('Organization_ID', '==', organizationId)
+    );
     const snapshot = await getDocs(q);
     if (snapshot.empty) return null;
     return snapshot.docs[0].data() as Task;
 }
 
-export async function saveTask(data: Partial<Task>): Promise<{ success: boolean; data?: { Task_ID: string }; message: string }> {
+export async function saveTask(data: Partial<Task>, organizationId: string): Promise<{ success: boolean; data?: { Task_ID: string }; message: string }> {
+    if (!organizationId) {
+        return { success: false, message: 'Organization ID is required' };
+    }
     try {
         const firestore = getDb();
         const isNew = !data.Task_ID;
@@ -2651,6 +3160,7 @@ export async function saveTask(data: Partial<Task>): Promise<{ success: boolean;
 
         if (isNew) {
             cleanData.Task_ID = generateUUID();
+            cleanData.Organization_ID = organizationId;
             cleanData.Created_Date = new Date().toISOString();
             cleanData.Status = cleanData.Status || 'pending';
             cleanData.Priority = cleanData.Priority || 'medium';
@@ -2659,7 +3169,11 @@ export async function saveTask(data: Partial<Task>): Promise<{ success: boolean;
             cleanData.Checklist = cleanData.Checklist || [];
             await addDoc(collection(firestore, COLLECTIONS.TASKS), cleanData);
         } else {
-            const q = query(collection(firestore, COLLECTIONS.TASKS), where('Task_ID', '==', cleanData.Task_ID));
+            const q = query(
+                collection(firestore, COLLECTIONS.TASKS),
+                where('Task_ID', '==', cleanData.Task_ID),
+                where('Organization_ID', '==', organizationId)
+            );
             const snapshot = await getDocs(q);
             if (!snapshot.empty) {
                 await updateDoc(snapshot.docs[0].ref, cleanData as Record<string, unknown>);
@@ -2673,10 +3187,17 @@ export async function saveTask(data: Partial<Task>): Promise<{ success: boolean;
     }
 }
 
-export async function deleteTask(taskId: string): Promise<{ success: boolean; message: string }> {
+export async function deleteTask(taskId: string, organizationId: string): Promise<{ success: boolean; message: string }> {
+    if (!organizationId) {
+        return { success: false, message: 'Organization ID is required' };
+    }
     try {
         const firestore = getDb();
-        const q = query(collection(firestore, COLLECTIONS.TASKS), where('Task_ID', '==', taskId));
+        const q = query(
+            collection(firestore, COLLECTIONS.TASKS),
+            where('Task_ID', '==', taskId),
+            where('Organization_ID', '==', organizationId)
+        );
         const snapshot = await getDocs(q);
         if (!snapshot.empty) {
             await deleteDoc(snapshot.docs[0].ref);
@@ -2688,10 +3209,17 @@ export async function deleteTask(taskId: string): Promise<{ success: boolean; me
     }
 }
 
-export async function updateTaskStatus(taskId: string, status: Task['Status']): Promise<{ success: boolean; message: string }> {
+export async function updateTaskStatus(taskId: string, status: Task['Status'], organizationId: string): Promise<{ success: boolean; message: string }> {
+    if (!organizationId) {
+        return { success: false, message: 'Organization ID is required' };
+    }
     try {
         const firestore = getDb();
-        const q = query(collection(firestore, COLLECTIONS.TASKS), where('Task_ID', '==', taskId));
+        const q = query(
+            collection(firestore, COLLECTIONS.TASKS),
+            where('Task_ID', '==', taskId),
+            where('Organization_ID', '==', organizationId)
+        );
         const snapshot = await getDocs(q);
         if (!snapshot.empty) {
             const updates: Record<string, unknown> = { Status: status };
@@ -2707,10 +3235,17 @@ export async function updateTaskStatus(taskId: string, status: Task['Status']): 
     }
 }
 
-export async function toggleTaskChecklistItem(taskId: string, checklistItemId: string): Promise<{ success: boolean; message: string }> {
+export async function toggleTaskChecklistItem(taskId: string, checklistItemId: string, organizationId: string): Promise<{ success: boolean; message: string }> {
+    if (!organizationId) {
+        return { success: false, message: 'Organization ID is required' };
+    }
     try {
         const firestore = getDb();
-        const q = query(collection(firestore, COLLECTIONS.TASKS), where('Task_ID', '==', taskId));
+        const q = query(
+            collection(firestore, COLLECTIONS.TASKS),
+            where('Task_ID', '==', taskId),
+            where('Organization_ID', '==', organizationId)
+        );
         const snapshot = await getDocs(q);
         if (!snapshot.empty) {
             const task = snapshot.docs[0].data() as Task;
@@ -2726,3 +3261,4 @@ export async function toggleTaskChecklistItem(taskId: string, checklistItemId: s
         return { success: false, message: 'Greška pri ažuriranju checkliste' };
     }
 }
+

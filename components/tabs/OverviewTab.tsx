@@ -3,6 +3,7 @@
 import { useState, useMemo } from 'react';
 import type { Project, WorkOrder, Order, Supplier, ProductMaterial, Offer, OfferProduct, WorkLog } from '@/lib/types';
 import { updateProductMaterial, createOrder, markMaterialsReceived } from '@/lib/database';
+import { useData } from '@/context/DataContext';
 import ProductTimelineModal from '@/components/ui/ProductTimelineModal';
 
 interface OverviewTabProps {
@@ -53,6 +54,7 @@ interface OverviewItem {
 export default function OverviewTab({ projects, workOrders, orders = [], suppliers = [], offers = [], workLogs = [], showToast, onCreateOrder, onRefresh }: OverviewTabProps) {
     const [groupBy, setGroupBy] = useState<GroupBy>('project');
     const [viewMode, setViewMode] = useState<ViewMode>('both');
+    const { organizationId } = useData();
     const [searchTerm, setSearchTerm] = useState('');
     const [statusFilter, setStatusFilter] = useState('');
     const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
@@ -517,12 +519,16 @@ export default function OverviewTab({ projects, workOrders, orders = [], supplie
         }
 
         try {
+            if (!organizationId) {
+                showToast('Organization ID is required', 'error');
+                return;
+            }
             const result = await createOrder({
                 Supplier_ID: supplier?.Supplier_ID || '',
                 Supplier_Name: selectedSupplier,
                 Total_Amount: totalAmount,
                 items,
-            });
+            }, organizationId);
 
             if (result.success) {
                 showToast(`Narudžba ${result.data?.Order_Number} kreirana!`, 'success');
@@ -577,7 +583,11 @@ export default function OverviewTab({ projects, workOrders, orders = [], supplie
         if (selectedMaterials.size === 0) return;
 
         try {
-            const result = await markMaterialsReceived(Array.from(selectedMaterials));
+            if (!organizationId) {
+                showToast('Organization ID is required', 'error');
+                return;
+            }
+            const result = await markMaterialsReceived(Array.from(selectedMaterials), organizationId);
             if (result.success) {
                 showToast(`${selectedMaterials.size} materijal(a) označeno kao primljeno!`, 'success');
                 setSelectedMaterials(new Set());
@@ -892,7 +902,7 @@ export default function OverviewTab({ projects, workOrders, orders = [], supplie
                                 className="btn btn-in-stock"
                                 onClick={async () => {
                                     for (const matId of Array.from(selectedMaterials)) {
-                                        await updateProductMaterial(matId, { Status: 'Na stanju' });
+                                        await updateProductMaterial(matId, { Status: 'Na stanju' }, organizationId!);
                                     }
                                     showToast(`${selectedMaterials.size} materijal(a) označeno kao "Na stanju"`, 'success');
                                     setSelectedMaterials(new Set());

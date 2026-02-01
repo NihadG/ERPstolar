@@ -3,6 +3,7 @@
 import { useState, useMemo } from 'react';
 import type { Offer, Project, OfferProduct, Product } from '@/lib/types';
 import { getOffer, createOfferWithProducts, deleteOffer, updateOfferStatus, saveOffer, updateOfferWithProducts } from '@/lib/database';
+import { useData } from '@/context/DataContext';
 import { generateOfferPDF, type OfferPDFData } from '@/lib/pdfGenerator';
 import Modal from '@/components/ui/Modal';
 import { OFFER_STATUSES } from '@/lib/types';
@@ -41,9 +42,9 @@ interface OffersTabProps {
 }
 
 export default function OffersTab({ offers, projects, onRefresh, showToast }: OffersTabProps) {
+    const { organizationId } = useData();
     const [searchTerm, setSearchTerm] = useState('');
     const [statusFilter, setStatusFilter] = useState('');
-
     // Create Offer Modal State
     const [createModal, setCreateModal] = useState(false);
     const [selectedProjectId, setSelectedProjectId] = useState('');
@@ -336,7 +337,7 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
                 ...offerData,
                 Offer_ID: currentOffer.Offer_ID,
                 Offer_Number: currentOffer.Offer_Number,
-            });
+            }, organizationId!);
 
             if (result.success) {
                 showToast('Ponuda ažurirana', 'success');
@@ -349,7 +350,7 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
             }
         } else {
             // Create new offer
-            result = await createOfferWithProducts(offerData as any);
+            result = await createOfferWithProducts(offerData as any, organizationId!);
 
             if (result.success) {
                 showToast('Ponuda kreirana: ' + result.data?.Offer_Number, 'success');
@@ -372,7 +373,7 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
         setViewModal(true);
         setModalLoading(true);
 
-        const offer = await getOffer(offerId);
+        const offer = await getOffer(offerId, organizationId!);
         setModalLoading(false);
 
         if (offer) {
@@ -386,7 +387,7 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
     async function handleDeleteOffer(offerId: string) {
         if (!confirm('Jeste li sigurni da želite obrisati ovu ponudu?')) return;
 
-        const result = await deleteOffer(offerId);
+        const result = await deleteOffer(offerId, organizationId!);
         if (result.success) {
             showToast(result.message, 'success');
             onRefresh();
@@ -396,13 +397,13 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
     }
 
     async function handleUpdateStatus(offerId: string, status: string) {
-        const result = await updateOfferStatus(offerId, status);
+        const result = await updateOfferStatus(offerId, status, organizationId!);
         if (result.success) {
             showToast('Status ažuriran', 'success');
             onRefresh();
             // Refresh view modal if open
             if (currentOffer && currentOffer.Offer_ID === offerId) {
-                const updated = await getOffer(offerId);
+                const updated = await getOffer(offerId, organizationId!);
                 setCurrentOffer(updated);
             }
         } else {
@@ -419,7 +420,7 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
         setModalLoading(true);
 
         // Load full offer with products
-        const fullOffer = await getOffer(offer.Offer_ID);
+        const fullOffer = await getOffer(offer.Offer_ID, organizationId!);
         setModalLoading(false);
 
         if (!fullOffer) {

@@ -421,3 +421,23 @@
 .sidebar.collapsed .nav-item.search-btn {
     justify-content: center;
 }
+
+/* AI Import Button Styles */
+.nav-badge-ai {
+    font-size: 9px;
+    font-weight: 700;
+    color: white;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    padding: 2px 6px;
+    border-radius: 4px;
+    margin-top: 2px;
+    letter-spacing: 0.3px;
+}
+
+.nav-item.ai-import-btn:hover .nav-icon-wrapper {
+    color: #667eea;
+}
+
+.sidebar.collapsed .nav-item.ai-import-btn {
+    justify-content: center;
+}

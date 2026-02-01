@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import type { Worker } from '@/lib/types';
 import { saveWorker, deleteWorker } from '@/lib/database';
+import { useData } from '@/context/DataContext';
 import Modal from '@/components/ui/Modal';
 import { WORKER_ROLES, WORKER_TYPES } from '@/lib/types';
 
@@ -13,6 +14,7 @@ interface WorkersTabProps {
 }
 
 export default function WorkersTab({ workers, onRefresh, showToast }: WorkersTabProps) {
+    const { organizationId } = useData();
     const [workerModal, setWorkerModal] = useState(false);
     const [editingWorker, setEditingWorker] = useState<Partial<Worker> | null>(null);
 
@@ -26,8 +28,12 @@ export default function WorkersTab({ workers, onRefresh, showToast }: WorkersTab
             showToast('Unesite ime radnika', 'error');
             return;
         }
+        if (!organizationId) {
+            showToast('Organization ID is required', 'error');
+            return;
+        }
 
-        const result = await saveWorker(editingWorker);
+        const result = await saveWorker(editingWorker, organizationId);
         if (result.success) {
             showToast(result.message, 'success');
             setWorkerModal(false);
@@ -39,8 +45,12 @@ export default function WorkersTab({ workers, onRefresh, showToast }: WorkersTab
 
     async function handleDeleteWorker(workerId: string) {
         if (!confirm('Jeste li sigurni da želite obrisati ovog radnika?')) return;
+        if (!organizationId) {
+            showToast('Organization ID is required', 'error');
+            return;
+        }
 
-        const result = await deleteWorker(workerId);
+        const result = await deleteWorker(workerId, organizationId);
         if (result.success) {
             showToast(result.message, 'success');
             onRefresh();

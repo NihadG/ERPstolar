@@ -41,6 +41,7 @@ import {
     MessageSquare,
     CheckCheck
 } from 'lucide-react';
+import { useData } from '@/context/DataContext';
 
 // ============================================
 // TYPES
@@ -88,6 +89,7 @@ const categoryIcons: Record<TaskCategory, React.ReactNode> = {
 // ============================================
 
 export default function TasksTab({ tasks, projects, workers, materials, workOrders = [], orders = [], onRefresh, showToast, projectFilter, onClearFilter }: TasksTabProps) {
+    const { organizationId } = useData();
     // State
     const [searchQuery, setSearchQuery] = useState('');
     const [filterStatus, setFilterStatus] = useState<FilterStatus>('all');
@@ -257,7 +259,7 @@ export default function TasksTab({ tasks, projects, workers, materials, workOrde
     };
 
     const handleSaveTask = async (taskData: Partial<Task>) => {
-        const result = await saveTask(taskData);
+        const result = await saveTask(taskData, organizationId!);
         if (result.success) {
             showToast(result.message, 'success');
             onRefresh();
@@ -269,7 +271,7 @@ export default function TasksTab({ tasks, projects, workers, materials, workOrde
 
     const handleDeleteTask = async (taskId: string) => {
         if (!confirm('Da li ste sigurni da želite obrisati ovaj zadatak?')) return;
-        const result = await deleteTask(taskId);
+        const result = await deleteTask(taskId, organizationId!);
         if (result.success) {
             showToast(result.message, 'success');
             onRefresh();
@@ -286,7 +288,7 @@ export default function TasksTab({ tasks, projects, workers, materials, workOrde
         ));
 
         // Attempt update
-        const result = await updateTaskStatus(taskId, status);
+        const result = await updateTaskStatus(taskId, status, organizationId!);
         if (result.success) {
             // Success - refresh data in background (silent sync)
             onRefresh();
@@ -313,7 +315,7 @@ export default function TasksTab({ tasks, projects, workers, materials, workOrde
         }));
 
         // Attempt update
-        const result = await toggleTaskChecklistItem(taskId, itemId);
+        const result = await toggleTaskChecklistItem(taskId, itemId, organizationId!);
         if (result.success) {
             // Silent refresh
             onRefresh();

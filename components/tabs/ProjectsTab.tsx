@@ -20,6 +20,7 @@ import GlassModal, { type GlassModalData } from '@/components/ui/GlassModal';
 import AluDoorModal, { type AluDoorModalData } from '@/components/ui/AluDoorModal';
 
 import ProductTimelineModal from '@/components/ui/ProductTimelineModal';
+import { useData } from '@/context/DataContext';
 import { PROJECT_STATUSES, PRODUCTION_STEPS, MATERIAL_CATEGORIES } from '@/lib/types';
 
 interface ProjectsTabProps {
@@ -34,6 +35,7 @@ interface ProjectsTabProps {
 }
 
 export default function ProjectsTab({ projects, materials, workOrders = [], offers = [], workLogs = [], onRefresh, showToast, onNavigateToTasks }: ProjectsTabProps) {
+    const { organizationId } = useData();
     const [searchTerm, setSearchTerm] = useState('');
     const [statusFilter, setStatusFilter] = useState('');
     const [expandedProjectId, setExpandedProjectId] = useState<string | null>(null);
@@ -158,8 +160,12 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
             showToast('Unesite ime klijenta', 'error');
             return;
         }
+        if (!organizationId) {
+            showToast('Organization ID is required', 'error');
+            return;
+        }
 
-        const result = await saveProject(editingProject);
+        const result = await saveProject(editingProject, organizationId);
         if (result.success) {
             showToast(result.message, 'success');
             setProjectModal(false);
@@ -171,8 +177,12 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
 
     async function handleDeleteProject(projectId: string) {
         if (!confirm('Jeste li sigurni da želite obrisati ovaj projekat?')) return;
+        if (!organizationId) {
+            showToast('Organization ID is required', 'error');
+            return;
+        }
 
-        const result = await deleteProject(projectId);
+        const result = await deleteProject(projectId, organizationId);
         if (result.success) {
             showToast(result.message, 'success');
             onRefresh();
@@ -186,13 +196,17 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
             showToast('Unesite naziv proizvoda', 'error');
             return;
         }
+        if (!organizationId) {
+            showToast('Organization ID is required', 'error');
+            return;
+        }
 
         const productData = {
             ...editingProduct,
             Project_ID: editingProduct.Project_ID || editingProduct.projectId,
         };
 
-        const result = await saveProduct(productData);
+        const result = await saveProduct(productData, organizationId);
         if (result.success) {
             showToast(result.message, 'success');
             setProductModal(false);
@@ -204,8 +218,12 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
 
     async function handleDeleteProduct(productId: string) {
         if (!confirm('Jeste li sigurni da želite obrisati ovaj proizvod?')) return;
+        if (!organizationId) {
+            showToast('Organization ID is required', 'error');
+            return;
+        }
 
-        const result = await deleteProduct(productId);
+        const result = await deleteProduct(productId, organizationId);
         if (result.success) {
             showToast(result.message, 'success');
             onRefresh();
@@ -255,7 +273,7 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
             Unit: selectedMaterial.Unit,
             Unit_Price: materialPrice || selectedMaterial.Default_Unit_Price,
             Supplier: selectedMaterial.Default_Supplier,
-        });
+        }, organizationId!);
 
         if (result.success) {
             showToast(result.message, 'success');
@@ -268,13 +286,17 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
 
     // Handle glass modal save
     async function handleSaveGlass(data: GlassModalData) {
+        if (!organizationId) {
+            showToast('Organization ID is required', 'error');
+            return;
+        }
         let result;
         if (data.isEditMode && data.productMaterialId) {
             result = await updateGlassMaterial({
                 productMaterialId: data.productMaterialId,
                 unitPrice: data.unitPrice,
                 items: data.items,
-            });
+            }, organizationId);
         } else {
             result = await addGlassMaterialToProduct({
                 productId: data.productId,
@@ -283,7 +305,7 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                 supplier: data.supplier,
                 unitPrice: data.unitPrice,
                 items: data.items,
-            });
+            }, organizationId);
         }
 
         if (result.success) {
@@ -296,13 +318,17 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
 
     // Handle alu door modal save
     async function handleSaveAluDoor(data: AluDoorModalData) {
+        if (!organizationId) {
+            showToast('Organization ID is required', 'error');
+            return;
+        }
         let result;
         if (data.isEditMode && data.productMaterialId) {
             result = await updateAluDoorMaterial({
                 productMaterialId: data.productMaterialId,
                 unitPrice: data.unitPrice,
                 items: data.items,
-            });
+            }, organizationId);
         } else {
             result = await addAluDoorMaterialToProduct({
                 productId: data.productId,
@@ -311,7 +337,7 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                 supplier: data.supplier,
                 unitPrice: data.unitPrice,
                 items: data.items,
-            });
+            }, organizationId);
         }
 
         if (result.success) {
@@ -340,8 +366,12 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
 
     async function handleDeleteMaterial(materialId: string) {
         if (!confirm('Jeste li sigurni da želite obrisati ovaj materijal?')) return;
+        if (!organizationId) {
+            showToast('Organization ID is required', 'error');
+            return;
+        }
 
-        const result = await deleteProductMaterial(materialId);
+        const result = await deleteProductMaterial(materialId, organizationId);
         if (result.success) {
             showToast(result.message, 'success');
             onRefresh();
@@ -362,13 +392,17 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
     // Save edited material
     async function handleSaveEditMaterial() {
         if (!editingMaterial) return;
+        if (!organizationId) {
+            showToast('Organization ID is required', 'error');
+            return;
+        }
 
         const result = await updateProductMaterial(editingMaterial.ID, {
             Quantity: editMaterialQty,
             Unit_Price: editMaterialPrice,
             Total_Price: editMaterialQty * editMaterialPrice,
             Is_Essential: editMaterialIsEssential
-        });
+        }, organizationId);
 
         if (result.success) {
             showToast('Materijal uspješno ažuriran', 'success');
@@ -381,7 +415,11 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
 
     // Handle material status change
     async function handleMaterialStatusChange(materialId: string, newStatus: string) {
-        const result = await updateProductMaterial(materialId, { Status: newStatus });
+        if (!organizationId) {
+            showToast('Organization ID is required', 'error');
+            return;
+        }
+        const result = await updateProductMaterial(materialId, { Status: newStatus }, organizationId);
         if (result.success) {
             showToast(`Status materijala promjenjen u "${newStatus}"`, 'success');
             setStatusDropdownMaterialId(null);

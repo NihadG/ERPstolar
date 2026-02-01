@@ -18,7 +18,8 @@ import {
     ChevronDown,
     Lock,
     Calendar,
-    CheckSquare
+    CheckSquare,
+    Sparkles,
 } from 'lucide-react';
 import './Sidebar.css';
 
@@ -30,9 +31,10 @@ interface SidebarProps {
     isCollapsed: boolean;
     onToggleCollapse: () => void;
     onOpenSearch: () => void;
+    onOpenAIImport?: () => void;
 }
 
-const Sidebar: React.FC<SidebarProps> = ({ activeTab, onTabChange, isOpen, onClose, isCollapsed, onToggleCollapse, onOpenSearch }) => {
+const Sidebar: React.FC<SidebarProps> = ({ activeTab, onTabChange, isOpen, onClose, isCollapsed, onToggleCollapse, onOpenSearch, onOpenAIImport }) => {
     const router = useRouter();
     const { user, organization, hasModule, signOut } = useAuth();
     const [isManagementExpanded, setIsManagementExpanded] = React.useState(false);
@@ -131,6 +133,30 @@ const Sidebar: React.FC<SidebarProps> = ({ activeTab, onTabChange, isOpen, onClo
                             </div>
                         )}
                     </button>
+
+                    {onOpenAIImport && (
+                        <button
+                            className="nav-item ai-import-btn"
+                            onClick={() => {
+                                onOpenAIImport();
+                                if (window.innerWidth <= 768) onClose();
+                            }}
+                            title={isCollapsed ? "AI Import" : undefined}
+                            style={{
+                                '--item-color': '#667eea',
+                            } as React.CSSProperties}
+                        >
+                            <div className="nav-icon-wrapper">
+                                <Sparkles size={20} />
+                            </div>
+                            {!isCollapsed && (
+                                <div className="nav-label-group">
+                                    <span className="nav-label">AI Import</span>
+                                    <span className="nav-badge-ai">NOVO</span>
+                                </div>
+                            )}
+                        </button>
+                    )}
 
                     <div className="nav-divider"></div>
 

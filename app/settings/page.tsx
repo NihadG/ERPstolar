@@ -67,25 +67,30 @@ export default function SettingsPage() {
     const [message, setMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
     const [activeSection, setActiveSection] = useState('company');
 
-    // Load settings from localStorage
+    // Load settings from localStorage (user-specific)
     useEffect(() => {
-        if (typeof window !== 'undefined') {
-            const savedCompany = localStorage.getItem('companyInfo');
-            const savedSettings = localStorage.getItem('appSettings');
+        if (typeof window !== 'undefined' && organization?.Organization_ID) {
+            const orgKey = organization.Organization_ID;
+            const savedCompany = localStorage.getItem(`companyInfo_${orgKey}`);
+            const savedSettings = localStorage.getItem(`appSettings_${orgKey}`);
 
             if (savedCompany) {
                 try {
                     setCompanyInfo({ ...DEFAULT_COMPANY, ...JSON.parse(savedCompany) });
                 } catch (e) { /* ignore */ }
+            } else {
+                setCompanyInfo(DEFAULT_COMPANY);
             }
 
             if (savedSettings) {
                 try {
                     setAppSettings({ ...DEFAULT_SETTINGS, ...JSON.parse(savedSettings) });
                 } catch (e) { /* ignore */ }
+            } else {
+                setAppSettings(DEFAULT_SETTINGS);
             }
         }
-    }, []);
+    }, [organization?.Organization_ID]);
 
     // Redirect to login if not authenticated
     useEffect(() => {
@@ -100,10 +105,16 @@ export default function SettingsPage() {
     }
 
     function handleSave() {
+        if (!organization?.Organization_ID) {
+            showMessage('Greška: Organizacija nije učitana', 'error');
+            return;
+        }
+
         setSaving(true);
         try {
-            localStorage.setItem('companyInfo', JSON.stringify(companyInfo));
-            localStorage.setItem('appSettings', JSON.stringify(appSettings));
+            const orgKey = organization.Organization_ID;
+            localStorage.setItem(`companyInfo_${orgKey}`, JSON.stringify(companyInfo));
+            localStorage.setItem(`appSettings_${orgKey}`, JSON.stringify(appSettings));
             showMessage('Postavke sačuvane uspješno', 'success');
         } catch (error) {
             showMessage('Greška pri čuvanju postavki', 'error');

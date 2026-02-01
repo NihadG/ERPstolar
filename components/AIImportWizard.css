@@ -1,0 +1,754 @@
+/* ============================================
+   AI IMPORT WIZARD STYLES
+   ============================================ */
+
+.ai-import-wizard {
+    display: flex;
+    flex-direction: column;
+    gap: 24px;
+    min-height: 500px;
+}
+
+/* Header */
+.ai-import-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.ai-import-header .material-icons-round {
+    color: var(--accent);
+    font-size: 24px;
+}
+
+/* Progress Steps */
+.ai-import-steps {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 16px 0;
+    border-bottom: 1px solid var(--border-light);
+}
+
+.ai-import-step {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 16px;
+    border-radius: 20px;
+    background: var(--surface);
+    transition: all 0.3s ease;
+}
+
+.ai-import-step .step-number {
+    width: 28px;
+    height: 28px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    background: var(--surface-hover);
+    color: var(--text-secondary);
+    font-size: 13px;
+    font-weight: 600;
+    transition: all 0.3s ease;
+}
+
+.ai-import-step .step-label {
+    color: var(--text-secondary);
+    font-size: 13px;
+    font-weight: 500;
+    white-space: nowrap;
+}
+
+.ai-import-step.active {
+    background: var(--accent-light);
+}
+
+.ai-import-step.active .step-number {
+    background: var(--accent);
+    color: white;
+}
+
+.ai-import-step.active .step-label {
+    color: var(--accent);
+    font-weight: 600;
+}
+
+.ai-import-step.completed .step-number {
+    background: var(--success);
+    color: white;
+}
+
+.ai-import-step.completed .step-number .material-icons-round {
+    font-size: 16px;
+}
+
+@media (max-width: 768px) {
+    .ai-import-steps {
+        flex-wrap: wrap;
+        gap: 4px;
+    }
+
+    .ai-import-step .step-label {
+        display: none;
+    }
+
+    .ai-import-step {
+        padding: 6px;
+    }
+}
+
+/* Content Area */
+.ai-import-content {
+    flex: 1;
+    padding: 8px;
+}
+
+.ai-import-instruction {
+    font-size: 15px;
+    color: var(--text-secondary);
+    margin-bottom: 20px;
+    text-align: center;
+}
+
+/* Entity Selection (Step 1) */
+.ai-import-entity-selection {
+    text-align: center;
+}
+
+.ai-import-entity-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 16px;
+    max-width: 900px;
+    margin: 0 auto;
+}
+
+.ai-import-entity-card {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    padding: 24px 16px;
+    background: white;
+    border: 2px solid var(--border-light);
+    border-radius: 16px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    text-align: center;
+}
+
+.ai-import-entity-card:hover {
+    border-color: var(--accent);
+    background: var(--accent-light);
+    transform: translateY(-2px);
+    box-shadow: 0 8px 24px rgba(0, 113, 227, 0.15);
+}
+
+.ai-import-entity-icon {
+    font-size: 48px;
+    line-height: 1;
+}
+
+.ai-import-entity-name {
+    font-size: 18px;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.ai-import-entity-desc {
+    font-size: 13px;
+    color: var(--text-secondary);
+    line-height: 1.4;
+}
+
+.ai-import-entity-fields {
+    font-size: 11px;
+    color: var(--text-tertiary);
+    padding: 8px 12px;
+    background: var(--surface);
+    border-radius: 8px;
+    margin-top: 8px;
+}
+
+/* Project Selection (Step 1.5) */
+.ai-import-project-selection {
+    max-width: 600px;
+    margin: 0 auto;
+}
+
+.ai-import-project-list {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    margin-bottom: 20px;
+    max-height: 400px;
+    overflow-y: auto;
+}
+
+.ai-import-project-card {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 16px 20px;
+    background: white;
+    border: 2px solid var(--border-light);
+    border-radius: 12px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    text-align: left;
+}
+
+.ai-import-project-card:hover {
+    border-color: var(--accent);
+    background: var(--accent-light);
+}
+
+.ai-import-project-name {
+    flex: 1;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.ai-import-project-address {
+    color: var(--text-secondary);
+    font-size: 13px;
+}
+
+.ai-import-empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+    padding: 48px;
+    color: var(--text-secondary);
+}
+
+.ai-import-empty .material-icons-round {
+    font-size: 48px;
+    opacity: 0.5;
+}
+
+/* Upload Section (Step 2) */
+.ai-import-upload {
+    max-width: 700px;
+    margin: 0 auto;
+}
+
+.ai-import-selected-type {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    justify-content: center;
+    margin-bottom: 24px;
+}
+
+.ai-import-type-badge,
+.ai-import-project-badge {
+    padding: 8px 16px;
+    background: var(--accent-light);
+    color: var(--accent);
+    border-radius: 20px;
+    font-size: 14px;
+    font-weight: 500;
+}
+
+.ai-import-dropzone {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    padding: 48px;
+    border: 2px dashed var(--border);
+    border-radius: 16px;
+    background: var(--surface);
+    cursor: pointer;
+    transition: all 0.2s ease;
+    text-align: center;
+}
+
+.ai-import-dropzone:hover,
+.ai-import-dropzone.dragging {
+    border-color: var(--accent);
+    background: var(--accent-light);
+}
+
+.ai-import-dropzone.has-file {
+    border-style: solid;
+    border-color: var(--success);
+    background: var(--success-bg);
+}
+
+.ai-import-dropzone .material-icons-round {
+    font-size: 48px;
+    color: var(--text-tertiary);
+}
+
+.ai-import-dropzone p {
+    font-size: 16px;
+    color: var(--text-primary);
+    font-weight: 500;
+}
+
+.ai-import-formats {
+    font-size: 13px;
+    color: var(--text-tertiary);
+}
+
+.ai-import-file-info {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.ai-import-file-info .material-icons-round {
+    font-size: 32px;
+    color: var(--success);
+}
+
+.ai-import-file-info .file-name {
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.ai-import-file-info .file-size {
+    color: var(--text-secondary);
+    font-size: 13px;
+}
+
+.ai-import-file-info .file-remove {
+    background: none;
+    border: none;
+    padding: 4px;
+    cursor: pointer;
+    color: var(--text-tertiary);
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s;
+}
+
+.ai-import-file-info .file-remove:hover {
+    background: var(--error-bg);
+    color: var(--error);
+}
+
+.ai-import-divider {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    margin: 24px 0;
+}
+
+.ai-import-divider::before,
+.ai-import-divider::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: var(--border-light);
+}
+
+.ai-import-divider span {
+    color: var(--text-tertiary);
+    font-size: 13px;
+    font-weight: 500;
+}
+
+.ai-import-text-input {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.ai-import-text-input label {
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--text-secondary);
+}
+
+.ai-import-text-input textarea {
+    padding: 16px;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    font-size: 14px;
+    font-family: inherit;
+    resize: vertical;
+    min-height: 120px;
+    transition: all 0.2s;
+}
+
+.ai-import-text-input textarea:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(0, 113, 227, 0.15);
+}
+
+.ai-import-actions {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-top: 24px;
+    padding-top: 24px;
+    border-top: 1px solid var(--border-light);
+}
+
+/* Analyzing State (Step 3) */
+.ai-import-analyzing {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 300px;
+}
+
+.ai-import-loader {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 16px;
+    text-align: center;
+}
+
+.ai-import-loader .spinner {
+    width: 48px;
+    height: 48px;
+    border: 4px solid var(--surface);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+.ai-import-loader p {
+    font-size: 18px;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.ai-import-loader-hint {
+    font-size: 13px;
+    color: var(--text-tertiary);
+}
+
+/* Preview Table (Step 4) */
+.ai-import-preview {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+.ai-import-warnings {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 16px;
+    background: var(--warning-bg);
+    border-radius: 12px;
+    color: #856404;
+}
+
+.ai-import-warnings .material-icons-round {
+    color: var(--warning);
+}
+
+.ai-import-warnings ul {
+    margin: 0;
+    padding-left: 16px;
+    font-size: 14px;
+}
+
+.ai-import-error {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 16px;
+    background: var(--error-bg);
+    border-radius: 12px;
+    color: var(--error);
+}
+
+.ai-import-table-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 4px;
+}
+
+.ai-import-table-header span {
+    font-size: 14px;
+    color: var(--text-secondary);
+}
+
+.ai-import-table-wrapper {
+    overflow-x: auto;
+    border: 1px solid var(--border-light);
+    border-radius: 12px;
+    max-height: 400px;
+    overflow-y: auto;
+}
+
+.ai-import-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+}
+
+.ai-import-table th,
+.ai-import-table td {
+    padding: 10px 12px;
+    text-align: left;
+    border-bottom: 1px solid var(--border-light);
+}
+
+.ai-import-table th {
+    background: var(--surface);
+    font-weight: 600;
+    color: var(--text-secondary);
+    position: sticky;
+    top: 0;
+    z-index: 1;
+}
+
+.ai-import-table th .required {
+    color: var(--error);
+    margin-left: 2px;
+}
+
+.ai-import-table tr:last-child td {
+    border-bottom: none;
+}
+
+.ai-import-table tr.deselected {
+    opacity: 0.5;
+    background: var(--surface);
+}
+
+.ai-import-table .col-select,
+.ai-import-table .col-actions {
+    width: 40px;
+    text-align: center;
+}
+
+.ai-import-table .col-confidence {
+    width: 80px;
+    text-align: center;
+}
+
+/* Table header content and resize handles */
+.ai-import-table th .th-content {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    position: relative;
+    min-height: 24px;
+}
+
+.ai-import-table th .th-label {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.ai-import-table th .resize-handle {
+    position: absolute;
+    right: 0;
+    top: 0;
+    bottom: 0;
+    width: 8px;
+    cursor: col-resize;
+    user-select: none;
+    z-index: 2;
+}
+
+.ai-import-table th .resize-handle::after {
+    content: '';
+    position: absolute;
+    right: 2px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 2px;
+    height: 60%;
+    background: var(--border);
+    border-radius: 1px;
+    opacity: 0;
+    transition: opacity 0.2s;
+}
+
+.ai-import-table th:hover .resize-handle::after,
+.ai-import-table th .resize-handle:hover::after {
+    opacity: 1;
+}
+
+/* Improved table cell styling */
+.ai-import-table td {
+    max-width: 300px;
+    overflow: hidden;
+}
+
+.ai-import-table tbody tr {
+    transition: background 0.15s;
+}
+
+.ai-import-table tbody tr:hover {
+    background: var(--surface);
+}
+
+.ai-import-input {
+    width: 100% !;
+    padding: 6px 10px;
+    border: 1px solid var(--border-light);
+    border-radius: 6px;
+    font-size: 13px;
+    background: white;
+    transition: all 0.2s;
+    min-height: 32px;
+    line-height: 1.4;
+}
+
+.ai-import-input[type="text"],
+.ai-import-input:not([type]) {
+    white-space: normal;
+    word-wrap: break-word;
+    overflow-wrap: break-word;
+}
+
+.ai-import-input:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px rgba(0, 113, 227, 0.1);
+}
+
+.ai-import-input:invalid {
+    border-color: var(--error);
+}
+
+.confidence-badge {
+    display: inline-block;
+    padding: 4px 8px;
+    border-radius: 12px;
+    font-size: 11px;
+    font-weight: 600;
+}
+
+.confidence-badge.high {
+    background: var(--success-bg);
+    color: #155724;
+}
+
+.confidence-badge.medium {
+    background: var(--warning-bg);
+    color: #856404;
+}
+
+.confidence-badge.low {
+    background: var(--error-bg);
+    color: #721c24;
+}
+
+/* Results (Step 5) */
+.ai-import-results {
+    max-width: 600px;
+    margin: 0 auto;
+    text-align: center;
+}
+
+.ai-import-progress {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 16px;
+    padding: 48px;
+}
+
+.progress-bar {
+    width: 100%;
+    height: 8px;
+    background: var(--surface);
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.progress-fill {
+    height: 100%;
+    background: var(--accent);
+    border-radius: 4px;
+    transition: width 0.3s ease;
+}
+
+.ai-import-result-summary {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 24px;
+    border-radius: 16px;
+    margin-bottom: 24px;
+}
+
+.ai-import-result-summary.success {
+    background: var(--success-bg);
+}
+
+.ai-import-result-summary.has-errors {
+    background: var(--warning-bg);
+}
+
+.ai-import-result-summary .material-icons-round {
+    font-size: 48px;
+}
+
+.ai-import-result-summary.success .material-icons-round {
+    color: var(--success);
+}
+
+.ai-import-result-summary.has-errors .material-icons-round {
+    color: var(--warning);
+}
+
+.ai-import-result-summary h3 {
+    font-size: 20px;
+    margin-bottom: 4px;
+}
+
+.ai-import-result-summary p {
+    font-size: 14px;
+    color: var(--text-secondary);
+}
+
+.ai-import-result-summary .error-count {
+    color: var(--error);
+}
+
+.ai-import-errors {
+    text-align: left;
+    padding: 16px;
+    background: var(--error-bg);
+    border-radius: 12px;
+    margin-bottom: 24px;
+}
+
+.ai-import-errors h4 {
+    font-size: 14px;
+    color: var(--error);
+    margin-bottom: 8px;
+}
+
+.ai-import-errors ul {
+    margin: 0;
+    padding-left: 20px;
+    font-size: 13px;
+    color: #721c24;
+}
+
+.ai-import-errors li {
+    margin-bottom: 4px;
+}

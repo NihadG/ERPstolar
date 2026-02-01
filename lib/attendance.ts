@@ -102,23 +102,30 @@ export async function markAttendanceAndRecalculate(
  * @param workerName - Worker name
  * @param dailyRate - Worker's daily rate
  * @param date - Attendance date (YYYY-MM-DD)
+ * @param organizationId - Organization ID for multi-tenancy
  * @returns Number of work logs created
  */
 export async function createWorkLogsForAttendance(
     workerId: string,
     workerName: string,
     dailyRate: number,
-    date: string
+    date: string,
+    organizationId: string
 ): Promise<{ created: number; skipped: number }> {
+    if (!organizationId) {
+        console.error('createWorkLogsForAttendance: organizationId is required');
+        return { created: 0, skipped: 0 };
+    }
     try {
         const firestore = getDb();
         let created = 0;
         let skipped = 0;
 
-        // Find all active work orders (status = 'U toku')
+        // Find all active work orders (status = 'U toku') for this organization
         const woQuery = query(
             collection(firestore, COLLECTIONS.WORK_ORDERS),
-            where('Status', '==', 'U toku')
+            where('Status', '==', 'U toku'),
+            where('Organization_ID', '==', organizationId)
         );
         const woSnapshot = await getDocs(woQuery);
 
@@ -134,7 +141,8 @@ export async function createWorkLogsForAttendance(
             const itemsQuery = query(
                 collection(firestore, COLLECTIONS.WORK_ORDER_ITEMS),
                 where('Work_Order_ID', '==', workOrderId),
-                where('Status', 'in', ['U toku', 'Na čekanju'])
+                where('Status', 'in', ['U toku', 'Na čekanju']),
+                where('Organization_ID', '==', organizationId)
             );
             const itemsSnapshot = await getDocs(itemsQuery);
 
@@ -166,7 +174,7 @@ export async function createWorkLogsForAttendance(
                     Process_Name: processName,  // Now includes the active process
                     Is_From_Attendance: true,
                     Date: date,
-                });
+                }, organizationId);
 
                 if (result.success) {
                     created++;
@@ -347,12 +355,25 @@ export async function getWorkerAttendanceByMonth(workerId: string, year: string,
     }
 }
 
-export async function getAllAttendanceByMonth(year: string, month: string): Promise<WorkerAttendance[]> {
+export async function getAllAttendanceByMonth(year: string, month: string, organizationId?: string): Promise<WorkerAttendance[]> {
     try {
         const firestore = getDb();
         const startDate = `${year}-${month.padStart(2, '0')}-01`;
         const endDate = `${year}-${month.padStart(2, '0')}-31`;
 
+        // If organizationId provided, filter by it
+        if (organizationId) {
+            const q = query(
+                collection(firestore, COLLECTIONS.WORKER_ATTENDANCE),
+                where('Organization_ID', '==', organizationId),
+                where('Date', '>=', startDate),
+                where('Date', '<=', endDate)
+            );
+            const snapshot = await getDocs(q);
+            return snapshot.docs.map(doc => doc.data() as WorkerAttendance);
+        }
+
+        // Fallback for backward compatibility (no org filter)
         const q = query(
             collection(firestore, COLLECTIONS.WORKER_ATTENDANCE),
             where('Date', '>=', startDate),
@@ -793,15 +814,21 @@ async function syncProductStatuses(items: any[]): Promise<void> {
  * - 'U proizvodnji' if any product is in active production
  * - 'Završeno' if ALL products are Spremno or Instalirano
  */
-export async function syncProjectStatus(projectId: string): Promise<void> {
+export async function syncProjectStatus(projectId: string, organizationId?: string): Promise<void> {
     try {
         const firestore = getDb();
 
-        // Get project
-        const projectQuery = query(
-            collection(firestore, 'projects'),
-            where('Project_ID', '==', projectId)
-        );
+        // Get project - optionally filter by organizationId if provided
+        const projectQuery = organizationId
+            ? query(
+                collection(firestore, 'projects'),
+                where('Project_ID', '==', projectId),
+                where('Organization_ID', '==', organizationId)
+            )
+            : query(
+                collection(firestore, 'projects'),
+                where('Project_ID', '==', projectId)
+            );
         const projectSnap = await getDocs(projectQuery);
 
         if (projectSnap.empty) return;
@@ -815,10 +842,16 @@ export async function syncProjectStatus(projectId: string): Promise<void> {
         }
 
         // Get all products for this project
-        const productsQuery = query(
-            collection(firestore, 'products'),
-            where('Project_ID', '==', projectId)
-        );
+        const productsQuery = organizationId
+            ? query(
+                collection(firestore, 'products'),
+                where('Project_ID', '==', projectId),
+                where('Organization_ID', '==', organizationId)
+            )
+            : query(
+                collection(firestore, 'products'),
+                where('Project_ID', '==', projectId)
+            );
         const productsSnap = await getDocs(productsQuery);
 
         if (productsSnap.empty) return;

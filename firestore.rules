@@ -16,13 +16,32 @@ service cloud.firestore {
       return request.auth != null && request.auth.uid == userId;
     }
     
+    // Get user's organization ID from their profile
+    function getUserOrgId() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.organizationId;
+    }
+    
+    // Check if user belongs to the document's organization
+    function isOrgMember() {
+      return isAuthenticated() && 
+             resource.data.Organization_ID == getUserOrgId();
+    }
+    
+    // Check if new document has correct organization ID
+    function hasValidOrgId() {
+      return isAuthenticated() && 
+             request.resource.data.Organization_ID == getUserOrgId();
+    }
+    
     // ============================================
     // ORGANIZATIONS
     // ============================================
     
     match /organizations/{orgId} {
-      // Only authenticated users can read/write organizations
-      allow read, write: if isAuthenticated();
+      // Users can read their own organization
+      allow read: if isAuthenticated() && getUserOrgId() == orgId;
+      // Only allow write if user belongs to this organization
+      allow write: if isAuthenticated() && getUserOrgId() == orgId;
     }
     
     // ============================================
@@ -30,130 +49,190 @@ service cloud.firestore {
     // ============================================
     
     match /users/{userId} {
-      // Users can read their own profile
+      // Users can read any user in their organization (for worker lists, etc.)
       allow read: if isAuthenticated();
       // Users can only write to their own profile
       allow write: if isOwner(userId);
     }
     
     // ============================================
-    // PROJECTS
+    // PROJECTS (Multi-tenancy enabled)
     // ============================================
     
     match /projects/{projectId} {
-      allow read, write: if isAuthenticated();
+      allow read: if isOrgMember();
+      allow create: if hasValidOrgId();
+      allow update, delete: if isOrgMember();
     }
     
     // ============================================
-    // PRODUCTS
+    // PRODUCTS (Multi-tenancy enabled)
     // ============================================
     
     match /products/{productId} {
-      allow read, write: if isAuthenticated();
+      allow read: if isOrgMember();
+      allow create: if hasValidOrgId();
+      allow update, delete: if isOrgMember();
     }
     
     // ============================================
-    // PRODUCT MATERIALS
+    // PRODUCT MATERIALS (Multi-tenancy enabled)
     // ============================================
     
     match /product_materials/{materialId} {
-      allow read, write: if isAuthenticated();
+      allow read: if isOrgMember();
+      allow create: if hasValidOrgId();
+      allow update, delete: if isOrgMember();
     }
     
     // ============================================
-    // MATERIALS CATALOG
+    // MATERIALS CATALOG (Multi-tenancy enabled)
     // ============================================
     
     match /materials/{materialId} {
-      allow read, write: if isAuthenticated();
+      allow read: if isOrgMember();
+      allow create: if hasValidOrgId();
+      allow update, delete: if isOrgMember();
     }
     
     // ============================================
-    // GLASS ITEMS
+    // GLASS ITEMS (Multi-tenancy enabled)
     // ============================================
     
     match /glass_items/{glassId} {
-      allow read, write: if isAuthenticated();
+      allow read: if isOrgMember();
+      allow create: if hasValidOrgId();
+      allow update, delete: if isOrgMember();
     }
     
     // ============================================
-    // ALU DOOR ITEMS
+    // ALU DOOR ITEMS (Multi-tenancy enabled)
     // ============================================
     
     match /alu_door_items/{doorId} {
-      allow read, write: if isAuthenticated();
+      allow read: if isOrgMember();
+      allow create: if hasValidOrgId();
+      allow update, delete: if isOrgMember();
     }
     
     // ============================================
-    // OFFERS
+    // OFFERS (Multi-tenancy enabled)
     // ============================================
     
     match /offers/{offerId} {
-      allow read, write: if isAuthenticated();
+      allow read: if isOrgMember();
+      allow create: if hasValidOrgId();
+      allow update, delete: if isOrgMember();
     }
     
     // ============================================
-    // OFFER PRODUCTS
+    // OFFER PRODUCTS (Multi-tenancy enabled)
     // ============================================
     
     match /offer_products/{offerProductId} {
-      allow read, write: if isAuthenticated();
+      allow read: if isOrgMember();
+      allow create: if hasValidOrgId();
+      allow update, delete: if isOrgMember();
     }
     
     // ============================================
-    // OFFER EXTRAS
+    // OFFER EXTRAS (Multi-tenancy enabled)
     // ============================================
     
     match /offer_extras/{extraId} {
-      allow read, write: if isAuthenticated();
+      allow read: if isOrgMember();
+      allow create: if hasValidOrgId();
+      allow update, delete: if isOrgMember();
     }
     
     // ============================================
-    // ORDERS
+    // ORDERS (Multi-tenancy enabled)
     // ============================================
     
     match /orders/{orderId} {
-      allow read, write: if isAuthenticated();
+      allow read: if isOrgMember();
+      allow create: if hasValidOrgId();
+      allow update, delete: if isOrgMember();
     }
     
     // ============================================
-    // ORDER ITEMS
+    // ORDER ITEMS (Multi-tenancy enabled)
     // ============================================
     
     match /order_items/{itemId} {
-      allow read, write: if isAuthenticated();
+      allow read: if isOrgMember();
+      allow create: if hasValidOrgId();
+      allow update, delete: if isOrgMember();
     }
     
     // ============================================
-    // SUPPLIERS
+    // SUPPLIERS (Multi-tenancy enabled)
     // ============================================
     
     match /suppliers/{supplierId} {
-      allow read, write: if isAuthenticated();
+      allow read: if isOrgMember();
+      allow create: if hasValidOrgId();
+      allow update, delete: if isOrgMember();
     }
     
     // ============================================
-    // WORKERS
+    // WORKERS (Multi-tenancy enabled)
     // ============================================
     
     match /workers/{workerId} {
-      allow read, write: if isAuthenticated();
+      allow read: if isOrgMember();
+      allow create: if hasValidOrgId();
+      allow update, delete: if isOrgMember();
     }
     
     // ============================================
-    // WORK ORDERS
+    // WORKER ATTENDANCE (Multi-tenancy enabled)
+    // ============================================
+    
+    match /worker_attendance/{attendanceId} {
+      allow read: if isOrgMember();
+      allow create: if hasValidOrgId();
+      allow update, delete: if isOrgMember();
+    }
+    
+    // ============================================
+    // WORK ORDERS (Multi-tenancy enabled)
     // ============================================
     
     match /work_orders/{workOrderId} {
-      allow read, write: if isAuthenticated();
+      allow read: if isOrgMember();
+      allow create: if hasValidOrgId();
+      allow update, delete: if isOrgMember();
     }
     
     // ============================================
-    // WORK ORDER ITEMS
+    // WORK ORDER ITEMS (Multi-tenancy enabled)
     // ============================================
     
     match /work_order_items/{itemId} {
-      allow read, write: if isAuthenticated();
+      allow read: if isOrgMember();
+      allow create: if hasValidOrgId();
+      allow update, delete: if isOrgMember();
+    }
+    
+    // ============================================
+    // WORK LOGS (Multi-tenancy enabled)
+    // ============================================
+    
+    match /work_logs/{logId} {
+      allow read: if isOrgMember();
+      allow create: if hasValidOrgId();
+      allow update, delete: if isOrgMember();
+    }
+    
+    // ============================================
+    // TASKS (Multi-tenancy enabled)
+    // ============================================
+    
+    match /tasks/{taskId} {
+      allow read: if isOrgMember();
+      allow create: if hasValidOrgId();
+      allow update, delete: if isOrgMember();
     }
   }
 }

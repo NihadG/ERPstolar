@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import type { Material } from '@/lib/types';
 import { saveMaterial, deleteMaterial } from '@/lib/database';
+import { useData } from '@/context/DataContext';
 import Modal from '@/components/ui/Modal';
 import { MATERIAL_CATEGORIES } from '@/lib/types';
 
@@ -13,6 +14,7 @@ interface MaterialsTabProps {
 }
 
 export default function MaterialsTab({ materials, onRefresh, showToast }: MaterialsTabProps) {
+    const { organizationId } = useData();
     const [searchTerm, setSearchTerm] = useState('');
     const [categoryFilter, setCategoryFilter] = useState('');
     const [materialModal, setMaterialModal] = useState(false);
@@ -39,8 +41,12 @@ export default function MaterialsTab({ materials, onRefresh, showToast }: Materi
             showToast('Unesite naziv materijala', 'error');
             return;
         }
+        if (!organizationId) {
+            showToast('Organization ID is required', 'error');
+            return;
+        }
 
-        const result = await saveMaterial(editingMaterial);
+        const result = await saveMaterial(editingMaterial, organizationId);
         if (result.success) {
             showToast(result.message, 'success');
             setMaterialModal(false);
@@ -52,8 +58,12 @@ export default function MaterialsTab({ materials, onRefresh, showToast }: Materi
 
     async function handleDeleteMaterial(materialId: string) {
         if (!confirm('Jeste li sigurni da želite obrisati ovaj materijal?')) return;
+        if (!organizationId) {
+            showToast('Organization ID is required', 'error');
+            return;
+        }
 
-        const result = await deleteMaterial(materialId);
+        const result = await deleteMaterial(materialId, organizationId);
         if (result.success) {
             showToast(result.message, 'success');
             onRefresh();

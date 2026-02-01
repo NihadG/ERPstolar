@@ -3,6 +3,7 @@
 import { useState, useMemo, useEffect } from 'react';
 import type { Order, Supplier, Project, ProductMaterial, OrderItem } from '@/lib/types';
 import { createOrder, deleteOrder, updateOrderStatus, markOrderSent, markMaterialsReceived, getOrder, deleteOrderItemsByIds, updateOrderItem, recalculateOrderTotal } from '@/lib/database';
+import { useData } from '@/context/DataContext';
 import { generateOrderPDF, generatePDFFromHTML, type OrderPDFData } from '@/lib/pdfGenerator';
 import { DropdownMenu } from '@/components/ui/DropdownMenu';
 import Modal from '@/components/ui/Modal';
@@ -25,6 +26,7 @@ type GroupBy = 'none' | 'supplier' | 'status' | 'date' | 'project';
 type SortBy = 'date-desc' | 'date-asc' | 'amount-desc' | 'amount-asc' | 'supplier';
 
 export default function OrdersTab({ orders, suppliers, projects, productMaterials, onRefresh, showToast, pendingOrderMaterials, onClearPendingOrder }: OrdersTabProps) {
+    const { organizationId } = useData();
     const [searchTerm, setSearchTerm] = useState('');
     const [statusFilter, setStatusFilter] = useState('');
     const [groupBy, setGroupBy] = useState<GroupBy>('supplier');
@@ -484,7 +486,7 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
             Supplier_Name: supplier.Name,
             Total_Amount: totalAmount,
             items: items as any,
-        });
+        }, organizationId!);
 
         if (result.success) {
             showToast(result.message, 'success');
@@ -509,7 +511,7 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
 
     async function handleQuickStatusChange(orderId: string, newStatus: string, e: React.SyntheticEvent) {
         e.stopPropagation();
-        const result = await updateOrderStatus(orderId, newStatus);
+        const result = await updateOrderStatus(orderId, newStatus, organizationId!);
         if (result.success) {
             showToast('Status promijenjen', 'success');
             onRefresh();
@@ -521,7 +523,7 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
     async function handleDeleteOrder(orderId: string) {
         if (!confirm('Jeste li sigurni da želite obrisati ovu narudžbu?')) return;
 
-        const result = await deleteOrder(orderId);
+        const result = await deleteOrder(orderId, organizationId!);
         if (result.success) {
             showToast(result.message, 'success');
             onRefresh();
@@ -531,7 +533,7 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
     }
 
     async function handleSendOrder(orderId: string) {
-        const result = await markOrderSent(orderId);
+        const result = await markOrderSent(orderId, organizationId!);
         if (result.success) {
             showToast('Narudžba poslana', 'success');
             onRefresh();
@@ -546,7 +548,7 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
             showToast('Odaberite stavke za primanje', 'error');
             return;
         }
-        const result = await markMaterialsReceived(Array.from(selectedItemIds));
+        const result = await markMaterialsReceived(Array.from(selectedItemIds), organizationId!);
         if (result.success) {
             showToast('Materijali primljeni', 'success');
             setSelectedItemIds(new Set());
@@ -583,9 +585,9 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
         }
         if (!confirm(`Obrisati ${selectedItemIds.size} stavki iz narudžbe?`)) return;
 
-        const result = await deleteOrderItemsByIds(Array.from(selectedItemIds));
+        const result = await deleteOrderItemsByIds(Array.from(selectedItemIds), organizationId!);
         if (result.success) {
-            await recalculateOrderTotal(currentOrder!.Order_ID);
+            await recalculateOrderTotal(currentOrder!.Order_ID, organizationId!);
             showToast('Stavke obrisane', 'success');
             setSelectedItemIds(new Set());
             onRefresh();
@@ -628,9 +630,9 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
         }
 
         for (const { id, quantity } of itemsToUpdate) {
-            await updateOrderItem(id, { Quantity: quantity });
+            await updateOrderItem(id, { Quantity: quantity }, organizationId!);
         }
-        await recalculateOrderTotal(currentOrder!.Order_ID);
+        await recalculateOrderTotal(currentOrder!.Order_ID, organizationId!);
 
         showToast('Količine ažurirane', 'success');
         setEditMode(false);
@@ -925,7 +927,7 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
 
 
     async function handleReceiveItems(itemIds: string[]) {
-        const result = await markMaterialsReceived(itemIds);
+        const result = await markMaterialsReceived(itemIds, organizationId!);
         if (result.success) {
             showToast('Materijali primljeni', 'success');
             onRefresh();
@@ -1129,9 +1131,9 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
                                                 showToast('Sve stavke su već primljene', 'info');
                                                 return;
                                             }
-                                            const result = await markMaterialsReceived(unreceivedItems.map(i => i.ID));
+                                            const result = await markMaterialsReceived(unreceivedItems.map(i => i.ID), organizationId!);
                                             if (result.success) {
-                                                await updateOrderStatus(order.Order_ID, 'Primljeno');
+                                                await updateOrderStatus(order.Order_ID, 'Primljeno', organizationId!);
                                                 showToast('Sve stavke primljene', 'success');
                                                 onRefresh();
                                             } else {
