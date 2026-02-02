@@ -50,12 +50,12 @@ const CSV_CONFIGS: Record<EntityType, EntityConfig> = {
         icon: '🧱',
         description: 'Sirovine, dijelovi, potrošni materijal',
         columns: [
-            { key: 'Material_Name', label: 'Naziv', required: true },
+            { key: 'Name', label: 'Naziv', required: true },
             { key: 'Category', label: 'Kategorija', required: true },
             { key: 'Unit', label: 'Jedinica', required: true },
-            { key: 'Unit_Price', label: 'Cijena', required: false },
+            { key: 'Default_Unit_Price', label: 'Cijena', required: false },
             { key: 'Stock_Quantity', label: 'Količina', required: false },
-            { key: 'Supplier_Name', label: 'Dobavljač', required: false },
+            { key: 'Default_Supplier', label: 'Dobavljač', required: false },
         ],
         exampleData: [
             ['Hrast ploča 18mm', 'Drvo', 'm2', '45.00', '100', 'Drvo d.o.o.'],
@@ -69,9 +69,9 @@ const CSV_CONFIGS: Record<EntityType, EntityConfig> = {
         icon: '🪑',
         description: 'Gotovi proizvodi za projekte',
         columns: [
-            { key: 'Product_Name', label: 'Naziv', required: true },
+            { key: 'Name', label: 'Naziv', required: true },
             { key: 'Description', label: 'Opis', required: false },
-            { key: 'Price', label: 'Cijena', required: false },
+            { key: 'Product_Value', label: 'Cijena', required: false },
             { key: 'Width', label: 'Širina (cm)', required: false },
             { key: 'Height', label: 'Visina (cm)', required: false },
             { key: 'Depth', label: 'Dubina (cm)', required: false },
@@ -107,12 +107,12 @@ const CSV_CONFIGS: Record<EntityType, EntityConfig> = {
         icon: '🚚',
         description: 'Dobavljači materijala i usluga',
         columns: [
-            { key: 'Supplier_Name', label: 'Naziv', required: true },
+            { key: 'Name', label: 'Naziv', required: true },
             { key: 'Contact_Person', label: 'Kontakt osoba', required: false },
             { key: 'Phone', label: 'Telefon', required: false },
             { key: 'Email', label: 'Email', required: false },
             { key: 'Address', label: 'Adresa', required: false },
-            { key: 'Category', label: 'Kategorija', required: false },
+            { key: 'Categories', label: 'Kategorija', required: false },
         ],
         exampleData: [
             ['Drvo d.o.o.', 'Petar Novak', '01 234 5678', 'info@drvo.hr', 'Industrijska 15, Zagreb', 'Drvo'],
@@ -294,7 +294,7 @@ export default function CSVImportWizard({
                     const index = columnMap[col.key];
                     if (index !== undefined && row[index]) {
                         // Handle numeric fields
-                        if (['Unit_Price', 'Stock_Quantity', 'Daily_Rate', 'Price', 'Width', 'Height', 'Depth'].includes(col.key)) {
+                        if (['Default_Unit_Price', 'Stock_Quantity', 'Daily_Rate', 'Product_Value', 'Width', 'Height', 'Depth'].includes(col.key)) {
                             const numVal = parseFloat(row[index].replace(',', '.'));
                             item[col.key] = isNaN(numVal) ? 0 : numVal;
                         } else {
@@ -370,33 +370,41 @@ export default function CSVImportWizard({
             }
 
             // Generate IDs
-            const timestamp = Date.now();
-            const random = Math.random().toString(36).substr(2, 5);
+
 
             try {
                 let saveResult: { success: boolean; message: string };
 
                 switch (entityType) {
                     case 'materials':
-                        item.Material_ID = `MAT-${timestamp}-${random}`;
+                        // Let DB generate ID
                         saveResult = await saveMaterial(item as Partial<Material>, organizationId);
                         break;
                     case 'products':
-                        item.Product_ID = `PROD-${timestamp}-${random}`;
+                        // Let DB generate ID
                         item.Status = 'U pripremi';
                         saveResult = await saveProduct(item as Partial<Product>, organizationId);
                         break;
                     case 'workers':
-                        item.Worker_ID = `WRK-${timestamp}-${random}`;
+                        // Combine First and Last Name
+                        if (item.First_Name && item.Last_Name) {
+                            item.Name = `${item.First_Name} ${item.Last_Name}`;
+                        } else if (item.First_Name) {
+                            item.Name = item.First_Name;
+                        } else if (item.Last_Name) {
+                            item.Name = item.Last_Name;
+                        }
+
+                        // Let DB generate ID
                         item.Status = 'Aktivan';
                         saveResult = await saveWorker(item as Partial<Worker>, organizationId);
                         break;
                     case 'suppliers':
-                        item.Supplier_ID = `SUP-${timestamp}-${random}`;
+                        // Let DB generate ID
                         saveResult = await saveSupplier(item as Partial<Supplier>, organizationId);
                         break;
                     case 'projects':
-                        item.Project_ID = `PROJ-${timestamp}-${random}`;
+                        // Let DB generate ID
                         item.Status = item.Status || 'Nacrt';
                         saveResult = await saveProject(item as Partial<Project>, organizationId);
                         break;
