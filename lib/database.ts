@@ -2549,10 +2549,10 @@ export async function createWorkOrder(data: {
                 Status: 'Na čekanju',
                 Process_Assignments: processAssignments,
                 Processes: processes,
-                // Cost and value fields for profit calculation
-                Product_Value: item.Product_Value,
-                Material_Cost: item.Material_Cost,
-                Planned_Labor_Cost: item.Planned_Labor_Cost,
+                // Cost and value fields for profit calculation (default to 0 if undefined)
+                Product_Value: item.Product_Value ?? 0,
+                Material_Cost: item.Material_Cost ?? 0,
+                Planned_Labor_Cost: item.Planned_Labor_Cost ?? 0,
             };
             await addDoc(collection(db, COLLECTIONS.WORK_ORDER_ITEMS), workOrderItem);
         }
@@ -2698,13 +2698,17 @@ export async function completeWorkOrderItem(itemId: string, productionStep: stri
     }
 }
 
-export async function deleteWorkOrder(workOrderId: string, organizationId: string): Promise<{ success: boolean; message: string }> {
+export async function deleteWorkOrder(
+    workOrderId: string,
+    organizationId: string,
+    productAction: 'completed' | 'waiting' = 'waiting'
+): Promise<{ success: boolean; message: string }> {
     if (!organizationId) {
         return { success: false, message: 'Organization ID is required' };
     }
 
     try {
-        // Get items first to reset product statuses
+        // Get items first to update product statuses
         const itemsQ = query(
             collection(db, COLLECTIONS.WORK_ORDER_ITEMS),
             where('Work_Order_ID', '==', workOrderId),
@@ -2712,7 +2716,10 @@ export async function deleteWorkOrder(workOrderId: string, organizationId: strin
         );
         const itemsSnap = await getDocs(itemsQ);
 
-        // Reset product statuses in projects before deleting
+        // Determine new product status based on action
+        const newProductStatus = productAction === 'completed' ? 'Spremno' : 'Čeka proizvodnju';
+
+        // Update product statuses in projects before deleting
         const projectUpdates = new Map<string, Map<string, string>>();
 
         for (const itemDoc of itemsSnap.docs) {
@@ -2721,11 +2728,11 @@ export async function deleteWorkOrder(workOrderId: string, organizationId: strin
                 if (!projectUpdates.has(item.Project_ID)) {
                     projectUpdates.set(item.Project_ID, new Map());
                 }
-                projectUpdates.get(item.Project_ID)!.set(item.Product_ID, 'Čeka proizvodnju');
+                projectUpdates.get(item.Project_ID)!.set(item.Product_ID, newProductStatus);
             }
         }
 
-        // Update each project's products to reset status
+        // Update each project's products
         const entries = Array.from(projectUpdates.entries());
         for (const [projectId, productStatuses] of entries) {
             const projectQ = query(
@@ -2742,7 +2749,13 @@ export async function deleteWorkOrder(workOrderId: string, organizationId: strin
                 const updatedProducts = products.map((p: any) => {
                     const newStatus = productStatuses.get(p.Product_ID);
                     if (newStatus) {
-                        return { ...p, Status: newStatus, Work_Order_Quantity: 0 };
+                        // If completing, clear work order reference but keep cost data
+                        // If waiting, reset completely
+                        if (productAction === 'completed') {
+                            return { ...p, Status: newStatus, Work_Order_Quantity: 0 };
+                        } else {
+                            return { ...p, Status: newStatus, Work_Order_Quantity: 0 };
+                        }
                     }
                     return p;
                 });
@@ -2767,7 +2780,11 @@ export async function deleteWorkOrder(workOrderId: string, organizationId: strin
         }
 
         await batch.commit();
-        return { success: true, message: 'Radni nalog obrisan' };
+
+        const actionMsg = productAction === 'completed'
+            ? 'Radni nalog obrisan, proizvodi označeni kao spremni'
+            : 'Radni nalog obrisan, proizvodi vraćeni na čekanje';
+        return { success: true, message: actionMsg };
     } catch (error) {
         console.error('deleteWorkOrder error:', error);
         return { success: false, message: 'Greška pri brisanju radnog naloga' };
@@ -2791,9 +2808,24 @@ export async function startWorkOrder(workOrderId: string, organizationId: string
             return { success: false, message: 'Radni nalog nije pronađen' };
         }
 
-        await updateDoc(snapshot.docs[0].ref, { Status: 'U toku' });
+        const workOrderData = snapshot.docs[0].data() as WorkOrder;
 
-        // Update all items to "U toku"
+        // Check if scheduled for future date - cannot start orders scheduled for the future
+        if (workOrderData.Is_Scheduled && workOrderData.Planned_Start_Date) {
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
+            const plannedStart = new Date(workOrderData.Planned_Start_Date);
+            plannedStart.setHours(0, 0, 0, 0);
+
+            if (plannedStart > today) {
+                return {
+                    success: false,
+                    message: `Nalog je zakazan za ${workOrderData.Planned_Start_Date}. Može se pokrenuti tek na taj datum.`
+                };
+            }
+        }
+
+        // First fetch items to validate workers and materials
         const itemsQ = query(
             collection(db, COLLECTIONS.WORK_ORDER_ITEMS),
             where('Work_Order_ID', '==', workOrderId),
@@ -2801,6 +2833,62 @@ export async function startWorkOrder(workOrderId: string, organizationId: string
         );
         const itemsSnap = await getDocs(itemsQ);
 
+        // VALIDATION 1: Check worker attendance for all assigned workers
+        const { canWorkerStartProcess } = await import('./attendance');
+        for (const itemDoc of itemsSnap.docs) {
+            const item = itemDoc.data() as WorkOrderItem;
+
+            // Check workers in Processes
+            if (item.Processes && Array.isArray(item.Processes)) {
+                for (const proc of item.Processes) {
+                    if (proc.Worker_ID) {
+                        const availability = await canWorkerStartProcess(proc.Worker_ID);
+                        if (!availability.allowed) {
+                            return {
+                                success: false,
+                                message: `Radnik "${proc.Worker_Name || proc.Worker_ID}" nije prisutan danas. ${availability.reason}`
+                            };
+                        }
+                    }
+                    // Check helpers too
+                    if (proc.Helpers && Array.isArray(proc.Helpers)) {
+                        for (const helper of proc.Helpers) {
+                            if (helper.Worker_ID) {
+                                const helperAvail = await canWorkerStartProcess(helper.Worker_ID);
+                                if (!helperAvail.allowed) {
+                                    return {
+                                        success: false,
+                                        message: `Pomoćnik "${helper.Worker_Name || helper.Worker_ID}" nije prisutan danas. ${helperAvail.reason}`
+                                    };
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // VALIDATION 2: Check essential materials
+            if (item.materials && Array.isArray(item.materials)) {
+                const missingMaterials = item.materials.filter(
+                    (m: any) => m.Is_Essential && m.Status !== 'Primljeno' && m.Status !== 'Na stanju'
+                );
+                if (missingMaterials.length > 0) {
+                    const materialNames = missingMaterials.map((m: any) => m.Material_Name).join(', ');
+                    return {
+                        success: false,
+                        message: `Esencijalni materijali nisu spremni za "${item.Product_Name}": ${materialNames}`
+                    };
+                }
+            }
+        }
+
+        // All validations passed - start the work order
+        await updateDoc(snapshot.docs[0].ref, {
+            Status: 'U toku',
+            Started_At: new Date().toISOString()
+        });
+
+        // Update all items to "U toku"
         for (const itemDoc of itemsSnap.docs) {
             if (itemDoc.data().Status === 'Na čekanju') {
                 await updateDoc(itemDoc.ref, { Status: 'U toku' });
@@ -2917,6 +3005,213 @@ export async function updateWorkOrder(workOrderId: string, updates: Partial<Work
     } catch (error) {
         console.error('updateWorkOrder error:', error);
         return { success: false, message: 'Greška pri ažuriranju radnog naloga' };
+    }
+}
+
+// ============================================
+// PLANNER / GANTT SCHEDULING FUNCTIONS
+// ============================================
+
+/**
+ * Schedule a work order (add to Gantt/Planner timeline)
+ */
+export async function scheduleWorkOrder(
+    workOrderId: string,
+    plannedStartDate: string,
+    plannedEndDate: string,
+    organizationId: string,
+    colorCode?: string
+): Promise<{ success: boolean; message: string }> {
+    if (!organizationId) {
+        return { success: false, message: 'Organization ID is required' };
+    }
+
+    try {
+        const firestore = getDb();
+        const q = query(
+            collection(firestore, COLLECTIONS.WORK_ORDERS),
+            where('Work_Order_ID', '==', workOrderId),
+            where('Organization_ID', '==', organizationId)
+        );
+        const snapshot = await getDocs(q);
+
+        if (snapshot.empty) {
+            return { success: false, message: 'Radni nalog nije pronađen' };
+        }
+
+        await updateDoc(snapshot.docs[0].ref, {
+            Planned_Start_Date: plannedStartDate,
+            Planned_End_Date: plannedEndDate,
+            Is_Scheduled: true,
+            Scheduled_At: new Date().toISOString(),
+            ...(colorCode && { Color_Code: colorCode }),
+        });
+
+        // AUTO-CREATE TASKS: Check for essential materials that need ordering
+        const itemsQ = query(
+            collection(firestore, COLLECTIONS.WORK_ORDER_ITEMS),
+            where('Work_Order_ID', '==', workOrderId),
+            where('Organization_ID', '==', organizationId)
+        );
+        const itemsSnap = await getDocs(itemsQ);
+
+        let tasksCreated = 0;
+        for (const itemDoc of itemsSnap.docs) {
+            const item = itemDoc.data();
+            if (!item.materials || !Array.isArray(item.materials)) continue;
+
+            // Find essential materials that are not ready
+            const essentialMissing = item.materials.filter(
+                (m: any) => m.Is_Essential && m.Status !== 'Primljeno' && m.Status !== 'Na stanju'
+            );
+
+            for (const material of essentialMissing) {
+                // Create a task for this material
+                await addDoc(collection(firestore, 'tasks'), {
+                    Task_ID: `TASK-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
+                    Title: `🚨 Naruči: ${material.Material_Name}`,
+                    Description: `Esencijalni materijal za proizvod "${item.Product_Name}" (Nalog: ${workOrderId}). Potrebno primiti prije početka proizvodnje.`,
+                    Project_ID: item.Project_ID || null,
+                    Due_Date: plannedStartDate,
+                    Priority: 'Hitno',
+                    Status: 'Novo',
+                    Created_At: new Date().toISOString(),
+                    Organization_ID: organizationId,
+                    Auto_Generated: true,
+                    Related_Work_Order: workOrderId,
+                    Related_Product: item.Product_ID,
+                    Related_Material: material.Material_ID || material.Material_Name
+                });
+                tasksCreated++;
+            }
+        }
+
+        const taskMsg = tasksCreated > 0 ? ` Kreirano ${tasksCreated} zadataka za naručivanje materijala.` : '';
+        return { success: true, message: `Nalog zakazan u planeru.${taskMsg}` };
+    } catch (error) {
+        console.error('scheduleWorkOrder error:', error);
+        return { success: false, message: 'Greška pri zakazivanju naloga' };
+    }
+}
+
+/**
+ * Reschedule a work order (update dates via drag/resize on Gantt)
+ */
+export async function rescheduleWorkOrder(
+    workOrderId: string,
+    newStartDate: string,
+    newEndDate: string,
+    organizationId: string
+): Promise<{ success: boolean; message: string }> {
+    if (!organizationId) {
+        return { success: false, message: 'Organization ID is required' };
+    }
+
+    try {
+        const firestore = getDb();
+        const q = query(
+            collection(firestore, COLLECTIONS.WORK_ORDERS),
+            where('Work_Order_ID', '==', workOrderId),
+            where('Organization_ID', '==', organizationId)
+        );
+        const snapshot = await getDocs(q);
+
+        if (snapshot.empty) {
+            return { success: false, message: 'Radni nalog nije pronađen' };
+        }
+
+        await updateDoc(snapshot.docs[0].ref, {
+            Planned_Start_Date: newStartDate,
+            Planned_End_Date: newEndDate,
+        });
+
+        return { success: true, message: 'Nalog premješten' };
+    } catch (error) {
+        console.error('rescheduleWorkOrder error:', error);
+        return { success: false, message: 'Greška pri premještanju naloga' };
+    }
+}
+
+/**
+ * Remove work order from schedule (keep the work order, just unschedule)
+ */
+export async function unscheduleWorkOrder(
+    workOrderId: string,
+    organizationId: string
+): Promise<{ success: boolean; message: string }> {
+    if (!organizationId) {
+        return { success: false, message: 'Organization ID is required' };
+    }
+
+    try {
+        const firestore = getDb();
+        const q = query(
+            collection(firestore, COLLECTIONS.WORK_ORDERS),
+            where('Work_Order_ID', '==', workOrderId),
+            where('Organization_ID', '==', organizationId)
+        );
+        const snapshot = await getDocs(q);
+
+        if (snapshot.empty) {
+            return { success: false, message: 'Radni nalog nije pronađen' };
+        }
+
+        const workOrderData = snapshot.docs[0].data() as WorkOrder;
+
+        // Block unscheduling of orders that are in progress
+        if (workOrderData.Status === 'U toku') {
+            return {
+                success: false,
+                message: 'Nalog U toku se ne može ukloniti iz planera. Prvo pauzirajte ili završite proizvodnju.'
+            };
+        }
+
+        await updateDoc(snapshot.docs[0].ref, {
+            Planned_Start_Date: null,
+            Planned_End_Date: null,
+            Is_Scheduled: false,
+            Scheduled_At: null,
+        });
+
+        return { success: true, message: 'Nalog uklonjen iz planera' };
+    } catch (error) {
+        console.error('unscheduleWorkOrder error:', error);
+        return { success: false, message: 'Greška pri uklanjanju iz planera' };
+    }
+}
+
+/**
+ * Get all scheduled work orders for Gantt view
+ * Optionally filter by date range
+ */
+export async function getScheduledWorkOrders(
+    organizationId: string,
+    dateRange?: { start: string; end: string }
+): Promise<WorkOrder[]> {
+    if (!organizationId) return [];
+
+    try {
+        // Get all work orders (filtering by Is_Scheduled happens client-side for now)
+        const workOrders = await getWorkOrders(organizationId);
+
+        // Filter to only scheduled ones
+        let scheduled = workOrders.filter(wo => wo.Is_Scheduled === true);
+
+        // Apply date range filter if provided
+        if (dateRange) {
+            scheduled = scheduled.filter(wo => {
+                if (!wo.Planned_Start_Date) return false;
+                const start = wo.Planned_Start_Date;
+                const end = wo.Planned_End_Date || wo.Planned_Start_Date;
+                // Check if order overlaps with range
+                return start <= dateRange.end && end >= dateRange.start;
+            });
+        }
+
+        return scheduled;
+    } catch (error) {
+        console.error('getScheduledWorkOrders error:', error);
+        return [];
     }
 }
 

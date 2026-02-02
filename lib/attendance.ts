@@ -227,6 +227,7 @@ function isWorkerAssignedToItem(item: WorkOrderItem, workerId: string): boolean 
 /**
  * Toggle pause state for a work order item
  * Paused items don't accrue daily rates (dnevnice) but maintain their status
+ * Also tracks Pause_Periods for accurate labor cost calculation
  */
 export async function toggleItemPause(
     workOrderId: string,
@@ -235,7 +236,36 @@ export async function toggleItemPause(
 ): Promise<{ success: boolean; message: string }> {
     try {
         const itemRef = await getItemRef(itemId);
-        await updateDoc(itemRef, { Is_Paused: isPaused });
+        const itemSnap = await getDoc(itemRef);
+
+        if (!itemSnap.exists()) {
+            return { success: false, message: 'Stavka nije pronađena' };
+        }
+
+        const itemData = itemSnap.data();
+        const now = new Date().toISOString();
+
+        // Track pause periods for accurate labor cost calculation
+        let pausePeriods: Array<{ Started_At: string; Ended_At?: string }> = itemData.Pause_Periods || [];
+
+        if (isPaused) {
+            // Starting a new pause period
+            pausePeriods.push({ Started_At: now });
+        } else {
+            // Ending the most recent pause period
+            if (pausePeriods.length > 0) {
+                const lastPause = pausePeriods[pausePeriods.length - 1];
+                if (!lastPause.Ended_At) {
+                    lastPause.Ended_At = now;
+                }
+            }
+        }
+
+        await updateDoc(itemRef, {
+            Is_Paused: isPaused,
+            Pause_Periods: pausePeriods
+        });
+
         return {
             success: true,
             message: isPaused ? 'Proizvod pauziran - dnevnice neće biti zaračunate' : 'Proizvod nastavljen'
@@ -610,9 +640,48 @@ export async function calculateActualLaborCost(item: any): Promise<number> {
         const endDate = new Date(item.Completed_At);
         const currentDate = new Date(startDate);
 
+        // Pre-fetch holidays for the date range
+        const holidayQuery = query(
+            collection(firestore, 'holidays'),
+            where('Date', '>=', startDateStr),
+            where('Date', '<=', endDateStr)
+        );
+        const holidaySnap = await getDocs(holidayQuery);
+        const holidayDates = new Set<string>();
+        holidaySnap.forEach(doc => holidayDates.add(doc.data().Date));
+
+        // Get pause periods for this item (if tracking per-product)
+        const pausePeriods: Array<{ Started_At: string; Ended_At?: string }> = item.Pause_Periods || [];
+
         // Iterate through each day
         while (currentDate <= endDate) {
             const dateStr = currentDate.toISOString().split('T')[0]; // YYYY-MM-DD
+
+            // SKIP 1: Weekends (Saturday=6, Sunday=0)
+            const dayOfWeek = currentDate.getDay();
+            if (dayOfWeek === 0 || dayOfWeek === 6) {
+                currentDate.setDate(currentDate.getDate() + 1);
+                continue;
+            }
+
+            // SKIP 2: Holidays
+            if (holidayDates.has(dateStr)) {
+                currentDate.setDate(currentDate.getDate() + 1);
+                continue;
+            }
+
+            // SKIP 3: Paused days for this item
+            const isPausedOnDate = pausePeriods.some(p => {
+                const pauseStart = new Date(p.Started_At).toISOString().split('T')[0];
+                const pauseEnd = p.Ended_At
+                    ? new Date(p.Ended_At).toISOString().split('T')[0]
+                    : new Date().toISOString().split('T')[0];
+                return dateStr >= pauseStart && dateStr <= pauseEnd;
+            });
+            if (isPausedOnDate) {
+                currentDate.setDate(currentDate.getDate() + 1);
+                continue;
+            }
 
             // Check attendance for each worker using the pre-fetched map
             for (const workerId of Array.from(workerIds)) {
@@ -690,7 +759,14 @@ export async function recalculateWorkOrder(workOrderId: string): Promise<void> {
         if (allCompleted) status = 'Završeno';
         else if (anyInProgress) status = 'U toku';
 
-        await updateDoc(doc(firestore, COLLECTIONS.WORK_ORDERS, workOrderId), {
+        // Use _docId from queryied work order (not the Work_Order_ID field)
+        const docId = (workOrder as any)._docId;
+        if (!docId) {
+            console.error('recalculateWorkOrder: No _docId found on work order');
+            return;
+        }
+
+        await updateDoc(doc(firestore, COLLECTIONS.WORK_ORDERS, docId), {
             Status: status,
             Started_At: earliestStart?.toISOString() || null,
             Completed_At: latestCompletion?.toISOString() || null,
@@ -989,22 +1065,26 @@ export async function repairAllProductStatuses(): Promise<{ success: boolean; me
  */
 async function getWorkOrderWithItems(workOrderId: string): Promise<WorkOrder | null> {
     const firestore = getDb();
-    const woRef = doc(firestore, COLLECTIONS.WORK_ORDERS, workOrderId);
-    const woSnap = await getDoc(woRef);
 
-    if (!woSnap.exists()) return null;
+    // Query by Work_Order_ID field (not doc ID) for consistency
+    const woQuery = query(
+        collection(firestore, COLLECTIONS.WORK_ORDERS),
+        where('Work_Order_ID', '==', workOrderId)
+    );
+    const woSnap = await getDocs(woQuery);
 
-    const data = woSnap.data();
-    // Use the stored Work_Order_ID if available, otherwise fallback to doc ID (for backward compatibility)
-    const storedWorkOrderId = data.Work_Order_ID || woSnap.id;
+    if (woSnap.empty) return null;
 
-    // IMPORTANT: Keep doc ID as the main identifier for updates, but link items via stored ID
-    const workOrder = { ...data, Work_Order_ID: woSnap.id } as WorkOrder;
+    const woDoc = woSnap.docs[0];
+    const data = woDoc.data();
 
-    // Get items from root collection using the Stored Work Order ID (linking key)
+    // IMPORTANT: Keep doc ID as the main identifier for updates
+    const workOrder = { ...data, _docId: woDoc.id } as WorkOrder & { _docId: string };
+
+    // Get items from root collection using the Work_Order_ID
     const itemsQuery = query(
         collection(firestore, COLLECTIONS.WORK_ORDER_ITEMS),
-        where('Work_Order_ID', '==', storedWorkOrderId)
+        where('Work_Order_ID', '==', workOrderId)
     );
     const itemsSnap = await getDocs(itemsQuery);
 

@@ -288,6 +288,13 @@ export interface WorkOrder {
     Profit_Margin?: number;        // (Profit / Total_Value) × 100
     Labor_Cost_Variance?: number;  // Planned_Labor_Cost - Actual_Labor_Cost
 
+    // PLANER / GANTT SCHEDULING
+    Planned_Start_Date?: string;   // Planirani datum početka
+    Planned_End_Date?: string;     // Planirani datum završetka
+    Is_Scheduled?: boolean;        // True ako je nalog dodan u planer
+    Scheduled_At?: string;         // Timestamp kada je zakazan
+    Color_Code?: string;           // Boja za prikaz u planeru (hex)
+
     items?: WorkOrderItem[];
 }
 

@@ -230,8 +230,12 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
     // Print Modal
     const [printModal, setPrintModal] = useState(false);
 
-
-
+    // Delete Confirmation Modal
+    const [deleteConfirmModal, setDeleteConfirmModal] = useState<{
+        isOpen: boolean;
+        workOrderId: string | null;
+        workOrderNumber: string;
+    }>({ isOpen: false, workOrderId: null, workOrderNumber: '' });
     const eligibleProducts = useMemo(() => {
         let products: any[] = [];
         projects.forEach(project => {
@@ -538,10 +542,34 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
         setPrintModal(true);
     }
 
+    // Opens the delete confirmation modal
     async function handleDeleteWorkOrder(workOrderId: string) {
-        if (!confirm('Obriši radni nalog?')) return;
-        const res = await deleteWorkOrder(workOrderId, organizationId || '');
-        if (res.success) { showToast(res.message, 'success'); onRefresh(); } else showToast(res.message, 'error');
+        const wo = workOrders.find(w => w.Work_Order_ID === workOrderId);
+        setDeleteConfirmModal({
+            isOpen: true,
+            workOrderId,
+            workOrderNumber: wo?.Work_Order_Number || ''
+        });
+    }
+
+    // Actually performs the delete with the selected action
+    async function confirmDeleteWorkOrder(productAction: 'completed' | 'waiting') {
+        if (!deleteConfirmModal.workOrderId) return;
+
+        const res = await deleteWorkOrder(
+            deleteConfirmModal.workOrderId,
+            organizationId || '',
+            productAction
+        );
+
+        setDeleteConfirmModal({ isOpen: false, workOrderId: null, workOrderNumber: '' });
+
+        if (res.success) {
+            showToast(res.message, 'success');
+            onRefresh();
+        } else {
+            showToast(res.message, 'error');
+        }
     }
 
     async function handleStartWorkOrder(workOrderId: string) {
@@ -1931,6 +1959,190 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                     .project-actions {
                         margin-left: 0;
                     }
+                }
+            `}</style>
+
+            {/* Delete Confirmation Modal */}
+            {deleteConfirmModal.isOpen && (
+                <div className="delete-modal-overlay" onClick={() => setDeleteConfirmModal({ isOpen: false, workOrderId: null, workOrderNumber: '' })}>
+                    <div className="delete-modal" onClick={(e) => e.stopPropagation()}>
+                        <div className="delete-modal-header">
+                            <h3>🗑️ Obriši nalog {deleteConfirmModal.workOrderNumber}</h3>
+                        </div>
+                        <div className="delete-modal-body">
+                            <p>Šta želite uraditi sa proizvodima iz ovog naloga?</p>
+                            <div className="delete-options">
+                                <button
+                                    className="delete-option option-completed"
+                                    onClick={() => confirmDeleteWorkOrder('completed')}
+                                >
+                                    <span className="option-icon">✅</span>
+                                    <div className="option-content">
+                                        <strong>Završi proizvode</strong>
+                                        <span>Postavi status na "Spremno" (bez kalkulacije profita)</span>
+                                    </div>
+                                </button>
+                                <button
+                                    className="delete-option option-waiting"
+                                    onClick={() => confirmDeleteWorkOrder('waiting')}
+                                >
+                                    <span className="option-icon">⏳</span>
+                                    <div className="option-content">
+                                        <strong>Vrati na čekanje</strong>
+                                        <span>Postavi status na "Čeka proizvodnju"</span>
+                                    </div>
+                                </button>
+                            </div>
+                        </div>
+                        <div className="delete-modal-footer">
+                            <button
+                                className="cancel-btn"
+                                onClick={() => setDeleteConfirmModal({ isOpen: false, workOrderId: null, workOrderNumber: '' })}
+                            >
+                                Odustani
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            <style jsx>{`
+                .delete-modal-overlay {
+                    position: fixed;
+                    inset: 0;
+                    background: rgba(15, 23, 42, 0.6);
+                    backdrop-filter: blur(4px);
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    z-index: 1000;
+                    animation: fadeIn 0.2s ease-out;
+                }
+
+                @keyframes fadeIn {
+                    from { opacity: 0; }
+                    to { opacity: 1; }
+                }
+
+                .delete-modal {
+                    background: white;
+                    border-radius: 20px;
+                    width: 100%;
+                    max-width: 440px;
+                    box-shadow: 0 25px 50px rgba(0, 0, 0, 0.2);
+                    animation: slideUp 0.3s ease-out;
+                    overflow: hidden;
+                }
+
+                @keyframes slideUp {
+                    from {
+                        opacity: 0;
+                        transform: translateY(20px) scale(0.95);
+                    }
+                    to {
+                        opacity: 1;
+                        transform: translateY(0) scale(1);
+                    }
+                }
+
+                .delete-modal-header {
+                    padding: 20px 24px;
+                    border-bottom: 1px solid #e2e8f0;
+                }
+
+                .delete-modal-header h3 {
+                    margin: 0;
+                    font-size: 18px;
+                    font-weight: 700;
+                    color: #1e293b;
+                }
+
+                .delete-modal-body {
+                    padding: 24px;
+                }
+
+                .delete-modal-body p {
+                    margin: 0 0 20px 0;
+                    color: #64748b;
+                    font-size: 14px;
+                }
+
+                .delete-options {
+                    display: flex;
+                    flex-direction: column;
+                    gap: 12px;
+                }
+
+                .delete-option {
+                    display: flex;
+                    align-items: flex-start;
+                    gap: 14px;
+                    padding: 16px;
+                    border: 2px solid #e2e8f0;
+                    border-radius: 12px;
+                    background: white;
+                    cursor: pointer;
+                    text-align: left;
+                    transition: all 0.2s;
+                }
+
+                .delete-option:hover {
+                    border-color: #94a3b8;
+                    background: #f8fafc;
+                }
+
+                .delete-option.option-completed:hover {
+                    border-color: #10b981;
+                    background: rgba(16, 185, 129, 0.05);
+                }
+
+                .delete-option.option-waiting:hover {
+                    border-color: #f59e0b;
+                    background: rgba(245, 158, 11, 0.05);
+                }
+
+                .option-icon {
+                    font-size: 24px;
+                }
+
+                .option-content {
+                    display: flex;
+                    flex-direction: column;
+                    gap: 4px;
+                }
+
+                .option-content strong {
+                    font-size: 15px;
+                    color: #1e293b;
+                }
+
+                .option-content span {
+                    font-size: 13px;
+                    color: #64748b;
+                }
+
+                .delete-modal-footer {
+                    padding: 16px 24px;
+                    border-top: 1px solid #e2e8f0;
+                    display: flex;
+                    justify-content: flex-end;
+                }
+
+                .cancel-btn {
+                    padding: 10px 20px;
+                    border: 1px solid #e2e8f0;
+                    background: white;
+                    border-radius: 10px;
+                    font-size: 14px;
+                    font-weight: 500;
+                    color: #64748b;
+                    cursor: pointer;
+                    transition: all 0.2s;
+                }
+
+                .cancel-btn:hover {
+                    background: #f8fafc;
+                    color: #1e293b;
                 }
             `}</style>
         </div >

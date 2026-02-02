@@ -6,6 +6,7 @@ import { saveMaterial, deleteMaterial } from '@/lib/database';
 import { useData } from '@/context/DataContext';
 import Modal from '@/components/ui/Modal';
 import { MATERIAL_CATEGORIES } from '@/lib/types';
+import { formatCurrency } from '@/lib/utils';
 
 interface MaterialsTabProps {
     materials: Material[];
@@ -26,10 +27,6 @@ export default function MaterialsTab({ materials, onRefresh, showToast }: Materi
         const matchesCategory = !categoryFilter || material.Category === categoryFilter;
         return matchesSearch && matchesCategory;
     });
-
-    function formatCurrency(amount: number): string {
-        return amount.toFixed(2) + ' KM';
-    }
 
     function openMaterialModal(material?: Material) {
         setEditingMaterial(material || { Category: 'Ploča', Unit: 'kom' });

@@ -187,8 +187,25 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
         const project = projects.find(p => p.Project_ID === projectId);
         if (!project) return;
 
+        // Get products that are already in ACCEPTED offers for this project
+        const productIdsInAcceptedOffers = new Set<string>();
+        offers
+            .filter(o => o.Project_ID === projectId && o.Status === 'Prihvaćeno')
+            .forEach(o => {
+                (o.products || []).forEach(op => {
+                    if (op.Included !== false) {
+                        productIdsInAcceptedOffers.add(op.Product_ID);
+                    }
+                });
+            });
+
+        // Filter out products that are already in accepted offers
+        const availableProducts = (project.products || []).filter(
+            p => !productIdsInAcceptedOffers.has(p.Product_ID)
+        );
+
         // Initialize products with offer-specific fields
-        const products: OfferProductState[] = (project.products || []).map(p => ({
+        const products: OfferProductState[] = availableProducts.map(p => ({
             Product_ID: p.Product_ID,
             Product_Name: p.Name,
             Quantity: p.Quantity || 1,

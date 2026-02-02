@@ -20,12 +20,13 @@ import WorkersTab from '@/components/tabs/WorkersTab';
 import SuppliersTab from '@/components/tabs/SuppliersTab';
 import AttendanceTab from '@/components/tabs/AttendanceTab';
 import TasksTab from '@/components/tabs/TasksTab';
+import PlannerTab from '@/components/tabs/PlannerTab';
 import Toast from '@/components/ui/Toast';
 import LoadingOverlay from '@/components/ui/LoadingOverlay';
 import ModuleGuard from '@/components/auth/ModuleGuard';
 import Sidebar from '@/components/Sidebar';
 import CommandPalette, { type CommandPaletteItem } from '@/components/ui/CommandPalette';
-import AIImportWizard from '@/components/AIImportWizard';
+import CSVImportWizard from '@/components/CSVImportWizard';
 
 export const dynamic = 'force-dynamic';
 
@@ -44,7 +45,7 @@ export default function Home() {
     const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
 
     // AI Import Wizard state
-    const [aiImportOpen, setAiImportOpen] = useState(false);
+    const [importWizardOpen, setImportWizardOpen] = useState(false);
 
     // Tasks filter state for cross-tab navigation
     const [tasksProjectFilter, setTasksProjectFilter] = useState<string | null>(null);
@@ -226,7 +227,7 @@ export default function Home() {
                 isCollapsed={sidebarCollapsed}
                 onToggleCollapse={() => setSidebarCollapsed(!sidebarCollapsed)}
                 onOpenSearch={() => setCommandPaletteOpen(true)}
-                onOpenAIImport={() => setAiImportOpen(true)}
+                onOpenImport={() => setImportWizardOpen(true)}
             />
 
             {/* Main Content Area */}
@@ -311,6 +312,15 @@ export default function Home() {
                         <ProductionTab
                             workOrders={appState.workOrders}
                             projects={appState.projects}
+                            workers={appState.workers}
+                            onRefresh={loadData}
+                            showToast={showToast}
+                        />
+                    )}
+
+                    {activeTab === 'planer' && (
+                        <PlannerTab
+                            workOrders={appState.workOrders}
                             workers={appState.workers}
                             onRefresh={loadData}
                             showToast={showToast}
@@ -455,7 +465,7 @@ export default function Home() {
                     { id: 'action-overview', type: 'action', title: 'Idi na Pregled', action: () => setActiveTab('overview') },
                     { id: 'action-offers', type: 'action', title: 'Idi na Ponude', action: () => setActiveTab('offers') },
                     { id: 'action-production', type: 'action', title: 'Idi na Proizvodnju', action: () => setActiveTab('production') },
-                    { id: 'action-ai-import', type: 'action', title: '✨ AI Import Wizard', action: () => setAiImportOpen(true) },
+                    { id: 'action-import', type: 'action', title: '📥 Import podataka', action: () => setImportWizardOpen(true) },
                     // Projects
                     ...appState.projects.map(p => ({
                         id: `project-${p.Project_ID}`,
@@ -478,11 +488,11 @@ export default function Home() {
                 }}
             />
 
-            {/* AI Import Wizard */}
+            {/* CSV Import Wizard */}
             {organization?.Organization_ID && (
-                <AIImportWizard
-                    isOpen={aiImportOpen}
-                    onClose={() => setAiImportOpen(false)}
+                <CSVImportWizard
+                    isOpen={importWizardOpen}
+                    onClose={() => setImportWizardOpen(false)}
                     organizationId={organization.Organization_ID}
                     onImportComplete={() => {
                         loadData();

@@ -20,6 +20,8 @@ import {
     Calendar,
     CheckSquare,
     Sparkles,
+    GanttChart,
+    FileUp,
 } from 'lucide-react';
 import './Sidebar.css';
 
@@ -31,10 +33,10 @@ interface SidebarProps {
     isCollapsed: boolean;
     onToggleCollapse: () => void;
     onOpenSearch: () => void;
-    onOpenAIImport?: () => void;
+    onOpenImport?: () => void;
 }
 
-const Sidebar: React.FC<SidebarProps> = ({ activeTab, onTabChange, isOpen, onClose, isCollapsed, onToggleCollapse, onOpenSearch, onOpenAIImport }) => {
+const Sidebar: React.FC<SidebarProps> = ({ activeTab, onTabChange, isOpen, onClose, isCollapsed, onToggleCollapse, onOpenSearch, onOpenImport }) => {
     const router = useRouter();
     const { user, organization, hasModule, signOut } = useAuth();
     const [isManagementExpanded, setIsManagementExpanded] = React.useState(false);
@@ -50,6 +52,7 @@ const Sidebar: React.FC<SidebarProps> = ({ activeTab, onTabChange, isOpen, onClo
         offers: '#FF9500',   // Orange
         orders: '#34C759',   // Green
         production: '#FF2D55', // Pink/Red
+        planer: '#06B6D4',   // Cyan - Gantt/Planer
         materials: '#5856D6', // Indigo
         workers: '#00C7BE',   // Teal
         suppliers: '#FFCC00', // Yellow
@@ -134,29 +137,7 @@ const Sidebar: React.FC<SidebarProps> = ({ activeTab, onTabChange, isOpen, onClo
                         )}
                     </button>
 
-                    {onOpenAIImport && (
-                        <button
-                            className="nav-item ai-import-btn"
-                            onClick={() => {
-                                onOpenAIImport();
-                                if (window.innerWidth <= 768) onClose();
-                            }}
-                            title={isCollapsed ? "AI Import" : undefined}
-                            style={{
-                                '--item-color': '#667eea',
-                            } as React.CSSProperties}
-                        >
-                            <div className="nav-icon-wrapper">
-                                <Sparkles size={20} />
-                            </div>
-                            {!isCollapsed && (
-                                <div className="nav-label-group">
-                                    <span className="nav-label">AI Import</span>
-                                    <span className="nav-badge-ai">NOVO</span>
-                                </div>
-                            )}
-                        </button>
-                    )}
+
 
                     <div className="nav-divider"></div>
 
@@ -175,6 +156,7 @@ const Sidebar: React.FC<SidebarProps> = ({ activeTab, onTabChange, isOpen, onClo
                         locked={!hasModule('orders')}
                     />
                     <NavItem id="production" icon={HardHat} label="Proizvodnja" />
+                    <NavItem id="planer" icon={GanttChart} label="Planer" />
                     <NavItem id="attendance" icon={Calendar} label="Šihtarica" />
                     <NavItem id="tasks" icon={CheckSquare} label="Zadaci" />
 
@@ -204,6 +186,25 @@ const Sidebar: React.FC<SidebarProps> = ({ activeTab, onTabChange, isOpen, onClo
                             <NavItem id="materials" icon={Package2} label="Materijali" />
                             <NavItem id="workers" icon={Users} label="Radnici" />
                             <NavItem id="suppliers" icon={Store} label="Dobavljači" />
+
+                            {onOpenImport && (
+                                <button
+                                    className="nav-item"
+                                    onClick={() => {
+                                        onOpenImport();
+                                        if (window.innerWidth <= 768) onClose();
+                                    }}
+                                    title={isCollapsed ? "Import podataka" : undefined}
+                                    style={{
+                                        '--item-color': '#64748b',
+                                    } as React.CSSProperties}
+                                >
+                                    <div className="nav-icon-wrapper">
+                                        <FileUp size={20} />
+                                    </div>
+                                    {!isCollapsed && <span className="nav-label">Import podataka</span>}
+                                </button>
+                            )}
                         </>
                     )}
                 </nav>

@@ -3,6 +3,7 @@ import { Inter } from 'next/font/google'
 import './globals.css'
 import { AuthProvider } from '@/context/AuthContext'
 import { DataProvider } from '@/context/DataContext'
+import ErrorBoundary from '@/components/ui/ErrorBoundary'
 
 const inter = Inter({ subsets: ['latin'] })
 
@@ -22,11 +23,13 @@ export default function RootLayout({
                 <link href="https://fonts.googleapis.com/icon?family=Material+Icons+Round" rel="stylesheet" />
             </head>
             <body className={inter.className}>
-                <AuthProvider>
-                    <DataProvider>
-                        {children}
-                    </DataProvider>
-                </AuthProvider>
+                <ErrorBoundary>
+                    <AuthProvider>
+                        <DataProvider>
+                            {children}
+                        </DataProvider>
+                    </AuthProvider>
+                </ErrorBoundary>
             </body>
         </html>
     )

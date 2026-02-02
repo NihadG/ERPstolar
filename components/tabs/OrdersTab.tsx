@@ -9,6 +9,7 @@ import { DropdownMenu } from '@/components/ui/DropdownMenu';
 import Modal from '@/components/ui/Modal';
 import { OrderWizardModal } from './OrderWizardModal';
 import { ORDER_STATUSES, MATERIAL_STATUSES } from '@/lib/types';
+import { formatCurrency, formatDate, getStatusClass } from '@/lib/utils';
 import './OrdersTab.css';
 
 interface OrdersTabProps {
@@ -355,25 +356,7 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
         });
     }, [selectedProductIds, selectedSupplierId, suppliers, unorderedMaterials, availableProducts]);
 
-    function getStatusClass(status: string): string {
-        return 'status-' + status.toLowerCase()
-            .replace(/\s+/g, '-')
-            .replace(/č/g, 'c')
-            .replace(/ć/g, 'c')
-            .replace(/š/g, 's')
-            .replace(/ž/g, 'z')
-            .replace(/đ/g, 'd');
-    }
-
-    function formatCurrency(amount: number): string {
-        return (amount || 0).toFixed(2) + ' KM';
-    }
-
-    function formatDate(dateString: string): string {
-        if (!dateString) return '-';
-        const date = new Date(dateString);
-        return date.toLocaleDateString('hr-HR');
-    }
+    // Utility functions imported from lib/utils
 
     function openWizard() {
         setWizardStep(1);
