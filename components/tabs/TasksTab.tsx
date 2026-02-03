@@ -23,6 +23,7 @@ import {
     AlertTriangle,
     ChevronDown,
     ChevronUp,
+    SlidersHorizontal,
     X,
     Save,
     Link2,
@@ -39,7 +40,10 @@ import {
     GripVertical,
     ExternalLink,
     MessageSquare,
-    CheckCheck
+    CheckCheck,
+    Grid3X3,
+    Flag,
+    CalendarDays
 } from 'lucide-react';
 import { useData } from '@/context/DataContext';
 
@@ -60,8 +64,19 @@ interface TasksTabProps {
     onClearFilter?: () => void;     // Clear the project filter
 }
 
-type ViewMode = 'list' | 'board';
+type ViewMode = 'list' | 'board' | 'grid';
 type FilterStatus = 'all' | 'pending' | 'in_progress' | 'completed';
+type GroupBy = 'none' | 'priority' | 'date' | 'connection' | 'worker';
+
+// Group labels for UI
+const GROUP_BY_LABELS: Record<GroupBy, string> = {
+    none: 'Bez grupiranja',
+    priority: 'Po hitnosti',
+    date: 'Po datumu',
+    connection: 'Po poveznici',
+    worker: 'Po radniku'
+};
+
 
 // ============================================
 // PRIORITY COLORS
@@ -95,10 +110,32 @@ export default function TasksTab({ tasks, projects, workers, materials, workOrde
     const [filterStatus, setFilterStatus] = useState<FilterStatus>('all');
     const [filterPriority, setFilterPriority] = useState<TaskPriority | 'all'>('all');
     const [filterCategory, setFilterCategory] = useState<TaskCategory | 'all'>('all');
-    const [viewMode, setViewMode] = useState<ViewMode>('list');
+    const [viewMode, setViewMode] = useState<ViewMode>('grid');
+    const [groupBy, setGroupBy] = useState<GroupBy>('priority');
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [editingTask, setEditingTask] = useState<Task | null>(null);
+    const [expandedTasks, setExpandedTasks] = useState<Set<string>>(new Set());
     const [showFilters, setShowFilters] = useState(false);
+    const [showControls, setShowControls] = useState(true);
+
+    // Initial check for mobile
+    useEffect(() => {
+        if (window.innerWidth < 768) {
+            setShowControls(false);
+        }
+    }, []);
+
+    const toggleControls = () => setShowControls(!showControls);
+
+    const toggleTaskExpansion = (taskId: string) => {
+        const newExpanded = new Set(expandedTasks);
+        if (newExpanded.has(taskId)) {
+            newExpanded.delete(taskId);
+        } else {
+            newExpanded.add(taskId);
+        }
+        setExpandedTasks(newExpanded);
+    };
 
     // Drag and drop state
     const [isDragging, setIsDragging] = useState(false);
@@ -224,6 +261,150 @@ export default function TasksTab({ tasks, projects, workers, materials, workOrde
         in_progress: boardTasks.filter(t => t.Status === 'in_progress'),
         completed: boardTasks.filter(t => t.Status === 'completed')
     }), [boardTasks]);
+
+    // Group tasks for grid view
+    interface TaskGroup {
+        key: string;
+        label: string;
+        iconClass: string;
+        tasks: Task[];
+    }
+
+    const groupedTasks = useMemo((): TaskGroup[] => {
+        if (groupBy === 'none') {
+            return [{ key: 'all', label: 'Svi zadaci', iconClass: 'category', tasks: filteredTasks }];
+        }
+
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const weekFromNow = new Date(today);
+        weekFromNow.setDate(weekFromNow.getDate() + 7);
+
+        switch (groupBy) {
+            case 'priority': {
+                const priorities: { key: TaskPriority; label: string; iconClass: string }[] = [
+                    { key: 'urgent', label: 'Hitno', iconClass: 'urgent' },
+                    { key: 'high', label: 'Visok prioritet', iconClass: 'high' },
+                    { key: 'medium', label: 'Srednji prioritet', iconClass: 'medium' },
+                    { key: 'low', label: 'Nizak prioritet', iconClass: 'low' }
+                ];
+                return priorities
+                    .map(p => ({
+                        key: p.key,
+                        label: p.label,
+                        iconClass: p.iconClass,
+                        tasks: filteredTasks.filter(t => t.Priority === p.key)
+                    }))
+                    .filter(g => g.tasks.length > 0);
+            }
+
+            case 'date': {
+                const overdue = filteredTasks.filter(t =>
+                    t.Due_Date && new Date(t.Due_Date) < today && t.Status !== 'completed'
+                );
+                const dueToday = filteredTasks.filter(t =>
+                    t.Due_Date && new Date(t.Due_Date).toDateString() === today.toDateString()
+                );
+                const thisWeek = filteredTasks.filter(t => {
+                    if (!t.Due_Date) return false;
+                    const due = new Date(t.Due_Date);
+                    return due > today && due <= weekFromNow;
+                });
+                const later = filteredTasks.filter(t => {
+                    if (!t.Due_Date) return false;
+                    return new Date(t.Due_Date) > weekFromNow;
+                });
+                const noDate = filteredTasks.filter(t => !t.Due_Date);
+
+                return [
+                    { key: 'overdue', label: 'Prekoračeno', iconClass: 'overdue', tasks: overdue },
+                    { key: 'today', label: 'Danas', iconClass: 'today', tasks: dueToday },
+                    { key: 'week', label: 'Ovaj tjedan', iconClass: 'week', tasks: thisWeek },
+                    { key: 'later', label: 'Kasnije', iconClass: 'later', tasks: later },
+                    { key: 'no-date', label: 'Bez roka', iconClass: 'no-date', tasks: noDate }
+                ].filter(g => g.tasks.length > 0);
+            }
+
+            case 'worker': {
+                const workerMap = new Map<string, Task[]>();
+                const unassigned: Task[] = [];
+
+                filteredTasks.forEach(t => {
+                    if (t.Assigned_Worker_Name) {
+                        const existing = workerMap.get(t.Assigned_Worker_Name) || [];
+                        existing.push(t);
+                        workerMap.set(t.Assigned_Worker_Name, existing);
+                    } else {
+                        unassigned.push(t);
+                    }
+                });
+
+                const groups: TaskGroup[] = Array.from(workerMap.entries())
+                    .sort((a, b) => a[0].localeCompare(b[0]))
+                    .map(([name, tasks]) => ({
+                        key: name,
+                        label: name,
+                        iconClass: 'worker',
+                        tasks
+                    }));
+
+                if (unassigned.length > 0) {
+                    groups.push({ key: 'unassigned', label: 'Nedodijeljeno', iconClass: 'no-date', tasks: unassigned });
+                }
+
+                return groups;
+            }
+
+            case 'connection': {
+                const connectionMap = new Map<string, { type: string; name: string; tasks: Task[] }>();
+                const noConnection: Task[] = [];
+
+                filteredTasks.forEach(t => {
+                    if (t.Links && t.Links.length > 0) {
+                        t.Links.forEach(link => {
+                            // Unique key composed of Type and ID to distinguish entities
+                            const key = `${link.Entity_Type}:${link.Entity_ID}`;
+                            const existing = connectionMap.get(key);
+                            if (existing) {
+                                // Add task if not already in list (though logic here prevents it, good to be safe)
+                                if (!existing.tasks.find(x => x.Task_ID === t.Task_ID)) {
+                                    existing.tasks.push(t);
+                                }
+                            } else {
+                                connectionMap.set(key, {
+                                    type: link.Entity_Type,
+                                    name: link.Entity_Name,
+                                    tasks: [t]
+                                });
+                            }
+                        });
+                    } else {
+                        noConnection.push(t);
+                    }
+                });
+
+                const groups: TaskGroup[] = Array.from(connectionMap.values())
+                    .sort((a, b) => a.name.localeCompare(b.name))
+                    .map(({ type, name, tasks }) => ({
+                        key: name, // Using name as key for simple display, or should we use ID? key is used for React list key.
+                        label: name,
+                        iconClass: type, // Map entity type to icon class
+                        tasks
+                    }));
+
+                if (noConnection.length > 0) {
+                    groups.push({ key: 'no-connection', label: 'Bez poveznica', iconClass: 'no-date', tasks: noConnection });
+                }
+
+                return groups;
+            }
+
+            default:
+                return [{ key: 'all', label: 'Svi zadaci', iconClass: 'category', tasks: filteredTasks }];
+        }
+    }, [filteredTasks, groupBy]);
+
+
 
     // Stats
     const stats = useMemo(() => {
@@ -664,6 +845,212 @@ export default function TasksTab({ tasks, projects, workers, materials, workOrde
         );
     };
 
+    // Render: Grid Card - Compact version for grid layout
+    const renderGridCard = (task: Task) => {
+        const pColor = priorityColors[task.Priority];
+        const isOverdue = task.Due_Date && task.Status !== 'completed' && new Date(task.Due_Date) < new Date();
+        const checklistProgress = task.Checklist?.length
+            ? task.Checklist.filter(c => c.completed).length / task.Checklist.length
+            : null;
+        const isExpanded = expandedTasks.has(task.Task_ID);
+
+        return (
+            <div
+                key={task.Task_ID}
+                className={`task-card grid-card ${task.Status === 'completed' ? 'completed' : ''} ${isExpanded ? 'expanded' : ''}`}
+                style={{
+                    borderLeft: `4px solid ${pColor.border}`,
+                    background: task.Status === 'completed' ? 'rgba(0,0,0,0.02)' : undefined
+                }}
+            >
+                {/* Actions - Absolute positioned */}
+                <div className="task-card-actions">
+                    <button
+                        className="icon-btn"
+                        onClick={(e) => { e.stopPropagation(); handleEditTask(task); }}
+                        title="Uredi"
+                    >
+                        <Edit3 size={14} />
+                    </button>
+                    <button
+                        className="icon-btn danger"
+                        onClick={(e) => { e.stopPropagation(); handleDeleteTask(task.Task_ID); }}
+                        title="Obriši"
+                    >
+                        <Trash2 size={14} />
+                    </button>
+                </div>
+
+                {/* Content */}
+                <div
+                    className="task-card-content"
+                    onClick={() => toggleTaskExpansion(task.Task_ID)}
+                >
+                    <h4 className="task-title" style={isExpanded ? { whiteSpace: 'normal' } : {}}>{task.Title}</h4>
+
+                    {task.Description && (
+                        <p className="task-description" style={isExpanded ? { lineClamp: 'unset', WebkitLineClamp: 'unset', display: 'block' } : {}}>
+                            {task.Description}
+                        </p>
+                    )}
+
+                    {/* EXPANDED CONTENT */}
+                    {isExpanded && (
+                        <div className="task-expanded-details">
+                            {/* Checklist */}
+                            {task.Checklist && task.Checklist.length > 0 && (
+                                <div className="expanded-section">
+                                    <div className="section-header-row">
+                                        <h5 className="section-title">
+                                            <CheckSquare size={12} />
+                                            Checklist ({task.Checklist.filter(c => c.completed).length}/{task.Checklist.length})
+                                        </h5>
+                                        <div className="checklist-progress-track">
+                                            <div
+                                                className="checklist-progress-fill"
+                                                style={{
+                                                    width: `${(task.Checklist.filter(c => c.completed).length / task.Checklist.length) * 100}%`
+                                                }}
+                                            />
+                                        </div>
+                                    </div>
+                                    <div className="checklist-preview">
+                                        {task.Checklist.map(item => (
+                                            <div
+                                                key={item.id}
+                                                className={`checklist-item-preview ${item.completed ? 'completed' : ''}`}
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    handleToggleChecklist(task.Task_ID, item.id);
+                                                }}
+                                            >
+                                                <div className={`check-box ${item.completed ? 'checked' : ''}`}>
+                                                    {item.completed && <CheckCheck size={12} color="white" strokeWidth={3} />}
+                                                </div>
+                                                <span>{item.text}</span>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* Full Links */}
+                            {task.Links && task.Links.length > 0 && (
+                                <div className="expanded-section">
+                                    <h5 className="section-title">
+                                        <Link2 size={12} />
+                                        Poveznice
+                                    </h5>
+                                    <div className="links-preview">
+                                        {task.Links.map((link, idx) => (
+                                            <span
+                                                key={idx}
+                                                className={`entity-chip ${link.Entity_Type}`}
+                                                onClick={(e) => { e.stopPropagation(); /* Maybe navigate? */ }}
+                                            >
+                                                {renderGroupIcon(link.Entity_Type)}
+                                                {link.Entity_Name}
+                                            </span>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* Notes */}
+                            {task.Notes && (
+                                <div className="expanded-section">
+                                    <h5 className="section-title">
+                                        <MessageSquare size={12} />
+                                        Bilješke
+                                    </h5>
+                                    <p className="notes-text">{task.Notes}</p>
+                                </div>
+                            )}
+                        </div>
+                    )}
+                </div>
+
+                {/* Meta row - Hide when expanded to avoid clutter? Or keep it? Keeping it for quick status scan. */}
+                {!isExpanded && (
+                    <div className="task-card-meta">
+                        {/* Category */}
+                        <span className="meta-chip category">
+                            {categoryIcons[task.Category]}
+                        </span>
+
+                        {/* Due date */}
+                        {task.Due_Date && (
+                            <span className={`meta-chip due-date ${isOverdue ? 'overdue' : ''}`}>
+                                <Calendar size={12} />
+                                {new Date(task.Due_Date).toLocaleDateString('hr-HR', {
+                                    day: 'numeric',
+                                    month: 'short'
+                                })}
+                            </span>
+                        )}
+
+                        {/* Checklist indicator */}
+                        {checklistProgress !== null && (
+                            <span className="meta-chip">
+                                <CheckCheck size={12} />
+                                {task.Checklist?.filter(c => c.completed).length}/{task.Checklist?.length}
+                            </span>
+                        )}
+
+                        {/* Links indicator */}
+                        {task.Links && task.Links.length > 0 && (
+                            <span className="meta-chip links-indicator">
+                                <Link2 size={11} />
+                                {task.Links.length}
+                            </span>
+                        )}
+                    </div>
+                )}
+
+                {/* Status button - Absolute positioned */}
+                <button
+                    className="task-status-btn"
+                    onClick={(e) => {
+                        e.stopPropagation();
+                        handleStatusChange(
+                            task.Task_ID,
+                            task.Status === 'completed' ? 'pending' : 'completed'
+                        );
+                    }}
+                    title={task.Status === 'completed' ? 'Označi kao nezavršeno' : 'Označi kao završeno'}
+                >
+                    {task.Status === 'completed'
+                        ? <CheckCircle2 size={20} className="check-complete" />
+                        : <Circle size={20} className="check-pending" />
+                    }
+                </button>
+            </div>
+        );
+    };
+
+    // Render: Group Icon based on group type
+    const renderGroupIcon = (iconClass: string) => {
+        switch (iconClass) {
+            case 'urgent': return <AlertTriangle size={16} />;
+            case 'high': return <Flag size={16} />;
+            case 'medium': return <Flag size={16} />;
+            case 'low': return <Flag size={16} />;
+            case 'overdue': return <AlertTriangle size={16} />;
+            case 'today': return <CalendarDays size={16} />;
+            case 'week': return <Calendar size={16} />;
+            case 'later': return <Clock size={16} />;
+            case 'no-date': return <Clock size={16} />;
+            case 'worker': return <User size={16} />;
+            case 'project': return <FolderOpen size={16} />;
+            case 'product': return <Package size={16} />;
+            case 'material': return <Layers size={16} />;
+            case 'work_order': return <HardHat size={16} />;
+            case 'order': return <ShoppingCart size={16} />;
+            case 'category': return <Tag size={16} />;
+            default: return <Tag size={16} />;
+        }
+    };
+
     return (
         <div className="tasks-container">
             {/* Header */}
@@ -673,7 +1060,12 @@ export default function TasksTab({ tasks, projects, workers, materials, workOrde
                         <CheckSquare size={28} color="#1D3557" />
                         Zadaci
                     </h2>
-                    <span className="tasks-count">{tasks.length} ukupno</span>
+                    <div className="tasks-count-wrapper">
+                        <span className="tasks-count">{tasks.length} ukupno</span>
+                        <button className="mobile-toggle-btn" onClick={toggleControls}>
+                            {showControls ? <ChevronUp size={20} /> : <SlidersHorizontal size={20} />}
+                        </button>
+                    </div>
                 </div>
 
                 <button className="btn-primary-tasks" onClick={handleCreateTask}>
@@ -698,57 +1090,82 @@ export default function TasksTab({ tasks, projects, workers, materials, workOrde
                 </div>
             )}
 
-            {/* Quick Stats */}
-            {renderQuickStats()}
+            {/* Collapsible Controls Wrapper */}
+            <div className={`tasks-controls-wrapper ${showControls ? 'open' : 'closed'}`}>
+                {/* Quick Stats */}
+                {renderQuickStats()}
 
-            {/* Toolbar */}
-            <div className="tasks-toolbar">
-                {/* Search */}
-                <div className="tasks-search">
-                    <Search size={18} className="search-icon" />
-                    <input
-                        type="text"
-                        placeholder="Pretraži zadatke..."
-                        value={searchQuery}
-                        onChange={(e) => setSearchQuery(e.target.value)}
-                    />
-                    {searchQuery && (
-                        <button className="clear-search" onClick={() => setSearchQuery('')}>
-                            <X size={16} />
+                {/* Toolbar */}
+                <div className="tasks-toolbar">
+                    {/* Search */}
+                    <div className="tasks-search">
+                        <Search size={18} />
+                        <input
+                            type="text"
+                            placeholder="Pretraži zadatke..."
+                            value={searchQuery}
+                            onChange={(e) => setSearchQuery(e.target.value)}
+                        />
+                        {searchQuery && (
+                            <button className="clear-search" onClick={() => setSearchQuery('')}>
+                                <X size={16} />
+                            </button>
+                        )}
+                    </div>
+
+                    {/* Filter Toggle */}
+                    <button
+                        className={`filter-toggle ${filterStatus !== 'all' || filterPriority !== 'all' || filterCategory !== 'all' ? 'active' : ''}`}
+                        onClick={() => setShowFilters(!showFilters)}
+                    >
+                        <Filter size={18} />
+                        Filteri
+                        {(filterStatus !== 'all' || filterPriority !== 'all' || filterCategory !== 'all') && (
+                            <span className="filter-badge">
+                                {[filterStatus, filterPriority, filterCategory].filter(f => f !== 'all').length}
+                            </span>
+                        )}
+                    </button>
+
+                    {/* View Mode Toggle */}
+                    <div className="view-toggle">
+                        <button
+                            className={viewMode === 'grid' ? 'active' : ''}
+                            onClick={() => setViewMode('grid')}
+                            title="Grid"
+                        >
+                            <Grid3X3 size={18} />
                         </button>
-                    )}
-                </div>
+                        <button
+                            className={viewMode === 'list' ? 'active' : ''}
+                            onClick={() => setViewMode('list')}
+                            title="Lista"
+                        >
+                            <ListChecks size={18} />
+                        </button>
+                        <button
+                            className={viewMode === 'board' ? 'active' : ''}
+                            onClick={() => setViewMode('board')}
+                            title="Ploča"
+                        >
+                            <Layers size={18} />
+                        </button>
+                    </div>
 
-                {/* Filters Toggle */}
-                <button
-                    className={`filter-toggle ${showFilters ? 'active' : ''}`}
-                    onClick={() => setShowFilters(!showFilters)}
-                >
-                    <Filter size={18} />
-                    Filteri
-                    {(filterStatus !== 'all' || filterPriority !== 'all' || filterCategory !== 'all') && (
-                        <span className="filter-badge">
-                            {[filterStatus, filterPriority, filterCategory].filter(f => f !== 'all').length}
-                        </span>
+                    {/* Group By Selector - Only show for grid view */}
+                    {viewMode === 'grid' && (
+                        <div className="group-by-selector">
+                            <label>Grupiraj:</label>
+                            <select
+                                value={groupBy}
+                                onChange={(e) => setGroupBy(e.target.value as GroupBy)}
+                            >
+                                {Object.entries(GROUP_BY_LABELS).map(([key, label]) => (
+                                    <option key={key} value={key}>{label}</option>
+                                ))}
+                            </select>
+                        </div>
                     )}
-                </button>
-
-                {/* View Mode Toggle */}
-                <div className="view-toggle">
-                    <button
-                        className={viewMode === 'list' ? 'active' : ''}
-                        onClick={() => setViewMode('list')}
-                        title="Lista"
-                    >
-                        <ListChecks size={18} />
-                    </button>
-                    <button
-                        className={viewMode === 'board' ? 'active' : ''}
-                        onClick={() => setViewMode('board')}
-                        title="Ploča"
-                    >
-                        <Layers size={18} />
-                    </button>
                 </div>
             </div>
 
@@ -835,7 +1252,36 @@ export default function TasksTab({ tasks, projects, workers, materials, workOrde
 
             {/* Content */}
             <div className="tasks-content">
-                {viewMode === 'list' ? (
+                {viewMode === 'grid' ? (
+                    // Grid View with Grouping
+                    <div className="tasks-grouped">
+                        {filteredTasks.length === 0 ? (
+                            <div className="tasks-empty">
+                                <CheckSquare size={48} strokeWidth={1.5} />
+                                <h3>Nema zadataka</h3>
+                                <p>Kreirajte novi zadatak klikom na dugme iznad</p>
+                            </div>
+                        ) : (
+                            groupedTasks.map(group => (
+                                <div key={group.key} className="task-group">
+                                    <div className="task-group-header">
+                                        <div className={`task-group-icon ${group.iconClass}`}>
+                                            {renderGroupIcon(group.iconClass)}
+                                        </div>
+                                        <div className="task-group-info">
+                                            <h3 className="task-group-title">{group.label}</h3>
+                                            <span className="task-group-count">{group.tasks.length} {group.tasks.length === 1 ? 'zadatak' : 'zadataka'}</span>
+                                        </div>
+                                    </div>
+                                    <div className="task-group-content">
+                                        {group.tasks.map(renderGridCard)}
+                                    </div>
+                                </div>
+                            ))
+                        )}
+                    </div>
+                ) : viewMode === 'list' ? (
+                    // List View
                     <div className="tasks-list">
                         {filteredTasks.length === 0 ? (
                             <div className="tasks-empty">
@@ -848,6 +1294,7 @@ export default function TasksTab({ tasks, projects, workers, materials, workOrde
                         )}
                     </div>
                 ) : (
+                    // Board View
                     <DragDropContext onDragEnd={onDragEnd}>
                         <div className="tasks-board">
                             {renderBoardColumn('pending', tasksByStatus.pending)}

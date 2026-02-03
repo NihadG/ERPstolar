@@ -265,7 +265,8 @@ export default function AttendanceTab({ workers, onRefresh, showToast }: Attenda
                 Worker_Name: selectedCell.workerName,
                 Date: selectedCell.date,
                 Status: finalStatus as any,
-                Notes: finalNotes
+                Notes: finalNotes,
+                Organization_ID: organizationId || undefined
             });
 
             // Reload just this month to confirm
@@ -399,6 +400,7 @@ export default function AttendanceTab({ workers, onRefresh, showToast }: Attenda
                         Date: bulkEditDate.dateStr,
                         Status: bulkStatuses[worker.Worker_ID] as any,
                         Notes: null,
+                        Organization_ID: organizationId || undefined
                     })
                 )
             );

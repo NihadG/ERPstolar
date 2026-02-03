@@ -6,6 +6,7 @@ import {
     getDoc,
     addDoc,
     updateDoc,
+    setDoc,
     query,
     where,
     writeBatch,
@@ -67,9 +68,8 @@ export async function saveWorkerAttendance(attendance: Partial<WorkerAttendance>
         );
 
         const attendanceRef = doc(firestore, COLLECTIONS.WORKER_ATTENDANCE, attendanceData.Attendance_ID);
-        await updateDoc(attendanceRef, attendanceData as any).catch(async () => {
-            await addDoc(collection(firestore, COLLECTIONS.WORKER_ATTENDANCE), attendanceData);
-        });
+        // Use setDoc with merge to create or update consistently using Attendance_ID as doc ID
+        await setDoc(attendanceRef, attendanceData as any, { merge: true });
 
         return attendanceData.Attendance_ID;
     } catch (error) {
