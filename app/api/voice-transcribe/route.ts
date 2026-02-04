@@ -1,13 +1,42 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { SpeechClient } from '@google-cloud/speech';
 
+// Parse private key - handles various formats from environment variables
+function parsePrivateKey(key: string | undefined): string | undefined {
+    if (!key) return undefined;
+
+    // If it's already properly formatted (contains actual newlines)
+    if (key.includes('-----BEGIN') && key.includes('\n')) {
+        return key;
+    }
+
+    // Replace escaped newlines (\\n) with actual newlines
+    let parsed = key.replace(/\\n/g, '\n');
+
+    // Handle double-escaped newlines (\\\\n)
+    parsed = parsed.replace(/\\\\n/g, '\n');
+
+    // If it was JSON-stringified (starts with quotes), try to parse
+    if (parsed.startsWith('"') && parsed.endsWith('"')) {
+        try {
+            parsed = JSON.parse(parsed);
+        } catch (e) {
+            // Ignore parse errors, use as-is
+        }
+    }
+
+    return parsed;
+}
+
 // Initialize Speech client with credentials from environment
 function getSpeechClient(): SpeechClient {
+    const privateKey = parsePrivateKey(process.env.GOOGLE_CLOUD_PRIVATE_KEY);
+
     const credentials = {
         projectId: process.env.GOOGLE_CLOUD_PROJECT_ID,
         credentials: {
             client_email: process.env.GOOGLE_CLOUD_CLIENT_EMAIL,
-            private_key: process.env.GOOGLE_CLOUD_PRIVATE_KEY?.replace(/\\n/g, '\n'),
+            private_key: privateKey,
         },
     };
 
