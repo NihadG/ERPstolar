@@ -5,6 +5,18 @@ import { SpeechClient } from '@google-cloud/speech';
 function parsePrivateKey(key: string | undefined): string | undefined {
     if (!key) return undefined;
 
+    // Check if it's base64 encoded (doesn't start with header)
+    if (!key.includes('-----BEGIN PRIVATE KEY-----')) {
+        try {
+            const decoded = Buffer.from(key, 'base64').toString('utf-8');
+            if (decoded.includes('-----BEGIN PRIVATE KEY-----')) {
+                return decoded;
+            }
+        } catch (e) {
+            // Not a valid base64 or failed to decode, continue to other checks
+        }
+    }
+
     // If it's already properly formatted (contains actual newlines)
     if (key.includes('-----BEGIN') && key.includes('\n')) {
         return key;
@@ -30,7 +42,8 @@ function parsePrivateKey(key: string | undefined): string | undefined {
 
 // Initialize Speech client with credentials from environment
 function getSpeechClient(): SpeechClient {
-    const privateKey = parsePrivateKey(process.env.GOOGLE_CLOUD_PRIVATE_KEY);
+    // Try Base64 specific var first, then the standard one
+    const privateKey = parsePrivateKey(process.env.GOOGLE_CLOUD_PRIVATE_KEY_BASE64 || process.env.GOOGLE_CLOUD_PRIVATE_KEY);
 
     const credentials = {
         projectId: process.env.GOOGLE_CLOUD_PROJECT_ID,
