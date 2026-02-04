@@ -1,9 +1,10 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useCallback } from 'react';
 import { createPortal } from 'react-dom';
-import type { WorkOrder, Worker, WorkOrderItem } from '@/lib/types';
-import { scheduleWorkOrder, unscheduleWorkOrder, startWorkOrder } from '@/lib/database';
+import { DragDropContext, Droppable, Draggable, DropResult } from '@hello-pangea/dnd';
+import type { WorkOrder, Worker, WorkOrderItem, WorkerConflict } from '@/lib/types';
+import { scheduleWorkOrder, unscheduleWorkOrder, startWorkOrder, checkWorkerConflicts, rescheduleWorkOrder } from '@/lib/database';
 import { useAuth } from '@/context/AuthContext';
 import {
     ChevronLeft,
@@ -21,7 +22,8 @@ import {
     CheckCircle,
     Clock,
     Pause,
-    AlertCircle
+    AlertCircle,
+    AlertTriangle
 } from 'lucide-react';
 import './PlannerTab.css';
 
@@ -112,6 +114,13 @@ export default function PlannerTab({ workOrders, workers, onRefresh, showToast }
         open: false, wo: null
     });
 
+    // Conflict modal - shows when workers have overlapping schedules
+    const [conflictModal, setConflictModal] = useState<{
+        open: boolean;
+        conflicts: WorkerConflict[];
+        pendingSchedule: { wo: WorkOrder; start: string; end: string } | null;
+    }>({ open: false, conflicts: [], pendingSchedule: null });
+
     const allWorkers = useMemo(() => workers, [workers]);
     const visibleDates = useMemo(() => getDateRange(viewStart, days), [viewStart, days]);
 
@@ -197,17 +206,48 @@ export default function PlannerTab({ workOrders, workers, onRefresh, showToast }
 
     const closeScheduleModal = () => setScheduleModal({ open: false, wo: null, start: '', end: '' });
 
-    const submitSchedule = async () => {
+    const submitSchedule = async (forceSchedule: boolean = false) => {
         if (!scheduleModal.wo || !orgId || submitting) return;
 
         setSubmitting(true);
         try {
+            // Get worker IDs from the work order
+            const workerIds = getWorkerIds(scheduleModal.wo);
+
+            // Check for conflicts (unless force scheduling)
+            if (!forceSchedule && workerIds.length > 0) {
+                const { hasConflicts, conflicts } = await checkWorkerConflicts(
+                    workerIds,
+                    scheduleModal.start,
+                    scheduleModal.end,
+                    scheduleModal.wo.Is_Scheduled ? scheduleModal.wo.Work_Order_ID : null,
+                    orgId
+                );
+
+                if (hasConflicts) {
+                    // Show conflict modal instead of scheduling
+                    setConflictModal({
+                        open: true,
+                        conflicts,
+                        pendingSchedule: {
+                            wo: scheduleModal.wo,
+                            start: scheduleModal.start,
+                            end: scheduleModal.end
+                        }
+                    });
+                    setSubmitting(false);
+                    return;
+                }
+            }
+
+            // No conflicts or force schedule - proceed
             const color = getStatusColor(scheduleModal.wo);
             const res = await scheduleWorkOrder(scheduleModal.wo.Work_Order_ID, scheduleModal.start, scheduleModal.end, orgId, color);
 
             if (res.success) {
-                showToast('Nalog zakazan', 'success');
+                showToast(res.message || 'Nalog zakazan', 'success');
                 closeScheduleModal();
+                setConflictModal({ open: false, conflicts: [], pendingSchedule: null });
                 onRefresh();
             } else {
                 showToast(res.message, 'error');
@@ -217,6 +257,26 @@ export default function PlannerTab({ workOrders, workers, onRefresh, showToast }
         } finally {
             setSubmitting(false);
         }
+    };
+
+    // Force schedule after confirming conflicts
+    const forceScheduleWithConflicts = async () => {
+        if (!conflictModal.pendingSchedule) return;
+
+        setScheduleModal({
+            open: true,
+            wo: conflictModal.pendingSchedule.wo,
+            start: conflictModal.pendingSchedule.start,
+            end: conflictModal.pendingSchedule.end
+        });
+        setConflictModal({ open: false, conflicts: [], pendingSchedule: null });
+
+        // Trigger schedule with force flag
+        setTimeout(() => submitSchedule(true), 100);
+    };
+
+    const closeConflictModal = () => {
+        setConflictModal({ open: false, conflicts: [], pendingSchedule: null });
     };
 
     // Detail Panel functions
@@ -240,6 +300,78 @@ export default function PlannerTab({ workOrders, workers, onRefresh, showToast }
         if (res.success) { showToast('Pokrenuto', 'success'); onRefresh(); }
         else showToast(res.message, 'error');
     };
+
+    // Drag-and-drop handler for rescheduling work orders
+    const onDragEnd = useCallback(async (result: DropResult) => {
+        const { draggableId, destination, source } = result;
+
+        // No destination or dropped in same place
+        if (!destination) return;
+
+        // Find the work order being dragged
+        const draggedOrder = scheduled.find(wo => wo.Work_Order_ID === draggableId);
+        if (!draggedOrder || !draggedOrder.Planned_Start_Date) return;
+
+        // Cannot drag orders that are in progress
+        if (draggedOrder.Status === 'U toku') {
+            showToast('Nalog U toku se ne može premjestiti', 'info');
+            return;
+        }
+
+        // Calculate the day offset from drag
+        const sourceIdx = parseInt(source.droppableId.replace('timeline-', ''));
+        const destIdx = parseInt(destination.droppableId.replace('timeline-', ''));
+        const dayOffset = destIdx - sourceIdx;
+
+        if (dayOffset === 0) return; // No change
+
+        // Calculate new dates
+        const oldStart = new Date(draggedOrder.Planned_Start_Date);
+        const oldEnd = draggedOrder.Planned_End_Date ? new Date(draggedOrder.Planned_End_Date) : oldStart;
+
+        const newStart = new Date(oldStart);
+        const newEnd = new Date(oldEnd);
+        newStart.setDate(newStart.getDate() + dayOffset);
+        newEnd.setDate(newEnd.getDate() + dayOffset);
+
+        const newStartStr = newStart.toISOString().split('T')[0];
+        const newEndStr = newEnd.toISOString().split('T')[0];
+
+        // Check for conflicts before rescheduling
+        const workerIds = getWorkerIds(draggedOrder);
+        if (workerIds.length > 0) {
+            const { hasConflicts, conflicts } = await checkWorkerConflicts(
+                workerIds,
+                newStartStr,
+                newEndStr,
+                draggedOrder.Work_Order_ID,
+                orgId
+            );
+
+            if (hasConflicts) {
+                // Show conflict modal with pending schedule
+                setConflictModal({
+                    open: true,
+                    conflicts,
+                    pendingSchedule: {
+                        wo: draggedOrder,
+                        start: newStartStr,
+                        end: newEndStr
+                    }
+                });
+                return;
+            }
+        }
+
+        // No conflicts - reschedule directly
+        const res = await rescheduleWorkOrder(draggedOrder.Work_Order_ID, newStartStr, newEndStr, orgId);
+        if (res.success) {
+            showToast('Nalog premješten', 'success');
+            onRefresh();
+        } else {
+            showToast(res.message, 'error');
+        }
+    }, [scheduled, orgId, onRefresh, showToast]);
 
     const isToday = (d: Date) => d.toDateString() === new Date().toDateString();
     const isWeekend = (d: Date) => [0, 6].includes(d.getDay());
@@ -308,109 +440,111 @@ export default function PlannerTab({ workOrders, workers, onRefresh, showToast }
                 </div>
             </div>
 
-            {/* Gantt Table */}
-            <div className="gantt-table">
-                {/* Date Header */}
-                <div className="gantt-header-row">
-                    <div className="gantt-worker-header">Radnici</div>
-                    <div className="gantt-dates-header" style={{ width: totalWidth }}>
-                        {visibleDates.map(d => (
-                            <div
-                                key={formatDateKey(d)}
-                                className={`gantt-date-cell ${isToday(d) ? 'today' : ''} ${isWeekend(d) ? 'weekend' : ''}`}
-                                style={{ width: cellWidth }}
-                            >
-                                <span className="day-name">{d.toLocaleDateString('hr-HR', { weekday: 'short' })}</span>
-                                <span className="day-num">{d.getDate()}</span>
+            {/* Gantt Table with Drag-and-Drop */}
+            <DragDropContext onDragEnd={onDragEnd}>
+                <div className="gantt-table">
+                    {/* Date Header */}
+                    <div className="gantt-header-row">
+                        <div className="gantt-worker-header">Radnici</div>
+                        <div className="gantt-dates-header" style={{ width: totalWidth }}>
+                            {visibleDates.map(d => (
+                                <div
+                                    key={formatDateKey(d)}
+                                    className={`gantt-date-cell ${isToday(d) ? 'today' : ''} ${isWeekend(d) ? 'weekend' : ''}`}
+                                    style={{ width: cellWidth }}
+                                >
+                                    <span className="day-name">{d.toLocaleDateString('hr-HR', { weekday: 'short' })}</span>
+                                    <span className="day-num">{d.getDate()}</span>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+
+                    {/* Worker Rows */}
+                    <div className="gantt-body">
+                        {allWorkers.length === 0 ? (
+                            <div className="gantt-empty">
+                                <User size={40} />
+                                <p>Nema radnika</p>
                             </div>
-                        ))}
+                        ) : (
+                            allWorkers.map(worker => {
+                                const orders = workerOrders.get(worker.Worker_ID) || [];
+                                return (
+                                    <div key={worker.Worker_ID} className="gantt-row">
+                                        <div className="gantt-worker-cell">
+                                            <div className={`avatar ${worker.Worker_Type === 'Glavni' ? 'main' : ''}`}>
+                                                {worker.Name?.charAt(0) || '?'}
+                                            </div>
+                                            <div className="worker-info">
+                                                <span className="name">{worker.Name}</span>
+                                                <span className="type">{worker.Worker_Type}</span>
+                                            </div>
+                                            {orders.length > 0 && <span className="count">{orders.length}</span>}
+                                        </div>
+
+                                        <div className="gantt-timeline" style={{ width: totalWidth }}>
+                                            {visibleDates.map(d => (
+                                                <div
+                                                    key={formatDateKey(d)}
+                                                    className={`timeline-cell ${isToday(d) ? 'today' : ''} ${isWeekend(d) ? 'weekend' : ''}`}
+                                                    style={{ width: cellWidth }}
+                                                />
+                                            ))}
+
+                                            {orders.map(wo => {
+                                                const pos = getBarPosition(wo);
+                                                if (!pos) return null;
+                                                const color = getStatusColor(wo);
+                                                const statusInfo = getStatusLabel(wo);
+                                                const StatusIcon = statusInfo.icon;
+
+                                                return (
+                                                    <div
+                                                        key={wo.Work_Order_ID}
+                                                        className="gantt-bar"
+                                                        style={{
+                                                            left: pos.left + 2,
+                                                            width: pos.width - 4,
+                                                            backgroundColor: color
+                                                        }}
+                                                        title={`${getProjectName(wo)} (${wo.Work_Order_Number})`}
+                                                        onClick={() => openDetailPanel(wo)}
+                                                    >
+                                                        <div className="bar-content">
+                                                            <span className="bar-project">{getProjectName(wo)}</span>
+                                                            <span className="bar-status">
+                                                                <StatusIcon size={10} />
+                                                                {statusInfo.text}
+                                                            </span>
+                                                        </div>
+                                                        <div className="bar-actions">
+                                                            {wo.Status === 'Na čekanju' && (() => {
+                                                                // Only show play button if today >= planned start date
+                                                                const today = new Date();
+                                                                today.setHours(0, 0, 0, 0);
+                                                                const plannedStart = wo.Planned_Start_Date ? new Date(wo.Planned_Start_Date) : today;
+                                                                plannedStart.setHours(0, 0, 0, 0);
+                                                                const canStart = plannedStart <= today;
+                                                                return canStart ? (
+                                                                    <button onClick={e => { e.stopPropagation(); startOrder(wo); }} title="Pokreni"><Play size={12} /></button>
+                                                                ) : null;
+                                                            })()}
+                                                            {wo.Status !== 'U toku' && (
+                                                                <button onClick={e => { e.stopPropagation(); unschedule(wo); }} title="Ukloni"><X size={12} /></button>
+                                                            )}
+                                                        </div>
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                    </div>
+                                );
+                            })
+                        )}
                     </div>
                 </div>
-
-                {/* Worker Rows */}
-                <div className="gantt-body">
-                    {allWorkers.length === 0 ? (
-                        <div className="gantt-empty">
-                            <User size={40} />
-                            <p>Nema radnika</p>
-                        </div>
-                    ) : (
-                        allWorkers.map(worker => {
-                            const orders = workerOrders.get(worker.Worker_ID) || [];
-                            return (
-                                <div key={worker.Worker_ID} className="gantt-row">
-                                    <div className="gantt-worker-cell">
-                                        <div className={`avatar ${worker.Worker_Type === 'Glavni' ? 'main' : ''}`}>
-                                            {worker.Name?.charAt(0) || '?'}
-                                        </div>
-                                        <div className="worker-info">
-                                            <span className="name">{worker.Name}</span>
-                                            <span className="type">{worker.Worker_Type}</span>
-                                        </div>
-                                        {orders.length > 0 && <span className="count">{orders.length}</span>}
-                                    </div>
-
-                                    <div className="gantt-timeline" style={{ width: totalWidth }}>
-                                        {visibleDates.map(d => (
-                                            <div
-                                                key={formatDateKey(d)}
-                                                className={`timeline-cell ${isToday(d) ? 'today' : ''} ${isWeekend(d) ? 'weekend' : ''}`}
-                                                style={{ width: cellWidth }}
-                                            />
-                                        ))}
-
-                                        {orders.map(wo => {
-                                            const pos = getBarPosition(wo);
-                                            if (!pos) return null;
-                                            const color = getStatusColor(wo);
-                                            const statusInfo = getStatusLabel(wo);
-                                            const StatusIcon = statusInfo.icon;
-
-                                            return (
-                                                <div
-                                                    key={wo.Work_Order_ID}
-                                                    className="gantt-bar"
-                                                    style={{
-                                                        left: pos.left + 2,
-                                                        width: pos.width - 4,
-                                                        backgroundColor: color
-                                                    }}
-                                                    title={`${getProjectName(wo)} (${wo.Work_Order_Number})`}
-                                                    onClick={() => openDetailPanel(wo)}
-                                                >
-                                                    <div className="bar-content">
-                                                        <span className="bar-project">{getProjectName(wo)}</span>
-                                                        <span className="bar-status">
-                                                            <StatusIcon size={10} />
-                                                            {statusInfo.text}
-                                                        </span>
-                                                    </div>
-                                                    <div className="bar-actions">
-                                                        {wo.Status === 'Na čekanju' && (() => {
-                                                            // Only show play button if today >= planned start date
-                                                            const today = new Date();
-                                                            today.setHours(0, 0, 0, 0);
-                                                            const plannedStart = wo.Planned_Start_Date ? new Date(wo.Planned_Start_Date) : today;
-                                                            plannedStart.setHours(0, 0, 0, 0);
-                                                            const canStart = plannedStart <= today;
-                                                            return canStart ? (
-                                                                <button onClick={e => { e.stopPropagation(); startOrder(wo); }} title="Pokreni"><Play size={12} /></button>
-                                                            ) : null;
-                                                        })()}
-                                                        {wo.Status !== 'U toku' && (
-                                                            <button onClick={e => { e.stopPropagation(); unschedule(wo); }} title="Ukloni"><X size={12} /></button>
-                                                        )}
-                                                    </div>
-                                                </div>
-                                            );
-                                        })}
-                                    </div>
-                                </div>
-                            );
-                        })
-                    )}
-                </div>
-            </div>
+            </DragDropContext>
 
             {/* Schedule Modal */}
             {scheduleModal.open && scheduleModal.wo && typeof document !== 'undefined' && createPortal(
@@ -453,7 +587,7 @@ export default function PlannerTab({ workOrders, workers, onRefresh, showToast }
                         </div>
                         <div className="modal-footer">
                             <button className="cancel-btn" onClick={closeScheduleModal} disabled={submitting}>Odustani</button>
-                            <button className="submit-btn" onClick={submitSchedule} disabled={submitting}>
+                            <button className="submit-btn" onClick={() => submitSchedule()} disabled={submitting}>
                                 {submitting ? <><Loader2 size={16} className="spin" /> Zakazujem...</> : 'Zakaži'}
                             </button>
                         </div>
@@ -588,6 +722,58 @@ export default function PlannerTab({ workOrders, workers, onRefresh, showToast }
                                     <p className="cannot-remove-msg">🔒 Nalog U toku ostaje u planeru</p>
                                 )}
                             </div>
+                        </div>
+                    </div>
+                </div>,
+                document.body
+            )}
+
+            {/* Conflict Warning Modal */}
+            {conflictModal.open && conflictModal.conflicts.length > 0 && typeof document !== 'undefined' && createPortal(
+                <div className="planner-modal-overlay" onClick={closeConflictModal}>
+                    <div className="planner-modal conflict-modal" onClick={e => e.stopPropagation()}>
+                        <div className="modal-header conflict-header">
+                            <div className="conflict-icon">
+                                <AlertTriangle size={24} />
+                            </div>
+                            <div>
+                                <h3>Upozorenje: Konflikt rasporeda</h3>
+                                <p>Neki radnici već imaju zakazane naloge u ovom periodu</p>
+                            </div>
+                            <button className="close-btn" onClick={closeConflictModal}><X size={20} /></button>
+                        </div>
+                        <div className="modal-body">
+                            <div className="conflict-list">
+                                {conflictModal.conflicts.map((conflict, idx) => (
+                                    <div key={idx} className="conflict-item">
+                                        <div className="conflict-worker">
+                                            <User size={16} />
+                                            <strong>{conflict.Worker_Name}</strong>
+                                        </div>
+                                        <div className="conflict-details">
+                                            <span className="conflict-order">
+                                                {conflict.Conflicting_Project_Name} ({conflict.Conflicting_Work_Order_Number})
+                                            </span>
+                                            <span className="conflict-dates">
+                                                {conflict.Overlap_Start} — {conflict.Overlap_End}
+                                            </span>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                            <div className="conflict-info">
+                                <AlertCircle size={14} />
+                                <span>Možete ipak zakazati nalog ako je to namjerno (npr. iskorištenje materijala).</span>
+                            </div>
+                        </div>
+                        <div className="modal-footer">
+                            <button className="cancel-btn" onClick={closeConflictModal}>
+                                Odustani
+                            </button>
+                            <button className="submit-btn warning" onClick={forceScheduleWithConflicts}>
+                                <AlertTriangle size={14} />
+                                Ipak zakaži
+                            </button>
                         </div>
                     </div>
                 </div>,

@@ -213,6 +213,18 @@ export interface Worker {
     Specializations?: string[];
 }
 
+export interface Notification {
+    id: string;
+    organizationId: string;
+    title: string;
+    message: string;
+    type: 'info' | 'success' | 'warning' | 'error';
+    createdAt: string;
+    read: boolean;
+    relatedId?: string;
+    link?: string;
+}
+
 // ============================================
 // TASK TYPES (Enhanced)
 // ============================================
@@ -538,5 +550,19 @@ export interface SubscriptionEvent {
     Date: string;
     Amount: number;
     Payment_ID: string;
+}
+
+// ============================================
+// WORKER CONFLICT TYPE (for scheduling)
+// ============================================
+
+export interface WorkerConflict {
+    Worker_ID: string;
+    Worker_Name: string;
+    Conflicting_Work_Order_ID: string;
+    Conflicting_Work_Order_Number: string;
+    Conflicting_Project_Name: string;
+    Overlap_Start: string;
+    Overlap_End: string;
 }
 

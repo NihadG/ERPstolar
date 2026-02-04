@@ -11,6 +11,7 @@ import {
     where,
     writeBatch,
     Timestamp,
+    onSnapshot,
 } from 'firebase/firestore';
 import { v4 as uuidv4 } from 'uuid';
 import type {
@@ -32,6 +33,7 @@ import type {
     WorkerAttendance,
     WorkLog,
     Task,
+    Notification,
 
     AppState,
 } from './types';
@@ -70,6 +72,7 @@ const COLLECTIONS = {
     WORKER_ATTENDANCE: 'worker_attendance',
     WORK_LOGS: 'work_logs',
     TASKS: 'tasks',
+    NOTIFICATIONS: 'notifications',
 };
 
 // ============================================
@@ -3013,6 +3016,360 @@ export async function updateWorkOrder(workOrderId: string, updates: Partial<Work
 // ============================================
 
 /**
+ * Helper: Get worker IDs from a work order (from Processes and Assigned_Workers)
+ */
+function getWorkerIdsFromWorkOrder(wo: WorkOrder): string[] {
+    const ids = new Set<string>();
+    wo.items?.forEach(item => {
+        // From Processes
+        item.Processes?.forEach(p => {
+            if (p.Worker_ID) ids.add(p.Worker_ID);
+            p.Helpers?.forEach(h => { if (h.Worker_ID) ids.add(h.Worker_ID); });
+        });
+        // From Assigned_Workers
+        item.Assigned_Workers?.forEach(aw => {
+            if (aw.Worker_ID) ids.add(aw.Worker_ID);
+        });
+    });
+    return Array.from(ids);
+}
+
+/**
+ * Check for worker scheduling conflicts
+ * Returns conflicts when workers are already assigned to other work orders in the given date range
+ */
+export async function checkWorkerConflicts(
+    workerIds: string[],
+    startDate: string,
+    endDate: string,
+    excludeWorkOrderId: string | null,
+    organizationId: string
+): Promise<{ hasConflicts: boolean; conflicts: import('./types').WorkerConflict[] }> {
+    if (!organizationId || workerIds.length === 0) {
+        return { hasConflicts: false, conflicts: [] };
+    }
+
+    try {
+        // Get all scheduled work orders
+        const scheduledOrders = await getScheduledWorkOrders(organizationId);
+
+        const conflicts: import('./types').WorkerConflict[] = [];
+        const newStart = new Date(startDate);
+        const newEnd = new Date(endDate);
+        newStart.setHours(0, 0, 0, 0);
+        newEnd.setHours(23, 59, 59, 999);
+
+        for (const wo of scheduledOrders) {
+            // Skip the work order we're scheduling/rescheduling
+            if (excludeWorkOrderId && wo.Work_Order_ID === excludeWorkOrderId) continue;
+
+            // Skip completed/cancelled orders
+            if (wo.Status === 'Završeno' || wo.Status === 'Otkazano') continue;
+
+            if (!wo.Planned_Start_Date) continue;
+
+            const woStart = new Date(wo.Planned_Start_Date);
+            const woEnd = wo.Planned_End_Date ? new Date(wo.Planned_End_Date) : woStart;
+            woStart.setHours(0, 0, 0, 0);
+            woEnd.setHours(23, 59, 59, 999);
+
+            // Check for date overlap
+            const datesOverlap = newStart <= woEnd && newEnd >= woStart;
+            if (!datesOverlap) continue;
+
+            // Get workers assigned to this existing order
+            const existingWorkerIds = getWorkerIdsFromWorkOrder(wo);
+
+            // Find overlapping workers
+            for (const workerId of workerIds) {
+                if (existingWorkerIds.includes(workerId)) {
+                    // Get worker name from items
+                    let workerName = 'Nepoznat radnik';
+                    wo.items?.forEach(item => {
+                        item.Processes?.forEach(p => {
+                            if (p.Worker_ID === workerId && p.Worker_Name) {
+                                workerName = p.Worker_Name;
+                            }
+                            p.Helpers?.forEach(h => {
+                                if (h.Worker_ID === workerId && h.Worker_Name) {
+                                    workerName = h.Worker_Name;
+                                }
+                            });
+                        });
+                        item.Assigned_Workers?.forEach(aw => {
+                            if (aw.Worker_ID === workerId && aw.Worker_Name) {
+                                workerName = aw.Worker_Name;
+                            }
+                        });
+                    });
+
+                    // Calculate actual overlap period
+                    const overlapStart = newStart > woStart ? newStart : woStart;
+                    const overlapEnd = newEnd < woEnd ? newEnd : woEnd;
+
+                    // Get project name from first item
+                    const projectName = wo.items?.[0]?.Project_Name || 'Nepoznat projekt';
+
+                    conflicts.push({
+                        Worker_ID: workerId,
+                        Worker_Name: workerName,
+                        Conflicting_Work_Order_ID: wo.Work_Order_ID,
+                        Conflicting_Work_Order_Number: wo.Work_Order_Number,
+                        Conflicting_Project_Name: projectName,
+                        Overlap_Start: overlapStart.toISOString().split('T')[0],
+                        Overlap_End: overlapEnd.toISOString().split('T')[0],
+                    });
+                }
+            }
+        }
+
+        return { hasConflicts: conflicts.length > 0, conflicts };
+    } catch (error) {
+        console.error('checkWorkerConflicts error:', error);
+        return { hasConflicts: false, conflicts: [] };
+    }
+}
+
+/**
+ * Automatically create orders for materials needed by a work order
+ * Groups materials by supplier and creates one order per supplier
+ * Only orders materials not already received or in stock
+ */
+export async function autoCreateOrdersForWorkOrder(
+    workOrderId: string,
+    plannedStartDate: string,
+    organizationId: string
+): Promise<{ ordersCreated: number; orderNumbers: string[] }> {
+    if (!organizationId) {
+        return { ordersCreated: 0, orderNumbers: [] };
+    }
+
+    try {
+        const firestore = getDb();
+
+        // Get the work order to access items
+        const workOrder = await getWorkOrder(workOrderId, organizationId);
+        if (!workOrder || !workOrder.items) {
+            return { ordersCreated: 0, orderNumbers: [] };
+        }
+
+        // Collect all materials that need ordering, grouped by supplier
+        const materialsBySupplier = new Map<string, {
+            supplierName: string;
+            materials: Array<{
+                productMaterialId: string;
+                materialName: string;
+                quantity: number;
+                unit: string;
+                unitPrice: number;
+                productId: string;
+                productName: string;
+                projectId: string;
+            }>;
+        }>();
+
+        for (const item of workOrder.items) {
+            // Get product materials from the database for this item's product
+            const productMaterials = await getProductMaterials(item.Product_ID, organizationId);
+
+            for (const material of productMaterials) {
+                // Skip materials that are already received or in stock
+                if (material.Status === 'Primljeno' || material.Status === 'Na stanju') {
+                    continue;
+                }
+
+                // Skip if already ordered
+                if (material.Status === 'Naručeno' && material.Order_ID) {
+                    continue;
+                }
+
+                // Calculate quantity needed vs on stock
+                const quantityNeeded = (material.Quantity || 0) * (item.Quantity || 1);
+                const onStock = material.On_Stock || 0;
+                const quantityToOrder = quantityNeeded - onStock;
+
+                if (quantityToOrder <= 0) {
+                    continue; // Already have enough in stock
+                }
+
+                // Group by supplier
+                const supplierKey = material.Supplier || 'Nepoznat dobavljač';
+                if (!materialsBySupplier.has(supplierKey)) {
+                    materialsBySupplier.set(supplierKey, {
+                        supplierName: supplierKey,
+                        materials: []
+                    });
+                }
+
+                materialsBySupplier.get(supplierKey)!.materials.push({
+                    productMaterialId: material.ID,
+                    materialName: material.Material_Name,
+                    quantity: quantityToOrder,
+                    unit: material.Unit,
+                    unitPrice: material.Unit_Price || 0,
+                    productId: item.Product_ID,
+                    productName: item.Product_Name,
+                    projectId: item.Project_ID || ''
+                });
+            }
+        }
+
+        // Create orders for each supplier
+        const orderNumbers: string[] = [];
+
+        // Calculate expected delivery (1 day before start)
+        const startDate = new Date(plannedStartDate);
+        startDate.setDate(startDate.getDate() - 1);
+        const expectedDelivery = startDate.toISOString().split('T')[0];
+
+        for (const group of Array.from(materialsBySupplier.values())) {
+            if (group.materials.length === 0) continue;
+
+            // Try to find supplier ID by name
+            const suppliers = await getSuppliers(organizationId);
+            const supplier = suppliers.find(s => s.Name === group.supplierName);
+
+            // Calculate total amount
+            const totalAmount = group.materials.reduce(
+                (sum: number, m: { quantity: number; unitPrice: number }) => sum + (m.quantity * m.unitPrice),
+                0
+            );
+
+            // Create the order
+            const orderItems: Partial<OrderItem>[] = group.materials.map((m) => ({
+                Product_Material_ID: m.productMaterialId,
+                Product_ID: m.productId,
+                Product_Name: m.productName,
+                Project_ID: m.projectId,
+                Material_Name: m.materialName,
+                Quantity: m.quantity,
+                Unit: m.unit,
+                Expected_Price: m.unitPrice,
+                Status: 'Naručeno'
+            }));
+
+            const result = await createOrder({
+                Supplier_ID: supplier?.Supplier_ID || '',
+                Supplier_Name: group.supplierName,
+                Expected_Delivery: expectedDelivery,
+                Total_Amount: totalAmount,
+                Notes: `Automatski kreirano za radni nalog. Planirani početak: ${plannedStartDate}`,
+                items: orderItems as any
+            }, organizationId);
+
+            if (result.success && result.data) {
+                orderNumbers.push(result.data.Order_Number);
+            }
+        }
+
+        if (orderNumbers.length > 0) {
+            await createNotification({
+                organizationId,
+                title: 'Automatski kreirane narudžbe',
+                message: `Automatski kreirano ${orderNumbers.length} narudžbi za radni nalog. Brojevi: ${orderNumbers.join(', ')}`,
+                type: 'info',
+                relatedId: workOrderId,
+                link: '/orders'
+            }, organizationId);
+        }
+
+        return { ordersCreated: orderNumbers.length, orderNumbers };
+    } catch (error) {
+        console.error('autoCreateOrdersForWorkOrder error:', error);
+        return { ordersCreated: 0, orderNumbers: [] };
+    }
+}
+
+// ============================================
+// NOTIFICATIONS
+// ============================================
+
+export async function createNotification(
+    data: Omit<Notification, 'id' | 'createdAt' | 'read'>,
+    organizationId: string
+): Promise<string> {
+    if (!organizationId) return '';
+
+    try {
+        const firestore = getDb();
+        const notification: Notification = {
+            ...data,
+            id: generateUUID(),
+            organizationId, // Ensure consistency with type property name
+            createdAt: new Date().toISOString(),
+            read: false
+        };
+
+        await addDoc(collection(firestore, COLLECTIONS.NOTIFICATIONS), notification);
+        return notification.id;
+    } catch (error) {
+        console.error('createNotification error:', error);
+        return '';
+    }
+}
+
+export async function getUnreadNotifications(organizationId: string): Promise<Notification[]> {
+    if (!organizationId) return [];
+
+    try {
+        const firestore = getDb();
+        const q = query(
+            collection(firestore, COLLECTIONS.NOTIFICATIONS),
+            where('organizationId', '==', organizationId),
+            where('read', '==', false)
+        );
+
+        const snapshot = await getDocs(q);
+        //Sort in memory as composite index might not exist yet
+        const notifications = snapshot.docs.map(doc => doc.data() as Notification);
+        return notifications.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    } catch (error) {
+        console.error('getUnreadNotifications error:', error);
+        return [];
+    }
+}
+
+export async function markNotificationAsRead(id: string): Promise<boolean> {
+    try {
+        const firestore = getDb();
+        const docRef = doc(firestore, COLLECTIONS.NOTIFICATIONS, id);
+        await updateDoc(docRef, { read: true });
+        return true;
+    } catch (error) {
+        console.error('markNotificationAsRead error:', error);
+        return false;
+    }
+}
+
+export function subscribeToNotifications(
+    organizationId: string,
+    callback: (notifications: Notification[]) => void
+): () => void {
+    if (!organizationId) return () => { };
+
+    try {
+        const firestore = getDb();
+        const q = query(
+            collection(firestore, COLLECTIONS.NOTIFICATIONS),
+            where('organizationId', '==', organizationId)
+        );
+
+        return onSnapshot(q, (snapshot) => {
+            const notifications = snapshot.docs.map(doc => ({
+                ...(doc.data() as Notification),
+                id: doc.id
+            }));
+            // Sort by date desc
+            notifications.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+            callback(notifications);
+        });
+    } catch (error) {
+        console.error('subscribe subscription error:', error);
+        return () => { };
+    }
+}
+
+/**
  * Schedule a work order (add to Gantt/Planner timeline)
  */
 export async function scheduleWorkOrder(
@@ -3086,8 +3443,23 @@ export async function scheduleWorkOrder(
             }
         }
 
+        // AUTO-CREATE ORDERS: If start date is within 2 days, create orders for missing materials
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const planStart = new Date(plannedStartDate);
+        planStart.setHours(0, 0, 0, 0);
+        const daysUntilStart = Math.ceil((planStart.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+
+        let orderMsg = '';
+        if (daysUntilStart <= 2) {
+            const orderResult = await autoCreateOrdersForWorkOrder(workOrderId, plannedStartDate, organizationId);
+            if (orderResult.ordersCreated > 0) {
+                orderMsg = ` Automatski kreirano ${orderResult.ordersCreated} narudžbi (${orderResult.orderNumbers.join(', ')}).`;
+            }
+        }
+
         const taskMsg = tasksCreated > 0 ? ` Kreirano ${tasksCreated} zadataka za naručivanje materijala.` : '';
-        return { success: true, message: `Nalog zakazan u planeru.${taskMsg}` };
+        return { success: true, message: `Nalog zakazan u planeru.${taskMsg}${orderMsg}` };
     } catch (error) {
         console.error('scheduleWorkOrder error:', error);
         return { success: false, message: 'Greška pri zakazivanju naloga' };

@@ -13,6 +13,7 @@
     "test:coverage": "jest --coverage"
   },
   "dependencies": {
+    "@google-cloud/speech": "^7.2.1",
     "@google/generative-ai": "^0.24.1",
     "@hello-pangea/dnd": "^18.0.1",
     "@types/html2canvas": "^0.5.35",

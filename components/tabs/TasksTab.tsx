@@ -46,6 +46,7 @@ import {
     CalendarDays
 } from 'lucide-react';
 import { useData } from '@/context/DataContext';
+import VoiceInput, { ExtractedTaskData } from '@/components/VoiceInput';
 
 // ============================================
 // TYPES
@@ -1353,6 +1354,53 @@ function TaskModal({ task, projects, products, workers, materials, workOrders, o
     const [links, setLinks] = useState<TaskLink[]>(task?.Links || []);
     const [checklist, setChecklist] = useState<ChecklistItem[]>(task?.Checklist || []);
     const [notes, setNotes] = useState(task?.Notes || '');
+    const [voiceTranscript, setVoiceTranscript] = useState('');
+
+    // Handle voice input result
+    const handleVoiceResult = (data: ExtractedTaskData) => {
+        // Apply extracted data to form fields
+        if (data.title) setTitle(data.title);
+        if (data.description) setDescription(data.description);
+        if (data.priority) setPriority(data.priority);
+        if (data.category) setCategory(data.category);
+        if (data.suggestedDueDate) setDueDate(data.suggestedDueDate);
+
+        // Add checklist items
+        if (data.checklist && data.checklist.length > 0) {
+            const newChecklist = data.checklist.map(text => ({
+                id: generateUUID(),
+                text,
+                completed: false
+            }));
+            setChecklist(prev => [...prev, ...newChecklist]);
+        }
+
+        // Try to match suggested worker
+        if (data.suggestedWorker) {
+            const matchedWorker = workers.find(w =>
+                w.Name.toLowerCase().includes(data.suggestedWorker!.toLowerCase())
+            );
+            if (matchedWorker) setAssignedWorker(matchedWorker.Worker_ID);
+        }
+
+        // Try to match suggested project and add as link
+        if (data.suggestedProject) {
+            const matchedProject = projects.find(p =>
+                p.Client_Name.toLowerCase().includes(data.suggestedProject!.toLowerCase())
+            );
+            if (matchedProject && !links.some(l => l.Entity_ID === matchedProject.Project_ID)) {
+                setLinks(prev => [...prev, {
+                    Entity_Type: 'project',
+                    Entity_ID: matchedProject.Project_ID,
+                    Entity_Name: matchedProject.Client_Name
+                }]);
+            }
+        }
+    };
+
+    const handleVoiceError = (error: string) => {
+        console.warn('Voice input error:', error);
+    };
 
     // Entity link state
     const [linkType, setLinkType] = useState<TaskLink['Entity_Type']>('project');
@@ -1442,9 +1490,22 @@ function TaskModal({ task, projects, products, workers, materials, workOrders, o
                         <CheckSquare size={20} className="text-primary" />
                         <h3>{isEdit ? 'Uredi zadatak' : 'Novi zadatak'}</h3>
                     </div>
-                    <button className="close-btn" onClick={onClose}>
-                        <X size={20} />
-                    </button>
+                    <div className="header-actions">
+                        {!isEdit && (
+                            <VoiceInput
+                                onResult={handleVoiceResult}
+                                onError={handleVoiceError}
+                                onTranscript={setVoiceTranscript}
+                                context={{
+                                    projects: projects.map(p => p.Client_Name),
+                                    workers: workers.map(w => w.Name)
+                                }}
+                            />
+                        )}
+                        <button className="close-btn" onClick={onClose}>
+                            <X size={20} />
+                        </button>
+                    </div>
                 </div>
 
                 {/* Main Content */}

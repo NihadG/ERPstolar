@@ -7502,6 +7502,12 @@ input[type=number] {
   background: #e8e8ed;
 }
 
+.task-modal-header .header-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
 .task-modal-body {
   flex: 1;
   overflow-y: auto;
@@ -9361,59 +9367,130 @@ input[type=number] {
   }
 
   .task-modal-header {
-    padding: 12px 16px;
+    padding: 16px;
     flex-shrink: 0;
+    position: relative;
+    background: white;
+    z-index: 10;
+    border-bottom: 1px solid var(--border-light);
+  }
+
+  .header-actions {
+    gap: 8px;
+  }
+
+  /* Exclude VoiceInput from normal flow in header to fix it to bottom */
+  .task-modal-header .voice-input-container {
+    position: fixed;
+    bottom: 24px;
+    right: 24px;
+    z-index: 1100;
   }
 
   .header-title h3 {
-    font-size: 16px;
+    font-size: 18px;
+    font-weight: 700;
   }
 
   .title-section {
-    padding: 16px 16px 8px;
+    padding: 24px 20px 12px;
     flex-shrink: 0;
+    background: white;
   }
 
   .task-title-input {
-    font-size: 20px;
+    font-size: 22px;
+    font-weight: 600;
   }
 
   .meta-bar {
     flex-direction: column;
     align-items: stretch;
-    gap: 16px;
-    padding: 0 16px 16px;
+    gap: 20px;
+    padding: 0 20px 24px;
     flex-shrink: 0;
+    background: white;
+    border-bottom: 1px solid var(--surface);
   }
 
   .meta-item {
     width: 100%;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .meta-label {
+    font-size: 12px;
+    text-transform: uppercase;
+    color: var(--text-tertiary);
+    font-weight: 600;
+  }
+
+  .meta-input-wrapper select,
+  .meta-input-wrapper input {
+    height: 44px;
+    /* Larger touch target */
+    font-size: 16px;
+    /* Prevent zoom on iOS */
+    border-color: var(--border-light);
+    background-color: var(--surface);
   }
 
   .priority-dots {
-    justify-content: flex-start;
+    justify-content: space-between;
+    background: var(--surface);
+    padding: 6px;
+    border-radius: 12px;
+  }
+
+  .priority-dot {
+    width: 36px;
+    height: 36px;
+    border-radius: 10px;
   }
 
   .modal-tabs {
-    margin: 0 16px;
-    /* Adjust margin for mobile */
+    margin: 16px 20px;
     padding: 4px;
-    gap: 2px;
+    gap: 4px;
     justify-content: space-between;
     flex-shrink: 0;
-    overflow-x: visible;
-    /* Segmented control usually fits */
+    background: var(--surface);
+    border-radius: 12px;
   }
 
   .tab-btn {
-    padding: 8px 0;
+    padding: 10px 0;
     flex: 1;
     text-align: center;
-    font-size: 13px;
+    font-size: 14px;
+    font-weight: 500;
+    border-radius: 8px;
+    color: var(--text-secondary);
+  }
+
+  .tab-btn.active {
+    background: white;
+    color: var(--text-primary);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
   }
 
   .modal-tab-content {
-    padding: 16px;
+    padding: 0 20px 20px;
+    flex: 1;
+    overflow-y: auto;
+    padding-bottom: 100px;
+    /* Space for footer + voice button */
+  }
+
+  .task-modal-content {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    overflow: hidden;
+    /* Let inner content scroll */
   }
 
   /* Adjust links tab for mobile */
@@ -9441,13 +9518,19 @@ input[type=number] {
   }
 
   .task-modal-footer {
-    padding: 12px 16px;
+    padding: 16px 20px;
     flex-shrink: 0;
+    background: white;
+    border-top: 1px solid var(--border-light);
+    padding-bottom: calc(16px + env(safe-area-inset-bottom, 0));
   }
 
   .btn-primary-action {
     width: 100%;
     justify-content: center;
+    height: 48px;
+    font-size: 16px;
+    font-weight: 600;
   }
 }
 
