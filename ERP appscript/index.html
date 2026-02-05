@@ -1,0 +1,1387 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <base target="_top">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/icon?family=Material+Icons+Round" rel="stylesheet">
+    <?!= include('Styles'); ?>
+</head>
+
+<body>
+    <div class="app">
+        <!-- Header -->
+        <header class="header">
+            <h1 class="header-title">
+                <span class="material-icons-round">factory</span>
+                Furniture Production
+            </h1>
+        </header>
+
+        <!-- Tab Navigation -->
+        <nav class="tabs">
+            <button class="tab active" data-tab="projects">
+                <span class="material-icons-round">folder</span>
+                Projekti
+            </button>
+            <button class="tab" data-tab="offers">
+                <span class="material-icons-round">request_quote</span>
+                Ponude
+            </button>
+            <button class="tab" data-tab="orders">
+                <span class="material-icons-round">local_shipping</span>
+                Narudžbe
+            </button>
+            <div class="tab-dropdown">
+                <button class="tab tab-more" id="settings-tab-btn">
+                    <span class="material-icons-round">settings</span>
+                    Podešavanja
+                    <span class="material-icons-round dropdown-arrow">expand_more</span>
+                </button>
+                <div class="tab-dropdown-menu" id="settings-dropdown">
+                    <button class="tab-dropdown-item" data-tab="materials">
+                        <span class="material-icons-round">inventory_2</span>
+                        Materijali
+                    </button>
+                    <button class="tab-dropdown-item" data-tab="workers">
+                        <span class="material-icons-round">people</span>
+                        Radnici
+                    </button>
+                    <button class="tab-dropdown-item" data-tab="suppliers">
+                        <span class="material-icons-round">store</span>
+                        Dobavljači
+                    </button>
+                </div>
+            </div>
+        </nav>
+
+        <!-- Tab Content -->
+        <main class="content">
+            <!-- Projects Tab -->
+            <div class="tab-content active" id="projects-content">
+                <div class="content-header">
+                    <div class="search-box">
+                        <span class="material-icons-round">search</span>
+                        <input type="text" id="projects-search" placeholder="Pretraži projekte...">
+                    </div>
+                    <select id="projects-filter" class="filter-select">
+                        <option value="">Svi statusi</option>
+                        <option value="Nacrt">Nacrt</option>
+                        <option value="Ponuđeno">Ponuđeno</option>
+                        <option value="Odobreno">Odobreno</option>
+                        <option value="U proizvodnji">U proizvodnji</option>
+                        <option value="Sklapanje">Sklapanje</option>
+                        <option value="Montaža">Montaža</option>
+                        <option value="Završeno">Završeno</option>
+                    </select>
+                    <button class="btn btn-primary" onclick="openProjectModal()">
+                        <span class="material-icons-round">add</span>
+                        Novi Projekat
+                    </button>
+                </div>
+                <div id="projects-list" class="projects-list">
+                    <!-- Projects loaded dynamically -->
+                </div>
+            </div>
+
+            <!-- Offers Tab -->
+            <div class="tab-content" id="offers-content">
+                <div class="content-header">
+                    <div class="search-box">
+                        <span class="material-icons-round">search</span>
+                        <input type="text" id="offers-search" placeholder="Pretraži ponude...">
+                    </div>
+                    <select id="offers-filter" class="filter-select">
+                        <option value="">Svi statusi</option>
+                        <option value="Nacrt">Nacrt</option>
+                        <option value="Poslano">Poslano</option>
+                        <option value="Prihvaćeno">Prihvaćeno</option>
+                        <option value="Odbijeno">Odbijeno</option>
+                    </select>
+                    <button class="btn btn-primary" onclick="openOfferModal()">
+                        <span class="material-icons-round">add</span>
+                        Nova Ponuda
+                    </button>
+                </div>
+                <div id="offers-list" class="offers-list">
+                    <!-- Offers loaded dynamically -->
+                </div>
+            </div>
+
+            <!-- Materials Tab -->
+            <div class="tab-content" id="materials-content">
+                <div class="content-header">
+                    <div class="search-box">
+                        <span class="material-icons-round">search</span>
+                        <input type="text" id="materials-search" placeholder="Pretraži materijale...">
+                    </div>
+                    <select id="materials-filter" class="filter-select">
+                        <option value="">Sve kategorije</option>
+                        <option value="Ploča">Ploče</option>
+                        <option value="Kanttraka">Kanttrake</option>
+                        <option value="Okovi">Okovi</option>
+                        <option value="Šarke">Šarke</option>
+                        <option value="Ladičari">Ladičari</option>
+                        <option value="Ručke">Ručke</option>
+                        <option value="LED">LED</option>
+                        <option value="Staklo">Staklo</option>
+                        <option value="Alu vrata">Alu vrata</option>
+                        <option value="Vijci">Vijci</option>
+                        <option value="Ostalo">Ostalo</option>
+                    </select>
+                    <button class="btn btn-primary" onclick="openMaterialModal()">
+                        <span class="material-icons-round">add</span>
+                        Novi Materijal
+                    </button>
+                </div>
+                <div id="materials-list" class="materials-list">
+                    <!-- Materials loaded dynamically -->
+                </div>
+            </div>
+
+            <!-- Orders Tab -->
+            <div class="tab-content" id="orders-content">
+                <div class="content-header">
+                    <div class="search-box">
+                        <span class="material-icons-round">search</span>
+                        <input type="text" id="orders-search" placeholder="Pretraži narudžbe...">
+                    </div>
+                    <select id="orders-filter" class="filter-select">
+                        <option value="">Svi statusi</option>
+                        <option value="Nacrt">Nacrt</option>
+                        <option value="Poslano">Poslano</option>
+                        <option value="Djelomično primljeno">Djelomično primljeno</option>
+                        <option value="Primljeno">Primljeno</option>
+                    </select>
+                    <button class="btn btn-primary" onclick="openOrderModal()">
+                        <span class="material-icons-round">add</span>
+                        Nova Narudžba
+                    </button>
+                </div>
+                <div id="orders-list" class="orders-list">
+                    <!-- Orders loaded dynamically -->
+                </div>
+            </div>
+
+            <!-- Workers Tab -->
+            <div class="tab-content" id="workers-content">
+                <div class="content-header">
+                    <button class="btn btn-primary" onclick="openWorkerModal()">
+                        <span class="material-icons-round">person_add</span>
+                        Novi Radnik
+                    </button>
+                </div>
+                <div id="workers-list" class="workers-list">
+                    <!-- Workers loaded dynamically -->
+                </div>
+            </div>
+
+            <!-- Suppliers Tab -->
+            <div class="tab-content" id="suppliers-content">
+                <div class="content-header">
+                    <button class="btn btn-primary" onclick="openSupplierModal()">
+                        <span class="material-icons-round">add_business</span>
+                        Novi Dobavljač
+                    </button>
+                </div>
+                <div id="suppliers-list" class="suppliers-list">
+                    <!-- Suppliers loaded dynamically -->
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- Modal Overlay -->
+    <div class="modal-overlay" id="modal-overlay" onclick="closeModal()"></div>
+
+    <!-- Project Modal -->
+    <div class="modal" id="project-modal">
+        <div class="modal-header">
+            <h2 id="project-modal-title">Novi Projekat</h2>
+            <button class="modal-close" onclick="closeModal()">
+                <span class="material-icons-round">close</span>
+            </button>
+        </div>
+        <form id="project-form" class="modal-body">
+            <input type="hidden" id="project-id">
+            <div class="form-group">
+                <label for="project-client">Klijent *</label>
+                <input type="text" id="project-client" required>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="project-phone">Telefon</label>
+                    <input type="tel" id="project-phone">
+                </div>
+                <div class="form-group">
+                    <label for="project-email">Email</label>
+                    <input type="email" id="project-email">
+                </div>
+            </div>
+            <div class="form-group">
+                <label for="project-address">Adresa</label>
+                <input type="text" id="project-address">
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="project-mode">Način proizvodnje</label>
+                    <select id="project-mode">
+                        <option value="PreCut">Gotovi elementi</option>
+                        <option value="InHouse">Vlastita obrada</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="project-deadline">Rok</label>
+                    <input type="date" id="project-deadline">
+                </div>
+            </div>
+            <div class="form-group">
+                <label for="project-notes">Napomene</label>
+                <textarea id="project-notes" rows="3"></textarea>
+            </div>
+        </form>
+        <div class="modal-footer">
+            <button type="button" class="btn btn-secondary" onclick="closeModal()">Otkaži</button>
+            <button type="button" class="btn btn-primary" onclick="saveProject()">Sačuvaj</button>
+        </div>
+    </div>
+
+    <!-- Product Modal -->
+    <div class="modal" id="product-modal">
+        <div class="modal-header">
+            <h2 id="product-modal-title">Novi Proizvod</h2>
+            <button class="modal-close" onclick="closeModal()">
+                <span class="material-icons-round">close</span>
+            </button>
+        </div>
+        <form id="product-form" class="modal-body">
+            <input type="hidden" id="product-id">
+            <input type="hidden" id="product-project-id">
+            <div class="form-group">
+                <label for="product-name">Naziv *</label>
+                <input type="text" id="product-name" required placeholder="npr. Gornji kuhinjski ormar">
+            </div>
+            <div class="form-row form-row-3">
+                <div class="form-group">
+                    <label for="product-height">Visina (mm)</label>
+                    <input type="number" id="product-height" min="0">
+                </div>
+                <div class="form-group">
+                    <label for="product-width">Širina (mm)</label>
+                    <input type="number" id="product-width" min="0">
+                </div>
+                <div class="form-group">
+                    <label for="product-depth">Dubina (mm)</label>
+                    <input type="number" id="product-depth" min="0">
+                </div>
+            </div>
+            <div class="form-group">
+                <label for="product-quantity">Količina</label>
+                <input type="number" id="product-quantity" min="1" value="1">
+            </div>
+            <div class="form-group">
+                <label for="product-notes">Napomene</label>
+                <textarea id="product-notes" rows="2"></textarea>
+            </div>
+        </form>
+        <div class="modal-footer">
+            <button type="button" class="btn btn-secondary" onclick="closeModal()">Otkaži</button>
+            <button type="button" class="btn btn-primary" onclick="saveProduct()">Sačuvaj</button>
+        </div>
+    </div>
+
+    <!-- Add Material to Product Modal -->
+    <div class="modal" id="add-material-modal">
+        <div class="modal-header">
+            <h2>Dodaj Materijal</h2>
+            <button class="modal-close" onclick="closeModal()">
+                <span class="material-icons-round">close</span>
+            </button>
+        </div>
+        <form id="add-material-form" class="modal-body">
+            <input type="hidden" id="material-product-id">
+            <div class="form-group">
+                <label for="material-search">Materijal *</label>
+                <div class="searchable-select" id="material-searchable-select">
+                    <input type="text" id="material-search" class="searchable-input"
+                        placeholder="Pretraži materijale..." autocomplete="off">
+                    <input type="hidden" id="material-select" required>
+                    <div class="searchable-dropdown" id="material-dropdown">
+                        <!-- Options rendered dynamically -->
+                    </div>
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="material-quantity">Količina *</label>
+                    <input type="number" id="material-quantity" step="0.01" min="0" required>
+                </div>
+                <div class="form-group">
+                    <label for="material-unit">Jedinica</label>
+                    <input type="text" id="material-unit" readonly>
+                </div>
+            </div>
+            <div class="form-group">
+                <label for="material-price">Cijena po jedinici (KM)</label>
+                <input type="number" id="material-price" step="0.01" min="0">
+            </div>
+            <div class="form-group">
+                <label>Ukupno: <strong id="material-total">0.00 KM</strong></label>
+            </div>
+        </form>
+        <div class="modal-footer">
+            <button type="button" class="btn btn-secondary" onclick="closeModal()">Otkaži</button>
+            <button type="button" class="btn btn-primary" onclick="addMaterialToProduct()">Dodaj</button>
+        </div>
+    </div>
+
+    <!-- Glass Items Modal -->
+    <div class="modal modal-xl" id="glass-modal">
+        <div class="modal-header">
+            <h2 id="glass-modal-title">🪟 Dodaj Staklo</h2>
+            <button class="modal-close" onclick="closeGlassModal()">
+                <span class="material-icons-round">close</span>
+            </button>
+        </div>
+        <div class="modal-body glass-modal-body">
+            <input type="hidden" id="glass-product-id">
+            <input type="hidden" id="glass-material-id">
+
+            <div class="glass-info-bar">
+                <div class="glass-info-item">
+                    <label>Materijal:</label>
+                    <strong id="glass-material-name">-</strong>
+                </div>
+                <div class="glass-info-item">
+                    <label>Cijena po m²:</label>
+                    <strong id="glass-price-m2">0 KM</strong>
+                </div>
+                <div class="glass-info-item">
+                    <label>Dobavljač:</label>
+                    <span id="glass-supplier">-</span>
+                </div>
+                <div class="glass-info-item highlight">
+                    <label>Brušenje:</label>
+                    <span>+10%</span>
+                </div>
+            </div>
+
+            <div class="glass-items-container">
+                <table class="glass-items-table">
+                    <thead>
+                        <tr>
+                            <th style="width: 40px;">#</th>
+                            <th style="width: 70px;">Kom</th>
+                            <th style="width: 100px;">Širina (mm)</th>
+                            <th style="width: 100px;">Visina (mm)</th>
+                            <th style="width: 80px;">Brušenje</th>
+                            <th style="width: 80px;">m²</th>
+                            <th style="width: 90px;">Cijena</th>
+                            <th style="width: 120px;">Napomena</th>
+                            <th style="width: 40px;"></th>
+                        </tr>
+                    </thead>
+                    <tbody id="glass-items-body">
+                        <!-- Glass items will be rendered here -->
+                    </tbody>
+                </table>
+                <button type="button" class="btn btn-secondary btn-add-glass" onclick="addGlassItemRow()">
+                    <span class="material-icons-round">add</span>
+                    Dodaj komad
+                </button>
+            </div>
+
+            <div class="glass-totals">
+                <div class="glass-total-item">
+                    <span>Ukupno komada:</span>
+                    <strong id="glass-total-count">0</strong>
+                </div>
+                <div class="glass-total-item">
+                    <span>Ukupna površina:</span>
+                    <strong id="glass-total-area">0.00 m²</strong>
+                </div>
+                <div class="glass-total-item primary">
+                    <span>Ukupna cijena:</span>
+                    <strong id="glass-total-price">0.00 KM</strong>
+                </div>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button type="button" class="btn btn-secondary" onclick="closeGlassModal()">Otkaži</button>
+            <button type="button" class="btn btn-primary" onclick="saveGlassMaterial()">
+                <span class="material-icons-round">save</span>
+                Sačuvaj staklo
+            </button>
+        </div>
+    </div>
+
+    <!-- Alu Door Items Modal -->
+    <div class="modal modal-xl" id="alu-door-modal">
+        <div class="modal-header">
+            <h2 id="alu-door-modal-title">🚪 Dodaj Alu Vrata</h2>
+            <button class="modal-close" onclick="closeAluDoorModal()">
+                <span class="material-icons-round">close</span>
+            </button>
+        </div>
+        <div class="modal-body alu-door-modal-body">
+            <input type="hidden" id="alu-door-product-id">
+            <input type="hidden" id="alu-door-material-id">
+
+            <div class="alu-door-info-bar">
+                <div class="alu-door-info-item">
+                    <label>Materijal:</label>
+                    <strong id="alu-door-material-name">-</strong>
+                </div>
+                <div class="alu-door-info-item">
+                    <label>Cijena po m²:</label>
+                    <strong id="alu-door-price-m2">200 KM</strong>
+                </div>
+                <div class="alu-door-info-item">
+                    <label>Dobavljač:</label>
+                    <span id="alu-door-supplier">-</span>
+                </div>
+            </div>
+
+            <div class="alu-door-cards-container" id="alu-door-items-body">
+                <!-- Alu door cards will be rendered here -->
+            </div>
+
+            <button type="button" class="btn btn-secondary btn-add-alu-door" onclick="addAluDoorItemRow()">
+                <span class="material-icons-round">add</span>
+                Dodaj vrata
+            </button>
+
+            <div class="alu-door-totals">
+                <div class="alu-door-total-item">
+                    <span>Ukupno komada:</span>
+                    <strong id="alu-door-total-count">0</strong>
+                </div>
+                <div class="alu-door-total-item">
+                    <span>Ukupna površina:</span>
+                    <strong id="alu-door-total-area">0.00 m²</strong>
+                </div>
+                <div class="alu-door-total-item primary">
+                    <span>Ukupna cijena:</span>
+                    <strong id="alu-door-total-price">0.00 KM</strong>
+                </div>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button type="button" class="btn btn-secondary" onclick="closeAluDoorModal()">Otkaži</button>
+            <button type="button" class="btn btn-primary" onclick="saveAluDoorMaterial()">
+                <span class="material-icons-round">save</span>
+                Sačuvaj alu vrata
+            </button>
+        </div>
+    </div>
+
+    <!-- Material Database Modal -->
+    <div class="modal" id="material-modal">
+        <div class="modal-header">
+            <h2 id="material-modal-title">Novi Materijal</h2>
+            <button class="modal-close" onclick="closeModal()">
+                <span class="material-icons-round">close</span>
+            </button>
+        </div>
+        <form id="material-form" class="modal-body">
+            <input type="hidden" id="db-material-id">
+            <div class="form-group">
+                <label for="db-material-name">Naziv *</label>
+                <input type="text" id="db-material-name" required>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="db-material-category">Kategorija</label>
+                    <select id="db-material-category">
+                        <option value="Ploča">Ploča</option>
+                        <option value="Kanttraka">Kanttraka</option>
+                        <option value="Okovi">Okovi</option>
+                        <option value="Vijci">Vijci</option>
+                        <option value="Šarke">Šarke</option>
+                        <option value="Ladičari">Ladičari</option>
+                        <option value="Ručke">Ručke</option>
+                        <option value="LED">LED</option>
+                        <option value="Staklo">Staklo</option>
+                        <option value="Alu vrata">Alu vrata</option>
+                        <option value="Ostalo">Ostalo</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="db-material-unit">Jedinica</label>
+                    <select id="db-material-unit">
+                        <option value="kom">kom</option>
+                        <option value="m">m</option>
+                        <option value="m²">m²</option>
+                        <option value="set">set</option>
+                        <option value="kg">kg</option>
+                    </select>
+                </div>
+            </div>
+            <div class="form-group">
+                <label for="db-material-price">Cijena (KM)</label>
+                <input type="number" id="db-material-price" step="0.01" min="0">
+            </div>
+            <div class="form-group">
+                <label for="db-material-desc">Opis</label>
+                <textarea id="db-material-desc" rows="2"></textarea>
+            </div>
+        </form>
+        <div class="modal-footer">
+            <button type="button" class="btn btn-secondary" onclick="closeModal()">Otkaži</button>
+            <button type="button" class="btn btn-primary" onclick="saveMaterialDb()">Sačuvaj</button>
+        </div>
+    </div>
+
+    <!-- Worker Modal -->
+    <div class="modal" id="worker-modal">
+        <div class="modal-header">
+            <h2 id="worker-modal-title">Novi Radnik</h2>
+            <button class="modal-close" onclick="closeModal()">
+                <span class="material-icons-round">close</span>
+            </button>
+        </div>
+        <form id="worker-form" class="modal-body">
+            <input type="hidden" id="worker-id">
+            <div class="form-group">
+                <label for="worker-name">Ime i Prezime *</label>
+                <input type="text" id="worker-name" required>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="worker-role">Uloga</label>
+                    <select id="worker-role">
+                        <option value="Opći">Opći</option>
+                        <option value="Rezač">Rezač</option>
+                        <option value="Kantiranje">Kantiranje</option>
+                        <option value="Bušenje">Bušenje</option>
+                        <option value="Montaža">Montaža</option>
+                        <option value="Instalacija">Instalacija</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="worker-phone">Telefon</label>
+                    <input type="tel" id="worker-phone">
+                </div>
+            </div>
+        </form>
+        <div class="modal-footer">
+            <button type="button" class="btn btn-secondary" onclick="closeModal()">Otkaži</button>
+            <button type="button" class="btn btn-primary" onclick="saveWorker()">Sačuvaj</button>
+        </div>
+    </div>
+
+    <!-- Supplier Modal -->
+    <div class="modal" id="supplier-modal">
+        <div class="modal-header">
+            <h2 id="supplier-modal-title">Novi Dobavljač</h2>
+            <button class="modal-close" onclick="closeModal()">
+                <span class="material-icons-round">close</span>
+            </button>
+        </div>
+        <form id="supplier-form" class="modal-body">
+            <input type="hidden" id="supplier-id">
+            <div class="form-group">
+                <label for="supplier-name">Naziv *</label>
+                <input type="text" id="supplier-name" required>
+            </div>
+            <div class="form-group">
+                <label for="supplier-contact">Kontakt osoba</label>
+                <input type="text" id="supplier-contact">
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="supplier-phone">Telefon</label>
+                    <input type="tel" id="supplier-phone">
+                </div>
+                <div class="form-group">
+                    <label for="supplier-email">Email</label>
+                    <input type="email" id="supplier-email">
+                </div>
+            </div>
+            <div class="form-group">
+                <label for="supplier-address">Adresa</label>
+                <input type="text" id="supplier-address">
+            </div>
+        </form>
+        <div class="modal-footer">
+            <button type="button" class="btn btn-secondary" onclick="closeModal()">Otkaži</button>
+            <button type="button" class="btn btn-primary" onclick="saveSupplier()">Sačuvaj</button>
+        </div>
+    </div>
+
+    <!-- Offer Modal - Redesigned -->
+    <div class="modal modal-xl" id="offer-modal">
+        <div class="modal-header">
+            <h2 id="offer-modal-title">Nova Ponuda</h2>
+            <button class="modal-close" onclick="closeModal()">
+                <span class="material-icons-round">close</span>
+            </button>
+        </div>
+        <div id="offer-form" class="modal-body offer-modal-body">
+            <input type="hidden" id="offer-id">
+            <input type="hidden" id="offer-project-id">
+
+            <!-- Project Selector (for new offers) -->
+            <div class="offer-project-select" id="offer-project-select">
+                <div class="form-group">
+                    <label for="offer-project-dropdown">Odaberi Projekat *</label>
+                    <select id="offer-project-dropdown" onchange="loadProjectForOffer()">
+                        <option value="">-- Odaberi projekat --</option>
+                    </select>
+                </div>
+            </div>
+
+            <!-- Client Info Display -->
+            <div class="offer-client-info" id="offer-client-info" style="display:none;">
+                <div class="client-info-card">
+                    <strong id="offer-client-name">-</strong>
+                    <span id="offer-client-address">-</span>
+                </div>
+            </div>
+
+            <!-- Products Section -->
+            <div class="offer-section" id="offer-products-section" style="display:none;">
+                <h3>Proizvodi</h3>
+                <p class="section-hint">Označite proizvode koje želite uključiti u ponudu</p>
+                <div class="offer-products-list" id="offer-products-list">
+                    <!-- Products loaded dynamically -->
+                </div>
+            </div>
+
+            <!-- Global Settings -->
+            <div class="offer-section" id="offer-settings-section" style="display:none;">
+                <h3>Postavke Ponude</h3>
+                <div class="offer-settings-grid">
+                    <div class="form-group">
+                        <label for="offer-transport">Transport (KM)</label>
+                        <input type="number" id="offer-transport" step="0.01" min="0" value="0"
+                            onchange="calculateOfferTotal()">
+                        <small>Dijeli se proporcionalno na proizvode</small>
+                    </div>
+                    <div class="form-group">
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="offer-onsite" onchange="toggleOnsiteDiscount()">
+                            <span>Sklapanje kod klijenta (bez montaže u radionici)</span>
+                        </label>
+                    </div>
+                    <div class="form-group" id="offer-discount-group" style="display:none;">
+                        <label for="offer-discount">Popust za sklapanje kod klijenta (KM)</label>
+                        <input type="number" id="offer-discount" step="0.01" min="0" value="0"
+                            onchange="calculateOfferTotal()">
+                        <small>Popust jer ne moramo sklopiti prije isporuke</small>
+                    </div>
+                    <div class="form-group">
+                        <label for="offer-valid">Ponuda vrijedi do</label>
+                        <input type="date" id="offer-valid">
+                    </div>
+                    <div class="form-group full-width">
+                        <label for="offer-notes">Napomene za ponudu</label>
+                        <textarea id="offer-notes" rows="2" placeholder="Dodatne napomene..."></textarea>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Summary -->
+            <div class="offer-summary-section" id="offer-summary-section" style="display:none;">
+                <div class="offer-summary-grid">
+                    <div class="summary-item">
+                        <span>Međuzbroj (proizvodi + marže + dodaci):</span>
+                        <span id="offer-subtotal" class="summary-value">0.00 KM</span>
+                    </div>
+                    <div class="summary-item">
+                        <span>Transport:</span>
+                        <span id="offer-transport-display" class="summary-value">0.00 KM</span>
+                    </div>
+                    <div class="summary-item discount" id="offer-discount-row" style="display: none;">
+                        <span>Popust (sklapanje kod klijenta):</span>
+                        <span id="offer-discount-display" class="summary-value">-0.00 KM</span>
+                    </div>
+                    <div class="summary-item total">
+                        <span>UKUPNO:</span>
+                        <span id="offer-total" class="summary-value total-value">0.00 KM</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button type="button" class="btn btn-secondary" onclick="closeModal()">Otkaži</button>
+            <button type="button" class="btn btn-primary" id="offer-save-btn" onclick="saveOfferData()" disabled>Sačuvaj
+                Ponudu</button>
+        </div>
+    </div>
+
+    <!-- Offer View/Edit Modal -->
+    <div class="modal modal-fullscreen" id="offer-view-modal">
+        <div class="modal-header">
+            <div class="offer-view-header-info">
+                <h2 id="offer-view-title">Ponuda</h2>
+                <span class="status-badge" id="offer-view-status">Nacrt</span>
+            </div>
+            <div class="offer-view-header-actions">
+                <button class="btn btn-secondary btn-sm" id="offer-edit-toggle-btn" onclick="toggleOfferEditMode()">
+                    <span class="material-icons-round">edit</span>
+                    Uredi
+                </button>
+                <button class="btn btn-primary btn-sm" onclick="printOfferDocument()">
+                    <span class="material-icons-round">print</span>
+                    Printaj
+                </button>
+                <button class="modal-close" onclick="closeOfferViewModal()">
+                    <span class="material-icons-round">close</span>
+                </button>
+            </div>
+        </div>
+        <div class="modal-body offer-view-body">
+            <input type="hidden" id="view-offer-id">
+
+            <!-- Offer Info Section -->
+            <div class="offer-view-section">
+                <div class="offer-view-info-grid">
+                    <div class="info-card">
+                        <div class="info-card-label">Broj ponude</div>
+                        <div class="info-card-value" id="view-offer-number">-</div>
+                    </div>
+                    <div class="info-card">
+                        <div class="info-card-label">Datum kreiranja</div>
+                        <div class="info-card-value" id="view-offer-date">-</div>
+                    </div>
+                    <div class="info-card">
+                        <div class="info-card-label">Vrijedi do</div>
+                        <div class="info-card-value editable-field">
+                            <span id="view-offer-valid-display">-</span>
+                            <input type="date" id="view-offer-valid-input" class="edit-input" style="display:none;">
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Client Section -->
+            <div class="offer-view-section">
+                <h3>Podaci o klijentu</h3>
+                <div class="client-info-grid">
+                    <div class="info-row">
+                        <span class="material-icons-round">person</span>
+                        <span id="view-client-name">-</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="material-icons-round">location_on</span>
+                        <span id="view-client-address">-</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="material-icons-round">phone</span>
+                        <span id="view-client-phone">-</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="material-icons-round">email</span>
+                        <span id="view-client-email">-</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Products Section -->
+            <div class="offer-view-section">
+                <h3>Proizvodi</h3>
+                <div class="offer-products-table-wrapper">
+                    <table class="offer-products-table">
+                        <thead>
+                            <tr>
+                                <th>Proizvod</th>
+                                <th>Dimenzije</th>
+                                <th>Količina</th>
+                                <th>Cijena materijala</th>
+                                <th class="editable-column">Marža</th>
+                                <th>Dodaci</th>
+                                <th>Ukupno</th>
+                            </tr>
+                        </thead>
+                        <tbody id="view-offer-products">
+                            <!-- Products loaded dynamically -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Settings Section -->
+            <div class="offer-view-section">
+                <h3>Postavke</h3>
+                <div class="offer-settings-view-grid">
+                    <div class="setting-item">
+                        <label>Transport</label>
+                        <div class="setting-value editable-field">
+                            <span id="view-transport-display">0.00 KM</span>
+                            <input type="number" id="view-transport-input" class="edit-input" style="display:none;"
+                                step="0.01" min="0">
+                        </div>
+                    </div>
+                    <div class="setting-item">
+                        <label>Sklapanje kod klijenta</label>
+                        <div class="setting-value">
+                            <span id="view-onsite-display">Ne</span>
+                            <input type="checkbox" id="view-onsite-input" class="edit-input" style="display:none;">
+                        </div>
+                    </div>
+                    <div class="setting-item" id="view-discount-row">
+                        <label>Popust (sklapanje)</label>
+                        <div class="setting-value editable-field">
+                            <span id="view-discount-display">0.00 KM</span>
+                            <input type="number" id="view-discount-input" class="edit-input" style="display:none;"
+                                step="0.01" min="0">
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Notes Section -->
+            <div class="offer-view-section">
+                <h3>Napomene</h3>
+                <div class="notes-content editable-field">
+                    <p id="view-notes-display">-</p>
+                    <textarea id="view-notes-input" class="edit-input" style="display:none;" rows="3"></textarea>
+                </div>
+            </div>
+
+            <!-- Totals Section -->
+            <div class="offer-view-totals">
+                <div class="totals-grid">
+                    <div class="total-row">
+                        <span>Međuzbroj:</span>
+                        <span id="view-subtotal">0.00 KM</span>
+                    </div>
+                    <div class="total-row">
+                        <span>Transport:</span>
+                        <span id="view-transport-total">0.00 KM</span>
+                    </div>
+                    <div class="total-row discount" id="view-discount-total-row" style="display:none;">
+                        <span>Popust:</span>
+                        <span id="view-discount-total">-0.00 KM</span>
+                    </div>
+                    <div class="total-row grand-total">
+                        <span>UKUPNO:</span>
+                        <span id="view-grand-total">0.00 KM</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <div class="footer-left">
+                <select id="view-offer-status-select" class="filter-select">
+                    <option value="Nacrt">Nacrt</option>
+                    <option value="Poslano">Poslano</option>
+                    <option value="Prihvaćeno">Prihvaćeno</option>
+                    <option value="Odbijeno">Odbijeno</option>
+                </select>
+                <button class="btn btn-secondary btn-sm" onclick="updateViewOfferStatus()">
+                    <span class="material-icons-round">update</span>
+                    Promijeni status
+                </button>
+            </div>
+            <div class="footer-right">
+                <button type="button" class="btn btn-secondary" onclick="closeOfferViewModal()">Zatvori</button>
+                <button type="button" class="btn btn-primary" id="save-offer-changes-btn" onclick="saveOfferChanges()"
+                    style="display:none;">
+                    <span class="material-icons-round">save</span>
+                    Sačuvaj izmjene
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Print Template Container (Hidden) -->
+    <div id="print-container" class="print-only">
+        <div class="print-page">
+            <!-- Company Header -->
+            <div class="print-header">
+                <div class="company-info">
+                    <h1 class="company-name">Vaša Firma d.o.o.</h1>
+                    <p>Adresa: Ulica i broj, Grad, Poštanski broj</p>
+                    <p>Tel: +387 XX XXX XXX | Email: info@firma.ba</p>
+                    <p>ID: xxxxxxxxxx | PDV: xxxxxxxxxx</p>
+                </div>
+                <div class="document-info">
+                    <h2>PONUDA / PREDRAČUN</h2>
+                    <p class="document-number" id="print-offer-number">Br: -</p>
+                    <p id="print-offer-date">Datum: -</p>
+                </div>
+            </div>
+
+            <!-- Client Info -->
+            <div class="print-client">
+                <h3>KUPAC:</h3>
+                <p id="print-client-name">-</p>
+                <p id="print-client-address">-</p>
+                <p id="print-client-contact">-</p>
+            </div>
+
+            <!-- Products Table -->
+            <table class="print-products-table">
+                <thead>
+                    <tr>
+                        <th>R.br.</th>
+                        <th>Naziv proizvoda</th>
+                        <th>Dimenzije</th>
+                        <th>Količina</th>
+                        <th>Jed. cijena</th>
+                        <th>Ukupno</th>
+                    </tr>
+                </thead>
+                <tbody id="print-products-body">
+                    <!-- Products inserted dynamically -->
+                </tbody>
+            </table>
+
+            <!-- Totals -->
+            <div class="print-totals">
+                <div class="print-total-row">
+                    <span>Međuzbroj:</span>
+                    <span id="print-subtotal">0.00 KM</span>
+                </div>
+                <div class="print-total-row" id="print-transport-row">
+                    <span>Transport:</span>
+                    <span id="print-transport">0.00 KM</span>
+                </div>
+                <div class="print-total-row discount" id="print-discount-row" style="display:none;">
+                    <span>Popust:</span>
+                    <span id="print-discount">-0.00 KM</span>
+                </div>
+                <div class="print-total-row grand-total">
+                    <span>UKUPNO ZA UPLATU:</span>
+                    <span id="print-grand-total">0.00 KM</span>
+                </div>
+            </div>
+
+            <!-- Notes -->
+            <div class="print-notes" id="print-notes-section">
+                <h4>Napomene:</h4>
+                <p id="print-notes">-</p>
+            </div>
+
+            <!-- Terms -->
+            <div class="print-terms">
+                <h4>Uslovi:</h4>
+                <ul>
+                    <li>Ponuda vrijedi do: <strong id="print-valid-until">-</strong></li>
+                    <li>Plaćanje: Avansno ili po dogovoru</li>
+                    <li>Rok isporuke: Po dogovoru nakon potvrde narudžbe</li>
+                    <li>Cijene su izražene u KM (konvertibilnim markama)</li>
+                </ul>
+            </div>
+
+            <!-- Signatures -->
+            <div class="print-signatures">
+                <div class="signature-block">
+                    <div class="signature-line"></div>
+                    <p>Potpis i pečat ponuđača</p>
+                </div>
+                <div class="signature-block">
+                    <div class="signature-line"></div>
+                    <p>Potpis naručioca (prihvatanje ponude)</p>
+                </div>
+            </div>
+
+            <!-- Footer -->
+            <div class="print-footer">
+                <p>Hvala Vam na povjerenju!</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Extra Service Modal (for adding extras to products) -->
+    <div class="modal" id="extra-modal">
+        <div class="modal-header">
+            <h2>Dodaj Uslugu/Dodatak</h2>
+            <button class="modal-close" onclick="closeExtraModal()">
+                <span class="material-icons-round">close</span>
+            </button>
+        </div>
+        <div class="modal-body">
+            <input type="hidden" id="extra-product-index">
+            <div class="form-group">
+                <label for="extra-name">Naziv usluge/dodatka *</label>
+                <select id="extra-name-select" onchange="onExtraSelect()">
+                    <option value="">-- Odaberi ili upiši --</option>
+                    <option value="LED instalacija">LED instalacija</option>
+                    <option value="Ugradnja česme">Ugradnja česme</option>
+                    <option value="Fugiranje">Fugiranje</option>
+                    <option value="Montaža lajsni">Montaža lajsni</option>
+                    <option value="Ugradnja spotova">Ugradnja spotova</option>
+                    <option value="Silikoniranje">Silikoniranje</option>
+                    <option value="custom">Drugo (upiši)</option>
+                </select>
+                <input type="text" id="extra-name-custom" placeholder="Naziv usluge..."
+                    style="display:none; margin-top:8px;">
+            </div>
+            <div class="form-row form-row-3">
+                <div class="form-group">
+                    <label for="extra-qty">Količina</label>
+                    <input type="number" id="extra-qty" step="0.01" min="0" value="1" onchange="calculateExtraTotal()">
+                </div>
+                <div class="form-group">
+                    <label for="extra-unit">Jedinica</label>
+                    <select id="extra-unit">
+                        <option value="kom">kom</option>
+                        <option value="m">m</option>
+                        <option value="m²">m²</option>
+                        <option value="sat">sat</option>
+                        <option value="paušal">paušal</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="extra-price">Cijena/jed (KM)</label>
+                    <input type="number" id="extra-price" step="0.01" min="0" value="0"
+                        onchange="calculateExtraTotal()">
+                </div>
+            </div>
+            <div class="form-group">
+                <label>Ukupno: <strong id="extra-total">0.00 KM</strong></label>
+            </div>
+            <div class="form-group">
+                <label for="extra-note">Napomena</label>
+                <input type="text" id="extra-note" placeholder="Dodatna napomena...">
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button type="button" class="btn btn-secondary" onclick="closeExtraModal()">Otkaži</button>
+            <button type="button" class="btn btn-primary" onclick="addExtraToProduct()">Dodaj</button>
+        </div>
+    </div>
+
+    <!-- Order Modal - Create New Order -->
+    <div class="modal modal-xl" id="order-modal">
+        <div class="modal-header">
+            <h2>Nova Narudžba</h2>
+            <button class="modal-close" onclick="closeModal()">
+                <span class="material-icons-round">close</span>
+            </button>
+        </div>
+        <div class="modal-body order-wizard-body-v2">
+            <!-- Left Sidebar: Filters -->
+            <div class="order-filters-sidebar">
+                <!-- Projects Panel -->
+                <div class="filter-panel compact">
+                    <div class="filter-panel-header">
+                        <span class="material-icons-round">folder</span>
+                        <span>Projekti</span>
+                        <span class="filter-count" id="projects-selected-count">0</span>
+                    </div>
+                    <div class="filter-panel-body" id="order-projects-list">
+                        <!-- Projects loaded dynamically -->
+                    </div>
+                </div>
+
+                <!-- Products Panel -->
+                <div class="filter-panel compact">
+                    <div class="filter-panel-header">
+                        <span class="material-icons-round">inventory</span>
+                        <span>Proizvodi</span>
+                        <span class="filter-count" id="products-selected-count">0</span>
+                    </div>
+                    <div class="filter-panel-body" id="order-products-list">
+                        <div class="filter-placeholder">Odaberi projekat</div>
+                    </div>
+                </div>
+
+                <!-- Supplier & Settings -->
+                <div class="filter-panel compact">
+                    <div class="filter-panel-header">
+                        <span class="material-icons-round">store</span>
+                        <span>Dobavljač & Postavke</span>
+                    </div>
+                    <div class="filter-panel-body filter-panel-form">
+                        <div class="form-group">
+                            <select id="order-supplier" class="full-width-select" onchange="applyOrderFilters()">
+                                <option value="">Svi dobavljači</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>Isporuka</label>
+                            <input type="date" id="order-expected-delivery">
+                        </div>
+                        <div class="form-group">
+                            <label>Napomene</label>
+                            <textarea id="order-notes" rows="2" placeholder="..."></textarea>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Main Content: Materials -->
+            <div class="order-main-content">
+                <div class="order-materials-panel-v2">
+                    <div class="materials-panel-header">
+                        <div class="materials-panel-title">
+                            <span class="material-icons-round">shopping_cart</span>
+                            <span>Materijali za narudžbu</span>
+                            <span class="materials-count" id="order-materials-count">0</span>
+                        </div>
+                        <div class="materials-panel-actions">
+                            <button class="btn btn-sm btn-secondary" onclick="selectAllOrderMaterials()">Sve</button>
+                            <button class="btn btn-sm btn-secondary"
+                                onclick="deselectAllOrderMaterials()">Ništa</button>
+                        </div>
+                    </div>
+                    <div id="order-materials-list" class="materials-panel-body-v2">
+                        <div class="loading-materials">
+                            <span class="material-icons-round spin">sync</span>
+                            Učitavanje...
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Summary Bar -->
+                <div class="order-summary-bar">
+                    <div class="summary-info">
+                        <strong id="order-items-count">0</strong> stavki
+                    </div>
+                    <div class="summary-total">
+                        Ukupno: <strong id="order-total-amount">0.00 KM</strong>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button type="button" class="btn btn-secondary" onclick="closeModal()">Otkaži</button>
+            <button type="button" class="btn btn-primary" id="create-order-btn" onclick="createOrder()" disabled>
+                <span class="material-icons-round">add_shopping_cart</span>
+                Kreiraj Narudžbu
+            </button>
+        </div>
+    </div>
+
+
+    <!-- Order View Modal -->
+    <div class="modal modal-fullscreen" id="order-view-modal">
+        <div class="modal-header">
+            <div class="order-view-header-info">
+                <h2 id="order-view-title">Narudžba</h2>
+                <span class="status-badge" id="order-view-status">Nacrt</span>
+            </div>
+            <div class="order-view-header-actions">
+                <button class="btn btn-secondary btn-sm" id="order-send-btn" onclick="sendOrder()">
+                    <span class="material-icons-round">send</span>
+                    Pošalji
+                </button>
+                <button class="btn btn-primary btn-sm" onclick="printOrderDocument()">
+                    <span class="material-icons-round">print</span>
+                    Printaj
+                </button>
+                <button class="modal-close" onclick="closeOrderViewModal()">
+                    <span class="material-icons-round">close</span>
+                </button>
+            </div>
+        </div>
+        <div class="modal-body order-view-body">
+            <input type="hidden" id="view-order-id">
+
+            <!-- Order Info -->
+            <div class="order-view-section">
+                <div class="order-view-info-grid">
+                    <div class="info-card">
+                        <div class="info-card-label">Broj narudžbe</div>
+                        <div class="info-card-value" id="view-order-number">-</div>
+                    </div>
+                    <div class="info-card">
+                        <div class="info-card-label">Datum</div>
+                        <div class="info-card-value" id="view-order-date">-</div>
+                    </div>
+                    <div class="info-card">
+                        <div class="info-card-label">Očekivana isporuka</div>
+                        <div class="info-card-value" id="view-order-delivery">-</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Supplier Info -->
+            <div class="order-view-section">
+                <h3>Dobavljač</h3>
+                <div class="supplier-info-card" id="view-supplier-info">
+                    <span class="material-icons-round">store</span>
+                    <div>
+                        <strong id="view-supplier-name">-</strong>
+                        <span id="view-supplier-contact">-</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Order Items -->
+            <div class="order-view-section">
+                <h3>Stavke narudžbe</h3>
+                <div class="order-items-table-wrapper">
+                    <table class="order-items-table">
+                        <thead>
+                            <tr>
+                                <th><input type="checkbox" id="select-all-items"
+                                        onchange="toggleAllOrderItems(this.checked)"></th>
+                                <th>Materijal</th>
+                                <th>Projekat / Proizvod</th>
+                                <th>Količina</th>
+                                <th>Jedinica</th>
+                                <th>Cijena</th>
+                                <th>Ukupno</th>
+                                <th>Status</th>
+                            </tr>
+                        </thead>
+                        <tbody id="view-order-items">
+                            <!-- Items loaded dynamically -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Notes -->
+            <div class="order-view-section" id="view-order-notes-section">
+                <h3>Napomene</h3>
+                <p id="view-order-notes">-</p>
+            </div>
+
+            <!-- Totals -->
+            <div class="order-view-totals">
+                <div class="totals-grid">
+                    <div class="total-row grand-total">
+                        <span>UKUPNO:</span>
+                        <span id="view-order-total">0.00 KM</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <div class="footer-left">
+                <button class="btn btn-success btn-sm" id="mark-received-btn" onclick="markSelectedAsReceived()"
+                    disabled>
+                    <span class="material-icons-round">check_circle</span>
+                    Označi primljeno
+                </button>
+                <button class="btn btn-danger btn-sm" id="delete-items-btn" onclick="deleteSelectedOrderItems()"
+                    disabled>
+                    <span class="material-icons-round">delete</span>
+                    Obriši selektovane
+                </button>
+            </div>
+            <div class="footer-right">
+                <button type="button" class="btn btn-danger btn-sm" onclick="confirmDeleteOrder()">
+                    <span class="material-icons-round">delete</span>
+                    Obriši
+                </button>
+                <button type="button" class="btn btn-secondary" onclick="closeOrderViewModal()">Zatvori</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Order Print Template -->
+    <div id="order-print-container" class="print-only">
+        <!-- Repeating Header for each page -->
+        <table class="print-wrapper-table">
+            <thead class="print-header-repeat">
+                <tr>
+                    <td>
+                        <div class="print-header">
+                            <div class="company-info">
+                                <h1 class="company-name">Vaša Firma d.o.o.</h1>
+                                <p>Adresa: Ulica i broj, Grad, Poštanski broj</p>
+                                <p>Tel: +387 XX XXX XXX | Email: info@firma.ba</p>
+                            </div>
+                            <div class="document-info">
+                                <h2>NARUDŽBENICA</h2>
+                                <p class="document-number" id="print-order-number">Br: -</p>
+                                <p id="print-order-date">Datum: -</p>
+                            </div>
+                        </div>
+                    </td>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td>
+                        <!-- Supplier Info -->
+                        <div class="print-client">
+                            <h3>DOBAVLJAČ:</h3>
+                            <p id="print-supplier-name">-</p>
+                            <p id="print-supplier-contact">-</p>
+                        </div>
+
+                        <!-- Regular Items Table -->
+                        <table class="print-products-table" id="print-regular-items-table">
+                            <thead>
+                                <tr>
+                                    <th style="width: 50px;">R.br.</th>
+                                    <th>Naziv materijala</th>
+                                    <th style="width: 100px;">Količina</th>
+                                    <th style="width: 80px;">Jedinica</th>
+                                </tr>
+                            </thead>
+                            <tbody id="print-regular-items">
+                                <!-- Regular items inserted dynamically -->
+                            </tbody>
+                        </table>
+
+                        <!-- Glass Items Table (separate, with proper glass columns) -->
+                        <div id="print-glass-section" style="display: none;">
+                            <h3 class="glass-section-title">🪟 Staklo</h3>
+                            <table class="print-products-table print-glass-table">
+                                <thead>
+                                    <tr>
+                                        <th style="width: 50px;">R.br.</th>
+                                        <th>Materijal</th>
+                                        <th style="width: 80px;">Kom</th>
+                                        <th>Dimenzije (mm)</th>
+                                        <th style="width: 100px;">Ukupno m²</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="print-glass-items">
+                                    <!-- Glass items inserted dynamically -->
+                                </tbody>
+                            </table>
+                        </div>
+
+                        <!-- Alu Door Items Section -->
+                        <div id="print-alu-door-section" style="display: none;">
+                            <h3
+                                style="display: flex; align-items: center; gap: 10px; font-size: 15px; font-weight: 600; color: #1d1d1f; margin: 40px 0 16px; padding-bottom: 12px; border-bottom: 2px solid #8b6914;">
+                                🚪 Alu Vrata sa Staklenom Ispunom</h3>
+                            <div id="print-alu-door-items">
+                                <!-- Alu door items inserted dynamically -->
+                            </div>
+                        </div>
+
+                        <!-- Notes -->
+                        <div class="print-notes" id="print-order-notes-section">
+                            <h4>Napomene:</h4>
+                            <p id="print-order-notes">-</p>
+                        </div>
+
+                        <!-- Delivery -->
+                        <div class="print-terms">
+                            <h4>Isporuka:</h4>
+                            <p>Očekivani datum isporuke: <strong id="print-order-delivery">-</strong></p>
+                        </div>
+
+                        <!-- Signatures -->
+                        <div class="print-signatures">
+                            <div class="signature-block">
+                                <div class="signature-line"></div>
+                                <p>Potpis naručioca</p>
+                            </div>
+                            <div class="signature-block">
+                                <div class="signature-line"></div>
+                                <p>Potpis dobavljača</p>
+                            </div>
+                        </div>
+                    </td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+
+    <!-- Toast Container -->
+    <div id="toast-container"></div>
+
+    <!-- Loading Overlay -->
+    <div class="loading-overlay" id="loading-overlay">
+        <div class="spinner"></div>
+    </div>
+
+    <?!= include('JavaScript'); ?>
+</body>
+
+</html>
