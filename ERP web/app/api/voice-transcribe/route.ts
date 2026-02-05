@@ -3,13 +3,21 @@ import { SpeechClient } from '@google-cloud/speech';
 
 // Parse private key - handles various formats from environment variables
 function parsePrivateKey(key: string | undefined): string | undefined {
-    if (!key) return undefined;
+    if (!key) {
+        console.warn('[Voice API] Private key is missing');
+        return undefined;
+    }
+
+    // Log key metadata for debugging (length and start/end)
+    const keyPreview = key.length > 20 ? `${key.substring(0, 10)}...${key.substring(key.length - 10)}` : key;
+    console.log(`[Voice API] Parsing key (len=${key.length}): ${keyPreview}`);
 
     // Check if it's base64 encoded (doesn't start with header)
     if (!key.includes('-----BEGIN PRIVATE KEY-----')) {
         try {
             const decoded = Buffer.from(key, 'base64').toString('utf-8');
             if (decoded.includes('-----BEGIN PRIVATE KEY-----')) {
+                console.log('[Voice API] Successfully decoded base64 key');
                 return decoded;
             }
         } catch (e) {
@@ -17,24 +25,39 @@ function parsePrivateKey(key: string | undefined): string | undefined {
         }
     }
 
-    // If it's already properly formatted (contains actual newlines)
-    if (key.includes('-----BEGIN') && key.includes('\n')) {
-        return key;
-    }
+    let parsed = key;
 
-    // Replace escaped newlines (\\n) with actual newlines
-    let parsed = key.replace(/\\n/g, '\n');
-
-    // Handle double-escaped newlines (\\\\n)
-    parsed = parsed.replace(/\\\\n/g, '\n');
-
-    // If it was JSON-stringified (starts with quotes), try to parse
+    // If it was JSON-stringified (starts with quotes), try to parse first
+    // This handles cases where the env var is literally '"-----BEGIN..."'
     if (parsed.startsWith('"') && parsed.endsWith('"')) {
         try {
             parsed = JSON.parse(parsed);
+            console.log('[Voice API] Successfully parsed JSON-stringified key');
         } catch (e) {
-            // Ignore parse errors, use as-is
+            // If JSON parse fails, it might be because newlines are already real newlines
+            // Just strip the quotes manually
+            console.log('[Voice API] JSON parse failed, manually stripping quotes');
+            parsed = parsed.slice(1, -1);
         }
+    }
+
+    // Replace escaped newlines (\\n) with actual newlines
+    if (parsed.includes('\\n')) {
+        parsed = parsed.replace(/\\n/g, '\n');
+        console.log('[Voice API] Replaced escaped newlines');
+    }
+
+    // Handle double-escaped newlines (\\\\n) just in case
+    if (parsed.includes('\\\\n')) {
+        parsed = parsed.replace(/\\\\n/g, '\n');
+        console.log('[Voice API] Replaced double-escaped newlines');
+    }
+
+    // Final check for valid format
+    if (!parsed.includes('-----BEGIN PRIVATE KEY-----')) {
+        console.warn('[Voice API] Warning: Key does not look like a valid PEM key after parsing');
+    } else {
+        console.log('[Voice API] Key appears to be correctly formatted PEM');
     }
 
     return parsed;
@@ -42,8 +65,15 @@ function parsePrivateKey(key: string | undefined): string | undefined {
 
 // Initialize Speech client with credentials from environment
 function getSpeechClient(): SpeechClient {
+    console.log('[Voice API] Initializing Speech Client...');
+    console.log('[Voice API] Project ID:', process.env.GOOGLE_CLOUD_PROJECT_ID);
+    console.log('[Voice API] Client Email:', process.env.GOOGLE_CLOUD_CLIENT_EMAIL);
+
     // Try Base64 specific var first, then the standard one
-    const privateKey = parsePrivateKey(process.env.GOOGLE_CLOUD_PRIVATE_KEY_BASE64 || process.env.GOOGLE_CLOUD_PRIVATE_KEY);
+    const rawKey = process.env.GOOGLE_CLOUD_PRIVATE_KEY_BASE64 || process.env.GOOGLE_CLOUD_PRIVATE_KEY;
+    console.log(`[Voice API] Raw key source: ${process.env.GOOGLE_CLOUD_PRIVATE_KEY_BASE64 ? 'BASE64_VAR' : 'STANDARD_VAR'}`);
+
+    const privateKey = parsePrivateKey(rawKey);
 
     const credentials = {
         projectId: process.env.GOOGLE_CLOUD_PROJECT_ID,
