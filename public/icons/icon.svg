@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- Background -->
+  <rect width="512" height="512" rx="90" fill="#1D3557"/>
+  
+  <!-- Furniture symbol (stylized table/desk) -->
+  <g fill="#F1FAEE">
+    <!-- Table top -->
+    <rect x="96" y="160" width="320" height="32" rx="8"/>
+    <!-- Table legs -->
+    <rect x="120" y="192" width="24" height="160" rx="4"/>
+    <rect x="368" y="192" width="24" height="160" rx="4"/>
+  </g>
+  
+  <!-- Checkmark circle overlay -->
+  <circle cx="380" cy="320" r="80" fill="#34C759"/>
+  <path d="M340 320 L365 345 L420 290" stroke="#fff" stroke-width="16" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+</svg>

@@ -11,6 +11,7 @@ import {
 } from '@/lib/types';
 import { DragDropContext, Droppable, Draggable, DropResult } from '@hello-pangea/dnd';
 import { saveTask, deleteTask, updateTaskStatus, toggleTaskChecklistItem, generateUUID } from '@/lib/database';
+import './TasksTab.css';
 import {
     Plus,
     Search,
@@ -1092,35 +1093,57 @@ export default function TasksTab({ tasks, projects, workers, materials, workOrde
                 </div>
             )}
 
-            {/* Collapsible Controls Wrapper */}
+            {/* Collapsible Controls Wrapper - SINGLE ROW LAYOUT */}
             <div className={`tasks-controls-wrapper ${showControls ? 'open' : 'closed'}`}>
-                {/* Quick Stats */}
-                {renderQuickStats()}
 
-                {/* Toolbar */}
-                <div className="tasks-toolbar">
-                    {/* Search */}
-                    <div className="tasks-search">
-                        <Search size={18} />
-                        <input
-                            type="text"
-                            placeholder="Pretraži zadatke..."
-                            value={searchQuery}
-                            onChange={(e) => setSearchQuery(e.target.value)}
-                        />
-                        {searchQuery && (
-                            <button className="clear-search" onClick={() => setSearchQuery('')}>
-                                <X size={16} />
-                            </button>
-                        )}
-                    </div>
+                {/* 1. LEFT: Quick Stats Group */}
+                <div className="stats-group">
+                    <button
+                        className={`stat-chip ${filterStatus === 'all' && stats.overdue > 0 ? 'highlight-red' : ''}`}
+                        onClick={() => setFilterStatus('all')}
+                        title="Prekoračeni zadaci"
+                    >
+                        <AlertTriangle size={16} />
+                        <span>{stats.overdue} prekoračeno</span>
+                    </button>
+                    <button className="stat-chip" title="Današnji zadaci">
+                        <Clock size={16} />
+                        <span>{stats.dueToday} danas</span>
+                    </button>
+                    <button
+                        className="stat-chip"
+                        onClick={() => setFilterPriority(filterPriority === 'high' ? 'all' : 'high')}
+                        title="Hitni zadaci"
+                    >
+                        <span className="priority-dot high"></span>
+                        <span>{stats.highPriority} hitno</span>
+                    </button>
+                </div>
 
+                {/* 2. MIDDLE: Search Box (Flex Grow) */}
+                <div className="tasks-search">
+                    <Search size={16} />
+                    <input
+                        type="text"
+                        placeholder="Pretraži zadatke..."
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                    />
+                    {searchQuery && (
+                        <button className="clear-search" onClick={() => setSearchQuery('')}>
+                            <X size={14} />
+                        </button>
+                    )}
+                </div>
+
+                {/* 3. RIGHT: Tools Group */}
+                <div className="tools-group">
                     {/* Filter Toggle */}
                     <button
                         className={`filter-toggle ${filterStatus !== 'all' || filterPriority !== 'all' || filterCategory !== 'all' ? 'active' : ''}`}
                         onClick={() => setShowFilters(!showFilters)}
                     >
-                        <Filter size={18} />
+                        <Filter size={16} />
                         Filteri
                         {(filterStatus !== 'all' || filterPriority !== 'all' || filterCategory !== 'all') && (
                             <span className="filter-badge">
@@ -1136,25 +1159,25 @@ export default function TasksTab({ tasks, projects, workers, materials, workOrde
                             onClick={() => setViewMode('grid')}
                             title="Grid"
                         >
-                            <Grid3X3 size={18} />
+                            <Grid3X3 size={20} /* Increased size */ />
                         </button>
                         <button
                             className={viewMode === 'list' ? 'active' : ''}
                             onClick={() => setViewMode('list')}
                             title="Lista"
                         >
-                            <ListChecks size={18} />
+                            <ListChecks size={20} /* Increased size */ />
                         </button>
                         <button
                             className={viewMode === 'board' ? 'active' : ''}
                             onClick={() => setViewMode('board')}
                             title="Ploča"
                         >
-                            <Layers size={18} />
+                            <Layers size={20} /* Increased size */ />
                         </button>
                     </div>
 
-                    {/* Group By Selector - Only show for grid view */}
+                    {/* Group By Selector (Only in Grid) */}
                     {viewMode === 'grid' && (
                         <div className="group-by-selector">
                             <label>Grupiraj:</label>

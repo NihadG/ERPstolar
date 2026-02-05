@@ -1,0 +1,381 @@
+/* ============================================
+   TASKS TAB LAYOUT - DESKTOP OPTIMIZED
+   ============================================ */
+
+.tasks-container {
+    padding: 24px;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 24px;
+    max-width: 1600px;
+    /* Limit width on ultra-wide screens for readability */
+    margin: 0 auto;
+    width: 100%;
+}
+
+/* HEADER SECTION */
+.tasks-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 4px;
+    /* Even smaller margin */
+}
+
+.tasks-title-section {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+}
+
+.tasks-title {
+    font-size: 28px;
+    font-weight: 700;
+    color: var(--text-primary);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin: 0;
+}
+
+.tasks-count-wrapper {
+    background: var(--surface);
+    padding: 6px 12px;
+    border-radius: 20px;
+    border: 1px solid var(--border-light);
+}
+
+.tasks-count {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-secondary);
+}
+
+.btn-primary-tasks {
+    background: var(--accent);
+    color: white;
+    border: none;
+    padding: 0 20px;
+    height: 44px;
+    /* Fixed height for consistency */
+    border-radius: 12px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    transition: all 0.2s ease;
+    box-shadow: 0 2px 8px rgba(0, 113, 227, 0.2);
+}
+
+.btn-primary-tasks:hover {
+    background: var(--accent-hover);
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(0, 113, 227, 0.3);
+}
+
+/* CONTROLS WRAPPER - Single Row Layout */
+.tasks-controls-wrapper {
+    background: #ffffff;
+    border-radius: 14px;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+    border: 1px solid rgba(0, 0, 0, 0.04);
+    padding: 8px 12px;
+    /* Very compact vertical padding */
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+    flex-wrap: wrap;
+    /* Allow wrapping on very small screens */
+}
+
+/* 1. LEFT: Stats Group */
+.stats-group {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding-right: 12px;
+    border-right: 1px solid var(--border-light);
+    flex-shrink: 0;
+}
+
+.stat-chip {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 10px;
+    background: transparent;
+    /* Clean look */
+    border: 1px solid transparent;
+    /* No border by default */
+    border-radius: 8px;
+    color: var(--text-secondary);
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    height: 32px;
+    /* Fixed height match */
+}
+
+.stat-chip svg {
+    width: 14px;
+    height: 14px;
+    color: var(--text-tertiary);
+    /* Muted icons */
+}
+
+.stat-chip:hover {
+    background: var(--surface);
+    color: var(--text-primary);
+}
+
+.stat-chip:hover svg {
+    color: var(--text-secondary);
+}
+
+.stat-chip.highlight-red {
+    background: #fff5f5;
+    color: #e02424;
+}
+
+.stat-chip.highlight-red svg {
+    color: #e02424;
+}
+
+/* 2. MIDDLE: Search Box */
+.tasks-search {
+    flex: 1;
+    /* Takes available space */
+    position: relative;
+    min-width: 200px;
+    max-width: 450px;
+    /* Optional cap */
+}
+
+/* 3. RIGHT: Tools Group */
+.tools-group {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+}
+
+/* Common Height for all inputs/buttons */
+.tasks-search input,
+.filter-toggle,
+.view-toggle button,
+.group-by-selector select {
+    height: 36px;
+    /* Unified height */
+}
+
+/* Search Input Override */
+.tasks-search input {
+    width: 100%;
+    padding: 0 32px 0 36px;
+    background: var(--surface);
+    border: 1px solid transparent;
+    border-radius: 8px;
+    font-size: 13px;
+    transition: all 0.2s ease;
+}
+
+/* Toolbar Actions - Compact */
+.filter-toggle,
+.view-toggle button,
+.group-by-selector select {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 8px;
+    /* Consistent radius */
+    cursor: pointer;
+    transition: all 0.2s ease;
+    border: 1px solid transparent;
+}
+
+.filter-toggle {
+    padding: 0 12px;
+    background: var(--surface);
+    gap: 6px;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-secondary);
+}
+
+.view-toggle {
+    display: flex;
+    background: var(--surface);
+    padding: 3px;
+    border-radius: 10px;
+    /* Slightly larger wrapper */
+    gap: 2px;
+}
+
+.view-toggle button {
+    width: 36px;
+    /* Square buttons */
+    background: transparent;
+    color: var(--text-tertiary);
+    padding: 0;
+    /* Removing padding to center icon */
+}
+
+/* Larger Icons for View Toggle */
+.view-toggle button svg {
+    width: 18px;
+    height: 18px;
+}
+
+.view-toggle button.active {
+    background: #ffffff;
+    color: var(--accent);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+    /* Stronger shadow */
+}
+
+.group-by-selector {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.group-by-selector label {
+    font-size: 12px;
+    color: var(--text-secondary);
+    display: none;
+    /* Hide label on small screens or just rely on select */
+}
+
+@media (min-width: 1200px) {
+    .group-by-selector label {
+        display: block;
+    }
+}
+
+.group-by-selector select {
+    padding: 0 28px 0 10px;
+    border-radius: 8px;
+    border: 1px solid var(--border-light);
+    background-color: #ffffff;
+    font-size: 13px;
+    cursor: pointer;
+    min-width: 110px;
+}
+
+/* COMPACT FILTERS PANEL - Inline Layout */
+.tasks-filters {
+    margin-top: -8px;
+    padding: 12px 16px;
+    background: var(--surface);
+    border-radius: 0 0 12px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    animation: slideDown 0.2s ease-out;
+    border: 1px solid var(--border-light);
+    border-top: none;
+}
+
+/* Inline filter row: label + chips in one line */
+.filter-group {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.filter-group label {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    color: var(--text-tertiary);
+    min-width: 70px;
+    flex-shrink: 0;
+}
+
+.filter-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    align-items: center;
+}
+
+/* Smaller, more compact chips */
+.filter-chip {
+    padding: 4px 10px;
+    border-radius: 6px;
+    border: 1px solid var(--border-light);
+    background: #ffffff;
+    font-size: 12px;
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: all 0.15s ease;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    line-height: 1.2;
+}
+
+.filter-chip svg {
+    width: 12px;
+    height: 12px;
+}
+
+.filter-chip:hover {
+    border-color: var(--border);
+    color: var(--text-primary);
+    background: #fafafa;
+}
+
+.filter-chip.active {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: white;
+}
+
+/* PROJECT FILTER BANNER */
+.project-filter-banner {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 16px;
+    background: var(--level-1-accent);
+    border: 1px solid var(--level-1-border);
+    border-radius: 12px;
+    color: var(--accent);
+    font-size: 14px;
+    margin-bottom: 8px;
+}
+
+.clear-filter-btn {
+    margin-left: auto;
+    background: transparent;
+    border: none;
+    color: var(--accent);
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 8px;
+    border-radius: 6px;
+}
+
+.clear-filter-btn:hover {
+    background: rgba(0, 113, 227, 0.1);
+}
+
+/* MEDIA QUERIES FOR LAPTOP OPTIMIZATION */
+@media (min-width: 1024px) {
+    .tasks-toolbar {
+        flex-direction: row;
+        /* Ensure row on desktop */
+    }
+}

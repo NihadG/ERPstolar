@@ -20,6 +20,7 @@ import WorkersTab from '@/components/tabs/WorkersTab';
 import SuppliersTab from '@/components/tabs/SuppliersTab';
 import AttendanceTab from '@/components/tabs/AttendanceTab';
 import TasksTab from '@/components/tabs/TasksTab';
+import MobileTasksTab from '@/components/tabs/MobileTasksTab';
 import PlannerTab from '@/components/tabs/PlannerTab';
 import Toast from '@/components/ui/Toast';
 import LoadingOverlay from '@/components/ui/LoadingOverlay';
@@ -33,6 +34,18 @@ export const dynamic = 'force-dynamic';
 export default function Home() {
     const router = useRouter();
     const { user, organization, loading: authLoading, hasModule, firebaseUser } = useAuth();
+
+    // Mobile detection for responsive component switching
+    const [isMobile, setIsMobile] = useState(false);
+
+    useEffect(() => {
+        const checkMobile = () => {
+            setIsMobile(window.innerWidth < 768);
+        };
+        checkMobile();
+        window.addEventListener('resize', checkMobile);
+        return () => window.removeEventListener('resize', checkMobile);
+    }, []);
 
     const [activeTab, setActiveTab] = useState('projects');
     const [dropdownOpen, setDropdownOpen] = useState(false);
@@ -360,18 +373,33 @@ export default function Home() {
                     )}
 
                     {activeTab === 'tasks' && (
-                        <TasksTab
-                            tasks={appState.tasks}
-                            projects={appState.projects}
-                            workers={appState.workers}
-                            materials={appState.materials}
-                            workOrders={appState.workOrders}
-                            orders={appState.orders}
-                            onRefresh={loadData}
-                            showToast={showToast}
-                            projectFilter={tasksProjectFilter}
-                            onClearFilter={() => setTasksProjectFilter(null)}
-                        />
+                        isMobile ? (
+                            <MobileTasksTab
+                                tasks={appState.tasks}
+                                projects={appState.projects}
+                                workers={appState.workers}
+                                materials={appState.materials}
+                                workOrders={appState.workOrders}
+                                orders={appState.orders}
+                                onRefresh={loadData}
+                                showToast={showToast}
+                                projectFilter={tasksProjectFilter}
+                                onClearFilter={() => setTasksProjectFilter(null)}
+                            />
+                        ) : (
+                            <TasksTab
+                                tasks={appState.tasks}
+                                projects={appState.projects}
+                                workers={appState.workers}
+                                materials={appState.materials}
+                                workOrders={appState.workOrders}
+                                orders={appState.orders}
+                                onRefresh={loadData}
+                                showToast={showToast}
+                                projectFilter={tasksProjectFilter}
+                                onClearFilter={() => setTasksProjectFilter(null)}
+                            />
+                        )
                     )}
                 </main>
             </div>
