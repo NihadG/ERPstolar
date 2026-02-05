@@ -90,6 +90,7 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
     // Filter projects
     const filteredProjects = projects.filter(project => {
         const matchesSearch = project.Client_Name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+            project.Name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
             project.Address?.toLowerCase().includes(searchTerm.toLowerCase());
         const matchesStatus = !statusFilter || project.Status === statusFilter;
         return matchesSearch && matchesStatus;
@@ -519,7 +520,9 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
 
                                     <div className="project-main-info">
                                         <div className="project-title-section">
-                                            <div className="project-name">{project.Client_Name}</div>
+                                            <div className="project-name">{project.Name || project.Client_Name}</div>
+                                            {project.Name && <div className="project-client-subtitle">{project.Client_Name}</div>}
+                                            <div className="project-id-subtle">#{project.Project_ID.substring(0, 8)}</div>
                                         </div>
                                         <div className="project-details">
                                             {project.Address && <div className="project-client">{project.Address}</div>}
@@ -957,7 +960,9 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
 
                                             <div className="project-main-info">
                                                 <div className="project-title-section">
-                                                    <div className="project-name">{project.Client_Name}</div>
+                                                    <div className="project-name">{project.Name || project.Client_Name}</div>
+                                                    {project.Name && <div className="project-client-subtitle">{project.Client_Name}</div>}
+                                                    <div className="project-id-subtle">#{project.Project_ID.substring(0, 8)}</div>
                                                     <div className="project-badges">
                                                     </div>
                                                 </div>
@@ -1006,6 +1011,15 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                     </>
                 }
             >
+                <div className="form-group">
+                    <label>Naziv projekta</label>
+                    <input
+                        type="text"
+                        placeholder="npr. Kuhinja Begović, Renovacija stana Mostar"
+                        value={editingProject?.Name || ''}
+                        onChange={(e) => setEditingProject({ ...editingProject, Name: e.target.value })}
+                    />
+                </div>
                 <div className="form-group">
                     <label>Klijent *</label>
                     <input

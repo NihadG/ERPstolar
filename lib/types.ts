@@ -5,6 +5,7 @@
 export interface Project {
     Project_ID: string;
     Organization_ID: string;  // Multi-tenancy: isolate data by organization
+    Name?: string;  // Opisni naziv projekta (npr. "Kuhinja Begović")
     Client_Name: string;
     Client_Phone: string;
     Client_Email: string;
@@ -106,6 +107,7 @@ export interface AluDoorItem {
 export interface Offer {
     Offer_ID: string;
     Organization_ID: string;  // Multi-tenancy: isolate data by organization
+    Name?: string;  // Opisni naziv ponude (npr. "Renovacija apartmana")
     Project_ID: string;
     Offer_Number: string;
     Created_Date: string;
@@ -161,6 +163,7 @@ export interface OfferExtra {
 export interface Order {
     Order_ID: string;
     Organization_ID: string;  // Multi-tenancy: isolate data by organization
+    Name?: string;  // Opisni naziv narudžbe (npr. "Ploče za projekat Sarajevo")
     Order_Number: string;
     Supplier_ID: string;
     Supplier_Name: string;
@@ -276,6 +279,7 @@ export interface Task {
 export interface WorkOrder {
     Work_Order_ID: string;
     Organization_ID: string;  // Multi-tenancy: isolate data by organization
+    Name?: string;  // Opisni naziv radnog naloga (npr. "Stolovi za hotel")
     Work_Order_Number: string;
     Created_Date: string;
     Due_Date: string;

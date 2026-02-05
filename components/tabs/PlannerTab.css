@@ -442,6 +442,41 @@
     box-shadow: 0 0 0 2px white, 0 0 0 4px currentColor, 0 2px 6px rgba(0, 0, 0, 0.15);
 }
 
+/* Deadline Warning Styles */
+.gantt-bar.deadline-overdue {
+    animation: pulseOverdue 1.5s ease-in-out infinite;
+    box-shadow: 0 0 0 2px #ff3b30, 0 2px 6px rgba(255, 59, 48, 0.4);
+}
+
+.gantt-bar.deadline-approaching {
+    animation: pulseApproaching 2s ease-in-out infinite;
+    box-shadow: 0 0 0 2px #ff9500, 0 2px 6px rgba(255, 149, 0, 0.4);
+}
+
+@keyframes pulseOverdue {
+
+    0%,
+    100% {
+        box-shadow: 0 0 0 2px #ff3b30, 0 2px 6px rgba(255, 59, 48, 0.4);
+    }
+
+    50% {
+        box-shadow: 0 0 0 4px #ff3b30, 0 4px 12px rgba(255, 59, 48, 0.6);
+    }
+}
+
+@keyframes pulseApproaching {
+
+    0%,
+    100% {
+        box-shadow: 0 0 0 2px #ff9500, 0 2px 6px rgba(255, 149, 0, 0.4);
+    }
+
+    50% {
+        box-shadow: 0 0 0 3px #ff9500, 0 3px 10px rgba(255, 149, 0, 0.5);
+    }
+}
+
 .bar-content {
     display: flex;
     flex-direction: column;

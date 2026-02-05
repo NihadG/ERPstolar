@@ -18,6 +18,7 @@ import {
     Calendar,
     CheckSquare,
     Circle,
+    Check,
     CheckCircle2,
     Clock,
     AlertTriangle,
@@ -1491,17 +1492,7 @@ function TaskModal({ task, projects, products, workers, materials, workOrders, o
                         <h3>{isEdit ? 'Uredi zadatak' : 'Novi zadatak'}</h3>
                     </div>
                     <div className="header-actions">
-                        {!isEdit && (
-                            <VoiceInput
-                                onResult={handleVoiceResult}
-                                onError={handleVoiceError}
-                                onTranscript={setVoiceTranscript}
-                                context={{
-                                    projects: projects.map(p => p.Client_Name),
-                                    workers: workers.map(w => w.Name)
-                                }}
-                            />
-                        )}
+
                         <button className="close-btn" onClick={onClose}>
                             <X size={20} />
                         </button>
@@ -1733,14 +1724,31 @@ function TaskModal({ task, projects, products, workers, materials, workOrders, o
                     </div>
                 </div>
 
+                {/* Floating Voice Input */}
+
+
                 {/* Footer */}
-                <div className="task-modal-footer">
-                    <button className="btn-text" onClick={onClose}>
-                        Odustani
+                <div className="task-modal-footer redesigned-footer">
+                    <button className="btn-modal-action cancel" onClick={onClose} title="Odustani">
+                        <X size={24} />
                     </button>
-                    <button className="btn-primary-action" onClick={handleSubmit}>
-                        <Save size={16} />
-                        {isEdit ? 'Spremi promjene' : 'Kreiraj zadatak'}
+
+                    {!isEdit && (
+                        <div className="footer-voice-wrapper">
+                            <VoiceInput
+                                onResult={handleVoiceResult}
+                                onError={handleVoiceError}
+                                onTranscript={setVoiceTranscript}
+                                context={{
+                                    projects: projects.map(p => p.Client_Name),
+                                    workers: workers.map(w => w.Name)
+                                }}
+                            />
+                        </div>
+                    )}
+
+                    <button className="btn-modal-action save" onClick={handleSubmit} title={isEdit ? 'Spremi' : 'Kreiraj'}>
+                        {isEdit ? <Save size={24} /> : <Check size={24} />}
                     </button>
                 </div>
             </div>

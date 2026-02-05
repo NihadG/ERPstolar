@@ -77,8 +77,8 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
 
     // Load company info from localStorage on mount
     useMemo(() => {
-        if (typeof window !== 'undefined') {
-            const saved = localStorage.getItem('companyInfo');
+        if (typeof window !== 'undefined' && organizationId) {
+            const saved = localStorage.getItem(`companyInfo_${organizationId}`);
             if (saved) {
                 try {
                     const parsed = JSON.parse(saved);
@@ -86,7 +86,7 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
                 } catch (e) { /* ignore */ }
             }
         }
-    }, []);
+    }, [organizationId]);
 
     // Handle pending order materials from Overview tab
     useEffect(() => {
@@ -174,7 +174,8 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
             // Search filter
             const matchesSearch = !searchTerm.trim() ||
                 order.Order_Number?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                order.Supplier_Name?.toLowerCase().includes(searchTerm.toLowerCase());
+                order.Supplier_Name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                order.Name?.toLowerCase().includes(searchTerm.toLowerCase());
 
             // Status filter
             const matchesStatus = !statusFilter || order.Status === statusFilter;
@@ -1134,7 +1135,8 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
 
                                                     <div className="order-info-group">
                                                         <div className="order-top-row">
-                                                            <span className="order-id-text">{order.Order_Number}</span>
+                                                            <span className="order-id-text">{order.Name || order.Order_Number}</span>
+                                                            {order.Name && <span style={{ fontSize: '11px', color: '#9ca3af', fontWeight: 400 }}>#{order.Order_Number}</span>}
                                                             {groupBy !== 'project' && projectName !== 'N/A' && (
                                                                 <span className="order-project-text">{projectName}</span>
                                                             )}

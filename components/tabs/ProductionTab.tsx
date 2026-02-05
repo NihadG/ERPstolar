@@ -98,7 +98,8 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
 
     // Filter Logic
     const filteredWorkOrders = workOrders.filter(wo => {
-        const matchesSearch = wo.Work_Order_Number?.toLowerCase().includes(searchTerm.toLowerCase());
+        const matchesSearch = wo.Work_Order_Number?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+            wo.Name?.toLowerCase().includes(searchTerm.toLowerCase());
         const matchesStatus = !statusFilter || wo.Status === statusFilter;
         return matchesSearch && matchesStatus;
     });
@@ -719,7 +720,8 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                     <div className="project-main-info">
                         <div className="project-title-section">
                             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                <div className="project-name">{wo.Work_Order_Number}</div>
+                                <div className="project-name">{wo.Name || wo.Work_Order_Number}</div>
+                                {wo.Name && <span style={{ fontSize: '11px', color: '#9ca3af', fontWeight: 400 }}>#{wo.Work_Order_Number}</span>}
                                 <span style={{
                                     display: 'flex',
                                     alignItems: 'center',

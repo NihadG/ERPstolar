@@ -95,6 +95,22 @@ const getProjectName = (wo: WorkOrder): string => {
     return 'Nepoznat projekt';
 };
 
+// Get deadline warning status
+const getDeadlineWarning = (wo: WorkOrder): 'overdue' | 'approaching' | 'ok' => {
+    if (!wo.Due_Date || wo.Status === 'Završeno') return 'ok';
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const dueDate = new Date(wo.Due_Date);
+    dueDate.setHours(0, 0, 0, 0);
+
+    const daysUntilDue = Math.ceil((dueDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+
+    if (daysUntilDue < 0) return 'overdue';
+    if (daysUntilDue <= 2) return 'approaching';
+    return 'ok';
+};
+
 export default function PlannerTab({ workOrders, workers, onRefresh, showToast }: PlannerTabProps) {
     const { organization } = useAuth();
     const orgId = organization?.Organization_ID || '';
@@ -208,6 +224,12 @@ export default function PlannerTab({ workOrders, workers, onRefresh, showToast }
 
     const submitSchedule = async (forceSchedule: boolean = false) => {
         if (!scheduleModal.wo || !orgId || submitting) return;
+
+        // Validate dates: end date must be >= start date
+        if (new Date(scheduleModal.end) < new Date(scheduleModal.start)) {
+            showToast('Krajnji datum mora biti jednak ili nakon početnog datuma', 'error');
+            return;
+        }
 
         setSubmitting(true);
         try {
@@ -498,21 +520,26 @@ export default function PlannerTab({ workOrders, workers, onRefresh, showToast }
                                                 const color = getStatusColor(wo);
                                                 const statusInfo = getStatusLabel(wo);
                                                 const StatusIcon = statusInfo.icon;
+                                                const deadlineStatus = getDeadlineWarning(wo);
 
                                                 return (
                                                     <div
                                                         key={wo.Work_Order_ID}
-                                                        className="gantt-bar"
+                                                        className={`gantt-bar ${deadlineStatus !== 'ok' ? `deadline-${deadlineStatus}` : ''}`}
                                                         style={{
                                                             left: pos.left + 2,
                                                             width: pos.width - 4,
                                                             backgroundColor: color
                                                         }}
-                                                        title={`${getProjectName(wo)} (${wo.Work_Order_Number})`}
+                                                        title={`${getProjectName(wo)} (${wo.Work_Order_Number})${deadlineStatus === 'overdue' ? ' ⚠️ ROK PREKORAČEN!' : deadlineStatus === 'approaching' ? ' ⏰ Rok se približava' : ''}`}
                                                         onClick={() => openDetailPanel(wo)}
                                                     >
                                                         <div className="bar-content">
-                                                            <span className="bar-project">{getProjectName(wo)}</span>
+                                                            <span className="bar-project">
+                                                                {deadlineStatus === 'overdue' && <AlertTriangle size={10} style={{ marginRight: 3, color: '#fff' }} />}
+                                                                {deadlineStatus === 'approaching' && <AlertCircle size={10} style={{ marginRight: 3, color: '#fff' }} />}
+                                                                {getProjectName(wo)}
+                                                            </span>
                                                             <span className="bar-status">
                                                                 <StatusIcon size={10} />
                                                                 {statusInfo.text}

@@ -90,8 +90,8 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
 
     // Load company info from localStorage on mount (read-only, managed in Settings)
     useMemo(() => {
-        if (typeof window !== 'undefined') {
-            const saved = localStorage.getItem('companyInfo');
+        if (typeof window !== 'undefined' && organizationId) {
+            const saved = localStorage.getItem(`companyInfo_${organizationId}`);
             if (saved) {
                 try {
                     const parsed = JSON.parse(saved);
@@ -99,7 +99,7 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
                 } catch (e) { /* ignore */ }
             }
         }
-    }, []);
+    }, [organizationId]);
 
     // App Settings (read from Settings page, stored in localStorage)
     const [appSettings, setAppSettings] = useState({
@@ -112,8 +112,8 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
 
     // Load app settings from localStorage on mount
     useMemo(() => {
-        if (typeof window !== 'undefined') {
-            const saved = localStorage.getItem('appSettings');
+        if (typeof window !== 'undefined' && organizationId) {
+            const saved = localStorage.getItem(`appSettings_${organizationId}`);
             if (saved) {
                 try {
                     const parsed = JSON.parse(saved);
@@ -121,7 +121,7 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
                 } catch (e) { /* ignore */ }
             }
         }
-    }, []);
+    }, [organizationId]);
 
     const filteredOffers = offers.filter(offer => {
         const matchesSearch = offer.Offer_Number?.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -1217,7 +1217,8 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
                         <div key={offer.Offer_ID} className="offer-card">
                             <div className="offer-card-header">
                                 <div className="offer-card-info">
-                                    <div className="offer-number">{offer.Offer_Number}</div>
+                                    <div className="offer-number">{offer.Name || offer.Offer_Number}</div>
+                                    {offer.Name && <div style={{ fontSize: '11px', color: '#9ca3af', fontWeight: 400 }}>#{offer.Offer_Number}</div>}
                                     <div className="offer-client">{offer.Client_Name || 'Nepoznat klijent'}</div>
                                     <div className="offer-date">Kreirano: {formatDate(offer.Created_Date)}</div>
                                 </div>
