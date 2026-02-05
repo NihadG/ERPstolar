@@ -3,47 +3,94 @@ import { SpeechClient } from '@google-cloud/speech';
 
 // Parse private key - handles various formats from environment variables
 function parsePrivateKey(key: string | undefined): string | undefined {
-    if (!key) return undefined;
+    if (!key) {
+        console.error('parsePrivateKey: Key is undefined or empty');
+        return undefined;
+    }
 
-    // Check if it's base64 encoded (doesn't start with header)
-    if (!key.includes('-----BEGIN PRIVATE KEY-----')) {
+    // Diagnostic logging (masked)
+    const keyStart = key.substring(0, 20);
+    const keyEnd = key.substring(key.length - 20);
+    console.log(`parsePrivateKey: Input key length: ${key.length}, Starts with: '${keyStart}', Ends with: '${keyEnd}'`);
+
+    let parsed = key;
+
+    // Check if it's base64 encoded (doesn't start with header and doesn't look like JSON)
+    if (!key.includes('-----BEGIN PRIVATE KEY-----') && !key.trim().startsWith('{')) {
         try {
             const decoded = Buffer.from(key, 'base64').toString('utf-8');
             if (decoded.includes('-----BEGIN PRIVATE KEY-----')) {
-                return decoded;
+                console.log('parsePrivateKey: Successfully decoded base64 key');
+                parsed = decoded;
             }
         } catch (e) {
-            // Not a valid base64 or failed to decode, continue to other checks
+            // Not a valid base64 or failed to decode
         }
     }
 
-    // If it's already properly formatted (contains actual newlines)
-    if (key.includes('-----BEGIN') && key.includes('\n')) {
-        return key;
+    // Clean up formatting
+    if (parsed.includes('\\n')) {
+        // Replace escaped newlines (\\n) with actual newlines
+        parsed = parsed.replace(/\\n/g, '\n');
+        console.log('parsePrivateKey: Replaced escaped newlines');
     }
 
-    // Replace escaped newlines (\\n) with actual newlines
-    let parsed = key.replace(/\\n/g, '\n');
-
     // Handle double-escaped newlines (\\\\n)
-    parsed = parsed.replace(/\\\\n/g, '\n');
+    if (parsed.includes('\\\\n')) {
+        parsed = parsed.replace(/\\\\n/g, '\n');
+    }
 
-    // If it was JSON-stringified (starts with quotes), try to parse
+    // Attempt JSON parse if it looks like a JSON string
     if (parsed.startsWith('"') && parsed.endsWith('"')) {
         try {
             parsed = JSON.parse(parsed);
+            console.log('parsePrivateKey: Parsed from JSON string');
         } catch (e) {
-            // Ignore parse errors, use as-is
+            // Ignore parse errors
         }
     }
+
+    // FINAL FIX: Ensure headers are on their own lines if they aren't already
+    // This fixes cases where the key is "flattened"
+    if (parsed.includes('-----BEGIN PRIVATE KEY-----')) {
+        const header = '-----BEGIN PRIVATE KEY-----';
+        const footer = '-----END PRIVATE KEY-----';
+
+        if (!parsed.includes(header + '\n')) {
+            parsed = parsed.replace(header, header + '\n');
+        }
+        if (!parsed.includes('\n' + footer)) {
+            parsed = parsed.replace(footer, '\n' + footer);
+        }
+    }
+
+    // Verify final result structure
+    const hasHeader = parsed.includes('-----BEGIN PRIVATE KEY-----');
+    const hasFooter = parsed.includes('-----END PRIVATE KEY-----');
+    const newlineCount = (parsed.match(/\n/g) || []).length;
+
+    console.log(`parsePrivateKey: Result validation - Header: ${hasHeader}, Footer: ${hasFooter}, Newlines: ${newlineCount}`);
 
     return parsed;
 }
 
 // Initialize Speech client with credentials from environment
 function getSpeechClient(): SpeechClient {
+    console.log('getSpeechClient: Initializing Google Cloud Speech Client...');
+    console.log('Environment check:', {
+        projectId: !!process.env.GOOGLE_CLOUD_PROJECT_ID,
+        clientEmail: !!process.env.GOOGLE_CLOUD_CLIENT_EMAIL,
+        privateKeyVar: !!process.env.GOOGLE_CLOUD_PRIVATE_KEY,
+        privateKeyBase64Var: !!process.env.GOOGLE_CLOUD_PRIVATE_KEY_BASE64
+    });
+
     // Try Base64 specific var first, then the standard one
-    const privateKey = parsePrivateKey(process.env.GOOGLE_CLOUD_PRIVATE_KEY_BASE64 || process.env.GOOGLE_CLOUD_PRIVATE_KEY);
+    const rawKey = process.env.GOOGLE_CLOUD_PRIVATE_KEY_BASE64 || process.env.GOOGLE_CLOUD_PRIVATE_KEY;
+    const privateKey = parsePrivateKey(rawKey);
+
+    if (!privateKey) {
+        console.error('getSpeechClient: Failed to parse private key!');
+    }
 
     const credentials = {
         projectId: process.env.GOOGLE_CLOUD_PROJECT_ID,
@@ -106,7 +153,7 @@ export async function POST(request: NextRequest) {
 
         // Extract transcription
         const transcription = response.results
-            ?.map(result => result.alternatives?.[0]?.transcript)
+            ?.map((result: any) => result.alternatives?.[0]?.transcript)
             .filter(Boolean)
             .join(' ') || '';
 
