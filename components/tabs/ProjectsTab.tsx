@@ -147,7 +147,27 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
     }
 
     function openProductModal(projectId: string, product?: Product) {
-        setEditingProduct(product ? { ...product } : { projectId, Quantity: 1 });
+        if (product) {
+            // Editing existing product
+            setEditingProduct({ ...product });
+        } else {
+            // New product - calculate next position number
+            const project = projects.find(p => p.Project_ID === projectId);
+            const existingProducts = project?.products || [];
+
+            // Find the highest Poz number
+            let maxPoz = 0;
+            existingProducts.forEach(prod => {
+                const match = prod.Name?.match(/^Poz\s*(\d+)/i);
+                if (match) {
+                    const pozNum = parseInt(match[1], 10);
+                    if (pozNum > maxPoz) maxPoz = pozNum;
+                }
+            });
+
+            const nextPoz = maxPoz + 1;
+            setEditingProduct({ projectId, Quantity: 1, Name: `Poz ${nextPoz} - ` });
+        }
         setProductModal(true);
     }
 

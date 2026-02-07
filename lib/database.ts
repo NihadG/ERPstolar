@@ -787,6 +787,64 @@ export async function deleteMaterial(materialId: string, organizationId: string)
     }
 }
 
+export async function deleteDuplicateMaterials(organizationId: string): Promise<{ success: boolean; deletedCount: number; message: string }> {
+    if (!organizationId) {
+        return { success: false, deletedCount: 0, message: 'Organization ID is required' };
+    }
+
+    try {
+        const materials = await getMaterialsCatalog(organizationId);
+
+        // Group materials by Name + Default_Unit_Price
+        const groupedMaterials = new Map<string, Material[]>();
+
+        materials.forEach(mat => {
+            const key = `${mat.Name.toLowerCase().trim()}|${mat.Default_Unit_Price || 0}`;
+            if (!groupedMaterials.has(key)) {
+                groupedMaterials.set(key, []);
+            }
+            groupedMaterials.get(key)!.push(mat);
+        });
+
+        // Find duplicates (groups with more than 1 material)
+        let deletedCount = 0;
+        const batch = writeBatch(db);
+
+        for (const [, group] of Array.from(groupedMaterials)) {
+            if (group.length > 1) {
+                // Keep the first one, delete the rest
+                for (let i = 1; i < group.length; i++) {
+                    const q = query(
+                        collection(db, COLLECTIONS.MATERIALS_DB),
+                        where('Material_ID', '==', group[i].Material_ID),
+                        where('Organization_ID', '==', organizationId)
+                    );
+                    const snapshot = await getDocs(q);
+                    if (!snapshot.empty) {
+                        batch.delete(snapshot.docs[0].ref);
+                        deletedCount++;
+                    }
+                }
+            }
+        }
+
+        if (deletedCount > 0) {
+            await batch.commit();
+        }
+
+        return {
+            success: true,
+            deletedCount,
+            message: deletedCount > 0
+                ? `Obrisano ${deletedCount} duplikata`
+                : 'Nema duplikata za brisanje'
+        };
+    } catch (error) {
+        console.error('deleteDuplicateMaterials error:', error);
+        return { success: false, deletedCount: 0, message: 'Greška pri brisanju duplikata' };
+    }
+}
+
 // ============================================
 // SUPPLIERS CRUD (Multi-tenancy enabled)
 // ============================================
@@ -2000,6 +2058,7 @@ export async function addGlassMaterialToProduct(data: AddGlassMaterialData, orga
             Status: 'Nije naručeno',
             Supplier: data.supplier || '',
             Order_ID: '',
+            Organization_ID: organizationId,
         };
 
         await addDoc(collection(db, COLLECTIONS.PRODUCT_MATERIALS), pmData);
@@ -2218,6 +2277,7 @@ export async function addAluDoorMaterialToProduct(data: AddAluDoorMaterialData, 
             Status: 'Nije naručeno',
             Supplier: data.supplier || '',
             Order_ID: '',
+            Organization_ID: organizationId,
         };
 
         await addDoc(collection(db, COLLECTIONS.PRODUCT_MATERIALS), pmData);

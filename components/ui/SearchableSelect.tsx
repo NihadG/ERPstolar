@@ -41,8 +41,8 @@ export function SearchableSelect({ options, value, onChange, placeholder = 'Pret
         if (isOpen && wrapperRef.current) {
             const rect = wrapperRef.current.getBoundingClientRect();
             setDropdownPosition({
-                top: rect.bottom + window.scrollY,
-                left: rect.left + window.scrollX,
+                top: rect.bottom,
+                left: rect.left,
                 width: rect.width
             });
         }
@@ -187,7 +187,7 @@ export function SearchableSelect({ options, value, onChange, placeholder = 'Pret
                 }
 
                 :global(.searchable-select-dropdown) {
-                    position: absolute;
+                    position: fixed;
                     background: white;
                     border: 1px solid rgba(0,0,0,0.1);
                     border-radius: 12px;

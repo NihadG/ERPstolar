@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import type { Material } from '@/lib/types';
-import { saveMaterial, deleteMaterial } from '@/lib/database';
+import { saveMaterial, deleteMaterial, deleteDuplicateMaterials } from '@/lib/database';
 import { useData } from '@/context/DataContext';
 import Modal from '@/components/ui/Modal';
 import { MATERIAL_CATEGORIES } from '@/lib/types';
@@ -20,6 +20,7 @@ export default function MaterialsTab({ materials, onRefresh, showToast }: Materi
     const [categoryFilter, setCategoryFilter] = useState('');
     const [materialModal, setMaterialModal] = useState(false);
     const [editingMaterial, setEditingMaterial] = useState<Partial<Material> | null>(null);
+    const [removingDuplicates, setRemovingDuplicates] = useState(false);
 
     const filteredMaterials = materials.filter(material => {
         const matchesSearch = material.Name.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -69,6 +70,29 @@ export default function MaterialsTab({ materials, onRefresh, showToast }: Materi
         }
     }
 
+    async function handleRemoveDuplicates() {
+        if (!confirm('Obrisati sve materijale sa identičnim nazivom i cijenom? Ostat će samo po jedan od svakog.')) return;
+        if (!organizationId) {
+            showToast('Organization ID is required', 'error');
+            return;
+        }
+
+        setRemovingDuplicates(true);
+        try {
+            const result = await deleteDuplicateMaterials(organizationId);
+            if (result.success) {
+                showToast(result.message, result.deletedCount > 0 ? 'success' : 'info');
+                if (result.deletedCount > 0) {
+                    onRefresh();
+                }
+            } else {
+                showToast(result.message, 'error');
+            }
+        } finally {
+            setRemovingDuplicates(false);
+        }
+    }
+
     return (
         <div className="tab-content active" id="materials-content">
             <div className="content-header">
@@ -91,6 +115,15 @@ export default function MaterialsTab({ materials, onRefresh, showToast }: Materi
                         <option key={category} value={category}>{category}</option>
                     ))}
                 </select>
+                <button
+                    className="btn btn-secondary"
+                    onClick={handleRemoveDuplicates}
+                    disabled={removingDuplicates}
+                    title="Obriši duplikate materijala (isti naziv i cijena)"
+                >
+                    <span className="material-icons-round">delete_sweep</span>
+                    {removingDuplicates ? 'Brisanje...' : 'Obriši Duplikate'}
+                </button>
                 <button className="btn btn-primary" onClick={() => openMaterialModal()}>
                     <span className="material-icons-round">add</span>
                     Novi Materijal

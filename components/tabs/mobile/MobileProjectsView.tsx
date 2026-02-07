@@ -45,25 +45,40 @@ export default function MobileProjectsView({
     const [searchTerm, setSearchTerm] = useState('');
     const [statusFilter, setStatusFilter] = useState('');
     const [expandedProjectId, setExpandedProjectId] = useState<string | null>(null);
-    const [expandedProductIds, setExpandedProductIds] = useState<Set<string>>(new Set());
+    const [expandedProductId, setExpandedProductId] = useState<string | null>(null);
+
+    // Focus Mode: when a project is expanded, only show that project
+    const isInFocusMode = expandedProjectId !== null;
+    const isInProductFocusMode = expandedProductId !== null;
 
     function toggleProject(projectId: string, e: React.MouseEvent) {
-        // Don't toggle if clicking actions
         if ((e.target as HTMLElement).closest('button')) return;
-        setExpandedProjectId(prev => prev === projectId ? null : projectId);
+        if (expandedProjectId === projectId) {
+            // Collapse project and reset product
+            setExpandedProjectId(null);
+            setExpandedProductId(null);
+        } else {
+            // Expand this project, collapse any expanded product
+            setExpandedProjectId(projectId);
+            setExpandedProductId(null);
+        }
     }
 
     function toggleProduct(productId: string, e: React.MouseEvent) {
-        e.stopPropagation(); // prevent closing the project card
+        e.stopPropagation();
         if ((e.target as HTMLElement).closest('button')) return;
 
-        const newExpanded = new Set(expandedProductIds);
-        if (newExpanded.has(productId)) {
-            newExpanded.delete(productId);
-        } else {
-            newExpanded.add(productId);
-        }
-        setExpandedProductIds(newExpanded);
+        // Toggle single product (focus mode for products)
+        setExpandedProductId(prev => prev === productId ? null : productId);
+    }
+
+    function exitFocusMode() {
+        setExpandedProjectId(null);
+        setExpandedProductId(null);
+    }
+
+    function exitProductFocusMode() {
+        setExpandedProductId(null);
     }
 
     // Helper to determine edit action
@@ -80,8 +95,26 @@ export default function MobileProjectsView({
         }
     }
 
+    // Natural sort for "Poz X" product names (supports decimals: 1, 1.1, 1.2, 2, 10)
+    function sortProductsByPosition(products: Product[]): Product[] {
+        return [...products].sort((a, b) => {
+            // Extract position numbers from names like "Poz 1 - Kitchen", "Poz 1.2 - Table"
+            const extractPoz = (name: string): number => {
+                const match = name?.match(/^Poz\s*(\d+(?:\.\d+)?)/i);
+                return match ? parseFloat(match[1]) : Infinity;
+            };
+
+            const pozA = extractPoz(a.Name || '');
+            const pozB = extractPoz(b.Name || '');
+
+            if (pozA !== pozB) return pozA - pozB;
+            // If same position, sort alphabetically
+            return (a.Name || '').localeCompare(b.Name || '');
+        });
+    }
+
     const filteredProjects = useMemo(() => {
-        return projects.filter(project => {
+        let result = projects.filter(project => {
             const term = searchTerm?.toLowerCase() || '';
             const matchesSearch =
                 (project.Client_Name?.toLowerCase() || '').includes(term) ||
@@ -90,7 +123,14 @@ export default function MobileProjectsView({
             const matchesStatus = !statusFilter || project.Status === statusFilter;
             return matchesSearch && matchesStatus;
         });
-    }, [projects, searchTerm, statusFilter]);
+
+        // Focus Mode: only show expanded project
+        if (isInFocusMode) {
+            result = result.filter(p => p.Project_ID === expandedProjectId);
+        }
+
+        return result;
+    }, [projects, searchTerm, statusFilter, isInFocusMode, expandedProjectId]);
 
     const getStatusColor = (status: string) => {
         switch (status) {
@@ -126,24 +166,34 @@ export default function MobileProjectsView({
                 </button>
             </div>
 
-            {/* Filter Pills */}
-            <div className="filter-scroll">
-                <button
-                    className={`filter-pill ${statusFilter === '' ? 'active' : ''}`}
-                    onClick={() => setStatusFilter('')}
-                >
-                    Sve
-                </button>
-                {PROJECT_STATUSES.map(status => (
+            {/* Filter Pills - Hidden in Focus Mode */}
+            {!isInFocusMode && (
+                <div className="filter-scroll">
                     <button
-                        key={status}
-                        className={`filter-pill ${statusFilter === status ? 'active' : ''}`}
-                        onClick={() => setStatusFilter(status)}
+                        className={`filter-pill ${statusFilter === '' ? 'active' : ''}`}
+                        onClick={() => setStatusFilter('')}
                     >
-                        {status}
+                        Sve
                     </button>
-                ))}
-            </div>
+                    {PROJECT_STATUSES.map(status => (
+                        <button
+                            key={status}
+                            className={`filter-pill ${statusFilter === status ? 'active' : ''}`}
+                            onClick={() => setStatusFilter(status)}
+                        >
+                            {status}
+                        </button>
+                    ))}
+                </div>
+            )}
+
+            {/* Back Button for Focus Mode */}
+            {isInFocusMode && (
+                <button className="focus-back-btn" onClick={exitFocusMode}>
+                    <span className="material-icons-round">arrow_back</span>
+                    Svi Projekti
+                </button>
+            )}
 
             {/* Projects List */}
             <div className="mobile-list">
@@ -169,7 +219,7 @@ export default function MobileProjectsView({
                                     </span>
                                 </div>
                                 {project.Name && <div className="mp-subtitle">{project.Name}</div>}
-                                {project.Address && <div className="mp-address">📍 {project.Address}</div>}
+                                {project.Address && <div className="mp-address">{project.Address}</div>}
                             </div>
 
                             <div className="mp-stats">
@@ -185,128 +235,141 @@ export default function MobileProjectsView({
                             {/* Expanded Content: Products */}
                             {isExpanded && (
                                 <div className="mp-products-section">
-                                    <div className="label-row">
-                                        <span>Proizvodi</span>
-                                        <button
-                                            className="mobile-add-tiny-btn"
-                                            onClick={(e) => {
-                                                e.stopPropagation();
-                                                onOpenProductModal(project.Project_ID);
-                                            }}
-                                        >
-                                            <span className="material-icons-round">add</span>
-                                            Dodaj
+                                    {/* Back Button for Product Focus Mode */}
+                                    {isInProductFocusMode && (
+                                        <button className="focus-back-btn small" onClick={(e) => { e.stopPropagation(); exitProductFocusMode(); }}>
+                                            <span className="material-icons-round">arrow_back</span>
+                                            Svi Proizvodi
                                         </button>
-                                    </div>
+                                    )}
+
+                                    {!isInProductFocusMode && (
+                                        <div className="label-row">
+                                            <span>Proizvodi</span>
+                                            <button
+                                                className="mobile-add-tiny-btn"
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    onOpenProductModal(project.Project_ID);
+                                                }}
+                                            >
+                                                <span className="material-icons-round">add</span>
+                                            </button>
+                                        </div>
+                                    )}
 
                                     <div className="mp-products-list">
-                                        {project.products?.map((product, idx) => {
-                                            const isProdExpanded = expandedProductIds.has(product.Product_ID);
-                                            return (
-                                                <div
-                                                    key={idx}
-                                                    className={`mp-product-card ${isProdExpanded ? 'expanded' : ''}`}
-                                                    onClick={(e) => toggleProduct(product.Product_ID, e)}
-                                                >
-                                                    <div className="img-ph-actions-row">
-                                                        <div className="mpp-header">
-                                                            <span className="mpp-name">{product.Name}</span>
-                                                            <span className="mpp-qty">x{product.Quantity}</span>
-                                                        </div>
-                                                        <div className="mp-prod-buttons">
-                                                            <button
-                                                                className="mini-btn"
-                                                                onClick={(e) => {
-                                                                    e.stopPropagation();
-                                                                    onOpenProductModal(project.Project_ID, product);
-                                                                }}
-                                                            >
-                                                                <span className="material-icons-round">edit</span>
-                                                            </button>
-                                                            <button
-                                                                className="mini-btn danger"
-                                                                onClick={(e) => {
-                                                                    e.stopPropagation();
-                                                                    onDeleteProduct(product.Product_ID);
-                                                                }}
-                                                            >
-                                                                <span className="material-icons-round">delete</span>
-                                                            </button>
-                                                        </div>
-                                                    </div>
-
-                                                    <div className="mpp-dims">
-                                                        {product.Width && `${product.Width}×${product.Height}×${product.Depth}mm`}
-                                                    </div>
-
-                                                    {/* Materials Summary (When Collapsed) */}
-                                                    {!isProdExpanded && (product.materials && product.materials.length > 0) && (
-                                                        <div className="mpp-materials-summary">
-                                                            <span className="material-icons-round tiny">layers</span>
-                                                            {product.materials.length} materijala
-                                                            <span className="material-icons-round tiny" style={{ marginLeft: 'auto' }}>expand_more</span>
-                                                        </div>
-                                                    )}
-
-                                                    {/* Expanded Product Content: Materials */}
-                                                    {isProdExpanded && (
-                                                        <div className="mpp-expanded-materials">
-                                                            <div className="mpp-mat-header">
-                                                                <span>Materijali ({product.materials?.length || 0})</span>
+                                        {sortProductsByPosition(project.products || [])
+                                            .filter(p => !isInProductFocusMode || expandedProductId === p.Product_ID)
+                                            .map((product, idx) => {
+                                                const isProdExpanded = expandedProductId === product.Product_ID;
+                                                return (
+                                                    <div
+                                                        key={idx}
+                                                        className={`mp-product-card ${isProdExpanded ? 'expanded' : ''}`}
+                                                        onClick={(e) => toggleProduct(product.Product_ID, e)}
+                                                    >
+                                                        <div className="img-ph-actions-row">
+                                                            <div className="mpp-header">
+                                                                <span className="mpp-name">{product.Name}</span>
+                                                                <span className="mpp-qty">x{product.Quantity}</span>
+                                                            </div>
+                                                            <div className="mp-prod-buttons">
                                                                 <button
-                                                                    className="mobile-add-tiny-btn"
+                                                                    className="mini-btn"
                                                                     onClick={(e) => {
                                                                         e.stopPropagation();
-                                                                        onOpenMaterialModal(product.Product_ID);
+                                                                        onOpenProductModal(project.Project_ID, product);
                                                                     }}
                                                                 >
-                                                                    <span className="material-icons-round">add</span>
+                                                                    <span className="material-icons-round">edit</span>
                                                                 </button>
-                                                            </div>
-
-                                                            <div className="mpp-materials-list detailed">
-                                                                {product.materials?.map((mat, mIdx) => (
-                                                                    <div key={mIdx} className="mpp-material-item-detailed">
-                                                                        <div className="m-info">
-                                                                            <span className="m-name">{mat.Material_Name}</span>
-                                                                            <span className="m-detail">
-                                                                                {mat.Quantity} {mat.Unit} × {formatCurrency(mat.Unit_Price)}
-                                                                            </span>
-                                                                            <span className="m-total">
-                                                                                Ukupno: <strong>{formatCurrency(mat.Total_Price || 0)}</strong>
-                                                                            </span>
-                                                                        </div>
-                                                                        <div className="m-actions">
-                                                                            <button
-                                                                                className="mini-btn"
-                                                                                onClick={(e) => {
-                                                                                    e.stopPropagation();
-                                                                                    handleMaterialEdit(product.Product_ID, mat);
-                                                                                }}
-                                                                            >
-                                                                                <span className="material-icons-round">edit</span>
-                                                                            </button>
-                                                                            <button
-                                                                                className="mini-btn danger"
-                                                                                onClick={(e) => {
-                                                                                    e.stopPropagation();
-                                                                                    onDeleteMaterial(mat.ID);
-                                                                                }}
-                                                                            >
-                                                                                <span className="material-icons-round">delete</span>
-                                                                            </button>
-                                                                        </div>
-                                                                    </div>
-                                                                ))}
-                                                                {(!product.materials || product.materials.length === 0) && (
-                                                                    <div className="mp-no-data">Nema materijala</div>
+                                                                {isProdExpanded && (
+                                                                    <button
+                                                                        className="mini-btn danger"
+                                                                        onClick={(e) => {
+                                                                            e.stopPropagation();
+                                                                            onDeleteProduct(product.Product_ID);
+                                                                        }}
+                                                                    >
+                                                                        <span className="material-icons-round">delete</span>
+                                                                    </button>
                                                                 )}
                                                             </div>
                                                         </div>
-                                                    )}
-                                                </div>
-                                            );
-                                        })}
+
+                                                        <div className="mpp-dims">
+                                                            {product.Width && `${product.Width}×${product.Height}×${product.Depth}mm`}
+                                                        </div>
+
+                                                        {/* Materials Summary (When Collapsed) */}
+                                                        {!isProdExpanded && (product.materials && product.materials.length > 0) && (
+                                                            <div className="mpp-materials-summary">
+                                                                <span className="material-icons-round tiny">layers</span>
+                                                                {product.materials.length} materijala
+                                                                <span className="material-icons-round tiny" style={{ marginLeft: 'auto' }}>expand_more</span>
+                                                            </div>
+                                                        )}
+
+                                                        {/* Expanded Product Content: Materials */}
+                                                        {isProdExpanded && (
+                                                            <div className="mpp-expanded-materials">
+                                                                <div className="mpp-mat-header">
+                                                                    <span>Materijali ({product.materials?.length || 0})</span>
+                                                                    <button
+                                                                        className="mobile-add-tiny-btn"
+                                                                        onClick={(e) => {
+                                                                            e.stopPropagation();
+                                                                            onOpenMaterialModal(product.Product_ID);
+                                                                        }}
+                                                                    >
+                                                                        <span className="material-icons-round">add</span>
+                                                                    </button>
+                                                                </div>
+
+                                                                <div className="mpp-materials-list detailed">
+                                                                    {product.materials?.map((mat, mIdx) => (
+                                                                        <div key={mIdx} className="mpp-material-item-detailed">
+                                                                            <div className="m-info">
+                                                                                <span className="m-name">{mat.Material_Name}</span>
+                                                                                <span className="m-detail">
+                                                                                    {mat.Quantity} {mat.Unit} × {formatCurrency(mat.Unit_Price)}
+                                                                                </span>
+                                                                                <span className="m-total">
+                                                                                    Ukupno: <strong>{formatCurrency(mat.Total_Price || 0)}</strong>
+                                                                                </span>
+                                                                            </div>
+                                                                            <div className="m-actions">
+                                                                                <button
+                                                                                    className="mini-btn"
+                                                                                    onClick={(e) => {
+                                                                                        e.stopPropagation();
+                                                                                        handleMaterialEdit(product.Product_ID, mat);
+                                                                                    }}
+                                                                                >
+                                                                                    <span className="material-icons-round">edit</span>
+                                                                                </button>
+                                                                                <button
+                                                                                    className="mini-btn danger"
+                                                                                    onClick={(e) => {
+                                                                                        e.stopPropagation();
+                                                                                        onDeleteMaterial(mat.ID);
+                                                                                    }}
+                                                                                >
+                                                                                    <span className="material-icons-round">delete</span>
+                                                                                </button>
+                                                                            </div>
+                                                                        </div>
+                                                                    ))}
+                                                                    {(!product.materials || product.materials.length === 0) && (
+                                                                        <div className="mp-no-data">Nema materijala</div>
+                                                                    )}
+                                                                </div>
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                );
+                                            })}
 
                                         {(!project.products || project.products.length === 0) && (
                                             <div className="mp-no-products">Nema proizvoda</div>
@@ -319,12 +382,10 @@ export default function MobileProjectsView({
                                 {onNavigateToTasks && (
                                     <button className="mp-action-btn" onClick={() => onNavigateToTasks(project.Project_ID)}>
                                         <span className="material-icons-round">task_alt</span>
-                                        Zadaci
                                     </button>
                                 )}
                                 <button className="mp-action-btn primary" onClick={() => onOpenProjectModal(project)}>
                                     <span className="material-icons-round">edit</span>
-                                    Uredi
                                 </button>
                                 <button className="mp-action-btn danger-text" onClick={() => onDeleteProject(project.Project_ID)}>
                                     <span className="material-icons-round">delete</span>
@@ -377,30 +438,65 @@ export default function MobileProjectsView({
                 }
 
                 .mobile-add-btn {
-                    width: 52px;
-                    height: 52px;
+                    width: 44px;
+                    height: 44px;
                     background: #2563eb;
                     color: white;
                     border: none;
-                    border-radius: 16px;
+                    border-radius: 12px;
                     display: flex;
                     align-items: center;
                     justify-content: center;
                     box-shadow: 0 4px 12px rgba(37, 99, 235, 0.3);
                 }
 
-                /* Mobile Add Tiny Btn */
+                /* Focus Mode Back Button */
+                .focus-back-btn {
+                    display: flex;
+                    align-items: center;
+                    gap: 8px;
+                    padding: 10px 16px;
+                    background: white;
+                    border: 1px solid #e2e8f0;
+                    border-radius: 10px;
+                    font-size: 14px;
+                    font-weight: 600;
+                    color: #475569;
+                    margin-bottom: 12px;
+                    box-shadow: 0 2px 6px rgba(0,0,0,0.05);
+                }
+                
+                .focus-back-btn:active {
+                    background: #f8fafc;
+                }
+                
+                .focus-back-btn .material-icons-round {
+                    font-size: 20px;
+                    color: #64748b;
+                }
+                
+                .focus-back-btn.small {
+                    padding: 8px 12px;
+                    font-size: 13px;
+                    margin-bottom: 10px;
+                }
+                
+                .focus-back-btn.small .material-icons-round {
+                    font-size: 18px;
+                }
+
+                /* Mobile Add Tiny Btn - Compact */
                 .mobile-add-tiny-btn {
                     display: flex;
                     align-items: center;
-                    gap: 6px;
+                    justify-content: center;
+                    width: 32px;
+                    height: 32px;
                     background: #eff6ff;
                     color: #2563eb;
                     border: 1px solid #bfdbfe;
-                    padding: 8px 12px;
+                    padding: 0;
                     border-radius: 8px;
-                    font-size: 13px;
-                    font-weight: 600;
                     transition: all 0.2s;
                 }
                 
@@ -552,7 +648,7 @@ export default function MobileProjectsView({
                 .mp-products-list {
                     display: flex;
                     flex-direction: column;
-                    gap: 12px;
+                    gap: 8px;
                 }
                 
                 .mp-product-card {
@@ -585,8 +681,8 @@ export default function MobileProjectsView({
                 }
                 
                 .mini-btn {
-                    width: 36px;
-                    height: 36px;
+                    width: 30px;
+                    height: 30px;
                     display: flex;
                     align-items: center;
                     justify-content: center;
@@ -724,26 +820,27 @@ export default function MobileProjectsView({
                 .mp-actions {
                     display: flex;
                     gap: 8px;
+                    justify-content: flex-end;
+                    margin-top: 12px;
                 }
 
                 .mp-action-btn {
-                    flex: 1;
-                    padding: 12px;
+                    width: 40px;
+                    height: 40px;
+                    padding: 0;
                     border: 1px solid #e2e8f0;
                     background: white;
-                    border-radius: 12px;
+                    border-radius: 10px;
                     display: flex;
                     align-items: center;
                     justify-content: center;
-                    gap: 8px;
-                    font-size: 14px;
-                    font-weight: 600;
                     color: #475569;
                     transition: all 0.2s;
                 }
                 
                 .mp-action-btn:active {
                     background: #f8fafc;
+                    transform: scale(0.96);
                 }
 
                 .mp-action-btn.primary {
@@ -757,10 +854,13 @@ export default function MobileProjectsView({
                 }
 
                 .mp-action-btn.danger-text {
-                    flex: 0 0 52px;
                     color: #ef4444;
                     border-color: #fee2e2;
                     background: #fef2f2;
+                }
+                
+                .mp-action-btn .material-icons-round {
+                    font-size: 20px;
                 }
             `}</style>
         </div>
