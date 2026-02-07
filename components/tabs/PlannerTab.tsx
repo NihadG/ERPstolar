@@ -63,27 +63,66 @@ const getDateRange = (start: Date, days: number) => {
     return dates;
 };
 
+// Helper: Check if an item (or its subtasks) has any active (non-paused) work
+const isItemActive = (item: WorkOrderItem): boolean => {
+    // If item has SubTasks, check SubTask level
+    if (item.SubTasks && item.SubTasks.length > 0) {
+        // Active if any SubTask is NOT paused AND status is 'U toku'
+        return item.SubTasks.some(st => !st.Is_Paused && st.Status === 'U toku');
+    }
+    // No SubTasks - check item level
+    return !item.Is_Paused && item.Status === 'U toku';
+};
+
+// Helper: Check if an item (or all its subtasks) is fully paused
+const isItemFullyPaused = (item: WorkOrderItem): boolean => {
+    // If item has SubTasks, ALL must be paused
+    if (item.SubTasks && item.SubTasks.length > 0) {
+        return item.SubTasks.every(st => st.Is_Paused === true);
+    }
+    // No SubTasks - check item level
+    return item.Is_Paused === true;
+};
+
 // Get status color for work order
 const getStatusColor = (wo: WorkOrder): string => {
     const items = wo.items || [];
-    const hasAnyPaused = items.some(item => item.Is_Paused);
-    const hasAnyInProgress = items.some(item => item.Status === 'U toku');
+    if (items.length === 0) {
+        // No items - use WO-level status
+        if (wo.Status === 'Završeno') return STATUS_COLORS.completed;
+        if (wo.Status === 'U toku') return STATUS_COLORS.inProgress;
+        return STATUS_COLORS.scheduled;
+    }
 
-    if (wo.Status === 'Završeno') return STATUS_COLORS.completed;
-    if (hasAnyPaused) return STATUS_COLORS.paused;
-    if (hasAnyInProgress || wo.Status === 'U toku') return STATUS_COLORS.inProgress;
+    // Check if ALL items are fully paused (WO is paused)
+    const allPaused = items.every(item => isItemFullyPaused(item));
+    // Check if ANY item has active (in-progress, non-paused) work
+    const anyActive = items.some(item => isItemActive(item));
+    // Check if WO is completed
+    const allCompleted = items.every(item => item.Status === 'Završeno');
+
+    if (wo.Status === 'Završeno' || allCompleted) return STATUS_COLORS.completed;
+    if (allPaused && wo.Status !== 'Na čekanju') return STATUS_COLORS.paused;
+    if (anyActive || wo.Status === 'U toku') return STATUS_COLORS.inProgress;
     return STATUS_COLORS.scheduled;
 };
 
 // Get status label
 const getStatusLabel = (wo: WorkOrder): { text: string; icon: typeof Clock } => {
     const items = wo.items || [];
-    const hasAnyPaused = items.some(item => item.Is_Paused);
-    const hasAnyInProgress = items.some(item => item.Status === 'U toku');
+    if (items.length === 0) {
+        if (wo.Status === 'Završeno') return { text: 'Završeno', icon: CheckCircle };
+        if (wo.Status === 'U toku') return { text: 'U toku', icon: Play };
+        return { text: 'Zakazano', icon: Clock };
+    }
 
-    if (wo.Status === 'Završeno') return { text: 'Završeno', icon: CheckCircle };
-    if (hasAnyPaused) return { text: 'Pauzirano', icon: Pause };
-    if (hasAnyInProgress || wo.Status === 'U toku') return { text: 'U toku', icon: Play };
+    const allPaused = items.every(item => isItemFullyPaused(item));
+    const anyActive = items.some(item => isItemActive(item));
+    const allCompleted = items.every(item => item.Status === 'Završeno');
+
+    if (wo.Status === 'Završeno' || allCompleted) return { text: 'Završeno', icon: CheckCircle };
+    if (allPaused && wo.Status !== 'Na čekanju') return { text: 'Pauzirano', icon: Pause };
+    if (anyActive || wo.Status === 'U toku') return { text: 'U toku', icon: Play };
     return { text: 'Zakazano', icon: Clock };
 };
 
@@ -676,25 +715,50 @@ export default function PlannerTab({ workOrders, workers, onRefresh, showToast }
                             <div className="detail-section">
                                 <h4><Box size={16} /> Proizvodi ({detailPanel.wo.items?.length || 0})</h4>
                                 <div className="products-list">
-                                    {detailPanel.wo.items?.map((item, idx) => (
-                                        <div key={item.ID || idx} className="product-row">
-                                            <div className="product-info">
-                                                <span className="product-name">{item.Product_Name}</span>
-                                                <span className="product-qty">{item.Quantity} kom</span>
+                                    {detailPanel.wo.items?.map((item, idx) => {
+                                        const hasSubTasks = item.SubTasks && item.SubTasks.length > 0;
+
+                                        // For items with SubTasks, show SubTask-level detail
+                                        if (hasSubTasks) {
+                                            return (
+                                                <div key={item.ID || idx} className="product-row with-subtasks">
+                                                    <div className="product-info">
+                                                        <span className="product-name">{item.Product_Name}</span>
+                                                        <span className="product-qty">{item.Quantity} kom ({item.SubTasks!.length} grupa)</span>
+                                                    </div>
+                                                    <div className="subtasks-status">
+                                                        {item.SubTasks!.map((st, stIdx) => (
+                                                            <div key={stIdx} className={`subtask-chip ${st.Is_Paused ? 'paused' : st.Status === 'U toku' ? 'active' : st.Status === 'Završeno' ? 'done' : 'pending'}`}>
+                                                                {st.Is_Paused ? <Pause size={10} /> : st.Status === 'U toku' ? <Play size={10} /> : st.Status === 'Završeno' ? <CheckCircle size={10} /> : <Clock size={10} />}
+                                                                <span>{st.Quantity}</span>
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                </div>
+                                            );
+                                        }
+
+                                        // Regular item without SubTasks
+                                        return (
+                                            <div key={item.ID || idx} className="product-row">
+                                                <div className="product-info">
+                                                    <span className="product-name">{item.Product_Name}</span>
+                                                    <span className="product-qty">{item.Quantity} kom</span>
+                                                </div>
+                                                <div className={`product-status ${item.Is_Paused ? 'paused' : item.Status === 'U toku' ? 'active' : item.Status === 'Završeno' ? 'done' : 'pending'}`}>
+                                                    {item.Is_Paused ? (
+                                                        <><Pause size={12} /> Pauzirano</>
+                                                    ) : item.Status === 'Završeno' ? (
+                                                        <><CheckCircle size={12} /> Završeno</>
+                                                    ) : item.Status === 'U toku' ? (
+                                                        <><Play size={12} /> U toku</>
+                                                    ) : (
+                                                        <><Clock size={12} /> Na čekanju</>
+                                                    )}
+                                                </div>
                                             </div>
-                                            <div className={`product-status ${item.Is_Paused ? 'paused' : item.Status === 'U toku' ? 'active' : item.Status === 'Završeno' ? 'done' : 'pending'}`}>
-                                                {item.Is_Paused ? (
-                                                    <><Pause size={12} /> Pauzirano</>
-                                                ) : item.Status === 'Završeno' ? (
-                                                    <><CheckCircle size={12} /> Završeno</>
-                                                ) : item.Status === 'U toku' ? (
-                                                    <><Play size={12} /> U toku</>
-                                                ) : (
-                                                    <><Clock size={12} /> Na čekanju</>
-                                                )}
-                                            </div>
-                                        </div>
-                                    )) || <p className="empty-msg">Nema proizvoda</p>}
+                                        );
+                                    }) || <p className="empty-msg">Nema proizvoda</p>}
                                 </div>
                             </div>
 

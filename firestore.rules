@@ -226,6 +226,16 @@ service cloud.firestore {
     }
     
     // ============================================
+    // NOTIFICATIONS (Multi-tenancy enabled)
+    // ============================================
+    
+    match /notifications/{notificationId} {
+      allow read: if isOrgMember();
+      allow create: if hasValidOrgId();
+      allow update, delete: if isOrgMember();
+    }
+    
+    // ============================================
     // TASKS (Multi-tenancy enabled)
     // ============================================
     

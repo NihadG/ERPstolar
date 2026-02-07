@@ -1,0 +1,123 @@
+
+Running 1 test using 1 worker
+
+PAGE LOG: %cDownload the React DevTools for a better development experience: https://reactjs.org/link/react-devtools font-weight:bold
+--- Creating Project: Hotel Central ---
+Loading overlay handling warning: ExpectError: [2mexpect([22m[31mlocator[39m[2m).[22mtoBeVisible[2m([22m[2m)[22m failed
+
+Locator: locator('.loading-overlay')
+Expected: visible
+Timeout: 2000ms
+Error: element(s) not found
+
+Call log:
+[2m  - Expect "toBeVisible" with timeout 2000ms[22m
+[2m  - waiting for locator('.loading-overlay')[22m
+
+    at [90mC:\Users\Nihad\OneDrive\Desktop\Aplikacije\ERP V4\[39mtests\seed_and_test.spec.ts:60:60 {
+  matcherResult: {
+    message: [32m'\x1B[2mexpect(\x1B[22m\x1B[31mlocator\x1B[39m\x1B[2m).\x1B[22mtoBeVisible\x1B[2m(\x1B[22m\x1B[2m)\x1B[22m failed\n'[39m +
+      [32m'\n'[39m +
+      [32m"Locator: locator('.loading-overlay')\n"[39m +
+      [32m'Expected: visible\n'[39m +
+      [32m'Timeout: 2000ms\n'[39m +
+      [32m'Error: element(s) not found\n'[39m +
+      [32m'\n'[39m +
+      [32m'Call log:\n'[39m +
+      [32m'\x1B[2m  - Expect "toBeVisible" with timeout 2000ms\x1B[22m\n'[39m +
+      [32m"\x1B[2m  - waiting for locator('.loading-overlay')\x1B[22m\n"[39m,
+    pass: [33mfalse[39m,
+    actual: [90mundefined[39m,
+    name: [32m'toBeVisible'[39m,
+    expected: [32m'visible'[39m,
+    log: [
+      [32m'  - Expect "toBeVisible" with timeout 2000ms'[39m,
+      [32m"  - waiting for locator('.loading-overlay')"[39m
+    ],
+    timeout: [33m2000[39m
+  },
+  [[32mSymbol(step)[39m]: {
+    category: [32m'expect'[39m,
+    apiName: [32m'expect.toBeVisible'[39m,
+    title: [32m`Expect "toBeVisible" locator('.loading-overlay')`[39m,
+    shortTitle: [32m'Expect "toBeVisible"'[39m,
+    params: { expected: [36m[Object][39m },
+    infectParentStepsWithError: [90mundefined[39m,
+    stepId: [32m'expect@47'[39m,
+    group: [90mundefined[39m,
+    boxedStack: [90mundefined[39m,
+    location: {
+      file: [32m'C:\\Users\\Nihad\\OneDrive\\Desktop\\Aplikacije\\ERP V4\\tests\\seed_and_test.spec.ts'[39m,
+      line: [33m60[39m,
+      column: [33m60[39m
+    },
+    steps: [],
+    attachmentIndices: [],
+    info: TestStepInfoImpl {
+      annotations: [],
+      _testInfo: [36m[TestInfoImpl][39m,
+      _stepId: [32m'expect@47'[39m,
+      _title: [32m`Expect "toBeVisible" locator('.loading-overlay')`[39m,
+      _parentStep: [90mundefined[39m,
+      skip: [36m[Function (anonymous)][39m
+    },
+    complete: [36m[Function: complete][39m,
+    endWallTime: [33m1770485426615[39m,
+    error: {
+      message: [32m'Error: \x1B[2mexpect(\x1B[22m\x1B[31mlocator\x1B[39m\x1B[2m).\x1B[22mtoBeVisible\x1B[2m(\x1B[22m\x1B[2m)\x1B[22m failed\n'[39m +
+        [32m'\n'[39m +
+        [32m"Locator: locator('.loading-overlay')\n"[39m +
+        [32m'Expected: visible\n'[39m +
+        [32m'Timeout: 2000ms\n'[39m +
+        [32m'Error: element(s) not found\n'[39m +
+        [32m'\n'[39m +
+        [32m'Call log:\n'[39m +
+        [32m'\x1B[2m  - Expect "toBeVisible" with timeout 2000ms\x1B[22m\n'[39m +
+        [32m"\x1B[2m  - waiting for locator('.loading-overlay')\x1B[22m\n"[39m,
+      stack: [32m'Error: \x1B[2mexpect(\x1B[22m\x1B[31mlocator\x1B[39m\x1B[2m).\x1B[22mtoBeVisible\x1B[2m(\x1B[22m\x1B[2m)\x1B[22m failed\n'[39m +
+        [32m'\n'[39m +
+        [32m"Locator: locator('.loading-overlay')\n"[39m +
+        [32m'Expected: visible\n'[39m +
+        [32m'Timeout: 2000ms\n'[39m +
+        [32m'Error: element(s) not found\n'[39m +
+        [32m'\n'[39m +
+        [32m'Call log:\n'[39m +
+        [32m'\x1B[2m  - Expect "toBeVisible" with timeout 2000ms\x1B[22m\n'[39m +
+        [32m"\x1B[2m  - waiting for locator('.loading-overlay')\x1B[22m\n"[39m +
+        [32m'\n'[39m +
+        [32m'    at C:\\Users\\Nihad\\OneDrive\\Desktop\\Aplikacije\\ERP V4\\tests\\seed_and_test.spec.ts:60:60'[39m,
+      cause: [90mundefined[39m
+    }
+  }
+}
+--- Adding Product: Reception Desk ---
+--- Adding Material: Oak Veneer ---
+  ✘  1 [chromium] › tests\seed_and_test.spec.ts:34:9 › Phase 2: Data Seeding & Planner Verification › Seed Data and Verify Work Order/Planner Flow (30.1s)
+
+
+  1) [chromium] › tests\seed_and_test.spec.ts:34:9 › Phase 2: Data Seeding & Planner Verification › Seed Data and Verify Work Order/Planner Flow 
+
+    [31mTest timeout of 30000ms exceeded.[39m
+
+    Error: page.click: Test timeout of 30000ms exceeded.
+    Call log:
+    [2m  - waiting for locator('input[placeholder="Pretraži materijale..."]')[22m
+
+
+      115 |
+      116 |         // Fill material details
+    > 117 |         await page.click('input[placeholder="Pretraži materijale..."]');
+          |                    ^
+      118 |         await page.waitForSelector('.searchable-select-option');
+      119 |         await page.click('.searchable-select-option:first-child');
+      120 |
+        at C:\Users\Nihad\OneDrive\Desktop\Aplikacije\ERP V4\tests\seed_and_test.spec.ts:117:20
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    test-results\seed_and_test-Phase-2-Data-bbef7-ify-Work-Order-Planner-Flow-chromium\test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    Error Context: test-results\seed_and_test-Phase-2-Data-bbef7-ify-Work-Order-Planner-Flow-chromium\error-context.md
+
+  1 failed
+    [chromium] › tests\seed_and_test.spec.ts:34:9 › Phase 2: Data Seeding & Planner Verification › Seed Data and Verify Work Order/Planner Flow 

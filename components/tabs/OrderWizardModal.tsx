@@ -102,6 +102,20 @@ export function OrderWizardModal({
                 {/* Step Navigation Header */}
                 <div className="wizard-header">
                     <div className="wizard-nav-left">
+                        <button
+                            className="glass-btn wizard-nav-btn"
+                            onClick={onClose}
+                            title="Izađi"
+                            style={{
+                                marginRight: '8px',
+                                width: '40px',
+                                padding: '0',
+                                justifyContent: 'center',
+                                minWidth: '40px'
+                            }}
+                        >
+                            <span className="material-icons-round">close</span>
+                        </button>
                         {wizardStep > 1 && (
                             <button
                                 className="glass-btn wizard-nav-btn"

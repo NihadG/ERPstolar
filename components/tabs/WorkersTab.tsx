@@ -1,11 +1,12 @@
 'use client';
 
-import { useState } from 'react';
-import type { Worker } from '@/lib/types';
+import { useState, useEffect } from 'react';
+import type { Worker, WorkerProductivity } from '@/lib/types';
 import { saveWorker, deleteWorker } from '@/lib/database';
 import { useData } from '@/context/DataContext';
 import Modal from '@/components/ui/Modal';
 import { WORKER_ROLES, WORKER_TYPES } from '@/lib/types';
+import { calculateWorkerProductivity, getCurrentMonthRange, getLastNDaysRange } from '@/lib/productivity';
 
 interface WorkersTabProps {
     workers: Worker[];
@@ -18,6 +19,55 @@ export default function WorkersTab({ workers, onRefresh, showToast }: WorkersTab
     const [workerModal, setWorkerModal] = useState(false);
     const [editingWorker, setEditingWorker] = useState<Partial<Worker> | null>(null);
 
+    // Worker Earnings Report Modal
+    const [earningsModal, setEarningsModal] = useState(false);
+    const [selectedWorker, setSelectedWorker] = useState<Worker | null>(null);
+    const [workerEarnings, setWorkerEarnings] = useState<WorkerProductivity | null>(null);
+    const [earningsLoading, setEarningsLoading] = useState(false);
+    const [dateRange, setDateRange] = useState<{ dateFrom: string; dateTo: string }>(() => getCurrentMonthRange());
+    const [periodPreset, setPeriodPreset] = useState<'month' | '7days' | '30days' | 'custom'>('month');
+
+    // Load worker earnings when modal opens
+    useEffect(() => {
+        if (selectedWorker && organizationId && earningsModal) {
+            loadWorkerEarnings();
+        }
+    }, [selectedWorker, organizationId, dateRange, earningsModal]);
+
+    async function loadWorkerEarnings() {
+        if (!selectedWorker || !organizationId) return;
+        setEarningsLoading(true);
+        try {
+            const earnings = await calculateWorkerProductivity(
+                selectedWorker.Worker_ID,
+                dateRange.dateFrom,
+                dateRange.dateTo,
+                organizationId
+            );
+            setWorkerEarnings(earnings);
+        } catch (error) {
+            console.error('Error loading worker earnings:', error);
+            showToast('Greška pri učitavanju izvještaja', 'error');
+        }
+        setEarningsLoading(false);
+    }
+
+    function openEarningsModal(worker: Worker) {
+        setSelectedWorker(worker);
+        setWorkerEarnings(null);
+        setEarningsModal(true);
+    }
+
+    function handlePeriodChange(preset: 'month' | '7days' | '30days' | 'custom') {
+        setPeriodPreset(preset);
+        if (preset === 'month') {
+            setDateRange(getCurrentMonthRange());
+        } else if (preset === '7days') {
+            setDateRange(getLastNDaysRange(7));
+        } else if (preset === '30days') {
+            setDateRange(getLastNDaysRange(30));
+        }
+    }
     function openWorkerModal(worker?: Worker) {
         setEditingWorker(worker || { Role: 'Opći', Status: 'Dostupan', Worker_Type: 'Glavni' });
         setWorkerModal(true);
@@ -79,7 +129,14 @@ export default function WorkersTab({ workers, onRefresh, showToast }: WorkersTab
                     workers.map(worker => (
                         <div key={worker.Worker_ID} className="simple-card">
                             <div className="simple-card-info">
-                                <div className="simple-card-title">{worker.Name}</div>
+                                <div
+                                    className="simple-card-title"
+                                    style={{ cursor: 'pointer', color: 'var(--primary-color)' }}
+                                    onClick={() => openEarningsModal(worker)}
+                                    title="Klikni za izvještaj zarade"
+                                >
+                                    {worker.Name}
+                                </div>
                                 <div className="simple-card-subtitle">
                                     <span style={{
                                         background: worker.Worker_Type === 'Pomoćnik' ? '#e0e7ff' : '#dcfce7',
@@ -196,6 +253,117 @@ export default function WorkersTab({ workers, onRefresh, showToast }: WorkersTab
                         </select>
                     </div>
                 </div>
+            </Modal>
+
+            {/* Worker Earnings Report Modal */}
+            <Modal
+                isOpen={earningsModal}
+                onClose={() => setEarningsModal(false)}
+                title={`Izvještaj: ${selectedWorker?.Name || ''}`}
+                size="large"
+            >
+                {/* Period Selection */}
+                <div style={{ marginBottom: '20px' }}>
+                    <label style={{ display: 'block', fontSize: '12px', color: '#64748b', marginBottom: '8px' }}>
+                        Period
+                    </label>
+                    <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                        {[
+                            { key: 'month' as const, label: 'Ovaj mjesec' },
+                            { key: '7days' as const, label: 'Zadnjih 7 dana' },
+                            { key: '30days' as const, label: 'Zadnjih 30 dana' },
+                            { key: 'custom' as const, label: 'Prilagođeno' },
+                        ].map(opt => (
+                            <button
+                                key={opt.key}
+                                onClick={() => handlePeriodChange(opt.key)}
+                                style={{
+                                    padding: '8px 14px',
+                                    borderRadius: '8px',
+                                    border: '1px solid',
+                                    borderColor: periodPreset === opt.key ? 'var(--primary-color)' : '#e2e8f0',
+                                    background: periodPreset === opt.key ? 'var(--primary-light)' : 'white',
+                                    color: periodPreset === opt.key ? 'var(--primary-color)' : '#64748b',
+                                    cursor: 'pointer',
+                                    fontSize: '13px',
+                                    fontWeight: periodPreset === opt.key ? 600 : 400,
+                                }}
+                            >
+                                {opt.label}
+                            </button>
+                        ))}
+                    </div>
+                    {/* Custom date range inputs */}
+                    {periodPreset === 'custom' && (
+                        <div style={{ display: 'flex', gap: '10px', marginTop: '12px' }}>
+                            <input
+                                type="date"
+                                value={dateRange.dateFrom}
+                                onChange={(e) => setDateRange({ ...dateRange, dateFrom: e.target.value })}
+                                style={{ padding: '8px', borderRadius: '6px', border: '1px solid #e2e8f0' }}
+                            />
+                            <span style={{ alignSelf: 'center', color: '#64748b' }}>do</span>
+                            <input
+                                type="date"
+                                value={dateRange.dateTo}
+                                onChange={(e) => setDateRange({ ...dateRange, dateTo: e.target.value })}
+                                style={{ padding: '8px', borderRadius: '6px', border: '1px solid #e2e8f0' }}
+                            />
+                        </div>
+                    )}
+                </div>
+
+                {/* Earnings Stats */}
+                {earningsLoading ? (
+                    <div style={{ textAlign: 'center', padding: '40px', color: '#64748b' }}>
+                        <span className="material-icons-round" style={{ fontSize: '32px', animation: 'spin 1s linear infinite' }}>sync</span>
+                        <p>Učitavanje...</p>
+                    </div>
+                ) : workerEarnings ? (
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '12px' }}>
+                        <div style={{ padding: '16px', borderRadius: '12px', background: '#f0fdf4', textAlign: 'center' }}>
+                            <div style={{ fontSize: '24px', fontWeight: 700, color: '#22c55e' }}>
+                                {workerEarnings.Total_Earnings.toLocaleString('hr-HR')} KM
+                            </div>
+                            <div style={{ fontSize: '12px', color: '#16a34a' }}>Ukupna zarada</div>
+                        </div>
+                        <div style={{ padding: '16px', borderRadius: '12px', background: '#f8fafc', textAlign: 'center' }}>
+                            <div style={{ fontSize: '24px', fontWeight: 700, color: '#1e293b' }}>
+                                {workerEarnings.Days_Worked}
+                            </div>
+                            <div style={{ fontSize: '12px', color: '#64748b' }}>Radnih dana</div>
+                        </div>
+                        <div style={{ padding: '16px', borderRadius: '12px', background: '#f8fafc', textAlign: 'center' }}>
+                            <div style={{ fontSize: '24px', fontWeight: 700, color: '#1e293b' }}>
+                                {workerEarnings.Avg_Daily_Rate.toLocaleString('hr-HR')} KM
+                            </div>
+                            <div style={{ fontSize: '12px', color: '#64748b' }}>Prosječna dnevnica</div>
+                        </div>
+                        <div style={{ padding: '16px', borderRadius: '12px', background: '#f8fafc', textAlign: 'center' }}>
+                            <div style={{ fontSize: '24px', fontWeight: 700, color: '#1e293b' }}>
+                                {workerEarnings.Products_Worked_On}
+                            </div>
+                            <div style={{ fontSize: '12px', color: '#64748b' }}>Proizvoda</div>
+                        </div>
+                        <div style={{ padding: '16px', borderRadius: '12px', background: '#eff6ff', textAlign: 'center' }}>
+                            <div style={{ fontSize: '24px', fontWeight: 700, color: '#3b82f6' }}>
+                                {workerEarnings.Value_Generated.toLocaleString('hr-HR')} KM
+                            </div>
+                            <div style={{ fontSize: '12px', color: '#2563eb' }}>Vrijednost proizvoda</div>
+                        </div>
+                        <div style={{ padding: '16px', borderRadius: '12px', background: '#f8fafc', textAlign: 'center' }}>
+                            <div style={{ fontSize: '24px', fontWeight: 700, color: '#1e293b' }}>
+                                {workerEarnings.Attendance_Rate}%
+                            </div>
+                            <div style={{ fontSize: '12px', color: '#64748b' }}>Prisutnost</div>
+                        </div>
+                    </div>
+                ) : (
+                    <div style={{ textAlign: 'center', padding: '40px', color: '#94a3b8' }}>
+                        <span className="material-icons-round" style={{ fontSize: '48px' }}>analytics</span>
+                        <p>Nema podataka za odabrani period</p>
+                    </div>
+                )}
             </Modal>
         </div>
     );

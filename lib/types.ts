@@ -335,11 +335,18 @@ export interface SubTask {
     Quantity: number;                   // Koliko komada ovaj sub-task pokriva
     Current_Process: string;            // Naziv trenutnog aktivnog procesa
     Status: 'Na čekanju' | 'U toku' | 'Završeno';
+    Is_Paused?: boolean;                // Individual pause za svaki sub-task
     Started_At?: string;
     Completed_At?: string;
     Worker_ID?: string;
     Worker_Name?: string;
+    Helpers?: { Worker_ID: string; Worker_Name: string }[];  // Pomoćnici na ovoj grupi
     Notes?: string;
+
+    // Cost tracking per sub-task
+    Pause_Periods?: Array<{ Started_At: string; Ended_At?: string }>;
+    Actual_Labor_Cost?: number;         // Izračunati trošak rada za ovu grupu
+    Working_Days?: number;              // Broj radnih dana za ovu grupu
 }
 
 export interface WorkOrderItem {
@@ -377,6 +384,12 @@ export interface WorkOrderItem {
     Planned_Labor_Rate?: number;      // Prosječna dnevnica (iz ponude)
     Planned_Labor_Cost?: number;      // Workers × Days × Rate
     Actual_Labor_Cost?: number;       // Kalkulisano iz Attendance
+    Actual_Labor_Days?: number;       // Stvarni broj radnih dana
+    Actual_Workers_Count?: number;    // Broj radnika koji su radili
+
+    // TRANSPORT I USLUGE
+    Transport_Share?: number;         // Proporcionalni dio transporta
+    Services_Total?: number;          // Suma dinamičkih usluga (LED, montaža, etc)
 
     // VRIJEDNOST I MATERIJAL
     Product_Value?: number;    // Cijena proizvoda iz ponude
@@ -570,3 +583,91 @@ export interface WorkerConflict {
     Overlap_End: string;
 }
 
+// ============================================
+// DYNAMIC SERVICES - Korisničke usluge
+// ============================================
+
+export interface ServiceDefinition {
+    Service_ID: string;
+    Organization_ID: string;
+    Name: string;                    // "LED rasvjeta", "Fugiranje", "Montaža"
+    Default_Price: number;           // Podrazumijevana cijena
+    Unit: string;                    // "m", "kom", "m²", "sat"
+    Category: string;                // "Rasvjeta", "Montaža", "Obrada"
+    Is_Active: boolean;              // Da li je aktivna
+    Created_Date: string;
+}
+
+export interface OfferProductService {
+    Service_ID: string;
+    Service_Name: string;
+    Quantity: number;
+    Unit: string;
+    Unit_Price: number;
+    Total: number;
+}
+
+// ============================================
+// PRODUCTIVITY METRICS - Produktivnost
+// ============================================
+
+export interface WorkerProductivity {
+    Worker_ID: string;
+    Worker_Name: string;
+
+    // Radni dani
+    Days_Worked: number;             // Ukupno radnih dana (iz WorkLog)
+    Days_Present: number;            // Prisutan + Teren (iz Attendance)
+    Attendance_Rate: number;         // (Days_Present / Radni dani u periodu) × 100
+
+    // Finansije
+    Total_Earnings: number;          // Σ(Daily_Rate za sve Work Logs)
+    Avg_Daily_Rate: number;          // Prosječna dnevnica
+
+    // Produktivnost
+    Products_Worked_On: number;      // Broj različitih proizvoda
+    Avg_Days_Per_Product: number;    // Prosječno dana po proizvodu
+
+    // Efikasnost
+    Value_Generated: number;         // Σ(Product_Value) za proizvode na kojima je radio
+    Value_Per_Day: number;           // Value_Generated / Days_Worked
+}
+
+export interface ProductProfitability {
+    Product_ID: string;
+    Product_Name: string;
+    Work_Order_Item_ID: string;
+
+    // Vrijednosti
+    Selling_Price: number;           // Cijena iz ponude
+    Quantity: number;                // Količina
+
+    // Troškovi
+    Material_Cost: number;           // Trošak materijala
+    Transport_Share: number;         // Proporcionalni transport
+    Services_Total: number;          // Usluge (LED, etc)
+
+    // Rad
+    Planned_Labor_Cost: number;
+    Actual_Labor_Cost: number;
+    Labor_Variance: number;          // Planirano - Stvarno
+    Labor_Variance_Percent: number;  // (Variance / Planned) × 100
+
+    // Profit
+    Gross_Profit: number;            // Selling - Material - Transport - Services
+    Net_Profit: number;              // Gross - Actual_Labor
+    Profit_Margin: number;           // (Net_Profit / Selling) × 100
+
+    // Radnici koji su radili
+    Workers: {
+        Worker_ID: string;
+        Name: string;
+        Days: number;
+        Cost: number;
+    }[];
+
+    // Datumi
+    Started_At?: string;
+    Completed_At?: string;
+    Duration_Days?: number;
+}

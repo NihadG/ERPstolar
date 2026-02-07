@@ -1,0 +1,28 @@
+
+Running 1 test using 1 worker
+
+  ✘  1 [chromium] › tests\seed_and_test.spec.ts:34:9 › Phase 2: Data Seeding & Planner Verification › Seed Data and Verify Work Order/Planner Flow (2.6s)
+
+
+  1) [chromium] › tests\seed_and_test.spec.ts:34:9 › Phase 2: Data Seeding & Planner Verification › Seed Data and Verify Work Order/Planner Flow 
+
+    Error: page.goto: net::ERR_CONNECTION_REFUSED at http://localhost:3000/login
+    Call log:
+    [2m  - navigating to "http://localhost:3000/login", waiting until "load"[22m
+
+
+      14 |
+      15 |         // Login Flow
+    > 16 |         await page.goto('/login');
+         |                    ^
+      17 |         await page.fill('input[type="email"]', 'nihad.tae@gmail.com');
+      18 |         await page.fill('input[type="password"]', 'admin123');
+      19 |         await page.click('button:has-text("Prijavi se")');
+        at C:\Users\Nihad\OneDrive\Desktop\Aplikacije\ERP V4\tests\seed_and_test.spec.ts:16:20
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    test-results\seed_and_test-Phase-2-Data-bbef7-ify-Work-Order-Planner-Flow-chromium\test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  1 failed
+    [chromium] › tests\seed_and_test.spec.ts:34:9 › Phase 2: Data Seeding & Planner Verification › Seed Data and Verify Work Order/Planner Flow 

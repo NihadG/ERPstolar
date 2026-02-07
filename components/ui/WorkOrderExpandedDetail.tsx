@@ -1,7 +1,9 @@
-import { useState, useEffect } from 'react';
-import { Calendar, Play, CheckCircle, Clock, Edit2, Plus, X } from 'lucide-react';
+import { useState, useEffect, useMemo } from 'react';
+import { Calendar, Play, CheckCircle, Clock, Edit2, Plus, X, TrendingUp } from 'lucide-react';
 import type { WorkOrder, Worker, WorkOrderItem, ItemProcessStatus, SubTask } from '@/lib/types';
 import ProcessKanbanBoard from './ProcessKanbanBoard';
+import ProfitOverviewWidget from './ProfitOverviewWidget';
+import PlanVsActualCard from './PlanVsActualCard';
 import { PRODUCTION_STEPS } from '@/lib/types';
 import {
     updateItemProcess,
@@ -255,6 +257,7 @@ export default function WorkOrderExpandedDetail({
                 )}
             </div>
 
+
             {/* === DEFAULT PROCESSES - only visible when editing === */}
             {editingProcesses ? (
                 <div className="processes-section">
@@ -308,59 +311,73 @@ export default function WorkOrderExpandedDetail({
                 onProcessUpdate={handleProcessUpdate}
                 onMoveToStage={handleMoveToStage}
                 onSubTaskUpdate={async (itemId, subTaskId, updates) => {
-                    try {
-                        setIsLoading(itemId);
-                        await updateSubTask(workOrder.Work_Order_ID, itemId, subTaskId, updates);
-                        onRefresh?.();
-                    } catch (error) {
-                        console.error('Error updating sub-task:', error);
-                    } finally {
-                        setIsLoading(null);
-                    }
+                    // OPTIMISTIC UPDATE: Update UI immediately
+                    setLocalItems(prev => prev.map(item => {
+                        if (item.ID !== itemId) return item;
+                        const updatedSubTasks = item.SubTasks?.map(st =>
+                            st.SubTask_ID === subTaskId ? { ...st, ...updates } : st
+                        );
+                        return { ...item, SubTasks: updatedSubTasks };
+                    }));
+
+                    // Then persist to database (non-blocking)
+                    updateSubTask(workOrder.Work_Order_ID, itemId, subTaskId, updates)
+                        .then(() => onRefresh?.())
+                        .catch(error => {
+                            console.error('Error updating sub-task:', error);
+                            // Could revert optimistic update here if needed
+                        });
                 }}
                 onSubTaskCreate={async (itemId, subTasks) => {
-                    try {
-                        setIsLoading(itemId);
-                        const item = localItems.find(i => i.ID === itemId);
-                        if (!item) return;
+                    const item = localItems.find(i => i.ID === itemId);
+                    if (!item) return;
 
-                        // Create both sub-tasks (the split creates 2)
-                        const existingSubTasks = item.SubTasks || [];
-                        await createSubTasks(workOrder.Work_Order_ID, itemId, [...existingSubTasks, ...subTasks]);
-                        onRefresh?.();
-                    } catch (error) {
-                        console.error('Error creating sub-task:', error);
-                    } finally {
-                        setIsLoading(null);
-                    }
+                    // OPTIMISTIC UPDATE: Update UI immediately
+                    const existingSubTasks = item.SubTasks || [];
+                    const allSubTasks = [...existingSubTasks, ...subTasks];
+                    setLocalItems(prev => prev.map(i =>
+                        i.ID === itemId ? { ...i, SubTasks: allSubTasks } : i
+                    ));
+
+                    // Then persist to database
+                    createSubTasks(workOrder.Work_Order_ID, itemId, allSubTasks)
+                        .then(() => onRefresh?.())
+                        .catch(error => console.error('Error creating sub-task:', error));
                 }}
                 onSubTaskMove={async (itemId, subTaskId, targetProcess) => {
-                    try {
-                        setIsLoading(itemId);
-                        await moveSubTask(workOrder.Work_Order_ID, itemId, subTaskId, targetProcess);
-                        onRefresh?.();
-                    } catch (error) {
-                        console.error('Error moving sub-task:', error);
-                    } finally {
-                        setIsLoading(null);
-                    }
+                    // OPTIMISTIC UPDATE: Update UI immediately
+                    const now = new Date().toISOString();
+                    setLocalItems(prev => prev.map(item => {
+                        if (item.ID !== itemId) return item;
+                        const updatedSubTasks = item.SubTasks?.map(st => {
+                            if (st.SubTask_ID !== subTaskId) return st;
+                            return {
+                                ...st,
+                                Current_Process: targetProcess,
+                                Status: targetProcess === 'ZAVRŠENO' ? 'Završeno' as const : 'U toku' as const,
+                                Started_At: st.Started_At || now
+                            };
+                        });
+                        return { ...item, SubTasks: updatedSubTasks };
+                    }));
+
+                    // Then persist to database
+                    moveSubTask(workOrder.Work_Order_ID, itemId, subTaskId, targetProcess)
+                        .then(() => onRefresh?.())
+                        .catch(error => console.error('Error moving sub-task:', error));
                 }}
                 onPauseToggle={async (itemId, isPaused) => {
-                    try {
-                        setIsLoading(itemId);
-                        // Import and call the toggle function
-                        const { toggleItemPause } = await import('@/lib/attendance');
-                        await toggleItemPause(workOrder.Work_Order_ID, itemId, isPaused);
-                        // Update local state optimistically
-                        setLocalItems(prev => prev.map(item =>
-                            item.ID === itemId ? { ...item, Is_Paused: isPaused } : item
-                        ));
-                        onRefresh?.();
-                    } catch (error) {
-                        console.error('Error toggling pause:', error);
-                    } finally {
-                        setIsLoading(null);
-                    }
+                    // OPTIMISTIC UPDATE: Update UI immediately (before DB call)
+                    setLocalItems(prev => prev.map(item =>
+                        item.ID === itemId ? { ...item, Is_Paused: isPaused } : item
+                    ));
+
+                    // Then persist to database
+                    import('@/lib/attendance').then(({ toggleItemPause }) => {
+                        toggleItemPause(workOrder.Work_Order_ID, itemId, isPaused)
+                            .then(() => onRefresh?.())
+                            .catch(error => console.error('Error toggling pause:', error));
+                    });
                 }}
             />
 

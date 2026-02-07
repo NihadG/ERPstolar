@@ -10323,6 +10323,7 @@ input[type=number] {
   margin-bottom: 10px;
   display: -webkit-box;
   -webkit-line-clamp: 2;
+  line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
@@ -10343,9 +10344,7 @@ input[type=number] {
   font-weight: 500;
 }
 
-.mobile-meta-chip.priority {
-  /* dynamically styled */
-}
+
 
 .mobile-meta-chip.date {
   background: #f0f0f5;
@@ -10836,9 +10835,7 @@ input[type=number] {
 }
 
 /* Links Tab */
-.mobile-links-tab {
-  /* styles */
-}
+
 
 .mobile-link-types {
   display: flex;
@@ -10966,9 +10963,7 @@ input[type=number] {
 }
 
 /* Checklist Tab */
-.mobile-checklist-tab {
-  /* styles */
-}
+
 
 .mobile-add-checklist {
   display: flex;

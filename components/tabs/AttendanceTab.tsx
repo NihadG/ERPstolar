@@ -8,6 +8,7 @@ import {
     getAllAttendanceByMonth,
     autoPopulateWeekends,
     formatLocalDateISO,
+    backfillWorkLogsFromAttendance,
 } from '@/lib/attendance';
 import {
     CheckCircle2,
@@ -21,7 +22,8 @@ import {
     ChevronLeft,
     ChevronRight,
     Calendar,
-    Users
+    Users,
+    Database
 } from 'lucide-react';
 import Modal from '@/components/ui/Modal';
 import { useData } from '@/context/DataContext';
@@ -303,6 +305,35 @@ export default function AttendanceTab({ workers, onRefresh, showToast }: Attenda
         }
     }
 
+    // Backfill work logs from existing attendance records
+    async function handleBackfillWorkLogs() {
+        if (!organizationId) {
+            showToast('Greška: Nema organizacije', 'error');
+            return;
+        }
+
+        try {
+            setLoading(true);
+
+            // Get date range from loaded months
+            const firstMonth = loadedMonths[0];
+            const lastMonth = loadedMonths[loadedMonths.length - 1];
+            const dateFrom = `${firstMonth.year}-${String(firstMonth.month).padStart(2, '0')}-01`;
+            const lastDay = new Date(lastMonth.year, lastMonth.month, 0).getDate();
+            const dateTo = `${lastMonth.year}-${String(lastMonth.month).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
+
+            const result = await backfillWorkLogsFromAttendance(organizationId, dateFrom, dateTo);
+
+            showToast(`Sinkronizacija završena: ${result.totalCreated} work logova kreirano`, 'success');
+            onRefresh();
+        } catch (error) {
+            console.error('Backfill error:', error);
+            showToast('Greška pri sinkronizaciji', 'error');
+        } finally {
+            setLoading(false);
+        }
+    }
+
     // Navigate months (Infinity Scroll Loaders)
     function previousMonth() {
         setLoadedMonths(prev => {
@@ -468,6 +499,17 @@ export default function AttendanceTab({ workers, onRefresh, showToast }: Attenda
                     <button className="glass-btn glass-btn-primary" onClick={handleAutoPopulateWeekends} disabled={loading} style={{ padding: '8px 14px' }}>
                         <Coffee size={16} />
                         Vikendi (Učitani)
+                    </button>
+
+                    <button
+                        className="glass-btn"
+                        onClick={handleBackfillWorkLogs}
+                        disabled={loading}
+                        style={{ padding: '8px 14px', background: '#fff7ed', borderColor: '#fed7aa', color: '#c2410c' }}
+                        title="Sync prisustvo sa work logovima za učitane mjesece"
+                    >
+                        <Database size={16} />
+                        Sync Work Logs
                     </button>
                 </div>
             </div>

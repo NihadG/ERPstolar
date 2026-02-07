@@ -472,9 +472,39 @@ export async function getProductsByProject(projectId: string, organizationId: st
 
     const products = snapshot.docs.map(doc => ({ ...doc.data() } as Product));
 
-    for (const product of products) {
-        product.materials = await getProductMaterials(product.Product_ID, organizationId);
+    if (products.length === 0) {
+        return products;
     }
+
+    // PERFORMANCE FIX: Fetch all materials for all products in one query instead of N queries
+    // Firestore 'in' query is limited to 30 items, so we batch if needed
+    const productIds = products.map(p => p.Product_ID);
+    const materialsByProduct = new Map<string, ProductMaterial[]>();
+
+    // Batch product IDs into chunks of 30 (Firestore limit)
+    const batchSize = 30;
+    for (let i = 0; i < productIds.length; i += batchSize) {
+        const batchIds = productIds.slice(i, i + batchSize);
+        const materialsQ = query(
+            collection(db, COLLECTIONS.PRODUCT_MATERIALS),
+            where('Product_ID', 'in', batchIds),
+            where('Organization_ID', '==', organizationId)
+        );
+        const materialsSnap = await getDocs(materialsQ);
+
+        materialsSnap.docs.forEach(doc => {
+            const mat = doc.data() as ProductMaterial;
+            if (!materialsByProduct.has(mat.Product_ID)) {
+                materialsByProduct.set(mat.Product_ID, []);
+            }
+            materialsByProduct.get(mat.Product_ID)!.push(mat);
+        });
+    }
+
+    // Assign materials to products using the map (O(1) lookup)
+    products.forEach(product => {
+        product.materials = materialsByProduct.get(product.Product_ID) || [];
+    });
 
     return products;
 }
@@ -3805,12 +3835,17 @@ export async function calculateItemLaborCost(workOrderItemId: string, organizati
 /**
  * Delete a work log entry
  */
-export async function deleteWorkLog(workLogId: string): Promise<{ success: boolean; message: string }> {
+export async function deleteWorkLog(workLogId: string, organizationId: string): Promise<{ success: boolean; message: string }> {
+    if (!organizationId) {
+        return { success: false, message: 'Organization ID is required' };
+    }
+
     try {
         const firestore = getDb();
         const q = query(
             collection(firestore, COLLECTIONS.WORK_LOGS),
-            where('WorkLog_ID', '==', workLogId)
+            where('WorkLog_ID', '==', workLogId),
+            where('Organization_ID', '==', organizationId)
         );
         const snapshot = await getDocs(q);
 
@@ -3830,14 +3865,17 @@ export async function deleteWorkLog(workLogId: string): Promise<{ success: boole
  * Check if a work log already exists for a worker/item/date combination
  * Prevents duplicate entries
  */
-export async function workLogExists(workerId: string, workOrderItemId: string, date: string): Promise<boolean> {
+export async function workLogExists(workerId: string, workOrderItemId: string, date: string, organizationId: string): Promise<boolean> {
+    if (!organizationId) return false;
+
     try {
         const firestore = getDb();
         const q = query(
             collection(firestore, COLLECTIONS.WORK_LOGS),
             where('Worker_ID', '==', workerId),
             where('Work_Order_Item_ID', '==', workOrderItemId),
-            where('Date', '==', date)
+            where('Date', '==', date),
+            where('Organization_ID', '==', organizationId)
         );
         const snapshot = await getDocs(q);
         return !snapshot.empty;

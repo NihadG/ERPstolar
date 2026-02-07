@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, DragEvent, useMemo } from 'react';
-import { GripVertical, User, CheckCircle, Clock, Scissors, Plus, X, Pause, Play } from 'lucide-react';
+import { GripVertical, User, CheckCircle, Clock, Scissors, Plus, X, Pause, Play, Edit2 } from 'lucide-react';
 import type { WorkOrderItem, ItemProcessStatus, Worker, SubTask } from '@/lib/types';
 import { canWorkerStartProcess } from '@/lib/attendance';
 
@@ -53,6 +53,11 @@ export default function ProcessKanbanBoard({
     const [splitModalOpen, setSplitModalOpen] = useState<string | null>(null);
     const [splitGroups, setSplitGroups] = useState<number[]>([]);
 
+    // Worker edit modal state
+    const [editWorkerModalOpen, setEditWorkerModalOpen] = useState<string | null>(null);
+    const [selectedMainWorker, setSelectedMainWorker] = useState<string>('');
+    const [selectedHelpers, setSelectedHelpers] = useState<string[]>([]);
+
     // Convert items to unified KanbanCard format
     const kanbanCards = useMemo((): KanbanCard[] => {
         const cards: KanbanCard[] = [];
@@ -71,7 +76,7 @@ export default function ProcessKanbanBoard({
                         totalQuantity: item.Quantity,
                         currentProcess: subTask.Current_Process,
                         status: subTask.Status,
-                        isPaused: item.Is_Paused || false,
+                        isPaused: subTask.Is_Paused || false, // Individual sub-task pause
                         workerId: subTask.Worker_ID,
                         workerName: subTask.Worker_Name,
                         isSubTask: true,
@@ -310,11 +315,93 @@ export default function ProcessKanbanBoard({
         setSplitModalOpen(null);
     };
 
-    // Pause/Resume a card (toggle Is_Paused - doesn't affect production status)
+    // Pause/Resume a card (toggle Is_Paused and track Pause_Periods)
+    // For sub-tasks: uses onSubTaskUpdate to pause individual sub-task
+    // For items: uses onPauseToggle to pause entire item
     const handlePause = (card: KanbanCard) => {
-        if (onPauseToggle) {
+        const now = new Date().toISOString();
+
+        if (card.isSubTask && onSubTaskUpdate) {
+            // Find current sub-task to get existing pause periods
+            const item = items.find(i => i.ID === card.itemId);
+            const subTask = item?.SubTasks?.find((st: any) => st.SubTask_ID === card.subTaskId);
+            const currentPausePeriods = subTask?.Pause_Periods || [];
+
+            if (!card.isPaused) {
+                // PAUSING: Add new pause period
+                onSubTaskUpdate(card.itemId, card.subTaskId!, {
+                    Is_Paused: true,
+                    Pause_Periods: [...currentPausePeriods, { Started_At: now }]
+                });
+            } else {
+                // RESUMING: Close the last open pause period
+                const updatedPeriods = currentPausePeriods.map((p: any, idx: number) => {
+                    if (idx === currentPausePeriods.length - 1 && !p.Ended_At) {
+                        return { ...p, Ended_At: now };
+                    }
+                    return p;
+                });
+                onSubTaskUpdate(card.itemId, card.subTaskId!, {
+                    Is_Paused: false,
+                    Pause_Periods: updatedPeriods
+                });
+            }
+        } else if (onPauseToggle) {
+            // Legacy item-level pause
             onPauseToggle(card.itemId, !card.isPaused);
         }
+    };
+
+    // Open edit worker modal
+    const openEditWorkerModal = (card: KanbanCard) => {
+        setEditWorkerModalOpen(card.id);
+        setSelectedMainWorker(card.workerId || '');
+        setSelectedHelpers(card.helpers?.map(h => h.Worker_ID) || []);
+    };
+
+    // Toggle helper selection
+    const toggleHelperSelection = (helperId: string) => {
+        setSelectedHelpers(prev =>
+            prev.includes(helperId)
+                ? prev.filter(id => id !== helperId)
+                : [...prev, helperId]
+        );
+    };
+
+    // Save worker changes
+    const saveWorkerChanges = async () => {
+        const card = kanbanCards.find(c => c.id === editWorkerModalOpen);
+        if (!card) {
+            setEditWorkerModalOpen(null);
+            return;
+        }
+
+        const mainWorker = workers.find(w => w.Worker_ID === selectedMainWorker);
+        const helperWorkers = selectedHelpers.map(id => workers.find(w => w.Worker_ID === id)).filter(Boolean) as Worker[];
+
+        // Build helpers array
+        const helpers = helperWorkers.map(w => ({
+            Worker_ID: w.Worker_ID,
+            Worker_Name: w.Name
+        }));
+
+        if (card.isSubTask && onSubTaskUpdate) {
+            // Update sub-task worker
+            onSubTaskUpdate(card.itemId, card.subTaskId!, {
+                Worker_ID: mainWorker?.Worker_ID,
+                Worker_Name: mainWorker?.Name,
+                Status: 'U toku'
+            });
+        } else {
+            // Update process with main worker and helpers
+            onProcessUpdate(card.itemId, card.currentProcess, {
+                Worker_ID: mainWorker?.Worker_ID,
+                Worker_Name: mainWorker?.Name,
+                Helpers: helpers
+            });
+        }
+
+        setEditWorkerModalOpen(null);
     };
 
     return (
@@ -391,6 +478,13 @@ export default function ProcessKanbanBoard({
                                             <div className="card-footer">
                                                 <div className="workers-section">
                                                     <div className="worker-display">
+                                                        <button
+                                                            className="edit-worker-btn"
+                                                            onClick={(e) => { e.stopPropagation(); openEditWorkerModal(card); }}
+                                                            title="Uredi radnike"
+                                                        >
+                                                            <Edit2 size={10} />
+                                                        </button>
                                                         <User size={12} />
                                                         <span className="worker-name">
                                                             {card.workerName || 'Nije dodijeljen'}
@@ -530,6 +624,76 @@ export default function ProcessKanbanBoard({
                         <div className="split-modal-footer">
                             <button className="btn-cancel" onClick={() => setSplitModalOpen(null)}>Odustani</button>
                             <button className="btn-confirm" onClick={confirmSplit}>Podijeli</button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Worker Edit Modal */}
+            {editWorkerModalOpen && (
+                <div className="split-modal-overlay" onClick={() => setEditWorkerModalOpen(null)}>
+                    <div className="split-modal" onClick={e => e.stopPropagation()}>
+                        <div className="split-modal-header">
+                            <Edit2 size={20} />
+                            <span>Uredi radnike</span>
+                            <button className="close-btn" onClick={() => setEditWorkerModalOpen(null)}>
+                                <X size={18} />
+                            </button>
+                        </div>
+                        <div className="split-modal-body">
+                            {(() => {
+                                const card = kanbanCards.find(c => c.id === editWorkerModalOpen);
+                                if (!card) return null;
+                                return (
+                                    <>
+                                        <div className="edit-worker-section">
+                                            <label className="section-label">Glavni radnik</label>
+                                            <select
+                                                className="worker-select"
+                                                value={selectedMainWorker}
+                                                onChange={(e) => setSelectedMainWorker(e.target.value)}
+                                            >
+                                                <option value="">-- Nije dodijeljen --</option>
+                                                {workers.map(w => (
+                                                    <option key={w.Worker_ID} value={w.Worker_ID}>
+                                                        {w.Name} ({w.Daily_Rate?.toFixed(0) || 0} KM/dan)
+                                                    </option>
+                                                ))}
+                                            </select>
+                                        </div>
+
+                                        <div className="edit-worker-section">
+                                            <label className="section-label">Pomoćnici</label>
+                                            <div className="helpers-list">
+                                                {workers
+                                                    .filter(w => w.Worker_ID !== selectedMainWorker)
+                                                    .map(w => (
+                                                        <label key={w.Worker_ID} className="helper-checkbox">
+                                                            <input
+                                                                type="checkbox"
+                                                                checked={selectedHelpers.includes(w.Worker_ID)}
+                                                                onChange={() => toggleHelperSelection(w.Worker_ID)}
+                                                            />
+                                                            <span className="helper-name">{w.Name}</span>
+                                                            <span className="helper-rate">{w.Daily_Rate?.toFixed(0) || 0} KM</span>
+                                                        </label>
+                                                    ))
+                                                }
+                                            </div>
+                                        </div>
+
+                                        {card.workerName && selectedMainWorker !== card.workerId && (
+                                            <div className="worker-change-notice">
+                                                ⚠️ Mijenjate radnika sa: <strong>{card.workerName}</strong>
+                                            </div>
+                                        )}
+                                    </>
+                                );
+                            })()}
+                        </div>
+                        <div className="split-modal-footer">
+                            <button className="btn-cancel" onClick={() => setEditWorkerModalOpen(null)}>Odustani</button>
+                            <button className="btn-confirm" onClick={saveWorkerChanges}>Spremi</button>
                         </div>
                     </div>
                 </div>
@@ -757,6 +921,26 @@ export default function ProcessKanbanBoard({
                     align-items: center;
                     gap: 6px;
                     color: #64748b;
+                }
+                .edit-worker-btn {
+                    width: 20px;
+                    height: 20px;
+                    border-radius: 4px;
+                    border: 1px solid #e2e8f0;
+                    background: white;
+                    color: #94a3b8;
+                    cursor: pointer;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    transition: all 0.2s ease;
+                    padding: 0;
+                }
+                .edit-worker-btn:hover {
+                    background: #3b82f6;
+                    color: white;
+                    border-color: #3b82f6;
+                    transform: scale(1.1);
                 }
                 .worker-display .worker-name {
                     font-size: 11px;
@@ -1022,6 +1206,85 @@ export default function ProcessKanbanBoard({
                 }
                 .btn-confirm:hover {
                     background: linear-gradient(135deg, #7c3aed, #6d28d9);
+                }
+                
+                /* Worker Edit Modal Styles */
+                .edit-worker-section {
+                    margin-bottom: 16px;
+                }
+                .section-label {
+                    display: block;
+                    font-size: 12px;
+                    font-weight: 600;
+                    color: #475569;
+                    margin-bottom: 8px;
+                    text-transform: uppercase;
+                    letter-spacing: 0.5px;
+                }
+                .worker-select {
+                    width: 100%;
+                    padding: 10px 12px;
+                    border: 1px solid #e2e8f0;
+                    border-radius: 8px;
+                    font-size: 14px;
+                    background: white;
+                    cursor: pointer;
+                    transition: border-color 0.2s;
+                }
+                .worker-select:focus {
+                    outline: none;
+                    border-color: #3b82f6;
+                    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+                }
+                .helpers-list {
+                    display: flex;
+                    flex-direction: column;
+                    gap: 8px;
+                    max-height: 180px;
+                    overflow-y: auto;
+                    padding: 4px;
+                }
+                .helper-checkbox {
+                    display: flex;
+                    align-items: center;
+                    gap: 10px;
+                    padding: 8px 12px;
+                    background: #f8fafc;
+                    border-radius: 8px;
+                    cursor: pointer;
+                    transition: background 0.2s;
+                }
+                .helper-checkbox:hover {
+                    background: #f1f5f9;
+                }
+                .helper-checkbox input[type="checkbox"] {
+                    width: 16px;
+                    height: 16px;
+                    accent-color: #3b82f6;
+                }
+                .helper-name {
+                    flex: 1;
+                    font-size: 13px;
+                    color: #1e293b;
+                }
+                .helper-rate {
+                    font-size: 11px;
+                    color: #64748b;
+                    background: #e2e8f0;
+                    padding: 2px 6px;
+                    border-radius: 4px;
+                }
+                .worker-change-notice {
+                    background: #fef3c7;
+                    border: 1px solid #fcd34d;
+                    border-radius: 8px;
+                    padding: 10px 14px;
+                    font-size: 12px;
+                    color: #92400e;
+                    margin-top: 12px;
+                }
+                .worker-change-notice strong {
+                    color: #78350f;
                 }
             `}</style>
         </div >

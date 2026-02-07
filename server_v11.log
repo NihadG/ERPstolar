@@ -1,0 +1,12 @@
+
+> erp-firebase@0.1.0 dev
+> next dev
+
+  ▲ Next.js 14.2.35
+  - Local:        http://localhost:3000
+  - Environments: .env.local
+
+ ✓ Starting...
+Terminate batch job (Y/N)? [?25h
+
+^C

@@ -1,0 +1,33 @@
+
+> erp-firebase@0.1.0 dev
+> next dev
+
+  ▲ Next.js 14.2.35
+  - Local:        http://localhost:3000
+  - Environments: .env.local
+
+ ✓ Starting...
+ ✓ Ready in 2.9s
+ ○ Compiling /login ...
+(node:14028) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+ ✓ Compiled /login in 6.5s (756 modules)
+ GET /login 200 in 7053ms
+ ○ Compiling / ...
+ ✓ Compiled / in 5.6s (1602 modules)
+ GET /login 200 in 296ms
+ GET /login 200 in 251ms
+ GET /login 200 in 77ms
+ GET /login 200 in 60ms
+ GET /login 200 in 107ms
+ GET /login 200 in 36ms
+ GET /login 200 in 24ms
+ GET /login 200 in 33ms
+ GET /login 200 in 32ms
+ GET /login 200 in 39ms
+ GET /login 200 in 43ms
+ ○ Compiling /_not-found ...
+ ✓ Compiled /_not-found in 731ms (1487 modules)
+ GET /login 404 in 1026ms
+ GET /login 404 in 38ms
+ GET /login 404 in 74ms

@@ -1,0 +1,38 @@
+
+Running 1 test using 1 worker
+
+[1A[2K[1/1] [chromium] › tests\seed_and_test.spec.ts:34:9 › Phase 2: Data Seeding & Planner Verification › Seed Data and Verify Work Order/Planner Flow
+[1A[2K[chromium] › tests\seed_and_test.spec.ts:34:9 › Phase 2: Data Seeding & Planner Verification › Seed Data and Verify Work Order/Planner Flow
+PAGE LOG: %cDownload the React DevTools for a better development experience: https://reactjs.org/link/react-devtools font-weight:bold
+
+[1A[2K--- Creating Project: Hotel Central ---
+
+[1A[2K  1) [chromium] › tests\seed_and_test.spec.ts:34:9 › Phase 2: Data Seeding & Planner Verification › Seed Data and Verify Work Order/Planner Flow 
+
+    [31mTest timeout of 30000ms exceeded.[39m
+
+    Error: page.click: Test timeout of 30000ms exceeded.
+    Call log:
+    [2m  - waiting for locator('a[href="/projects"]')[22m
+
+
+      39 |         // 1. Create Project
+      40 |         console.log('--- Creating Project: ' + projectName + ' ---');
+    > 41 |         await page.click('a[href="/projects"]');
+         |                    ^
+      42 |         // Wait for list to load
+      43 |         await page.waitForSelector('.projects-list');
+      44 |
+        at C:\Users\Nihad\OneDrive\Desktop\Aplikacije\ERP V4\tests\seed_and_test.spec.ts:41:20
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    test-results\seed_and_test-Phase-2-Data-bbef7-ify-Work-Order-Planner-Flow-chromium\test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    Error Context: test-results\seed_and_test-Phase-2-Data-bbef7-ify-Work-Order-Planner-Flow-chromium\error-context.md
+
+
+[1A[2K  1 failed
+    [chromium] › tests\seed_and_test.spec.ts:34:9 › Phase 2: Data Seeding & Planner Verification › Seed Data and Verify Work Order/Planner Flow 
+
+[36m  Serving HTML report at http://localhost:61270. Press Ctrl+C to quit.[39m

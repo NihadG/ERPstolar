@@ -25,6 +25,10 @@ import { useData } from '@/context/DataContext';
 import { PROJECT_STATUSES, PRODUCTION_STEPS, MATERIAL_CATEGORIES } from '@/lib/types';
 import { useIsMobile } from '@/hooks/useIsMobile';
 import MobileProjectsView from './mobile/MobileProjectsView';
+import MobileMaterialEditModal from './mobile/MobileMaterialEditModal';
+import MobileProjectModal from './mobile/MobileProjectModal';
+import MobileProductModal from './mobile/MobileProductModal';
+import MobileMaterialAddModal from './mobile/MobileMaterialAddModal';
 
 interface ProjectsTabProps {
     projects: Project[];
@@ -179,8 +183,10 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
         setMaterialModal(true);
     }
 
-    async function handleSaveProject() {
-        if (!editingProject?.Client_Name) {
+    async function handleSaveProject(projectData?: Partial<Project>) {
+        const dataToSave = projectData || editingProject;
+
+        if (!dataToSave?.Client_Name) {
             showToast('Unesite ime klijenta', 'error');
             return;
         }
@@ -189,7 +195,7 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
             return;
         }
 
-        const result = await saveProject(editingProject, organizationId);
+        const result = await saveProject(dataToSave, organizationId);
         if (result.success) {
             showToast(result.message, 'success');
             setProjectModal(false);
@@ -215,8 +221,10 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
         }
     }
 
-    async function handleSaveProduct() {
-        if (!editingProduct?.Name) {
+    async function handleSaveProduct(productData?: Partial<Product>) {
+        const dataToSave = productData || editingProduct;
+
+        if (!dataToSave?.Name) {
             showToast('Unesite naziv proizvoda', 'error');
             return;
         }
@@ -225,12 +233,12 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
             return;
         }
 
-        const productData = {
-            ...editingProduct,
-            Project_ID: editingProduct.Project_ID || editingProduct.projectId,
+        const productPayload = {
+            ...dataToSave,
+            Project_ID: dataToSave.Project_ID || (dataToSave as any).projectId,
         };
 
-        const result = await saveProduct(productData, organizationId);
+        const result = await saveProduct(productPayload, organizationId);
         if (result.success) {
             showToast(result.message, 'success');
             setProductModal(false);
@@ -265,38 +273,52 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
         return mat.Is_Alu_Door === true || mat.Category === 'Alu vrata';
     }
 
-    async function handleAddMaterial() {
-        if (!selectedMaterial || !addingMaterial) {
+    async function handleAddMaterial(data?: { materialId: string, quantity: number, price: number }) {
+        // Prepare data from args or state
+        const targetMaterialId = data?.materialId || selectedMaterial?.Material_ID;
+        const targetQuantity = data?.quantity ?? materialQty;
+        const targetPrice = data?.price ?? materialPrice;
+        const targetProductId = addingMaterial?.productId;
+
+        // If generic checks fail, try checking selectedMaterial object (desktop flow)
+        const targetMaterialObj = data
+            ? materials.find(m => m.Material_ID === data.materialId)
+            : selectedMaterial;
+
+        if (!targetMaterialObj || !targetProductId) {
             showToast('Odaberite materijal', 'error');
             return;
         }
 
         // Check if this is a glass material - redirect to glass modal
-        if (isGlassMaterial(selectedMaterial)) {
+        // Note: Glass/Alu redirect logic is tricky with the new mobile direct-add flow. 
+        // For now, if mobile adds it directly, we assume standard material add unless we add specific logic there.
+        // But let's keep it safe:
+        if (isGlassMaterial(targetMaterialObj)) {
             setMaterialModal(false);
-            setGlassProductId(addingMaterial.productId);
+            setGlassProductId(targetProductId);
             setEditingGlassMaterial(null);
             setGlassModal(true);
             return;
         }
 
         // Check if this is an alu door material - redirect to alu door modal
-        if (isAluDoorMaterial(selectedMaterial)) {
+        if (isAluDoorMaterial(targetMaterialObj)) {
             setMaterialModal(false);
-            setAluDoorProductId(addingMaterial.productId);
+            setAluDoorProductId(targetProductId);
             setEditingAluDoorMaterial(null);
             setAluDoorModal(true);
             return;
         }
 
         const result = await addMaterialToProduct({
-            Product_ID: addingMaterial.productId,
-            Material_ID: selectedMaterial.Material_ID,
-            Material_Name: selectedMaterial.Name,
-            Quantity: materialQty,
-            Unit: selectedMaterial.Unit,
-            Unit_Price: materialPrice || selectedMaterial.Default_Unit_Price,
-            Supplier: selectedMaterial.Default_Supplier,
+            Product_ID: targetProductId,
+            Material_ID: targetMaterialObj.Material_ID,
+            Material_Name: targetMaterialObj.Name,
+            Quantity: targetQuantity,
+            Unit: targetMaterialObj.Unit,
+            Unit_Price: targetPrice || targetMaterialObj.Default_Unit_Price,
+            Supplier: targetMaterialObj.Default_Supplier || '',
         }, organizationId!);
 
         if (result.success) {
@@ -414,7 +436,25 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
     }
 
     // Save edited material
-    async function handleSaveEditMaterial() {
+    async function handleSaveEditMaterial(id?: string, updates?: { Quantity: number; Unit_Price: number; Total_Price: number; Is_Essential: boolean }) {
+        // If called from mobile modal with args
+        if (id && updates) {
+            if (!organizationId) {
+                showToast('Organization ID is required', 'error');
+                return;
+            }
+            const result = await updateProductMaterial(id, updates, organizationId);
+            if (result.success) {
+                showToast('Materijal uspješno ažuriran', 'success');
+                setEditMaterialModal(false);
+                onRefresh();
+            } else {
+                showToast(result.message, 'error');
+            }
+            return;
+        }
+
+        // Existing desktop logic
         if (!editingMaterial) return;
         if (!organizationId) {
             showToast('Organization ID is required', 'error');
@@ -518,8 +558,16 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                     onEditAluDoor={openAluDoorModalForEdit}
                 />
 
-                {/* Modals are shared */}
-                {projectModal && (
+                {/* Modals are shared but different for mobile */}
+                {/* Project Modal */}
+                {isMobile ? (
+                    <MobileProjectModal
+                        isOpen={projectModal}
+                        onClose={() => setProjectModal(false)}
+                        project={editingProject}
+                        onSave={handleSaveProject}
+                    />
+                ) : (
                     <Modal
                         isOpen={projectModal}
                         onClose={() => setProjectModal(false)}
@@ -559,146 +607,164 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                         </div>
                         <div className="modal-actions">
                             <button className="btn btn-secondary" onClick={() => setProjectModal(false)}>Otkaži</button>
-                            <button className="btn btn-primary" onClick={handleSaveProject}>Sačuvaj</button>
+                            <button className="btn btn-primary" onClick={() => handleSaveProject()}>Sačuvaj</button>
                         </div>
                     </Modal>
                 )}
 
                 {/* Shared Modals for Mobile */}
                 {/* Product Modal */}
-                <Modal
-                    isOpen={productModal}
-                    onClose={() => setProductModal(false)}
-                    title={editingProduct?.Product_ID ? 'Uredi Proizvod' : 'Novi Proizvod'}
-                    footer={
-                        <>
-                            <button className="btn btn-secondary" onClick={() => setProductModal(false)}>Otkaži</button>
-                            <button className="btn btn-primary" onClick={handleSaveProduct}>Sačuvaj</button>
-                        </>
-                    }
-                >
-                    <div className="form-group">
-                        <label>Naziv *</label>
-                        <input
-                            type="text"
-                            placeholder="npr. Gornji kuhinjski ormar"
-                            value={editingProduct?.Name || ''}
-                            onChange={(e) => setEditingProduct({ ...editingProduct, Name: e.target.value })}
-                        />
-                    </div>
-                    <div className="form-row form-row-3">
+                {isMobile ? (
+                    <MobileProductModal
+                        isOpen={productModal}
+                        onClose={() => setProductModal(false)}
+                        product={editingProduct}
+                        onSave={handleSaveProduct}
+                    />
+                ) : (
+                    <Modal
+                        isOpen={productModal}
+                        onClose={() => setProductModal(false)}
+                        title={editingProduct?.Product_ID ? 'Uredi Proizvod' : 'Novi Proizvod'}
+                        footer={
+                            <>
+                                <button className="btn btn-secondary" onClick={() => setProductModal(false)}>Otkaži</button>
+                                <button className="btn btn-primary" onClick={() => handleSaveProduct()}>Sačuvaj</button>
+                            </>
+                        }
+                    >
                         <div className="form-group">
-                            <label>Visina (mm)</label>
+                            <label>Naziv *</label>
+                            <input
+                                type="text"
+                                placeholder="npr. Gornji kuhinjski ormar"
+                                value={editingProduct?.Name || ''}
+                                onChange={(e) => setEditingProduct({ ...editingProduct, Name: e.target.value })}
+                            />
+                        </div>
+                        <div className="form-row form-row-3">
+                            <div className="form-group">
+                                <label>Visina (mm)</label>
+                                <input
+                                    type="number"
+                                    min="0"
+                                    value={editingProduct?.Height || ''}
+                                    onChange={(e) => setEditingProduct({ ...editingProduct, Height: parseInt(e.target.value) || 0 })}
+                                />
+                            </div>
+                            <div className="form-group">
+                                <label>Širina (mm)</label>
+                                <input
+                                    type="number"
+                                    min="0"
+                                    value={editingProduct?.Width || ''}
+                                    onChange={(e) => setEditingProduct({ ...editingProduct, Width: parseInt(e.target.value) || 0 })}
+                                />
+                            </div>
+                            <div className="form-group">
+                                <label>Dubina (mm)</label>
+                                <input
+                                    type="number"
+                                    min="0"
+                                    value={editingProduct?.Depth || ''}
+                                    onChange={(e) => setEditingProduct({ ...editingProduct, Depth: parseInt(e.target.value) || 0 })}
+                                />
+                            </div>
+                        </div>
+                        <div className="form-group">
+                            <label>Količina</label>
                             <input
                                 type="number"
-                                min="0"
-                                value={editingProduct?.Height || ''}
-                                onChange={(e) => setEditingProduct({ ...editingProduct, Height: parseInt(e.target.value) || 0 })}
+                                min="1"
+                                value={editingProduct?.Quantity || 1}
+                                onChange={(e) => setEditingProduct({ ...editingProduct, Quantity: parseInt(e.target.value) || 1 })}
                             />
                         </div>
                         <div className="form-group">
-                            <label>Širina (mm)</label>
-                            <input
-                                type="number"
-                                min="0"
-                                value={editingProduct?.Width || ''}
-                                onChange={(e) => setEditingProduct({ ...editingProduct, Width: parseInt(e.target.value) || 0 })}
+                            <label>Napomene</label>
+                            <textarea
+                                rows={2}
+                                value={editingProduct?.Notes || ''}
+                                onChange={(e) => setEditingProduct({ ...editingProduct, Notes: e.target.value })}
                             />
                         </div>
-                        <div className="form-group">
-                            <label>Dubina (mm)</label>
-                            <input
-                                type="number"
-                                min="0"
-                                value={editingProduct?.Depth || ''}
-                                onChange={(e) => setEditingProduct({ ...editingProduct, Depth: parseInt(e.target.value) || 0 })}
-                            />
-                        </div>
-                    </div>
-                    <div className="form-group">
-                        <label>Količina</label>
-                        <input
-                            type="number"
-                            min="1"
-                            value={editingProduct?.Quantity || 1}
-                            onChange={(e) => setEditingProduct({ ...editingProduct, Quantity: parseInt(e.target.value) || 1 })}
-                        />
-                    </div>
-                    <div className="form-group">
-                        <label>Napomene</label>
-                        <textarea
-                            rows={2}
-                            value={editingProduct?.Notes || ''}
-                            onChange={(e) => setEditingProduct({ ...editingProduct, Notes: e.target.value })}
-                        />
-                    </div>
-                </Modal>
+                    </Modal>
+                )}
 
                 {/* Add Material Modal */}
-                <Modal
-                    isOpen={materialModal}
-                    onClose={() => setMaterialModal(false)}
-                    title="Dodaj Materijal"
-                    footer={
-                        <>
-                            <button className="btn btn-secondary" onClick={() => setMaterialModal(false)}>Otkaži</button>
-                            <button className="btn btn-primary" onClick={handleAddMaterial}>Dodaj</button>
-                        </>
-                    }
-                >
-                    <div className="form-group">
-                        <label>Materijal *</label>
-                        <SearchableSelect
-                            value={selectedMaterial?.Material_ID || ''}
-                            onChange={(value) => {
-                                const mat = materials.find(m => m.Material_ID === value);
-                                setSelectedMaterial(mat || null);
-                                if (mat) {
-                                    setMaterialPrice(mat.Default_Unit_Price);
-                                }
-                            }}
-                            options={materials.map(mat => ({
-                                value: mat.Material_ID,
-                                label: mat.Name,
-                                subLabel: `${mat.Category} • ${mat.Unit}`
-                            }))}
-                            placeholder="Pretraži materijale..."
-                        />
-                    </div>
-                    <div className="form-row">
+                {isMobile ? (
+                    <MobileMaterialAddModal
+                        isOpen={materialModal}
+                        onClose={() => setMaterialModal(false)}
+                        materials={materials}
+                        onAdd={handleAddMaterial}
+                    />
+                ) : (
+                    <Modal
+                        isOpen={materialModal}
+                        onClose={() => setMaterialModal(false)}
+                        title="Dodaj Materijal"
+                        footer={
+                            <>
+                                <button className="btn btn-secondary" onClick={() => setMaterialModal(false)}>Otkaži</button>
+                                <button className="btn btn-primary" onClick={() => handleAddMaterial()}>Dodaj</button>
+                            </>
+                        }
+                    >
                         <div className="form-group">
-                            <label>Količina *</label>
+                            <label>Materijal *</label>
+                            <SearchableSelect
+                                value={selectedMaterial?.Material_ID || ''}
+                                onChange={(value) => {
+                                    const mat = materials.find(m => m.Material_ID === value);
+                                    setSelectedMaterial(mat || null);
+                                    if (mat) {
+                                        setMaterialPrice(mat.Default_Unit_Price);
+                                    }
+                                }}
+                                options={materials.map(mat => ({
+                                    value: mat.Material_ID,
+                                    label: mat.Name,
+                                    subLabel: `${mat.Category} • ${mat.Unit}`
+                                }))}
+                                placeholder="Pretraži materijale..."
+                            />
+                        </div>
+                        <div className="form-row">
+                            <div className="form-group">
+                                <label>Količina *</label>
+                                <input
+                                    type="number"
+                                    step="0.01"
+                                    min="0"
+                                    value={materialQty}
+                                    onChange={(e) => setMaterialQty(parseFloat(e.target.value) || 0)}
+                                />
+                            </div>
+                            <div className="form-group">
+                                <label>Jedinica</label>
+                                <input
+                                    type="text"
+                                    readOnly
+                                    value={selectedMaterial?.Unit || ''}
+                                />
+                            </div>
+                        </div>
+                        <div className="form-group">
+                            <label>Cijena po jedinici (KM)</label>
                             <input
                                 type="number"
                                 step="0.01"
                                 min="0"
-                                value={materialQty}
-                                onChange={(e) => setMaterialQty(parseFloat(e.target.value) || 0)}
+                                value={materialPrice}
+                                onChange={(e) => setMaterialPrice(parseFloat(e.target.value) || 0)}
                             />
                         </div>
                         <div className="form-group">
-                            <label>Jedinica</label>
-                            <input
-                                type="text"
-                                readOnly
-                                value={selectedMaterial?.Unit || ''}
-                            />
+                            <label>Ukupno: <strong>{formatCurrency(materialQty * materialPrice)}</strong></label>
                         </div>
-                    </div>
-                    <div className="form-group">
-                        <label>Cijena po jedinici (KM)</label>
-                        <input
-                            type="number"
-                            step="0.01"
-                            min="0"
-                            value={materialPrice}
-                            onChange={(e) => setMaterialPrice(parseFloat(e.target.value) || 0)}
-                        />
-                    </div>
-                    <div className="form-group">
-                        <label>Ukupno: <strong>{formatCurrency(materialQty * materialPrice)}</strong></label>
-                    </div>
-                </Modal>
+                    </Modal>
+                )}
 
                 {/* Glass Modal */}
                 <GlassModal
@@ -720,89 +786,98 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                     onSave={handleSaveAluDoor}
                 />
 
-                {/* Edit Material Modal */}
-                <Modal
-                    isOpen={editMaterialModal}
-                    onClose={() => setEditMaterialModal(false)}
-                    title="Uredi Materijal"
-                    footer={
-                        <>
-                            <button className="btn btn-secondary" onClick={() => setEditMaterialModal(false)}>Otkaži</button>
-                            <button className="btn btn-primary" onClick={handleSaveEditMaterial}>Sačuvaj</button>
-                        </>
-                    }
-                >
-                    {editingMaterial && (
-                        <div className="edit-modal-content">
-                            <div className="modal-header-info">
-                                <div className="header-icon">📦</div>
-                                <div className="header-details">
-                                    <div className="header-title">{editingMaterial.Material_Name}</div>
-                                    <div className="header-subtitle">Uređivanje detalja materijala</div>
+                {/* Edit Material Modal - Desktop vs Mobile */}
+                {isMobile ? (
+                    <MobileMaterialEditModal
+                        isOpen={editMaterialModal}
+                        onClose={() => setEditMaterialModal(false)}
+                        material={editingMaterial}
+                        onSave={handleSaveEditMaterial}
+                    />
+                ) : (
+                    <Modal
+                        isOpen={editMaterialModal}
+                        onClose={() => setEditMaterialModal(false)}
+                        title="Uredi Materijal"
+                        footer={
+                            <>
+                                <button className="btn btn-secondary" onClick={() => setEditMaterialModal(false)}>Otkaži</button>
+                                <button className="btn btn-primary" onClick={() => handleSaveEditMaterial()}>Sačuvaj</button>
+                            </>
+                        }
+                    >
+                        {editingMaterial && (
+                            <div className="edit-modal-content">
+                                <div className="modal-header-info">
+                                    <div className="header-icon">📦</div>
+                                    <div className="header-details">
+                                        <div className="header-title">{editingMaterial.Material_Name}</div>
+                                        <div className="header-subtitle">Uređivanje detalja materijala</div>
+                                    </div>
                                 </div>
-                            </div>
 
-                            <div className="modal-form-grid">
-                                <div className="form-field">
-                                    <label>Količina <span className="required">*</span></label>
-                                    <div className="input-wrapper">
+                                <div className="modal-form-grid">
+                                    <div className="form-field">
+                                        <label>Količina <span className="required">*</span></label>
+                                        <div className="input-wrapper">
+                                            <input
+                                                type="number"
+                                                step="0.01"
+                                                min="0"
+                                                value={editMaterialQty}
+                                                onChange={(e) => setEditMaterialQty(parseFloat(e.target.value) || 0)}
+                                                placeholder="0"
+                                            />
+                                            <span className="unit-badge">{editingMaterial.Unit || 'kom'}</span>
+                                        </div>
+                                    </div>
+
+                                    <div className="form-field">
+                                        <label>Cijena po jedinici</label>
+                                        <div className="input-wrapper">
+                                            <input
+                                                type="number"
+                                                step="0.01"
+                                                min="0"
+                                                value={editMaterialPrice}
+                                                onChange={(e) => setEditMaterialPrice(parseFloat(e.target.value) || 0)}
+                                                placeholder="0.00"
+                                            />
+                                            <span className="currency-badge">KM</span>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div className="total-price-card">
+                                    <span className="total-label">UKUPNA VRIJEDNOST</span>
+                                    <span className="total-amount">
+                                        {(editMaterialQty * editMaterialPrice).toFixed(2)}
+                                        <span className="total-currency">KM</span>
+                                    </span>
+                                </div>
+
+                                <label className={`essential-card ${editMaterialIsEssential ? 'active' : ''}`}>
+                                    <div className="checkbox-wrapper">
                                         <input
-                                            type="number"
-                                            step="0.01"
-                                            min="0"
-                                            value={editMaterialQty}
-                                            onChange={(e) => setEditMaterialQty(parseFloat(e.target.value) || 0)}
-                                            placeholder="0"
+                                            type="checkbox"
+                                            checked={editMaterialIsEssential}
+                                            onChange={(e) => setEditMaterialIsEssential(e.target.checked)}
                                         />
-                                        <span className="unit-badge">{editingMaterial.Unit || 'kom'}</span>
                                     </div>
-                                </div>
-
-                                <div className="form-field">
-                                    <label>Cijena po jedinici</label>
-                                    <div className="input-wrapper">
-                                        <input
-                                            type="number"
-                                            step="0.01"
-                                            min="0"
-                                            value={editMaterialPrice}
-                                            onChange={(e) => setEditMaterialPrice(parseFloat(e.target.value) || 0)}
-                                            placeholder="0.00"
-                                        />
-                                        <span className="currency-badge">KM</span>
+                                    <div className="essential-content">
+                                        <div className="essential-title">
+                                            <span className="warning-icon">⚠️</span>
+                                            Esencijalni materijal
+                                        </div>
+                                        <div className="essential-description">
+                                            Označavanjem ovog materijala kao esencijalnog sprječavate početak proizvodnje dok se materijal ne zaprimi na stanje.
+                                        </div>
                                     </div>
-                                </div>
+                                </label>
                             </div>
-
-                            <div className="total-price-card">
-                                <span className="total-label">UKUPNA VRIJEDNOST</span>
-                                <span className="total-amount">
-                                    {(editMaterialQty * editMaterialPrice).toFixed(2)}
-                                    <span className="total-currency">KM</span>
-                                </span>
-                            </div>
-
-                            <label className={`essential-card ${editMaterialIsEssential ? 'active' : ''}`}>
-                                <div className="checkbox-wrapper">
-                                    <input
-                                        type="checkbox"
-                                        checked={editMaterialIsEssential}
-                                        onChange={(e) => setEditMaterialIsEssential(e.target.checked)}
-                                    />
-                                </div>
-                                <div className="essential-content">
-                                    <div className="essential-title">
-                                        <span className="warning-icon">⚠️</span>
-                                        Esencijalni materijal
-                                    </div>
-                                    <div className="essential-description">
-                                        Označavanjem ovog materijala kao esencijalnog sprječavate početak proizvodnje dok se materijal ne zaprimi na stanje.
-                                    </div>
-                                </div>
-                            </label>
-                        </div>
-                    )}
-                </Modal>
+                        )}
+                    </Modal>
+                )}
 
                 {/* Product Timeline Modal */}
                 <ProductTimelineModal
@@ -1358,7 +1433,7 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                 footer={
                     <>
                         <button className="btn btn-secondary" onClick={() => setProjectModal(false)}>Otkaži</button>
-                        <button className="glass-btn glass-btn-primary" onClick={handleSaveProject}>Sačuvaj</button>
+                        <button className="glass-btn glass-btn-primary" onClick={() => handleSaveProject()}>Sačuvaj</button>
                     </>
                 }
             >
@@ -1434,7 +1509,7 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                 footer={
                     <>
                         <button className="btn btn-secondary" onClick={() => setProductModal(false)}>Otkaži</button>
-                        <button className="btn btn-primary" onClick={handleSaveProduct}>Sačuvaj</button>
+                        <button className="btn btn-primary" onClick={() => handleSaveProduct()}>Sačuvaj</button>
                     </>
                 }
             >
@@ -1503,7 +1578,7 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                 footer={
                     <>
                         <button className="btn btn-secondary" onClick={() => setMaterialModal(false)}>Otkaži</button>
-                        <button className="btn btn-primary" onClick={handleAddMaterial}>Dodaj</button>
+                        <button className="btn btn-primary" onClick={() => handleAddMaterial()}>Dodaj</button>
                     </>
                 }
             >
@@ -1590,7 +1665,7 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                 footer={
                     <>
                         <button className="btn btn-secondary" onClick={() => setEditMaterialModal(false)}>Otkaži</button>
-                        <button className="btn btn-primary" onClick={handleSaveEditMaterial}>Sačuvaj</button>
+                        <button className="btn btn-primary" onClick={() => handleSaveEditMaterial()}>Sačuvaj</button>
                     </>
                 }
             >

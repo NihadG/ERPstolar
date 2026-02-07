@@ -79,20 +79,51 @@ export async function saveWorkerAttendance(attendance: Partial<WorkerAttendance>
 }
 
 /**
- * Mark worker attendance - simplified version
- * (Returns empty affectedWorkOrders for backward compatibility)
+ * Mark worker attendance and automatically create work logs for active items
+ * ENHANCED: Now creates work_logs entries when status is 'Prisutan' or 'Teren'
+ * This ensures proper synchronization between attendance and productivity tracking
  */
 export async function markAttendanceAndRecalculate(
     attendance: Partial<WorkerAttendance>
-): Promise<{ success: boolean; affectedWorkOrders: string[] }> {
+): Promise<{ success: boolean; affectedWorkOrders: string[]; workLogsCreated: number }> {
     try {
+        // 1. Save the attendance record
         await saveWorkerAttendance(attendance);
-        return { success: true, affectedWorkOrders: [] };
+
+        let workLogsCreated = 0;
+
+        // 2. If worker is present (Prisutan or Teren), create work logs for all active items
+        if ((attendance.Status === 'Prisutan' || attendance.Status === 'Teren') &&
+            attendance.Worker_ID &&
+            attendance.Date &&
+            attendance.Organization_ID) {
+
+            // Get worker's daily rate
+            const workers = await getWorkers(attendance.Organization_ID);
+            const worker = workers.find(w => w.Worker_ID === attendance.Worker_ID);
+            const dailyRate = worker?.Daily_Rate || 0;
+            const workerName = attendance.Worker_Name || worker?.Name || 'Unknown';
+
+            // Create work logs for all active work order items where worker is assigned
+            const result = await createWorkLogsForAttendance(
+                attendance.Worker_ID,
+                workerName,
+                dailyRate,
+                attendance.Date,
+                attendance.Organization_ID
+            );
+
+            workLogsCreated = result.created;
+            console.log(`Attendance marked: ${workerName} - ${attendance.Status} on ${attendance.Date}. Work logs created: ${result.created}, skipped: ${result.skipped}`);
+        }
+
+        return { success: true, affectedWorkOrders: [], workLogsCreated };
     } catch (error) {
         console.error('Error marking attendance:', error);
         throw error;
     }
 }
+
 
 /**
  * Create WorkLog entries for a worker's attendance
@@ -155,7 +186,7 @@ export async function createWorkLogsForAttendance(
                 if (!isAssigned) continue;
 
                 // Check if work log already exists for this worker/item/date
-                const exists = await workLogExists(workerId, item.ID, date);
+                const exists = await workLogExists(workerId, item.ID, date, organizationId);
                 if (exists) {
                     skipped++;
                     continue;
@@ -482,9 +513,83 @@ export async function autoPopulateWeekends(workers: Worker[], year: number, mont
     }
 }
 
+/**
+ * BACKFILL UTILITY: Create work_logs for all existing attendance records
+ * Use this once to fix historical data after enabling automatic work_log creation
+ * 
+ * @param organizationId - Organization ID
+ * @param dateFrom - Start date (YYYY-MM-DD)
+ * @param dateTo - End date (YYYY-MM-DD)
+ * @returns Summary of created and skipped work logs
+ */
+export async function backfillWorkLogsFromAttendance(
+    organizationId: string,
+    dateFrom: string,
+    dateTo: string
+): Promise<{ totalCreated: number; totalSkipped: number; processedDays: number }> {
+    if (!organizationId) {
+        throw new Error('organizationId is required');
+    }
+
+    console.log(`Starting backfill for organization ${organizationId} from ${dateFrom} to ${dateTo}`);
+
+    const firestore = getDb();
+    let totalCreated = 0;
+    let totalSkipped = 0;
+    let processedDays = 0;
+
+    try {
+        // Get all attendance records in the date range
+        const attendanceQuery = query(
+            collection(firestore, COLLECTIONS.WORKER_ATTENDANCE),
+            where('Organization_ID', '==', organizationId),
+            where('Date', '>=', dateFrom),
+            where('Date', '<=', dateTo)
+        );
+        const attendanceSnap = await getDocs(attendanceQuery);
+
+        // Filter for Prisutan and Teren only
+        const validRecords = attendanceSnap.docs
+            .map(d => d.data() as WorkerAttendance)
+            .filter(a => a.Status === 'Prisutan' || a.Status === 'Teren');
+
+        console.log(`Found ${validRecords.length} attendance records to process`);
+
+        // Get all workers for daily rates
+        const workers = await getWorkers(organizationId);
+        const workerMap = new Map(workers.map(w => [w.Worker_ID, w]));
+
+        // Group by worker+date for batch processing
+        for (const attendance of validRecords) {
+            const worker = workerMap.get(attendance.Worker_ID);
+            const dailyRate = worker?.Daily_Rate || 0;
+            const workerName = attendance.Worker_Name || worker?.Name || 'Unknown';
+
+            const result = await createWorkLogsForAttendance(
+                attendance.Worker_ID,
+                workerName,
+                dailyRate,
+                attendance.Date,
+                organizationId
+            );
+
+            totalCreated += result.created;
+            totalSkipped += result.skipped;
+            processedDays++;
+        }
+
+        console.log(`Backfill complete: ${totalCreated} created, ${totalSkipped} skipped, ${processedDays} days processed`);
+        return { totalCreated, totalSkipped, processedDays };
+    } catch (error) {
+        console.error('Error in backfillWorkLogsFromAttendance:', error);
+        throw error;
+    }
+}
+
 // ============================================
 // SIMPLIFIED WORK ORDER MANAGEMENT
 // ============================================
+
 
 /**
  * Assign workers to a Work Order Item
@@ -565,11 +670,176 @@ export async function completeWorkOrderItem(
 }
 
 /**
+ * Calculate labor cost for a specific sub-task (split group)
+ * Considers individual pause periods, worker assignments, and quantity ratio
+ * 
+ * @param subTask - The sub-task to calculate cost for
+ * @param itemQuantity - Total quantity of parent item (for ratio calculation)
+ * @param organizationId - Organization ID for filtering
+ * @returns Object with laborCost and workingDays
+ */
+export async function calculateSubTaskLaborCost(
+    subTask: any,
+    itemQuantity: number,
+    organizationId?: string
+): Promise<{ laborCost: number; workingDays: number }> {
+    try {
+        // If not started, no cost
+        if (!subTask.Started_At) {
+            return { laborCost: 0, workingDays: 0 };
+        }
+
+        // If paused, skip calculation (no cost accumulation while paused)
+        if (subTask.Is_Paused) {
+            // Return existing values if available
+            return {
+                laborCost: subTask.Actual_Labor_Cost || 0,
+                workingDays: subTask.Working_Days || 0
+            };
+        }
+
+        const firestore = getDb();
+
+        // Collect worker IDs (main + helpers)
+        const workerIds = new Set<string>();
+        if (subTask.Worker_ID) {
+            workerIds.add(subTask.Worker_ID);
+        }
+        if (subTask.Helpers && subTask.Helpers.length > 0) {
+            subTask.Helpers.forEach((h: { Worker_ID: string }) => {
+                if (h.Worker_ID) workerIds.add(h.Worker_ID);
+            });
+        }
+
+        if (workerIds.size === 0) {
+            return { laborCost: 0, workingDays: 0 };
+        }
+
+        // Date range
+        const startDateStr = subTask.Started_At.split('T')[0];
+        const endDateStr = subTask.Completed_At
+            ? subTask.Completed_At.split('T')[0]
+            : new Date().toISOString().split('T')[0]; // Use today if not completed
+
+        // Fetch worker daily rates
+        const workersSnap = await getDocs(collection(firestore, 'workers'));
+        const workersMap = new Map<string, number>();
+        workersSnap.forEach(doc => {
+            const data = doc.data();
+            if (data.Worker_ID) {
+                workersMap.set(data.Worker_ID, data.Daily_Rate || 0);
+            }
+        });
+
+        // Batch fetch attendance records
+        const attendanceQuery = query(
+            collection(firestore, COLLECTIONS.WORKER_ATTENDANCE),
+            where('Date', '>=', startDateStr),
+            where('Date', '<=', endDateStr)
+        );
+        const attendanceSnap = await getDocs(attendanceQuery);
+        const attendanceMap = new Map<string, string>();
+        attendanceSnap.forEach(doc => {
+            const data = doc.data();
+            if (data.Worker_ID && data.Date && data.Status) {
+                attendanceMap.set(`${data.Worker_ID}_${data.Date}`, data.Status);
+            }
+        });
+
+        // Fetch holidays
+        const holidayQuery = query(
+            collection(firestore, 'holidays'),
+            where('Date', '>=', startDateStr),
+            where('Date', '<=', endDateStr)
+        );
+        const holidaySnap = await getDocs(holidayQuery);
+        const holidayDates = new Set<string>();
+        holidaySnap.forEach(doc => holidayDates.add(doc.data().Date));
+
+        // Get sub-task pause periods
+        const pausePeriods = subTask.Pause_Periods || [];
+
+        let totalCost = 0;
+        let workingDays = 0;
+        const startDate = new Date(subTask.Started_At);
+        const endDate = new Date(endDateStr);
+        const currentDate = new Date(startDate);
+
+        while (currentDate <= endDate) {
+            const dateStr = currentDate.toISOString().split('T')[0];
+
+            // SKIP: Weekends
+            const dayOfWeek = currentDate.getDay();
+            if (dayOfWeek === 0 || dayOfWeek === 6) {
+                currentDate.setDate(currentDate.getDate() + 1);
+                continue;
+            }
+
+            // SKIP: Holidays
+            if (holidayDates.has(dateStr)) {
+                currentDate.setDate(currentDate.getDate() + 1);
+                continue;
+            }
+
+            // SKIP: Paused periods for this sub-task
+            const isPausedOnDate = pausePeriods.some((p: { Started_At: string; Ended_At?: string }) => {
+                const pauseStart = new Date(p.Started_At).toISOString().split('T')[0];
+                const pauseEnd = p.Ended_At
+                    ? new Date(p.Ended_At).toISOString().split('T')[0]
+                    : new Date().toISOString().split('T')[0];
+                return dateStr >= pauseStart && dateStr <= pauseEnd;
+            });
+            if (isPausedOnDate) {
+                currentDate.setDate(currentDate.getDate() + 1);
+                continue;
+            }
+
+            // Count working day for any present worker
+            let dayHadWork = false;
+            for (const workerId of Array.from(workerIds)) {
+                const status = attendanceMap.get(`${workerId}_${dateStr}`);
+                if (status === 'Prisutan' || status === 'Teren') {
+                    const dailyRate = workersMap.get(workerId) || 0;
+                    totalCost += dailyRate;
+                    dayHadWork = true;
+                }
+            }
+            if (dayHadWork) workingDays++;
+
+            currentDate.setDate(currentDate.getDate() + 1);
+        }
+
+        // Apply quantity ratio (proportion of total item)
+        const quantityRatio = itemQuantity > 0 ? subTask.Quantity / itemQuantity : 1;
+        const adjustedCost = totalCost * quantityRatio;
+
+        return {
+            laborCost: Math.round(adjustedCost * 100) / 100,
+            workingDays
+        };
+    } catch (error) {
+        console.error('Error calculating sub-task labor cost:', error);
+        return { laborCost: 0, workingDays: 0 };
+    }
+}
+
+/**
  * Calculate actual labor cost based on worker attendance
- * OPTIMIZED: Batch-fetches attendance records instead of individual calls per day/worker
+ * ENHANCED: Now handles SubTasks with individual pause periods
  */
 export async function calculateActualLaborCost(item: any): Promise<number> {
     try {
+        // ENHANCED: If item has SubTasks, calculate cost per sub-task
+        if (item.SubTasks && item.SubTasks.length > 0) {
+            let totalCost = 0;
+            for (const subTask of item.SubTasks) {
+                const result = await calculateSubTaskLaborCost(subTask, item.Quantity);
+                totalCost += result.laborCost;
+            }
+            return totalCost;
+        }
+
+        // Legacy: Item-level calculation if no SubTasks
         if (!item.Started_At || !item.Completed_At) return 0;
 
         // Collect all unique worker IDs from Processes (main workers + helpers)
