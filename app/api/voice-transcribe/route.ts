@@ -186,6 +186,7 @@ export async function POST(request: NextRequest) {
         }
 
         console.log(`Voice transcribe: Transcription complete, length: ${transcription.length}`);
+        console.log(`Voice transcribe: Transcription text: "${transcription}"`);
 
         return NextResponse.json({
             text: transcription,
