@@ -30,12 +30,11 @@ function parsePrivateKey(key: string | undefined): string | undefined {
 
     // Clean up formatting
     if (parsed.includes('\\n')) {
-        // Replace escaped newlines (\\n) with actual newlines
         parsed = parsed.replace(/\\n/g, '\n');
         console.log('parsePrivateKey: Replaced escaped newlines');
     }
 
-    // Handle double-escaped newlines (\\\\n)
+    // Handle double-escaped newlines
     if (parsed.includes('\\\\n')) {
         parsed = parsed.replace(/\\\\n/g, '\n');
     }
@@ -50,8 +49,7 @@ function parsePrivateKey(key: string | undefined): string | undefined {
         }
     }
 
-    // FINAL FIX: Ensure headers are on their own lines if they aren't already
-    // This fixes cases where the key is "flattened"
+    // Ensure headers are on their own lines
     if (parsed.includes('-----BEGIN PRIVATE KEY-----')) {
         const header = '-----BEGIN PRIVATE KEY-----';
         const footer = '-----END PRIVATE KEY-----';
@@ -64,7 +62,6 @@ function parsePrivateKey(key: string | undefined): string | undefined {
         }
     }
 
-    // Verify final result structure
     const hasHeader = parsed.includes('-----BEGIN PRIVATE KEY-----');
     const hasFooter = parsed.includes('-----END PRIVATE KEY-----');
     const newlineCount = (parsed.match(/\n/g) || []).length;
@@ -77,7 +74,6 @@ function parsePrivateKey(key: string | undefined): string | undefined {
 // Singleton Speech client
 let speechClient: SpeechClient | null = null;
 
-// Initialize Speech client with credentials from environment
 function getSpeechClient(): SpeechClient {
     if (speechClient) {
         return speechClient;
@@ -91,7 +87,6 @@ function getSpeechClient(): SpeechClient {
         privateKeyBase64Var: !!process.env.GOOGLE_CLOUD_PRIVATE_KEY_BASE64
     });
 
-    // Try Base64 specific var first, then the standard one
     const rawKey = process.env.GOOGLE_CLOUD_PRIVATE_KEY_BASE64 || process.env.GOOGLE_CLOUD_PRIVATE_KEY;
     const privateKey = parsePrivateKey(rawKey);
 
@@ -111,23 +106,10 @@ function getSpeechClient(): SpeechClient {
     return speechClient;
 }
 
-// Max audio size: ~10MB
 const MAX_AUDIO_SIZE_BYTES = 10 * 1024 * 1024;
-
-// Helper to convert audio buffer to LINEAR16 PCM format
-// This is more reliable than WEBM_OPUS for Google Speech API
-function convertToLinear16(audioBuffer: ArrayBuffer): { audioData: Buffer; sampleRate: number } {
-    // For now, we'll send the raw audio and let Google handle WebM
-    // A proper conversion would require ffmpeg or similar on the server
-    return {
-        audioData: Buffer.from(audioBuffer),
-        sampleRate: 48000
-    };
-}
 
 export async function POST(request: NextRequest) {
     try {
-        // Get audio from form data
         const formData = await request.formData();
         const audioFile = formData.get('audio') as Blob | null;
 
@@ -138,10 +120,8 @@ export async function POST(request: NextRequest) {
             );
         }
 
-        // Log audio file details for debugging
         console.log(`Voice transcribe: Received audio file, size: ${audioFile.size} bytes (${(audioFile.size / 1024).toFixed(2)} KB), type: ${audioFile.type}`);
 
-        // Check audio file size before processing
         if (audioFile.size > MAX_AUDIO_SIZE_BYTES) {
             console.warn(`Audio file too large: ${audioFile.size} bytes (max: ${MAX_AUDIO_SIZE_BYTES})`);
             return NextResponse.json(
@@ -150,12 +130,10 @@ export async function POST(request: NextRequest) {
             );
         }
 
-        // Check if we have required credentials
         if (!process.env.GOOGLE_CLOUD_PROJECT_ID ||
             !process.env.GOOGLE_CLOUD_CLIENT_EMAIL ||
             !process.env.GOOGLE_CLOUD_PRIVATE_KEY) {
 
-            // Fallback: Return a message about missing credentials
             console.warn('Google Cloud credentials not configured. Using mock response.');
             return NextResponse.json({
                 text: '[Demo Mode] Google Cloud nije konfigurisan. Molimo postavite GOOGLE_CLOUD_* varijable.',
@@ -164,7 +142,6 @@ export async function POST(request: NextRequest) {
             });
         }
 
-        // Convert Blob to buffer
         const arrayBuffer = await audioFile.arrayBuffer();
         const audioBuffer = Buffer.from(arrayBuffer);
 
@@ -172,8 +149,7 @@ export async function POST(request: NextRequest) {
 
         const client = getSpeechClient();
 
-        // Use streaming recognition which handles longer audio better
-        // and doesn't have the same duration detection issues as sync recognize
+        // Use streaming recognition with proper message ordering
         const transcription = await streamingRecognize(client, audioBuffer);
 
         return NextResponse.json({
@@ -185,8 +161,6 @@ export async function POST(request: NextRequest) {
     } catch (error: any) {
         console.error('Speech-to-Text Error:', error);
 
-        // Handle specific Google Cloud errors
-        // Code 3 = INVALID_ARGUMENT (usually audio too long for sync recognize)
         if (error.code === 3 && error.details?.includes('too long')) {
             return NextResponse.json(
                 { error: 'Audio je predug. Molimo snimite kraći audio (maksimalno 60 sekundi).' },
@@ -194,7 +168,6 @@ export async function POST(request: NextRequest) {
             );
         }
 
-        // Code 7 = PERMISSION_DENIED
         if (error.code === 7) {
             return NextResponse.json(
                 { error: 'Google Cloud API nije omogućen ili credentials nisu ispravni' },
@@ -209,30 +182,18 @@ export async function POST(request: NextRequest) {
     }
 }
 
-// Streaming recognition function - handles audio better than sync recognize
+// Streaming recognition with proper config/audio ordering
 async function streamingRecognize(
     client: SpeechClient,
     audioBuffer: Buffer
 ): Promise<{ text: string; confidence: number }> {
     return new Promise((resolve, reject) => {
-        const config: protos.google.cloud.speech.v1.IStreamingRecognitionConfig = {
-            config: {
-                encoding: 'WEBM_OPUS' as any,
-                sampleRateHertz: 48000,
-                languageCode: 'hr-HR',
-                alternativeLanguageCodes: ['sr-RS', 'bs-BA'],
-                enableAutomaticPunctuation: true,
-                model: 'latest_long', // Use latest_long for better quality
-            },
-            interimResults: false,
-        };
-
         let fullTranscript = '';
         let bestConfidence = 0;
 
-        // Create streaming recognize stream
+        // Create the streaming recognize stream
         const recognizeStream = client
-            .streamingRecognize(config)
+            .streamingRecognize()
             .on('error', (error: any) => {
                 console.error('Streaming recognition error:', error);
                 reject(error);
@@ -260,25 +221,46 @@ async function streamingRecognize(
                 });
             });
 
-        // Send audio in chunks (Google recommends ~100ms chunks, roughly 25KB for 48kHz stereo)
-        // For compressed WebM, we can send larger chunks
-        const CHUNK_SIZE = 32 * 1024; // 32KB chunks
-        let offset = 0;
-
-        const sendChunk = () => {
-            if (offset < audioBuffer.length) {
-                const chunk = audioBuffer.slice(offset, offset + CHUNK_SIZE);
-                recognizeStream.write({ audioContent: chunk });
-                offset += CHUNK_SIZE;
-                // Use setImmediate to avoid blocking
-                setImmediate(sendChunk);
-            } else {
-                // End the stream when all data is sent
-                recognizeStream.end();
+        // IMPORTANT: First message MUST contain only the streamingConfig
+        const configRequest: protos.google.cloud.speech.v1.IStreamingRecognizeRequest = {
+            streamingConfig: {
+                config: {
+                    encoding: 'WEBM_OPUS' as any,
+                    sampleRateHertz: 48000,
+                    languageCode: 'hr-HR',
+                    alternativeLanguageCodes: ['sr-RS', 'bs-BA'],
+                    enableAutomaticPunctuation: true,
+                    model: 'latest_long',
+                },
+                interimResults: false,
             }
         };
 
-        // Start sending chunks
-        sendChunk();
+        // Send config first
+        recognizeStream.write(configRequest);
+
+        // Then send audio in chunks - each message has ONLY audioContent
+        const CHUNK_SIZE = 32 * 1024; // 32KB chunks
+        let offset = 0;
+
+        const sendChunks = () => {
+            while (offset < audioBuffer.length) {
+                const end = Math.min(offset + CHUNK_SIZE, audioBuffer.length);
+                const chunk = audioBuffer.slice(offset, end);
+
+                const audioRequest: protos.google.cloud.speech.v1.IStreamingRecognizeRequest = {
+                    audioContent: chunk
+                };
+
+                recognizeStream.write(audioRequest);
+                offset = end;
+            }
+
+            // End the stream after all audio is sent
+            recognizeStream.end();
+        };
+
+        // Send audio chunks
+        sendChunks();
     });
 }
