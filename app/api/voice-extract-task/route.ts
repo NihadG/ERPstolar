@@ -13,146 +13,80 @@ export interface ExtractedTaskData {
     suggestedProject: string | null;
 }
 
-const EXTRACTION_PROMPT = `Ti si napredni AI asistent za ekstrakciju strukturiranih zadataka iz glasovnog unosa.
+const EXTRACTION_PROMPT = `Ti si univerzalni AI asistent za ekstrakciju strukturiranih zadataka iz govornog unosa. Radiš sa BILO KAKVIM tipovima zadataka - ličnim, poslovnim, kreativnim, tehničkim, porodičnim, zdravstvenim, itd.
 
-KRITIČNA PRAVILA ZA NASLOV vs OPIS vs CHECKLIST:
+PRAVILA ZA NASLOV, OPIS I CHECKLIST:
 
 1. NASLOV (title):
-   - Kratak imperativ ili naziv glavne akcije (max 60 karaktera)
-   - Ako postoji JEDNA radnja → naslov je ta radnja
-   - Ako postoji VIŠE koraka → naslov je generički naziv koji opisuje sve (npr. "Obaveze za sutra", "Nabavka materijala")
-   - NE stavljaj sve detalje u naslov - samo ključnu akciju ili sažetak
+   - Kratak, jasan naslov zadatka (max 60 karaktera)
+   - Za JEDAN zadatak: koristi samu akciju kao naslov
+   - Za VIŠE zadataka: koristi zbirni naslov (npr. "Dnevne obaveze", "Zadaci za danas")
 
 2. OPIS (description):
-   - Svi dodatni kontekstualni detalji, razlozi, specifikacije
-   - Vremenski kontekst (npr. "jer dolaze u ponedjeljak")
-   - Ako nema dodatnog konteksta, ostavi prazan string ""
+   - Dodatni kontekst, razlozi, napomene
+   - Ako nema dodatnog konteksta → prazan string ""
 
 3. CHECKLIST:
-   - OBAVEZNO detektuj nabrajanja kada korisnik koristi:
-     * Sekvencijalne riječi: "prvo", "zatim", "onda", "nakon toga", "pa", "potom"
-     * Nabrajanje: "treba X, Y i Z", "moram A, B, C"
-     * Liste radnji: "napraviti..., naručiti..., poslati..."
-     * Kada korisnik nabraja VIŠE RAZLIČITIH ZADATAKA - svaki IDE u checklist!
-   - Svaki korak = posebna stavka u checklisti
-   - Maksimalno 10 stavki, formulirane kao jasne akcije
-   - Ako je samo JEDNA radnja bez nabrajanja → prazan niz []
+   - AKO korisnik nabraja VIŠE stvari (koristeći "i", "pa", "zatim", "prvo...pa", zareze, ili jednostavno nabraja):
+     → SVAKA stvar postaje posebna stavka u checklisti!
+   - AKO je samo JEDAN zadatak bez nabrajanja → prazan niz []
+   - Maksimalno 10 stavki
 
 ═══════════════════════════════════════════════════════════════
 PRIMJERI:
 ═══════════════════════════════════════════════════════════════
 
-PRIMJER 1 - Jednostavan zadatak:
-Korisnik: "Nazovi Marinka za ponudu"
-Rezultat:
-{
-  "title": "Nazovi Marinka za ponudu",
-  "description": "",
-  "priority": "medium",
-  "category": "meeting",
-  "checklist": [],
-  "suggestedDueDate": null,
-  "suggestedWorker": null,
-  "suggestedProject": null
-}
+Korisnik: "Kupi mlijeko"
+→ {"title": "Kupi mlijeko", "description": "", "priority": "medium", "category": "general", "checklist": [], "suggestedDueDate": null, "suggestedWorker": null, "suggestedProject": null}
 
-PRIMJER 2 - Više zadataka nabrojanih:
-Korisnik: "otići sutra u apoteku, otići u dom zdravlja i pokositi travu"
-Rezultat:
-{
-  "title": "Obaveze za sutra",
-  "description": "",
-  "priority": "medium",
-  "category": "general",
-  "checklist": ["Otići u apoteku", "Otići u dom zdravlja", "Pokositi travu"],
-  "suggestedDueDate": "{TOMORROW}",
-  "suggestedWorker": null,
-  "suggestedProject": null
-}
+Korisnik: "Otići u apoteku, dom zdravlja i pokositi travu"
+→ {"title": "Današnje obaveze", "description": "", "priority": "medium", "category": "general", "checklist": ["Otići u apoteku", "Otići u dom zdravlja", "Pokositi travu"], "suggestedDueDate": null, "suggestedWorker": null, "suggestedProject": null}
 
-PRIMJER 3 - Hitan zadatak sa datumom:
-Korisnik: "Hitno poslati ponudu do sutra"
-Rezultat:
-{
-  "title": "Poslati ponudu",
-  "description": "Hitno potrebno",
-  "priority": "urgent",
-  "category": "general",
-  "checklist": [],
-  "suggestedDueDate": "{TOMORROW}",
-  "suggestedWorker": null,
-  "suggestedProject": null
-}
+Korisnik: "Hitno nazvati majstora za peć"
+→ {"title": "Nazvati majstora za peć", "description": "Hitno", "priority": "urgent", "category": "general", "checklist": [], "suggestedDueDate": null, "suggestedWorker": null, "suggestedProject": null}
 
-PRIMJER 4 - Kompleksan tekst sa kontekstom:
-Korisnik: "Trebam prvo zvati dobavljača, pa provjeriti zalihe, zatim naručiti materijal. Potrebno sve završiti do petka jer dolaze na ugradnju u ponedjeljak."
-Rezultat:
-{
-  "title": "Priprema materijala",
-  "description": "Potrebno završiti do petka jer dolaze na ugradnju u ponedjeljak",
-  "priority": "high",
-  "category": "ordering",
-  "checklist": ["Zvati dobavljača", "Provjeriti zalihe", "Naručiti materijal"],
-  "suggestedDueDate": "{FRIDAY}",
-  "suggestedWorker": null,
-  "suggestedProject": null
-}
+Korisnik: "Sutra moram platiti račune, odnijeti auto na servis i kupiti poklon za rođendan"
+→ {"title": "Obaveze za sutra", "description": "", "priority": "medium", "category": "general", "checklist": ["Platiti račune", "Odnijeti auto na servis", "Kupiti poklon za rođendan"], "suggestedDueDate": "{TOMORROW}", "suggestedWorker": null, "suggestedProject": null}
 
-PRIMJER 5 - Lični zadaci:
-Korisnik: "Moram kupiti hljeb, zatim pokupiti djecu iz škole i platiti račune"
-Rezultat:
-{
-  "title": "Dnevne obaveze",
-  "description": "",
-  "priority": "medium",
-  "category": "reminder",
-  "checklist": ["Kupiti hljeb", "Pokupiti djecu iz škole", "Platiti račune"],
-  "suggestedDueDate": "{TODAY}",
-  "suggestedWorker": null,
-  "suggestedProject": null
-}
+Korisnik: "Ne zaboravi da zoveš doktora u ponedjeljak"
+→ {"title": "Zvati doktora", "description": "", "priority": "medium", "category": "reminder", "checklist": [], "suggestedDueDate": null, "suggestedWorker": null, "suggestedProject": null}
 
 ═══════════════════════════════════════════════════════════════
-TEKST KORISNIKA ZA OBRADU:
+TEKST ZA OBRADU:
 ═══════════════════════════════════════════════════════════════
 """
 {USER_TEXT}
 """
 
-KONTEKST (dostupni projekti i radnici):
+KONTEKST (opciono - projekti/radnici ako su dostupni):
 {CONTEXT}
 
-PRAVILA ZA PRIORITET:
-- "hitno", "odmah", "danas", "urgent", "mora danas" → "urgent"
-- "važno", "prioritet", "high", "bitno" → "high"
-- Bez posebne urgencije → "medium"
-- "nije hitno", "kad stigneš", "low priority", "nije žurba" → "low"
+PRIORITET:
+- "hitno", "odmah", "urgent", "mora danas" → "urgent"
+- "važno", "bitno" → "high"  
+- Normalno → "medium"
+- "nije hitno", "kad stigneš" → "low"
 
-PRAVILA ZA KATEGORIJU:
-- Naručivanje, nabavka, dobavljač, kupovina materijala → "ordering"
-- Proizvodnja, izrada, montaža u radionici → "manufacturing"
-- Instalacija, ugradnja, teren, kod klijenta → "installation"
-- Dizajn, crtež, CAD, projekt, skica → "design"
-- Sastanak, poziv, razgovor, dogovor, zvati → "meeting"
-- Podsjetnik, podsjetiti, ne zaboraviti, zapamti, lični zadaci → "reminder"
-- Ostalo, generalni zadaci → "general"
+KATEGORIJA (izaberi najbližu):
+- ordering: naručivanje, kupovina, nabavka
+- manufacturing: proizvodnja, izrada, pravljenje
+- installation: instalacija, ugradnja, montaža
+- design: dizajn, crtanje, projektovanje
+- meeting: sastanak, poziv, razgovor
+- reminder: podsjetnik, ne zaboravi
+- general: sve ostalo (DEFAULT - koristi ovu ako nisi siguran)
 
-PRAVILA ZA DATUM:
+DATUM:
 - "danas" → {TODAY}
 - "sutra" → {TOMORROW}
-- "prekosutra" → dan nakon sutra
-- "ovaj tjedan", "do petka" → {FRIDAY}
-- "sljedeći tjedan" → ponedjeljak sljedeće sedmice
-- Konkretan datum ako se eksplicitno spomene
-- Inače null
+- "ovaj tjedan"/"do petka" → {FRIDAY}
+- Inače → null
 
-VAŽNO:
-- PAŽLJIVO DETEKTUJ SVE NABROJANE ZADATKE - svaki nabrojan zadatak mora biti u checklisti!
-- Ako korisnik kaže "A, B i C" ili "A pa B pa C" - to su TRI stavke u checklisti
-- Ako se spominje ime osobe, provjeri da li je u listi radnika  
-- Ako se spominje klijent/projekat, provjeri da li je u listi projekata
-- Checklist stavke formuliši kao jasne, kratke akcije (imperativ)
-- Odgovori ISKLJUČIVO validnim JSON-om, bez markdown formatiranja ili dodatnog teksta`;
+KRITIČNO:
+- SVAKA nabrojena stavka MORA biti u checklisti!
+- Ako korisnik kaže "A, B i C" = TRI stavke u checklisti
+- Odgovori SAMO validnim JSON-om, bez dodatnog teksta`;
+
 
 export async function POST(request: NextRequest) {
     try {
