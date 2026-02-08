@@ -12,10 +12,10 @@ test.describe('Phase 2: Data Seeding & Planner Verification', () => {
             }
         });
 
-        // Login Flow
+        // Login Flow - credentials from .env.test (see playwright.config.ts)
         await page.goto('/login');
-        await page.fill('input[type="email"]', 'nihad.tae@gmail.com');
-        await page.fill('input[type="password"]', 'admin123');
+        await page.fill('input[type="email"]', process.env.TEST_USER_EMAIL || '');
+        await page.fill('input[type="password"]', process.env.TEST_USER_PASSWORD || '');
         await page.click('button:has-text("Prijavi se")');
 
         try {

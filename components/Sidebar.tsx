@@ -26,6 +26,7 @@ import {
     BadgeDollarSign,
     Database,
     ClipboardList,
+    Shield,
 } from 'lucide-react';
 import NotificationCenter from './NotificationCenter';
 import './Sidebar.css';
@@ -284,6 +285,30 @@ const Sidebar: React.FC<SidebarProps> = ({ activeTab, onTabChange, isOpen, onClo
                             </div>
                         );
                     })}
+
+                    {/* Super Admin Panel - only visible to super admins */}
+                    {user?.Is_Super_Admin && (
+                        <div className="nav-group-wrapper">
+                            <div className="nav-divider"></div>
+                            <button
+                                className="nav-item special-action admin-link"
+                                onClick={() => {
+                                    router.push('/admin');
+                                    if (window.innerWidth <= 768) onClose();
+                                }}
+                                title={isCollapsed ? "Admin Panel" : undefined}
+                                style={{
+                                    '--item-color': '#FF3B30',
+                                    '--item-rgb': '255, 59, 48',
+                                } as React.CSSProperties}
+                            >
+                                <div className="nav-icon-wrapper">
+                                    <Shield size={19} />
+                                </div>
+                                {!isCollapsed && <span className="nav-label">Admin Panel</span>}
+                            </button>
+                        </div>
+                    )}
 
                     {/* Import button */}
                     {onOpenImport && (

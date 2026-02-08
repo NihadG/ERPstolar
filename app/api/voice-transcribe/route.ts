@@ -145,7 +145,7 @@ export async function POST(request: NextRequest) {
                 encoding: 'WEBM_OPUS', // Browser typically records in webm
                 sampleRateHertz: 48000,
                 languageCode: 'hr-HR', // Croatian (covers Bosnian/Serbian too)
-                alternativeLanguageCodes: ['sr-RS'], // Serbian as fallback
+                alternativeLanguageCodes: ['sr-RS', 'bs-BA'], // Serbian and Bosnian as fallbacks
                 enableAutomaticPunctuation: true,
                 model: 'default',
             },

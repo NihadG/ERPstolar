@@ -1044,9 +1044,15 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                     <div className="empty-state"><span className="material-icons-round">engineering</span><h3>Nema radnih naloga</h3><p>Kreirajte prvi radni nalog</p></div>
                 ) : (
                     groupBy === 'none' ? (
-                        filteredWorkOrders.map(wo => renderWorkOrderCard(wo))
+                        (expandedOrderId
+                            ? filteredWorkOrders.filter(wo => wo.Work_Order_ID === expandedOrderId)
+                            : filteredWorkOrders
+                        ).map(wo => renderWorkOrderCard(wo))
                     ) : (
-                        groupedWorkOrders.map(group => (
+                        (expandedOrderId
+                            ? groupedWorkOrders.filter(g => g.items.some(wo => wo.Work_Order_ID === expandedOrderId))
+                            : groupedWorkOrders
+                        ).map(group => (
                             <div key={group.key} className="group-section" style={{ marginBottom: '24px' }}>
                                 <div
                                     className="group-header"
@@ -1132,7 +1138,10 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
 
                                 {!collapsedGroups.has(group.key) && (
                                     <div className="group-items" style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginTop: '12px' }}>
-                                        {group.items.map(wo => renderWorkOrderCard(wo))}
+                                        {(expandedOrderId
+                                            ? group.items.filter(wo => wo.Work_Order_ID === expandedOrderId)
+                                            : group.items
+                                        ).map(wo => renderWorkOrderCard(wo))}
                                     </div>
                                 )}
                             </div>

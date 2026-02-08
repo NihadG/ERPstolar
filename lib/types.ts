@@ -557,6 +557,7 @@ export interface User {
     Created_Date: string;
     Last_Login: string;
     Is_Active: boolean;
+    Is_Super_Admin?: boolean;  // Set only via Firestore console, never from client
 }
 
 export interface SubscriptionEvent {
@@ -671,3 +672,184 @@ export interface ProductProfitability {
     Completed_At?: string;
     Duration_Days?: number;
 }
+
+// ============================================
+// PRODUCTION SNAPSHOT - AI/ML Training Data
+// ============================================
+
+export interface SnapshotMaterial {
+    Material_ID: string;
+    Material_Name: string;
+    Category: string;              // "Ploče", "Okovi", "Staklo"...
+    Quantity: number;
+    Unit: string;
+    Unit_Price: number;
+    Total_Price: number;
+    Is_Glass: boolean;
+    Is_Alu_Door: boolean;
+
+    // Price Accuracy Metadata
+    Price_Captured_At: string;     // Timestamp kada je cijena zabilježena
+    Is_Final_Price: boolean;       // true = finalna cijena pri završetku
+}
+
+export interface SnapshotWorker {
+    Worker_ID: string;
+    Worker_Name: string;
+    Role: string;
+    Worker_Type: 'Glavni' | 'Pomoćnik';
+    Days_Worked: number;
+    Daily_Rate: number;
+    Total_Cost: number;
+}
+
+// NOVO: Za praćenje vremena po procesu
+export interface SnapshotProcess {
+    Process_Name: string;           // "Rezanje", "Kantiranje"...
+    Status: string;
+    Started_At?: string;
+    Completed_At?: string;
+    Duration_Days: number;
+    Worker_ID?: string;
+    Worker_Name?: string;
+    Helpers_Count: number;
+}
+
+// NOVO: Za praćenje extras/services
+export interface SnapshotExtra {
+    Name: string;
+    Quantity: number;
+    Unit: string;
+    Unit_Price: number;
+    Total: number;
+}
+
+export interface ProductionSnapshotItem {
+    Product_ID: string;
+    Product_Name: string;
+
+    // Klasifikacija proizvoda (za grupisanje sličnih)
+    Product_Type?: string;          // "Kuhinja", "Ormar", "Komoda", "Stol"...
+
+    // Dimenzije
+    Height: number;
+    Width: number;
+    Depth: number;
+    Volume_M3: number;              // H × W × D / 1,000,000,000
+    Surface_M2: number;             // H × W / 1,000,000 (prednja površina)
+
+    // Količina
+    Quantity: number;
+
+    // Materijali
+    Materials: SnapshotMaterial[];
+    Material_Count: number;
+    Has_Glass: boolean;
+    Has_Alu_Door: boolean;
+    Total_Material_Cost: number;
+
+    // Material Ratios (za AI estimaciju)
+    Material_Per_M2: number;        // Total_Material_Cost / Surface_M2
+    Material_Per_M3: number;        // Total_Material_Cost / Volume_M3
+    Material_Per_Unit: number;      // Total_Material_Cost / Quantity
+
+    // Rad
+    Planned_Labor_Days: number;
+    Actual_Labor_Days: number;
+    Workers_Assigned: SnapshotWorker[];
+
+    // Procesi sa vremenima (za detaljno planiranje)
+    Processes: SnapshotProcess[];
+
+    // Offer detalji (za AI kreiranje ponuda)
+    Selling_Price: number;
+    Margin_Percent: number;
+    Margin_Type: 'Fixed' | 'Percentage';
+    LED_Meters: number;
+    LED_Price_Per_Meter: number;
+    LED_Total: number;
+    Transport_Share: number;
+    Extras: SnapshotExtra[];
+    Profit: number;
+
+    // Legacy
+    Margin_Applied: number;         // Backward compatibility
+}
+
+export interface ProductionSnapshot {
+    // Identifikatori
+    Snapshot_ID: string;
+    Organization_ID: string;
+    Work_Order_ID: string;
+    Work_Order_Number: string;
+    Created_At: string;             // Timestamp kreiranja snapshota
+
+    // Projekt Info
+    Project_ID: string;
+    Client_Name: string;
+    Project_Deadline: string;
+
+    // Offer Info (ako postoji)
+    Offer_ID?: string;
+    Offer_Number?: string;
+    Offer_Total?: number;
+    Offer_Transport_Cost?: number;
+    Offer_Has_Onsite_Assembly?: boolean;
+
+    // Proizvod Info (denormalizirano za svaki item)
+    Items: ProductionSnapshotItem[];
+
+    // Agregati za Work Order
+    Total_Products: number;         // Ukupan broj proizvoda
+    Total_Quantity: number;         // Ukupna količina svih proizvoda
+    Total_Material_Cost: number;    // Σ materijala
+    Total_Selling_Price: number;    // Σ cijena iz ponude
+
+    // Agregat ratios (za brzu AI analizu)
+    Avg_Material_Per_M2: number;
+    Avg_Material_Per_M3: number;
+
+    // Vrijeme
+    Planned_Start?: string;
+    Planned_End?: string;
+    Actual_Start?: string;
+    Actual_End?: string;
+    Planned_Days: number;
+    Actual_Days: number;
+    Duration_Variance: number;      // Actual - Planned (pozitivno = kašnjenje)
+
+    // Troškovi Rada
+    Planned_Labor_Cost: number;
+    Actual_Labor_Cost: number;
+    Labor_Cost_Variance: number;    // Planned - Actual
+    Labor_Variance_Percent: number;
+
+    // Profit
+    Gross_Profit: number;
+    Net_Profit: number;
+    Profit_Margin_Percent: number;
+
+    // Radnici (Agregirano)
+    Workers_Count: number;
+    Total_Worker_Days: number;      // Σ svih radnih dana svih radnika
+    Avg_Daily_Rate: number;
+
+    // Procesi
+    Production_Steps: string[];     // ["Rezanje", "Kantiranje", ...]
+
+    // Sezonalnost (za ML)
+    Month: number;                  // 1-12
+    Quarter: number;                // 1-4
+    Day_Of_Week_Start: number;      // 0-6 (0 = Sunday)
+
+    // Data Quality (za AI validaciju)
+    Quality_Score: number;          // 0-100, samo score >= 50 koristi AI
+    Data_Issues: string[];          // Lista problema ['Missing material cost', ...]
+    Is_Valid_For_AI: boolean;       // true ako Quality_Score >= 50
+    Normalized_Product_Types: string[]; // Normalizirani tipovi ['Kuhinja', 'Ormar']
+
+    // Material Price Accuracy
+    Materials_Snapshot_Time: string; // Timestamp kada su cijene materijala zabilježene
+    Materials_Are_Final: boolean;    // true = finalne cijene pri završetku naloga
+}
+

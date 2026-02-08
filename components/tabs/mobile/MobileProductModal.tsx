@@ -170,10 +170,10 @@ export default function MobileProductModal({ isOpen, onClose, product, onSave }:
                 .mobile-backdrop {
                     position: absolute;
                     inset: 0;
-                    background: rgba(0, 0, 0, 0.4);
-                    backdrop-filter: blur(4px);
+                    background: rgba(0, 0, 0, 0.45);
+                    backdrop-filter: blur(6px);
                     opacity: 0;
-                    transition: opacity 0.3s ease;
+                    transition: opacity 0.3s cubic-bezier(0.4, 0, 0.2, 1);
                     pointer-events: auto;
                 }
 
@@ -186,10 +186,10 @@ export default function MobileProductModal({ isOpen, onClose, product, onSave }:
                     width: 100%;
                     max-width: 600px;
                     background: #ffffff;
-                    border-radius: 20px 20px 0 0;
-                    box-shadow: 0 -4px 24px rgba(0, 0, 0, 0.15);
+                    border-radius: 24px 24px 0 0;
+                    box-shadow: 0 -8px 32px rgba(0, 0, 0, 0.12);
                     transform: translateY(100%);
-                    transition: transform 0.3s cubic-bezier(0.2, 0.9, 0.3, 1);
+                    transition: transform 0.35s cubic-bezier(0.2, 0.9, 0.3, 1);
                     pointer-events: auto;
                     display: flex;
                     flex-direction: column;
@@ -203,7 +203,7 @@ export default function MobileProductModal({ isOpen, onClose, product, onSave }:
 
                 .sheet-handle-bar {
                     width: 100%;
-                    height: 24px;
+                    height: 28px;
                     display: flex;
                     align-items: center;
                     justify-content: center;
@@ -211,14 +211,14 @@ export default function MobileProductModal({ isOpen, onClose, product, onSave }:
                 }
 
                 .sheet-handle {
-                    width: 40px;
+                    width: 36px;
                     height: 4px;
-                    background: #e2e8f0;
+                    background: #cbd5e1;
                     border-radius: 2px;
                 }
 
                 .sheet-header {
-                    padding: 0 24px 16px;
+                    padding: 4px 20px 20px;
                     display: flex;
                     align-items: center;
                     justify-content: space-between;
@@ -227,20 +227,23 @@ export default function MobileProductModal({ isOpen, onClose, product, onSave }:
 
                 .header-text h3 {
                     margin: 0;
-                    font-size: 20px;
+                    font-size: 22px;
                     font-weight: 700;
-                    color: #1e293b;
+                    color: #0f172a;
+                    letter-spacing: -0.01em;
                 }
 
                 .header-text p {
-                    margin: 4px 0 0;
-                    font-size: 14px;
+                    margin: 6px 0 0;
+                    font-size: 13px;
+                    font-weight: 500;
                     color: #64748b;
+                    letter-spacing: -0.005em;
                 }
 
                 .close-btn {
-                    width: 36px;
-                    height: 36px;
+                    width: 40px;
+                    height: 40px;
                     border-radius: 50%;
                     background: #f8fafc;
                     border: none;
@@ -249,78 +252,109 @@ export default function MobileProductModal({ isOpen, onClose, product, onSave }:
                     justify-content: center;
                     color: #64748b;
                     cursor: pointer;
+                    transition: all 0.2s;
+                }
+
+                .close-btn:active {
+                    background: #e2e8f0;
+                    transform: scale(0.95);
                 }
 
                 .sheet-content {
-                    padding: 24px;
+                    padding: 20px;
                     overflow-y: auto;
                     flex: 1;
+                }
+
+                @media (min-width: 400px) {
+                    .sheet-content {
+                        padding: 24px;
+                    }
                 }
 
                 .form-group {
                     margin-bottom: 24px;
                 }
 
+                .form-group:last-child {
+                    margin-bottom: 0;
+                }
+
                 .form-group label {
                     display: block;
-                    font-size: 14px;
+                    font-size: 13px;
                     font-weight: 600;
-                    color: #64748b;
-                    margin-bottom: 8px;
+                    color: #475569;
+                    margin-bottom: 10px;
+                    letter-spacing: -0.005em;
                 }
 
                 .required {
                     color: #ef4444;
+                    font-weight: 700;
                 }
 
                 .mobile-input {
                     width: 100%;
-                    height: 48px;
-                    border: 1px solid #e2e8f0;
+                    height: 50px;
+                    border: 1.5px solid #e2e8f0;
                     border-radius: 12px;
                     padding: 0 16px;
-                    font-size: 16px;
-                    color: #1e293b;
-                    background: #fcfcfd;
+                    font-size: 15px;
+                    color: #0f172a;
+                    background: #fafafa;
                     outline: none;
-                    transition: all 0.2s;
+                    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+                    font-weight: 400;
+                }
+
+                .mobile-input::placeholder {
+                    color: #94a3b8;
                 }
 
                 .mobile-input:focus {
                     border-color: #2563eb;
-                    background: white;
-                    box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.1);
+                    background: #ffffff;
+                    box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.08);
                 }
 
                 .mobile-input.large {
                     height: 56px;
-                    font-size: 18px;
+                    font-size: 16px;
                     font-weight: 500;
+                    padding: 0 18px;
                 }
                 
                 .mobile-textarea {
                     width: 100%;
-                    border: 1px solid #e2e8f0;
+                    border: 1.5px solid #e2e8f0;
                     border-radius: 12px;
-                    padding: 12px 16px;
-                    font-size: 16px;
-                    color: #1e293b;
-                    background: #fcfcfd;
+                    padding: 14px 16px;
+                    font-size: 15px;
+                    color: #0f172a;
+                    background: #fafafa;
                     outline: none;
                     resize: none;
                     font-family: inherit;
+                    line-height: 1.5;
+                    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+                }
+
+                .mobile-textarea::placeholder {
+                    color: #94a3b8;
                 }
                 
                 .mobile-textarea:focus {
                     border-color: #2563eb;
-                    background: white;
+                    background: #ffffff;
+                    box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.08);
                 }
 
                 .dims-card {
-                    background: #f8fafc;
-                    border: 1px solid #e2e8f0;
+                    background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
+                    border: 1.5px solid #e2e8f0;
                     border-radius: 16px;
-                    padding: 16px;
+                    padding: 18px;
                     margin-bottom: 24px;
                 }
 
@@ -328,99 +362,121 @@ export default function MobileProductModal({ isOpen, onClose, product, onSave }:
                     display: flex;
                     align-items: center;
                     gap: 8px;
-                    font-size: 14px;
+                    font-size: 13px;
                     font-weight: 600;
                     color: #475569;
-                    margin-bottom: 12px;
+                    margin-bottom: 14px;
+                    letter-spacing: -0.005em;
                 }
 
                 .dims-header .material-icons-round {
-                    font-size: 18px;
-                    color: #94a3b8;
+                    font-size: 20px;
+                    color: #64748b;
                 }
 
                 .dims-grid {
                     display: grid;
                     grid-template-columns: repeat(3, 1fr);
-                    gap: 12px;
+                    gap: 10px;
+                }
+
+                @media (min-width: 500px) {
+                    .dims-grid {
+                        gap: 12px;
+                    }
                 }
 
                 .dim-input-wrapper {
                     display: flex;
                     flex-direction: column;
-                    gap: 4px;
+                    gap: 6px;
                 }
 
                 .dim-input-wrapper label {
-                    font-size: 12px;
+                    font-size: 11px;
+                    font-weight: 600;
                     color: #64748b;
+                    text-transform: uppercase;
+                    letter-spacing: 0.02em;
                 }
 
                 .dim-input-wrapper input {
                     width: 100%;
-                    height: 44px;
-                    border: 1px solid #e2e8f0;
+                    height: 48px;
+                    border: 1.5px solid #e2e8f0;
                     border-radius: 10px;
                     text-align: center;
                     font-size: 16px;
                     font-weight: 600;
-                    color: #1e293b;
-                    background: white;
+                    color: #0f172a;
+                    background: #ffffff;
+                    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
                 }
                 
                 .dim-input-wrapper input:focus {
                     border-color: #2563eb;
                     outline: none;
+                    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.08);
                 }
 
                 .quantity-control {
                     display: flex;
                     align-items: center;
-                    gap: 16px;
-                    background: #f8fafc;
-                    padding: 8px;
+                    gap: 12px;
+                    background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
+                    padding: 10px;
                     border-radius: 16px;
                     width: fit-content;
+                    border: 1.5px solid #e2e8f0;
                 }
 
                 .qty-btn {
-                    width: 40px;
-                    height: 40px;
-                    border-radius: 10px;
-                    background: white;
-                    border: 1px solid #e2e8f0;
+                    width: 44px;
+                    height: 44px;
+                    border-radius: 12px;
+                    background: #ffffff;
+                    border: 1.5px solid #e2e8f0;
                     display: flex;
                     align-items: center;
                     justify-content: center;
                     color: #2563eb;
                     cursor: pointer;
-                    box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+                    box-shadow: 0 2px 4px rgba(0,0,0,0.04);
+                    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
                 }
 
                 .qty-btn:active {
                     transform: scale(0.95);
                     background: #eff6ff;
+                    box-shadow: 0 1px 2px rgba(0,0,0,0.04);
                 }
 
                 .qty-value {
-                    font-size: 20px;
+                    font-size: 22px;
                     font-weight: 700;
-                    color: #1e293b;
-                    min-width: 32px;
+                    color: #0f172a;
+                    min-width: 40px;
                     text-align: center;
                 }
 
                 .sheet-footer {
-                    padding: 16px 24px;
+                    padding: 16px 20px;
                     display: flex;
                     gap: 12px;
                     border-top: 1px solid #f1f5f9;
-                    background: white;
+                    background: #fafafa;
+                    flex-shrink: 0;
+                }
+
+                @media (min-width: 400px) {
+                    .sheet-footer {
+                        padding: 18px 24px;
+                    }
                 }
 
                 .sheet-btn {
                     flex: 1;
-                    height: 52px;
+                    min-height: 54px;
                     border-radius: 14px;
                     font-size: 16px;
                     font-weight: 600;
@@ -429,6 +485,8 @@ export default function MobileProductModal({ isOpen, onClose, product, onSave }:
                     justify-content: center;
                     border: none;
                     cursor: pointer;
+                    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+                    letter-spacing: -0.01em;
                 }
 
                 .sheet-btn.secondary {
@@ -436,15 +494,21 @@ export default function MobileProductModal({ isOpen, onClose, product, onSave }:
                     color: #64748b;
                 }
 
+                .sheet-btn.secondary:active {
+                    background: #e2e8f0;
+                    transform: scale(0.98);
+                }
+
                 .sheet-btn.primary {
                     background: #2563eb;
                     color: white;
-                    box-shadow: 0 4px 12px rgba(37, 99, 235, 0.3);
+                    box-shadow: 0 4px 14px rgba(37, 99, 235, 0.35);
                 }
 
                 .sheet-btn.primary:active {
                     background: #1d4ed8;
                     transform: scale(0.98);
+                    box-shadow: 0 2px 8px rgba(37, 99, 235, 0.3);
                 }
             `}</style>
         </div>,

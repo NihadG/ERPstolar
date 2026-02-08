@@ -11,7 +11,7 @@ import {
     where,
     writeBatch,
 } from 'firebase/firestore';
-import { generateUUID, createWorkLog, workLogExists, getWorkers } from './database';
+import { generateUUID, createWorkLog, workLogExists, getWorkers, createProductionSnapshot, getProductMaterials } from './database';
 import type { Worker, WorkerAttendance, WorkOrder, WorkOrderItem, WorkLog } from './types';
 
 // Helper: Get Firestore with null check
@@ -986,18 +986,35 @@ export async function recalculateWorkOrder(workOrderId: string): Promise<void> {
 
         if (!workOrder || !workOrder.items) return;
 
-        // Aggregate values from items
+        // Aggregate values from items - FETCH FRESH MATERIAL COSTS
         let totalValue = 0;
         let materialCost = 0;
+        let transportCost = 0;
+        let servicesCost = 0;
         let plannedLaborCost = 0;
         let actualLaborCost = 0;
 
         let earliestStart: Date | undefined;
         let latestCompletion: Date | undefined;
 
-        workOrder.items.forEach((item: any) => {
+        // Use for...of to support async material cost fetching
+        for (const item of workOrder.items) {
             totalValue += item.Product_Value || 0;
-            materialCost += item.Material_Cost || 0;
+
+            // IMPORTANT: Fetch fresh material costs from database (not stale item.Material_Cost)
+            // Materials can change during production, so we always need current prices
+            if (item.Product_ID && workOrder.Organization_ID) {
+                const materials = await getProductMaterials(item.Product_ID, workOrder.Organization_ID);
+                materialCost += materials.reduce((sum, m) => sum + (m.Total_Price || 0), 0);
+            } else {
+                // Fallback to stored value if no Product_ID
+                materialCost += item.Material_Cost || 0;
+            }
+
+            // Include Transport and Services in profit calculation (best practice)
+            transportCost += item.Transport_Share || 0;
+            servicesCost += item.Services_Total || 0;
+
             plannedLaborCost += item.Planned_Labor_Cost || 0;
             actualLaborCost += item.Actual_Labor_Cost || 0;
 
@@ -1010,14 +1027,18 @@ export async function recalculateWorkOrder(workOrderId: string): Promise<void> {
                 const comp = new Date(item.Completed_At);
                 if (!latestCompletion || comp > latestCompletion) latestCompletion = comp;
             }
-        });
+        }
 
         // SAFETY CHECK: If calculated total is 0 but existing WO has value, preserve it (Legacy Data Protection)
         if (totalValue === 0 && (workOrder.Total_Value || 0) > 0) {
             totalValue = workOrder.Total_Value || 0;
         }
 
-        const profit = totalValue - materialCost - actualLaborCost;
+        // STANDARDIZED PROFIT FORMULA (consistent with calculateProductProfitability)
+        // Gross Profit = Selling - Material - Transport - Services
+        // Net Profit = Gross - Labor
+        const grossProfit = totalValue - materialCost - transportCost - servicesCost;
+        const profit = grossProfit - actualLaborCost; // This is Net Profit
         const profitMargin = totalValue > 0 ? (profit / totalValue) * 100 : 0;
         const laborCostVariance = plannedLaborCost - actualLaborCost;
 
@@ -1049,6 +1070,17 @@ export async function recalculateWorkOrder(workOrderId: string): Promise<void> {
             Profit_Margin: profitMargin,
             Labor_Cost_Variance: laborCostVariance
         });
+
+        // AI TRAINING: Create production snapshot when work order is completed
+        if (status === 'Završeno' && workOrder.Organization_ID) {
+            try {
+                await createProductionSnapshot(workOrderId, workOrder.Organization_ID);
+                console.log(`[AI Training] Production snapshot created for WorkOrder ${workOrderId}`);
+            } catch (snapshotError) {
+                console.error('[AI Training] Failed to create production snapshot:', snapshotError);
+                // Don't throw - snapshot failure shouldn't block work order completion
+            }
+        }
 
         // SYNC: Update product statuses in projects
         await syncProductStatuses(workOrder.items);

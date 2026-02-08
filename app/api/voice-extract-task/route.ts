@@ -13,10 +13,108 @@ export interface ExtractedTaskData {
     suggestedProject: string | null;
 }
 
-const EXTRACTION_PROMPT = `Ti si asistent za upravljanje zadacima u ERP sistemu za stolarsku radnju.
-Korisnik je izgovorio sljedeći tekst. Izvuci strukturirane podatke za kreiranje zadatka.
+const EXTRACTION_PROMPT = `Ti si napredni AI asistent za ekstrakciju strukturiranih zadataka iz glasovnog unosa u ERP sistemu za stolarsku radnju.
 
-TEKST KORISNIKA:
+KRITIČNA PRAVILA ZA NASLOV vs OPIS vs CHECKLIST:
+
+1. NASLOV (title):
+   - Kratak imperativ ili naziv glavne akcije (max 60 karaktera)
+   - Ako postoji JEDNA radnja → naslov je ta radnja
+   - Ako postoji VIŠE koraka → naslov je generički naziv (npr. "Priprema za projekat X", "Narudžba materijala")
+   - NE stavljaj detalje u naslov - samo ključnu akciju
+
+2. OPIS (description):
+   - Svi dodatni kontekstualni detalji, razlozi, specifikacije
+   - Vremenski kontekst ("jer dolaze u ponedjeljak", "potrebno do petka")
+   - Tehničke specifikacije ili napomene
+   - Ako nema dodatnog konteksta, ostavi prazan string ""
+
+3. CHECKLIST:
+   - OBAVEZNO detektuj nabrajanja kada korisnik koristi:
+     * Sekvencijalne riječi: "prvo", "zatim", "onda", "nakon toga", "pa", "potom"
+     * Nabrajanje: "treba X, Y i Z", "moram A, B, C"
+     * Imperativne liste: "napraviti..., naručiti..., poslati..."
+   - Svaki korak = posebna stavka u checklisti
+   - Maksimalno 5 stavki, formulirane kao jasne akcije
+   - Ako je samo JEDNA radnja bez nabrajanja → prazan niz []
+
+═══════════════════════════════════════════════════════════════
+PRIMJERI (FEW-SHOT LEARNING):
+═══════════════════════════════════════════════════════════════
+
+PRIMJER 1 - Jednostavan zadatak:
+Korisnik: "Nazovi Marinka za ponudu"
+Rezultat:
+{
+  "title": "Nazovi Marinka za ponudu",
+  "description": "",
+  "priority": "medium",
+  "category": "meeting",
+  "checklist": [],
+  "suggestedDueDate": null,
+  "suggestedWorker": null,
+  "suggestedProject": null
+}
+
+PRIMJER 2 - Zadatak sa checklistom:
+Korisnik: "Treba napraviti ormar za Kovačević, prvo izmjeriti prostor, pa napraviti nacrt, zatim naručiti iverice"
+Rezultat:
+{
+  "title": "Ormar za Kovačević",
+  "description": "",
+  "priority": "medium",
+  "category": "manufacturing",
+  "checklist": ["Izmjeriti prostor", "Napraviti nacrt", "Naručiti iverice"],
+  "suggestedDueDate": null,
+  "suggestedWorker": null,
+  "suggestedProject": "Kovačević"
+}
+
+PRIMJER 3 - Hitan zadatak sa datumom:
+Korisnik: "Hitno poslati ponudu za Hodžić do sutra"
+Rezultat:
+{
+  "title": "Poslati ponudu za Hodžić",
+  "description": "Hitno potrebno",
+  "priority": "urgent",
+  "category": "general",
+  "checklist": [],
+  "suggestedDueDate": "{TOMORROW}",
+  "suggestedWorker": null,
+  "suggestedProject": "Hodžić"
+}
+
+PRIMJER 4 - Kompleksan tekst sa kontekstom:
+Korisnik: "Za projekat Mehić trebam prvo zvati dobavljača, pa provjeriti zalihe, zatim naručiti iverice i okove. Potrebno sve završiti do petka jer dolaze na ugradnju u ponedjeljak."
+Rezultat:
+{
+  "title": "Priprema materijala za Mehić",
+  "description": "Potrebno završiti do petka jer dolaze na ugradnju u ponedjeljak",
+  "priority": "high",
+  "category": "ordering",
+  "checklist": ["Zvati dobavljača", "Provjeriti zalihe", "Naručiti iverice", "Naručiti okove"],
+  "suggestedDueDate": "{FRIDAY}",
+  "suggestedWorker": null,
+  "suggestedProject": "Mehić"
+}
+
+PRIMJER 5 - Dizajn sa koracima:
+Korisnik: "Treba isprogramirati novi dizajn za klijenta Sarajlić, napraviti crtež u CAD-u i poslati na odobrenje, hitno je"
+Rezultat:
+{
+  "title": "Novi dizajn za Sarajlić",
+  "description": "Hitno potrebno",
+  "priority": "urgent",
+  "category": "design",
+  "checklist": ["Napraviti crtež u CAD-u", "Poslati na odobrenje"],
+  "suggestedDueDate": null,
+  "suggestedWorker": null,
+  "suggestedProject": "Sarajlić"
+}
+
+═══════════════════════════════════════════════════════════════
+TEKST KORISNIKA ZA OBRADU:
+═══════════════════════════════════════════════════════════════
 """
 {USER_TEXT}
 """
@@ -24,50 +122,35 @@ TEKST KORISNIKA:
 KONTEKST (dostupni projekti i radnici):
 {CONTEXT}
 
-Odgovori ISKLJUČIVO u validnom JSON formatu, bez dodatnog teksta:
-{
-  "title": "Kratak, jasan naslov zadatka (max 60 karaktera)",
-  "description": "Detaljan opis ako postoji, inače prazan string",
-  "priority": "low|medium|high|urgent",
-  "category": "general|manufacturing|ordering|installation|design|meeting|reminder",
-  "checklist": ["stavka1", "stavka2"],
-  "suggestedDueDate": "YYYY-MM-DD ili null",
-  "suggestedWorker": "ime radnika ako se spominje ili null",
-  "suggestedProject": "ime projekta/klijenta ako se spominje ili null"
-}
-
 PRAVILA ZA PRIORITET:
-- "hitno", "odmah", "danas", "urgent" → "urgent"
-- "važno", "prioritet", "high" → "high"
+- "hitno", "odmah", "danas", "urgent", "mora danas" → "urgent"
+- "važno", "prioritet", "high", "bitno" → "high"
 - Bez posebne urgencije → "medium"
-- "nije hitno", "kad stigneš", "low priority" → "low"
+- "nije hitno", "kad stigneš", "low priority", "nije žurba" → "low"
 
 PRAVILA ZA KATEGORIJU:
-- Naručivanje materijala, dobavljači, nabavka → "ordering"
-- Proizvodnja, radovi, izrada, montaža u radionici → "manufacturing"
-- Instalacija, ugradnja kod klijenta, teren → "installation"
-- Dizajn, crtež, projekt, skica → "design"
-- Sastanak, razgovor, dogovor → "meeting"
-- Podsjetnik, podsjetiti, ne zaboraviti → "reminder"
+- Naručivanje, nabavka, dobavljač, kupovina materijala → "ordering"
+- Proizvodnja, izrada, montaža u radionici, rad u radnji → "manufacturing"
+- Instalacija, ugradnja, teren, kod klijenta → "installation"
+- Dizajn, crtež, CAD, projekt, skica, programiranje → "design"
+- Sastanak, poziv, razgovor, dogovor, zvati → "meeting"
+- Podsjetnik, podsjetiti, ne zaboraviti, zapamti → "reminder"
 - Ostalo → "general"
 
 PRAVILA ZA DATUM:
-- "danas" → današnji datum ({TODAY})
-- "sutra" → sutrašnji datum
-- "ovaj tjedan", "ove sedmice" → petak ove sedmice
-- Konkretan datum ako se spominje
+- "danas" → {TODAY}
+- "sutra" → {TOMORROW}
+- "prekosutra" → dan nakon sutra
+- "ovaj tjedan", "ove sedmice", "do petka" → {FRIDAY}
+- "sljedeći tjedan" → ponedjeljak sljedeće sedmice
+- Konkretan datum ako se eksplicitno spomene
 - Inače null
-
-PRAVILA ZA CHECKLIST:
-- Ako korisnik nabrojava korake ili stvari za uraditi, stavi svaku kao posebnu stavku
-- Maksimalno 5 stavki
-- Ako nema nabrajanja, prazan niz []
 
 VAŽNO:
 - Ako se spominje ime osobe, provjeri da li je u listi radnika
-- Ako se spominje klijent/kupac, provjeri da li je u listi projekata
-- Naslov treba biti jasan i koncizan
-- Odgovori SAMO JSON, bez markdown formatiranja`;
+- Ako se spominje klijent/projekat, provjeri da li je u listi projekata
+- Checklist stavke formuliši kao jasne, kratke akcije (imperativ)
+- Odgovori ISKLJUČIVO validnim JSON-om, bez markdown formatiranja ili dodatnog teksta`;
 
 export async function POST(request: NextRequest) {
     try {
@@ -101,14 +184,29 @@ export async function POST(request: NextRequest) {
 Radnici: ${context.workers?.join(', ') || 'Nema podataka'}`
             : 'Nema dostupnog konteksta';
 
-        // Get today's date for reference
-        const today = new Date().toISOString().split('T')[0];
+        // Get date references
+        const todayDate = new Date();
+        const today = todayDate.toISOString().split('T')[0];
 
-        // Build the prompt
+        // Calculate tomorrow
+        const tomorrowDate = new Date(todayDate);
+        tomorrowDate.setDate(tomorrowDate.getDate() + 1);
+        const tomorrow = tomorrowDate.toISOString().split('T')[0];
+
+        // Calculate this Friday
+        const fridayDate = new Date(todayDate);
+        const dayOfWeek = fridayDate.getDay();
+        const daysUntilFriday = dayOfWeek <= 5 ? 5 - dayOfWeek : 5 + (7 - dayOfWeek);
+        fridayDate.setDate(fridayDate.getDate() + daysUntilFriday);
+        const friday = fridayDate.toISOString().split('T')[0];
+
+        // Build the prompt with all date placeholders
         const prompt = EXTRACTION_PROMPT
             .replace('{USER_TEXT}', text)
             .replace('{CONTEXT}', contextStr)
-            .replace('{TODAY}', today);
+            .replaceAll('{TODAY}', today)
+            .replaceAll('{TOMORROW}', tomorrow)
+            .replaceAll('{FRIDAY}', friday);
 
         // Initialize Gemini
         const genAI = new GoogleGenerativeAI(apiKey);

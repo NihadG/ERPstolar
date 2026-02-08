@@ -83,9 +83,9 @@ export function AuthProvider({ children }: AuthProviderProps) {
         return () => unsubscribe();
     }, []);
 
-    // SECURE ADMIN WHITELIST - admins have full access to all modules
-    const ADMIN_EMAILS = ['nihad.tae@gmail.com'];
-    const isSuperAdmin = user?.Email ? ADMIN_EMAILS.includes(user.Email.toLowerCase()) : false;
+    // Check super admin status from user profile (stored securely in Firestore)
+    // Note: Is_Super_Admin should only be set via Firestore Console, never from client
+    const isSuperAdmin = user?.Is_Super_Admin === true;
 
     // Check if user has access to a module
     const hasModule = (module: keyof ModuleAccess): boolean => {

@@ -34,7 +34,12 @@ import type {
     WorkLog,
     Task,
     Notification,
-
+    ProductionSnapshot,
+    ProductionSnapshotItem,
+    SnapshotMaterial,
+    SnapshotWorker,
+    SnapshotProcess,
+    SnapshotExtra,
     AppState,
 } from './types';
 
@@ -73,6 +78,7 @@ const COLLECTIONS = {
     WORK_LOGS: 'work_logs',
     TASKS: 'tasks',
     NOTIFICATIONS: 'notifications',
+    PRODUCTION_SNAPSHOTS: 'production_snapshots',
 };
 
 // ============================================
@@ -4024,6 +4030,456 @@ export async function toggleTaskChecklistItem(taskId: string, checklistItemId: s
     } catch (error) {
         console.error('toggleTaskChecklistItem error:', error);
         return { success: false, message: 'Greška pri ažuriranju checkliste' };
+    }
+}
+
+// ============================================
+// PRODUCTION SNAPSHOTS - AI/ML Training Data
+// ============================================
+
+/**
+ * Create a production snapshot when a work order is completed.
+ * This captures denormalized data for AI/ML training purposes.
+ * ENHANCED: Now includes offer data, process timing, surface area, and material ratios.
+ */
+export async function createProductionSnapshot(
+    workOrderId: string,
+    organizationId: string
+): Promise<{ success: boolean; snapshotId?: string; message: string }> {
+    if (!organizationId) {
+        return { success: false, message: 'Organization ID is required' };
+    }
+
+    try {
+        const firestore = getDb();
+
+        // 1. Get Work Order with items
+        const workOrder = await getWorkOrder(workOrderId, organizationId);
+        if (!workOrder) {
+            return { success: false, message: 'Work order not found' };
+        }
+
+        // 2. Get Project
+        const projectQ = query(
+            collection(firestore, COLLECTIONS.PROJECTS),
+            where('Project_ID', '==', workOrder.items?.[0]?.Project_ID || ''),
+            where('Organization_ID', '==', organizationId)
+        );
+        const projectSnap = await getDocs(projectQ);
+        const project = projectSnap.docs[0]?.data() as Project | undefined;
+
+        // 3. Get Offer for this project (if exists)
+        let offer: Offer | undefined;
+        let offerProducts: OfferProduct[] = [];
+        if (project?.Project_ID) {
+            const offerQ = query(
+                collection(firestore, COLLECTIONS.OFFERS),
+                where('Project_ID', '==', project.Project_ID),
+                where('Organization_ID', '==', organizationId)
+            );
+            const offerSnap = await getDocs(offerQ);
+            if (!offerSnap.empty) {
+                offer = offerSnap.docs[0].data() as Offer;
+                // Get offer products
+                const offerProdsQ = query(
+                    collection(firestore, COLLECTIONS.OFFER_PRODUCTS),
+                    where('Offer_ID', '==', offer.Offer_ID),
+                    where('Organization_ID', '==', organizationId)
+                );
+                const offerProdsSnap = await getDocs(offerProdsQ);
+                offerProducts = offerProdsSnap.docs.map(d => d.data() as OfferProduct);
+
+                // Get extras for each offer product
+                for (const op of offerProducts) {
+                    const extrasQ = query(
+                        collection(firestore, COLLECTIONS.OFFER_EXTRAS),
+                        where('Offer_Product_ID', '==', op.ID),
+                        where('Organization_ID', '==', organizationId)
+                    );
+                    const extrasSnap = await getDocs(extrasQ);
+                    op.extras = extrasSnap.docs.map(d => d.data() as OfferExtra);
+                }
+            }
+        }
+
+        // 4. Get all work logs for this work order
+        const workLogsQ = query(
+            collection(firestore, COLLECTIONS.WORK_LOGS),
+            where('Work_Order_ID', '==', workOrderId),
+            where('Organization_ID', '==', organizationId)
+        );
+        const workLogsSnap = await getDocs(workLogsQ);
+        const workLogs = workLogsSnap.docs.map(doc => doc.data() as WorkLog);
+
+        // 5. Get workers for enrichment
+        const workersQ = query(
+            collection(firestore, COLLECTIONS.WORKERS),
+            where('Organization_ID', '==', organizationId)
+        );
+        const workersSnap = await getDocs(workersQ);
+        const workersMap = new Map<string, Worker>();
+        workersSnap.docs.forEach(doc => {
+            const w = doc.data() as Worker;
+            workersMap.set(w.Worker_ID, w);
+        });
+
+        // 6. Build snapshot items
+        const snapshotItems: ProductionSnapshotItem[] = [];
+        let totalMaterialCost = 0;
+        let totalSellingPrice = 0;
+        let totalQuantity = 0;
+        let totalSurfaceM2 = 0;
+        let totalVolumeM3 = 0;
+
+        for (const item of workOrder.items || []) {
+            // Get product details
+            const product = await getProduct(item.Product_ID, organizationId);
+            const height = product?.Height || 0;
+            const width = product?.Width || 0;
+            const depth = product?.Depth || 0;
+            const volume = (height * width * depth) / 1000000000; // Convert mm³ to m³
+            const surface = (height * width) / 1000000; // Convert mm² to m²
+
+            // Infer Product Type from name
+            const productName = item.Product_Name?.toLowerCase() || '';
+            let productType = 'Ostalo';
+            if (productName.includes('kuhinja') || productName.includes('kuh')) productType = 'Kuhinja';
+            else if (productName.includes('ormar') || productName.includes('garderob')) productType = 'Ormar';
+            else if (productName.includes('komoda')) productType = 'Komoda';
+            else if (productName.includes('stol') || productName.includes('radni')) productType = 'Stol';
+            else if (productName.includes('polica')) productType = 'Polica';
+            else if (productName.includes('vrata')) productType = 'Vrata';
+
+            // Get materials
+            const materials = await getProductMaterials(item.Product_ID, organizationId);
+            const materialSnapshotTime = new Date().toISOString();
+            const snapshotMaterials: SnapshotMaterial[] = materials.map(m => ({
+                Material_ID: m.ID,
+                Material_Name: m.Material_Name,
+                Category: m.Supplier || 'Ostalo',
+                Quantity: m.Quantity,
+                Unit: m.Unit,
+                Unit_Price: m.Unit_Price,
+                Total_Price: m.Total_Price,
+                Is_Glass: (m.glassItems && m.glassItems.length > 0) || false,
+                Is_Alu_Door: (m.aluDoorItems && m.aluDoorItems.length > 0) || false,
+                Price_Captured_At: materialSnapshotTime,
+                Is_Final_Price: true  // Captured at work order completion
+            }));
+
+            const hasGlass = materials.some(m => m.glassItems && m.glassItems.length > 0);
+            const hasAluDoor = materials.some(m => m.aluDoorItems && m.aluDoorItems.length > 0);
+            const itemMaterialCost = materials.reduce((sum, m) => sum + (m.Total_Price || 0), 0);
+
+            // Calculate material ratios
+            const materialPerM2 = surface > 0 ? itemMaterialCost / surface : 0;
+            const materialPerM3 = volume > 0 ? itemMaterialCost / volume : 0;
+            const materialPerUnit = item.Quantity > 0 ? itemMaterialCost / item.Quantity : 0;
+
+            // Get workers for this item from work logs
+            const itemWorkLogs = workLogs.filter(wl => wl.Work_Order_Item_ID === item.ID);
+            const workerDaysMap = new Map<string, { days: number; cost: number; name: string }>();
+
+            itemWorkLogs.forEach(wl => {
+                const existing = workerDaysMap.get(wl.Worker_ID) || { days: 0, cost: 0, name: wl.Worker_Name };
+                existing.days += 1;
+                existing.cost += wl.Daily_Rate;
+                existing.name = wl.Worker_Name;
+                workerDaysMap.set(wl.Worker_ID, existing);
+            });
+
+            const snapshotWorkers: SnapshotWorker[] = Array.from(workerDaysMap.entries()).map(([workerId, data]) => {
+                const worker = workersMap.get(workerId);
+                return {
+                    Worker_ID: workerId,
+                    Worker_Name: data.name,
+                    Role: worker?.Role || 'Opći',
+                    Worker_Type: worker?.Worker_Type || 'Glavni',
+                    Days_Worked: data.days,
+                    Daily_Rate: data.cost / data.days,
+                    Total_Cost: data.cost
+                };
+            });
+
+            // Get process timing from item.Processes
+            const snapshotProcesses: SnapshotProcess[] = ((item as any).Processes || []).map((p: any) => {
+                let durationDays = 0;
+                if (p.Started_At && p.Completed_At) {
+                    const start = new Date(p.Started_At);
+                    const end = new Date(p.Completed_At);
+                    durationDays = Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) || 1;
+                }
+                return {
+                    Process_Name: p.Process_Name || 'Unknown',
+                    Status: p.Status || 'Unknown',
+                    Started_At: p.Started_At,
+                    Completed_At: p.Completed_At,
+                    Duration_Days: durationDays,
+                    Worker_ID: p.Worker_ID,
+                    Worker_Name: p.Worker_Name,
+                    Helpers_Count: p.Helpers?.length || 0
+                };
+            });
+
+            // Get offer data for this product
+            const offerProduct = offerProducts.find(op => op.Product_ID === item.Product_ID);
+            const ledMeters = offerProduct?.LED_Meters || 0;
+            const ledPricePerMeter = offerProduct?.LED_Price || 0;
+            const ledTotal = offerProduct?.LED_Total || 0;
+            const marginPercent = offerProduct?.Margin || 0;
+            const marginType = offerProduct?.Margin_Type || 'Percentage';
+            const transportShare = offerProduct?.Transport_Share || 0;
+
+            // Get extras
+            const snapshotExtras: SnapshotExtra[] = (offerProduct?.extras || []).map(e => ({
+                Name: e.Name,
+                Quantity: e.Quantity,
+                Unit: e.Unit,
+                Unit_Price: e.Unit_Price,
+                Total: e.Total
+            }));
+
+            const actualLaborDays = itemWorkLogs.length;
+            const sellingPrice = item.Product_Value || offerProduct?.Selling_Price || 0;
+            const profit = sellingPrice - itemMaterialCost - (item.Actual_Labor_Cost || 0);
+
+            snapshotItems.push({
+                Product_ID: item.Product_ID,
+                Product_Name: item.Product_Name,
+                Product_Type: productType,
+                Height: height,
+                Width: width,
+                Depth: depth,
+                Volume_M3: volume,
+                Surface_M2: surface,
+                Quantity: item.Quantity,
+                Materials: snapshotMaterials,
+                Material_Count: materials.length,
+                Has_Glass: hasGlass,
+                Has_Alu_Door: hasAluDoor,
+                Total_Material_Cost: itemMaterialCost,
+                Material_Per_M2: Math.round(materialPerM2 * 100) / 100,
+                Material_Per_M3: Math.round(materialPerM3 * 100) / 100,
+                Material_Per_Unit: Math.round(materialPerUnit * 100) / 100,
+                Planned_Labor_Days: item.Planned_Labor_Days || 0,
+                Actual_Labor_Days: actualLaborDays,
+                Workers_Assigned: snapshotWorkers,
+                Processes: snapshotProcesses,
+                Selling_Price: sellingPrice,
+                Margin_Percent: marginPercent,
+                Margin_Type: marginType,
+                LED_Meters: ledMeters,
+                LED_Price_Per_Meter: ledPricePerMeter,
+                LED_Total: ledTotal,
+                Transport_Share: transportShare,
+                Extras: snapshotExtras,
+                Profit: profit,
+                Margin_Applied: marginPercent // Legacy
+            });
+
+            totalMaterialCost += itemMaterialCost;
+            totalSellingPrice += sellingPrice;
+            totalQuantity += item.Quantity;
+            totalSurfaceM2 += surface * item.Quantity;
+            totalVolumeM3 += volume * item.Quantity;
+        }
+
+        // 7. Calculate aggregates
+        const plannedDays = workOrder.Planned_Labor_Cost && workOrder.Actual_Labor_Cost
+            ? Math.round(workOrder.Planned_Labor_Cost / 100)
+            : 0;
+
+        const actualStartDate = workOrder.Started_At ? new Date(workOrder.Started_At) : new Date();
+        const actualEndDate = workOrder.Completed_At ? new Date(workOrder.Completed_At) : new Date();
+        const actualDays = Math.ceil((actualEndDate.getTime() - actualStartDate.getTime()) / (1000 * 60 * 60 * 24)) || 1;
+
+        // Worker aggregates
+        const uniqueWorkers = new Set(workLogs.map(wl => wl.Worker_ID));
+        const totalWorkerDays = workLogs.length;
+        const avgDailyRate = totalWorkerDays > 0
+            ? workLogs.reduce((sum, wl) => sum + wl.Daily_Rate, 0) / totalWorkerDays
+            : 0;
+
+        // Calculate fresh labor cost from work_logs (not stale stored value)
+        const freshLaborCost = workLogs.reduce((sum, wl) => sum + (wl.Daily_Rate || 0), 0);
+
+        // Calculate Transport and Services totals from items
+        const totalTransportCost = snapshotItems.reduce((sum, i) => sum + (i.Transport_Share || 0), 0);
+        const totalServicesCost = snapshotItems.reduce((sum, i) =>
+            sum + (i.Extras?.reduce((s, e) => s + (e.Total || 0), 0) || 0), 0);
+
+        // STANDARDIZED PROFIT FORMULA (consistent with calculateProductProfitability)
+        // Gross Profit = Selling - Material - Transport - Services
+        // Net Profit = Gross - Labor
+        const grossProfit = totalSellingPrice - totalMaterialCost - totalTransportCost - totalServicesCost;
+        const netProfit = grossProfit - freshLaborCost;
+        const profitMargin = totalSellingPrice > 0 ? (netProfit / totalSellingPrice) * 100 : 0;
+
+        // Aggregate material ratios
+        const avgMaterialPerM2 = totalSurfaceM2 > 0 ? totalMaterialCost / totalSurfaceM2 : 0;
+        const avgMaterialPerM3 = totalVolumeM3 > 0 ? totalMaterialCost / totalVolumeM3 : 0;
+
+        // 8. Create the snapshot
+        const snapshotId = generateUUID();
+        const snapshot: ProductionSnapshot = {
+            Snapshot_ID: snapshotId,
+            Organization_ID: organizationId,
+            Work_Order_ID: workOrderId,
+            Work_Order_Number: workOrder.Work_Order_Number,
+            Created_At: new Date().toISOString(),
+
+            Project_ID: project?.Project_ID || '',
+            Client_Name: project?.Client_Name || 'Unknown',
+            Project_Deadline: project?.Deadline || '',
+
+            // Offer Info
+            Offer_ID: offer?.Offer_ID,
+            Offer_Number: offer?.Offer_Number,
+            Offer_Total: offer?.Total,
+            Offer_Transport_Cost: offer?.Transport_Cost,
+            Offer_Has_Onsite_Assembly: offer?.Onsite_Assembly,
+
+            Items: snapshotItems,
+
+            Total_Products: snapshotItems.length,
+            Total_Quantity: totalQuantity,
+            Total_Material_Cost: totalMaterialCost,
+            Total_Selling_Price: totalSellingPrice,
+
+            Avg_Material_Per_M2: Math.round(avgMaterialPerM2 * 100) / 100,
+            Avg_Material_Per_M3: Math.round(avgMaterialPerM3 * 100) / 100,
+
+            Planned_Start: workOrder.Planned_Start_Date,
+            Planned_End: workOrder.Planned_End_Date,
+            Actual_Start: workOrder.Started_At,
+            Actual_End: workOrder.Completed_At,
+            Planned_Days: plannedDays,
+            Actual_Days: actualDays,
+            Duration_Variance: actualDays - plannedDays,
+
+            Planned_Labor_Cost: workOrder.Planned_Labor_Cost || 0,
+            Actual_Labor_Cost: workOrder.Actual_Labor_Cost || 0,
+            Labor_Cost_Variance: (workOrder.Planned_Labor_Cost || 0) - (workOrder.Actual_Labor_Cost || 0),
+            Labor_Variance_Percent: workOrder.Planned_Labor_Cost
+                ? (((workOrder.Planned_Labor_Cost - (workOrder.Actual_Labor_Cost || 0)) / workOrder.Planned_Labor_Cost) * 100)
+                : 0,
+
+            Gross_Profit: grossProfit,
+            Net_Profit: netProfit,
+            Profit_Margin_Percent: profitMargin,
+
+            Workers_Count: uniqueWorkers.size,
+            Total_Worker_Days: totalWorkerDays,
+            Avg_Daily_Rate: avgDailyRate,
+
+            Production_Steps: workOrder.Production_Steps || [],
+
+            Month: actualStartDate.getMonth() + 1,
+            Quarter: Math.ceil((actualStartDate.getMonth() + 1) / 3),
+            Day_Of_Week_Start: actualStartDate.getDay(),
+
+            // Data Quality - Calculate quality score
+            Quality_Score: 100, // Will be calculated below
+            Data_Issues: [],
+            Is_Valid_For_AI: true,
+            Normalized_Product_Types: [],
+
+            // Material Price Accuracy
+            Materials_Snapshot_Time: new Date().toISOString(),
+            Materials_Are_Final: true
+        };
+
+        // 9. Calculate Data Quality Score
+        const dataIssues: string[] = [];
+        let qualityScore = 100;
+
+        // Critical issues (-50 points)
+        if (!snapshot.Total_Material_Cost || snapshot.Total_Material_Cost <= 0) {
+            dataIssues.push('Missing material cost');
+            qualityScore -= 50;
+        }
+
+        // Important issues (-20 points each)
+        if (!snapshot.Items?.length) {
+            dataIssues.push('No products in snapshot');
+            qualityScore -= 20;
+        }
+        if (!snapshot.Actual_Start || !snapshot.Actual_End) {
+            dataIssues.push('Missing start/end dates');
+            qualityScore -= 20;
+        }
+
+        // Minor issues (-10 points each)
+        if (snapshot.Actual_Days <= 0) {
+            dataIssues.push('Invalid duration');
+            qualityScore -= 10;
+        }
+        if (snapshot.Workers_Count <= 0) {
+            dataIssues.push('No workers assigned');
+            qualityScore -= 10;
+        }
+
+        // Logical issues (-15 points each)
+        if (snapshot.Profit_Margin_Percent < -50 || snapshot.Profit_Margin_Percent > 200) {
+            dataIssues.push('Unrealistic profit margin');
+            qualityScore -= 15;
+        }
+        if (snapshot.Duration_Variance > 30) {
+            dataIssues.push('Excessive duration variance');
+            qualityScore -= 10;
+        }
+
+        // Normalize product types
+        const normalizedTypes = new Set<string>();
+        for (const item of snapshot.Items) {
+            if (item.Product_Type && item.Product_Type !== 'Ostalo') {
+                normalizedTypes.add(item.Product_Type);
+            }
+        }
+
+        // Update snapshot with quality data
+        snapshot.Quality_Score = Math.max(0, qualityScore);
+        snapshot.Data_Issues = dataIssues;
+        snapshot.Is_Valid_For_AI = qualityScore >= 50;
+        snapshot.Normalized_Product_Types = Array.from(normalizedTypes);
+
+        // Material price accuracy timestamp
+        snapshot.Materials_Snapshot_Time = new Date().toISOString();
+        snapshot.Materials_Are_Final = true; // Captured at work order completion
+
+        // 10. Save to Firestore
+        await addDoc(collection(firestore, COLLECTIONS.PRODUCTION_SNAPSHOTS), snapshot);
+
+        const qualityStatus = snapshot.Is_Valid_For_AI ? '✓ Valid for AI' : '⚠ Low quality';
+        console.log(`[ProductionSnapshot] Created snapshot ${snapshotId} (Score: ${snapshot.Quality_Score}/100, ${qualityStatus})`);
+
+        return { success: true, snapshotId, message: `Snapshot kreiran (Quality: ${snapshot.Quality_Score}/100)` };
+    } catch (error) {
+        console.error('createProductionSnapshot error:', error);
+        return { success: false, message: 'Greška pri kreiranju snapshota' };
+    }
+}
+
+
+/**
+ * Get all production snapshots for an organization (for AI/ML analysis)
+ */
+export async function getProductionSnapshots(
+    organizationId: string
+) {
+    if (!organizationId) return [];
+
+    try {
+        const firestore = getDb();
+        const q = query(
+            collection(firestore, COLLECTIONS.PRODUCTION_SNAPSHOTS),
+            where('Organization_ID', '==', organizationId)
+        );
+        const snapshot = await getDocs(q);
+        return snapshot.docs.map(doc => doc.data() as ProductionSnapshot);
+    } catch (error) {
+        console.error('getProductionSnapshots error:', error);
+        return [];
     }
 }
 

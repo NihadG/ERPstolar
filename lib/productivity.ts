@@ -18,6 +18,7 @@ import type {
     WorkOrderItem,
     WorkerAttendance,
 } from './types';
+import { getProductMaterials } from './database';
 
 // ============================================
 // WORKER PRODUCTIVITY
@@ -217,7 +218,12 @@ export async function calculateProductProfitability(
         // Get values from item
         const sellingPrice = item.Product_Value || 0;
         const quantity = item.Quantity || 1;
-        const materialCost = item.Material_Cost || 0;
+
+        // IMPORTANT: Fetch fresh material costs from database (not stale item.Material_Cost)
+        // Materials can change during production, so we always need current prices
+        const materials = await getProductMaterials(item.Product_ID, organizationId);
+        const materialCost = materials.reduce((sum, m) => sum + (m.Total_Price || 0), 0);
+
         const transportShare = item.Transport_Share || 0;
         const servicesTotal = item.Services_Total || 0;
         const plannedLaborCost = item.Planned_Labor_Cost || 0;

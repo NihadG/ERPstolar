@@ -49,8 +49,11 @@ service cloud.firestore {
     // ============================================
     
     match /users/{userId} {
-      // Users can read any user in their organization (for worker lists, etc.)
-      allow read: if isAuthenticated();
+      // Users can read their own profile
+      // OR users in the same organization (for worker lists, user pickers, etc.)
+      allow read: if isOwner(userId) || 
+                     (isAuthenticated() && 
+                      get(/databases/$(database)/documents/users/$(userId)).data.Organization_ID == getUserOrgId());
       // Users can only write to their own profile
       allow write: if isOwner(userId);
     }

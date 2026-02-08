@@ -26,6 +26,7 @@ interface MobileProjectsViewProps {
     onEditMaterial: (material: ProductMaterial) => void;
     onEditGlass: (productId: string, material: ProductMaterial) => void;
     onEditAluDoor: (productId: string, material: ProductMaterial) => void;
+    onUpdateMaterial: (materialId: string, updates: { Quantity: number; Unit_Price: number; Total_Price: number }) => Promise<void>;
 }
 
 export default function MobileProjectsView({
@@ -40,12 +41,17 @@ export default function MobileProjectsView({
     onDeleteMaterial,
     onEditMaterial,
     onEditGlass,
-    onEditAluDoor
+    onEditAluDoor,
+    onUpdateMaterial
 }: MobileProjectsViewProps) {
     const [searchTerm, setSearchTerm] = useState('');
     const [statusFilter, setStatusFilter] = useState('');
     const [expandedProjectId, setExpandedProjectId] = useState<string | null>(null);
     const [expandedProductId, setExpandedProductId] = useState<string | null>(null);
+
+    // Quick edit mode for materials
+    const [quickEditMode, setQuickEditMode] = useState<string | null>(null); // Product_ID in quick edit mode
+    const [editingMaterialValues, setEditingMaterialValues] = useState<Record<string, { qty: number; price: number }>>({});
 
     // Focus Mode: when a project is expanded, only show that project
     const isInFocusMode = expandedProjectId !== null;
@@ -110,6 +116,65 @@ export default function MobileProjectsView({
             if (pozA !== pozB) return pozA - pozB;
             // If same position, sort alphabetically
             return (a.Name || '').localeCompare(b.Name || '');
+        });
+    }
+
+    // Quick Edit Functions for Mobile
+    function toggleQuickEdit(productId: string) {
+        if (quickEditMode === productId) {
+            // Exit quick edit mode
+            setQuickEditMode(null);
+            setEditingMaterialValues({});
+        } else {
+            // Enter quick edit mode
+            setQuickEditMode(productId);
+            // Initialize values for all materials in this product
+            const product = projects.flatMap(p => p.products || []).find(prod => prod.Product_ID === productId);
+            if (product?.materials) {
+                const initialValues: Record<string, { qty: number; price: number }> = {};
+                product.materials.forEach(mat => {
+                    initialValues[mat.ID] = {
+                        qty: mat.Quantity,
+                        price: mat.Unit_Price
+                    };
+                });
+                setEditingMaterialValues(initialValues);
+            }
+        }
+    }
+
+    function handleQuickEditChange(materialId: string, field: 'qty' | 'price', value: string) {
+        const numValue = parseFloat(value) || 0;
+        setEditingMaterialValues(prev => ({
+            ...prev,
+            [materialId]: {
+                ...prev[materialId],
+                [field]: numValue
+            }
+        }));
+    }
+
+    async function saveQuickEdit(materialId: string) {
+        const values = editingMaterialValues[materialId];
+        if (!values) return;
+
+        // Find the original material to check if values changed
+        const material = projects
+            .flatMap(p => p.products || [])
+            .flatMap(prod => prod.materials || [])
+            .find(m => m.ID === materialId);
+
+        if (!material) return;
+
+        // Only save if changed
+        if (values.qty === material.Quantity && values.price === material.Unit_Price) {
+            return;
+        }
+
+        await onUpdateMaterial(materialId, {
+            Quantity: values.qty,
+            Unit_Price: values.price,
+            Total_Price: values.qty * values.price
         });
     }
 
@@ -316,51 +381,113 @@ export default function MobileProjectsView({
                                                             <div className="mpp-expanded-materials">
                                                                 <div className="mpp-mat-header">
                                                                     <span>Materijali ({product.materials?.length || 0})</span>
-                                                                    <button
-                                                                        className="mobile-add-tiny-btn"
-                                                                        onClick={(e) => {
-                                                                            e.stopPropagation();
-                                                                            onOpenMaterialModal(product.Product_ID);
-                                                                        }}
-                                                                    >
-                                                                        <span className="material-icons-round">add</span>
-                                                                    </button>
+                                                                    <div style={{ display: 'flex', gap: '6px' }}>
+                                                                        {(product.materials?.length || 0) > 0 && (
+                                                                            <button
+                                                                                className={`mobile-quick-edit-btn ${quickEditMode === product.Product_ID ? 'active' : ''}`}
+                                                                                onClick={(e) => {
+                                                                                    e.stopPropagation();
+                                                                                    toggleQuickEdit(product.Product_ID);
+                                                                                }}
+                                                                            >
+                                                                                <span className="material-icons-round">
+                                                                                    {quickEditMode === product.Product_ID ? 'check' : 'flash_on'}
+                                                                                </span>
+                                                                            </button>
+                                                                        )}
+                                                                        <button
+                                                                            className="mobile-add-tiny-btn"
+                                                                            onClick={(e) => {
+                                                                                e.stopPropagation();
+                                                                                onOpenMaterialModal(product.Product_ID);
+                                                                            }}
+                                                                        >
+                                                                            <span className="material-icons-round">add</span>
+                                                                        </button>
+                                                                    </div>
                                                                 </div>
 
                                                                 <div className="mpp-materials-list detailed">
-                                                                    {product.materials?.map((mat, mIdx) => (
-                                                                        <div key={mIdx} className="mpp-material-item-detailed">
-                                                                            <div className="m-info">
-                                                                                <span className="m-name">{mat.Material_Name}</span>
-                                                                                <span className="m-detail">
-                                                                                    {mat.Quantity} {mat.Unit} × {formatCurrency(mat.Unit_Price)}
-                                                                                </span>
-                                                                                <span className="m-total">
-                                                                                    Ukupno: <strong>{formatCurrency(mat.Total_Price || 0)}</strong>
-                                                                                </span>
+                                                                    {product.materials?.map((mat, mIdx) => {
+                                                                        const isInQuickEdit = quickEditMode === product.Product_ID;
+                                                                        const editValues = editingMaterialValues[mat.ID] || { qty: mat.Quantity, price: mat.Unit_Price };
+                                                                        const isGlass = mat.glassItems && mat.glassItems.length > 0;
+                                                                        const isAluDoor = mat.aluDoorItems && mat.aluDoorItems.length > 0;
+
+                                                                        return (
+                                                                            <div key={mIdx} className={`mpp-material-item-detailed ${isInQuickEdit ? 'editing' : ''}`}>
+                                                                                <div className="m-info">
+                                                                                    <span className="m-name">{mat.Material_Name}</span>
+                                                                                    {isInQuickEdit && !isGlass && !isAluDoor ? (
+                                                                                        <div className="m-quick-edit-controls">
+                                                                                            <div className="m-edit-field">
+                                                                                                <label>Količina</label>
+                                                                                                <input
+                                                                                                    type="number"
+                                                                                                    className="mobile-quick-edit-input"
+                                                                                                    value={editValues.qty}
+                                                                                                    onChange={(e) => handleQuickEditChange(mat.ID, 'qty', e.target.value)}
+                                                                                                    onBlur={() => saveQuickEdit(mat.ID)}
+                                                                                                    step="0.01"
+                                                                                                    min="0"
+                                                                                                    onClick={(e) => e.stopPropagation()}
+                                                                                                />
+                                                                                                <span className="unit-label">{mat.Unit}</span>
+                                                                                            </div>
+                                                                                            <div className="m-edit-field">
+                                                                                                <label>Cijena</label>
+                                                                                                <input
+                                                                                                    type="number"
+                                                                                                    className="mobile-quick-edit-input"
+                                                                                                    value={editValues.price}
+                                                                                                    onChange={(e) => handleQuickEditChange(mat.ID, 'price', e.target.value)}
+                                                                                                    onBlur={() => saveQuickEdit(mat.ID)}
+                                                                                                    step="0.01"
+                                                                                                    min="0"
+                                                                                                    onClick={(e) => e.stopPropagation()}
+                                                                                                />
+                                                                                                <span className="unit-label">KM</span>
+                                                                                            </div>
+                                                                                        </div>
+                                                                                    ) : (
+                                                                                        <span className="m-detail">
+                                                                                            {mat.Quantity} {mat.Unit} × {formatCurrency(mat.Unit_Price)}
+                                                                                        </span>
+                                                                                    )}
+                                                                                    <span className="m-total">
+                                                                                        Ukupno: <strong>
+                                                                                            {isInQuickEdit && !isGlass && !isAluDoor
+                                                                                                ? formatCurrency(editValues.qty * editValues.price)
+                                                                                                : formatCurrency(mat.Total_Price || 0)
+                                                                                            }
+                                                                                        </strong>
+                                                                                    </span>
+                                                                                </div>
+                                                                                {!isInQuickEdit && (
+                                                                                    <div className="m-actions">
+                                                                                        <button
+                                                                                            className="mini-btn"
+                                                                                            onClick={(e) => {
+                                                                                                e.stopPropagation();
+                                                                                                handleMaterialEdit(product.Product_ID, mat);
+                                                                                            }}
+                                                                                        >
+                                                                                            <span className="material-icons-round">edit</span>
+                                                                                        </button>
+                                                                                        <button
+                                                                                            className="mini-btn danger"
+                                                                                            onClick={(e) => {
+                                                                                                e.stopPropagation();
+                                                                                                onDeleteMaterial(mat.ID);
+                                                                                            }}
+                                                                                        >
+                                                                                            <span className="material-icons-round">delete</span>
+                                                                                        </button>
+                                                                                    </div>
+                                                                                )}
                                                                             </div>
-                                                                            <div className="m-actions">
-                                                                                <button
-                                                                                    className="mini-btn"
-                                                                                    onClick={(e) => {
-                                                                                        e.stopPropagation();
-                                                                                        handleMaterialEdit(product.Product_ID, mat);
-                                                                                    }}
-                                                                                >
-                                                                                    <span className="material-icons-round">edit</span>
-                                                                                </button>
-                                                                                <button
-                                                                                    className="mini-btn danger"
-                                                                                    onClick={(e) => {
-                                                                                        e.stopPropagation();
-                                                                                        onDeleteMaterial(mat.ID);
-                                                                                    }}
-                                                                                >
-                                                                                    <span className="material-icons-round">delete</span>
-                                                                                </button>
-                                                                            </div>
-                                                                        </div>
-                                                                    ))}
+                                                                        );
+                                                                    })}
                                                                     {(!product.materials || product.materials.length === 0) && (
                                                                         <div className="mp-no-data">Nema materijala</div>
                                                                     )}
@@ -861,6 +988,96 @@ export default function MobileProjectsView({
                 
                 .mp-action-btn .material-icons-round {
                     font-size: 20px;
+                }
+
+                /* Mobile Quick Edit Styles */
+                .mobile-quick-edit-btn {
+                    padding: 0;
+                    background: none;
+                    color: #f59e0b;
+                    border: none;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    transition: all 0.2s;
+                }
+
+                .mobile-quick-edit-btn:active {
+                    transform: scale(0.9);
+                }
+
+                .mobile-quick-edit-btn.active {
+                    color: #10b981;
+                }
+
+                .mobile-quick-edit-btn .material-icons-round {
+                    font-size: 24px;
+                }
+
+                .mpp-material-item-detailed.editing {
+                    background: linear-gradient(135deg, #fffbeb 0%, #ffffff 100%);
+                    border-left: 3px solid #f59e0b;
+                }
+
+                .m-quick-edit-controls {
+                    display: flex;
+                    flex-direction: column;
+                    gap: 12px;
+                    margin-top: 12px;
+                    padding: 12px;
+                    background: white;
+                    border-radius: 8px;
+                    border: 1px solid #fde68a;
+                }
+
+                .m-edit-field {
+                    display: flex;
+                    align-items: center;
+                    gap: 8px;
+                }
+
+                .m-edit-field label {
+                    font-size: 12px;
+                    font-weight: 600;
+                    color: #64748b;
+                    min-width: 60px;
+                }
+
+                .mobile-quick-edit-input {
+                    flex: 1;
+                    padding: 10px 12px;
+                    border: 1.5px solid #f59e0b;
+                    border-radius: 8px;
+                    font-size: 16px;
+                    font-weight: 500;
+                    text-align: center;
+                    background: white;
+                    color: #1e293b;
+                }
+
+                .mobile-quick-edit-input:focus {
+                    outline: none;
+                    border-color: #d97706;
+                    background: #fffbeb;
+                    box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.1);
+                }
+
+                .unit-label {
+                    font-size: 13px;
+                    font-weight: 600;
+                    color: #64748b;
+                    min-width: 30px;
+                }
+
+                /* Remove spinner arrows for mobile number inputs */
+                .mobile-quick-edit-input::-webkit-outer-spin-button,
+                .mobile-quick-edit-input::-webkit-inner-spin-button {
+                    -webkit-appearance: none;
+                    margin: 0;
+                }
+
+                .mobile-quick-edit-input[type=number] {
+                    -moz-appearance: textfield;
                 }
             `}</style>
         </div>

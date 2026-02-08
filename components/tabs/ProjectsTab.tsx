@@ -91,6 +91,10 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
     // Material status dropdown
     const [statusDropdownMaterialId, setStatusDropdownMaterialId] = useState<string | null>(null);
 
+    // Quick edit mode for materials
+    const [quickEditMode, setQuickEditMode] = useState<string | null>(null); // Product_ID in quick edit mode
+    const [editingMaterialValues, setEditingMaterialValues] = useState<Record<string, { qty: number; price: number }>>({});
+
     // Product Timeline Modal
     const [timelineProduct, setTimelineProduct] = useState<{ product: Product; sellingPrice?: number; materialCost?: number; laborCost?: number; profit?: number; profitMargin?: number } | null>(null);
 
@@ -136,12 +140,14 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
     }
 
     function toggleProduct(productId: string) {
-        const newExpanded = new Set(expandedProducts);
-        if (newExpanded.has(productId)) {
-            newExpanded.delete(productId);
-        } else {
+        const newExpanded = new Set<string>();
+        // If the clicked product is NOT currently expanded, add it (focus mode).
+        // If it IS expanded, we don't add it to newExpanded, effectively clearing it (collapsing all, showing list).
+        if (!expandedProducts.has(productId)) {
             newExpanded.add(productId);
         }
+
+        // This enforces single-product focus
         setExpandedProducts(newExpanded);
     }
 
@@ -493,6 +499,95 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
         }
     }
 
+    // Quick Edit Functions
+    function toggleQuickEdit(productId: string) {
+        if (quickEditMode === productId) {
+            // Exit quick edit mode
+            setQuickEditMode(null);
+            setEditingMaterialValues({});
+        } else {
+            // Enter quick edit mode
+            setQuickEditMode(productId);
+            // Initialize values for all materials in this product
+            const product = projects.flatMap(p => p.products || []).find(prod => prod.Product_ID === productId);
+            if (product?.materials) {
+                const initialValues: Record<string, { qty: number; price: number }> = {};
+                product.materials.forEach(mat => {
+                    initialValues[mat.ID] = {
+                        qty: mat.Quantity,
+                        price: mat.Unit_Price
+                    };
+                });
+                setEditingMaterialValues(initialValues);
+            }
+        }
+    }
+
+    function handleQuickEditChange(materialId: string, field: 'qty' | 'price', value: string) {
+        const numValue = parseFloat(value) || 0;
+        setEditingMaterialValues(prev => ({
+            ...prev,
+            [materialId]: {
+                ...prev[materialId],
+                [field]: numValue
+            }
+        }));
+    }
+
+    async function saveQuickEdit(materialId: string) {
+        const values = editingMaterialValues[materialId];
+        if (!values || !organizationId) return;
+
+        // Find the original material to check if values changed
+        const material = projects
+            .flatMap(p => p.products || [])
+            .flatMap(prod => prod.materials || [])
+            .find(m => m.ID === materialId);
+
+        if (!material) return;
+
+        // Only save if changed
+        if (values.qty === material.Quantity && values.price === material.Unit_Price) {
+            return;
+        }
+
+        const result = await updateProductMaterial(materialId, {
+            Quantity: values.qty,
+            Unit_Price: values.price,
+            Total_Price: values.qty * values.price
+        }, organizationId);
+
+        if (result.success) {
+            showToast('Materijal ažuriran', 'success');
+            onRefresh();
+        } else {
+            showToast(result.message, 'error');
+        }
+    }
+
+    function handleQuickEditKeyDown(e: React.KeyboardEvent, materialId: string) {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            saveQuickEdit(materialId);
+        } else if (e.key === 'Escape') {
+            // Reset to original value
+            const material = projects
+                .flatMap(p => p.products || [])
+                .flatMap(prod => prod.materials || [])
+                .find(m => m.ID === materialId);
+
+            if (material) {
+                setEditingMaterialValues(prev => ({
+                    ...prev,
+                    [materialId]: {
+                        qty: material.Quantity,
+                        price: material.Unit_Price
+                    }
+                }));
+            }
+        }
+    }
+
     function getStatusClass(status: string): string {
         return 'status-' + status.toLowerCase()
             .replace(/\s+/g, '-')
@@ -556,6 +651,19 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                     onEditMaterial={openEditMaterialModal}
                     onEditGlass={openGlassModalForEdit}
                     onEditAluDoor={openAluDoorModalForEdit}
+                    onUpdateMaterial={async (materialId, updates) => {
+                        if (!organizationId) {
+                            showToast('Organization ID is required', 'error');
+                            return;
+                        }
+                        const result = await updateProductMaterial(materialId, updates, organizationId);
+                        if (result.success) {
+                            showToast('Materijal ažuriran', 'success');
+                            onRefresh();
+                        } else {
+                            showToast(result.message, 'error');
+                        }
+                    }}
                 />
 
                 {/* Modals are shared but different for mobile */}
@@ -1148,10 +1256,23 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                                                     <div className={`product-materials ${expandedProducts.has(product.Product_ID) ? 'expanded' : ''}`}>
                                                         <div className="materials-header">
                                                             <h5>Materijali ({productMaterials.length})</h5>
-                                                            <button className="btn-add-item" onClick={() => openMaterialModal(product.Product_ID)}>
-                                                                <span className="material-icons-round">add</span>
-                                                                Dodaj materijal
-                                                            </button>
+                                                            <div style={{ display: 'flex', gap: '8px' }}>
+                                                                {productMaterials.length > 0 && (
+                                                                    <button
+                                                                        className={`btn-quick-edit ${quickEditMode === product.Product_ID ? 'active' : ''}`}
+                                                                        onClick={() => toggleQuickEdit(product.Product_ID)}
+                                                                        title={quickEditMode === product.Product_ID ? 'Zatvori Quick Edit' : 'Brzo uređivanje materijala'}
+                                                                    >
+                                                                        <span className="material-icons-round">
+                                                                            {quickEditMode === product.Product_ID ? 'check' : 'flash_on'}
+                                                                        </span>
+                                                                    </button>
+                                                                )}
+                                                                <button className="btn-add-item" onClick={() => openMaterialModal(product.Product_ID)}>
+                                                                    <span className="material-icons-round">add</span>
+                                                                    Dodaj materijal
+                                                                </button>
+                                                            </div>
                                                         </div>
 
                                                         {productMaterials.length === 0 && (
@@ -1191,9 +1312,11 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                                                                             const isAluDoor = material.aluDoorItems && material.aluDoorItems.length > 0;
                                                                             const glassCount = isGlass ? material.glassItems!.reduce((sum, gi) => sum + (gi.Qty || 1), 0) : 0;
                                                                             const aluDoorCount = isAluDoor ? material.aluDoorItems!.reduce((sum, ai) => sum + (ai.Qty || 1), 0) : 0;
+                                                                            const isInQuickEdit = quickEditMode === product.Product_ID;
+                                                                            const editValues = editingMaterialValues[material.ID] || { qty: material.Quantity, price: material.Unit_Price };
 
                                                                             return (
-                                                                                <div key={material.ID} className="material-row">
+                                                                                <div key={material.ID} className={`material-row ${isInQuickEdit ? 'editing' : ''}`}>
                                                                                     <div className="mat-col-name">
                                                                                         <span className="material-name-text">{material.Material_Name}</span>
                                                                                         {material.Is_Essential && <span className="material-indicator essential" title="Esencijalni materijal">⚠️</span>}
@@ -1202,15 +1325,48 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                                                                                     </div>
                                                                                     <div className="mat-col-qty">
                                                                                         <span className="mobile-label">Kol:</span>
-                                                                                        {material.Quantity} {material.Unit}
+                                                                                        {isInQuickEdit && !isGlass && !isAluDoor ? (
+                                                                                            <input
+                                                                                                type="number"
+                                                                                                className="quick-edit-input"
+                                                                                                value={editValues.qty}
+                                                                                                onChange={(e) => handleQuickEditChange(material.ID, 'qty', e.target.value)}
+                                                                                                onBlur={() => saveQuickEdit(material.ID)}
+                                                                                                onKeyDown={(e) => handleQuickEditKeyDown(e, material.ID)}
+                                                                                                step="0.01"
+                                                                                                min="0"
+                                                                                                onClick={(e) => e.stopPropagation()}
+                                                                                            />
+                                                                                        ) : (
+                                                                                            <span>{material.Quantity} {material.Unit}</span>
+                                                                                        )}
                                                                                     </div>
                                                                                     <div className="mat-col-price">
                                                                                         <span className="mobile-label">Cijena:</span>
-                                                                                        {formatCurrency(material.Unit_Price)}
+                                                                                        {isInQuickEdit && !isGlass && !isAluDoor ? (
+                                                                                            <input
+                                                                                                type="number"
+                                                                                                className="quick-edit-input"
+                                                                                                value={editValues.price}
+                                                                                                onChange={(e) => handleQuickEditChange(material.ID, 'price', e.target.value)}
+                                                                                                onBlur={() => saveQuickEdit(material.ID)}
+                                                                                                onKeyDown={(e) => handleQuickEditKeyDown(e, material.ID)}
+                                                                                                step="0.01"
+                                                                                                min="0"
+                                                                                                onClick={(e) => e.stopPropagation()}
+                                                                                            />
+                                                                                        ) : (
+                                                                                            formatCurrency(material.Unit_Price)
+                                                                                        )}
                                                                                     </div>
                                                                                     <div className="mat-col-total">
                                                                                         <span className="mobile-label">Ukupno:</span>
-                                                                                        <strong>{formatCurrency(material.Total_Price)}</strong>
+                                                                                        <strong>
+                                                                                            {isInQuickEdit && !isGlass && !isAluDoor
+                                                                                                ? formatCurrency(editValues.qty * editValues.price)
+                                                                                                : formatCurrency(material.Total_Price)
+                                                                                            }
+                                                                                        </strong>
                                                                                     </div>
                                                                                     <div className="mat-col-status">
                                                                                         {material.Status === 'Nije naručeno' ? (
@@ -1971,6 +2127,91 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                     line-height: 1.5;
                     text-transform: none;
                     letter-spacing: normal;
+                }
+
+                /* Quick Edit Styles */
+                .btn-quick-edit {
+                    display: inline-flex;
+                    align-items: center;
+                    justify-content: center;
+                    padding: 0;
+                    background: none;
+                    color: #f59e0b;
+                    border: none;
+                    cursor: pointer;
+                    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+                }
+
+                .btn-quick-edit:hover {
+                    transform: scale(1.1);
+                    color: #d97706;
+                }
+
+                .btn-quick-edit:active {
+                    transform: scale(0.95);
+                }
+
+                .btn-quick-edit.active {
+                    color: #10b981;
+                }
+
+                .btn-quick-edit.active:hover {
+                    color: #059669;
+                }
+
+                .btn-quick-edit .material-icons-round {
+                    font-size: 22px;
+                }
+
+                .material-row.editing {
+                    background: linear-gradient(90deg, #fffbeb 0%, #ffffff 100%);
+                    border-left: 3px solid #f59e0b;
+                    animation: highlightPulse 0.3s ease-out;
+                }
+
+                @keyframes highlightPulse {
+                    0% {
+                        background: #fef3c7;
+                    }
+                    100% {
+                        background: linear-gradient(90deg, #fffbeb 0%, #ffffff 100%);
+                    }
+                }
+
+                .quick-edit-input {
+                    width: 100%;
+                    max-width: 100px;
+                    padding: 6px 10px;
+                    border: 1.5px solid #f59e0b;
+                    border-radius: 6px;
+                    font-size: 14px;
+                    font-weight: 500;
+                    text-align: center;
+                    background: white;
+                    color: #1e293b;
+                    transition: all 0.2s;
+                }
+
+                .quick-edit-input:focus {
+                    outline: none;
+                    border-color: #d97706;
+                    box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.1);
+                    background: #fffbeb;
+                }
+
+                .quick-edit-input:hover {
+                    border-color: #fb923c;
+                }
+
+                /* Remove spinner arrows for number inputs in quick edit */
+                .quick-edit-input::-webkit-outer-spin-button,
+                .quick-edit-input::-webkit-inner-spin-button {
+                    -webkit-appearance: none;
+                    margin: 0;
+                }
+
+                .quick-edit-input[type=number] {
+                    -moz-appearance: textfield;
                 }
             `}</style>
         </div>
