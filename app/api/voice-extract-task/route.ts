@@ -13,33 +13,33 @@ export interface ExtractedTaskData {
     suggestedProject: string | null;
 }
 
-const EXTRACTION_PROMPT = `Ti si napredni AI asistent za ekstrakciju strukturiranih zadataka iz glasovnog unosa u ERP sistemu za stolarsku radnju.
+const EXTRACTION_PROMPT = `Ti si napredni AI asistent za ekstrakciju strukturiranih zadataka iz glasovnog unosa.
 
 KRITIČNA PRAVILA ZA NASLOV vs OPIS vs CHECKLIST:
 
 1. NASLOV (title):
    - Kratak imperativ ili naziv glavne akcije (max 60 karaktera)
    - Ako postoji JEDNA radnja → naslov je ta radnja
-   - Ako postoji VIŠE koraka → naslov je generički naziv (npr. "Priprema za projekat X", "Narudžba materijala")
-   - NE stavljaj detalje u naslov - samo ključnu akciju
+   - Ako postoji VIŠE koraka → naslov je generički naziv koji opisuje sve (npr. "Obaveze za sutra", "Nabavka materijala")
+   - NE stavljaj sve detalje u naslov - samo ključnu akciju ili sažetak
 
 2. OPIS (description):
    - Svi dodatni kontekstualni detalji, razlozi, specifikacije
-   - Vremenski kontekst ("jer dolaze u ponedjeljak", "potrebno do petka")
-   - Tehničke specifikacije ili napomene
+   - Vremenski kontekst (npr. "jer dolaze u ponedjeljak")
    - Ako nema dodatnog konteksta, ostavi prazan string ""
 
 3. CHECKLIST:
    - OBAVEZNO detektuj nabrajanja kada korisnik koristi:
      * Sekvencijalne riječi: "prvo", "zatim", "onda", "nakon toga", "pa", "potom"
      * Nabrajanje: "treba X, Y i Z", "moram A, B, C"
-     * Imperativne liste: "napraviti..., naručiti..., poslati..."
+     * Liste radnji: "napraviti..., naručiti..., poslati..."
+     * Kada korisnik nabraja VIŠE RAZLIČITIH ZADATAKA - svaki IDE u checklist!
    - Svaki korak = posebna stavka u checklisti
-   - Maksimalno 5 stavki, formulirane kao jasne akcije
+   - Maksimalno 10 stavki, formulirane kao jasne akcije
    - Ako je samo JEDNA radnja bez nabrajanja → prazan niz []
 
 ═══════════════════════════════════════════════════════════════
-PRIMJERI (FEW-SHOT LEARNING):
+PRIMJERI:
 ═══════════════════════════════════════════════════════════════
 
 PRIMJER 1 - Jednostavan zadatak:
@@ -56,60 +56,60 @@ Rezultat:
   "suggestedProject": null
 }
 
-PRIMJER 2 - Zadatak sa checklistom:
-Korisnik: "Treba napraviti ormar za Kovačević, prvo izmjeriti prostor, pa napraviti nacrt, zatim naručiti iverice"
+PRIMJER 2 - Više zadataka nabrojanih:
+Korisnik: "otići sutra u apoteku, otići u dom zdravlja i pokositi travu"
 Rezultat:
 {
-  "title": "Ormar za Kovačević",
+  "title": "Obaveze za sutra",
   "description": "",
   "priority": "medium",
-  "category": "manufacturing",
-  "checklist": ["Izmjeriti prostor", "Napraviti nacrt", "Naručiti iverice"],
-  "suggestedDueDate": null,
+  "category": "general",
+  "checklist": ["Otići u apoteku", "Otići u dom zdravlja", "Pokositi travu"],
+  "suggestedDueDate": "{TOMORROW}",
   "suggestedWorker": null,
-  "suggestedProject": "Kovačević"
+  "suggestedProject": null
 }
 
 PRIMJER 3 - Hitan zadatak sa datumom:
-Korisnik: "Hitno poslati ponudu za Hodžić do sutra"
+Korisnik: "Hitno poslati ponudu do sutra"
 Rezultat:
 {
-  "title": "Poslati ponudu za Hodžić",
+  "title": "Poslati ponudu",
   "description": "Hitno potrebno",
   "priority": "urgent",
   "category": "general",
   "checklist": [],
   "suggestedDueDate": "{TOMORROW}",
   "suggestedWorker": null,
-  "suggestedProject": "Hodžić"
+  "suggestedProject": null
 }
 
 PRIMJER 4 - Kompleksan tekst sa kontekstom:
-Korisnik: "Za projekat Mehić trebam prvo zvati dobavljača, pa provjeriti zalihe, zatim naručiti iverice i okove. Potrebno sve završiti do petka jer dolaze na ugradnju u ponedjeljak."
+Korisnik: "Trebam prvo zvati dobavljača, pa provjeriti zalihe, zatim naručiti materijal. Potrebno sve završiti do petka jer dolaze na ugradnju u ponedjeljak."
 Rezultat:
 {
-  "title": "Priprema materijala za Mehić",
+  "title": "Priprema materijala",
   "description": "Potrebno završiti do petka jer dolaze na ugradnju u ponedjeljak",
   "priority": "high",
   "category": "ordering",
-  "checklist": ["Zvati dobavljača", "Provjeriti zalihe", "Naručiti iverice", "Naručiti okove"],
+  "checklist": ["Zvati dobavljača", "Provjeriti zalihe", "Naručiti materijal"],
   "suggestedDueDate": "{FRIDAY}",
   "suggestedWorker": null,
-  "suggestedProject": "Mehić"
+  "suggestedProject": null
 }
 
-PRIMJER 5 - Dizajn sa koracima:
-Korisnik: "Treba isprogramirati novi dizajn za klijenta Sarajlić, napraviti crtež u CAD-u i poslati na odobrenje, hitno je"
+PRIMJER 5 - Lični zadaci:
+Korisnik: "Moram kupiti hljeb, zatim pokupiti djecu iz škole i platiti račune"
 Rezultat:
 {
-  "title": "Novi dizajn za Sarajlić",
-  "description": "Hitno potrebno",
-  "priority": "urgent",
-  "category": "design",
-  "checklist": ["Napraviti crtež u CAD-u", "Poslati na odobrenje"],
-  "suggestedDueDate": null,
+  "title": "Dnevne obaveze",
+  "description": "",
+  "priority": "medium",
+  "category": "reminder",
+  "checklist": ["Kupiti hljeb", "Pokupiti djecu iz škole", "Platiti račune"],
+  "suggestedDueDate": "{TODAY}",
   "suggestedWorker": null,
-  "suggestedProject": "Sarajlić"
+  "suggestedProject": null
 }
 
 ═══════════════════════════════════════════════════════════════
@@ -130,24 +130,26 @@ PRAVILA ZA PRIORITET:
 
 PRAVILA ZA KATEGORIJU:
 - Naručivanje, nabavka, dobavljač, kupovina materijala → "ordering"
-- Proizvodnja, izrada, montaža u radionici, rad u radnji → "manufacturing"
+- Proizvodnja, izrada, montaža u radionici → "manufacturing"
 - Instalacija, ugradnja, teren, kod klijenta → "installation"
-- Dizajn, crtež, CAD, projekt, skica, programiranje → "design"
+- Dizajn, crtež, CAD, projekt, skica → "design"
 - Sastanak, poziv, razgovor, dogovor, zvati → "meeting"
-- Podsjetnik, podsjetiti, ne zaboraviti, zapamti → "reminder"
-- Ostalo → "general"
+- Podsjetnik, podsjetiti, ne zaboraviti, zapamti, lični zadaci → "reminder"
+- Ostalo, generalni zadaci → "general"
 
 PRAVILA ZA DATUM:
 - "danas" → {TODAY}
 - "sutra" → {TOMORROW}
 - "prekosutra" → dan nakon sutra
-- "ovaj tjedan", "ove sedmice", "do petka" → {FRIDAY}
+- "ovaj tjedan", "do petka" → {FRIDAY}
 - "sljedeći tjedan" → ponedjeljak sljedeće sedmice
 - Konkretan datum ako se eksplicitno spomene
 - Inače null
 
 VAŽNO:
-- Ako se spominje ime osobe, provjeri da li je u listi radnika
+- PAŽLJIVO DETEKTUJ SVE NABROJANE ZADATKE - svaki nabrojan zadatak mora biti u checklisti!
+- Ako korisnik kaže "A, B i C" ili "A pa B pa C" - to su TRI stavke u checklisti
+- Ako se spominje ime osobe, provjeri da li je u listi radnika  
 - Ako se spominje klijent/projekat, provjeri da li je u listi projekata
 - Checklist stavke formuliši kao jasne, kratke akcije (imperativ)
 - Odgovori ISKLJUČIVO validnim JSON-om, bez markdown formatiranja ili dodatnog teksta`;
@@ -210,12 +212,16 @@ Radnici: ${context.workers?.join(', ') || 'Nema podataka'}`
 
         // Initialize Gemini
         const genAI = new GoogleGenerativeAI(apiKey);
-        const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+        const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
+
+        console.log(`Voice extract: Processing text: "${text}"`);
 
         // Generate response
         const result = await model.generateContent(prompt);
         const response = await result.response;
         let responseText = response.text();
+
+        console.log(`Voice extract: Gemini raw response: "${responseText.substring(0, 500)}..."`);
 
         // Clean up response (remove markdown code blocks if present)
         responseText = responseText
