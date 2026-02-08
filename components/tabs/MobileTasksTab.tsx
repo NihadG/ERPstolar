@@ -895,6 +895,40 @@ function MobileTaskModal({
         if (data.priority) setPriority(data.priority as TaskPriority);
         if (data.category) setCategory(data.category as TaskCategory);
         if (data.suggestedDueDate) setDueDate(data.suggestedDueDate);
+
+        // Add checklist items
+        if (data.checklist && data.checklist.length > 0) {
+            const newChecklist = data.checklist.map(text => ({
+                id: generateUUID(),
+                text,
+                completed: false
+            }));
+            setChecklist(prev => [...prev, ...newChecklist]);
+            // Switch to checklist tab if items were added
+            setActiveTab('checklist');
+        }
+
+        // Try to match suggested worker
+        if (data.suggestedWorker) {
+            const matchedWorker = workers.find(w =>
+                w.Name.toLowerCase().includes(data.suggestedWorker!.toLowerCase())
+            );
+            // Note: MobileTaskModal doesn't have worker assignment UI, but we could add it
+        }
+
+        // Try to match suggested project and add as link
+        if (data.suggestedProject) {
+            const matchedProject = projects.find(p =>
+                p.Client_Name.toLowerCase().includes(data.suggestedProject!.toLowerCase())
+            );
+            if (matchedProject && !links.some(l => l.Entity_ID === matchedProject.Project_ID)) {
+                setLinks(prev => [...prev, {
+                    Entity_Type: 'project',
+                    Entity_ID: matchedProject.Project_ID,
+                    Entity_Name: matchedProject.Client_Name
+                }]);
+            }
+        }
     };
 
     const handleVoiceError = (error: string) => {
