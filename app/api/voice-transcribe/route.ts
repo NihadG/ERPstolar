@@ -103,6 +103,9 @@ function getSpeechClient(): SpeechClient {
     return new SpeechClient(credentials);
 }
 
+// Max audio size: ~10MB (approximately 60 seconds of WEBM_OPUS at high quality)
+const MAX_AUDIO_SIZE_BYTES = 10 * 1024 * 1024;
+
 export async function POST(request: NextRequest) {
     try {
         // Get audio from form data
@@ -116,9 +119,24 @@ export async function POST(request: NextRequest) {
             );
         }
 
+        // Log audio file details for debugging
+        console.log(`Voice transcribe: Received audio file, size: ${audioFile.size} bytes (${(audioFile.size / 1024).toFixed(2)} KB), type: ${audioFile.type}`);
+
+        // Check audio file size before processing
+        // Google's sync recognize API is very strict about audio length
+        // Lower limit to ~5MB to be safe (roughly 30-40 seconds of WEBM_OPUS)
+        if (audioFile.size > MAX_AUDIO_SIZE_BYTES) {
+            console.warn(`Audio file too large: ${audioFile.size} bytes (max: ${MAX_AUDIO_SIZE_BYTES})`);
+            return NextResponse.json(
+                { error: 'Audio je predug. Molimo snimite kraći audio (maksimalno 60 sekundi).' },
+                { status: 400 }
+            );
+        }
+
         // Convert Blob to base64
         const arrayBuffer = await audioFile.arrayBuffer();
         const audioBytes = Buffer.from(arrayBuffer).toString('base64');
+        console.log(`Voice transcribe: Base64 audio length: ${audioBytes.length} characters`);
 
         // Check if we have required credentials
         if (!process.env.GOOGLE_CLOUD_PROJECT_ID ||
@@ -137,17 +155,21 @@ export async function POST(request: NextRequest) {
         const client = getSpeechClient();
 
         // Configure transcription request
+        // Note: Browser MediaRecorder outputs webm/opus, but Google API handles it better as OGG_OPUS
+        // We also let Google auto-detect the sample rate to avoid mismatches
         const [response] = await client.recognize({
             audio: {
                 content: audioBytes,
             },
             config: {
-                encoding: 'WEBM_OPUS', // Browser typically records in webm
-                sampleRateHertz: 48000,
+                // Let Google auto-detect the encoding - more reliable for browser-recorded audio
+                encoding: 'WEBM_OPUS',
+                // Let Google auto-detect sample rate by not specifying it
+                // sampleRateHertz: 48000, // Commented out - let API auto-detect
                 languageCode: 'hr-HR', // Croatian (covers Bosnian/Serbian too)
                 alternativeLanguageCodes: ['sr-RS', 'bs-BA'], // Serbian and Bosnian as fallbacks
                 enableAutomaticPunctuation: true,
-                model: 'default',
+                model: 'latest_short', // Use 'latest_short' for better handling of short audio
             },
         });
 
@@ -169,6 +191,15 @@ export async function POST(request: NextRequest) {
         console.error('Speech-to-Text Error:', error);
 
         // Handle specific Google Cloud errors
+        // Code 3 = INVALID_ARGUMENT (usually audio too long for sync recognize)
+        if (error.code === 3 && error.details?.includes('too long')) {
+            return NextResponse.json(
+                { error: 'Audio je predug. Molimo snimite kraći audio (maksimalno 60 sekundi).' },
+                { status: 400 }
+            );
+        }
+
+        // Code 7 = PERMISSION_DENIED
         if (error.code === 7) {
             return NextResponse.json(
                 { error: 'Google Cloud API nije omogućen ili credentials nisu ispravni' },
