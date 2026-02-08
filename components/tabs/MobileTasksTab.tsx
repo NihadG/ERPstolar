@@ -873,7 +873,7 @@ function MobileTaskModal({
     const [description, setDescription] = useState(task?.Description || '');
     const [priority, setPriority] = useState<TaskPriority>(task?.Priority || 'medium');
     const [category, setCategory] = useState<TaskCategory>(task?.Category || 'general');
-    const [showControls, setShowControls] = useState(true);
+    const [showControls, setShowControls] = useState(false);
     const [dueDate, setDueDate] = useState(task?.Due_Date || '');
     const [notes, setNotes] = useState(task?.Notes || '');
     const [links, setLinks] = useState<TaskLink[]>(task?.Links || []);
@@ -1016,7 +1016,6 @@ function MobileTaskModal({
                         placeholder="Šta treba uraditi?"
                         value={title}
                         onChange={e => setTitle(e.target.value)}
-                        autoFocus
                     />
 
                     {/* Tabs */}
