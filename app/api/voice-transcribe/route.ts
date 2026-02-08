@@ -145,7 +145,7 @@ export async function POST(request: NextRequest) {
             languageCode: 'hr-HR',
             alternativeLanguageCodes: ['sr-RS', 'bs-BA'],
             enableAutomaticPunctuation: true,
-            model: 'latest_long',
+            model: 'default', // latest_long not supported for hr-HR
         };
 
         const audio: protos.google.cloud.speech.v1.IRecognitionAudio = {
