@@ -1,47 +1,134 @@
 'use client';
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
-import { Bell, Check, Info, AlertTriangle, CheckCircle, AlertOctagon } from 'lucide-react';
+import { Bell, Check, Info, AlertTriangle, CheckCircle, AlertOctagon, ClipboardList, Calendar } from 'lucide-react';
 import { Notification } from '@/lib/types';
 import { subscribeToNotifications, markNotificationAsRead } from '@/lib/database';
 import { useAuth } from '@/context/AuthContext';
 import './NotificationCenter.css';
 
+// Local notification type for internal use
+interface LocalNotification {
+    id: string;
+    title: string;
+    message: string;
+    type: 'info' | 'success' | 'warning' | 'error' | 'sihtarica' | 'tasks';
+    read: boolean;
+    createdAt: string;
+    link?: string;
+    metadata?: {
+        taskCount?: number;
+        date?: string;
+    };
+}
+
+const NOTIFICATIONS_KEY = 'erp_notifications_read';
+const LAST_SIHTARICA_KEY = 'erp_last_sihtarica_check';
+const LAST_TASKS_KEY = 'erp_last_tasks_check';
+
 export default function NotificationCenter() {
     const { organization } = useAuth();
     const router = useRouter();
-    const [notifications, setNotifications] = useState<Notification[]>([]);
+    const [notifications, setNotifications] = useState<LocalNotification[]>([]);
     const [isOpen, setIsOpen] = useState(false);
-    const containerRef = useRef<HTMLDivElement>(null);
     const buttonRef = useRef<HTMLButtonElement>(null);
     const [position, setPosition] = useState({ top: 0, left: 0 });
 
-    // Subscribe to notifications
+    // Get today's date string
+    const getTodayString = () => new Date().toISOString().split('T')[0];
+
+    // Get read notifications from localStorage
+    const getReadNotifications = useCallback((): Set<string> => {
+        try {
+            const stored = localStorage.getItem(NOTIFICATIONS_KEY);
+            return stored ? new Set(JSON.parse(stored)) : new Set();
+        } catch {
+            return new Set();
+        }
+    }, []);
+
+    // Save read notifications to localStorage
+    const saveReadNotifications = useCallback((readIds: Set<string>) => {
+        try {
+            localStorage.setItem(NOTIFICATIONS_KEY, JSON.stringify(Array.from(readIds)));
+        } catch {
+            console.error('Failed to save read notifications');
+        }
+    }, []);
+
+    // Generate daily notifications
+    const generateDailyNotifications = useCallback(() => {
+        const today = getTodayString();
+        const dailyNotifications: LocalNotification[] = [];
+        const readIds = getReadNotifications();
+
+        // Check if sihtarica notification was shown today
+        const lastSihtaricaCheck = localStorage.getItem(LAST_SIHTARICA_KEY);
+        if (lastSihtaricaCheck !== today) {
+            const sihtaricaId = `sihtarica-${today}`;
+            dailyNotifications.push({
+                id: sihtaricaId,
+                title: 'Sihtarica',
+                message: 'Ne zaboravi popuniti dnevnu sihtaricu za danas!',
+                type: 'sihtarica',
+                read: readIds.has(sihtaricaId),
+                createdAt: new Date().toISOString(),
+                link: '/sihtarica'
+            });
+            localStorage.setItem(LAST_SIHTARICA_KEY, today);
+        }
+
+        // Check for tasks notification (simple reminder)
+        const lastTasksCheck = localStorage.getItem(LAST_TASKS_KEY);
+        if (lastTasksCheck !== today) {
+            const tasksId = `tasks-${today}`;
+            dailyNotifications.push({
+                id: tasksId,
+                title: 'Današnji zadaci',
+                message: 'Provjeri svoje zadatke za danas',
+                type: 'tasks',
+                read: readIds.has(tasksId),
+                createdAt: new Date().toISOString(),
+                link: '/',
+                metadata: {
+                    date: today
+                }
+            });
+            localStorage.setItem(LAST_TASKS_KEY, today);
+        }
+
+        return dailyNotifications;
+    }, [getReadNotifications]);
+
+    // Subscribe to notifications and generate daily ones
     useEffect(() => {
         if (!organization?.Organization_ID) return;
 
-        const unsubscribe = subscribeToNotifications(organization.Organization_ID, (newNotifications) => {
-            // DEMO PURPOSE: If no notifications, show a sample one so user can see design
-            if (newNotifications.length === 0) {
-                setNotifications([{
-                    id: 'demo-1',
-                    organizationId: organization.Organization_ID,
-                    title: 'Dobrodošli u novi Notification Center',
-                    message: 'Ovo je primjer obavijesti kako bi vidjeli novi dizajn. Obavijesti o narudžbama će se pojavljivati ovdje.',
-                    type: 'success',
-                    read: false,
-                    createdAt: new Date().toISOString(),
-                    link: '#'
-                }]);
-            } else {
-                setNotifications(newNotifications);
-            }
+        const dailyNotifications = generateDailyNotifications();
+
+        const unsubscribe = subscribeToNotifications(organization.Organization_ID, (dbNotifications) => {
+            const readIds = getReadNotifications();
+
+            // Convert DB notifications to local format
+            const convertedDbNotifications = dbNotifications.map((n: Notification) => ({
+                ...n,
+                type: n.type as LocalNotification['type'],
+                read: readIds.has(n.id)
+            }));
+
+            // Combine daily + DB notifications
+            setNotifications([...dailyNotifications, ...convertedDbNotifications]);
         });
 
+        // If subscription returns empty, just use daily
+        if (dailyNotifications.length > 0) {
+            setNotifications(dailyNotifications);
+        }
+
         return () => unsubscribe();
-    }, [organization?.Organization_ID]);
+    }, [organization?.Organization_ID, generateDailyNotifications, getReadNotifications]);
 
     // Update position logic
     const updatePosition = () => {
@@ -49,7 +136,7 @@ export default function NotificationCenter() {
             const rect = buttonRef.current.getBoundingClientRect();
             setPosition({
                 top: rect.top,
-                left: rect.right + 12 // 12px gap
+                left: rect.right + 12
             });
         }
     };
@@ -59,7 +146,7 @@ export default function NotificationCenter() {
         if (isOpen) {
             updatePosition();
             window.addEventListener('resize', updatePosition);
-            window.addEventListener('scroll', updatePosition, true); // Capture scroll
+            window.addEventListener('scroll', updatePosition, true);
         }
         return () => {
             window.removeEventListener('resize', updatePosition);
@@ -67,10 +154,9 @@ export default function NotificationCenter() {
         };
     }, [isOpen]);
 
-    // Close on click outside (modified for Portal)
+    // Close on click outside
     useEffect(() => {
         function handleClickOutside(event: MouseEvent) {
-            // Check if click is inside portal container or button
             const target = event.target as Node;
             const portalElement = document.getElementById('notification-portal-container');
 
@@ -89,50 +175,76 @@ export default function NotificationCenter() {
     const handleMarkAsRead = async (e: React.MouseEvent, id: string) => {
         e.stopPropagation();
 
-        // Optimistic update
-        setNotifications(prev => prev.map(n => n.id === id ? { ...n, read: true } : n));
+        // Update local state
+        setNotifications((prev: LocalNotification[]) => prev.map((n: LocalNotification) => n.id === id ? { ...n, read: true } : n));
 
-        // Handle demo notification locally
-        if (id.startsWith('demo-')) {
-            return;
+        // Persist to localStorage
+        const readIds = getReadNotifications();
+        readIds.add(id);
+        saveReadNotifications(readIds);
+
+        // If it's a DB notification, also update in database
+        if (!id.startsWith('sihtarica-') && !id.startsWith('tasks-') && !id.startsWith('demo-')) {
+            await markNotificationAsRead(id);
         }
-
-        await markNotificationAsRead(id);
     };
 
     const handleMarkAllRead = async () => {
-        const unread = notifications.filter(n => !n.read);
+        const unread = notifications.filter((n: LocalNotification) => !n.read);
 
-        // Optimistic update
-        setNotifications(prev => prev.map(n => ({ ...n, read: true })));
+        // Update local state
+        setNotifications((prev: LocalNotification[]) => prev.map((n: LocalNotification) => ({ ...n, read: true })));
 
+        // Persist all to localStorage
+        const readIds = getReadNotifications();
+        unread.forEach((n: LocalNotification) => readIds.add(n.id));
+        saveReadNotifications(readIds);
+
+        // Update DB notifications
         for (const n of unread) {
-            if (n.id.startsWith('demo-')) continue;
-            await markNotificationAsRead(n.id);
-        }
-    };
-
-    const handleNotificationClick = async (n: Notification) => {
-        if (!n.read) {
-            if (n.id.startsWith('demo-')) {
-                setNotifications(prev => prev.map(item => item.id === n.id ? { ...item, read: true } : item));
-            } else {
+            if (!n.id.startsWith('sihtarica-') && !n.id.startsWith('tasks-') && !n.id.startsWith('demo-')) {
                 await markNotificationAsRead(n.id);
             }
         }
-        if (n.link && n.link !== '#') {
+    };
+
+    const handleNotificationClick = async (n: LocalNotification) => {
+        // Mark as read
+        if (!n.read) {
+            setNotifications((prev: LocalNotification[]) => prev.map((item: LocalNotification) => item.id === n.id ? { ...item, read: true } : item));
+            const readIds = getReadNotifications();
+            readIds.add(n.id);
+            saveReadNotifications(readIds);
+
+            if (!n.id.startsWith('sihtarica-') && !n.id.startsWith('tasks-') && !n.id.startsWith('demo-')) {
+                await markNotificationAsRead(n.id);
+            }
+        }
+
+        // Navigate based on type
+        setIsOpen(false);
+
+        if (n.type === 'tasks') {
+            // Navigate to home and open tasks tab
+            router.push('/');
+            setTimeout(() => {
+                const event = new CustomEvent('openTasksTab', { detail: { view: 'today' } });
+                window.dispatchEvent(event);
+            }, 100);
+        } else if (n.link && n.link !== '#') {
             router.push(n.link);
-            setIsOpen(false);
         }
     };
 
-    const unreadCount = notifications.filter(n => !n.read).length;
+    const unreadCount = notifications.filter((n: LocalNotification) => !n.read).length;
 
     const getIcon = (type: string) => {
         switch (type) {
             case 'success': return <CheckCircle size={18} className="text-green-500" />;
             case 'warning': return <AlertTriangle size={18} className="text-orange-500" />;
             case 'error': return <AlertOctagon size={18} className="text-red-500" />;
+            case 'sihtarica': return <ClipboardList size={18} className="text-blue-500" />;
+            case 'tasks': return <Calendar size={18} className="text-purple-500" />;
             default: return <Info size={18} className="text-blue-500" />;
         }
     };
@@ -182,7 +294,7 @@ export default function NotificationCenter() {
                             <p>Nemate novih obavijesti</p>
                         </div>
                     ) : (
-                        notifications.map(n => (
+                        notifications.map((n: LocalNotification) => (
                             <div
                                 key={n.id}
                                 className={`notification-item ${n.type} ${!n.read ? 'unread' : ''}`}

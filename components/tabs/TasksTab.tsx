@@ -67,7 +67,7 @@ interface TasksTabProps {
     onClearFilter?: () => void;     // Clear the project filter
 }
 
-type ViewMode = 'list' | 'board' | 'grid';
+type ViewMode = 'calendar' | 'board' | 'grid';
 type FilterStatus = 'all' | 'pending' | 'in_progress' | 'completed';
 type GroupBy = 'none' | 'priority' | 'date' | 'connection' | 'worker';
 
@@ -120,6 +120,12 @@ export default function TasksTab({ tasks, projects, workers, materials, workOrde
     const [expandedTasks, setExpandedTasks] = useState<Set<string>>(new Set());
     const [showFilters, setShowFilters] = useState(false);
     const [showControls, setShowControls] = useState(true);
+    const [showCompleted, setShowCompleted] = useState(false);
+    const [calendarDate, setCalendarDate] = useState(new Date());
+    // Task preview modal (read-only view)
+    const [previewTask, setPreviewTask] = useState<Task | null>(null);
+    // Day tasks popup (shows all tasks for a specific day)
+    const [dayTasksPopup, setDayTasksPopup] = useState<{ day: number; tasks: Task[] } | null>(null);
 
     // Initial check for mobile
     useEffect(() => {
@@ -217,6 +223,11 @@ export default function TasksTab({ tasks, projects, workers, materials, workOrde
                 }
             }
 
+            // Hide completed tasks by default (unless showCompleted is true or explicitly filtering for them)
+            if (!showCompleted && task.Status === 'completed' && filterStatus !== 'completed') {
+                return false;
+            }
+
             // Status filter
             if (filterStatus !== 'all' && task.Status !== filterStatus) {
                 return false;
@@ -252,7 +263,7 @@ export default function TasksTab({ tasks, projects, workers, materials, workOrde
 
             return 0;
         });
-    }, [localTasks, searchQuery, filterStatus, filterPriority, filterCategory, projectFilter, projects]);
+    }, [localTasks, searchQuery, filterStatus, filterPriority, filterCategory, projectFilter, projects, showCompleted]);
 
     // Group tasks by status for board view (exclude reminders - they're not workflow items)
     const boardTasks = useMemo(() =>
@@ -264,6 +275,20 @@ export default function TasksTab({ tasks, projects, workers, materials, workOrde
         in_progress: boardTasks.filter(t => t.Status === 'in_progress'),
         completed: boardTasks.filter(t => t.Status === 'completed')
     }), [boardTasks]);
+
+    // Group tasks by date for calendar view
+    const tasksByDate = useMemo(() => {
+        const map = new Map<string, Task[]>();
+        filteredTasks.forEach(task => {
+            if (task.Due_Date) {
+                const dateKey = new Date(task.Due_Date).toISOString().split('T')[0];
+                const existing = map.get(dateKey) || [];
+                existing.push(task);
+                map.set(dateKey, existing);
+            }
+        });
+        return map;
+    }, [filteredTasks]);
 
     // Group tasks for grid view
     interface TaskGroup {
@@ -1093,185 +1118,181 @@ export default function TasksTab({ tasks, projects, workers, materials, workOrde
                 </div>
             )}
 
-            {/* Collapsible Controls Wrapper - SINGLE ROW LAYOUT */}
+            {/* Simplified Toolbar - Search + Options Toggle */}
             <div className={`tasks-controls-wrapper ${showControls ? 'open' : 'closed'}`}>
 
-                {/* 1. LEFT: Quick Stats Group */}
-                <div className="stats-group">
-                    <button
-                        className={`stat-chip ${filterStatus === 'all' && stats.overdue > 0 ? 'highlight-red' : ''}`}
-                        onClick={() => setFilterStatus('all')}
-                        title="Prekoračeni zadaci"
-                    >
-                        <AlertTriangle size={16} />
-                        <span>{stats.overdue} prekoračeno</span>
-                    </button>
-                    <button className="stat-chip" title="Današnji zadaci">
-                        <Clock size={16} />
-                        <span>{stats.dueToday} danas</span>
-                    </button>
-                    <button
-                        className="stat-chip"
-                        onClick={() => setFilterPriority(filterPriority === 'high' ? 'all' : 'high')}
-                        title="Hitni zadaci"
-                    >
-                        <span className="priority-dot high"></span>
-                        <span>{stats.highPriority} hitno</span>
-                    </button>
-                </div>
-
-                {/* 2. MIDDLE: Search Box (Flex Grow) */}
-                <div className="tasks-search">
-                    <Search size={16} />
+                {/* Compact Search */}
+                <div className="tasks-search-compact">
+                    <Search size={14} />
                     <input
                         type="text"
-                        placeholder="Pretraži zadatke..."
+                        placeholder="Pretraži..."
                         value={searchQuery}
                         onChange={(e) => setSearchQuery(e.target.value)}
                     />
                     {searchQuery && (
                         <button className="clear-search" onClick={() => setSearchQuery('')}>
-                            <X size={14} />
+                            <X size={12} />
                         </button>
                     )}
                 </div>
 
-                {/* 3. RIGHT: Tools Group */}
-                <div className="tools-group">
-                    {/* Filter Toggle */}
-                    <button
-                        className={`filter-toggle ${filterStatus !== 'all' || filterPriority !== 'all' || filterCategory !== 'all' ? 'active' : ''}`}
-                        onClick={() => setShowFilters(!showFilters)}
-                    >
-                        <Filter size={16} />
-                        Filteri
-                        {(filterStatus !== 'all' || filterPriority !== 'all' || filterCategory !== 'all') && (
-                            <span className="filter-badge">
-                                {[filterStatus, filterPriority, filterCategory].filter(f => f !== 'all').length}
-                            </span>
-                        )}
-                    </button>
-
-                    {/* View Mode Toggle */}
-                    <div className="view-toggle">
-                        <button
-                            className={viewMode === 'grid' ? 'active' : ''}
-                            onClick={() => setViewMode('grid')}
-                            title="Grid"
-                        >
-                            <Grid3X3 size={20} /* Increased size */ />
-                        </button>
-                        <button
-                            className={viewMode === 'list' ? 'active' : ''}
-                            onClick={() => setViewMode('list')}
-                            title="Lista"
-                        >
-                            <ListChecks size={20} /* Increased size */ />
-                        </button>
-                        <button
-                            className={viewMode === 'board' ? 'active' : ''}
-                            onClick={() => setViewMode('board')}
-                            title="Ploča"
-                        >
-                            <Layers size={20} /* Increased size */ />
-                        </button>
-                    </div>
-
-                    {/* Group By Selector (Only in Grid) */}
-                    {viewMode === 'grid' && (
-                        <div className="group-by-selector">
-                            <label>Grupiraj:</label>
-                            <select
-                                value={groupBy}
-                                onChange={(e) => setGroupBy(e.target.value as GroupBy)}
-                            >
-                                {Object.entries(GROUP_BY_LABELS).map(([key, label]) => (
-                                    <option key={key} value={key}>{label}</option>
-                                ))}
-                            </select>
-                        </div>
+                {/* Options Toggle Button */}
+                <button
+                    className={`options-toggle ${showFilters ? 'active' : ''}`}
+                    onClick={() => setShowFilters(!showFilters)}
+                >
+                    <SlidersHorizontal size={16} />
+                    <span>Opcije</span>
+                    {(filterStatus !== 'all' || filterPriority !== 'all' || filterCategory !== 'all' || showCompleted) && (
+                        <span className="options-badge">
+                            {[filterStatus, filterPriority, filterCategory].filter(f => f !== 'all').length + (showCompleted ? 1 : 0)}
+                        </span>
                     )}
-                </div>
+                    <ChevronDown size={14} className={`chevron ${showFilters ? 'rotated' : ''}`} />
+                </button>
             </div>
 
-            {/* Filters Panel */}
+            {/* Unified Options Panel */}
             {showFilters && (
-                <div className="tasks-filters">
-                    {/* Status Filter */}
-                    <div className="filter-group">
-                        <label>Status</label>
-                        <div className="filter-chips">
-                            {(['all', 'pending', 'in_progress', 'completed'] as const).map(status => (
+                <div className="tasks-options-panel">
+                    {/* Row 1: View Mode + Group By + Show Completed */}
+                    <div className="options-row">
+                        {/* View Mode */}
+                        <div className="option-group">
+                            <label>Prikaz</label>
+                            <div className="view-toggle">
                                 <button
-                                    key={status}
-                                    className={`filter-chip ${filterStatus === status ? 'active' : ''}`}
-                                    onClick={() => setFilterStatus(status)}
+                                    className={viewMode === 'grid' ? 'active' : ''}
+                                    onClick={() => setViewMode('grid')}
+                                    title="Grid"
                                 >
-                                    {status === 'all' ? 'Svi' : TASK_STATUS_LABELS[status]}
+                                    <Grid3X3 size={18} />
                                 </button>
-                            ))}
-                        </div>
-                    </div>
-
-                    {/* Priority Filter */}
-                    <div className="filter-group">
-                        <label>Prioritet</label>
-                        <div className="filter-chips">
-                            <button
-                                className={`filter-chip ${filterPriority === 'all' ? 'active' : ''}`}
-                                onClick={() => setFilterPriority('all')}
-                            >
-                                Svi
-                            </button>
-                            {TASK_PRIORITIES.map(priority => (
                                 <button
-                                    key={priority}
-                                    className={`filter-chip priority-${priority} ${filterPriority === priority ? 'active' : ''}`}
-                                    onClick={() => setFilterPriority(priority)}
+                                    className={viewMode === 'calendar' ? 'active' : ''}
+                                    onClick={() => setViewMode('calendar')}
+                                    title="Kalendar"
                                 >
-                                    {TASK_PRIORITY_LABELS[priority]}
+                                    <CalendarDays size={18} />
                                 </button>
-                            ))}
-                        </div>
-                    </div>
-
-                    {/* Category Filter */}
-                    <div className="filter-group">
-                        <label>Kategorija</label>
-                        <div className="filter-chips">
-                            <button
-                                className={`filter-chip ${filterCategory === 'all' ? 'active' : ''}`}
-                                onClick={() => setFilterCategory('all')}
-                            >
-                                Sve
-                            </button>
-                            {TASK_CATEGORIES.map(category => (
                                 <button
-                                    key={category}
-                                    className={`filter-chip ${filterCategory === category ? 'active' : ''}`}
-                                    onClick={() => setFilterCategory(category)}
+                                    className={viewMode === 'board' ? 'active' : ''}
+                                    onClick={() => setViewMode('board')}
+                                    title="Kanban"
                                 >
-                                    {categoryIcons[category]}
-                                    {TASK_CATEGORY_LABELS[category]}
+                                    <Layers size={18} />
                                 </button>
-                            ))}
+                            </div>
                         </div>
-                    </div>
 
-                    {/* Clear Filters */}
-                    {(filterStatus !== 'all' || filterPriority !== 'all' || filterCategory !== 'all') && (
+                        {/* Group By (Grid only) */}
+                        {viewMode === 'grid' && (
+                            <div className="option-group">
+                                <label>Grupiraj</label>
+                                <select
+                                    value={groupBy}
+                                    onChange={(e) => setGroupBy(e.target.value as GroupBy)}
+                                >
+                                    {Object.entries(GROUP_BY_LABELS).map(([key, label]) => (
+                                        <option key={key} value={key}>{label}</option>
+                                    ))}
+                                </select>
+                            </div>
+                        )}
+
+                        {/* Show Completed */}
                         <button
-                            className="clear-filters"
-                            onClick={() => {
-                                setFilterStatus('all');
-                                setFilterPriority('all');
-                                setFilterCategory('all');
-                            }}
+                            className={`completed-toggle ${showCompleted ? 'active' : ''}`}
+                            onClick={() => setShowCompleted(!showCompleted)}
                         >
-                            <X size={14} />
-                            Očisti filtere
+                            <CheckCircle2 size={16} />
+                            <span>{showCompleted ? 'Sakrij završene' : 'Prikaži završene'}</span>
                         </button>
-                    )}
+                    </div>
+
+                    {/* Row 2: Filters - Structured & Clear */}
+                    <div className="options-row filters-row">
+                        <div className="filters-grid">
+                            {/* Status Filter */}
+                            <div className="filter-column">
+                                <h4 className="filter-label">Status</h4>
+                                <div className="filter-chips">
+                                    {(['all', 'pending', 'in_progress', 'completed'] as const).map(status => (
+                                        <button
+                                            key={status}
+                                            className={`filter-chip ${filterStatus === status ? 'active' : ''}`}
+                                            onClick={() => setFilterStatus(status)}
+                                        >
+                                            {status === 'all' ? 'Svi' : TASK_STATUS_LABELS[status]}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+
+                            {/* Priority Filter */}
+                            <div className="filter-column">
+                                <h4 className="filter-label">Prioritet</h4>
+                                <div className="filter-chips">
+                                    <button
+                                        className={`filter-chip ${filterPriority === 'all' ? 'active' : ''}`}
+                                        onClick={() => setFilterPriority('all')}
+                                    >
+                                        Svi
+                                    </button>
+                                    {TASK_PRIORITIES.map(priority => (
+                                        <button
+                                            key={priority}
+                                            className={`filter-chip priority-${priority} ${filterPriority === priority ? 'active' : ''}`}
+                                            onClick={() => setFilterPriority(priority)}
+                                        >
+                                            {TASK_PRIORITY_LABELS[priority]}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+
+                            {/* Category Filter */}
+                            <div className="filter-column">
+                                <h4 className="filter-label">Kategorija</h4>
+                                <div className="filter-chips">
+                                    <button
+                                        className={`filter-chip ${filterCategory === 'all' ? 'active' : ''}`}
+                                        onClick={() => setFilterCategory('all')}
+                                    >
+                                        Sve
+                                    </button>
+                                    {TASK_CATEGORIES.map(category => (
+                                        <button
+                                            key={category}
+                                            className={`filter-chip ${filterCategory === category ? 'active' : ''}`}
+                                            onClick={() => setFilterCategory(category)}
+                                        >
+                                            {categoryIcons[category]}
+                                            {TASK_CATEGORY_LABELS[category]}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Clear Filters - Bottom Action */}
+                        {(filterStatus !== 'all' || filterPriority !== 'all' || filterCategory !== 'all') && (
+                            <div className="filter-actions">
+                                <button
+                                    className="clear-filters-btn"
+                                    onClick={() => {
+                                        setFilterStatus('all');
+                                        setFilterPriority('all');
+                                        setFilterCategory('all');
+                                    }}
+                                >
+                                    <X size={14} />
+                                    Očisti filtere
+                                </button>
+                            </div>
+                        )}
+                    </div>
                 </div>
             )}
 
@@ -1305,20 +1326,149 @@ export default function TasksTab({ tasks, projects, workers, materials, workOrde
                             ))
                         )}
                     </div>
-                ) : viewMode === 'list' ? (
-                    // List View
-                    <div className="tasks-list">
-                        {filteredTasks.length === 0 ? (
-                            <div className="tasks-empty">
-                                <CheckSquare size={48} strokeWidth={1.5} />
-                                <h3>Nema zadataka</h3>
-                                <p>Kreirajte novi zadatak klikom na dugme iznad</p>
+                ) : viewMode === 'calendar' ? (() => {
+                    // Calendar View - uses calendarDate from component state
+                    const today = new Date();
+                    const year = calendarDate.getFullYear();
+                    const month = calendarDate.getMonth();
+
+                    // Get first day of month and number of days
+                    const firstDayOfMonth = new Date(year, month, 1);
+                    const lastDayOfMonth = new Date(year, month + 1, 0);
+                    const daysInMonth = lastDayOfMonth.getDate();
+                    const startingDayOfWeek = firstDayOfMonth.getDay(); // 0 = Sunday
+
+                    // Adjust for Monday start (European style)
+                    const adjustedStartDay = startingDayOfWeek === 0 ? 6 : startingDayOfWeek - 1;
+
+                    // Generate calendar days array
+                    const calendarDays: (number | null)[] = [];
+                    for (let i = 0; i < adjustedStartDay; i++) {
+                        calendarDays.push(null); // Empty cells before first day
+                    }
+                    for (let day = 1; day <= daysInMonth; day++) {
+                        calendarDays.push(day);
+                    }
+
+                    const getTasksForDay = (day: number) => {
+                        const dateKey = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+                        return tasksByDate.get(dateKey) || [];
+                    };
+
+                    const isToday = (day: number) => {
+                        return today.getDate() === day &&
+                            today.getMonth() === month &&
+                            today.getFullYear() === year;
+                    };
+
+                    const monthNames = ['Januar', 'Februar', 'Mart', 'April', 'Maj', 'Juni',
+                        'Juli', 'August', 'Septembar', 'Oktobar', 'Novembar', 'Decembar'];
+                    const dayNames = ['Pon', 'Uto', 'Sri', 'Čet', 'Pet', 'Sub', 'Ned'];
+
+                    return (
+                        <div className="tasks-calendar">
+                            {/* Calendar Header */}
+                            <div className="calendar-header">
+                                <button
+                                    className="calendar-nav-btn"
+                                    onClick={() => setCalendarDate(new Date(year, month - 1, 1))}
+                                >
+                                    <ChevronUp size={20} style={{ transform: 'rotate(-90deg)' }} />
+                                </button>
+                                <h3 className="calendar-title">
+                                    {monthNames[month]} {year}
+                                </h3>
+                                <button
+                                    className="calendar-nav-btn"
+                                    onClick={() => setCalendarDate(new Date(year, month + 1, 1))}
+                                >
+                                    <ChevronUp size={20} style={{ transform: 'rotate(90deg)' }} />
+                                </button>
+                                <button
+                                    className="calendar-today-btn"
+                                    onClick={() => setCalendarDate(new Date())}
+                                >
+                                    Danas
+                                </button>
                             </div>
-                        ) : (
-                            filteredTasks.map(renderTaskCard)
-                        )}
-                    </div>
-                ) : (
+
+                            {/* Day Headers */}
+                            <div className="calendar-day-headers">
+                                {dayNames.map(day => (
+                                    <div key={day} className="calendar-day-header">{day}</div>
+                                ))}
+                            </div>
+
+                            {/* Calendar Grid */}
+                            <div className="calendar-grid">
+                                {calendarDays.map((day, index) => {
+                                    if (day === null) {
+                                        return <div key={`empty-${index}`} className="calendar-day empty" />;
+                                    }
+
+                                    const dayTasks = getTasksForDay(day);
+                                    const isPast = new Date(year, month, day) < new Date(today.getFullYear(), today.getMonth(), today.getDate());
+                                    const hasOverdue = dayTasks.some(t => t.Status !== 'completed' && isPast);
+
+                                    return (
+                                        <div
+                                            key={day}
+                                            className={`calendar-day ${isToday(day) ? 'today' : ''} ${hasOverdue ? 'has-overdue' : ''} ${dayTasks.length > 0 ? 'has-tasks' : ''}`}
+                                        >
+                                            <span className="day-number">{day}</span>
+                                            <div className="day-tasks">
+                                                {dayTasks.slice(0, 3).map(task => (
+                                                    <button
+                                                        key={task.Task_ID}
+                                                        className={`calendar-task priority-${task.Priority} ${task.Status === 'completed' ? 'completed' : ''}`}
+                                                        onClick={() => setPreviewTask(task)}
+                                                        title={task.Title}
+                                                    >
+                                                        <span className="task-dot" style={{ background: priorityColors[task.Priority].icon }} />
+                                                        <span className="task-text">{task.Title}</span>
+                                                    </button>
+                                                ))}
+                                                {dayTasks.length > 3 && (
+                                                    <button
+                                                        className="more-tasks"
+                                                        onClick={() => setDayTasksPopup({ day, tasks: dayTasks })}
+                                                    >
+                                                        +{dayTasks.length - 3} više
+                                                    </button>
+                                                )}
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+
+                            {/* Tasks without due date */}
+                            {filteredTasks.filter(t => !t.Due_Date).length > 0 && (
+                                <div className="calendar-no-date">
+                                    <h4>
+                                        <Clock size={16} />
+                                        Bez roka ({filteredTasks.filter(t => !t.Due_Date).length})
+                                    </h4>
+                                    <div className="no-date-tasks">
+                                        {filteredTasks.filter(t => !t.Due_Date).slice(0, 5).map(task => (
+                                            <button
+                                                key={task.Task_ID}
+                                                className={`calendar-task priority-${task.Priority}`}
+                                                onClick={() => handleEditTask(task)}
+                                            >
+                                                <span className="task-dot" style={{ background: priorityColors[task.Priority].icon }} />
+                                                <span className="task-text">{task.Title}</span>
+                                            </button>
+                                        ))}
+                                        {filteredTasks.filter(t => !t.Due_Date).length > 5 && (
+                                            <span className="more-tasks">+{filteredTasks.filter(t => !t.Due_Date).length - 5} više</span>
+                                        )}
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    );
+                })() : (
                     // Board View
                     <DragDropContext onDragEnd={onDragEnd}>
                         <div className="tasks-board">
@@ -1343,6 +1493,174 @@ export default function TasksTab({ tasks, projects, workers, materials, workOrde
                     onSave={handleSaveTask}
                     onClose={() => setIsModalOpen(false)}
                 />
+            )}
+
+            {/* Task Preview Modal - Premium */}
+            {previewTask && (
+                <div className="task-preview-overlay" onClick={() => setPreviewTask(null)}>
+                    <div className="task-preview-modal premium" onClick={e => e.stopPropagation()}>
+                        {/* Header with gradient */}
+                        <div className={`preview-header-premium priority-${previewTask.Priority}`}>
+                            <div className="preview-header-content">
+                                <div className="preview-badge-row">
+                                    <span className={`priority-badge priority-${previewTask.Priority}`}>
+                                        <Flag size={12} />
+                                        {previewTask.Priority === 'high' ? 'Hitno' : previewTask.Priority === 'medium' ? 'Srednje' : 'Nisko'}
+                                    </span>
+                                    <span className={`status-badge-pill ${previewTask.Status}`}>
+                                        {previewTask.Status === 'pending' ? 'Na čekanju' :
+                                            previewTask.Status === 'in_progress' ? 'U tijeku' : 'Završeno'}
+                                    </span>
+                                </div>
+                                <button className="preview-close-btn" onClick={() => setPreviewTask(null)}>
+                                    <X size={20} />
+                                </button>
+                            </div>
+                            <h2 className="preview-title-premium">{previewTask.Title}</h2>
+                            {previewTask.Due_Date && (
+                                <div className="preview-date">
+                                    <Calendar size={14} />
+                                    <span>{new Date(previewTask.Due_Date).toLocaleDateString('hr-HR', {
+                                        weekday: 'long', day: 'numeric', month: 'long'
+                                    })}</span>
+                                </div>
+                            )}
+                        </div>
+
+                        {/* Content */}
+                        <div className="preview-content-premium">
+                            {previewTask.Description && (
+                                <div className="preview-description">
+                                    <p>{previewTask.Description}</p>
+                                </div>
+                            )}
+
+                            {/* Interactive Checklist */}
+                            {previewTask.Checklist && previewTask.Checklist.length > 0 && (
+                                <div className="preview-checklist-section">
+                                    <div className="checklist-header">
+                                        <span className="checklist-title">
+                                            <ListChecks size={16} />
+                                            Checklist
+                                        </span>
+                                        <span className="checklist-progress">
+                                            {previewTask.Checklist.filter(i => i.completed).length}/{previewTask.Checklist.length}
+                                        </span>
+                                    </div>
+                                    <div className="checklist-progress-bar">
+                                        <div
+                                            className="progress-fill"
+                                            style={{
+                                                width: `${(previewTask.Checklist.filter(i => i.completed).length / previewTask.Checklist.length) * 100}%`
+                                            }}
+                                        />
+                                    </div>
+                                    <div className="checklist-items-preview">
+                                        {previewTask.Checklist.map(item => (
+                                            <button
+                                                key={item.id}
+                                                className={`checklist-item-btn ${item.completed ? 'done' : ''}`}
+                                                onClick={async () => {
+                                                    // Toggle checklist item
+                                                    await handleToggleChecklist(previewTask.Task_ID, item.id);
+                                                    // Update local preview state
+                                                    const updatedChecklist = previewTask.Checklist?.map(i =>
+                                                        i.id === item.id ? { ...i, completed: !i.completed } : i
+                                                    ) || [];
+                                                    const updatedTask = { ...previewTask, Checklist: updatedChecklist };
+                                                    setPreviewTask(updatedTask);
+
+                                                    // Auto-complete if all items done
+                                                    if (updatedChecklist.every(i => i.completed) && previewTask.Status !== 'completed') {
+                                                        await handleStatusChange(previewTask.Task_ID, 'completed');
+                                                        setPreviewTask({ ...updatedTask, Status: 'completed' });
+                                                        showToast('Zadatak automatski označen kao završen', 'success');
+                                                    }
+                                                }}
+                                            >
+                                                <span className="check-icon">
+                                                    {item.completed ? <CheckCircle2 size={18} /> : <Circle size={18} />}
+                                                </span>
+                                                <span className="check-text">{item.text}</span>
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+
+                        {/* Footer Actions */}
+                        <div className="preview-footer-premium">
+                            {previewTask.Status !== 'completed' ? (
+                                <button
+                                    className="preview-action-btn complete"
+                                    onClick={async () => {
+                                        await handleStatusChange(previewTask.Task_ID, 'completed');
+                                        setPreviewTask({ ...previewTask, Status: 'completed' });
+                                        showToast('Zadatak označen kao završen', 'success');
+                                    }}
+                                >
+                                    <CheckCircle2 size={18} />
+                                    Završi zadatak
+                                </button>
+                            ) : (
+                                <button
+                                    className="preview-action-btn reopen"
+                                    onClick={async () => {
+                                        await handleStatusChange(previewTask.Task_ID, 'pending');
+                                        setPreviewTask({ ...previewTask, Status: 'pending' });
+                                    }}
+                                >
+                                    <Circle size={18} />
+                                    Ponovno otvori
+                                </button>
+                            )}
+                            <button
+                                className="preview-action-btn edit"
+                                onClick={() => {
+                                    setPreviewTask(null);
+                                    handleEditTask(previewTask);
+                                }}
+                            >
+                                <Edit3 size={18} />
+                                Uredi
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Day Tasks Popup */}
+            {dayTasksPopup && (
+                <div className="day-popup-overlay" onClick={() => setDayTasksPopup(null)}>
+                    <div className="day-popup-modal" onClick={e => e.stopPropagation()}>
+                        <div className="day-popup-header">
+                            <h3>{dayTasksPopup.day}. {new Intl.DateTimeFormat('hr-HR', { month: 'long' }).format(calendarDate)}</h3>
+                            <button className="day-popup-close" onClick={() => setDayTasksPopup(null)}>
+                                <X size={20} />
+                            </button>
+                        </div>
+                        <div className="day-popup-list">
+                            {dayTasksPopup.tasks.map(task => (
+                                <button
+                                    key={task.Task_ID}
+                                    className={`day-popup-task ${task.Status === 'completed' ? 'completed' : ''}`}
+                                    onClick={() => {
+                                        setDayTasksPopup(null);
+                                        setPreviewTask(task);
+                                    }}
+                                >
+                                    <span className="task-dot" style={{ background: priorityColors[task.Priority].icon }} />
+                                    <span className="task-title">{task.Title}</span>
+                                    <span className={`task-status ${task.Status}`}>
+                                        {task.Status === 'completed' ? <CheckCircle2 size={14} /> :
+                                            task.Status === 'in_progress' ? <Clock size={14} /> : null}
+                                    </span>
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+                </div>
             )}
         </div>
     );

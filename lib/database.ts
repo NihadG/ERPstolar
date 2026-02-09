@@ -33,6 +33,7 @@ import type {
     WorkerAttendance,
     WorkLog,
     Task,
+    ChecklistItem,
     Notification,
     ProductionSnapshot,
     ProductionSnapshotItem,
@@ -4031,6 +4032,411 @@ export async function toggleTaskChecklistItem(taskId: string, checklistItemId: s
         console.error('toggleTaskChecklistItem error:', error);
         return { success: false, message: 'Greška pri ažuriranju checkliste' };
     }
+}
+
+// ============================================
+// BATCH TASK OPERATIONS (Performance Optimized)
+// ============================================
+
+export interface TaskFilter {
+    status?: Task['Status'] | Task['Status'][];
+    priority?: Task['Priority'] | Task['Priority'][];
+    category?: Task['Category'] | Task['Category'][];
+    dueDateFrom?: string;
+    dueDateTo?: string;
+    assignedWorkerId?: string;
+    hasLinks?: boolean;
+}
+
+export async function batchUpdateTasks(
+    taskIds: string[],
+    updates: Partial<Task>,
+    organizationId: string
+): Promise<{ success: boolean; updatedCount: number; message: string }> {
+    if (!organizationId) {
+        return { success: false, updatedCount: 0, message: 'Organization ID is required' };
+    }
+    if (taskIds.length === 0) {
+        return { success: true, updatedCount: 0, message: 'Nema zadataka za ažuriranje' };
+    }
+
+    try {
+        const firestore = getDb();
+        const batch = writeBatch(firestore);
+        let updatedCount = 0;
+
+        // Process in chunks of 30 (Firestore 'in' query limit)
+        const chunkSize = 30;
+        for (let i = 0; i < taskIds.length; i += chunkSize) {
+            const chunkIds = taskIds.slice(i, i + chunkSize);
+            const q = query(
+                collection(firestore, COLLECTIONS.TASKS),
+                where('Task_ID', 'in', chunkIds),
+                where('Organization_ID', '==', organizationId)
+            );
+            const snapshot = await getDocs(q);
+
+            snapshot.docs.forEach(docSnap => {
+                // Remove undefined values and Organization_ID from updates
+                const cleanUpdates = Object.fromEntries(
+                    Object.entries(updates).filter(([key, value]) =>
+                        value !== undefined && key !== 'Organization_ID' && key !== 'Task_ID'
+                    )
+                );
+
+                // Add completion date if marking as completed
+                if (updates.Status === 'completed' && !cleanUpdates.Completed_Date) {
+                    cleanUpdates.Completed_Date = new Date().toISOString();
+                }
+
+                batch.update(docSnap.ref, cleanUpdates);
+                updatedCount++;
+            });
+        }
+
+        await batch.commit();
+        return { success: true, updatedCount, message: `${updatedCount} zadataka ažurirano` };
+    } catch (error) {
+        console.error('batchUpdateTasks error:', error);
+        return { success: false, updatedCount: 0, message: 'Greška pri batch ažuriranju' };
+    }
+}
+
+export async function batchDeleteTasks(
+    taskIds: string[],
+    organizationId: string
+): Promise<{ success: boolean; deletedCount: number; message: string }> {
+    if (!organizationId) {
+        return { success: false, deletedCount: 0, message: 'Organization ID is required' };
+    }
+    if (taskIds.length === 0) {
+        return { success: true, deletedCount: 0, message: 'Nema zadataka za brisanje' };
+    }
+
+    try {
+        const firestore = getDb();
+        const batch = writeBatch(firestore);
+        let deletedCount = 0;
+
+        const chunkSize = 30;
+        for (let i = 0; i < taskIds.length; i += chunkSize) {
+            const chunkIds = taskIds.slice(i, i + chunkSize);
+            const q = query(
+                collection(firestore, COLLECTIONS.TASKS),
+                where('Task_ID', 'in', chunkIds),
+                where('Organization_ID', '==', organizationId)
+            );
+            const snapshot = await getDocs(q);
+
+            snapshot.docs.forEach(docSnap => {
+                batch.delete(docSnap.ref);
+                deletedCount++;
+            });
+        }
+
+        await batch.commit();
+        return { success: true, deletedCount, message: `${deletedCount} zadataka obrisano` };
+    } catch (error) {
+        console.error('batchDeleteTasks error:', error);
+        return { success: false, deletedCount: 0, message: 'Greška pri batch brisanju' };
+    }
+}
+
+// ============================================
+// REAL-TIME TASK SUBSCRIPTION
+// ============================================
+
+export function subscribeToTasks(
+    organizationId: string,
+    callback: (tasks: Task[]) => void
+): () => void {
+    if (!organizationId) {
+        callback([]);
+        return () => { };
+    }
+
+    const firestore = getDb();
+    const q = query(
+        collection(firestore, COLLECTIONS.TASKS),
+        where('Organization_ID', '==', organizationId)
+    );
+
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+        const tasks = snapshot.docs.map(doc => ({ ...doc.data() } as Task));
+        // Sort by due date (nulls last), then by priority
+        tasks.sort((a, b) => {
+            // Completed tasks last
+            if (a.Status === 'completed' && b.Status !== 'completed') return 1;
+            if (a.Status !== 'completed' && b.Status === 'completed') return -1;
+
+            // Priority order: urgent > high > medium > low
+            const priorityOrder = { urgent: 0, high: 1, medium: 2, low: 3 };
+            const priorityDiff = priorityOrder[a.Priority] - priorityOrder[b.Priority];
+            if (priorityDiff !== 0) return priorityDiff;
+
+            // Due date (nulls last)
+            if (!a.Due_Date && b.Due_Date) return 1;
+            if (a.Due_Date && !b.Due_Date) return -1;
+            if (a.Due_Date && b.Due_Date) {
+                return new Date(a.Due_Date).getTime() - new Date(b.Due_Date).getTime();
+            }
+
+            return 0;
+        });
+
+        callback(tasks);
+    }, (error) => {
+        console.error('subscribeToTasks error:', error);
+        callback([]);
+    });
+
+    return unsubscribe;
+}
+
+// ============================================
+// OPTIMIZED TASK QUERIES
+// ============================================
+
+export async function getTodaysTasks(organizationId: string): Promise<Task[]> {
+    if (!organizationId) return [];
+
+    const today = new Date().toISOString().split('T')[0];
+    const firestore = getDb();
+
+    const q = query(
+        collection(firestore, COLLECTIONS.TASKS),
+        where('Organization_ID', '==', organizationId),
+        where('Due_Date', '>=', today),
+        where('Due_Date', '<', today + 'T23:59:59.999Z')
+    );
+
+    try {
+        const snapshot = await getDocs(q);
+        return snapshot.docs.map(doc => ({ ...doc.data() } as Task));
+    } catch {
+        // Firestore may not support this exact query, fallback to client filtering
+        const allTasks = await getTasks(organizationId);
+        return allTasks.filter(t => t.Due_Date?.startsWith(today));
+    }
+}
+
+export async function getOverdueTasks(organizationId: string): Promise<Task[]> {
+    if (!organizationId) return [];
+
+    const today = new Date().toISOString().split('T')[0];
+    const allTasks = await getTasks(organizationId);
+
+    return allTasks.filter(t =>
+        t.Due_Date &&
+        t.Due_Date < today &&
+        t.Status !== 'completed' &&
+        t.Status !== 'cancelled'
+    );
+}
+
+export async function getTasksByFilter(
+    filter: TaskFilter,
+    organizationId: string
+): Promise<Task[]> {
+    if (!organizationId) return [];
+
+    const allTasks = await getTasks(organizationId);
+
+    return allTasks.filter(task => {
+        // Status filter
+        if (filter.status) {
+            const statuses = Array.isArray(filter.status) ? filter.status : [filter.status];
+            if (!statuses.includes(task.Status)) return false;
+        }
+
+        // Priority filter
+        if (filter.priority) {
+            const priorities = Array.isArray(filter.priority) ? filter.priority : [filter.priority];
+            if (!priorities.includes(task.Priority)) return false;
+        }
+
+        // Category filter
+        if (filter.category) {
+            const categories = Array.isArray(filter.category) ? filter.category : [filter.category];
+            if (!categories.includes(task.Category)) return false;
+        }
+
+        // Due date range filter
+        if (filter.dueDateFrom && task.Due_Date && task.Due_Date < filter.dueDateFrom) return false;
+        if (filter.dueDateTo && task.Due_Date && task.Due_Date > filter.dueDateTo) return false;
+
+        // Assigned worker filter
+        if (filter.assignedWorkerId && task.Assigned_Worker_ID !== filter.assignedWorkerId) return false;
+
+        // Has links filter
+        if (filter.hasLinks !== undefined) {
+            const hasLinks = task.Links && task.Links.length > 0;
+            if (filter.hasLinks !== hasLinks) return false;
+        }
+
+        return true;
+    });
+}
+
+// ============================================
+// ENHANCED CHECKLIST OPERATIONS
+// ============================================
+
+export async function addChecklistItem(
+    taskId: string,
+    itemText: string,
+    organizationId: string
+): Promise<{ success: boolean; itemId?: string; message: string }> {
+    if (!organizationId) {
+        return { success: false, message: 'Organization ID is required' };
+    }
+
+    try {
+        const firestore = getDb();
+        const q = query(
+            collection(firestore, COLLECTIONS.TASKS),
+            where('Task_ID', '==', taskId),
+            where('Organization_ID', '==', organizationId)
+        );
+        const snapshot = await getDocs(q);
+
+        if (snapshot.empty) {
+            return { success: false, message: 'Zadatak nije pronađen' };
+        }
+
+        const task = snapshot.docs[0].data() as Task;
+        const newItem: ChecklistItem = {
+            id: generateUUID(),
+            text: itemText,
+            completed: false
+        };
+
+        const updatedChecklist = [...(task.Checklist || []), newItem];
+        await updateDoc(snapshot.docs[0].ref, { Checklist: updatedChecklist });
+
+        return { success: true, itemId: newItem.id, message: 'Stavka dodana' };
+    } catch (error) {
+        console.error('addChecklistItem error:', error);
+        return { success: false, message: 'Greška pri dodavanju stavke' };
+    }
+}
+
+export async function removeChecklistItem(
+    taskId: string,
+    itemId: string,
+    organizationId: string
+): Promise<{ success: boolean; message: string }> {
+    if (!organizationId) {
+        return { success: false, message: 'Organization ID is required' };
+    }
+
+    try {
+        const firestore = getDb();
+        const q = query(
+            collection(firestore, COLLECTIONS.TASKS),
+            where('Task_ID', '==', taskId),
+            where('Organization_ID', '==', organizationId)
+        );
+        const snapshot = await getDocs(q);
+
+        if (snapshot.empty) {
+            return { success: false, message: 'Zadatak nije pronađen' };
+        }
+
+        const task = snapshot.docs[0].data() as Task;
+        const updatedChecklist = (task.Checklist || []).filter(item => item.id !== itemId);
+        await updateDoc(snapshot.docs[0].ref, { Checklist: updatedChecklist });
+
+        return { success: true, message: 'Stavka uklonjena' };
+    } catch (error) {
+        console.error('removeChecklistItem error:', error);
+        return { success: false, message: 'Greška pri uklanjanju stavke' };
+    }
+}
+
+export async function batchToggleChecklistItems(
+    taskId: string,
+    itemIds: string[],
+    completed: boolean,
+    organizationId: string
+): Promise<{ success: boolean; message: string }> {
+    if (!organizationId) {
+        return { success: false, message: 'Organization ID is required' };
+    }
+
+    try {
+        const firestore = getDb();
+        const q = query(
+            collection(firestore, COLLECTIONS.TASKS),
+            where('Task_ID', '==', taskId),
+            where('Organization_ID', '==', organizationId)
+        );
+        const snapshot = await getDocs(q);
+
+        if (snapshot.empty) {
+            return { success: false, message: 'Zadatak nije pronađen' };
+        }
+
+        const task = snapshot.docs[0].data() as Task;
+        const itemIdSet = new Set(itemIds);
+        const updatedChecklist = (task.Checklist || []).map(item =>
+            itemIdSet.has(item.id) ? { ...item, completed } : item
+        );
+
+        await updateDoc(snapshot.docs[0].ref, { Checklist: updatedChecklist });
+
+        return { success: true, message: `${itemIds.length} stavki ažurirano` };
+    } catch (error) {
+        console.error('batchToggleChecklistItems error:', error);
+        return { success: false, message: 'Greška pri batch ažuriranju checkliste' };
+    }
+}
+
+// ============================================
+// TASK STATISTICS
+// ============================================
+
+export interface TaskStats {
+    total: number;
+    pending: number;
+    in_progress: number;
+    completed: number;
+    cancelled: number;
+    overdue: number;
+    dueToday: number;
+    highPriority: number;
+    completionRate: number;
+}
+
+export async function getTaskStats(organizationId: string): Promise<TaskStats> {
+    if (!organizationId) {
+        return {
+            total: 0, pending: 0, in_progress: 0, completed: 0, cancelled: 0,
+            overdue: 0, dueToday: 0, highPriority: 0, completionRate: 0
+        };
+    }
+
+    const tasks = await getTasks(organizationId);
+    const today = new Date().toISOString().split('T')[0];
+
+    const stats: TaskStats = {
+        total: tasks.length,
+        pending: tasks.filter(t => t.Status === 'pending').length,
+        in_progress: tasks.filter(t => t.Status === 'in_progress').length,
+        completed: tasks.filter(t => t.Status === 'completed').length,
+        cancelled: tasks.filter(t => t.Status === 'cancelled').length,
+        overdue: tasks.filter(t => t.Due_Date && t.Due_Date < today && t.Status !== 'completed' && t.Status !== 'cancelled').length,
+        dueToday: tasks.filter(t => t.Due_Date?.startsWith(today)).length,
+        highPriority: tasks.filter(t => (t.Priority === 'high' || t.Priority === 'urgent') && t.Status !== 'completed').length,
+        completionRate: 0
+    };
+
+    const relevantTasks = tasks.filter(t => t.Status !== 'cancelled');
+    if (relevantTasks.length > 0) {
+        stats.completionRate = Math.round((stats.completed / relevantTasks.length) * 100);
+    }
+
+    return stats;
 }
 
 // ============================================
