@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/context/AuthContext';
+import { saveOrgSettings, getOrgSettings } from '@/lib/database';
 import Link from 'next/link';
 
 const PLAN_NAMES: Record<string, { name: string; color: string; icon: string }> = {
@@ -12,6 +13,11 @@ const PLAN_NAMES: Record<string, { name: string; color: string; icon: string }> 
 };
 
 export const dynamic = 'force-dynamic';
+
+interface BankAccount {
+    bankName: string;
+    accountNumber: string;
+}
 
 interface CompanyInfo {
     name: string;
@@ -23,6 +29,7 @@ interface CompanyInfo {
     website: string;
     logoBase64: string;
     hideNameWhenLogo: boolean;
+    bankAccounts: BankAccount[];
 }
 
 interface AppSettings {
@@ -42,7 +49,8 @@ const DEFAULT_COMPANY: CompanyInfo = {
     pdvNumber: '',
     website: '',
     logoBase64: '',
-    hideNameWhenLogo: false
+    hideNameWhenLogo: false,
+    bankAccounts: []
 };
 
 const DEFAULT_SETTINGS: AppSettings = {
@@ -67,10 +75,33 @@ export default function SettingsPage() {
     const [message, setMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
     const [activeSection, setActiveSection] = useState('company');
 
-    // Load settings from localStorage (user-specific)
+    // Load settings from Firestore (with localStorage fallback)
     useEffect(() => {
-        if (typeof window !== 'undefined' && organization?.Organization_ID) {
+        async function loadSettings() {
+            if (!organization?.Organization_ID) return;
             const orgKey = organization.Organization_ID;
+
+            // Try Firestore first
+            try {
+                const firestoreSettings = await getOrgSettings(orgKey);
+                if (firestoreSettings) {
+                    if (firestoreSettings.companyInfo) {
+                        const merged = { ...DEFAULT_COMPANY, ...firestoreSettings.companyInfo };
+                        setCompanyInfo(merged);
+                        localStorage.setItem(`companyInfo_${orgKey}`, JSON.stringify(merged));
+                    }
+                    if (firestoreSettings.appSettings) {
+                        const merged = { ...DEFAULT_SETTINGS, ...firestoreSettings.appSettings };
+                        setAppSettings(merged);
+                        localStorage.setItem(`appSettings_${orgKey}`, JSON.stringify(merged));
+                    }
+                    return;
+                }
+            } catch (e) {
+                console.warn('Failed to load from Firestore, falling back to localStorage', e);
+            }
+
+            // Fallback to localStorage
             const savedCompany = localStorage.getItem(`companyInfo_${orgKey}`);
             const savedSettings = localStorage.getItem(`appSettings_${orgKey}`);
 
@@ -78,18 +109,14 @@ export default function SettingsPage() {
                 try {
                     setCompanyInfo({ ...DEFAULT_COMPANY, ...JSON.parse(savedCompany) });
                 } catch (e) { /* ignore */ }
-            } else {
-                setCompanyInfo(DEFAULT_COMPANY);
             }
-
             if (savedSettings) {
                 try {
                     setAppSettings({ ...DEFAULT_SETTINGS, ...JSON.parse(savedSettings) });
                 } catch (e) { /* ignore */ }
-            } else {
-                setAppSettings(DEFAULT_SETTINGS);
             }
         }
+        loadSettings();
     }, [organization?.Organization_ID]);
 
     // Redirect to login if not authenticated
@@ -104,7 +131,7 @@ export default function SettingsPage() {
         setTimeout(() => setMessage(null), 3000);
     }
 
-    function handleSave() {
+    async function handleSave() {
         if (!organization?.Organization_ID) {
             showMessage('Greška: Organizacija nije učitana', 'error');
             return;
@@ -113,6 +140,16 @@ export default function SettingsPage() {
         setSaving(true);
         try {
             const orgKey = organization.Organization_ID;
+
+            // Save to Firestore
+            const result = await saveOrgSettings(orgKey, { companyInfo, appSettings });
+            if (!result.success) {
+                showMessage('Greška pri čuvanju u bazu: ' + result.message, 'error');
+                setSaving(false);
+                return;
+            }
+
+            // Cache in localStorage
             localStorage.setItem(`companyInfo_${orgKey}`, JSON.stringify(companyInfo));
             localStorage.setItem(`appSettings_${orgKey}`, JSON.stringify(appSettings));
             showMessage('Postavke sačuvane uspješno', 'success');
@@ -120,6 +157,25 @@ export default function SettingsPage() {
             showMessage('Greška pri čuvanju postavki', 'error');
         }
         setSaving(false);
+    }
+
+    function addBankAccount() {
+        setCompanyInfo({
+            ...companyInfo,
+            bankAccounts: [...(companyInfo.bankAccounts || []), { bankName: '', accountNumber: '' }]
+        });
+    }
+
+    function removeBankAccount(index: number) {
+        const updated = [...(companyInfo.bankAccounts || [])];
+        updated.splice(index, 1);
+        setCompanyInfo({ ...companyInfo, bankAccounts: updated });
+    }
+
+    function updateBankAccount(index: number, field: 'bankName' | 'accountNumber', value: string) {
+        const updated = [...(companyInfo.bankAccounts || [])];
+        updated[index] = { ...updated[index], [field]: value };
+        setCompanyInfo({ ...companyInfo, bankAccounts: updated });
     }
 
     function handleLogoUpload(e: React.ChangeEvent<HTMLInputElement>) {
@@ -397,6 +453,53 @@ export default function SettingsPage() {
                                         placeholder="www.firma.ba"
                                     />
                                 </div>
+                            </div>
+
+                            {/* Bank Accounts */}
+                            <div className="bank-accounts-section">
+                                <div className="bank-accounts-header">
+                                    <div>
+                                        <h3>Bankovni računi</h3>
+                                        <p>Podaci o bankovnim računima koji se prikazuju na ponudama.</p>
+                                    </div>
+                                    <button className="btn btn-secondary btn-small" onClick={addBankAccount}>
+                                        <span className="material-icons-round" style={{ fontSize: '16px' }}>add</span>
+                                        Dodaj račun
+                                    </button>
+                                </div>
+                                {(companyInfo.bankAccounts || []).length === 0 && (
+                                    <div className="bank-empty">
+                                        <span className="material-icons-round">account_balance</span>
+                                        <p>Nema dodanih bankovnih računa</p>
+                                    </div>
+                                )}
+                                {(companyInfo.bankAccounts || []).map((account, index) => (
+                                    <div key={index} className="bank-row">
+                                        <div className="bank-fields">
+                                            <div className="form-group">
+                                                <label>Banka</label>
+                                                <input
+                                                    type="text"
+                                                    value={account.bankName}
+                                                    onChange={(e) => updateBankAccount(index, 'bankName', e.target.value)}
+                                                    placeholder="Naziv banke"
+                                                />
+                                            </div>
+                                            <div className="form-group">
+                                                <label>Broj računa / IBAN</label>
+                                                <input
+                                                    type="text"
+                                                    value={account.accountNumber}
+                                                    onChange={(e) => updateBankAccount(index, 'accountNumber', e.target.value)}
+                                                    placeholder="XX00 0000 0000 0000 0000"
+                                                />
+                                            </div>
+                                        </div>
+                                        <button className="btn btn-ghost btn-icon" onClick={() => removeBankAccount(index)} title="Ukloni">
+                                            <span className="material-icons-round" style={{ fontSize: '18px', color: '#ef4444' }}>delete</span>
+                                        </button>
+                                    </div>
+                                ))}
                             </div>
                         </section>
                     )}
@@ -871,6 +974,77 @@ export default function SettingsPage() {
                     width: 16px;
                     height: 16px;
                     border-width: 2px;
+                }
+
+                .bank-accounts-section {
+                    margin-top: 32px;
+                    padding-top: 32px;
+                    border-top: 1px solid var(--border-light);
+                }
+
+                .bank-accounts-header {
+                    display: flex;
+                    align-items: flex-start;
+                    justify-content: space-between;
+                    margin-bottom: 20px;
+                }
+
+                .bank-accounts-header h3 {
+                    font-size: 16px;
+                    font-weight: 600;
+                    margin-bottom: 4px;
+                }
+
+                .bank-accounts-header p {
+                    font-size: 13px;
+                    color: var(--text-tertiary);
+                }
+
+                .btn-small {
+                    padding: 8px 14px;
+                    font-size: 13px;
+                }
+
+                .bank-empty {
+                    display: flex;
+                    flex-direction: column;
+                    align-items: center;
+                    gap: 8px;
+                    padding: 32px;
+                    border-radius: 12px;
+                    background: var(--surface);
+                    border: 1px dashed var(--border);
+                    color: var(--text-tertiary);
+                }
+
+                .bank-empty .material-icons-round {
+                    font-size: 32px;
+                    opacity: 0.5;
+                }
+
+                .bank-row {
+                    display: flex;
+                    align-items: flex-end;
+                    gap: 12px;
+                    margin-bottom: 12px;
+                    padding: 16px;
+                    border-radius: 12px;
+                    background: var(--surface);
+                    border: 1px solid var(--border-light);
+                }
+
+                .bank-fields {
+                    display: grid;
+                    grid-template-columns: 1fr 1fr;
+                    gap: 16px;
+                    flex: 1;
+                }
+
+                .btn-icon {
+                    padding: 8px;
+                    border-radius: 8px;
+                    flex-shrink: 0;
+                    margin-bottom: 4px;
                 }
 
                 @media (max-width: 900px) {

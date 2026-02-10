@@ -4,6 +4,7 @@ import {
     doc,
     getDocs,
     getDoc,
+    setDoc,
     addDoc,
     updateDoc,
     deleteDoc,
@@ -678,6 +679,60 @@ export async function addMaterialToProduct(data: Partial<ProductMaterial>, organ
     }
 }
 
+// Batch update material statuses — much faster than calling updateProductMaterial per material
+export async function batchUpdateMaterialStatuses(
+    updates: { materialId: string; status: string; orderId: string }[],
+    organizationId: string
+): Promise<{ success: boolean; message: string }> {
+    if (!organizationId || updates.length === 0) {
+        return { success: true, message: 'Ništa za ažurirati' };
+    }
+
+    try {
+        // Firestore 'in' queries support max 30 items, so chunk if needed
+        const chunkSize = 30;
+        const affectedProductIds = new Set<string>();
+
+        for (let i = 0; i < updates.length; i += chunkSize) {
+            const chunk = updates.slice(i, i + chunkSize);
+            const materialIds = chunk.map(u => u.materialId);
+
+            const q = query(
+                collection(db, COLLECTIONS.PRODUCT_MATERIALS),
+                where('ID', 'in', materialIds),
+                where('Organization_ID', '==', organizationId)
+            );
+            const snapshot = await getDocs(q);
+
+            if (snapshot.empty) continue;
+
+            // Build a lookup for the updates
+            const updateMap = new Map(chunk.map(u => [u.materialId, u]));
+
+            const batch = writeBatch(db);
+            snapshot.docs.forEach(docSnap => {
+                const data = docSnap.data() as ProductMaterial;
+                const upd = updateMap.get(data.ID);
+                if (upd) {
+                    batch.update(docSnap.ref, { Status: upd.status, Order_ID: upd.orderId });
+                    if (data.Product_ID) affectedProductIds.add(data.Product_ID);
+                }
+            });
+            await batch.commit();
+        }
+
+        // Recalculate product costs once per affected product (not per material)
+        for (const productId of Array.from(affectedProductIds)) {
+            await recalculateProductCost(productId, organizationId);
+        }
+
+        return { success: true, message: 'Statusi materijala ažurirani' };
+    } catch (error) {
+        console.error('batchUpdateMaterialStatuses error:', error);
+        return { success: false, message: 'Greška pri ažuriranju statusa materijala' };
+    }
+}
+
 export async function updateProductMaterial(materialId: string, data: Partial<ProductMaterial>, organizationId: string): Promise<{ success: boolean; message: string }> {
     if (!organizationId) {
         return { success: false, message: 'Organization ID is required' };
@@ -1160,6 +1215,8 @@ export async function createOfferWithProducts(offerData: any, organizationId: st
             Total: total,
             Notes: offerData.Notes || '',
             Accepted_Date: '',
+            Include_PDV: offerData.Include_PDV ?? true,
+            PDV_Rate: offerData.PDV_Rate ?? 17,
         };
 
         await addDoc(collection(db, COLLECTIONS.OFFERS), offer);
@@ -1197,6 +1254,9 @@ export async function createOfferWithProducts(offerData: any, organizationId: st
                 Discount_Share: 0,
                 Selling_Price: sellingPrice,
                 Total_Price: totalPrice,
+                Labor_Workers: parseFloat(product.Labor_Workers) || 0,
+                Labor_Days: parseFloat(product.Labor_Days) || 0,
+                Labor_Daily_Rate: parseFloat(product.Labor_Daily_Rate) || 0,
             };
 
             await addDoc(collection(db, COLLECTIONS.OFFER_PRODUCTS), offerProduct);
@@ -1306,6 +1366,8 @@ export async function updateOfferWithProducts(offerData: any, organizationId: st
             Notes: offerData.Notes || '',
             Subtotal: subtotal,
             Total: total,
+            Include_PDV: offerData.Include_PDV ?? true,
+            PDV_Rate: offerData.PDV_Rate ?? 17,
         });
 
         // Delete existing offer products and their extras
@@ -1365,6 +1427,9 @@ export async function updateOfferWithProducts(offerData: any, organizationId: st
                 Discount_Share: 0,
                 Selling_Price: sellingPrice,
                 Total_Price: totalPrice,
+                Labor_Workers: parseFloat(product.Labor_Workers) || 0,
+                Labor_Days: parseFloat(product.Labor_Days) || 0,
+                Labor_Daily_Rate: parseFloat(product.Labor_Daily_Rate) || 0,
             };
 
             await addDoc(collection(db, COLLECTIONS.OFFER_PRODUCTS), offerProduct);
@@ -1538,7 +1603,7 @@ export async function getOrderItems(orderId: string, organizationId: string): Pr
     return snapshot.docs.map(doc => ({ ...doc.data() } as OrderItem));
 }
 
-export async function createOrder(data: Partial<Order> & { items?: Partial<OrderItem>[] }, organizationId: string): Promise<{ success: boolean; data?: { Order_ID: string; Order_Number: string }; message: string }> {
+export async function createOrder(data: Partial<Order> & { items?: (Partial<OrderItem> & { Product_Material_IDs?: string[] })[] }, organizationId: string): Promise<{ success: boolean; data?: { Order_ID: string; Order_Number: string }; message: string }> {
     if (!organizationId) {
         return { success: false, message: 'Organization ID is required' };
     }
@@ -1562,7 +1627,10 @@ export async function createOrder(data: Partial<Order> & { items?: Partial<Order
 
         await addDoc(collection(db, COLLECTIONS.ORDERS), order);
 
-        // Add items
+        // Add items using batch for order items
+        const itemsBatch = writeBatch(db);
+        const allMaterialIds: string[] = [];
+
         for (const item of data.items || []) {
             const orderItem: OrderItem & { Organization_ID: string } = {
                 ID: generateUUID(),
@@ -1581,12 +1649,22 @@ export async function createOrder(data: Partial<Order> & { items?: Partial<Order
                 Status: 'Naručeno',
             };
 
-            await addDoc(collection(db, COLLECTIONS.ORDER_ITEMS), orderItem);
+            const newDocRef = doc(collection(db, COLLECTIONS.ORDER_ITEMS));
+            itemsBatch.set(newDocRef, orderItem);
 
-            // Update material status
-            if (item.Product_Material_ID) {
-                await updateProductMaterial(item.Product_Material_ID, { Status: 'Naručeno', Order_ID: orderId }, organizationId);
-            }
+            // Collect all material IDs for batch status update
+            const materialIds = item.Product_Material_IDs || (item.Product_Material_ID ? [item.Product_Material_ID] : []);
+            allMaterialIds.push(...materialIds);
+        }
+
+        await itemsBatch.commit();
+
+        // Batch update all material statuses in one go
+        if (allMaterialIds.length > 0) {
+            await batchUpdateMaterialStatuses(
+                allMaterialIds.map(id => ({ materialId: id, status: 'Naručeno', orderId })),
+                organizationId
+            );
         }
 
         return { success: true, data: { Order_ID: orderId, Order_Number: orderNumber }, message: 'Narudžba kreirana' };
@@ -1622,13 +1700,13 @@ export async function saveOrder(data: Partial<Order>, organizationId: string): P
     }
 }
 
-export async function deleteOrder(orderId: string, organizationId: string): Promise<{ success: boolean; message: string }> {
+export async function deleteOrder(orderId: string, organizationId: string, materialAction?: 'received' | 'reset'): Promise<{ success: boolean; message: string }> {
     if (!organizationId) {
         return { success: false, message: 'Organization ID is required' };
     }
 
     try {
-        // Delete order items first
+        // Get order items first to update material statuses
         const itemsQ = query(
             collection(db, COLLECTIONS.ORDER_ITEMS),
             where('Order_ID', '==', orderId),
@@ -1636,6 +1714,20 @@ export async function deleteOrder(orderId: string, organizationId: string): Prom
         );
         const itemsSnap = await getDocs(itemsQ);
 
+        // Batch update material statuses based on user choice
+        if (materialAction) {
+            const newStatus = materialAction === 'received' ? 'Primljeno' : 'Nije naručeno';
+            const materialUpdates = itemsSnap.docs
+                .map(d => d.data() as OrderItem)
+                .filter(item => item.Product_Material_ID)
+                .map(item => ({ materialId: item.Product_Material_ID, status: newStatus, orderId: '' }));
+
+            if (materialUpdates.length > 0) {
+                await batchUpdateMaterialStatuses(materialUpdates, organizationId);
+            }
+        }
+
+        // Delete order items
         const batch = writeBatch(db);
         itemsSnap.docs.forEach(doc => batch.delete(doc.ref));
         await batch.commit();
@@ -4889,3 +4981,51 @@ export async function getProductionSnapshots(
     }
 }
 
+// ============================================
+// ORGANIZATION SETTINGS (Firestore persistence)
+// ============================================
+
+export async function saveOrgSettings(
+    organizationId: string,
+    data: { companyInfo: any; appSettings: any }
+): Promise<{ success: boolean; message: string }> {
+    if (!organizationId) {
+        return { success: false, message: 'Organization ID is required' };
+    }
+
+    try {
+        const firestore = getDb();
+        await setDoc(doc(firestore, 'org_settings', organizationId), {
+            companyInfo: data.companyInfo,
+            appSettings: data.appSettings,
+            Updated_At: new Date().toISOString(),
+        }, { merge: true });
+
+        return { success: true, message: 'Settings saved' };
+    } catch (error) {
+        console.error('saveOrgSettings error:', error);
+        return { success: false, message: 'Error saving settings' };
+    }
+}
+
+export async function getOrgSettings(
+    organizationId: string
+): Promise<{ companyInfo: any; appSettings: any } | null> {
+    if (!organizationId) return null;
+
+    try {
+        const firestore = getDb();
+        const docSnap = await getDoc(doc(firestore, 'org_settings', organizationId));
+        if (docSnap.exists()) {
+            const data = docSnap.data();
+            return {
+                companyInfo: data.companyInfo || null,
+                appSettings: data.appSettings || null,
+            };
+        }
+        return null;
+    } catch (error) {
+        console.error('getOrgSettings error:', error);
+        return null;
+    }
+}

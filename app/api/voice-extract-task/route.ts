@@ -13,43 +13,72 @@ export interface ExtractedTaskData {
     suggestedProject: string | null;
 }
 
-const EXTRACTION_PROMPT = `Ti si univerzalni AI asistent za ekstrakciju strukturiranih zadataka iz govornog unosa. Radiš sa BILO KAKVIM tipovima zadataka - ličnim, poslovnim, kreativnim, tehničkim, porodičnim, zdravstvenim, itd.
+const EXTRACTION_PROMPT = `Ti si AI asistent za ERP sistem stolarske radionice (fabrika namještaja). Tvoj posao je da iz govornog unosa na bosanskom/hrvatskom/srpskom jeziku izvučeš strukturirane podatke za kreiranje zadatka.
 
-PRAVILA ZA NASLOV, OPIS I CHECKLIST:
+KONTEKST FIRME: Stolarska radionica koja proizvodi namještaj po mjeri — kuhinje, ormare, komode, vitrine, radne ploče. Koristi materijale kao iverica (iveral), MDF, drvo (hrast, bukva, orah), ABS trake, okove, šarke, vodilice, itd.
+
+═══════════════════════════════════════════════════════════════
+PRAVILA:
+═══════════════════════════════════════════════════════════════
 
 1. NASLOV (title):
-   - Kratak, jasan naslov zadatka (max 60 karaktera)
-   - Za JEDAN zadatak: koristi samu akciju kao naslov
-   - Za VIŠE zadataka: koristi zbirni naslov (npr. "Dnevne obaveze", "Zadaci za danas")
+   - Kratak, jasan, profesionalan naslov (max 60 karaktera)
+   - Koristi infinitiv ili imenicu: "Naručiti materijal za...", "Pripremiti..." 
+   - Za JEDAN zadatak: sam zadatak kao naslov
+   - Za VIŠE zadataka: zbirni naslov ("Obaveze za klijenta X", "Pripreme za montažu")
+   - NIKADA ne stavljaj sirovi transkript kao naslov!
+   - Uvijek velikim slovom počni
 
 2. OPIS (description):
-   - Dodatni kontekst, razlozi, napomene
+   - Dodatni kontekst, detalji, napomene iz govora
+   - Bilo koji dio koji nije naslov ni checklist stavka
    - Ako nema dodatnog konteksta → prazan string ""
+   - NE ponavljaj naslov u opisu!
 
 3. CHECKLIST:
-   - AKO korisnik nabraja VIŠE stvari (koristeći "i", "pa", "zatim", "prvo...pa", zareze, ili jednostavno nabraja):
-     → SVAKA stvar postaje posebna stavka u checklisti!
+   - AKO korisnik nabraja VIŠE stvari ("prvo X, pa Y, i Z") → SVAKA stavka posebno u checklisti
    - AKO je samo JEDAN zadatak bez nabrajanja → prazan niz []
+   - Svaka stavka čista, profesionalna rečenica sa velikim slovom
    - Maksimalno 10 stavki
 
+4. PROJEKAT (suggestedProject):
+   - Ako korisnik pomene ime klijenta, mjesto, ili projekat → vrati ime
+   - OBAVEZNO provjeri listu dostupnih projekata/klijenata u KONTEKSTU
+   - Koristi fuzzy matching - "Hodžić" treba da matchuje "Hodžić Sarajevo"
+   - Ako ne prepoznajes → null
+
+5. RADNIK (suggestedWorker):
+   - Ako korisnik pomene ime radnika → vrati ime
+   - Provjeri listu dostupnih radnika u KONTEKSTU
+   - null ako nema
+
 ═══════════════════════════════════════════════════════════════
-PRIMJERI:
+PRIMJERI (STOLARSKA RADIONICA):
 ═══════════════════════════════════════════════════════════════
 
-Korisnik: "Kupi mlijeko"
-→ {"title": "Kupi mlijeko", "description": "", "priority": "medium", "category": "general", "checklist": [], "suggestedDueDate": null, "suggestedWorker": null, "suggestedProject": null}
+Korisnik: "Treba naručiti iveral H3395 hrast za Hodžića"
+→ {"title": "Naručiti iveral H3395 hrast", "description": "Za projekat Hodžić", "priority": "medium", "category": "ordering", "checklist": [], "suggestedDueDate": null, "suggestedWorker": null, "suggestedProject": "Hodžić"}
 
-Korisnik: "Otići u apoteku, dom zdravlja i pokositi travu"
-→ {"title": "Današnje obaveze", "description": "", "priority": "medium", "category": "general", "checklist": ["Otići u apoteku", "Otići u dom zdravlja", "Pokositi travu"], "suggestedDueDate": null, "suggestedWorker": null, "suggestedProject": null}
+Korisnik: "Hitno za sutra, pripremiti materijal za montažu kod Begović, treba ABS trake, šarke i vodilice"
+→ {"title": "Pripremiti materijal za montažu Begović", "description": "Hitno za sutra", "priority": "urgent", "category": "manufacturing", "checklist": ["Pripremiti ABS trake", "Pripremiti šarke", "Pripremiti vodilice"], "suggestedDueDate": "{TOMORROW}", "suggestedWorker": null, "suggestedProject": "Begović"}
 
-Korisnik: "Hitno nazvati majstora za peć"
-→ {"title": "Nazvati majstora za peć", "description": "Hitno", "priority": "urgent", "category": "general", "checklist": [], "suggestedDueDate": null, "suggestedWorker": null, "suggestedProject": null}
+Korisnik: "Emir neka izmjeri kod Petrović u Zenici za kuhinju"
+→ {"title": "Mjerenje za kuhinju - Petrović Zenica", "description": "", "priority": "medium", "category": "design", "checklist": [], "suggestedDueDate": null, "suggestedWorker": "Emir", "suggestedProject": "Petrović"}
 
-Korisnik: "Sutra moram platiti račune, odnijeti auto na servis i kupiti poklon za rođendan"
-→ {"title": "Obaveze za sutra", "description": "", "priority": "medium", "category": "general", "checklist": ["Platiti račune", "Odnijeti auto na servis", "Kupiti poklon za rođendan"], "suggestedDueDate": "{TOMORROW}", "suggestedWorker": null, "suggestedProject": null}
+Korisnik: "Moramo nazvati dobavljača za okove, provjeriti cijenu vodilica i naručiti ABS trake"
+→ {"title": "Nabavka okova i materijala", "description": "", "priority": "medium", "category": "ordering", "checklist": ["Nazvati dobavljača za okove", "Provjeriti cijenu vodilica", "Naručiti ABS trake"], "suggestedDueDate": null, "suggestedWorker": null, "suggestedProject": null}
 
-Korisnik: "Ne zaboravi da zoveš doktora u ponedjeljak"
-→ {"title": "Zvati doktora", "description": "", "priority": "medium", "category": "reminder", "checklist": [], "suggestedDueDate": null, "suggestedWorker": null, "suggestedProject": null}
+Korisnik: "Danas se mora završiti kuhinja za Delića, treba kantovati ploče i sklopiti gornje elemente"
+→ {"title": "Završiti kuhinju za Delića", "description": "Danas obavezno", "priority": "urgent", "category": "manufacturing", "checklist": ["Kantovati ploče", "Sklopiti gornje elemente"], "suggestedDueDate": "{TODAY}", "suggestedWorker": null, "suggestedProject": "Delić"}
+
+Korisnik: "U petak montaža kod Ibrahimović u Ilidži, treba ponijeti alat, silikoniti radnu ploču i spojiti vodu"
+→ {"title": "Montaža kod Ibrahimović - Ilidža", "description": "Petak", "priority": "high", "category": "installation", "checklist": ["Ponijeti alat", "Silikoniti radnu ploču", "Spojiti vodu"], "suggestedDueDate": "{FRIDAY}", "suggestedWorker": null, "suggestedProject": "Ibrahimović"}
+
+Korisnik: "Zakazati sastanak sa klijentom za novi projekat"
+→ {"title": "Zakazati sastanak sa klijentom", "description": "Za novi projekat", "priority": "medium", "category": "meeting", "checklist": [], "suggestedDueDate": null, "suggestedWorker": null, "suggestedProject": null}
+
+Korisnik: "Kupi mlijeko i kruh"
+→ {"title": "Kupovina potrepština", "description": "", "priority": "low", "category": "general", "checklist": ["Kupiti mlijeko", "Kupiti kruh"], "suggestedDueDate": null, "suggestedWorker": null, "suggestedProject": null}
 
 ═══════════════════════════════════════════════════════════════
 TEKST ZA OBRADU:
@@ -58,33 +87,35 @@ TEKST ZA OBRADU:
 {USER_TEXT}
 """
 
-KONTEKST (opciono - projekti/radnici ako su dostupni):
+KONTEKST — dostupni projekti/klijenti, radnici i dobavljači:
 {CONTEXT}
 
 PRIORITET:
-- "hitno", "odmah", "urgent", "mora danas" → "urgent"
-- "važno", "bitno" → "high"  
+- "hitno", "odmah", "urgent", "mora danas", "mora odmah" → "urgent"
+- "važno", "bitno", "mora se", "obavezno" → "high"  
 - Normalno → "medium"
-- "nije hitno", "kad stigneš" → "low"
+- "nije hitno", "kad stigneš", "kada bude vremena" → "low"
 
 KATEGORIJA (izaberi najbližu):
-- ordering: naručivanje, kupovina, nabavka
-- manufacturing: proizvodnja, izrada, pravljenje
-- installation: instalacija, ugradnja, montaža
-- design: dizajn, crtanje, projektovanje
+- ordering: naručivanje, kupovina, nabavka, narudžba, dobavljač, cijena
+- manufacturing: proizvodnja, izrada, rezanje, kantovanje, brušenje, sklapanje, lakiranje
+- installation: montaža, ugradnja, instalacija, postavljanje, spajanje
+- design: dizajn, crtanje, projektovanje, mjerenje, nacrt
 - meeting: sastanak, poziv, razgovor
-- reminder: podsjetnik, ne zaboravi
-- general: sve ostalo (DEFAULT - koristi ovu ako nisi siguran)
+- reminder: podsjetnik, ne zaboravi, zapamti
+- general: sve ostalo (DEFAULT)
 
 DATUM:
 - "danas" → {TODAY}
 - "sutra" → {TOMORROW}
-- "ovaj tjedan"/"do petka" → {FRIDAY}
+- "ovaj tjedan"/"do petka"/"u petak" → {FRIDAY}
 - Inače → null
 
 KRITIČNO:
 - SVAKA nabrojena stavka MORA biti u checklisti!
 - Ako korisnik kaže "A, B i C" = TRI stavke u checklisti
+- NIKADA ne vrati sirovi transkript kao naslov — uvijek obradi i skrati
+- Svaki naslov i stavku počni VELIKIM SLOVOM
 - Odgovori SAMO validnim JSON-om, bez dodatnog teksta`;
 
 
@@ -96,6 +127,7 @@ export async function POST(request: NextRequest) {
             context?: {
                 projects?: string[];
                 workers?: string[];
+                suppliers?: string[];
             };
         };
 
@@ -114,29 +146,34 @@ export async function POST(request: NextRequest) {
             );
         }
 
-        // Build context string
-        const contextStr = context
-            ? `Projekti/Klijenti: ${context.projects?.join(', ') || 'Nema podataka'}
-Radnici: ${context.workers?.join(', ') || 'Nema podataka'}`
-            : 'Nema dostupnog konteksta';
+        // Build context string with all available data
+        const contextParts: string[] = [];
+        if (context?.projects?.length) {
+            contextParts.push(`Projekti/Klijenti: ${context.projects.join(', ')}`);
+        }
+        if (context?.workers?.length) {
+            contextParts.push(`Radnici: ${context.workers.join(', ')}`);
+        }
+        if (context?.suppliers?.length) {
+            contextParts.push(`Dobavljači: ${context.suppliers.join(', ')}`);
+        }
+        const contextStr = contextParts.length > 0 ? contextParts.join('\n') : 'Nema dostupnog konteksta';
 
         // Get date references
         const todayDate = new Date();
         const today = todayDate.toISOString().split('T')[0];
 
-        // Calculate tomorrow
         const tomorrowDate = new Date(todayDate);
         tomorrowDate.setDate(tomorrowDate.getDate() + 1);
         const tomorrow = tomorrowDate.toISOString().split('T')[0];
 
-        // Calculate this Friday
         const fridayDate = new Date(todayDate);
         const dayOfWeek = fridayDate.getDay();
         const daysUntilFriday = dayOfWeek <= 5 ? 5 - dayOfWeek : 5 + (7 - dayOfWeek);
         fridayDate.setDate(fridayDate.getDate() + daysUntilFriday);
         const friday = fridayDate.toISOString().split('T')[0];
 
-        // Build the prompt with all date placeholders
+        // Build the prompt
         const prompt = EXTRACTION_PROMPT
             .replace('{USER_TEXT}', text)
             .replace('{CONTEXT}', contextStr)
@@ -150,14 +187,13 @@ Radnici: ${context.workers?.join(', ') || 'Nema podataka'}`
 
         console.log(`Voice extract: Processing text: "${text}"`);
 
-        // Generate response
         const result = await model.generateContent(prompt);
         const response = await result.response;
         let responseText = response.text();
 
         console.log(`Voice extract: Gemini raw response: "${responseText.substring(0, 500)}..."`);
 
-        // Clean up response (remove markdown code blocks if present)
+        // Clean up response
         responseText = responseText
             .replace(/```json\n?/g, '')
             .replace(/```\n?/g, '')
@@ -169,10 +205,14 @@ Radnici: ${context.workers?.join(', ') || 'Nema podataka'}`
             extractedData = JSON.parse(responseText);
         } catch (parseError) {
             console.error('Failed to parse AI response:', responseText);
-            // Return a basic fallback
+            // Intelligent fallback: use first 60 chars as title, rest as description
+            const cleanText = text.trim();
+            const sentenceEnd = cleanText.indexOf('.') > 0 && cleanText.indexOf('.') < 60
+                ? cleanText.indexOf('.') + 1
+                : Math.min(cleanText.length, 60);
             extractedData = {
-                title: text.substring(0, 60),
-                description: text,
+                title: cleanText.substring(0, sentenceEnd).trim(),
+                description: cleanText.length > sentenceEnd ? cleanText.substring(sentenceEnd).trim() : '',
                 priority: 'medium',
                 category: 'general',
                 checklist: [],
@@ -182,7 +222,7 @@ Radnici: ${context.workers?.join(', ') || 'Nema podataka'}`
             };
         }
 
-        // Validate and sanitize the response
+        // Validate and sanitize
         const validPriorities = ['low', 'medium', 'high', 'urgent'];
         const validCategories = ['general', 'manufacturing', 'ordering', 'installation', 'design', 'meeting', 'reminder'];
 
@@ -195,8 +235,21 @@ Radnici: ${context.workers?.join(', ') || 'Nema podataka'}`
         if (!Array.isArray(extractedData.checklist)) {
             extractedData.checklist = [];
         }
-        // Limit checklist to 5 items
-        extractedData.checklist = extractedData.checklist.slice(0, 5);
+        // Limit checklist to 10 items
+        extractedData.checklist = extractedData.checklist.slice(0, 10);
+
+        // Post-processing: ensure title starts with uppercase, trim excess
+        if (extractedData.title) {
+            extractedData.title = extractedData.title.charAt(0).toUpperCase() + extractedData.title.slice(1);
+            if (extractedData.title.length > 60) {
+                extractedData.title = extractedData.title.substring(0, 57) + '...';
+            }
+        }
+
+        // Capitalize checklist items
+        extractedData.checklist = extractedData.checklist.map(item =>
+            item ? item.charAt(0).toUpperCase() + item.slice(1) : item
+        );
 
         return NextResponse.json(extractedData);
 

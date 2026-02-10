@@ -1232,8 +1232,9 @@ function MobileTaskModal({
                             onError={handleVoiceError}
                             onTranscript={setVoiceTranscript}
                             context={{
-                                projects: projects.map(p => p.Client_Name),
-                                workers: workers.map(w => w.Name)
+                                projects: projects.map(p => p.Address ? `${p.Client_Name} (${p.Address})` : p.Client_Name),
+                                workers: workers.map(w => w.Name),
+                                suppliers: Array.from(new Set(orders.map(o => o.Supplier_Name).filter(Boolean)))
                             }}
                         />
                     ) : <div style={{ width: 60 }} />}

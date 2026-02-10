@@ -5,6 +5,7 @@ import type { Offer, Project, OfferProduct, Product } from '@/lib/types';
 import { getOffer, createOfferWithProducts, deleteOffer, updateOfferStatus, saveOffer, updateOfferWithProducts } from '@/lib/database';
 import { useData } from '@/context/DataContext';
 import { generateOfferPDF, type OfferPDFData } from '@/lib/pdfGenerator';
+import { getOrgSettings } from '@/lib/database';
 import Modal from '@/components/ui/Modal';
 import { OFFER_STATUSES } from '@/lib/types';
 
@@ -75,7 +76,7 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
     const [includePDV, setIncludePDV] = useState(true);
     const [pdvRate, setPdvRate] = useState(17);
 
-    // Company Info (read from Settings page, stored in localStorage)
+    // Company Info (read from Settings page, stored in Firestore)
     const [companyInfo, setCompanyInfo] = useState({
         name: 'Vaša Firma',
         address: 'Ulica i broj, Grad',
@@ -85,19 +86,37 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
         pdvNumber: '',
         website: '',
         logoBase64: '',
-        hideNameWhenLogo: false
+        hideNameWhenLogo: false,
+        bankAccounts: [] as { bankName: string; accountNumber: string }[]
     });
 
-    // Load company info from localStorage on mount (read-only, managed in Settings)
+    // Load company info from Firestore (with localStorage fallback)
     useMemo(() => {
         if (typeof window !== 'undefined' && organizationId) {
-            const saved = localStorage.getItem(`companyInfo_${organizationId}`);
-            if (saved) {
-                try {
-                    const parsed = JSON.parse(saved);
-                    setCompanyInfo(prev => ({ ...prev, ...parsed }));
-                } catch (e) { /* ignore */ }
-            }
+            // Try Firestore first
+            getOrgSettings(organizationId).then(firestoreData => {
+                if (firestoreData?.companyInfo) {
+                    setCompanyInfo(prev => ({ ...prev, ...firestoreData.companyInfo }));
+                    localStorage.setItem(`companyInfo_${organizationId}`, JSON.stringify(firestoreData.companyInfo));
+                    return;
+                }
+                // Fallback to localStorage
+                const saved = localStorage.getItem(`companyInfo_${organizationId}`);
+                if (saved) {
+                    try {
+                        const parsed = JSON.parse(saved);
+                        setCompanyInfo(prev => ({ ...prev, ...parsed }));
+                    } catch (e) { /* ignore */ }
+                }
+            }).catch(() => {
+                const saved = localStorage.getItem(`companyInfo_${organizationId}`);
+                if (saved) {
+                    try {
+                        const parsed = JSON.parse(saved);
+                        setCompanyInfo(prev => ({ ...prev, ...parsed }));
+                    } catch (e) { /* ignore */ }
+                }
+            });
         }
     }, [organizationId]);
 
@@ -332,6 +351,8 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
             Onsite_Discount: onsiteDiscount,
             Valid_Until: validUntil,
             Notes: notes,
+            Include_PDV: includePDV,
+            PDV_Rate: pdvRate,
             products: offerProducts.map(p => ({
                 Product_ID: p.Product_ID,
                 Product_Name: p.Product_Name,
@@ -479,6 +500,8 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
         setOnsiteDiscount(fullOffer.Onsite_Discount || 0);
         setValidUntil(fullOffer.Valid_Until ? fullOffer.Valid_Until.split('T')[0] : getDefaultValidDate());
         setNotes(fullOffer.Notes || '');
+        setIncludePDV((fullOffer as any).Include_PDV ?? true);
+        setPdvRate((fullOffer as any).PDV_Rate ?? 17);
         setCurrentOffer(fullOffer);
     }
 
@@ -487,37 +510,23 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
     // ============================================
 
     function handlePrintOffer(offer: Offer) {
-        // Calculate prices dynamically (in case stored values are 0)
-        // Note: Include all products, filter only if Included is explicitly false
-        const productsWithPrices = (offer.products || []).filter(p => p.Included !== false).map(p => {
-            const materialCost = p.Material_Cost || 0;
-            const margin = p.Margin || 0;
-            const extrasTotal = (p.extras || []).reduce((sum: number, e: any) => sum + (e.Total || e.total || 0), 0);
-            // Check for labor fields (may be stored with different key names)
-            const laborWorkers = (p as any).Labor_Workers || (p as any).laborWorkers || 0;
-            const laborDays = (p as any).Labor_Days || (p as any).laborDays || 0;
-            const laborRate = (p as any).Labor_Daily_Rate || (p as any).laborDailyRate || 0;
-            const laborTotal = laborWorkers * laborDays * laborRate;
+        // Use stored prices from the database — they already include labor, extras, etc.
+        const products = (offer.products || []).filter(p => p.Included !== false).map(p => ({
+            ...p,
+            Selling_Price: p.Selling_Price || 0,
+            Total_Price: p.Total_Price || 0
+        }));
 
-            const sellingPrice = materialCost + margin + extrasTotal + laborTotal;
-            const totalPrice = sellingPrice * (p.Quantity || 1);
-
-            return {
-                ...p,
-                Selling_Price: sellingPrice || p.Selling_Price || 0,
-                Total_Price: totalPrice || p.Total_Price || 0
-            };
-        });
-
-        // Recalculate subtotal
-        const calculatedSubtotal = productsWithPrices.reduce((sum, p) => sum + p.Total_Price, 0);
-        const subtotal = calculatedSubtotal || offer.Subtotal || 0;
+        // Use stored subtotal and total from the offer
+        const subtotal = offer.Subtotal || products.reduce((sum, p) => sum + p.Total_Price, 0);
         const transport = offer.Transport_Cost || 0;
         const discount = offer.Onsite_Assembly ? (offer.Onsite_Discount || 0) : 0;
         const baseTotal = subtotal + transport - discount;
-        const total = baseTotal || offer.Total || 0;
+        const total = baseTotal;
 
-        const products = productsWithPrices;
+        // Use stored PDV settings from the offer
+        const offerIncludePDV = (offer as any).Include_PDV ?? false;
+        const offerPdvRate = (offer as any).PDV_Rate ?? 17;
 
         const printContent = `
             <!DOCTYPE html>
@@ -667,11 +676,9 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
                     }
                     
                     .products-section h3 {
-                        font-size: 13px;
+                        font-size: 16px;
                         font-weight: 600;
                         color: #1d1d1f;
-                        text-transform: uppercase;
-                        letter-spacing: 1.5px;
                         margin-bottom: 24px;
                     }
                     
@@ -682,13 +689,11 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
                     }
                     
                     .products-section th {
-                        font-size: 12px;
+                        font-size: 13px;
                         font-weight: 600;
-                        color: #6e6e73;
-                        text-transform: uppercase;
-                        letter-spacing: 0.8px;
-                        padding: 16px 14px;
-                        border-bottom: 2px solid #e5e5e7;
+                        color: #4b5563;
+                        padding: 12px 14px;
+                        border-bottom: 1px solid #e5e7eb;
                         text-align: left;
                     }
                     
@@ -1042,21 +1047,21 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
                                                     <span class="value">${formatCurrency(transport)}</span>
                                                 </div>
                                             ` : ''}
-                                            ${offer.Onsite_Assembly ? `
+                                            ${discount > 0 ? `
                                                 <div class="totals-row discount">
                                                     <span class="label">Popust (sklapanje na licu mjesta)</span>
                                                     <span class="value">-${formatCurrency(discount)}</span>
                                                 </div>
                                             ` : ''}
-                                            ${includePDV ? `
+                                            ${offerIncludePDV ? `
                                                 <div class="totals-row">
-                                                    <span class="label">PDV (${pdvRate}%)</span>
-                                                    <span class="value">${formatCurrency(total * pdvRate / 100)}</span>
+                                                    <span class="label">PDV (${offerPdvRate}%)</span>
+                                                    <span class="value">${formatCurrency(total * offerPdvRate / 100)}</span>
                                                 </div>
                                             ` : ''}
                                             <div class="totals-row total">
-                                                <span class="label">Ukupno${includePDV ? ' (sa PDV)' : ''}</span>
-                                                <span class="value">${formatCurrency(includePDV ? total * (1 + pdvRate / 100) : total)}</span>
+                                                <span class="label">Ukupno${offerIncludePDV ? ' (sa PDV)' : ''}</span>
+                                                <span class="value">${formatCurrency(offerIncludePDV ? total * (1 + offerPdvRate / 100) : total)}</span>
                                             </div>
                                         </div>
                                     </div>
@@ -1075,6 +1080,16 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
                                     </div>
 
                                     <div class="footer">
+                                        ${(companyInfo.bankAccounts || []).length > 0 ? `
+                                            <div style="margin-bottom: 16px; text-align: left;">
+                                                <div style="font-size: 11px; font-weight: 500; color: #86868b; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 10px;">Bankovni računi</div>
+                                                ${(companyInfo.bankAccounts || []).map(acc => `
+                                                    <div style="margin-bottom: 6px; font-size: 12px; color: #1d1d1f;">
+                                                        <span style="font-weight: 500;">${acc.bankName}:</span> ${acc.accountNumber}
+                                                    </div>
+                                                `).join('')}
+                                            </div>
+                                        ` : ''}
                                         <p>Hvala na povjerenju</p>
                                     </div>
                                 </div>
@@ -1102,36 +1117,29 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
 
     async function handleDownloadPDF(offer: Offer) {
         try {
-            // Calculate prices dynamically
+            // Use stored prices from database
             const productsWithPrices = (offer.products || []).filter(p => p.Included !== false).map(p => {
-                const materialCost = p.Material_Cost || 0;
-                const margin = p.Margin || 0;
-                const extrasTotal = (p.extras || []).reduce((sum: number, e: any) => sum + (e.Total || e.total || 0), 0);
-                const laborWorkers = (p as any).Labor_Workers || (p as any).laborWorkers || 0;
-                const laborDays = (p as any).Labor_Days || (p as any).laborDays || 0;
-                const laborRate = (p as any).Labor_Daily_Rate || (p as any).laborDailyRate || 0;
+                const laborWorkers = (p as any).Labor_Workers || 0;
+                const laborDays = (p as any).Labor_Days || 0;
+                const laborRate = (p as any).Labor_Daily_Rate || 0;
                 const laborTotal = laborWorkers * laborDays * laborRate;
-
-                const sellingPrice = materialCost + margin + extrasTotal + laborTotal;
-                const totalPrice = sellingPrice * (p.Quantity || 1);
 
                 return {
                     name: p.Product_Name,
                     quantity: p.Quantity || 1,
                     dimensions: undefined,
-                    materialCost: materialCost,
+                    materialCost: p.Material_Cost || 0,
                     laborCost: laborTotal,
                     extras: (p.extras || []).map((e: any) => ({
                         name: e.name || e.Name,
                         total: e.total || e.Total || 0
                     })),
-                    sellingPrice: sellingPrice || p.Selling_Price || 0,
-                    totalPrice: totalPrice || p.Total_Price || 0
+                    sellingPrice: p.Selling_Price || 0,
+                    totalPrice: p.Total_Price || 0
                 };
             });
 
-            const calculatedSubtotal = productsWithPrices.reduce((sum, p) => sum + p.totalPrice, 0);
-            const subtotal = calculatedSubtotal || offer.Subtotal || 0;
+            const subtotal = offer.Subtotal || productsWithPrices.reduce((sum, p) => sum + p.totalPrice, 0);
             const transport = offer.Transport_Cost || 0;
             const discount = offer.Onsite_Assembly ? (offer.Onsite_Discount || 0) : 0;
             const total = subtotal + transport - discount;
@@ -1152,7 +1160,8 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
                 companyName: companyInfo.name,
                 companyAddress: companyInfo.address,
                 companyPhone: companyInfo.phone,
-                companyEmail: companyInfo.email
+                companyEmail: companyInfo.email,
+                bankAccounts: companyInfo.bankAccounts || []
             };
 
             await generateOfferPDF(pdfData);
@@ -1832,16 +1841,31 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
                                     <span>Transport:</span>
                                     <span>{formatCurrency(currentOffer.Transport_Cost)}</span>
                                 </div>
-                                {currentOffer.Onsite_Assembly && (
+                                {currentOffer.Onsite_Assembly && (currentOffer.Onsite_Discount || 0) > 0 && (
                                     <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--success)' }}>
                                         <span>Popust:</span>
                                         <span>-{formatCurrency(currentOffer.Onsite_Discount)}</span>
                                     </div>
                                 )}
+                                {(currentOffer as any).Include_PDV && (() => {
+                                    const baseTotal = (currentOffer.Subtotal || 0) + (currentOffer.Transport_Cost || 0) - (currentOffer.Onsite_Assembly ? (currentOffer.Onsite_Discount || 0) : 0);
+                                    const rate = (currentOffer as any).PDV_Rate || 17;
+                                    return (
+                                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                                            <span>PDV ({rate}%):</span>
+                                            <span>{formatCurrency(baseTotal * rate / 100)}</span>
+                                        </div>
+                                    );
+                                })()}
                                 <hr style={{ border: 'none', borderTop: '1px solid var(--border)' }} />
                                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '20px', fontWeight: 700 }}>
-                                    <span>UKUPNO:</span>
-                                    <span style={{ color: 'var(--accent)' }}>{formatCurrency(currentOffer.Total)}</span>
+                                    <span>UKUPNO{(currentOffer as any).Include_PDV ? ' (sa PDV)' : ''}:</span>
+                                    <span style={{ color: 'var(--accent)' }}>{formatCurrency(
+                                        (() => {
+                                            const baseTotal = (currentOffer.Subtotal || 0) + (currentOffer.Transport_Cost || 0) - (currentOffer.Onsite_Assembly ? (currentOffer.Onsite_Discount || 0) : 0);
+                                            return (currentOffer as any).Include_PDV ? baseTotal * (1 + ((currentOffer as any).PDV_Rate || 17) / 100) : baseTotal;
+                                        })()
+                                    )}</span>
                                 </div>
                             </div>
                         </div>

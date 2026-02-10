@@ -29,7 +29,9 @@ export async function generatePDFFromElement(
         useCORS: true,
         logging: false,
         background: '#ffffff',
-    });
+        scale: 2,
+        windowWidth: 794,
+    } as any);
 
     const imgData = canvas.toDataURL('image/png');
 
@@ -131,6 +133,7 @@ export interface OfferPDFData {
     companyAddress?: string;
     companyPhone?: string;
     companyEmail?: string;
+    bankAccounts?: Array<{ bankName: string; accountNumber: string }>;
 }
 
 export async function generateOfferPDF(data: OfferPDFData): Promise<void> {
@@ -213,10 +216,9 @@ function createOfferHTML(data: OfferPDFData): string {
                     margin-bottom: 30px;
                 }
                 .client-section h3 {
-                    font-size: 12px;
-                    text-transform: uppercase;
-                    letter-spacing: 0.05em;
-                    color: #6b7280;
+                    font-size: 14px;
+                    font-weight: 600;
+                    color: #111827;
                     margin-bottom: 8px;
                 }
                 .client-section .name {
@@ -233,15 +235,14 @@ function createOfferHTML(data: OfferPDFData): string {
                     border-collapse: collapse; 
                     margin-bottom: 30px;
                 }
-                thead { background: #f3f4f6; }
+                thead { background: transparent; }
                 th { 
                     padding: 12px; 
                     text-align: left; 
                     font-weight: 600;
-                    color: #374151;
-                    font-size: 12px;
-                    text-transform: uppercase;
-                    letter-spacing: 0.05em;
+                    color: #4b5563;
+                    font-size: 13px;
+                    border-bottom: 1px solid #e5e7eb;
                 }
                 th:nth-child(3), th:nth-child(4), th:nth-child(5) { text-align: right; }
                 .totals {
@@ -355,6 +356,16 @@ function createOfferHTML(data: OfferPDFData): string {
             ` : ''}
 
             <div class="footer">
+                ${(data.bankAccounts || []).length > 0 ? `
+                    <div style="margin-bottom: 16px; text-align: left;">
+                        <div style="font-size: 11px; font-weight: 500; color: #9ca3af; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px;">Bankovni računi</div>
+                        ${(data.bankAccounts || []).map(acc => `
+                            <div style="margin-bottom: 4px; font-size: 12px; color: #6b7280;">
+                                <span style="font-weight: 500;">${acc.bankName}:</span> ${acc.accountNumber}
+                            </div>
+                        `).join('')}
+                    </div>
+                ` : ''}
                 <p>Hvala na povjerenju! • Ponuda generirana: ${new Date().toLocaleDateString('hr-HR')}</p>
             </div>
         </body>
@@ -457,9 +468,8 @@ function createOrderHTML(data: OrderPDFData): string {
                     border-left: 4px solid #dc2626;
                 }
                 .supplier-section h3 {
-                    font-size: 12px;
-                    text-transform: uppercase;
-                    letter-spacing: 0.05em;
+                    font-size: 14px;
+                    font-weight: 600;
                     color: #991b1b;
                     margin-bottom: 8px;
                 }
@@ -477,15 +487,14 @@ function createOrderHTML(data: OrderPDFData): string {
                     border-collapse: collapse; 
                     margin-bottom: 30px;
                 }
-                thead { background: #f3f4f6; }
+                thead { background: transparent; }
                 th { 
                     padding: 12px; 
                     text-align: left; 
                     font-weight: 600;
-                    color: #374151;
-                    font-size: 12px;
-                    text-transform: uppercase;
-                    letter-spacing: 0.05em;
+                    color: #4b5563;
+                    font-size: 13px;
+                    border-bottom: 1px solid #e5e7eb;
                 }
                 th:nth-child(3), th:nth-child(4), th:nth-child(5) { text-align: right; }
                 .totals {

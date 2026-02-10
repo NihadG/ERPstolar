@@ -120,6 +120,8 @@ export interface Offer {
     Total: number;
     Notes: string;
     Accepted_Date: string;
+    Include_PDV: boolean;
+    PDV_Rate: number;
     Client_Name?: string;
     Client_Phone?: string;
     Client_Email?: string;
@@ -147,6 +149,9 @@ export interface OfferProduct {
     Discount_Share: number;
     Selling_Price: number;
     Total_Price: number;
+    Labor_Workers: number;
+    Labor_Days: number;
+    Labor_Daily_Rate: number;
     extras?: OfferExtra[];
 }
 

@@ -24,6 +24,7 @@ interface VoiceInputProps {
     context?: {
         projects?: string[];
         workers?: string[];
+        suppliers?: string[];
     };
 }
 
@@ -133,6 +134,18 @@ export default function VoiceInput({ onResult, onError, onTranscript, disabled, 
             // Step 1: Transcribe
             const formData = new FormData();
             formData.append('audio', audioBlob, 'recording.webm');
+
+            // Pass context hint to Whisper for better name/city recognition
+            if (context) {
+                const hints = [
+                    ...(context.projects || []),
+                    ...(context.workers || []),
+                    ...(context.suppliers || [])
+                ].filter(Boolean);
+                if (hints.length > 0) {
+                    formData.append('contextHint', hints.join(', '));
+                }
+            }
 
             const transcribeResponse = await fetch('/api/voice-transcribe', {
                 method: 'POST',

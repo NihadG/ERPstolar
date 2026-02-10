@@ -1102,7 +1102,17 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                                         </button>
                                     </div>
 
-                                    {project.products?.map(product => (
+                                    {[...(project.products || [])].sort((a, b) => {
+                                        // Natural sort for "Poz X" product names (supports decimals: 1, 1.1, 1.2, 2, 10)
+                                        const extractPoz = (name: string): number => {
+                                            const match = name?.match(/^Poz\s*(\d+(?:\.\d+)?)/i);
+                                            return match ? parseFloat(match[1]) : Infinity;
+                                        };
+                                        const pozA = extractPoz(a.Name || '');
+                                        const pozB = extractPoz(b.Name || '');
+                                        if (pozA !== pozB) return pozA - pozB;
+                                        return (a.Name || '').localeCompare(b.Name || '', 'hr', { numeric: true });
+                                    }).map(product => (
                                         <div key={product.Product_ID} className="product-card">
                                             <div className="product-header" onClick={() => toggleProduct(product.Product_ID)}>
                                                 <button className={`expand-btn ${expandedProducts.has(product.Product_ID) ? 'expanded' : ''}`}>

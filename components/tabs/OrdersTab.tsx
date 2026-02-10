@@ -5,6 +5,7 @@ import type { Order, Supplier, Project, ProductMaterial, OrderItem } from '@/lib
 import { createOrder, deleteOrder, updateOrderStatus, markOrderSent, markMaterialsReceived, getOrder, deleteOrderItemsByIds, updateOrderItem, recalculateOrderTotal } from '@/lib/database';
 import { useData } from '@/context/DataContext';
 import { generateOrderPDF, generatePDFFromHTML, type OrderPDFData } from '@/lib/pdfGenerator';
+import { getOrgSettings } from '@/lib/database';
 import { DropdownMenu } from '@/components/ui/DropdownMenu';
 import Modal from '@/components/ui/Modal';
 import { OrderWizardModal } from './OrderWizardModal';
@@ -57,6 +58,11 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
     const [editedQuantities, setEditedQuantities] = useState<Record<string, number>>({});
     const [selectedItemIds, setSelectedItemIds] = useState<Set<string>>(new Set());
 
+    // Delete Order Dialog State
+    const [deleteOrderModal, setDeleteOrderModal] = useState(false);
+    const [deleteOrderId, setDeleteOrderId] = useState<string | null>(null);
+    const [deleteMaterialAction, setDeleteMaterialAction] = useState<'received' | 'reset'>('reset');
+
     // Current order derived from expanded ID
     const currentOrder = useMemo(() =>
         orders.find(o => o.Order_ID === expandedOrderId) || null
@@ -72,19 +78,33 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
         pdvNumber: '',
         website: '',
         logoBase64: '',
-        hideNameWhenLogo: false
+        hideNameWhenLogo: false,
+        bankAccounts: [] as { bankName: string; accountNumber: string }[]
     });
 
-    // Load company info from localStorage on mount
+    // Load company info from Firestore (with localStorage fallback)
     useMemo(() => {
         if (typeof window !== 'undefined' && organizationId) {
-            const saved = localStorage.getItem(`companyInfo_${organizationId}`);
-            if (saved) {
-                try {
-                    const parsed = JSON.parse(saved);
-                    setCompanyInfo(prev => ({ ...prev, ...parsed }));
-                } catch (e) { /* ignore */ }
-            }
+            getOrgSettings(organizationId).then(firestoreData => {
+                if (firestoreData?.companyInfo) {
+                    setCompanyInfo(prev => ({ ...prev, ...firestoreData.companyInfo }));
+                    localStorage.setItem(`companyInfo_${organizationId}`, JSON.stringify(firestoreData.companyInfo));
+                    return;
+                }
+                const saved = localStorage.getItem(`companyInfo_${organizationId}`);
+                if (saved) {
+                    try {
+                        setCompanyInfo(prev => ({ ...prev, ...JSON.parse(saved) }));
+                    } catch (e) { /* ignore */ }
+                }
+            }).catch(() => {
+                const saved = localStorage.getItem(`companyInfo_${organizationId}`);
+                if (saved) {
+                    try {
+                        setCompanyInfo(prev => ({ ...prev, ...JSON.parse(saved) }));
+                    } catch (e) { /* ignore */ }
+                }
+            });
         }
     }, [organizationId]);
 
@@ -440,7 +460,7 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
         const supplier = suppliers.find(s => s.Supplier_ID === selectedSupplierId);
         if (!supplier) return;
 
-        const items = Array.from(selectedMaterialIds).map(materialId => {
+        const rawItems = Array.from(selectedMaterialIds).map(materialId => {
             const material = filteredMaterials.find(m => m.ID === materialId);
             const product = availableProducts.find(p => p.Product_ID === material?.Product_ID);
 
@@ -462,6 +482,22 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
                 Expected_Price: orderPrice,
             };
         });
+
+        // Group materials by Material_Name + Unit to combine quantities
+        const grouped = new Map<string, typeof rawItems[0] & { Product_Material_IDs: string[] }>();
+        rawItems.forEach(item => {
+            const key = `${item.Material_Name}||${item.Unit}`;
+            if (grouped.has(key)) {
+                const existing = grouped.get(key)!;
+                existing.Quantity += item.Quantity;
+                existing.Expected_Price += item.Expected_Price;
+                existing.Total_Needed += item.Total_Needed;
+                existing.Product_Material_IDs.push(item.Product_Material_ID);
+            } else {
+                grouped.set(key, { ...item, Product_Material_IDs: [item.Product_Material_ID] });
+            }
+        });
+        const items = Array.from(grouped.values());
 
         const totalAmount = items.reduce((sum, item) => sum + item.Expected_Price, 0);
 
@@ -504,12 +540,20 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
         }
     }
 
-    async function handleDeleteOrder(orderId: string) {
-        if (!confirm('Jeste li sigurni da želite obrisati ovu narudžbu?')) return;
+    function handleDeleteOrder(orderId: string) {
+        setDeleteOrderId(orderId);
+        setDeleteMaterialAction('reset');
+        setDeleteOrderModal(true);
+    }
 
-        const result = await deleteOrder(orderId, organizationId!);
+    async function confirmDeleteOrder() {
+        if (!deleteOrderId) return;
+
+        const result = await deleteOrder(deleteOrderId, organizationId!, deleteMaterialAction);
         if (result.success) {
             showToast(result.message, 'success');
+            setDeleteOrderModal(false);
+            setDeleteOrderId(null);
             onRefresh();
         } else {
             showToast(result.message, 'error');
@@ -797,12 +841,13 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
                     .print-layout * { box-sizing: border-box; margin: 0; padding: 0; }
                     .print-layout { 
                         font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; 
-                        padding: 40px; 
+                        padding: 24px; 
                         color: #1d1d1f; 
                         background: white; 
-                        width: 100%;
+                        width: 794px;
+                        overflow: hidden;
                     }
-                    .print-layout .header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 32px; padding-bottom: 24px; border-bottom: 2px solid #1d1d1f; }
+                    .print-layout .header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 32px; padding-bottom: 24px; border-bottom: 1px solid #e5e5e5; }
                     .print-layout .company-info { display: flex; flex-direction: column; gap: 6px; }
                     .print-layout .company-logo { max-width: 180px; max-height: 60px; width: auto; height: auto; object-fit: contain; }
                     .print-layout .company-name { font-size: 20px; font-weight: 700; letter-spacing: -0.3px; color: #1d1d1f; margin: 0; }
@@ -1215,7 +1260,7 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
                                                         )}
                                                     </div>
 
-                                                    {order.items?.map(item => {
+                                                    {[...(order.items || [])].sort((a, b) => (a.Material_Name || '').localeCompare(b.Material_Name || '', 'hr')).map(item => {
                                                         const isReceived = item.Status === 'Primljeno';
                                                         const isSelected = selectedItemIds.has(item.ID);
 
@@ -1305,6 +1350,71 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
                 setOrderQuantity={(id, qty) => setOrderQuantities(prev => ({ ...prev, [id]: qty }))}
                 setOnStockQuantity={(id, qty) => setOnStockQuantities(prev => ({ ...prev, [id]: qty }))}
             />
+
+            {/* Delete Order Confirmation Modal */}
+            <Modal
+                isOpen={deleteOrderModal}
+                onClose={() => { setDeleteOrderModal(false); setDeleteOrderId(null); }}
+                title="Brisanje narudžbe"
+                footer={
+                    <>
+                        <button className="btn btn-secondary" onClick={() => { setDeleteOrderModal(false); setDeleteOrderId(null); }}>Otkaži</button>
+                        <button className="glass-btn glass-btn-primary" style={{ background: '#ef4444', borderColor: '#ef4444' }} onClick={confirmDeleteOrder}>Obriši narudžbu</button>
+                    </>
+                }
+            >
+                <p style={{ marginBottom: '16px', color: 'var(--text-secondary)' }}>
+                    Šta želite učiniti s materijalima iz ove narudžbe?
+                </p>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                    <label style={{
+                        display: 'flex',
+                        alignItems: 'flex-start',
+                        gap: '12px',
+                        padding: '14px 16px',
+                        borderRadius: '10px',
+                        border: deleteMaterialAction === 'reset' ? '2px solid #2563eb' : '2px solid #e2e8f0',
+                        background: deleteMaterialAction === 'reset' ? '#eff6ff' : 'white',
+                        cursor: 'pointer',
+                        transition: 'all 0.2s'
+                    }}>
+                        <input
+                            type="radio"
+                            name="deleteAction"
+                            checked={deleteMaterialAction === 'reset'}
+                            onChange={() => setDeleteMaterialAction('reset')}
+                            style={{ marginTop: '2px' }}
+                        />
+                        <div>
+                            <div style={{ fontWeight: 600, color: '#1e293b', marginBottom: '2px' }}>Vrati na "Nije naručeno"</div>
+                            <div style={{ fontSize: '13px', color: '#64748b' }}>Materijali će biti vraćeni u status čekanja i moći ćete ih ponovo naručiti.</div>
+                        </div>
+                    </label>
+                    <label style={{
+                        display: 'flex',
+                        alignItems: 'flex-start',
+                        gap: '12px',
+                        padding: '14px 16px',
+                        borderRadius: '10px',
+                        border: deleteMaterialAction === 'received' ? '2px solid #10b981' : '2px solid #e2e8f0',
+                        background: deleteMaterialAction === 'received' ? '#ecfdf5' : 'white',
+                        cursor: 'pointer',
+                        transition: 'all 0.2s'
+                    }}>
+                        <input
+                            type="radio"
+                            name="deleteAction"
+                            checked={deleteMaterialAction === 'received'}
+                            onChange={() => setDeleteMaterialAction('received')}
+                            style={{ marginTop: '2px' }}
+                        />
+                        <div>
+                            <div style={{ fontWeight: 600, color: '#1e293b', marginBottom: '2px' }}>Označi kao primljene</div>
+                            <div style={{ fontSize: '13px', color: '#64748b' }}>Materijali će biti označeni kao primljeni, npr. ako ste ih nabavili direktno.</div>
+                        </div>
+                    </label>
+                </div>
+            </Modal>
         </div>
     );
 }

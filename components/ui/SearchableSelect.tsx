@@ -18,7 +18,7 @@ interface SearchableSelectProps {
 export function SearchableSelect({ options, value, onChange, placeholder = 'Pretraži...', label }: SearchableSelectProps) {
     const [isOpen, setIsOpen] = useState(false);
     const [searchQuery, setSearchQuery] = useState('');
-    const [dropdownPosition, setDropdownPosition] = useState<{ top: number, left: number, width: number } | null>(null);
+    const [dropdownPosition, setDropdownPosition] = useState<{ top: number, left: number, width: number, maxHeight: number } | null>(null);
     const wrapperRef = useRef<HTMLDivElement>(null);
     const inputRef = useRef<HTMLInputElement>(null);
 
@@ -40,10 +40,26 @@ export function SearchableSelect({ options, value, onChange, placeholder = 'Pret
     useEffect(() => {
         if (isOpen && wrapperRef.current) {
             const rect = wrapperRef.current.getBoundingClientRect();
+            const spaceBelow = window.innerHeight - rect.bottom;
+            const spaceAbove = rect.top;
+            const dropdownHeight = 300; // Estimated max height
+
+            let top = rect.bottom + 4;
+            let maxHeight = Math.min(dropdownHeight, spaceBelow - 20);
+
+            // Flip up if not enough space below but enough above
+            if (spaceBelow < dropdownHeight && spaceAbove > spaceBelow) {
+                top = rect.top - Math.min(dropdownHeight, spaceAbove - 20) - 4;
+                maxHeight = Math.min(dropdownHeight, spaceAbove - 20);
+                // We'll add a class or style to indicate it's flipped if needed, 
+                // but for portal positioning 'top' is enough.
+            }
+
             setDropdownPosition({
-                top: rect.bottom,
+                top,
                 left: rect.left,
-                width: rect.width
+                width: rect.width,
+                maxHeight
             });
         }
     }, [isOpen]);
@@ -95,9 +111,10 @@ export function SearchableSelect({ options, value, onChange, placeholder = 'Pret
                     id="searchable-select-dropdown"
                     className="searchable-select-dropdown"
                     style={{
-                        top: dropdownPosition.top + 4,
+                        top: dropdownPosition.top,
                         left: dropdownPosition.left,
-                        width: dropdownPosition.width
+                        width: dropdownPosition.width,
+                        maxHeight: dropdownPosition.maxHeight
                     }}
                 >
                     <div className="dropdown-search-wrapper">
@@ -286,14 +303,14 @@ export function SearchableSelect({ options, value, onChange, placeholder = 'Pret
                 /* Mobile Adaptations */
                 @media (max-width: 768px) {
                     :global(.searchable-select-dropdown) {
-                        position: fixed !important;
-                        top: auto !important;
+                        /* Force fixed bottom sheet on mobile regardless of calculation */
+                        top: auto !important; 
                         left: 0 !important;
                         bottom: 0 !important;
                         width: 100% !important;
                         border-radius: 20px 20px 0 0 !important;
                         animation: slideUp 0.25s cubic-bezier(0.16, 1, 0.3, 1) !important;
-                        max-height: 70vh !important;
+                        max-height: 70vh !important; /* Fixed height on mobile */
                         box-shadow: 0 -4px 30px rgba(0,0,0,0.15) !important;
                     }
 

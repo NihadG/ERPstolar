@@ -1,10 +1,11 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import type { Material } from '@/lib/types';
 import { saveMaterial, deleteMaterial, deleteDuplicateMaterials } from '@/lib/database';
 import { useData } from '@/context/DataContext';
 import Modal from '@/components/ui/Modal';
+import { SearchableSelect } from '@/components/ui/SearchableSelect';
 import { MATERIAL_CATEGORIES } from '@/lib/types';
 import { formatCurrency } from '@/lib/utils';
 
@@ -15,12 +16,26 @@ interface MaterialsTabProps {
 }
 
 export default function MaterialsTab({ materials, onRefresh, showToast }: MaterialsTabProps) {
-    const { organizationId } = useData();
+    const { organizationId, appState, loadTabData, isTabLoaded } = useData();
     const [searchTerm, setSearchTerm] = useState('');
     const [categoryFilter, setCategoryFilter] = useState('');
     const [materialModal, setMaterialModal] = useState(false);
     const [editingMaterial, setEditingMaterial] = useState<Partial<Material> | null>(null);
     const [removingDuplicates, setRemovingDuplicates] = useState(false);
+
+    // Load suppliers if not loaded
+    useEffect(() => {
+        if (!isTabLoaded('suppliers')) {
+            loadTabData('suppliers');
+        }
+    }, [isTabLoaded, loadTabData]);
+
+    const supplierOptions = useMemo(() => {
+        return (appState.suppliers || []).map(s => ({
+            value: s.Name,
+            label: s.Name
+        }));
+    }, [appState.suppliers]);
 
     const filteredMaterials = materials.filter(material => {
         const matchesSearch = material.Name.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -216,6 +231,15 @@ export default function MaterialsTab({ materials, onRefresh, showToast }: Materi
                         min="0"
                         value={editingMaterial?.Default_Unit_Price || ''}
                         onChange={(e) => setEditingMaterial({ ...editingMaterial, Default_Unit_Price: parseFloat(e.target.value) || 0 })}
+                    />
+                </div>
+                <div className="form-group">
+                    <SearchableSelect
+                        label="Dobavljač"
+                        options={supplierOptions}
+                        value={editingMaterial?.Default_Supplier || ''}
+                        onChange={(val) => setEditingMaterial({ ...editingMaterial, Default_Supplier: val })}
+                        placeholder="Odaberi dobavljača..."
                     />
                 </div>
                 <div className="form-group">

@@ -19,7 +19,7 @@ interface OverviewTabProps {
 }
 
 type GroupBy = 'none' | 'project' | 'productStatus' | 'materialStatus' | 'supplier';
-type ViewMode = 'products' | 'materials' | 'both';
+type ViewMode = 'products' | 'materials' | 'both' | 'grouped';
 
 interface OverviewItem {
     type: 'product' | 'material';
@@ -67,6 +67,9 @@ export default function OverviewTab({ projects, workOrders, orders = [], supplie
     // Product Timeline Modal
     const [timelineProduct, setTimelineProduct] = useState<OverviewItem | null>(null);
 
+    // Material grouping
+    const [expandedMaterialProject, setExpandedMaterialProject] = useState<string | null>(null);
+
     // Contextual grouping options based on viewMode
     const groupingOptions = useMemo(() => {
         if (viewMode === 'products') {
@@ -104,6 +107,12 @@ export default function OverviewTab({ projects, workOrders, orders = [], supplie
     const handleViewModeChange = (newMode: ViewMode) => {
         setViewMode(newMode);
         setStatusFilter('');
+        if (newMode === 'grouped') {
+            setGroupBy('project');
+            setSelectedMaterials(new Set());
+            setSelectedSupplier('');
+            return;
+        }
         if (newMode === 'products' && (groupBy === 'materialStatus' || groupBy === 'supplier')) {
             setGroupBy('project');
         } else if (newMode === 'materials' && groupBy === 'productStatus') {
@@ -682,6 +691,13 @@ export default function OverviewTab({ projects, workOrders, orders = [], supplie
                                 <span className="material-icons-round">category</span>
                                 Materijali
                             </button>
+                            <button
+                                className={viewMode === 'grouped' ? 'active' : ''}
+                                onClick={() => handleViewModeChange('grouped')}
+                            >
+                                <span className="material-icons-round">view_list</span>
+                                Grupisano
+                            </button>
                         </div>
 
                         <div className="divider"></div>
@@ -720,167 +736,356 @@ export default function OverviewTab({ projects, workOrders, orders = [], supplie
                 </div>
             </div>
 
-            {/* Grouped content */}
-            < div className="overview-content" >
-                {
-                    groupedData.length === 0 ? (
-                        <div className="empty-state">
-                            <span className="material-icons-round">inbox</span>
-                            <h3>Nema rezultata</h3>
-                            <p>Pokušajte promijeniti filtere</p>
-                        </div>
-                    ) : (
-                        groupedData.map(group => (
-                            <div key={group.groupKey} className="group-card">
-                                {/* Group Header - Clean single row */}
+            {/* Content area */}
+            {viewMode === 'grouped' ? (
+                /* Grouped Materials View */
+                <div className="overview-content">
+                    {projects.filter(p => p.Status !== 'Otkazano' && p.Status !== 'Završeno').map(project => {
+                        // Build order lookup: Product_Material_ID -> order info (SOURCE OF TRUTH)
+                        const orderLookup = new Map<string, { orderQty: number; orderStatus: string; orderNumber: string; receivedDate?: string }>();
+                        (orders || []).forEach(order => {
+                            (order.items || []).forEach(item => {
+                                if (item.Product_Material_ID) {
+                                    orderLookup.set(item.Product_Material_ID, {
+                                        orderQty: item.Quantity || 0,
+                                        orderStatus: item.Status || '',
+                                        orderNumber: order.Order_Number || '',
+                                        receivedDate: (item as any).Received_Date
+                                    });
+                                }
+                            });
+                        });
+
+                        // Aggregate materials across all products
+                        const materialMap = new Map<string, {
+                            name: string;
+                            unit: string;
+                            totalQty: number;
+                            orderedQty: number;
+                            receivedQty: number;
+                            notOrderedQty: number;
+                        }>();
+
+                        (project.products || []).forEach(product => {
+                            (product.materials || []).forEach(mat => {
+                                const key = `${mat.Material_Name}||${mat.Unit}`;
+                                // Use ORDER DATA as source of truth, not mat.Status
+                                const orderInfo = orderLookup.get(mat.ID);
+                                const hasOrder = !!orderInfo || !!mat.Order_ID;
+                                const isReceived = orderInfo?.orderStatus === 'Primljeno' || mat.Status === 'Primljeno';
+                                const qty = mat.Quantity || 0;
+
+                                if (materialMap.has(key)) {
+                                    const existing = materialMap.get(key)!;
+                                    existing.totalQty += qty;
+                                    if (isReceived) {
+                                        existing.receivedQty += qty;
+                                    } else if (hasOrder) {
+                                        existing.orderedQty += qty;
+                                    } else {
+                                        existing.notOrderedQty += qty;
+                                    }
+                                } else {
+                                    materialMap.set(key, {
+                                        name: mat.Material_Name,
+                                        unit: mat.Unit,
+                                        totalQty: qty,
+                                        orderedQty: (!isReceived && hasOrder) ? qty : 0,
+                                        receivedQty: isReceived ? qty : 0,
+                                        notOrderedQty: (!hasOrder && !isReceived) ? qty : 0,
+                                    });
+                                }
+                            });
+                        });
+
+                        if (materialMap.size === 0) return null;
+
+                        const groupedMaterials = Array.from(materialMap.values()).sort((a, b) => a.name.localeCompare(b.name, 'hr'));
+                        const isExpanded = expandedMaterialProject === project.Project_ID;
+                        const totalMats = groupedMaterials.reduce((s, m) => s + m.totalQty, 0);
+                        const totalOrdered = groupedMaterials.reduce((s, m) => s + m.orderedQty + m.receivedQty, 0);
+                        const allDone = totalOrdered >= totalMats;
+
+                        return (
+                            <div key={project.Project_ID} className="group-card">
                                 <div
                                     className="group-card-header"
-                                    onClick={() => toggleGroup(group.groupKey)}
+                                    onClick={() => setExpandedMaterialProject(isExpanded ? null : project.Project_ID)}
                                 >
                                     <div className="group-left">
                                         <span className="material-icons-round toggle-chevron">
-                                            {collapsedGroups.has(group.groupKey) ? 'chevron_right' : 'expand_more'}
+                                            {isExpanded ? 'expand_more' : 'chevron_right'}
                                         </span>
-                                        <span className="group-title">{group.groupLabel}</span>
-                                        <span className="group-count-badge">{group.count} stavke</span>
+                                        <span className="group-title">{project.Client_Name}</span>
+                                        <span className="group-count-badge">{groupedMaterials.length} materijala</span>
                                     </div>
-                                    <div className="group-right">
-                                        {/* Progress bar removed */}
+                                    <div className="group-right" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                        <span style={{
+                                            fontSize: '11px',
+                                            padding: '2px 8px',
+                                            borderRadius: '10px',
+                                            background: allDone ? '#ecfdf5' : '#fffbeb',
+                                            color: allDone ? '#10b981' : '#f59e0b',
+                                            fontWeight: 600
+                                        }}>
+                                            {allDone ? '✓ Sve naručeno' : `${groupedMaterials.filter(m => m.notOrderedQty > 0).length} čeka narudžbu`}
+                                        </span>
+                                        <span style={{ fontSize: '12px', color: '#64748b' }}>{project.products?.length || 0} proizvoda</span>
                                     </div>
                                 </div>
 
-                                {/* Items List */}
-                                {!collapsedGroups.has(group.groupKey) && (
-                                    <div className="group-card-content">
-                                        {/* Table Header */}
-                                        <div className={`list-header ${isSelectionMode ? 'with-checkbox' : ''}`}>
-                                            {isSelectionMode && (
-                                                <div className="col-checkbox">
-                                                    <input
-                                                        type="checkbox"
-                                                        checked={group.items.filter(i => i.type === 'material' && i.Material_ID).every(i => selectedMaterials.has(i.Material_ID!))}
-                                                        onChange={() => selectAllMaterialsInGroup(group.items, group.groupKey)}
-                                                    />
-                                                </div>
-                                            )}
-                                            <div className="col-naziv">NAZIV</div>
-                                            <div className="col-kol">KOL.</div>
-                                            <div className="col-projekt">PROJEKT</div>
-                                            <div className="col-profit">PROFIT</div>
-                                            <div className="col-datum">DATUM</div>
-                                        </div>
+                                {isExpanded && (
+                                    <div className="group-card-content" style={{ padding: '0 16px 16px' }}>
+                                        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+                                            <thead>
+                                                <tr style={{ borderBottom: '2px solid #e2e8f0' }}>
+                                                    <th style={{ textAlign: 'left', padding: '10px 8px 10px 0', color: '#64748b', fontWeight: 600, fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Materijal</th>
+                                                    <th style={{ textAlign: 'right', padding: '10px 8px', color: '#64748b', fontWeight: 600, fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Potrebno</th>
+                                                    <th style={{ textAlign: 'right', padding: '10px 8px', color: '#64748b', fontWeight: 600, fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Naručeno</th>
+                                                    <th style={{ textAlign: 'right', padding: '10px 8px', color: '#64748b', fontWeight: 600, fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Primljeno</th>
+                                                    <th style={{ textAlign: 'right', padding: '10px 0 10px 8px', color: '#64748b', fontWeight: 600, fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Status</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {groupedMaterials.map((mat, i) => {
+                                                    // Derive a single clean status from order data
+                                                    let statusLabel: string;
+                                                    let statusColor: string;
+                                                    let statusBg: string;
 
-                                        {/* Items */}
-                                        {group.items.map((item, idx) => (
-                                            <div
-                                                key={idx}
-                                                className={`list-item ${isSelectionMode ? 'with-checkbox' : ''} ${item.type === 'material' && item.Material_ID && selectedMaterials.has(item.Material_ID) ? 'selected' : ''}`}
-                                                onClick={item.type === 'material' && isSelectionMode && item.Material_ID ? () => toggleMaterialSelection(item.Material_ID!, group.groupKey) : undefined}
-                                                style={isSelectionMode && item.type === 'material' ? { cursor: 'pointer' } : undefined}
-                                            >
-                                                {isSelectionMode && (
-                                                    <div className="col-checkbox">
-                                                        {item.type === 'material' && item.Material_ID && (
-                                                            <input
-                                                                type="checkbox"
-                                                                checked={selectedMaterials.has(item.Material_ID)}
-                                                                onChange={() => toggleMaterialSelection(item.Material_ID!, group.groupKey)}
-                                                                onClick={(e) => e.stopPropagation()}
-                                                            />
-                                                        )}
-                                                    </div>
-                                                )}
-                                                <div className="col-naziv">
-                                                    <div className={`item-icon ${item.type}`}>
-                                                        <span className="material-icons-round">
-                                                            {item.type === 'product' ? 'inventory_2' : 'category'}
-                                                        </span>
-                                                    </div>
-                                                    <div className="item-info">
-                                                        <span className="item-name">
-                                                            {item.type === 'product' ? item.Product_Name : item.Material_Name}
-                                                        </span>
-                                                        <span className={`item-status ${getStatusClass(item.type === 'product' ? item.Product_Status! : item.Material_Status!)}`}>
-                                                            {item.type === 'product' ? item.Product_Status : item.Material_Status}
-                                                        </span>
-                                                    </div>
-                                                </div>
-                                                <div className="col-kol">
-                                                    <span className="kol-value">{item.type === 'material' ? item.Material_Quantity : (item.Product_Quantity || 1)}</span>
-                                                    <span className="kol-unit">{item.type === 'material' ? (item.Material_Unit || 'kom') : 'KOM'}</span>
-                                                </div>
-                                                <div className="col-projekt">{item.Client_Name}</div>
-                                                {/* Profit column - only for products with profit data */}
-                                                {item.type === 'product' && item.Profit !== undefined ? (
-                                                    <div
-                                                        className="col-profit"
-                                                        style={{
-                                                            display: 'flex',
-                                                            alignItems: 'center',
-                                                            gap: '6px',
-                                                            padding: '4px 8px',
-                                                            borderRadius: '6px',
-                                                            background: item.Profit_Margin! >= 30 ? 'rgba(16, 185, 129, 0.1)' :
-                                                                item.Profit_Margin! >= 15 ? 'rgba(245, 158, 11, 0.1)' : 'rgba(239, 68, 68, 0.1)',
-                                                            color: item.Profit_Margin! >= 30 ? '#10b981' :
-                                                                item.Profit_Margin! >= 15 ? '#f59e0b' : '#ef4444',
-                                                            fontWeight: 600,
-                                                            fontSize: '12px',
-                                                            minWidth: '100px',
-                                                            cursor: 'pointer'
-                                                        }}
-                                                        title="Klikni za detaljan izvještaj"
-                                                        onClick={(e) => {
-                                                            e.stopPropagation();
-                                                            setTimelineProduct(item);
-                                                        }}
-                                                    >
-                                                        <span className="material-icons-round" style={{ fontSize: '14px' }}>
-                                                            {item.Profit_Margin! >= 30 ? 'trending_up' :
-                                                                item.Profit_Margin! >= 15 ? 'trending_flat' : 'trending_down'}
-                                                        </span>
-                                                        {item.Profit.toLocaleString('hr-HR')} KM
-                                                        <span style={{ opacity: 0.7, fontSize: '11px' }}>({item.Profit_Margin?.toFixed(0)}%)</span>
-                                                    </div>
-                                                ) : item.type === 'product' ? (
-                                                    <div className="col-profit" style={{
-                                                        color: '#9ca3af',
-                                                        fontSize: '12px',
-                                                        minWidth: '100px'
-                                                    }}>
-                                                        <span className="material-icons-round" style={{ fontSize: '14px' }}>remove</span>
-                                                    </div>
-                                                ) : (
-                                                    <div className="col-profit" style={{ minWidth: '100px' }}></div>
-                                                )}
-                                                <div className="col-datum">
-                                                    <span className="material-icons-round" style={{
-                                                        color: item.DateType === 'received' ? '#10b981' :
-                                                            item.DateType === 'order' ? '#3b82f6' :
-                                                                item.type === 'product' && item.RelevantDate ? '#f59e0b' : '#9ca3af'
-                                                    }}>
-                                                        {item.DateType === 'received' ? 'event_available' :
-                                                            item.DateType === 'order' ? 'shopping_cart' :
-                                                                item.type === 'product' && item.RelevantDate ? 'factory' : 'event'}
-                                                    </span>
-                                                    <span style={{
-                                                        color: item.DateType === 'received' ? '#059669' :
-                                                            item.DateType === 'order' ? '#2563eb' :
-                                                                item.type === 'product' && item.RelevantDate ? '#d97706' : 'inherit',
-                                                        fontWeight: item.RelevantDate ? 500 : 400
-                                                    }}>
-                                                        {item.RelevantDate ? new Date(item.RelevantDate).toLocaleDateString('hr') : '-'}
-                                                    </span>
-                                                </div>
-                                            </div>
-                                        ))}
+                                                    if (mat.receivedQty >= mat.totalQty) {
+                                                        statusLabel = 'Primljeno';
+                                                        statusColor = '#10b981';
+                                                        statusBg = '#ecfdf5';
+                                                    } else if (mat.receivedQty > 0) {
+                                                        statusLabel = `Djelomično primljeno`;
+                                                        statusColor = '#06b6d4';
+                                                        statusBg = '#ecfeff';
+                                                    } else if (mat.orderedQty + mat.receivedQty >= mat.totalQty) {
+                                                        statusLabel = 'Naručeno';
+                                                        statusColor = '#3b82f6';
+                                                        statusBg = '#eff6ff';
+                                                    } else if (mat.orderedQty > 0) {
+                                                        statusLabel = 'Djelomično naručeno';
+                                                        statusColor = '#8b5cf6';
+                                                        statusBg = '#f5f3ff';
+                                                    } else {
+                                                        statusLabel = 'Nije naručeno';
+                                                        statusColor = '#f59e0b';
+                                                        statusBg = '#fffbeb';
+                                                    }
+
+                                                    return (
+                                                        <tr key={i} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                                                            <td style={{ padding: '10px 8px 10px 0', fontWeight: 500, color: '#1e293b' }}>
+                                                                {mat.name}
+                                                            </td>
+                                                            <td style={{ textAlign: 'right', padding: '10px 8px', fontWeight: 600, color: '#334155' }}>
+                                                                {mat.totalQty} {mat.unit}
+                                                            </td>
+                                                            <td style={{
+                                                                textAlign: 'right',
+                                                                padding: '10px 8px',
+                                                                fontWeight: 600,
+                                                                color: (mat.orderedQty + mat.receivedQty) >= mat.totalQty ? '#10b981' : mat.orderedQty > 0 ? '#3b82f6' : '#94a3b8'
+                                                            }}>
+                                                                {mat.orderedQty + mat.receivedQty} {mat.unit}
+                                                            </td>
+                                                            <td style={{
+                                                                textAlign: 'right',
+                                                                padding: '10px 8px',
+                                                                fontWeight: 600,
+                                                                color: mat.receivedQty >= mat.totalQty ? '#10b981' : mat.receivedQty > 0 ? '#06b6d4' : '#94a3b8'
+                                                            }}>
+                                                                {mat.receivedQty} {mat.unit}
+                                                            </td>
+                                                            <td style={{ textAlign: 'right', padding: '10px 0 10px 8px' }}>
+                                                                <span style={{
+                                                                    fontSize: '11px',
+                                                                    padding: '3px 10px',
+                                                                    borderRadius: '8px',
+                                                                    background: statusBg,
+                                                                    color: statusColor,
+                                                                    fontWeight: 600,
+                                                                    whiteSpace: 'nowrap'
+                                                                }}>
+                                                                    {statusLabel}
+                                                                </span>
+                                                            </td>
+                                                        </tr>
+                                                    );
+                                                })}
+                                            </tbody>
+                                        </table>
                                     </div>
                                 )}
                             </div>
-                        ))
-                    )
-                }
-            </div >
+                        );
+                    })}
+                </div>
+            ) : (
+                /* Standard grouped content */
+                <div className="overview-content" >
+                    {
+                        groupedData.length === 0 ? (
+                            <div className="empty-state">
+                                <span className="material-icons-round">inbox</span>
+                                <h3>Nema rezultata</h3>
+                                <p>Pokušajte promijeniti filtere</p>
+                            </div>
+                        ) : (
+                            groupedData.map(group => (
+                                <div key={group.groupKey} className="group-card">
+                                    {/* Group Header - Clean single row */}
+                                    <div
+                                        className="group-card-header"
+                                        onClick={() => toggleGroup(group.groupKey)}
+                                    >
+                                        <div className="group-left">
+                                            <span className="material-icons-round toggle-chevron">
+                                                {collapsedGroups.has(group.groupKey) ? 'chevron_right' : 'expand_more'}
+                                            </span>
+                                            <span className="group-title">{group.groupLabel}</span>
+                                            <span className="group-count-badge">{group.count} stavke</span>
+                                        </div>
+                                        <div className="group-right">
+                                            {/* Progress bar removed */}
+                                        </div>
+                                    </div>
+
+                                    {/* Items List */}
+                                    {!collapsedGroups.has(group.groupKey) && (
+                                        <div className="group-card-content">
+                                            {/* Table Header */}
+                                            <div className={`list-header ${isSelectionMode ? 'with-checkbox' : ''}`}>
+                                                {isSelectionMode && (
+                                                    <div className="col-checkbox">
+                                                        <input
+                                                            type="checkbox"
+                                                            checked={group.items.filter(i => i.type === 'material' && i.Material_ID).every(i => selectedMaterials.has(i.Material_ID!))}
+                                                            onChange={() => selectAllMaterialsInGroup(group.items, group.groupKey)}
+                                                        />
+                                                    </div>
+                                                )}
+                                                <div className="col-naziv">NAZIV</div>
+                                                <div className="col-kol">KOL.</div>
+                                                <div className="col-projekt">PROJEKT</div>
+                                                <div className="col-profit">PROFIT</div>
+                                                <div className="col-datum">DATUM</div>
+                                            </div>
+
+                                            {/* Items */}
+                                            {group.items.map((item, idx) => (
+                                                <div
+                                                    key={idx}
+                                                    className={`list-item ${isSelectionMode ? 'with-checkbox' : ''} ${item.type === 'material' && item.Material_ID && selectedMaterials.has(item.Material_ID) ? 'selected' : ''}`}
+                                                    onClick={item.type === 'material' && isSelectionMode && item.Material_ID ? () => toggleMaterialSelection(item.Material_ID!, group.groupKey) : undefined}
+                                                    style={isSelectionMode && item.type === 'material' ? { cursor: 'pointer' } : undefined}
+                                                >
+                                                    {isSelectionMode && (
+                                                        <div className="col-checkbox">
+                                                            {item.type === 'material' && item.Material_ID && (
+                                                                <input
+                                                                    type="checkbox"
+                                                                    checked={selectedMaterials.has(item.Material_ID)}
+                                                                    onChange={() => toggleMaterialSelection(item.Material_ID!, group.groupKey)}
+                                                                    onClick={(e) => e.stopPropagation()}
+                                                                />
+                                                            )}
+                                                        </div>
+                                                    )}
+                                                    <div className="col-naziv">
+                                                        <div className={`item-icon ${item.type}`}>
+                                                            <span className="material-icons-round">
+                                                                {item.type === 'product' ? 'inventory_2' : 'category'}
+                                                            </span>
+                                                        </div>
+                                                        <div className="item-info">
+                                                            <span className="item-name">
+                                                                {item.type === 'product' ? item.Product_Name : item.Material_Name}
+                                                            </span>
+                                                            <span className={`item-status ${getStatusClass(item.type === 'product' ? item.Product_Status! : item.Material_Status!)}`}>
+                                                                {item.type === 'product' ? item.Product_Status : item.Material_Status}
+                                                            </span>
+                                                        </div>
+                                                    </div>
+                                                    <div className="col-kol">
+                                                        <span className="kol-value">{item.type === 'material' ? item.Material_Quantity : (item.Product_Quantity || 1)}</span>
+                                                        <span className="kol-unit">{item.type === 'material' ? (item.Material_Unit || 'kom') : 'KOM'}</span>
+                                                    </div>
+                                                    <div className="col-projekt">{item.Client_Name}</div>
+                                                    {/* Profit column - only for products with profit data */}
+                                                    {item.type === 'product' && item.Profit !== undefined ? (
+                                                        <div
+                                                            className="col-profit"
+                                                            style={{
+                                                                display: 'flex',
+                                                                alignItems: 'center',
+                                                                gap: '6px',
+                                                                padding: '4px 8px',
+                                                                borderRadius: '6px',
+                                                                background: item.Profit_Margin! >= 30 ? 'rgba(16, 185, 129, 0.1)' :
+                                                                    item.Profit_Margin! >= 15 ? 'rgba(245, 158, 11, 0.1)' : 'rgba(239, 68, 68, 0.1)',
+                                                                color: item.Profit_Margin! >= 30 ? '#10b981' :
+                                                                    item.Profit_Margin! >= 15 ? '#f59e0b' : '#ef4444',
+                                                                fontWeight: 600,
+                                                                fontSize: '12px',
+                                                                minWidth: '100px',
+                                                                cursor: 'pointer'
+                                                            }}
+                                                            title="Klikni za detaljan izvještaj"
+                                                            onClick={(e) => {
+                                                                e.stopPropagation();
+                                                                setTimelineProduct(item);
+                                                            }}
+                                                        >
+                                                            <span className="material-icons-round" style={{ fontSize: '14px' }}>
+                                                                {item.Profit_Margin! >= 30 ? 'trending_up' :
+                                                                    item.Profit_Margin! >= 15 ? 'trending_flat' : 'trending_down'}
+                                                            </span>
+                                                            {item.Profit.toLocaleString('hr-HR')} KM
+                                                            <span style={{ opacity: 0.7, fontSize: '11px' }}>({item.Profit_Margin?.toFixed(0)}%)</span>
+                                                        </div>
+                                                    ) : item.type === 'product' ? (
+                                                        <div className="col-profit" style={{
+                                                            color: '#9ca3af',
+                                                            fontSize: '12px',
+                                                            minWidth: '100px'
+                                                        }}>
+                                                            <span className="material-icons-round" style={{ fontSize: '14px' }}>remove</span>
+                                                        </div>
+                                                    ) : (
+                                                        <div className="col-profit" style={{ minWidth: '100px' }}></div>
+                                                    )}
+                                                    <div className="col-datum">
+                                                        <span className="material-icons-round" style={{
+                                                            color: item.DateType === 'received' ? '#10b981' :
+                                                                item.DateType === 'order' ? '#3b82f6' :
+                                                                    item.type === 'product' && item.RelevantDate ? '#f59e0b' : '#9ca3af'
+                                                        }}>
+                                                            {item.DateType === 'received' ? 'event_available' :
+                                                                item.DateType === 'order' ? 'shopping_cart' :
+                                                                    item.type === 'product' && item.RelevantDate ? 'factory' : 'event'}
+                                                        </span>
+                                                        <span style={{
+                                                            color: item.DateType === 'received' ? '#059669' :
+                                                                item.DateType === 'order' ? '#2563eb' :
+                                                                    item.type === 'product' && item.RelevantDate ? '#d97706' : 'inherit',
+                                                            fontWeight: item.RelevantDate ? 500 : 400
+                                                        }}>
+                                                            {item.RelevantDate ? new Date(item.RelevantDate).toLocaleDateString('hr') : '-'}
+                                                        </span>
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
+                            ))
+                        )
+                    }
+                </div >
+            )}
 
             {/* Floating Action Bar for Material Selection */}
             {
