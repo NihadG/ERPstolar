@@ -38,7 +38,7 @@ interface OfferProductState {
 interface OffersTabProps {
     offers: Offer[];
     projects: Project[];
-    onRefresh: () => void;
+    onRefresh: (...collections: string[]) => void;
     showToast: (message: string, type: 'success' | 'error' | 'info') => void;
 }
 
@@ -382,7 +382,7 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
                 setCreateModal(false);
                 setIsEditMode(false);
                 setCurrentOffer(null);
-                onRefresh();
+                onRefresh('offers');
             } else {
                 showToast(result.message, 'error');
             }
@@ -393,7 +393,7 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
             if (result.success) {
                 showToast('Ponuda kreirana: ' + result.data?.Offer_Number, 'success');
                 setCreateModal(false);
-                onRefresh();
+                onRefresh('offers');
             } else {
                 showToast(result.message, 'error');
             }
@@ -428,7 +428,7 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
         const result = await deleteOffer(offerId, organizationId!);
         if (result.success) {
             showToast(result.message, 'success');
-            onRefresh();
+            onRefresh('offers');
         } else {
             showToast(result.message, 'error');
         }
@@ -438,7 +438,7 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
         const result = await updateOfferStatus(offerId, status, organizationId!);
         if (result.success) {
             showToast('Status ažuriran', 'success');
-            onRefresh();
+            onRefresh('offers');
             // Refresh view modal if open
             if (currentOffer && currentOffer.Offer_ID === offerId) {
                 const updated = await getOffer(offerId, organizationId!);
@@ -689,8 +689,8 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
                     }
                     
                     .products-section th {
-                        font-size: 13px;
-                        font-weight: 600;
+                        font-size: 15px;
+                        font-weight: 700;
                         color: #4b5563;
                         padding: 12px 14px;
                         border-bottom: 1px solid #e5e7eb;
@@ -715,7 +715,7 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
                         letter-spacing: 0px;
                     }
                     
-                    .products-section td:first-child { text-align: center; color: #6e6e73; font-size: 14px; }
+                    .products-section td:first-child { text-align: center; color: #6e6e73; font-size: 13px; }
                     .products-section td:nth-child(3) { text-align: center; color: #5a5a5a; }
                     .products-section td:nth-child(4) { text-align: right; color: #3d3d3d; }
                     .products-section td:nth-child(5) { text-align: right; color: #1d1d1f; font-size: 16px; }
@@ -724,10 +724,17 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
                     
                     .products-section .product-name {
                         font-family: 'Google Sans', 'Roboto', sans-serif;
-                        font-weight: 500;
-                        font-size: 16px;
+                        font-weight: 400;
+                        font-size: 15px;
                         color: #2d2d2d;
                         letter-spacing: 0.3px;
+                    }
+                    
+                    .products-section .product-dimensions {
+                        font-size: 11px;
+                        color: #86868b;
+                        margin-top: 2px;
+                        font-weight: 400;
                     }
                     
                     .totals-card {
@@ -1018,7 +1025,10 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
                                                 ${products.map((p, i) => `
                                                     <tr>
                                                         <td>${i + 1}</td>
-                                                        <td class="product-name">${p.Product_Name}</td>
+                                                        <td>
+                                                            <div class="product-name">${p.Product_Name}</div>
+                                                            ${(p as any).Width && (p as any).Height ? `<div class="product-dimensions">${(p as any).Width} × ${(p as any).Height} cm</div>` : ''}
+                                                        </td>
                                                         <td class="product-qty">${p.Quantity}</td>
                                                         <td class="product-price">${formatCurrency(p.Selling_Price)}</td>
                                                         <td class="product-total">${formatCurrency(p.Total_Price)}</td>
@@ -1124,10 +1134,14 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
                 const laborRate = (p as any).Labor_Daily_Rate || 0;
                 const laborTotal = laborWorkers * laborDays * laborRate;
 
+                const width = (p as any).Width;
+                const height = (p as any).Height;
+                const dimensions = width && height ? `${width} × ${height} cm` : undefined;
+
                 return {
                     name: p.Product_Name,
                     quantity: p.Quantity || 1,
-                    dimensions: undefined,
+                    dimensions: dimensions,
                     materialCost: p.Material_Cost || 0,
                     laborCost: laborTotal,
                     extras: (p.extras || []).map((e: any) => ({

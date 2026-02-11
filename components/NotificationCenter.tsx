@@ -1,12 +1,12 @@
 'use client';
 
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { createPortal } from 'react-dom';
-import { useRouter } from 'next/navigation';
-import { Bell, Check, Info, AlertTriangle, CheckCircle, AlertOctagon, ClipboardList, Calendar } from 'lucide-react';
+import { Bell, Check, Info, AlertTriangle, CheckCircle, AlertOctagon, ClipboardList, Calendar, FileText, ShoppingCart, ChevronRight } from 'lucide-react';
 import { Notification } from '@/lib/types';
 import { subscribeToNotifications, markNotificationAsRead } from '@/lib/database';
 import { useAuth } from '@/context/AuthContext';
+import { useData } from '@/context/DataContext';
 import './NotificationCenter.css';
 
 // Local notification type for internal use
@@ -14,23 +14,36 @@ interface LocalNotification {
     id: string;
     title: string;
     message: string;
-    type: 'info' | 'success' | 'warning' | 'error' | 'sihtarica' | 'tasks';
+    type: 'info' | 'success' | 'warning' | 'error' | 'sihtarica' | 'tasks' | 'offers' | 'orders';
     read: boolean;
     createdAt: string;
     link?: string;
+    targetTab?: string; // Tab to switch to when clicked
     metadata?: {
         taskCount?: number;
         date?: string;
+        count?: number;
     };
 }
 
 const NOTIFICATIONS_KEY = 'erp_notifications_read';
 const LAST_SIHTARICA_KEY = 'erp_last_sihtarica_check';
 const LAST_TASKS_KEY = 'erp_last_tasks_check';
+const LAST_UNSENT_OFFERS_KEY = 'erp_last_unsent_offers_check';
+const LAST_UNSENT_ORDERS_KEY = 'erp_last_unsent_orders_check';
+
+// Days between unsent reminders
+const REMINDER_INTERVAL_DAYS = 3;
+
+function daysBetween(dateStr: string, today: string): number {
+    const d1 = new Date(dateStr);
+    const d2 = new Date(today);
+    return Math.floor((d2.getTime() - d1.getTime()) / (1000 * 60 * 60 * 24));
+}
 
 export default function NotificationCenter() {
     const { organization } = useAuth();
-    const router = useRouter();
+    const { appState } = useData();
     const [notifications, setNotifications] = useState<LocalNotification[]>([]);
     const [isOpen, setIsOpen] = useState(false);
     const buttonRef = useRef<HTMLButtonElement>(null);
@@ -58,13 +71,24 @@ export default function NotificationCenter() {
         }
     }, []);
 
+    // Count unsent offers and orders from appState
+    const unsentOffers = useMemo(() =>
+        (appState.offers || []).filter(o => o.Status === 'Nacrt'),
+        [appState.offers]
+    );
+
+    const unsentOrders = useMemo(() =>
+        (appState.orders || []).filter(o => o.Status === 'Nacrt'),
+        [appState.orders]
+    );
+
     // Generate daily notifications
     const generateDailyNotifications = useCallback(() => {
         const today = getTodayString();
         const dailyNotifications: LocalNotification[] = [];
         const readIds = getReadNotifications();
 
-        // Check if sihtarica notification was shown today
+        // ── Sihtarica reminder (daily) ──
         const lastSihtaricaCheck = localStorage.getItem(LAST_SIHTARICA_KEY);
         if (lastSihtaricaCheck !== today) {
             const sihtaricaId = `sihtarica-${today}`;
@@ -75,12 +99,12 @@ export default function NotificationCenter() {
                 type: 'sihtarica',
                 read: readIds.has(sihtaricaId),
                 createdAt: new Date().toISOString(),
-                link: '/sihtarica'
+                targetTab: 'attendance'
             });
             localStorage.setItem(LAST_SIHTARICA_KEY, today);
         }
 
-        // Check for tasks notification (simple reminder)
+        // ── Tasks reminder (daily) ──
         const lastTasksCheck = localStorage.getItem(LAST_TASKS_KEY);
         if (lastTasksCheck !== today) {
             const tasksId = `tasks-${today}`;
@@ -91,16 +115,56 @@ export default function NotificationCenter() {
                 type: 'tasks',
                 read: readIds.has(tasksId),
                 createdAt: new Date().toISOString(),
-                link: '/',
-                metadata: {
-                    date: today
-                }
+                targetTab: 'tasks',
+                metadata: { date: today }
             });
             localStorage.setItem(LAST_TASKS_KEY, today);
         }
 
+        // ── Unsent offers reminder (every 3 days) ──
+        if (unsentOffers.length > 0) {
+            const lastOffersCheck = localStorage.getItem(LAST_UNSENT_OFFERS_KEY);
+            const shouldRemind = !lastOffersCheck || daysBetween(lastOffersCheck, today) >= REMINDER_INTERVAL_DAYS;
+
+            if (shouldRemind) {
+                const offersId = `unsent-offers-${today}`;
+                dailyNotifications.push({
+                    id: offersId,
+                    title: 'Neposlane ponude',
+                    message: `Imate ${unsentOffers.length} ponud${unsentOffers.length === 1 ? 'u' : 'a'} u statusu "Nacrt" koje nisu poslane.`,
+                    type: 'offers',
+                    read: readIds.has(offersId),
+                    createdAt: new Date().toISOString(),
+                    targetTab: 'offers',
+                    metadata: { count: unsentOffers.length }
+                });
+                localStorage.setItem(LAST_UNSENT_OFFERS_KEY, today);
+            }
+        }
+
+        // ── Unsent orders reminder (every 3 days) ──
+        if (unsentOrders.length > 0) {
+            const lastOrdersCheck = localStorage.getItem(LAST_UNSENT_ORDERS_KEY);
+            const shouldRemind = !lastOrdersCheck || daysBetween(lastOrdersCheck, today) >= REMINDER_INTERVAL_DAYS;
+
+            if (shouldRemind) {
+                const ordersId = `unsent-orders-${today}`;
+                dailyNotifications.push({
+                    id: ordersId,
+                    title: 'Neposlane narudžbe',
+                    message: `Imate ${unsentOrders.length} narudžb${unsentOrders.length === 1 ? 'u' : 'e'} u statusu "Nacrt" koje nisu poslane.`,
+                    type: 'orders',
+                    read: readIds.has(ordersId),
+                    createdAt: new Date().toISOString(),
+                    targetTab: 'orders',
+                    metadata: { count: unsentOrders.length }
+                });
+                localStorage.setItem(LAST_UNSENT_ORDERS_KEY, today);
+            }
+        }
+
         return dailyNotifications;
-    }, [getReadNotifications]);
+    }, [getReadNotifications, unsentOffers, unsentOrders]);
 
     // Subscribe to notifications and generate daily ones
     useEffect(() => {
@@ -118,13 +182,22 @@ export default function NotificationCenter() {
                 read: readIds.has(n.id)
             }));
 
-            // Combine daily + DB notifications
-            setNotifications([...dailyNotifications, ...convertedDbNotifications]);
+            // Combine daily + DB notifications, sort: unread first, then by date
+            const all = [...dailyNotifications, ...convertedDbNotifications];
+            all.sort((a, b) => {
+                if (a.read !== b.read) return a.read ? 1 : -1;
+                return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+            });
+            setNotifications(all);
         });
 
         // If subscription returns empty, just use daily
         if (dailyNotifications.length > 0) {
-            setNotifications(dailyNotifications);
+            const sorted = [...dailyNotifications].sort((a, b) => {
+                if (a.read !== b.read) return a.read ? 1 : -1;
+                return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+            });
+            setNotifications(sorted);
         }
 
         return () => unsubscribe();
@@ -184,7 +257,7 @@ export default function NotificationCenter() {
         saveReadNotifications(readIds);
 
         // If it's a DB notification, also update in database
-        if (!id.startsWith('sihtarica-') && !id.startsWith('tasks-') && !id.startsWith('demo-')) {
+        if (!id.startsWith('sihtarica-') && !id.startsWith('tasks-') && !id.startsWith('unsent-offers-') && !id.startsWith('unsent-orders-') && !id.startsWith('demo-')) {
             await markNotificationAsRead(id);
         }
     };
@@ -202,7 +275,7 @@ export default function NotificationCenter() {
 
         // Update DB notifications
         for (const n of unread) {
-            if (!n.id.startsWith('sihtarica-') && !n.id.startsWith('tasks-') && !n.id.startsWith('demo-')) {
+            if (!n.id.startsWith('sihtarica-') && !n.id.startsWith('tasks-') && !n.id.startsWith('unsent-offers-') && !n.id.startsWith('unsent-orders-') && !n.id.startsWith('demo-')) {
                 await markNotificationAsRead(n.id);
             }
         }
@@ -216,23 +289,20 @@ export default function NotificationCenter() {
             readIds.add(n.id);
             saveReadNotifications(readIds);
 
-            if (!n.id.startsWith('sihtarica-') && !n.id.startsWith('tasks-') && !n.id.startsWith('demo-')) {
+            if (!n.id.startsWith('sihtarica-') && !n.id.startsWith('tasks-') && !n.id.startsWith('unsent-offers-') && !n.id.startsWith('unsent-orders-') && !n.id.startsWith('demo-')) {
                 await markNotificationAsRead(n.id);
             }
         }
 
-        // Navigate based on type
+        // Navigate based on targetTab or link
         setIsOpen(false);
 
-        if (n.type === 'tasks') {
-            // Navigate to home and open tasks tab
-            router.push('/');
-            setTimeout(() => {
-                const event = new CustomEvent('openTasksTab', { detail: { view: 'today' } });
-                window.dispatchEvent(event);
-            }, 100);
+        if (n.targetTab) {
+            // Use the global switchTab event to change tabs
+            window.dispatchEvent(new CustomEvent('switchTab', { detail: { tab: n.targetTab } }));
         } else if (n.link && n.link !== '#') {
-            router.push(n.link);
+            // For external links, use router (import not needed, window.location works)
+            window.location.href = n.link;
         }
     };
 
@@ -245,6 +315,8 @@ export default function NotificationCenter() {
             case 'error': return <AlertOctagon size={18} className="text-red-500" />;
             case 'sihtarica': return <ClipboardList size={18} className="text-blue-500" />;
             case 'tasks': return <Calendar size={18} className="text-purple-500" />;
+            case 'offers': return <FileText size={18} className="text-amber-500" />;
+            case 'orders': return <ShoppingCart size={18} className="text-teal-500" />;
             default: return <Info size={18} className="text-blue-500" />;
         }
     };
@@ -297,7 +369,7 @@ export default function NotificationCenter() {
                         notifications.map((n: LocalNotification) => (
                             <div
                                 key={n.id}
-                                className={`notification-item ${n.type} ${!n.read ? 'unread' : ''}`}
+                                className={`notification-item ${n.type} ${!n.read ? 'unread' : 'read'}`}
                                 onClick={() => handleNotificationClick(n)}
                             >
                                 <div className="n-icon">
@@ -310,15 +382,22 @@ export default function NotificationCenter() {
                                         {formatTimeAgo(n.createdAt)}
                                     </span>
                                 </div>
-                                {!n.read && (
-                                    <button
-                                        className="n-action"
-                                        onClick={(e) => handleMarkAsRead(e, n.id)}
-                                        title="Označi kao pročitano"
-                                    >
-                                        <Check size={12} strokeWidth={3} />
-                                    </button>
-                                )}
+                                <div className="n-actions">
+                                    {!n.read && (
+                                        <button
+                                            className="n-action n-mark-read"
+                                            onClick={(e) => handleMarkAsRead(e, n.id)}
+                                            title="Označi kao pročitano"
+                                        >
+                                            <Check size={12} strokeWidth={3} />
+                                        </button>
+                                    )}
+                                    {(n.targetTab || n.link) && (
+                                        <span className="n-open-hint">
+                                            <ChevronRight size={14} />
+                                        </span>
+                                    )}
+                                </div>
                             </div>
                         ))
                     )}

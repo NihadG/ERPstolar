@@ -8,7 +8,7 @@ interface MobileWorkOrdersViewProps {
     workOrders: WorkOrder[];
     projects: Project[];
     workers: Worker[]; // Needed if we want to show worker avatars or names
-    onRefresh: () => void;
+    onRefresh: (...collections: string[]) => void;
     showToast: (message: string, type: 'success' | 'error' | 'info') => void;
 
     // Actions

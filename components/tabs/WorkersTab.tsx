@@ -10,7 +10,7 @@ import { calculateWorkerProductivity, getCurrentMonthRange, getLastNDaysRange } 
 
 interface WorkersTabProps {
     workers: Worker[];
-    onRefresh: () => void;
+    onRefresh: (...collections: string[]) => void;
     showToast: (message: string, type: 'success' | 'error' | 'info') => void;
 }
 
@@ -87,7 +87,7 @@ export default function WorkersTab({ workers, onRefresh, showToast }: WorkersTab
         if (result.success) {
             showToast(result.message, 'success');
             setWorkerModal(false);
-            onRefresh();
+            onRefresh('workers');
         } else {
             showToast(result.message, 'error');
         }
@@ -103,7 +103,7 @@ export default function WorkersTab({ workers, onRefresh, showToast }: WorkersTab
         const result = await deleteWorker(workerId, organizationId);
         if (result.success) {
             showToast(result.message, 'success');
-            onRefresh();
+            onRefresh('workers');
         } else {
             showToast(result.message, 'error');
         }

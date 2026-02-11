@@ -10,7 +10,7 @@ interface MobileProjectsViewProps {
     workOrders: WorkOrder[];
     offers?: Offer[];
     workLogs?: WorkLog[];
-    onRefresh: () => void;
+    onRefresh: (...collections: string[]) => void;
     showToast: (message: string, type: 'success' | 'error' | 'info') => void;
     onNavigateToTasks?: (projectId: string) => void;
 

@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { ChevronRight, ChevronLeft } from 'lucide-react';
-import { getAllData } from '@/lib/database';
+import { getAllData, getProjects, getMaterialsCatalog, getSuppliers, getWorkers, getOffers, getOrders, getWorkOrders, getTasks } from '@/lib/database';
 import { signOut } from '@/lib/auth';
 import { useAuth } from '@/context/AuthContext';
 import type { AppState, Project, Product, Material, Offer, Order, Supplier, Worker } from '@/lib/types';
@@ -146,6 +146,18 @@ export default function Home() {
         return () => document.removeEventListener('keydown', handleKeyDown);
     }, []);
 
+    // Listen for switchTab custom events (from NotificationCenter, etc.)
+    useEffect(() => {
+        function handleSwitchTab(e: Event) {
+            const detail = (e as CustomEvent).detail;
+            if (detail?.tab) {
+                setActiveTab(detail.tab);
+            }
+        }
+        window.addEventListener('switchTab', handleSwitchTab);
+        return () => window.removeEventListener('switchTab', handleSwitchTab);
+    }, []);
+
     // Redirect to login if not authenticated
     useEffect(() => {
         if (!authLoading && !firebaseUser) {
@@ -155,25 +167,78 @@ export default function Home() {
 
     useEffect(() => {
         if (firebaseUser && organization?.Organization_ID) {
-            loadData();
+            refreshCollections();
         }
     }, [firebaseUser, organization]);
 
-    async function loadData() {
-        if (!organization?.Organization_ID) {
-            // Wait for organization to be loaded
+    // Collection-level loaders for targeted refresh
+    const collectionLoaders: Record<string, (orgId: string) => Promise<any[]>> = {
+        projects: getProjects,
+        materials: getMaterialsCatalog,
+        suppliers: getSuppliers,
+        workers: getWorkers,
+        offers: getOffers,
+        orders: getOrders,
+        workOrders: getWorkOrders,
+        tasks: getTasks,
+    };
+
+    /**
+     * Targeted refresh: reload only specified collections instead of everything.
+     * Called with no args = full reload (backward compatible).
+     * Called with collection names = reload only those collections.
+     * 
+     * Examples:
+     *   refreshCollections()                    // full reload
+     *   refreshCollections('projects')          // only projects
+     *   refreshCollections('workOrders','projects')  // workOrders + projects
+     */
+    async function refreshCollections(...collections: string[]) {
+        if (!organization?.Organization_ID) return;
+
+        // No args = full reload (backward compatible)
+        if (collections.length === 0) {
+            setLoading(true);
+            try {
+                const data = await getAllData(organization.Organization_ID);
+                setAppState(data);
+            } catch (error) {
+                console.error('Error loading all data:', error);
+                showToast('Greška pri učitavanju podataka', 'error');
+            } finally {
+                setLoading(false);
+            }
             return;
         }
 
-        setLoading(true);
+        // Targeted reload — only specified collections
+        // Expand with dependencies: if projects change, workOrders need fresh data too
+        // (material costs feed into WO profit calculations)
+        const deps: Record<string, string[]> = {
+            projects: ['workOrders'],  // material cost → WO profit
+        };
+        const expanded = new Set(collections);
+        collections.forEach(c => deps[c]?.forEach(d => expanded.add(d)));
+        const toLoad = Array.from(expanded);
+
         try {
-            const data = await getAllData(organization.Organization_ID);
-            setAppState(data);
+            const results = await Promise.all(
+                toLoad
+                    .filter(c => collectionLoaders[c])
+                    .map(async (c) => ({ name: c, data: await collectionLoaders[c](organization.Organization_ID) }))
+            );
+
+            if (results.length > 0) {
+                setAppState(prev => {
+                    const updates: any = {};
+                    results.forEach(({ name, data }) => { updates[name] = data; });
+                    return { ...prev, ...updates };
+                });
+            }
         } catch (error) {
-            console.error('Error loading data:', error);
-            showToast('Greška pri učitavanju podataka', 'error');
-        } finally {
-            setLoading(false);
+            console.error('Error refreshing collections:', error);
+            // Fallback to full reload on error
+            await refreshCollections();
         }
     }
 
@@ -275,7 +340,7 @@ export default function Home() {
                             workOrders={appState.workOrders}
                             offers={appState.offers}
                             workLogs={appState.workLogs}
-                            onRefresh={loadData}
+                            onRefresh={refreshCollections}
                             showToast={showToast}
                             onNavigateToTasks={handleNavigateToTasks}
                         />
@@ -291,7 +356,7 @@ export default function Home() {
                             workLogs={appState.workLogs}
                             showToast={showToast}
                             onCreateOrder={handleCreateOrderFromOverview}
-                            onRefresh={loadData}
+                            onRefresh={refreshCollections}
                         />
                     )}
 
@@ -300,7 +365,7 @@ export default function Home() {
                             <OffersTab
                                 offers={appState.offers}
                                 projects={appState.projects}
-                                onRefresh={loadData}
+                                onRefresh={refreshCollections}
                                 showToast={showToast}
                             />
                         </ModuleGuard>
@@ -313,7 +378,7 @@ export default function Home() {
                                 suppliers={appState.suppliers}
                                 projects={appState.projects}
                                 productMaterials={appState.productMaterials}
-                                onRefresh={loadData}
+                                onRefresh={refreshCollections}
                                 showToast={showToast}
                                 pendingOrderMaterials={pendingOrderMaterials}
                                 onClearPendingOrder={clearPendingOrder}
@@ -326,7 +391,7 @@ export default function Home() {
                             workOrders={appState.workOrders}
                             projects={appState.projects}
                             workers={appState.workers}
-                            onRefresh={loadData}
+                            onRefresh={refreshCollections}
                             showToast={showToast}
                         />
                     )}
@@ -335,7 +400,7 @@ export default function Home() {
                         <PlannerTab
                             workOrders={appState.workOrders}
                             workers={appState.workers}
-                            onRefresh={loadData}
+                            onRefresh={refreshCollections}
                             showToast={showToast}
                         />
                     )}
@@ -343,7 +408,7 @@ export default function Home() {
                     {activeTab === 'materials' && (
                         <MaterialsTab
                             materials={appState.materials}
-                            onRefresh={loadData}
+                            onRefresh={refreshCollections}
                             showToast={showToast}
                         />
                     )}
@@ -351,7 +416,7 @@ export default function Home() {
                     {activeTab === 'workers' && (
                         <WorkersTab
                             workers={appState.workers}
-                            onRefresh={loadData}
+                            onRefresh={refreshCollections}
                             showToast={showToast}
                         />
                     )}
@@ -359,7 +424,7 @@ export default function Home() {
                     {activeTab === 'suppliers' && (
                         <SuppliersTab
                             suppliers={appState.suppliers}
-                            onRefresh={loadData}
+                            onRefresh={refreshCollections}
                             showToast={showToast}
                         />
                     )}
@@ -367,7 +432,7 @@ export default function Home() {
                     {activeTab === 'attendance' && (
                         <AttendanceTab
                             workers={appState.workers}
-                            onRefresh={loadData}
+                            onRefresh={refreshCollections}
                             showToast={showToast}
                         />
                     )}
@@ -381,7 +446,7 @@ export default function Home() {
                                 materials={appState.materials}
                                 workOrders={appState.workOrders}
                                 orders={appState.orders}
-                                onRefresh={loadData}
+                                onRefresh={refreshCollections}
                                 showToast={showToast}
                                 projectFilter={tasksProjectFilter}
                                 onClearFilter={() => setTasksProjectFilter(null)}
@@ -394,7 +459,7 @@ export default function Home() {
                                 materials={appState.materials}
                                 workOrders={appState.workOrders}
                                 orders={appState.orders}
-                                onRefresh={loadData}
+                                onRefresh={refreshCollections}
                                 showToast={showToast}
                                 projectFilter={tasksProjectFilter}
                                 onClearFilter={() => setTasksProjectFilter(null)}
@@ -523,7 +588,7 @@ export default function Home() {
                     onClose={() => setImportWizardOpen(false)}
                     organizationId={organization.Organization_ID}
                     onImportComplete={() => {
-                        loadData();
+                        refreshCollections();
                         showToast('Import završen uspješno!', 'success');
                     }}
                 />

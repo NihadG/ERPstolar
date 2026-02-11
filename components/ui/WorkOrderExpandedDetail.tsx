@@ -22,7 +22,7 @@ interface WorkOrderExpandedDetailProps {
     onPrint: (workOrder: WorkOrder) => void;
     onDelete: (workOrderId: string) => Promise<void>;
     onStart: (workOrderId: string) => Promise<void>;
-    onRefresh?: () => void;
+    onRefresh?: (...collections: string[]) => void;
 }
 
 export default function WorkOrderExpandedDetail({
@@ -93,7 +93,7 @@ export default function WorkOrderExpandedDetail({
             console.error('Error updating process:', error);
         } finally {
             setIsLoading(null);
-            onRefresh?.(); // Refresh parent data
+            onRefresh?.('workOrders', 'projects'); // Refresh parent data
         }
     };
 
@@ -194,7 +194,7 @@ export default function WorkOrderExpandedDetail({
             ));
         } finally {
             setIsLoading(null);
-            onRefresh?.(); // Refresh parent data
+            onRefresh?.('workOrders', 'projects'); // Refresh parent data
         }
     };
 
@@ -215,7 +215,7 @@ export default function WorkOrderExpandedDetail({
             setIsLoading('processes');
             await onUpdate(workOrder.Work_Order_ID, { Production_Steps: localProcesses });
             setEditingProcesses(false);
-            onRefresh?.(); // CRITICAL: refresh data so UI reflects saved changes
+            onRefresh?.('workOrders', 'projects'); // CRITICAL: refresh data so UI reflects saved changes
         } catch (error) {
             console.error('Error saving processes:', error);
         } finally {
@@ -322,7 +322,7 @@ export default function WorkOrderExpandedDetail({
 
                     // Then persist to database (non-blocking)
                     updateSubTask(workOrder.Work_Order_ID, itemId, subTaskId, updates)
-                        .then(() => onRefresh?.())
+                        .then(() => onRefresh?.('workOrders', 'projects'))
                         .catch(error => {
                             console.error('Error updating sub-task:', error);
                             // Could revert optimistic update here if needed
@@ -341,7 +341,7 @@ export default function WorkOrderExpandedDetail({
 
                     // Then persist to database
                     createSubTasks(workOrder.Work_Order_ID, itemId, allSubTasks)
-                        .then(() => onRefresh?.())
+                        .then(() => onRefresh?.('workOrders', 'projects'))
                         .catch(error => console.error('Error creating sub-task:', error));
                 }}
                 onSubTaskMove={async (itemId, subTaskId, targetProcess) => {
@@ -363,7 +363,7 @@ export default function WorkOrderExpandedDetail({
 
                     // Then persist to database
                     moveSubTask(workOrder.Work_Order_ID, itemId, subTaskId, targetProcess)
-                        .then(() => onRefresh?.())
+                        .then(() => onRefresh?.('workOrders', 'projects'))
                         .catch(error => console.error('Error moving sub-task:', error));
                 }}
                 onPauseToggle={async (itemId, isPaused) => {
@@ -375,7 +375,7 @@ export default function WorkOrderExpandedDetail({
                     // Then persist to database
                     import('@/lib/attendance').then(({ toggleItemPause }) => {
                         toggleItemPause(workOrder.Work_Order_ID, itemId, isPaused)
-                            .then(() => onRefresh?.())
+                            .then(() => onRefresh?.('workOrders', 'projects'))
                             .catch(error => console.error('Error toggling pause:', error));
                     });
                 }}

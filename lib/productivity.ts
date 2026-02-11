@@ -73,7 +73,7 @@ export async function calculateWorkerProductivity(
         ).length;
 
         // Calculate working days in period (excluding weekends)
-        const workingDaysInPeriod = countWorkingDays(dateFrom, dateTo);
+        const workingDaysInPeriod = await countWorkingDays(dateFrom, dateTo);
 
         // Days worked (from work logs - unique dates)
         const uniqueDates = new Set(workLogs.map(log => log.Date));
@@ -443,17 +443,33 @@ export async function getWorkerEarningsSummary(
 // ============================================
 
 /**
- * Count working days (Monday-Friday) between two dates
+ * Count working days (Monday-Friday, excluding holidays) between two dates
+ * Enhanced: Also excludes holidays from the 'holidays' Firestore collection
  */
-function countWorkingDays(dateFrom: string, dateTo: string): number {
+async function countWorkingDays(dateFrom: string, dateTo: string): Promise<number> {
     const start = new Date(dateFrom);
     const end = new Date(dateTo);
-    let count = 0;
 
+    // Fetch holidays for the date range
+    let holidayDates = new Set<string>();
+    try {
+        const holidayQuery = query(
+            collection(db, 'holidays'),
+            where('Date', '>=', dateFrom),
+            where('Date', '<=', dateTo)
+        );
+        const holidaySnap = await getDocs(holidayQuery);
+        holidaySnap.forEach(doc => holidayDates.add(doc.data().Date));
+    } catch {
+        // If holidays collection doesn't exist or query fails, continue without
+    }
+
+    let count = 0;
     const current = new Date(start);
     while (current <= end) {
         const dayOfWeek = current.getDay();
-        if (dayOfWeek !== 0 && dayOfWeek !== 6) {
+        const dateStr = current.toISOString().split('T')[0];
+        if (dayOfWeek !== 0 && dayOfWeek !== 6 && !holidayDates.has(dateStr)) {
             count++;
         }
         current.setDate(current.getDate() + 1);
@@ -461,6 +477,7 @@ function countWorkingDays(dateFrom: string, dateTo: string): number {
 
     return count;
 }
+
 
 /**
  * Get current month's date range

@@ -30,7 +30,7 @@ import { useData } from '@/context/DataContext';
 
 interface AttendanceTabProps {
     workers: Worker[];
-    onRefresh: () => void;
+    onRefresh: (...collections: string[]) => void;
     showToast: (message: string, type: 'success' | 'error' | 'info') => void;
 }
 
@@ -273,7 +273,7 @@ export default function AttendanceTab({ workers, onRefresh, showToast }: Attenda
 
             // Reload just this month to confirm
             loadMonth(date.getFullYear(), date.getMonth() + 1);
-            onRefresh();
+            onRefresh('workers');
         } catch (error) {
             showToast('Greška pri spremanju', 'error');
             loadMonth(date.getFullYear(), date.getMonth() + 1);
@@ -325,7 +325,7 @@ export default function AttendanceTab({ workers, onRefresh, showToast }: Attenda
             const result = await backfillWorkLogsFromAttendance(organizationId, dateFrom, dateTo);
 
             showToast(`Sinkronizacija završena: ${result.totalCreated} work logova kreirano`, 'success');
-            onRefresh();
+            onRefresh('workers');
         } catch (error) {
             console.error('Backfill error:', error);
             showToast('Greška pri sinkronizaciji', 'error');
@@ -422,8 +422,8 @@ export default function AttendanceTab({ workers, onRefresh, showToast }: Attenda
         setBulkStatuses({});
 
         try {
-            // 2. Save all in parallel
-            await Promise.all(
+            // 2. Save all in parallel — skip per-worker recalculation (we batch it below)
+            const results = await Promise.all(
                 workersToUpdate.map(worker =>
                     markAttendanceAndRecalculate({
                         Worker_ID: worker.Worker_ID,
@@ -432,13 +432,24 @@ export default function AttendanceTab({ workers, onRefresh, showToast }: Attenda
                         Status: bulkStatuses[worker.Worker_ID] as any,
                         Notes: null,
                         Organization_ID: organizationId || undefined
-                    })
+                    }, { skipRecalculation: true })
                 )
             );
 
+            // 3. Single batch recalculation — only if any work logs were created/deleted
+            const totalChanges = results.reduce((sum, r) => sum + r.workLogsCreated + r.workLogsDeleted, 0);
+            if (totalChanges > 0 && organizationId) {
+                try {
+                    const { recalculateAllActiveWorkOrders } = await import('@/lib/attendance');
+                    await recalculateAllActiveWorkOrders(organizationId);
+                } catch (recalcError) {
+                    console.error('Batch recalculation failed:', recalcError);
+                }
+            }
+
             showToast(`Prisustvo sačuvano za ${workersToUpdate.length} radnika`, 'success');
             loadMonth(date.getFullYear(), date.getMonth() + 1);
-            onRefresh();
+            onRefresh('workers');
         } catch (error) {
             showToast('Greška pri čuvanju prisustva', 'error');
             loadMonth(date.getFullYear(), date.getMonth() + 1);

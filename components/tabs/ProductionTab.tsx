@@ -17,7 +17,7 @@ interface ProductionTabProps {
     workOrders: WorkOrder[];
     projects: Project[];
     workers: Worker[];
-    onRefresh: () => void;
+    onRefresh: (...collections: string[]) => void;
     showToast: (message: string, type: 'success' | 'error' | 'info') => void;
 }
 
@@ -525,7 +525,7 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
         if (result.success) {
             showToast(`Radni nalog ${result.data?.Work_Order_Number} kreiran`, 'success');
             setCreateModal(false);
-            onRefresh();
+            onRefresh('workOrders', 'projects');
         } else {
             showToast(result.message, 'error');
         }
@@ -536,7 +536,7 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
         const res = await updateWorkOrder(workOrderId, updates, organizationId || '');
         if (res.success) {
             showToast(res.message, 'success');
-            onRefresh();
+            onRefresh('workOrders', 'projects');
         } else {
             showToast(res.message, 'error');
         }
@@ -571,7 +571,7 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
 
         if (res.success) {
             showToast(res.message, 'success');
-            onRefresh();
+            onRefresh('workOrders', 'projects');
         } else {
             showToast(res.message, 'error');
         }
@@ -646,7 +646,7 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
         const res = await startWorkOrder(workOrderId, organizationId || '');
         if (res.success) {
             showToast('Nalog pokrenut', 'success');
-            onRefresh();
+            onRefresh('workOrders', 'projects');
         } else {
             showToast(res.message, 'error');
         }
@@ -1022,7 +1022,7 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                             const result = await repairAllProductStatuses();
                             if (result.success) {
                                 showToast(result.message, 'success');
-                                onRefresh();
+                                onRefresh('workOrders', 'projects');
                             } else {
                                 showToast(result.message, 'error');
                             }

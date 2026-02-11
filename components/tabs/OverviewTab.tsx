@@ -1,8 +1,9 @@
 'use client';
 
-import { useState, useMemo } from 'react';
-import type { Project, WorkOrder, Order, Supplier, ProductMaterial, Offer, OfferProduct, WorkLog } from '@/lib/types';
+import { useState, useMemo, useEffect, useCallback } from 'react';
+import type { Project, WorkOrder, WorkOrderItem, Order, Supplier, ProductMaterial, Offer, OfferProduct, WorkLog, WorkerAttendance } from '@/lib/types';
 import { updateProductMaterial, createOrder, markMaterialsReceived } from '@/lib/database';
+import { markAttendanceAndRecalculate, getAllAttendanceByMonth } from '@/lib/attendance';
 import { useData } from '@/context/DataContext';
 import ProductTimelineModal from '@/components/ui/ProductTimelineModal';
 
@@ -15,7 +16,7 @@ interface OverviewTabProps {
     workLogs?: WorkLog[];
     showToast: (message: string, type: 'success' | 'error' | 'info') => void;
     onCreateOrder?: (materialIds: string[], supplierName: string) => void;
-    onRefresh?: () => void;
+    onRefresh?: (...collections: string[]) => void;
 }
 
 type GroupBy = 'none' | 'project' | 'productStatus' | 'materialStatus' | 'supplier';
@@ -66,6 +67,76 @@ export default function OverviewTab({ projects, workOrders, orders = [], supplie
 
     // Product Timeline Modal
     const [timelineProduct, setTimelineProduct] = useState<OverviewItem | null>(null);
+    const [timelineAttendance, setTimelineAttendance] = useState<WorkerAttendance[]>([]);
+
+    // Derive WorkOrderItem and materials for timeline
+    const timelineWorkOrderItem = useMemo(() => {
+        if (!timelineProduct?.Product_ID) return undefined;
+        for (const wo of workOrders) {
+            const item = wo.items?.find(i => i.Product_ID === timelineProduct.Product_ID);
+            if (item) return item;
+        }
+        return undefined;
+    }, [timelineProduct, workOrders]);
+
+    const timelineMaterials = useMemo(() => {
+        if (!timelineProduct?.Product_ID) return [];
+        for (const p of projects) {
+            const product = p.products?.find(pr => pr.Product_ID === timelineProduct.Product_ID);
+            if (product?.materials) return product.materials;
+        }
+        return [];
+    }, [timelineProduct, projects]);
+
+    // Helper to fetch attendance across multiple months
+    const fetchAllAttendance = useCallback(async (orgId: string): Promise<WorkerAttendance[]> => {
+        const results: WorkerAttendance[] = [];
+        const now = new Date();
+        // Fetch last 6 months of attendance
+        for (let i = 0; i < 6; i++) {
+            const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+            const year = String(d.getFullYear());
+            const month = String(d.getMonth() + 1);
+            try {
+                const monthData = await getAllAttendanceByMonth(year, month, orgId);
+                results.push(...monthData);
+            } catch { /* skip month on error */ }
+        }
+        return results;
+    }, []);
+
+    // Fetch attendance when timeline modal opens
+    useEffect(() => {
+        if (!timelineProduct || !organizationId) {
+            setTimelineAttendance([]);
+            return;
+        }
+        fetchAllAttendance(organizationId).then(setTimelineAttendance).catch(e => {
+            console.error('Failed to fetch attendance for timeline:', e);
+        });
+    }, [timelineProduct, organizationId, fetchAllAttendance]);
+
+    // Handler for retroactive attendance editing from timeline
+    const handleTimelineAttendanceChange = useCallback(async (
+        workerId: string,
+        workerName: string,
+        date: string,
+        newStatus: string
+    ) => {
+        if (!organizationId) return;
+        await markAttendanceAndRecalculate({
+            Worker_ID: workerId,
+            Worker_Name: workerName,
+            Date: date,
+            Status: newStatus as any,
+            Organization_ID: organizationId
+        });
+        // Re-fetch attendance to reflect changes
+        const att = await fetchAllAttendance(organizationId);
+        setTimelineAttendance(att);
+        showToast(`Prisustvo ažurirano: ${workerName} → ${newStatus} (${date})`, 'success');
+        onRefresh?.('workOrders', 'projects');
+    }, [organizationId, showToast, onRefresh, fetchAllAttendance]);
 
     // Material grouping
     const [expandedMaterialProject, setExpandedMaterialProject] = useState<string | null>(null);
@@ -543,7 +614,7 @@ export default function OverviewTab({ projects, workOrders, orders = [], supplie
                 showToast(`Narudžba ${result.data?.Order_Number} kreirana!`, 'success');
                 setSelectedMaterials(new Set());
                 setSelectedSupplier('');
-                onRefresh?.();
+                onRefresh?.('workOrders', 'projects');
             } else {
                 showToast(result.message, 'error');
             }
@@ -601,7 +672,7 @@ export default function OverviewTab({ projects, workOrders, orders = [], supplie
                 showToast(`${selectedMaterials.size} materijal(a) označeno kao primljeno!`, 'success');
                 setSelectedMaterials(new Set());
                 setSelectedSupplier('');
-                onRefresh?.();
+                onRefresh?.('workOrders', 'projects');
             } else {
                 showToast(result.message, 'error');
             }
@@ -741,22 +812,21 @@ export default function OverviewTab({ projects, workOrders, orders = [], supplie
                 /* Grouped Materials View */
                 <div className="overview-content">
                     {projects.filter(p => p.Status !== 'Otkazano' && p.Status !== 'Završeno').map(project => {
-                        // Build order lookup: Product_Material_ID -> order info (SOURCE OF TRUTH)
-                        const orderLookup = new Map<string, { orderQty: number; orderStatus: string; orderNumber: string; receivedDate?: string }>();
+                        // Build order quantity lookup: Product_Material_ID -> total ordered qty from order items
+                        const orderQtyLookup = new Map<string, number>();
                         (orders || []).forEach(order => {
+                            // Only count quantities from sent/confirmed orders (not drafts)
+                            if (order.Status === 'Nacrt') return;
                             (order.items || []).forEach(item => {
                                 if (item.Product_Material_ID) {
-                                    orderLookup.set(item.Product_Material_ID, {
-                                        orderQty: item.Quantity || 0,
-                                        orderStatus: item.Status || '',
-                                        orderNumber: order.Order_Number || '',
-                                        receivedDate: (item as any).Received_Date
-                                    });
+                                    orderQtyLookup.set(item.Product_Material_ID,
+                                        (orderQtyLookup.get(item.Product_Material_ID) || 0) + (item.Quantity || 0));
                                 }
                             });
                         });
 
                         // Aggregate materials across all products
+                        // Use mat.Status as the SOLE source of truth
                         const materialMap = new Map<string, {
                             name: string;
                             unit: string;
@@ -769,18 +839,18 @@ export default function OverviewTab({ projects, workOrders, orders = [], supplie
                         (project.products || []).forEach(product => {
                             (product.materials || []).forEach(mat => {
                                 const key = `${mat.Material_Name}||${mat.Unit}`;
-                                // Use ORDER DATA as source of truth, not mat.Status
-                                const orderInfo = orderLookup.get(mat.ID);
-                                const hasOrder = !!orderInfo || !!mat.Order_ID;
-                                const isReceived = orderInfo?.orderStatus === 'Primljeno' || mat.Status === 'Primljeno';
                                 const qty = mat.Quantity || 0;
+                                // Determine status purely from material's Status field
+                                const isReceived = mat.Status === 'Primljeno' || mat.Status === 'U upotrebi' || mat.Status === 'Instalirano';
+                                const isOrdered = mat.Status === 'Naručeno';
+                                const isOnStock = mat.Status === 'Na stanju';
 
                                 if (materialMap.has(key)) {
                                     const existing = materialMap.get(key)!;
                                     existing.totalQty += qty;
-                                    if (isReceived) {
+                                    if (isReceived || isOnStock) {
                                         existing.receivedQty += qty;
-                                    } else if (hasOrder) {
+                                    } else if (isOrdered) {
                                         existing.orderedQty += qty;
                                     } else {
                                         existing.notOrderedQty += qty;
@@ -790,9 +860,9 @@ export default function OverviewTab({ projects, workOrders, orders = [], supplie
                                         name: mat.Material_Name,
                                         unit: mat.Unit,
                                         totalQty: qty,
-                                        orderedQty: (!isReceived && hasOrder) ? qty : 0,
-                                        receivedQty: isReceived ? qty : 0,
-                                        notOrderedQty: (!hasOrder && !isReceived) ? qty : 0,
+                                        orderedQty: isOrdered ? qty : 0,
+                                        receivedQty: (isReceived || isOnStock) ? qty : 0,
+                                        notOrderedQty: (!isOrdered && !isReceived && !isOnStock) ? qty : 0,
                                     });
                                 }
                             });
@@ -1112,7 +1182,7 @@ export default function OverviewTab({ projects, workOrders, orders = [], supplie
                                     showToast(`${selectedMaterials.size} materijal(a) označeno kao "Na stanju"`, 'success');
                                     setSelectedMaterials(new Set());
                                     setSelectedSupplier('');
-                                    onRefresh?.();
+                                    onRefresh?.('workOrders', 'projects');
                                 }}
                             >
                                 <span className="material-icons-round">inventory</span>
@@ -1147,12 +1217,16 @@ export default function OverviewTab({ projects, workOrders, orders = [], supplie
                 onClose={() => setTimelineProduct(null)}
                 productId={timelineProduct?.Product_ID || ''}
                 productName={timelineProduct?.Product_Name || ''}
+                workOrderItem={timelineWorkOrderItem}
                 workLogs={workLogs.filter(wl => wl.Product_ID === timelineProduct?.Product_ID)}
+                attendance={timelineAttendance}
+                materials={timelineMaterials}
                 sellingPrice={timelineProduct?.Selling_Price}
                 materialCost={timelineProduct?.Material_Cost}
                 laborCost={timelineProduct?.Labor_Cost}
                 profit={timelineProduct?.Profit}
                 profitMargin={timelineProduct?.Profit_Margin}
+                onAttendanceChange={handleTimelineAttendanceChange}
             />
 
             <style jsx>{`

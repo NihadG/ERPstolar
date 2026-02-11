@@ -58,7 +58,7 @@ interface MobileTasksTabProps {
     materials: Material[];
     workOrders?: WorkOrder[];
     orders?: Order[];
-    onRefresh: () => void;
+    onRefresh: (...collections: string[]) => void;
     showToast: (message: string, type: 'success' | 'error' | 'info') => void;
     projectFilter?: string | null;
     onClearFilter?: () => void;
@@ -122,6 +122,7 @@ export default function MobileTasksTab({
     const [groupBy, setGroupBy] = useState<GroupBy>('priority');
     const [showFilters, setShowFilters] = useState(false);
     const [showSearch, setShowSearch] = useState(false);
+    const [showCompleted, setShowCompleted] = useState(false);
     const [expandedTaskId, setExpandedTaskId] = useState<string | null>(null);
 
     // Modal states
@@ -165,6 +166,11 @@ export default function MobileTasksTab({
                     !task.Description?.toLowerCase().includes(query)) {
                     return false;
                 }
+            }
+
+            // Completed filter (Hide by default unless showCompleted is true)
+            if (!showCompleted && task.Status === 'completed') {
+                return false;
             }
 
             // Status filter
@@ -382,7 +388,7 @@ export default function MobileTasksTab({
         const result = await saveTask(taskData, organizationId!);
         if (result.success) {
             showToast(result.message, 'success');
-            onRefresh();
+            onRefresh('tasks');
             setIsModalOpen(false);
         } else {
             showToast(result.message, 'error');
@@ -393,7 +399,7 @@ export default function MobileTasksTab({
         const result = await deleteTask(taskId, organizationId!);
         if (result.success) {
             showToast(result.message, 'success');
-            onRefresh();
+            onRefresh('tasks');
         } else {
             showToast(result.message, 'error');
         }
@@ -408,7 +414,7 @@ export default function MobileTasksTab({
 
         const result = await updateTaskStatus(taskId, status, organizationId!);
         if (result.success) {
-            onRefresh();
+            onRefresh('tasks');
         } else {
             setLocalTasks(previousTasks);
             showToast(result.message, 'error');
@@ -431,7 +437,7 @@ export default function MobileTasksTab({
 
         const result = await toggleTaskChecklistItem(taskId, itemId, organizationId!);
         if (result.success) {
-            onRefresh();
+            onRefresh('tasks');
         } else {
             setLocalTasks(previousTasks);
         }
@@ -480,7 +486,7 @@ export default function MobileTasksTab({
 
                     <div
                         className="mobile-task-content"
-                        onClick={() => hasExpandableContent && setExpandedTaskId(isExpanded ? null : task.Task_ID)}
+                        onClick={() => setExpandedTaskId(isExpanded ? null : task.Task_ID)}
                     >
                         <h3 className="mobile-task-title">{task.Title}</h3>
                         {task.Description && (
@@ -523,19 +529,17 @@ export default function MobileTasksTab({
                     </div>
 
                     <div className="mobile-task-actions">
-                        {hasExpandableContent && (
-                            <button
-                                className="mobile-expand-btn"
-                                onClick={() => setExpandedTaskId(isExpanded ? null : task.Task_ID)}
-                            >
-                                {isExpanded ? <ChevronUp size={20} /> : <ChevronDown size={20} />}
-                            </button>
-                        )}
+                        <button
+                            className="mobile-expand-btn"
+                            onClick={() => setExpandedTaskId(isExpanded ? null : task.Task_ID)}
+                        >
+                            {isExpanded ? <ChevronUp size={20} /> : <ChevronDown size={20} />}
+                        </button>
                     </div>
                 </div>
 
                 {/* Expanded content */}
-                {isExpanded && hasExpandableContent && (
+                {isExpanded && (
                     <div className="mobile-task-expanded">
                         {/* Notes */}
                         {task.Notes && (
@@ -642,6 +646,13 @@ export default function MobileTasksTab({
                             {stats.overdue} prekoračeno
                         </button>
                     )}
+                    <button
+                        className={`mobile-stat-chip ${showCompleted ? 'active' : ''}`}
+                        onClick={() => setShowCompleted(!showCompleted)}
+                    >
+                        <CheckCircle2 size={14} />
+                        {showCompleted ? 'Sakrij završene' : 'Prikaži završene'}
+                    </button>
                     <button
                         className={`mobile-stat-chip ${filterStatus === 'pending' ? 'active' : ''}`}
                         onClick={() => setFilterStatus(filterStatus === 'pending' ? 'all' : 'pending')}

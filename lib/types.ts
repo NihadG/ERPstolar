@@ -184,6 +184,7 @@ export interface OrderItem {
     ID: string;
     Order_ID: string;
     Product_Material_ID: string;
+    Product_Material_IDs?: string[];  // All grouped material IDs (for batch operations)
     Product_ID: string;
     Product_Name: string;
     Project_ID: string;
@@ -367,6 +368,7 @@ export interface WorkOrderItem {
     // STATUS I DATUMI
     Status: 'Na čekanju' | 'U toku' | 'Završeno';
     Is_Paused?: boolean;          // If true, daily rates won't accrue
+    Pause_Periods?: Array<{ Started_At: string; Ended_At?: string }>;  // Tracked by toggleItemPause
     Started_At?: string;      // ISO timestamp kada je započeto
     Completed_At?: string;    // ISO timestamp kada je završeno
 
@@ -481,6 +483,26 @@ export const WORK_ORDER_STATUSES = ['Na čekanju', 'U toku', 'Završeno', 'Otkaz
 export const PRODUCTION_STEPS = ['Rezanje', 'Kantiranje', 'Bušenje', 'Sklapanje'];
 export const ATTENDANCE_STATUSES = ['Prisutan', 'Odsutan', 'Bolovanje', 'Odmor', 'Teren', 'Vikend', 'Praznik'] as const;
 export const PROCESS_STATUSES = ['Na čekanju', 'U toku', 'Odloženo', 'Završeno'] as const;
+
+// Dopuštene tranzicije statusa materijala (source → allowed targets)
+export const ALLOWED_MATERIAL_TRANSITIONS: Record<string, string[]> = {
+    'Nije naručeno': ['Na stanju', 'Naručeno'],
+    'Na stanju': ['Nije naručeno', 'U upotrebi'],
+    'Naručeno': ['Nije naručeno', 'Primljeno'],
+    'Primljeno': ['U upotrebi', 'Naručeno'],
+    'U upotrebi': ['Instalirano', 'Primljeno'],
+    'Instalirano': ['U upotrebi'],
+};
+
+// Dopuštene tranzicije statusa narudžbe (source → allowed targets)
+export const ALLOWED_ORDER_TRANSITIONS: Record<string, string[]> = {
+    'Nacrt': ['Poslano'],
+    'Poslano': ['Nacrt', 'Potvrđeno'],
+    'Potvrđeno': ['Nacrt', 'Isporučeno', 'Djelomično'],
+    'Isporučeno': ['Primljeno', 'Djelomično'],
+    'Djelomično': ['Primljeno', 'Isporučeno'],
+    'Primljeno': [],
+};
 
 // Task constants
 export const TASK_STATUSES = ['pending', 'in_progress', 'completed', 'cancelled'] as const;

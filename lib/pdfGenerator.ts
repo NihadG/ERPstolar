@@ -149,14 +149,14 @@ export async function generateOfferPDF(data: OfferPDFData): Promise<void> {
 function createOfferHTML(data: OfferPDFData): string {
     const productsHTML = data.products.map((p, i) => `
         <tr>
-            <td style="padding: 12px; border-bottom: 1px solid #e5e7eb;">${i + 1}</td>
-            <td style="padding: 12px; border-bottom: 1px solid #e5e7eb;">
-                <strong>${p.name}</strong>
-                ${p.dimensions ? `<br><small style="color: #6b7280;">${p.dimensions}</small>` : ''}
+            <td style="padding: 12px; border-bottom: 1px solid #e5e7eb; font-size: 13px; text-align: center;">${i + 1}</td>
+            <td style="padding: 12px; border-bottom: 1px solid #e5e7eb; font-size: 15px;">
+                <div style="font-weight: 400;">${p.name}</div>
+                ${p.dimensions ? `<div style="font-size: 11px; color: #86868b; margin-top: 2px;">${p.dimensions}</div>` : ''}
             </td>
-            <td style="padding: 12px; border-bottom: 1px solid #e5e7eb; text-align: center;">${p.quantity}</td>
-            <td style="padding: 12px; border-bottom: 1px solid #e5e7eb; text-align: right;">${formatCurrency(p.sellingPrice)}</td>
-            <td style="padding: 12px; border-bottom: 1px solid #e5e7eb; text-align: right; font-weight: 600;">${formatCurrency(p.totalPrice)}</td>
+            <td style="padding: 12px; border-bottom: 1px solid #e5e7eb; text-align: center; font-size: 15px;">${p.quantity}</td>
+            <td style="padding: 12px; border-bottom: 1px solid #e5e7eb; text-align: right; font-size: 15px;">${formatCurrency(p.sellingPrice)}</td>
+            <td style="padding: 12px; border-bottom: 1px solid #e5e7eb; text-align: right; font-size: 16px; font-weight: 400;">${formatCurrency(p.totalPrice)}</td>
         </tr>
         ${p.extras?.map(e => `
             <tr style="background: #f9fafb;">
@@ -239,9 +239,9 @@ function createOfferHTML(data: OfferPDFData): string {
                 th { 
                     padding: 12px; 
                     text-align: left; 
-                    font-weight: 600;
+                    font-weight: 700;
                     color: #4b5563;
-                    font-size: 13px;
+                    font-size: 15px;
                     border-bottom: 1px solid #e5e7eb;
                 }
                 th:nth-child(3), th:nth-child(4), th:nth-child(5) { text-align: right; }

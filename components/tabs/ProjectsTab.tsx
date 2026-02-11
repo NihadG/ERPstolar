@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import type { Project, Material, Product, ProductMaterial, WorkOrder, Offer, OfferProduct, WorkLog } from '@/lib/types';
+import { ALLOWED_MATERIAL_TRANSITIONS } from '@/lib/types';
 import {
     saveProject,
     deleteProject,
@@ -36,7 +37,7 @@ interface ProjectsTabProps {
     workOrders: WorkOrder[];
     offers?: Offer[];
     workLogs?: WorkLog[];
-    onRefresh: () => void;
+    onRefresh: (...collections: string[]) => void;
     showToast: (message: string, type: 'success' | 'error' | 'info') => void;
     onNavigateToTasks?: (projectId: string) => void;  // Navigate to tasks filtered by project
 }
@@ -205,7 +206,7 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
         if (result.success) {
             showToast(result.message, 'success');
             setProjectModal(false);
-            onRefresh();
+            onRefresh('projects');
         } else {
             showToast(result.message, 'error');
         }
@@ -221,7 +222,7 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
         const result = await deleteProject(projectId, organizationId);
         if (result.success) {
             showToast(result.message, 'success');
-            onRefresh();
+            onRefresh('projects');
         } else {
             showToast(result.message, 'error');
         }
@@ -248,7 +249,7 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
         if (result.success) {
             showToast(result.message, 'success');
             setProductModal(false);
-            onRefresh();
+            onRefresh('projects');
         } else {
             showToast(result.message, 'error');
         }
@@ -264,7 +265,7 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
         const result = await deleteProduct(productId, organizationId);
         if (result.success) {
             showToast(result.message, 'success');
-            onRefresh();
+            onRefresh('projects');
         } else {
             showToast(result.message, 'error');
         }
@@ -330,7 +331,7 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
         if (result.success) {
             showToast(result.message, 'success');
             setMaterialModal(false);
-            onRefresh();
+            onRefresh('projects');
         } else {
             showToast(result.message, 'error');
         }
@@ -362,7 +363,7 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
 
         if (result.success) {
             showToast(result.message, 'success');
-            onRefresh();
+            onRefresh('projects');
         } else {
             showToast(result.message, 'error');
         }
@@ -394,7 +395,7 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
 
         if (result.success) {
             showToast(result.message, 'success');
-            onRefresh();
+            onRefresh('projects');
         } else {
             showToast(result.message, 'error');
         }
@@ -426,7 +427,7 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
         const result = await deleteProductMaterial(materialId, organizationId);
         if (result.success) {
             showToast(result.message, 'success');
-            onRefresh();
+            onRefresh('projects');
         } else {
             showToast(result.message, 'error');
         }
@@ -453,7 +454,7 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
             if (result.success) {
                 showToast('Materijal uspješno ažuriran', 'success');
                 setEditMaterialModal(false);
-                onRefresh();
+                onRefresh('projects');
             } else {
                 showToast(result.message, 'error');
             }
@@ -477,7 +478,7 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
         if (result.success) {
             showToast('Materijal uspješno ažuriran', 'success');
             setEditMaterialModal(false);
-            onRefresh();
+            onRefresh('projects');
         } else {
             showToast(result.message, 'error');
         }
@@ -493,7 +494,7 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
         if (result.success) {
             showToast(`Status materijala promjenjen u "${newStatus}"`, 'success');
             setStatusDropdownMaterialId(null);
-            onRefresh();
+            onRefresh('projects');
         } else {
             showToast(result.message, 'error');
         }
@@ -559,7 +560,7 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
 
         if (result.success) {
             showToast('Materijal ažuriran', 'success');
-            onRefresh();
+            onRefresh('projects');
         } else {
             showToast(result.message, 'error');
         }
@@ -659,7 +660,7 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                         const result = await updateProductMaterial(materialId, updates, organizationId);
                         if (result.success) {
                             showToast('Materijal ažuriran', 'success');
-                            onRefresh();
+                            onRefresh('projects');
                         } else {
                             showToast(result.message, 'error');
                         }
@@ -1379,38 +1380,55 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                                                                                         </strong>
                                                                                     </div>
                                                                                     <div className="mat-col-status">
-                                                                                        {material.Status === 'Nije naručeno' ? (
-                                                                                            <div className="status-dropdown-wrapper">
-                                                                                                <span
-                                                                                                    className={`status-badge ${getStatusClass(material.Status)} clickable`}
-                                                                                                    onClick={(e) => {
-                                                                                                        e.stopPropagation();
-                                                                                                        setStatusDropdownMaterialId(
-                                                                                                            statusDropdownMaterialId === material.ID ? null : material.ID
-                                                                                                        );
-                                                                                                    }}
-                                                                                                    title="Klikni za promjenu statusa"
-                                                                                                >
-                                                                                                    {material.Status}
-                                                                                                    <span className="material-icons-round" style={{ fontSize: '14px', marginLeft: '4px' }}>expand_more</span>
-                                                                                                </span>
-                                                                                                {statusDropdownMaterialId === material.ID && (
-                                                                                                    <div className="status-dropdown-menu" onClick={(e) => e.stopPropagation()}>
-                                                                                                        <button
-                                                                                                            className="status-dropdown-item"
-                                                                                                            onClick={() => handleMaterialStatusChange(material.ID, 'Na stanju')}
+                                                                                        {(() => {
+                                                                                            const allowedTransitions = ALLOWED_MATERIAL_TRANSITIONS[material.Status] || [];
+                                                                                            const statusIcons: Record<string, string> = {
+                                                                                                'Nije naručeno': 'remove_shopping_cart',
+                                                                                                'Na stanju': 'inventory',
+                                                                                                'Naručeno': 'shopping_cart',
+                                                                                                'Primljeno': 'check_circle',
+                                                                                                'U upotrebi': 'build',
+                                                                                                'Instalirano': 'done_all',
+                                                                                            };
+                                                                                            if (allowedTransitions.length > 0) {
+                                                                                                return (
+                                                                                                    <div className="status-dropdown-wrapper">
+                                                                                                        <span
+                                                                                                            className={`status-badge ${getStatusClass(material.Status)} clickable`}
+                                                                                                            onClick={(e) => {
+                                                                                                                e.stopPropagation();
+                                                                                                                setStatusDropdownMaterialId(
+                                                                                                                    statusDropdownMaterialId === material.ID ? null : material.ID
+                                                                                                                );
+                                                                                                            }}
+                                                                                                            title="Klikni za promjenu statusa"
                                                                                                         >
-                                                                                                            <span className="material-icons-round">inventory</span>
-                                                                                                            Na stanju
-                                                                                                        </button>
+                                                                                                            {material.Status}
+                                                                                                            <span className="material-icons-round" style={{ fontSize: '14px', marginLeft: '4px' }}>expand_more</span>
+                                                                                                        </span>
+                                                                                                        {statusDropdownMaterialId === material.ID && (
+                                                                                                            <div className="status-dropdown-menu" onClick={(e) => e.stopPropagation()}>
+                                                                                                                {allowedTransitions.map(targetStatus => (
+                                                                                                                    <button
+                                                                                                                        key={targetStatus}
+                                                                                                                        className="status-dropdown-item"
+                                                                                                                        onClick={() => handleMaterialStatusChange(material.ID, targetStatus)}
+                                                                                                                    >
+                                                                                                                        <span className="material-icons-round">{statusIcons[targetStatus] || 'swap_horiz'}</span>
+                                                                                                                        {targetStatus}
+                                                                                                                    </button>
+                                                                                                                ))}
+                                                                                                            </div>
+                                                                                                        )}
                                                                                                     </div>
-                                                                                                )}
-                                                                                            </div>
-                                                                                        ) : (
-                                                                                            <span className={`status-badge ${getStatusClass(material.Status)}`}>
-                                                                                                {material.Status}
-                                                                                            </span>
-                                                                                        )}
+                                                                                                );
+                                                                                            }
+                                                                                            return (
+                                                                                                <span className={`status-badge ${getStatusClass(material.Status)}`}>
+                                                                                                    {material.Status}
+                                                                                                </span>
+                                                                                            );
+                                                                                        })()}
                                                                                     </div>
                                                                                     <div className="mat-col-actions">
                                                                                         <div className="action-buttons">

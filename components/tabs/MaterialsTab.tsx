@@ -11,7 +11,7 @@ import { formatCurrency } from '@/lib/utils';
 
 interface MaterialsTabProps {
     materials: Material[];
-    onRefresh: () => void;
+    onRefresh: (...collections: string[]) => void;
     showToast: (message: string, type: 'success' | 'error' | 'info') => void;
 }
 
@@ -63,7 +63,7 @@ export default function MaterialsTab({ materials, onRefresh, showToast }: Materi
         if (result.success) {
             showToast(result.message, 'success');
             setMaterialModal(false);
-            onRefresh();
+            onRefresh('materials');
         } else {
             showToast(result.message, 'error');
         }
@@ -79,7 +79,7 @@ export default function MaterialsTab({ materials, onRefresh, showToast }: Materi
         const result = await deleteMaterial(materialId, organizationId);
         if (result.success) {
             showToast(result.message, 'success');
-            onRefresh();
+            onRefresh('materials');
         } else {
             showToast(result.message, 'error');
         }
@@ -98,7 +98,7 @@ export default function MaterialsTab({ materials, onRefresh, showToast }: Materi
             if (result.success) {
                 showToast(result.message, result.deletedCount > 0 ? 'success' : 'info');
                 if (result.deletedCount > 0) {
-                    onRefresh();
+                    onRefresh('materials');
                 }
             } else {
                 showToast(result.message, 'error');

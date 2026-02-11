@@ -8,7 +8,7 @@ import Modal from '@/components/ui/Modal';
 
 interface SuppliersTabProps {
     suppliers: Supplier[];
-    onRefresh: () => void;
+    onRefresh: (...collections: string[]) => void;
     showToast: (message: string, type: 'success' | 'error' | 'info') => void;
 }
 
@@ -36,7 +36,7 @@ export default function SuppliersTab({ suppliers, onRefresh, showToast }: Suppli
         if (result.success) {
             showToast(result.message, 'success');
             setSupplierModal(false);
-            onRefresh();
+            onRefresh('suppliers');
         } else {
             showToast(result.message, 'error');
         }
@@ -52,7 +52,7 @@ export default function SuppliersTab({ suppliers, onRefresh, showToast }: Suppli
         const result = await deleteSupplier(supplierId, organizationId);
         if (result.success) {
             showToast(result.message, 'success');
-            onRefresh();
+            onRefresh('suppliers');
         } else {
             showToast(result.message, 'error');
         }

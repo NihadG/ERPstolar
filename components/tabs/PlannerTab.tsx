@@ -30,7 +30,7 @@ import './PlannerTab.css';
 interface PlannerTabProps {
     workOrders: WorkOrder[];
     workers: Worker[];
-    onRefresh: () => void;
+    onRefresh: (...collections: string[]) => void;
     showToast: (message: string, type: 'success' | 'error' | 'info') => void;
 }
 
@@ -309,7 +309,7 @@ export default function PlannerTab({ workOrders, workers, onRefresh, showToast }
                 showToast(res.message || 'Nalog zakazan', 'success');
                 closeScheduleModal();
                 setConflictModal({ open: false, conflicts: [], pendingSchedule: null });
-                onRefresh();
+                onRefresh('workOrders');
             } else {
                 showToast(res.message, 'error');
             }
@@ -351,14 +351,14 @@ export default function PlannerTab({ workOrders, workers, onRefresh, showToast }
     const unschedule = async (wo: WorkOrder) => {
         if (!orgId) return;
         const res = await unscheduleWorkOrder(wo.Work_Order_ID, orgId);
-        if (res.success) { showToast('Uklonjeno', 'success'); onRefresh(); }
+        if (res.success) { showToast('Uklonjeno', 'success'); onRefresh('workOrders'); }
         else showToast(res.message, 'error');
     };
 
     const startOrder = async (wo: WorkOrder) => {
         if (!orgId) return;
         const res = await startWorkOrder(wo.Work_Order_ID, orgId);
-        if (res.success) { showToast('Pokrenuto', 'success'); onRefresh(); }
+        if (res.success) { showToast('Pokrenuto', 'success'); onRefresh('workOrders'); }
         else showToast(res.message, 'error');
     };
 
@@ -428,7 +428,7 @@ export default function PlannerTab({ workOrders, workers, onRefresh, showToast }
         const res = await rescheduleWorkOrder(draggedOrder.Work_Order_ID, newStartStr, newEndStr, orgId);
         if (res.success) {
             showToast('Nalog premješten', 'success');
-            onRefresh();
+            onRefresh('workOrders');
         } else {
             showToast(res.message, 'error');
         }

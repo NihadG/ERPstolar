@@ -61,7 +61,7 @@ interface TasksTabProps {
     materials: Material[];
     workOrders?: WorkOrder[];
     orders?: Order[];
-    onRefresh: () => void;
+    onRefresh: (...collections: string[]) => void;
     showToast: (message: string, type: 'success' | 'error' | 'info') => void;
     projectFilter?: string | null;  // Filter tasks by project ID
     onClearFilter?: () => void;     // Clear the project filter
@@ -471,7 +471,7 @@ export default function TasksTab({ tasks, projects, workers, materials, workOrde
         const result = await saveTask(taskData, organizationId!);
         if (result.success) {
             showToast(result.message, 'success');
-            onRefresh();
+            onRefresh('tasks');
             setIsModalOpen(false);
         } else {
             showToast(result.message, 'error');
@@ -483,7 +483,7 @@ export default function TasksTab({ tasks, projects, workers, materials, workOrde
         const result = await deleteTask(taskId, organizationId!);
         if (result.success) {
             showToast(result.message, 'success');
-            onRefresh();
+            onRefresh('tasks');
         } else {
             showToast(result.message, 'error');
         }
@@ -500,7 +500,7 @@ export default function TasksTab({ tasks, projects, workers, materials, workOrde
         const result = await updateTaskStatus(taskId, status, organizationId!);
         if (result.success) {
             // Success - refresh data in background (silent sync)
-            onRefresh();
+            onRefresh('tasks');
         } else {
             // Revert on failure
             setLocalTasks(previousTasks);
@@ -527,7 +527,7 @@ export default function TasksTab({ tasks, projects, workers, materials, workOrde
         const result = await toggleTaskChecklistItem(taskId, itemId, organizationId!);
         if (result.success) {
             // Silent refresh
-            onRefresh();
+            onRefresh('tasks');
         } else {
             // Revert on failure
             setLocalTasks(previousTasks);

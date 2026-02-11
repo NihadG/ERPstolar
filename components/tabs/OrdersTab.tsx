@@ -9,7 +9,7 @@ import { getOrgSettings } from '@/lib/database';
 import { DropdownMenu } from '@/components/ui/DropdownMenu';
 import Modal from '@/components/ui/Modal';
 import { OrderWizardModal } from './OrderWizardModal';
-import { ORDER_STATUSES, MATERIAL_STATUSES } from '@/lib/types';
+import { ORDER_STATUSES, MATERIAL_STATUSES, ALLOWED_ORDER_TRANSITIONS } from '@/lib/types';
 import { formatCurrency, formatDate, getStatusClass } from '@/lib/utils';
 import './OrdersTab.css';
 
@@ -18,7 +18,7 @@ interface OrdersTabProps {
     suppliers: Supplier[];
     projects: Project[];
     productMaterials: ProductMaterial[];
-    onRefresh: () => void;
+    onRefresh: (...collections: string[]) => void;
     showToast: (message: string, type: 'success' | 'error' | 'info') => void;
     pendingOrderMaterials?: { materialIds: string[], supplierName: string } | null;
     onClearPendingOrder?: () => void;
@@ -511,7 +511,7 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
         if (result.success) {
             showToast(result.message, 'success');
             setWizardModal(false);
-            onRefresh();
+            onRefresh('orders', 'projects');
         } else {
             showToast(result.message, 'error');
         }
@@ -534,7 +534,7 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
         const result = await updateOrderStatus(orderId, newStatus, organizationId!);
         if (result.success) {
             showToast('Status promijenjen', 'success');
-            onRefresh();
+            onRefresh('orders', 'projects');
         } else {
             showToast(result.message, 'error');
         }
@@ -546,6 +546,26 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
         setDeleteOrderModal(true);
     }
 
+    // ── Order status change with confirmation ──
+    const [statusDropdownOrderId, setStatusDropdownOrderId] = useState<string | null>(null);
+
+    async function handleOrderStatusChange(orderId: string, newStatus: string, currentStatus: string) {
+        // Confirmation for reverting to Nacrt (resets materials)
+        if (newStatus === 'Nacrt' && (currentStatus === 'Poslano' || currentStatus === 'Potvrđeno')) {
+            if (!confirm('Vraćanje na "Nacrt" će resetirati statuse materijala na "Nije naručeno". Nastaviti?')) {
+                return;
+            }
+        }
+        setStatusDropdownOrderId(null);
+        const result = await updateOrderStatus(orderId, newStatus, organizationId!);
+        if (result.success) {
+            showToast(`Status narudžbe promijenjen u "${newStatus}"`, 'success');
+            onRefresh('orders', 'projects');
+        } else {
+            showToast(result.message, 'error');
+        }
+    }
+
     async function confirmDeleteOrder() {
         if (!deleteOrderId) return;
 
@@ -554,7 +574,7 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
             showToast(result.message, 'success');
             setDeleteOrderModal(false);
             setDeleteOrderId(null);
-            onRefresh();
+            onRefresh('orders', 'projects');
         } else {
             showToast(result.message, 'error');
         }
@@ -564,7 +584,7 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
         const result = await markOrderSent(orderId, organizationId!);
         if (result.success) {
             showToast('Narudžba poslana', 'success');
-            onRefresh();
+            onRefresh('orders', 'projects');
             // setViewModal(false); // No longer needed
         } else {
             showToast(result.message, 'error');
@@ -580,7 +600,7 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
         if (result.success) {
             showToast('Materijali primljeni', 'success');
             setSelectedItemIds(new Set());
-            onRefresh();
+            onRefresh('orders', 'projects');
             // Current order updates automatically via useMemo
         } else {
             showToast(result.message, 'error');
@@ -618,7 +638,7 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
             await recalculateOrderTotal(currentOrder!.Order_ID, organizationId!);
             showToast('Stavke obrisane', 'success');
             setSelectedItemIds(new Set());
-            onRefresh();
+            onRefresh('orders', 'projects');
             // Current order updates automatically via useMemo
         } else {
             showToast(result.message, 'error');
@@ -666,7 +686,7 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
         setEditMode(false);
         setEditedQuantities({});
         setEditedQuantities({});
-        onRefresh();
+        onRefresh('orders', 'projects');
         // Current order updates automatically via useMemo
     }
 
@@ -959,8 +979,8 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
         const result = await markMaterialsReceived(itemIds, organizationId!);
         if (result.success) {
             showToast('Materijali primljeni', 'success');
-            onRefresh();
-            onRefresh();
+            onRefresh('orders', 'projects');
+            onRefresh('orders', 'projects');
             // Current order updates automatically via useMemo
         } else {
             showToast(result.message, 'error');
@@ -1164,7 +1184,7 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
                                             if (result.success) {
                                                 await updateOrderStatus(order.Order_ID, 'Primljeno', organizationId!);
                                                 showToast('Sve stavke primljene', 'success');
-                                                onRefresh();
+                                                onRefresh('orders', 'projects');
                                             } else {
                                                 showToast(result.message, 'error');
                                             }
@@ -1200,9 +1220,46 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
                                                     </div>
 
                                                     <div className="order-actions-group" onClick={e => e.stopPropagation()}>
-                                                        <span className={`status-badge-custom status-${order.Status.toLowerCase().replace(/\s+/g, '-')}`}>
-                                                            {order.Status}
-                                                        </span>
+                                                        {(() => {
+                                                            const allowed = ALLOWED_ORDER_TRANSITIONS[order.Status] || [];
+                                                            if (allowed.length > 0) {
+                                                                return (
+                                                                    <div className="status-dropdown-wrapper" style={{ position: 'relative' }}>
+                                                                        <span
+                                                                            className={`status-badge-custom status-${order.Status.toLowerCase().replace(/\s+/g, '-')} clickable`}
+                                                                            onClick={(e) => {
+                                                                                e.stopPropagation();
+                                                                                setStatusDropdownOrderId(statusDropdownOrderId === order.Order_ID ? null : order.Order_ID);
+                                                                            }}
+                                                                            title="Klikni za promjenu statusa"
+                                                                            style={{ cursor: 'pointer' }}
+                                                                        >
+                                                                            {order.Status}
+                                                                            <span className="material-icons-round" style={{ fontSize: '14px', marginLeft: '4px' }}>expand_more</span>
+                                                                        </span>
+                                                                        {statusDropdownOrderId === order.Order_ID && (
+                                                                            <div className="status-dropdown-menu" onClick={(e) => e.stopPropagation()} style={{ position: 'absolute', top: '100%', right: 0, zIndex: 50, background: 'var(--bg-card)', borderRadius: 8, boxShadow: '0 4px 16px rgba(0,0,0,0.15)', padding: '4px', minWidth: 160, marginTop: 4 }}>
+                                                                                {allowed.map(targetStatus => (
+                                                                                    <button
+                                                                                        key={targetStatus}
+                                                                                        className="status-dropdown-item"
+                                                                                        onClick={() => handleOrderStatusChange(order.Order_ID, targetStatus, order.Status)}
+                                                                                        style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', width: '100%', border: 'none', background: 'transparent', cursor: 'pointer', borderRadius: 6, fontSize: 13, color: targetStatus === 'Nacrt' ? 'var(--warning)' : 'var(--text-primary)' }}
+                                                                                    >
+                                                                                        {targetStatus}
+                                                                                    </button>
+                                                                                ))}
+                                                                            </div>
+                                                                        )}
+                                                                    </div>
+                                                                );
+                                                            }
+                                                            return (
+                                                                <span className={`status-badge-custom status-${order.Status.toLowerCase().replace(/\s+/g, '-')}`}>
+                                                                    {order.Status}
+                                                                </span>
+                                                            );
+                                                        })()}
 
                                                         {!allReceived && order.Status !== 'Nacrt' && (
                                                             <button
