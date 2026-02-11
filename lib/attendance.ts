@@ -11,7 +11,7 @@ import {
     where,
     writeBatch,
 } from 'firebase/firestore';
-import { generateUUID, createWorkLog, workLogExists, getWorkers, createProductionSnapshot, getProductMaterials } from './database';
+import { generateUUID, createWorkLog, workLogExists, getWorkers, createProductionSnapshot, getProductMaterials, deleteWorkLogsForWorkerOnDate } from './database';
 import type { Worker, WorkerAttendance, WorkOrder, WorkOrderItem, WorkLog } from './types';
 
 // Helper: Get Firestore with null check
@@ -55,9 +55,25 @@ async function getItemRef(itemId: string) {
 export async function saveWorkerAttendance(attendance: Partial<WorkerAttendance>): Promise<string> {
     try {
         const firestore = getDb();
+
+        // DUPLICATE GUARD: Check if record already exists for this Worker+Date
+        // If so, update existing instead of creating a new one
+        let existingId = attendance.Attendance_ID;
+        if (!existingId && attendance.Worker_ID && attendance.Date) {
+            const existingQuery = query(
+                collection(firestore, COLLECTIONS.WORKER_ATTENDANCE),
+                where('Worker_ID', '==', attendance.Worker_ID),
+                where('Date', '==', attendance.Date)
+            );
+            const existingSnap = await getDocs(existingQuery);
+            if (!existingSnap.empty) {
+                existingId = existingSnap.docs[0].data().Attendance_ID || existingSnap.docs[0].id;
+            }
+        }
+
         const attendanceData = {
             ...attendance,
-            Attendance_ID: attendance.Attendance_ID || generateUUID(),
+            Attendance_ID: existingId || generateUUID(),
             Created_Date: attendance.Created_Date || new Date().toISOString(),
             Modified_Date: new Date().toISOString(),
         };
@@ -79,25 +95,29 @@ export async function saveWorkerAttendance(attendance: Partial<WorkerAttendance>
 }
 
 /**
- * Mark worker attendance and automatically create work logs for active items
- * ENHANCED: Now creates work_logs entries when status is 'Prisutan' or 'Teren'
+ * Mark worker attendance and automatically create/cleanup work logs
+ * ENHANCED: 
+ *   - Creates work_logs when status is 'Prisutan' or 'Teren'
+ *   - DELETES work_logs when status changes to non-working (Odsutan, Bolovanje, Odmor, Vikend)
  * This ensures proper synchronization between attendance and productivity tracking
  */
 export async function markAttendanceAndRecalculate(
-    attendance: Partial<WorkerAttendance>
-): Promise<{ success: boolean; affectedWorkOrders: string[]; workLogsCreated: number }> {
+    attendance: Partial<WorkerAttendance>,
+    options?: { skipRecalculation?: boolean }
+): Promise<{ success: boolean; affectedWorkOrders: string[]; workLogsCreated: number; workLogsDeleted: number }> {
     try {
         // 1. Save the attendance record
         await saveWorkerAttendance(attendance);
 
         let workLogsCreated = 0;
+        let workLogsDeleted = 0;
+
+        if (!attendance.Worker_ID || !attendance.Date || !attendance.Organization_ID) {
+            return { success: true, affectedWorkOrders: [], workLogsCreated: 0, workLogsDeleted: 0 };
+        }
 
         // 2. If worker is present (Prisutan or Teren), create work logs for all active items
-        if ((attendance.Status === 'Prisutan' || attendance.Status === 'Teren') &&
-            attendance.Worker_ID &&
-            attendance.Date &&
-            attendance.Organization_ID) {
-
+        if (attendance.Status === 'Prisutan' || attendance.Status === 'Teren') {
             // Get worker's daily rate
             const workers = await getWorkers(attendance.Organization_ID);
             const worker = workers.find(w => w.Worker_ID === attendance.Worker_ID);
@@ -115,14 +135,70 @@ export async function markAttendanceAndRecalculate(
 
             workLogsCreated = result.created;
             console.log(`Attendance marked: ${workerName} - ${attendance.Status} on ${attendance.Date}. Work logs created: ${result.created}, skipped: ${result.skipped}`);
+        } else {
+            // 3. NON-WORKING STATUS: Delete any existing work logs for this worker/date
+            // This handles retroactive corrections (e.g., changing Prisutan → Odsutan)
+            try {
+                const cleanupResult = await deleteWorkLogsForWorkerOnDate(
+                    attendance.Worker_ID,
+                    attendance.Date,
+                    attendance.Organization_ID
+                );
+                workLogsDeleted = cleanupResult.deleted;
+                if (workLogsDeleted > 0) {
+                    console.log(`Attendance cleanup: Deleted ${workLogsDeleted} stale work logs for worker ${attendance.Worker_ID} on ${attendance.Date} (status: ${attendance.Status})`);
+                }
+            } catch (deleteError) {
+                console.error('Failed to delete work logs during attendance cleanup:', deleteError);
+                // Continue — attendance was already saved, best effort cleanup
+            }
         }
 
-        return { success: true, affectedWorkOrders: [], workLogsCreated };
+        // 4. RECALCULATE affected work orders so profit/labor cost stays fresh
+        //    (skipped when called in bulk — caller handles batch recalc)
+        const affectedWorkOrders: string[] = [];
+        if (!options?.skipRecalculation && (workLogsDeleted > 0 || workLogsCreated > 0)) {
+            try {
+                const firestore = getDb();
+                // Find all active work orders for this org
+                const woQuery = query(
+                    collection(firestore, COLLECTIONS.WORK_ORDERS),
+                    where('Status', '==', 'U toku'),
+                    where('Organization_ID', '==', attendance.Organization_ID)
+                );
+                const woSnap = await getDocs(woQuery);
+                for (const woDoc of woSnap.docs) {
+                    const woData = woDoc.data();
+                    const woId = woData.Work_Order_ID;
+                    // Check if any item in this WO has this worker assigned
+                    const itemsQuery = query(
+                        collection(firestore, COLLECTIONS.WORK_ORDER_ITEMS),
+                        where('Work_Order_ID', '==', woId),
+                        where('Organization_ID', '==', attendance.Organization_ID)
+                    );
+                    const itemsSnap = await getDocs(itemsQuery);
+                    const isAffected = itemsSnap.docs.some(d => {
+                        const item = d.data() as WorkOrderItem;
+                        return isWorkerAssignedToItem(item, attendance.Worker_ID!) ||
+                            item.Assigned_Workers?.some(w => w.Worker_ID === attendance.Worker_ID);
+                    });
+                    if (isAffected) {
+                        affectedWorkOrders.push(woId);
+                        await recalculateWorkOrder(woId);
+                    }
+                }
+            } catch (recalcError) {
+                console.error('Failed to recalculate work orders after attendance change:', recalcError);
+            }
+        }
+
+        return { success: true, affectedWorkOrders, workLogsCreated, workLogsDeleted };
     } catch (error) {
         console.error('Error marking attendance:', error);
         throw error;
     }
 }
+
 
 
 /**
@@ -377,13 +453,19 @@ export async function canWorkerStartProcess(
     }
 }
 
-export async function getWorkerAttendance(workerId: string, date: string): Promise<WorkerAttendance | null> {
+export async function getWorkerAttendance(workerId: string, date: string, organizationId?: string): Promise<WorkerAttendance | null> {
     try {
         const firestore = getDb();
-        const q = query(
-            collection(firestore, COLLECTIONS.WORKER_ATTENDANCE),
+        const constraints = [
             where('Worker_ID', '==', workerId),
             where('Date', '==', date)
+        ];
+        if (organizationId) {
+            constraints.push(where('Organization_ID', '==', organizationId));
+        }
+        const q = query(
+            collection(firestore, COLLECTIONS.WORKER_ATTENDANCE),
+            ...constraints
         );
         const snapshot = await getDocs(q);
 
@@ -474,39 +556,76 @@ export async function getWorkerMonthlyAttendance(
     }
 }
 
-export async function autoPopulateWeekends(workers: Worker[], year: number, month: number): Promise<void> {
+export async function autoPopulateWeekends(workers: Worker[], year: number, month: number, organizationId?: string): Promise<void> {
     try {
         const firestore = getDb();
         const daysInMonth = new Date(year, month, 0).getDate();
-        const batch = writeBatch(firestore);
 
+        // Collect all weekend date strings
+        const weekendDates: string[] = [];
         for (let day = 1; day <= daysInMonth; day++) {
             const date = new Date(year, month - 1, day);
-            const dayOfWeek = date.getDay(); // 0 = Sunday, 6 = Saturday
+            if (date.getDay() === 0 || date.getDay() === 6) {
+                weekendDates.push(formatLocalDateISO(date));
+            }
+        }
 
-            if (dayOfWeek === 0 || dayOfWeek === 6) {
-                // It's a weekend!
-                const dateStr = formatLocalDateISO(date);
+        if (weekendDates.length === 0 || workers.length === 0) return;
 
-                for (const worker of workers) {
-                    // Check if attendance already exists
-                    const existing = await getWorkerAttendance(worker.Worker_ID, dateStr);
-                    if (!existing) {
-                        const attendanceRef = doc(collection(firestore, COLLECTIONS.WORKER_ATTENDANCE));
-                        batch.set(attendanceRef, {
+        // BATCH-FETCH all existing attendance for this month to avoid N async reads
+        const startDate = `${year}-${String(month).padStart(2, '0')}-01`;
+        const endDate = `${year}-${String(month).padStart(2, '0')}-31`;
+        const constraints = [
+            where('Date', '>=', startDate),
+            where('Date', '<=', endDate)
+        ];
+        if (organizationId) {
+            constraints.push(where('Organization_ID', '==', organizationId));
+        }
+        const existingQuery = query(
+            collection(firestore, COLLECTIONS.WORKER_ATTENDANCE),
+            ...constraints
+        );
+        const existingSnap = await getDocs(existingQuery);
+        const existingKeys = new Set<string>();
+        existingSnap.forEach(d => {
+            const data = d.data();
+            existingKeys.add(`${data.Worker_ID}_${data.Date}`);
+        });
+
+        // Build all operations, then commit in 500-op chunks
+        const operations: Array<{ ref: any; data: any }> = [];
+        for (const dateStr of weekendDates) {
+            for (const worker of workers) {
+                const key = `${worker.Worker_ID}_${dateStr}`;
+                if (!existingKeys.has(key)) {
+                    const ref = doc(collection(firestore, COLLECTIONS.WORKER_ATTENDANCE));
+                    operations.push({
+                        ref,
+                        data: {
                             Attendance_ID: generateUUID(),
+                            Organization_ID: organizationId || '',
                             Worker_ID: worker.Worker_ID,
                             Worker_Name: worker.Name,
                             Date: dateStr,
                             Status: 'Vikend',
                             Created_Date: new Date().toISOString(),
-                        });
-                    }
+                        }
+                    });
                 }
             }
         }
 
-        await batch.commit();
+        // Commit in chunks of 450 (well under Firestore's 500 limit)
+        const CHUNK_SIZE = 450;
+        for (let i = 0; i < operations.length; i += CHUNK_SIZE) {
+            const chunk = operations.slice(i, i + CHUNK_SIZE);
+            const batch = writeBatch(firestore);
+            chunk.forEach(op => batch.set(op.ref, op.data));
+            await batch.commit();
+        }
+
+        console.log(`autoPopulateWeekends: Created ${operations.length} records for ${workers.length} workers`);
     } catch (error) {
         console.error('Error auto-populating weekends:', error);
         throw error;
@@ -653,8 +772,8 @@ export async function completeWorkOrderItem(
 
         const item = itemSnap.data();
 
-        // Calculate actual labor cost
-        const actualLaborCost = await calculateActualLaborCost(item);
+        // Calculate actual labor cost — pass Organization_ID for tenant isolation
+        const actualLaborCost = await calculateActualLaborCost(item, item.Organization_ID);
 
         await updateDoc(itemRef, {
             Status: 'Završeno',
@@ -681,7 +800,7 @@ export async function completeWorkOrderItem(
 export async function calculateSubTaskLaborCost(
     subTask: any,
     itemQuantity: number,
-    organizationId?: string
+    organizationId: string
 ): Promise<{ laborCost: number; workingDays: number }> {
     try {
         // If not started, no cost
@@ -731,11 +850,17 @@ export async function calculateSubTaskLaborCost(
             }
         });
 
-        // Batch fetch attendance records
+        // Batch fetch attendance records — FILTERED by Organization_ID to prevent cross-tenant leak
+        const attendanceQueryConstraints = [
+            where('Date', '>=', startDateStr),
+            where('Date', '<=', endDateStr),
+        ];
+        if (organizationId) {
+            attendanceQueryConstraints.push(where('Organization_ID', '==', organizationId));
+        }
         const attendanceQuery = query(
             collection(firestore, COLLECTIONS.WORKER_ATTENDANCE),
-            where('Date', '>=', startDateStr),
-            where('Date', '<=', endDateStr)
+            ...attendanceQueryConstraints
         );
         const attendanceSnap = await getDocs(attendanceQuery);
         const attendanceMap = new Map<string, string>();
@@ -827,13 +952,15 @@ export async function calculateSubTaskLaborCost(
  * Calculate actual labor cost based on worker attendance
  * ENHANCED: Now handles SubTasks with individual pause periods
  */
-export async function calculateActualLaborCost(item: any): Promise<number> {
+export async function calculateActualLaborCost(item: any, organizationId?: string): Promise<number> {
     try {
+        const orgId = organizationId || item.Organization_ID || '';
+
         // ENHANCED: If item has SubTasks, calculate cost per sub-task
         if (item.SubTasks && item.SubTasks.length > 0) {
             let totalCost = 0;
             for (const subTask of item.SubTasks) {
-                const result = await calculateSubTaskLaborCost(subTask, item.Quantity);
+                const result = await calculateSubTaskLaborCost(subTask, item.Quantity, orgId);
                 totalCost += result.laborCost;
             }
             return totalCost;
@@ -887,11 +1014,17 @@ export async function calculateActualLaborCost(item: any): Promise<number> {
         const endDateStr = item.Completed_At.split('T')[0]; // YYYY-MM-DD
 
         // OPTIMIZATION: Batch-fetch ALL attendance records for the date range
-        // Instead of N workers × M days = N×M queries, we do just 1 query
+        // FIXED: Filter by Organization_ID to prevent cross-tenant data leak
+        const attendanceQueryConstraints = [
+            where('Date', '>=', startDateStr),
+            where('Date', '<=', endDateStr),
+        ];
+        if (orgId) {
+            attendanceQueryConstraints.push(where('Organization_ID', '==', orgId));
+        }
         const attendanceQuery = query(
             collection(firestore, 'worker_attendance'),
-            where('Date', '>=', startDateStr),
-            where('Date', '<=', endDateStr)
+            ...attendanceQueryConstraints
         );
         const attendanceSnap = await getDocs(attendanceQuery);
 
@@ -986,7 +1119,7 @@ export async function recalculateWorkOrder(workOrderId: string): Promise<void> {
 
         if (!workOrder || !workOrder.items) return;
 
-        // Aggregate values from items - FETCH FRESH MATERIAL COSTS
+        // Aggregate values from items - FETCH FRESH COSTS (material + labor)
         let totalValue = 0;
         let materialCost = 0;
         let transportCost = 0;
@@ -997,26 +1130,44 @@ export async function recalculateWorkOrder(workOrderId: string): Promise<void> {
         let earliestStart: Date | undefined;
         let latestCompletion: Date | undefined;
 
-        // Use for...of to support async material cost fetching
+        // Use for...of to support async material + labor cost fetching
         for (const item of workOrder.items) {
             totalValue += item.Product_Value || 0;
 
             // IMPORTANT: Fetch fresh material costs from database (not stale item.Material_Cost)
             // Materials can change during production, so we always need current prices
+            let itemMaterialCost = 0;
             if (item.Product_ID && workOrder.Organization_ID) {
                 const materials = await getProductMaterials(item.Product_ID, workOrder.Organization_ID);
-                materialCost += materials.reduce((sum, m) => sum + (m.Total_Price || 0), 0);
+                itemMaterialCost = materials.reduce((sum, m) => sum + (m.Total_Price || 0), 0);
             } else {
                 // Fallback to stored value if no Product_ID
-                materialCost += item.Material_Cost || 0;
+                itemMaterialCost = item.Material_Cost || 0;
             }
+            materialCost += itemMaterialCost;
 
             // Include Transport and Services in profit calculation (best practice)
             transportCost += item.Transport_Share || 0;
             servicesCost += item.Services_Total || 0;
 
             plannedLaborCost += item.Planned_Labor_Cost || 0;
-            actualLaborCost += item.Actual_Labor_Cost || 0;
+
+            // CRITICAL FIX: Calculate FRESH labor cost instead of using stale stored value
+            // This ensures profit is accurate in real-time, not just after item completion
+            const freshItemLaborCost = await calculateActualLaborCost(item, workOrder.Organization_ID);
+            actualLaborCost += freshItemLaborCost;
+
+            // SYNC: Update item-level Material_Cost and Actual_Labor_Cost for consistency
+            try {
+                const itemRef = doc(firestore, COLLECTIONS.WORK_ORDER_ITEMS, item.ID);
+                await updateDoc(itemRef, {
+                    Material_Cost: itemMaterialCost,
+                    Actual_Labor_Cost: freshItemLaborCost
+                });
+            } catch (syncErr) {
+                console.warn(`Failed to sync costs on item ${item.ID}:`, syncErr);
+            }
+
 
             if (item.Started_At) {
                 const start = new Date(item.Started_At);
@@ -1097,6 +1248,35 @@ export async function recalculateWorkOrder(workOrderId: string): Promise<void> {
     } catch (error) {
         console.error('Error recalculating work order:', error);
         throw error;
+    }
+}
+
+/**
+ * Recalculate ALL active work orders for an organization.
+ * Used after bulk attendance updates to avoid per-worker recalculation overhead.
+ */
+export async function recalculateAllActiveWorkOrders(organizationId: string): Promise<void> {
+    try {
+        const firestore = getDb();
+        const woQuery = query(
+            collection(firestore, COLLECTIONS.WORK_ORDERS),
+            where('Status', '==', 'U toku'),
+            where('Organization_ID', '==', organizationId)
+        );
+        const woSnap = await getDocs(woQuery);
+
+        // Recalculate each active WO (sequential to avoid Firestore contention)
+        for (const woDoc of woSnap.docs) {
+            const woId = woDoc.data().Work_Order_ID;
+            try {
+                await recalculateWorkOrder(woId);
+            } catch (err) {
+                console.warn(`Failed to recalculate WO ${woId}:`, err);
+            }
+        }
+        console.log(`Batch recalculation: ${woSnap.size} active work orders recalculated`);
+    } catch (error) {
+        console.error('Error in batch recalculation:', error);
     }
 }
 
