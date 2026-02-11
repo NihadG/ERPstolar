@@ -44,6 +44,7 @@ import type {
     SnapshotExtra,
     AppState,
 } from './types';
+import { ALLOWED_ORDER_TRANSITIONS } from './types';
 
 // ============================================
 // HELPER: GET FIRESTORE WITH NULL CHECK
@@ -631,6 +632,30 @@ export async function recalculateProductCost(productId: string, organizationId: 
         await updateDoc(snapshot.docs[0].ref, { Material_Cost: totalCost });
     }
 
+    // SYNC: Propagate material cost change to active work orders
+    // recalculateWorkOrder fetches fresh material costs, so just trigger it
+    try {
+        const woItemsQ = query(
+            collection(db, COLLECTIONS.WORK_ORDER_ITEMS),
+            where('Product_ID', '==', productId),
+            where('Organization_ID', '==', organizationId)
+        );
+        const woItemsSnap = await getDocs(woItemsQ);
+        const woIds = new Set<string>();
+        woItemsSnap.docs.forEach(d => {
+            const woId = d.data().Work_Order_ID;
+            if (woId) woIds.add(woId);
+        });
+
+        if (woIds.size > 0) {
+            const { recalculateWorkOrder } = await import('./attendance');
+            for (const woId of Array.from(woIds)) {
+                await recalculateWorkOrder(woId);
+            }
+        }
+    } catch (err) {
+        console.warn('recalculateProductCost: WO sync failed (non-critical):', err);
+    }
 
     return totalCost;
 }
@@ -1628,11 +1653,15 @@ export async function createOrder(data: Partial<Order> & { items?: (Partial<Orde
         await addDoc(collection(db, COLLECTIONS.ORDERS), order);
 
         // Add items using batch for order items
+        // NOTE: We do NOT update material statuses here.
+        // Material statuses remain 'Nije naručeno' until the order is actually sent (markOrderSent).
         const itemsBatch = writeBatch(db);
-        const allMaterialIds: string[] = [];
 
         for (const item of data.items || []) {
-            const orderItem: OrderItem & { Organization_ID: string } = {
+            // Collect all grouped material IDs for this item
+            const allMaterialIdsForItem = item.Product_Material_IDs || (item.Product_Material_ID ? [item.Product_Material_ID] : []);
+
+            const orderItem: OrderItem & { Organization_ID: string; Product_Material_IDs?: string[] } = {
                 ID: generateUUID(),
                 Organization_ID: organizationId,
                 Order_ID: orderId,
@@ -1646,26 +1675,15 @@ export async function createOrder(data: Partial<Order> & { items?: (Partial<Orde
                 Expected_Price: item.Expected_Price || 0,
                 Actual_Price: 0,
                 Received_Quantity: 0,
-                Status: 'Naručeno',
+                Status: 'Na čekanju',
+                Product_Material_IDs: allMaterialIdsForItem.length > 1 ? allMaterialIdsForItem : undefined,
             };
 
             const newDocRef = doc(collection(db, COLLECTIONS.ORDER_ITEMS));
             itemsBatch.set(newDocRef, orderItem);
-
-            // Collect all material IDs for batch status update
-            const materialIds = item.Product_Material_IDs || (item.Product_Material_ID ? [item.Product_Material_ID] : []);
-            allMaterialIds.push(...materialIds);
         }
 
         await itemsBatch.commit();
-
-        // Batch update all material statuses in one go
-        if (allMaterialIds.length > 0) {
-            await batchUpdateMaterialStatuses(
-                allMaterialIds.map(id => ({ materialId: id, status: 'Naručeno', orderId })),
-                organizationId
-            );
-        }
 
         return { success: true, data: { Order_ID: orderId, Order_Number: orderNumber }, message: 'Narudžba kreirana' };
     } catch (error) {
@@ -1715,12 +1733,19 @@ export async function deleteOrder(orderId: string, organizationId: string, mater
         const itemsSnap = await getDocs(itemsQ);
 
         // Batch update material statuses based on user choice
+        // IMPORTANT: Use Product_Material_IDs (grouped) when available, not just Product_Material_ID
         if (materialAction) {
             const newStatus = materialAction === 'received' ? 'Primljeno' : 'Nije naručeno';
-            const materialUpdates = itemsSnap.docs
-                .map(d => d.data() as OrderItem)
-                .filter(item => item.Product_Material_ID)
-                .map(item => ({ materialId: item.Product_Material_ID, status: newStatus, orderId: '' }));
+            const materialUpdates: { materialId: string; status: string; orderId: string }[] = [];
+
+            for (const docSnap of itemsSnap.docs) {
+                const item = docSnap.data() as OrderItem;
+                // Get ALL material IDs for this item (grouped or single)
+                const materialIds = item.Product_Material_IDs || (item.Product_Material_ID ? [item.Product_Material_ID] : []);
+                for (const matId of materialIds) {
+                    materialUpdates.push({ materialId: matId, status: newStatus, orderId: '' });
+                }
+            }
 
             if (materialUpdates.length > 0) {
                 await batchUpdateMaterialStatuses(materialUpdates, organizationId);
@@ -1756,6 +1781,7 @@ export async function updateOrderStatus(orderId: string, status: string, organiz
     }
 
     try {
+        // Get current order to check previous status
         const q = query(
             collection(db, COLLECTIONS.ORDERS),
             where('Order_ID', '==', orderId),
@@ -1763,9 +1789,93 @@ export async function updateOrderStatus(orderId: string, status: string, organiz
         );
         const snapshot = await getDocs(q);
 
-        if (!snapshot.empty) {
-            await updateDoc(snapshot.docs[0].ref, { Status: status });
+        if (snapshot.empty) {
+            return { success: false, message: 'Narudžba nije pronađena' };
         }
+
+        const previousStatus = (snapshot.docs[0].data() as Order).Status;
+
+        // Validate transition
+        const allowed = ALLOWED_ORDER_TRANSITIONS[previousStatus];
+        if (allowed && !allowed.includes(status)) {
+            return { success: false, message: `Nije moguće promijeniti status iz "${previousStatus}" u "${status}"` };
+        }
+
+        await updateDoc(snapshot.docs[0].ref, { Status: status });
+
+        // Helper: get all order items for this order
+        const getItems = async () => {
+            const itemsQ = query(
+                collection(db, COLLECTIONS.ORDER_ITEMS),
+                where('Order_ID', '==', orderId),
+                where('Organization_ID', '==', organizationId)
+            );
+            return await getDocs(itemsQ);
+        };
+
+        // ── Transition: ANY → Nacrt (revert to draft) ──
+        // Reset non-received materials to 'Nije naručeno' and clear Order_ID
+        if (status === 'Nacrt') {
+            const itemsSnap = await getItems();
+            const materialUpdates: { materialId: string; status: string; orderId: string }[] = [];
+            for (const docSnap of itemsSnap.docs) {
+                const item = docSnap.data() as OrderItem;
+                if (item.Status === 'Primljeno') continue; // Don't revert received items
+                const materialIds = item.Product_Material_IDs || (item.Product_Material_ID ? [item.Product_Material_ID] : []);
+                for (const matId of materialIds) {
+                    materialUpdates.push({ materialId: matId, status: 'Nije naručeno', orderId: '' });
+                }
+                // Reset order item status back
+                await updateDoc(docSnap.ref, { Status: 'Na čekanju' });
+            }
+            if (materialUpdates.length > 0) {
+                await batchUpdateMaterialStatuses(materialUpdates, organizationId);
+            }
+        }
+
+        // ── Transition: Nacrt → Poslano ──
+        // Set all materials to 'Naručeno' (same as markOrderSent)
+        if (status === 'Poslano' && previousStatus === 'Nacrt') {
+            const itemsSnap = await getItems();
+            const materialUpdates: { materialId: string; status: string; orderId: string }[] = [];
+            for (const docSnap of itemsSnap.docs) {
+                const item = docSnap.data() as OrderItem;
+                if (item.Status === 'Primljeno') continue;
+                const materialIds = item.Product_Material_IDs || (item.Product_Material_ID ? [item.Product_Material_ID] : []);
+                for (const matId of materialIds) {
+                    materialUpdates.push({ materialId: matId, status: 'Naručeno', orderId });
+                }
+                await updateDoc(docSnap.ref, { Status: 'Naručeno' });
+            }
+            if (materialUpdates.length > 0) {
+                await batchUpdateMaterialStatuses(materialUpdates, organizationId);
+            }
+        }
+
+        // ── Transition: ANY → Primljeno (receive all) ──
+        // Mark all non-received materials as 'Primljeno'
+        if (status === 'Primljeno') {
+            const itemsSnap = await getItems();
+            const materialUpdates: { materialId: string; status: string; orderId: string }[] = [];
+            for (const docSnap of itemsSnap.docs) {
+                const item = docSnap.data() as OrderItem;
+                if (item.Status === 'Primljeno') continue;
+                const materialIds = item.Product_Material_IDs || (item.Product_Material_ID ? [item.Product_Material_ID] : []);
+                for (const matId of materialIds) {
+                    materialUpdates.push({ materialId: matId, status: 'Primljeno', orderId });
+                }
+                await updateDoc(docSnap.ref, {
+                    Status: 'Primljeno',
+                    Received_Date: new Date().toISOString()
+                });
+            }
+            if (materialUpdates.length > 0) {
+                await batchUpdateMaterialStatuses(materialUpdates, organizationId);
+            }
+        }
+
+        // Note: Potvrđeno, Isporučeno, Djelomično don't change material statuses
+        // Materials are updated individually via markMaterialsReceived
 
         return { success: true, message: 'Status narudžbe ažuriran' };
     } catch (error) {
@@ -1898,19 +2008,37 @@ export async function markOrderSent(orderId: string, organizationId: string): Pr
 
         await updateDoc(orderSnap.docs[0].ref, { Status: 'Poslano' });
 
-        // Get order items and update material statuses
-        const items = await getOrderItems(orderId, organizationId);
+        // Get order items and collect ALL material IDs (including grouped)
+        const itemsQ = query(
+            collection(db, COLLECTIONS.ORDER_ITEMS),
+            where('Order_ID', '==', orderId),
+            where('Organization_ID', '==', organizationId)
+        );
+        const itemsSnap = await getDocs(itemsQ);
+
+        const materialUpdates: { materialId: string; status: string; orderId: string }[] = [];
         const affectedProducts = new Set<string>();
         const affectedProjects = new Set<string>();
 
-        for (const item of items) {
-            if (item.Product_Material_ID) {
-                // Update material status to "Naručeno"
-                await updateProductMaterial(item.Product_Material_ID, { Status: 'Naručeno', Order_ID: orderId }, organizationId);
+        for (const docSnap of itemsSnap.docs) {
+            const item = docSnap.data() as OrderItem;
+            // Get ALL material IDs for this item (grouped or single)
+            const materialIds = item.Product_Material_IDs || (item.Product_Material_ID ? [item.Product_Material_ID] : []);
 
-                if (item.Product_ID) affectedProducts.add(item.Product_ID);
-                if (item.Project_ID) affectedProjects.add(item.Project_ID);
+            for (const matId of materialIds) {
+                materialUpdates.push({ materialId: matId, status: 'Naručeno', orderId });
             }
+
+            // Update order item status to 'Naručeno'
+            await updateDoc(docSnap.ref, { Status: 'Naručeno' });
+
+            if (item.Product_ID) affectedProducts.add(item.Product_ID);
+            if (item.Project_ID) affectedProjects.add(item.Project_ID);
+        }
+
+        // Batch update all material statuses
+        if (materialUpdates.length > 0) {
+            await batchUpdateMaterialStatuses(materialUpdates, organizationId);
         }
 
         // Update product statuses
@@ -1944,6 +2072,7 @@ export async function markMaterialsReceived(orderItemIds: string[], organization
     try {
         const affectedProducts = new Set<string>();
         const affectedProjects = new Set<string>();
+        const affectedOrderIds = new Set<string>();
 
         for (const itemId of orderItemIds) {
             // Find order item with organization filter
@@ -1964,13 +2093,55 @@ export async function markMaterialsReceived(orderItemIds: string[], organization
                 Received_Date: new Date().toISOString()
             });
 
-            // Update material status
-            if (item.Product_Material_ID) {
-                await updateProductMaterial(item.Product_Material_ID, { Status: 'Primljeno' }, organizationId);
+            // Update ALL material statuses (including grouped)
+            const materialIds = item.Product_Material_IDs || (item.Product_Material_ID ? [item.Product_Material_ID] : []);
+            for (const matId of materialIds) {
+                await updateProductMaterial(matId, { Status: 'Primljeno' }, organizationId);
             }
 
             if (item.Product_ID) affectedProducts.add(item.Product_ID);
             if (item.Project_ID) affectedProjects.add(item.Project_ID);
+            if (item.Order_ID) affectedOrderIds.add(item.Order_ID);
+        }
+
+        // ── Auto-update order status (Djelomično / Primljeno) ──
+        for (const oId of Array.from(affectedOrderIds)) {
+            const allItemsQ = query(
+                collection(db, COLLECTIONS.ORDER_ITEMS),
+                where('Order_ID', '==', oId),
+                where('Organization_ID', '==', organizationId)
+            );
+            const allItemsSnap = await getDocs(allItemsQ);
+            const totalItems = allItemsSnap.docs.length;
+            const receivedItems = allItemsSnap.docs.filter(d => (d.data() as OrderItem).Status === 'Primljeno').length;
+
+            if (totalItems > 0 && receivedItems === totalItems) {
+                // All items received → order is Primljeno
+                const orderQ = query(
+                    collection(db, COLLECTIONS.ORDERS),
+                    where('Order_ID', '==', oId),
+                    where('Organization_ID', '==', organizationId)
+                );
+                const orderSnap = await getDocs(orderQ);
+                if (!orderSnap.empty) {
+                    await updateDoc(orderSnap.docs[0].ref, { Status: 'Primljeno' });
+                }
+            } else if (receivedItems > 0) {
+                // Some items received → order is Djelomično
+                const orderQ = query(
+                    collection(db, COLLECTIONS.ORDERS),
+                    where('Order_ID', '==', oId),
+                    where('Organization_ID', '==', organizationId)
+                );
+                const orderSnap = await getDocs(orderQ);
+                if (!orderSnap.empty) {
+                    const currentStatus = (orderSnap.docs[0].data() as Order).Status;
+                    // Only set Djelomično if not already Primljeno
+                    if (currentStatus !== 'Primljeno') {
+                        await updateDoc(orderSnap.docs[0].ref, { Status: 'Djelomično' });
+                    }
+                }
+            }
         }
 
         // Check if all materials for products are received
@@ -2014,9 +2185,10 @@ export async function deleteOrderItemsByIds(itemIds: string[], organizationId: s
 
             const item = itemSnap.docs[0].data() as OrderItem;
 
-            // Reset material status to "Nije naručeno" and clear Order_ID
-            if (item.Product_Material_ID) {
-                await updateProductMaterial(item.Product_Material_ID, { Status: 'Nije naručeno', Order_ID: '' }, organizationId);
+            // Reset ALL material statuses (including grouped) to "Nije naručeno" and clear Order_ID
+            const materialIds = item.Product_Material_IDs || (item.Product_Material_ID ? [item.Product_Material_ID] : []);
+            for (const matId of materialIds) {
+                await updateProductMaterial(matId, { Status: 'Nije naručeno', Order_ID: '' }, organizationId);
             }
 
             // Delete the order item
@@ -3961,6 +4133,44 @@ export async function deleteWorkLog(workLogId: string, organizationId: string): 
 }
 
 /**
+ * Delete ALL work logs for a specific worker on a specific date.
+ * Called when attendance changes from working (Prisutan/Teren) to non-working status,
+ * ensuring stale work logs don't inflate labor cost calculations.
+ */
+export async function deleteWorkLogsForWorkerOnDate(
+    workerId: string,
+    date: string,
+    organizationId: string
+): Promise<{ deleted: number }> {
+    if (!organizationId) return { deleted: 0 };
+
+    try {
+        const firestore = getDb();
+        const q = query(
+            collection(firestore, COLLECTIONS.WORK_LOGS),
+            where('Worker_ID', '==', workerId),
+            where('Date', '==', date),
+            where('Organization_ID', '==', organizationId)
+        );
+        const snapshot = await getDocs(q);
+
+        if (snapshot.empty) return { deleted: 0 };
+
+        // Batch delete all matching work logs
+        const batch = writeBatch(firestore);
+        snapshot.docs.forEach(doc => batch.delete(doc.ref));
+        await batch.commit();
+
+        console.log(`Deleted ${snapshot.size} work logs for worker ${workerId} on ${date}`);
+        return { deleted: snapshot.size };
+    } catch (error) {
+        console.error('deleteWorkLogsForWorkerOnDate error:', error);
+        throw error; // Propagate error — caller must handle inconsistency
+    }
+}
+
+
+/**
  * Check if a work log already exists for a worker/item/date combination
  * Prevents duplicate entries
  */
@@ -4739,7 +4949,10 @@ export async function createProductionSnapshot(
 
             const actualLaborDays = itemWorkLogs.length;
             const sellingPrice = item.Product_Value || offerProduct?.Selling_Price || 0;
-            const profit = sellingPrice - itemMaterialCost - (item.Actual_Labor_Cost || 0);
+            // STANDARDIZED: Use fresh labor from work logs and include Transport + Services
+            const freshItemLaborCost = itemWorkLogs.reduce((sum, wl) => sum + (wl.Daily_Rate || 0), 0);
+            const itemServicesTotal = (offerProduct?.extras || []).reduce((s, e) => s + (e.Total || 0), 0);
+            const profit = sellingPrice - itemMaterialCost - transportShare - itemServicesTotal - freshItemLaborCost;
 
             snapshotItems.push({
                 Product_ID: item.Product_ID,
