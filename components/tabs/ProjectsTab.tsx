@@ -49,6 +49,8 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
     const [expandedProjectId, setExpandedProjectId] = useState<string | null>(null);
     const [expandedProducts, setExpandedProducts] = useState<Set<string>>(new Set());
     const [expandedStatusGroups, setExpandedStatusGroups] = useState<Set<string>>(new Set());
+    const [actionsDropdownProjectId, setActionsDropdownProjectId] = useState<string | null>(null);
+    const [showMaterialsSummary, setShowMaterialsSummary] = useState<Set<string>>(new Set());
 
     function toggleStatusGroup(status: string) {
         const newExpanded = new Set(expandedStatusGroups);
@@ -484,7 +486,7 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
         }
     }
 
-    // Handle material status change
+    // Handle material status change (optimistic update to preserve UI state)
     async function handleMaterialStatusChange(materialId: string, newStatus: string) {
         if (!organizationId) {
             showToast('Organization ID is required', 'error');
@@ -494,6 +496,7 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
         if (result.success) {
             showToast(`Status materijala promjenjen u "${newStatus}"`, 'success');
             setStatusDropdownMaterialId(null);
+            // Background refresh to sync data without disrupting UI
             onRefresh('projects');
         } else {
             showToast(result.message, 'error');
@@ -1057,7 +1060,6 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                                         <div className="project-title-section">
                                             <div className="project-name">{project.Name || project.Client_Name}</div>
                                             {project.Name && <div className="project-client-subtitle">{project.Client_Name}</div>}
-                                            <div className="project-id-subtle">#{project.Project_ID.substring(0, 8)}</div>
                                         </div>
                                         <div className="project-details">
                                             {project.Address && <div className="project-client">{project.Address}</div>}
@@ -1077,18 +1079,53 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                                             </span>
                                         </div>
 
-                                        <div className="project-actions" onClick={(e) => e.stopPropagation()}>
-                                            {onNavigateToTasks && (
-                                                <button className="icon-btn" onClick={() => onNavigateToTasks(project.Project_ID)} title="Zadaci za ovaj projekat">
-                                                    <span className="material-icons-round">task_alt</span>
-                                                </button>
+                                        <div className="project-actions" onClick={(e) => e.stopPropagation()} style={{ position: 'relative' }}>
+                                            <button
+                                                className="icon-btn"
+                                                onClick={() => setActionsDropdownProjectId(actionsDropdownProjectId === project.Project_ID ? null : project.Project_ID)}
+                                                title="Akcije"
+                                            >
+                                                <span className="material-icons-round">more_vert</span>
+                                            </button>
+                                            {actionsDropdownProjectId === project.Project_ID && (
+                                                <div className="actions-dropdown" style={{
+                                                    position: 'absolute', right: 0, top: '100%', zIndex: 100,
+                                                    background: '#fff', borderRadius: '10px', boxShadow: '0 4px 20px rgba(0,0,0,0.12)',
+                                                    border: '1px solid #e2e8f0', minWidth: '180px', padding: '4px 0',
+                                                    animation: 'fadeIn 0.15s ease'
+                                                }}>
+                                                    {onNavigateToTasks && (
+                                                        <button
+                                                            onClick={() => { onNavigateToTasks(project.Project_ID); setActionsDropdownProjectId(null); }}
+                                                            style={{ display: 'flex', alignItems: 'center', gap: '10px', width: '100%', padding: '10px 14px', border: 'none', background: 'none', cursor: 'pointer', fontSize: '13px', color: '#334155', transition: 'background 0.15s' }}
+                                                            onMouseEnter={e => e.currentTarget.style.background = '#f1f5f9'}
+                                                            onMouseLeave={e => e.currentTarget.style.background = 'none'}
+                                                        >
+                                                            <span className="material-icons-round" style={{ fontSize: '18px', color: '#64748b' }}>task_alt</span>
+                                                            Zadaci
+                                                        </button>
+                                                    )}
+                                                    <button
+                                                        onClick={() => { openProjectModal(project); setActionsDropdownProjectId(null); }}
+                                                        style={{ display: 'flex', alignItems: 'center', gap: '10px', width: '100%', padding: '10px 14px', border: 'none', background: 'none', cursor: 'pointer', fontSize: '13px', color: '#334155', transition: 'background 0.15s' }}
+                                                        onMouseEnter={e => e.currentTarget.style.background = '#f1f5f9'}
+                                                        onMouseLeave={e => e.currentTarget.style.background = 'none'}
+                                                    >
+                                                        <span className="material-icons-round" style={{ fontSize: '18px', color: '#64748b' }}>edit</span>
+                                                        Uredi projekat
+                                                    </button>
+                                                    <div style={{ height: '1px', background: '#f1f5f9', margin: '4px 0' }} />
+                                                    <button
+                                                        onClick={() => { handleDeleteProject(project.Project_ID); setActionsDropdownProjectId(null); }}
+                                                        style={{ display: 'flex', alignItems: 'center', gap: '10px', width: '100%', padding: '10px 14px', border: 'none', background: 'none', cursor: 'pointer', fontSize: '13px', color: '#ef4444', transition: 'background 0.15s' }}
+                                                        onMouseEnter={e => e.currentTarget.style.background = '#fef2f2'}
+                                                        onMouseLeave={e => e.currentTarget.style.background = 'none'}
+                                                    >
+                                                        <span className="material-icons-round" style={{ fontSize: '18px' }}>delete</span>
+                                                        Obriši projekat
+                                                    </button>
+                                                </div>
                                             )}
-                                            <button className="icon-btn" onClick={() => openProjectModal(project)}>
-                                                <span className="material-icons-round">edit</span>
-                                            </button>
-                                            <button className="icon-btn danger" onClick={() => handleDeleteProject(project.Project_ID)}>
-                                                <span className="material-icons-round">delete</span>
-                                            </button>
                                         </div>
                                     </div>
                                 </div>
@@ -1477,6 +1514,87 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                                         </div>
                                     ))}
                                 </div>
+
+                                {/* Grouped Materials Summary */}
+                                {(() => {
+                                    const materialMap = new Map<string, { name: string; unit: string; totalQty: number; orderedQty: number; receivedQty: number; notOrderedQty: number }>();
+                                    (project.products || []).forEach(product => {
+                                        (product.materials || []).forEach(mat => {
+                                            const key = `${mat.Material_Name}||${mat.Unit}`;
+                                            const qty = mat.Quantity || 0;
+                                            const isReceived = mat.Status === 'Primljeno' || mat.Status === 'U upotrebi' || mat.Status === 'Instalirano';
+                                            const isOrdered = mat.Status === 'Naručeno';
+                                            const isOnStock = mat.Status === 'Na stanju';
+                                            if (materialMap.has(key)) {
+                                                const existing = materialMap.get(key)!;
+                                                existing.totalQty += qty;
+                                                if (isReceived || isOnStock) existing.receivedQty += qty;
+                                                else if (isOrdered) existing.orderedQty += qty;
+                                                else existing.notOrderedQty += qty;
+                                            } else {
+                                                materialMap.set(key, {
+                                                    name: mat.Material_Name, unit: mat.Unit, totalQty: qty,
+                                                    orderedQty: isOrdered ? qty : 0,
+                                                    receivedQty: (isReceived || isOnStock) ? qty : 0,
+                                                    notOrderedQty: (!isOrdered && !isReceived && !isOnStock) ? qty : 0,
+                                                });
+                                            }
+                                        });
+                                    });
+                                    if (materialMap.size === 0) return null;
+                                    const groupedMats = Array.from(materialMap.values()).sort((a, b) => a.name.localeCompare(b.name, 'hr'));
+                                    const isOpen = showMaterialsSummary.has(project.Project_ID);
+                                    return (
+                                        <div style={{ padding: '0 20px 20px' }}>
+                                            <div
+                                                onClick={() => {
+                                                    const next = new Set(showMaterialsSummary);
+                                                    if (next.has(project.Project_ID)) next.delete(project.Project_ID); else next.add(project.Project_ID);
+                                                    setShowMaterialsSummary(next);
+                                                }}
+                                                style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', padding: '10px 0', borderTop: '1px solid #f1f5f9', userSelect: 'none' }}
+                                            >
+                                                <span className="material-icons-round" style={{ fontSize: '18px', color: '#64748b', transition: 'transform 0.2s', transform: isOpen ? 'rotate(90deg)' : 'rotate(0deg)' }}>chevron_right</span>
+                                                <span style={{ fontWeight: 600, fontSize: '13px', color: '#334155' }}>Pregled materijala</span>
+                                                <span style={{ fontSize: '11px', color: '#94a3b8', fontWeight: 500 }}>({groupedMats.length})</span>
+                                            </div>
+                                            {isOpen && (
+                                                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px', marginTop: '4px' }}>
+                                                    <thead>
+                                                        <tr style={{ borderBottom: '2px solid #e2e8f0' }}>
+                                                            <th style={{ textAlign: 'left', padding: '8px 8px 8px 0', color: '#64748b', fontWeight: 600, fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Materijal</th>
+                                                            <th style={{ textAlign: 'right', padding: '8px', color: '#64748b', fontWeight: 600, fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Potrebno</th>
+                                                            <th style={{ textAlign: 'right', padding: '8px', color: '#64748b', fontWeight: 600, fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Naručeno</th>
+                                                            <th style={{ textAlign: 'right', padding: '8px', color: '#64748b', fontWeight: 600, fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Primljeno</th>
+                                                            <th style={{ textAlign: 'right', padding: '8px 0 8px 8px', color: '#64748b', fontWeight: 600, fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Status</th>
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody>
+                                                        {groupedMats.map((mat, i) => {
+                                                            let statusLabel: string, statusColor: string, statusBg: string;
+                                                            if (mat.receivedQty >= mat.totalQty) { statusLabel = 'Primljeno'; statusColor = '#10b981'; statusBg = '#ecfdf5'; }
+                                                            else if (mat.receivedQty > 0) { statusLabel = 'Djelomično primljeno'; statusColor = '#06b6d4'; statusBg = '#ecfeff'; }
+                                                            else if (mat.orderedQty + mat.receivedQty >= mat.totalQty) { statusLabel = 'Naručeno'; statusColor = '#3b82f6'; statusBg = '#eff6ff'; }
+                                                            else if (mat.orderedQty > 0) { statusLabel = 'Djelomično naručeno'; statusColor = '#8b5cf6'; statusBg = '#f5f3ff'; }
+                                                            else { statusLabel = 'Nije naručeno'; statusColor = '#f59e0b'; statusBg = '#fffbeb'; }
+                                                            return (
+                                                                <tr key={i} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                                                                    <td style={{ padding: '8px 8px 8px 0', fontWeight: 500, color: '#1e293b' }}>{mat.name}</td>
+                                                                    <td style={{ textAlign: 'right', padding: '8px', fontWeight: 600, color: '#334155' }}>{mat.totalQty} {mat.unit}</td>
+                                                                    <td style={{ textAlign: 'right', padding: '8px', fontWeight: 600, color: (mat.orderedQty + mat.receivedQty) >= mat.totalQty ? '#10b981' : mat.orderedQty > 0 ? '#3b82f6' : '#94a3b8' }}>{mat.orderedQty + mat.receivedQty} {mat.unit}</td>
+                                                                    <td style={{ textAlign: 'right', padding: '8px', fontWeight: 600, color: mat.receivedQty >= mat.totalQty ? '#10b981' : mat.receivedQty > 0 ? '#06b6d4' : '#94a3b8' }}>{mat.receivedQty} {mat.unit}</td>
+                                                                    <td style={{ textAlign: 'right', padding: '8px 0 8px 8px' }}>
+                                                                        <span style={{ fontSize: '11px', padding: '3px 10px', borderRadius: '8px', background: statusBg, color: statusColor, fontWeight: 600, whiteSpace: 'nowrap' }}>{statusLabel}</span>
+                                                                    </td>
+                                                                </tr>
+                                                            );
+                                                        })}
+                                                    </tbody>
+                                                </table>
+                                            )}
+                                        </div>
+                                    );
+                                })()}
                             </div>
                         );
                     })
@@ -1572,9 +1690,6 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                                                 <div className="project-title-section">
                                                     <div className="project-name">{project.Name || project.Client_Name}</div>
                                                     {project.Name && <div className="project-client-subtitle">{project.Client_Name}</div>}
-                                                    <div className="project-id-subtle">#{project.Project_ID.substring(0, 8)}</div>
-                                                    <div className="project-badges">
-                                                    </div>
                                                 </div>
                                                 <div className="project-details">
                                                     {project.Address && <div className="project-client">{project.Address}</div>}
@@ -1587,18 +1702,53 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                                                 </div>
                                             </div>
 
-                                            <div className="project-actions" onClick={(e) => e.stopPropagation()}>
-                                                {onNavigateToTasks && (
-                                                    <button className="icon-btn" onClick={() => onNavigateToTasks(project.Project_ID)} title="Zadaci za ovaj projekat">
-                                                        <span className="material-icons-round">task_alt</span>
-                                                    </button>
+                                            <div className="project-actions" onClick={(e) => e.stopPropagation()} style={{ position: 'relative' }}>
+                                                <button
+                                                    className="icon-btn"
+                                                    onClick={() => setActionsDropdownProjectId(actionsDropdownProjectId === project.Project_ID ? null : project.Project_ID)}
+                                                    title="Akcije"
+                                                >
+                                                    <span className="material-icons-round">more_vert</span>
+                                                </button>
+                                                {actionsDropdownProjectId === project.Project_ID && (
+                                                    <div className="actions-dropdown" style={{
+                                                        position: 'absolute', right: 0, top: '100%', zIndex: 100,
+                                                        background: '#fff', borderRadius: '10px', boxShadow: '0 4px 20px rgba(0,0,0,0.12)',
+                                                        border: '1px solid #e2e8f0', minWidth: '180px', padding: '4px 0',
+                                                        animation: 'fadeIn 0.15s ease'
+                                                    }}>
+                                                        {onNavigateToTasks && (
+                                                            <button
+                                                                onClick={() => { onNavigateToTasks(project.Project_ID); setActionsDropdownProjectId(null); }}
+                                                                style={{ display: 'flex', alignItems: 'center', gap: '10px', width: '100%', padding: '10px 14px', border: 'none', background: 'none', cursor: 'pointer', fontSize: '13px', color: '#334155', transition: 'background 0.15s' }}
+                                                                onMouseEnter={e => e.currentTarget.style.background = '#f1f5f9'}
+                                                                onMouseLeave={e => e.currentTarget.style.background = 'none'}
+                                                            >
+                                                                <span className="material-icons-round" style={{ fontSize: '18px', color: '#64748b' }}>task_alt</span>
+                                                                Zadaci
+                                                            </button>
+                                                        )}
+                                                        <button
+                                                            onClick={() => { openProjectModal(project); setActionsDropdownProjectId(null); }}
+                                                            style={{ display: 'flex', alignItems: 'center', gap: '10px', width: '100%', padding: '10px 14px', border: 'none', background: 'none', cursor: 'pointer', fontSize: '13px', color: '#334155', transition: 'background 0.15s' }}
+                                                            onMouseEnter={e => e.currentTarget.style.background = '#f1f5f9'}
+                                                            onMouseLeave={e => e.currentTarget.style.background = 'none'}
+                                                        >
+                                                            <span className="material-icons-round" style={{ fontSize: '18px', color: '#64748b' }}>edit</span>
+                                                            Uredi projekat
+                                                        </button>
+                                                        <div style={{ height: '1px', background: '#f1f5f9', margin: '4px 0' }} />
+                                                        <button
+                                                            onClick={() => { handleDeleteProject(project.Project_ID); setActionsDropdownProjectId(null); }}
+                                                            style={{ display: 'flex', alignItems: 'center', gap: '10px', width: '100%', padding: '10px 14px', border: 'none', background: 'none', cursor: 'pointer', fontSize: '13px', color: '#ef4444', transition: 'background 0.15s' }}
+                                                            onMouseEnter={e => e.currentTarget.style.background = '#fef2f2'}
+                                                            onMouseLeave={e => e.currentTarget.style.background = 'none'}
+                                                        >
+                                                            <span className="material-icons-round" style={{ fontSize: '18px' }}>delete</span>
+                                                            Obriši projekat
+                                                        </button>
+                                                    </div>
                                                 )}
-                                                <button className="icon-btn" onClick={() => openProjectModal(project)}>
-                                                    <span className="material-icons-round">edit</span>
-                                                </button>
-                                                <button className="icon-btn danger" onClick={() => handleDeleteProject(project.Project_ID)}>
-                                                    <span className="material-icons-round">delete</span>
-                                                </button>
                                             </div>
                                         </div>
                                     </div>

@@ -2,7 +2,6 @@ import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/context/AuthContext';
 import {
-    LayoutDashboard,
     FolderOpen,
     FileText,
     ShoppingCart,
@@ -69,7 +68,7 @@ const Sidebar: React.FC<SidebarProps> = ({ activeTab, onTabChange, isOpen, onClo
     // SwiftUI-like distinct colors (Apple HIG inspired)
     const navColors: Record<string, string> = {
         projects: '#007AFF', // System Blue
-        overview: '#AF52DE', // System Purple
+
         offers: '#FF9500',   // System Orange
         orders: '#34C759',   // System Green
         production: '#FF2D55', // System Pink
@@ -141,7 +140,7 @@ const Sidebar: React.FC<SidebarProps> = ({ activeTab, onTabChange, isOpen, onClo
             icon: Briefcase,
             items: [
                 { id: 'projects', icon: FolderOpen, label: 'Projekti' },
-                { id: 'overview', icon: LayoutDashboard, label: 'Pregled' },
+
                 { id: 'tasks', icon: CheckSquare, label: 'Zadaci' },
             ]
         },

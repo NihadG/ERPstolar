@@ -356,9 +356,72 @@ export async function getAllData(organizationId: string): Promise<AppState> {
 
 export async function getProjects(organizationId: string): Promise<Project[]> {
     if (!organizationId) return [];
-    const q = query(collection(db, COLLECTIONS.PROJECTS), where('Organization_ID', '==', organizationId));
-    const snapshot = await getDocs(q);
-    return snapshot.docs.map(doc => ({ ...doc.data() } as Project));
+
+    const orgFilter = where('Organization_ID', '==', organizationId);
+
+    // Fetch projects + related collections in parallel for proper assembly
+    const [projectsSnap, productsSnap, productMaterialsSnap, glassItemsSnap, aluDoorItemsSnap, offersSnap] = await Promise.all([
+        getDocs(query(collection(db, COLLECTIONS.PROJECTS), orgFilter)),
+        getDocs(query(collection(db, COLLECTIONS.PRODUCTS), orgFilter)),
+        getDocs(query(collection(db, COLLECTIONS.PRODUCT_MATERIALS), orgFilter)),
+        getDocs(query(collection(db, COLLECTIONS.GLASS_ITEMS), orgFilter)),
+        getDocs(query(collection(db, COLLECTIONS.ALU_DOOR_ITEMS), orgFilter)),
+        getDocs(query(collection(db, COLLECTIONS.OFFERS), orgFilter)),
+    ]);
+
+    const projects = projectsSnap.docs.map(doc => ({ ...doc.data() } as Project));
+    const products = productsSnap.docs.map(doc => ({ ...doc.data() } as Product));
+    const productMaterials = productMaterialsSnap.docs.map(doc => ({ ...doc.data() } as ProductMaterial));
+    const glassItems = glassItemsSnap.docs.map(doc => ({ ...doc.data() } as GlassItem));
+    const aluDoorItems = aluDoorItemsSnap.docs.map(doc => ({ ...doc.data() } as AluDoorItem));
+    const offers = offersSnap.docs.map(doc => ({ ...doc.data() } as Offer));
+
+    // Build maps for O(1) lookups (same logic as getAllData)
+    const glassItemsByMaterial = new Map<string, GlassItem[]>();
+    glassItems.forEach(gi => {
+        const key = gi.Product_Material_ID;
+        if (!glassItemsByMaterial.has(key)) glassItemsByMaterial.set(key, []);
+        glassItemsByMaterial.get(key)!.push(gi);
+    });
+
+    const aluDoorItemsByMaterial = new Map<string, AluDoorItem[]>();
+    aluDoorItems.forEach(adi => {
+        const key = adi.Product_Material_ID;
+        if (!aluDoorItemsByMaterial.has(key)) aluDoorItemsByMaterial.set(key, []);
+        aluDoorItemsByMaterial.get(key)!.push(adi);
+    });
+
+    const materialsByProduct = new Map<string, ProductMaterial[]>();
+    productMaterials.forEach(pm => {
+        pm.glassItems = glassItemsByMaterial.get(pm.ID) || [];
+        pm.aluDoorItems = aluDoorItemsByMaterial.get(pm.ID) || [];
+        const key = pm.Product_ID;
+        if (!materialsByProduct.has(key)) materialsByProduct.set(key, []);
+        materialsByProduct.get(key)!.push(pm);
+    });
+
+    const productsByProject = new Map<string, Product[]>();
+    products.forEach(p => {
+        p.materials = materialsByProduct.get(p.Product_ID) || [];
+        const key = p.Project_ID;
+        if (!productsByProject.has(key)) productsByProject.set(key, []);
+        productsByProject.get(key)!.push(p);
+    });
+
+    const offersByProject = new Map<string, Offer[]>();
+    offers.forEach(o => {
+        const key = o.Project_ID;
+        if (!offersByProject.has(key)) offersByProject.set(key, []);
+        offersByProject.get(key)!.push(o);
+    });
+
+    // Attach assembled products and offers to projects
+    projects.forEach(project => {
+        project.products = productsByProject.get(project.Project_ID) || [];
+        project.offers = offersByProject.get(project.Project_ID) || [];
+    });
+
+    return projects;
 }
 
 export async function getProject(projectId: string, organizationId: string): Promise<Project | null> {
@@ -3037,22 +3100,40 @@ export async function completeWorkOrderItem(itemId: string, productionStep: stri
         );
         const productSnap = await getDocs(productQ);
 
+        // Determine next status based on production step
+        const statusMap: Record<string, string> = {
+            'Rezanje': 'Kantiranje',
+            'Kantiranje': 'Bušenje',
+            'Bušenje': 'Sklapanje',
+            'Sklapanje': 'Spremno',
+        };
+        const nextStatus = statusMap[productionStep] || 'Spremno';
+
+        // Update standalone PRODUCTS collection
         if (!productSnap.empty) {
-            // Determine next status based on production step
-            const statusMap: Record<string, string> = {
-                'Rezanje': 'Kantiranje',
-                'Kantiranje': 'Bušenje',
-                'Bušenje': 'Sklapanje',
-                'Sklapanje': 'Spremno',
-            };
-            const nextStatus = statusMap[productionStep] || 'Spremno';
             await updateDoc(productSnap.docs[0].ref, { Status: nextStatus });
+        }
+
+        // Also update embedded products array in PROJECTS document
+        if (item.Project_ID) {
+            const projectQ = query(
+                collection(db, COLLECTIONS.PROJECTS),
+                where('Project_ID', '==', item.Project_ID),
+                where('Organization_ID', '==', organizationId)
+            );
+            const projectSnap = await getDocs(projectQ);
+            if (!projectSnap.empty) {
+                const projectData = projectSnap.docs[0].data();
+                const products = projectData.products || [];
+                const updatedProducts = products.map((p: any) =>
+                    p.Product_ID === item.Product_ID ? { ...p, Status: nextStatus } : p
+                );
+                await updateDoc(projectSnap.docs[0].ref, { products: updatedProducts });
+            }
 
             // Sync project status using centralized function
-            if (item.Project_ID) {
-                const { syncProjectStatus } = await import('./attendance');
-                await syncProjectStatus(item.Project_ID, organizationId);
-            }
+            const { syncProjectStatus } = await import('./attendance');
+            await syncProjectStatus(item.Project_ID, organizationId);
         }
 
         return { success: true, message: 'Stavka završena, status proizvoda ažuriran' };
@@ -3128,6 +3209,22 @@ export async function deleteWorkOrder(
             }
         }
 
+        // Also update standalone PRODUCTS collection
+        for (const itemDoc of itemsSnap.docs) {
+            const item = itemDoc.data();
+            if (item.Product_ID) {
+                const productQ = query(
+                    collection(db, COLLECTIONS.PRODUCTS),
+                    where('Product_ID', '==', item.Product_ID),
+                    where('Organization_ID', '==', organizationId)
+                );
+                const productSnap = await getDocs(productQ);
+                if (!productSnap.empty) {
+                    await updateDoc(productSnap.docs[0].ref, { Status: newProductStatus });
+                }
+            }
+        }
+
         // Delete items
         const batch = writeBatch(db);
         itemsSnap.docs.forEach(docRef => batch.delete(docRef.ref));
@@ -3144,6 +3241,14 @@ export async function deleteWorkOrder(
         }
 
         await batch.commit();
+
+        // Sync project status via centralized function
+        for (const projectId of Array.from(projectUpdates.keys())) {
+            try {
+                const { syncProjectStatus } = await import('./attendance');
+                await syncProjectStatus(projectId, organizationId);
+            } catch (e) { console.error('syncProjectStatus error after deleteWorkOrder:', e); }
+        }
 
         const actionMsg = productAction === 'completed'
             ? 'Radni nalog obrisan, proizvodi označeni kao spremni'
@@ -3259,10 +3364,17 @@ export async function startWorkOrder(workOrderId: string, organizationId: string
             }
         }
 
-        // Update products to production step status
+        // Update products to production step status (BOTH stores)
         const wo = snapshot.docs[0].data() as WorkOrder;
+        const firstStep = wo.Production_Steps[0];
+
+        // Group product updates by project for efficient embedded array updates
+        const projectProductUpdates = new Map<string, Map<string, string>>();
+
         for (const itemDoc of itemsSnap.docs) {
             const item = itemDoc.data() as WorkOrderItem;
+
+            // Update standalone PRODUCTS collection
             const productQ = query(
                 collection(db, COLLECTIONS.PRODUCTS),
                 where('Product_ID', '==', item.Product_ID),
@@ -3270,22 +3382,41 @@ export async function startWorkOrder(workOrderId: string, organizationId: string
             );
             const productSnap = await getDocs(productQ);
             if (!productSnap.empty) {
-                await updateDoc(productSnap.docs[0].ref, { Status: wo.Production_Steps[0] });
+                await updateDoc(productSnap.docs[0].ref, { Status: firstStep });
             }
 
-            // Update project to "U proizvodnji" if not already
+            // Collect updates for embedded products array
+            if (item.Project_ID) {
+                if (!projectProductUpdates.has(item.Project_ID)) {
+                    projectProductUpdates.set(item.Project_ID, new Map());
+                }
+                projectProductUpdates.get(item.Project_ID)!.set(item.Product_ID, firstStep);
+            }
+        }
+
+        // Update embedded products array in each project
+        for (const [projectId, productStatuses] of Array.from(projectProductUpdates.entries())) {
             const projectQ = query(
                 collection(db, COLLECTIONS.PROJECTS),
-                where('Project_ID', '==', item.Project_ID),
+                where('Project_ID', '==', projectId),
                 where('Organization_ID', '==', organizationId)
             );
             const projectSnap = await getDocs(projectQ);
             if (!projectSnap.empty) {
-                const currentStatus = projectSnap.docs[0].data().Status;
-                if (currentStatus === 'Odobreno' || currentStatus === 'Nacrt') {
-                    await updateDoc(projectSnap.docs[0].ref, { Status: 'U proizvodnji' });
-                }
+                const projectData = projectSnap.docs[0].data();
+                const products = projectData.products || [];
+                const updatedProducts = products.map((p: any) => {
+                    const newStatus = productStatuses.get(p.Product_ID);
+                    return newStatus ? { ...p, Status: newStatus } : p;
+                });
+                await updateDoc(projectSnap.docs[0].ref, { products: updatedProducts });
             }
+
+            // Sync project status via centralized function
+            try {
+                const { syncProjectStatus } = await import('./attendance');
+                await syncProjectStatus(projectId, organizationId);
+            } catch (e) { console.error('syncProjectStatus error after startWorkOrder:', e); }
         }
 
         return { success: true, message: 'Radni nalog pokrenut' };

@@ -11,7 +11,7 @@ import { PROJECT_STATUSES, PRODUCT_STATUSES, MATERIAL_CATEGORIES } from '@/lib/t
 
 // Components
 import ProjectsTab from '@/components/tabs/ProjectsTab';
-import OverviewTab from '@/components/tabs/OverviewTab';
+
 import OffersTab from '@/components/tabs/OffersTab';
 import OrdersTab from '@/components/tabs/OrdersTab';
 import ProductionTab from '@/components/tabs/ProductionTab';
@@ -346,19 +346,6 @@ export default function Home() {
                         />
                     )}
 
-                    {activeTab === 'overview' && (
-                        <OverviewTab
-                            projects={appState.projects}
-                            workOrders={appState.workOrders}
-                            orders={appState.orders}
-                            suppliers={appState.suppliers}
-                            offers={appState.offers}
-                            workLogs={appState.workLogs}
-                            showToast={showToast}
-                            onCreateOrder={handleCreateOrderFromOverview}
-                            onRefresh={refreshCollections}
-                        />
-                    )}
 
                     {activeTab === 'offers' && (
                         <ModuleGuard module="offers" moduleName="Modul Ponude">
@@ -555,7 +542,7 @@ export default function Home() {
                     // Quick Actions
                     { id: 'action-projects', type: 'action', title: 'Idi na Projekte', shortcut: 'Ctrl+N', action: () => setActiveTab('projects') },
                     { id: 'action-orders', type: 'action', title: 'Idi na Narudžbe', shortcut: 'Ctrl+O', action: () => setActiveTab('orders') },
-                    { id: 'action-overview', type: 'action', title: 'Idi na Pregled', action: () => setActiveTab('overview') },
+
                     { id: 'action-offers', type: 'action', title: 'Idi na Ponude', action: () => setActiveTab('offers') },
                     { id: 'action-production', type: 'action', title: 'Idi na Proizvodnju', action: () => setActiveTab('production') },
                     { id: 'action-import', type: 'action', title: '📥 Import podataka', action: () => setImportWizardOpen(true) },
