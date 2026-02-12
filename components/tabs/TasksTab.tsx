@@ -45,7 +45,8 @@ import {
     CheckCheck,
     Grid3X3,
     Flag,
-    CalendarDays
+    CalendarDays,
+    Printer
 } from 'lucide-react';
 import { useData } from '@/context/DataContext';
 import VoiceInput, { ExtractedTaskData } from '@/components/VoiceInput';
@@ -126,6 +127,8 @@ export default function TasksTab({ tasks, projects, workers, materials, workOrde
     const [previewTask, setPreviewTask] = useState<Task | null>(null);
     // Day tasks popup (shows all tasks for a specific day)
     const [dayTasksPopup, setDayTasksPopup] = useState<{ day: number; tasks: Task[] } | null>(null);
+    // Print modal
+    const [printingTask, setPrintingTask] = useState<Task | null>(null);
 
     // Initial check for mobile
     useEffect(() => {
@@ -608,6 +611,9 @@ export default function TasksTab({ tasks, projects, workers, materials, workOrde
                                 {isExpanded ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
                             </button>
                         )}
+                        <button className="icon-btn" onClick={() => setPrintingTask(task)} title="Printaj zadatak">
+                            <Printer size={16} />
+                        </button>
                         <button className="icon-btn" onClick={() => handleEditTask(task)} title="Uredi">
                             <Edit3 size={16} />
                         </button>
@@ -2095,5 +2101,114 @@ function TaskModal({ task, projects, products, workers, materials, workOrders, o
                 </div>
             </div>
         </div>
+
+            {/* Print Modal */ }
+    {
+        printingTask && (
+            <div className="print-modal-overlay">
+                <div className="print-modal-content">
+                    <div className="print-modal-actions no-print">
+                        <button onClick={() => window.print()} className="btn-print">
+                            <Printer size={20} />
+                            Print
+                        </button>
+                        <button onClick={() => setPrintingTask(null)} className="btn-close-print">
+                            <X size={20} />
+                            Zatvori
+                        </button>
+                    </div>
+
+                    <div className="print-paper">
+                        {/* Watermark/Decoration */}
+                        <div className="print-watermark"></div>
+
+                        {/* Header */}
+                        <div className="print-header">
+                            <div className="print-logo">
+                                <span className="logo-text">ERP Sustav</span>
+                            </div>
+                            <div className="print-meta">
+                                <div className="print-date">Datum: {new Date().toLocaleDateString('hr-HR')}</div>
+                                <div className="print-id">ID: {printingTask.Task_ID.slice(0, 8)}</div>
+                            </div>
+                        </div>
+
+                        {/* Task Title & Status */}
+                        <div className="print-title-section">
+                            <h1 className="print-task-title">{printingTask.Title}</h1>
+                            <div className="print-task-tags">
+                                <span className={`print-tag priority-${printingTask.Priority}`}>
+                                    {TASK_PRIORITY_LABELS[printingTask.Priority]}
+                                </span>
+                                <span className="print-tag category">
+                                    {TASK_CATEGORY_LABELS[printingTask.Category]}
+                                </span>
+                                {printingTask.Due_Date && (
+                                    <span className="print-tag date">
+                                        Rok: {new Date(printingTask.Due_Date).toLocaleDateString('hr-HR')}
+                                    </span>
+                                )}
+                                {printingTask.Assigned_Worker_Name && (
+                                    <span className="print-tag worker">
+                                        <User size={12} style={{ marginRight: 4 }} />
+                                        {printingTask.Assigned_Worker_Name}
+                                    </span>
+                                )}
+                            </div>
+                        </div>
+
+                        {/* Description */}
+                        {printingTask.Description && (
+                            <div className="print-section">
+                                <h3 className="print-section-title">Opis</h3>
+                                <div className="print-description">{printingTask.Description}</div>
+                            </div>
+                        )}
+
+                        {/* Checklist */}
+                        {printingTask.Checklist && printingTask.Checklist.length > 0 && (
+                            <div className="print-section">
+                                <h3 className="print-section-title">
+                                    Checklist ({printingTask.Checklist.filter(c => c.completed).length}/{printingTask.Checklist.length})
+                                </h3>
+                                <div className="print-checklist">
+                                    {printingTask.Checklist.map(item => (
+                                        <div key={item.id} className={`print-checklist-item ${item.completed ? 'completed' : ''}`}>
+                                            <div className={`print-checkbox ${item.completed ? 'checked' : ''}`}>
+                                                {item.completed && <Check size={12} />}
+                                            </div>
+                                            <span className="print-item-text">{item.text}</span>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+
+                        {/* Links/Connections */}
+                        {printingTask.Links && printingTask.Links.length > 0 && (
+                            <div className="print-section">
+                                <h3 className="print-section-title">Povezano</h3>
+                                <div className="print-links">
+                                    {printingTask.Links.map((link, idx) => (
+                                        <span key={idx} className="print-link-tag">
+                                            {link.Entity_Type}: {link.Entity_Name}
+                                        </span>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+
+                        {/* Notes */}
+                        {printingTask.Notes && (
+                            <div className="print-section">
+                                <h3 className="print-section-title">Napomene</h3>
+                                <div className="print-notes">{printingTask.Notes}</div>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            </div>
+        )
+    }
     );
 }

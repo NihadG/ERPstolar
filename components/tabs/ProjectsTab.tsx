@@ -49,7 +49,6 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
     const [expandedProjectId, setExpandedProjectId] = useState<string | null>(null);
     const [expandedProducts, setExpandedProducts] = useState<Set<string>>(new Set());
     const [expandedStatusGroups, setExpandedStatusGroups] = useState<Set<string>>(new Set());
-    const [actionsDropdownProjectId, setActionsDropdownProjectId] = useState<string | null>(null);
     const [showMaterialsSummary, setShowMaterialsSummary] = useState<Set<string>>(new Set());
 
     function toggleStatusGroup(status: string) {
@@ -1057,10 +1056,8 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                                     </button>
 
                                     <div className="project-main-info">
-                                        <div className="project-title-section">
-                                            <div className="project-name">{project.Name || project.Client_Name}</div>
-                                            {project.Name && <div className="project-client-subtitle">{project.Client_Name}</div>}
-                                        </div>
+                                        <div className="project-name">{project.Name || project.Client_Name}</div>
+                                        {project.Name && <div className="project-client-subtitle">{project.Client_Name}</div>}
                                         <div className="project-details">
                                             {project.Address && <div className="project-client">{project.Address}</div>}
                                             <div className="project-summary">
@@ -1079,53 +1076,18 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                                             </span>
                                         </div>
 
-                                        <div className="project-actions" onClick={(e) => e.stopPropagation()} style={{ position: 'relative' }}>
-                                            <button
-                                                className="icon-btn"
-                                                onClick={() => setActionsDropdownProjectId(actionsDropdownProjectId === project.Project_ID ? null : project.Project_ID)}
-                                                title="Akcije"
-                                            >
-                                                <span className="material-icons-round">more_vert</span>
-                                            </button>
-                                            {actionsDropdownProjectId === project.Project_ID && (
-                                                <div className="actions-dropdown" style={{
-                                                    position: 'absolute', right: 0, top: '100%', zIndex: 100,
-                                                    background: '#fff', borderRadius: '10px', boxShadow: '0 4px 20px rgba(0,0,0,0.12)',
-                                                    border: '1px solid #e2e8f0', minWidth: '180px', padding: '4px 0',
-                                                    animation: 'fadeIn 0.15s ease'
-                                                }}>
-                                                    {onNavigateToTasks && (
-                                                        <button
-                                                            onClick={() => { onNavigateToTasks(project.Project_ID); setActionsDropdownProjectId(null); }}
-                                                            style={{ display: 'flex', alignItems: 'center', gap: '10px', width: '100%', padding: '10px 14px', border: 'none', background: 'none', cursor: 'pointer', fontSize: '13px', color: '#334155', transition: 'background 0.15s' }}
-                                                            onMouseEnter={e => e.currentTarget.style.background = '#f1f5f9'}
-                                                            onMouseLeave={e => e.currentTarget.style.background = 'none'}
-                                                        >
-                                                            <span className="material-icons-round" style={{ fontSize: '18px', color: '#64748b' }}>task_alt</span>
-                                                            Zadaci
-                                                        </button>
-                                                    )}
-                                                    <button
-                                                        onClick={() => { openProjectModal(project); setActionsDropdownProjectId(null); }}
-                                                        style={{ display: 'flex', alignItems: 'center', gap: '10px', width: '100%', padding: '10px 14px', border: 'none', background: 'none', cursor: 'pointer', fontSize: '13px', color: '#334155', transition: 'background 0.15s' }}
-                                                        onMouseEnter={e => e.currentTarget.style.background = '#f1f5f9'}
-                                                        onMouseLeave={e => e.currentTarget.style.background = 'none'}
-                                                    >
-                                                        <span className="material-icons-round" style={{ fontSize: '18px', color: '#64748b' }}>edit</span>
-                                                        Uredi projekat
-                                                    </button>
-                                                    <div style={{ height: '1px', background: '#f1f5f9', margin: '4px 0' }} />
-                                                    <button
-                                                        onClick={() => { handleDeleteProject(project.Project_ID); setActionsDropdownProjectId(null); }}
-                                                        style={{ display: 'flex', alignItems: 'center', gap: '10px', width: '100%', padding: '10px 14px', border: 'none', background: 'none', cursor: 'pointer', fontSize: '13px', color: '#ef4444', transition: 'background 0.15s' }}
-                                                        onMouseEnter={e => e.currentTarget.style.background = '#fef2f2'}
-                                                        onMouseLeave={e => e.currentTarget.style.background = 'none'}
-                                                    >
-                                                        <span className="material-icons-round" style={{ fontSize: '18px' }}>delete</span>
-                                                        Obriši projekat
-                                                    </button>
-                                                </div>
+                                        <div className="project-actions" onClick={(e) => e.stopPropagation()}>
+                                            {onNavigateToTasks && (
+                                                <button className="icon-btn" onClick={() => onNavigateToTasks(project.Project_ID)} title="Zadaci">
+                                                    <span className="material-icons-round">task_alt</span>
+                                                </button>
                                             )}
+                                            <button className="icon-btn" onClick={() => openProjectModal(project)} title="Uredi projekat">
+                                                <span className="material-icons-round">edit</span>
+                                            </button>
+                                            <button className="icon-btn danger" onClick={() => handleDeleteProject(project.Project_ID)} title="Obriši projekat">
+                                                <span className="material-icons-round">delete</span>
+                                            </button>
                                         </div>
                                     </div>
                                 </div>
@@ -1687,10 +1649,8 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                                             </button>
 
                                             <div className="project-main-info">
-                                                <div className="project-title-section">
-                                                    <div className="project-name">{project.Name || project.Client_Name}</div>
-                                                    {project.Name && <div className="project-client-subtitle">{project.Client_Name}</div>}
-                                                </div>
+                                                <div className="project-name">{project.Name || project.Client_Name}</div>
+                                                {project.Name && <div className="project-client-subtitle">{project.Client_Name}</div>}
                                                 <div className="project-details">
                                                     {project.Address && <div className="project-client">{project.Address}</div>}
                                                     <div className="project-summary">
@@ -1702,53 +1662,18 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                                                 </div>
                                             </div>
 
-                                            <div className="project-actions" onClick={(e) => e.stopPropagation()} style={{ position: 'relative' }}>
-                                                <button
-                                                    className="icon-btn"
-                                                    onClick={() => setActionsDropdownProjectId(actionsDropdownProjectId === project.Project_ID ? null : project.Project_ID)}
-                                                    title="Akcije"
-                                                >
-                                                    <span className="material-icons-round">more_vert</span>
-                                                </button>
-                                                {actionsDropdownProjectId === project.Project_ID && (
-                                                    <div className="actions-dropdown" style={{
-                                                        position: 'absolute', right: 0, top: '100%', zIndex: 100,
-                                                        background: '#fff', borderRadius: '10px', boxShadow: '0 4px 20px rgba(0,0,0,0.12)',
-                                                        border: '1px solid #e2e8f0', minWidth: '180px', padding: '4px 0',
-                                                        animation: 'fadeIn 0.15s ease'
-                                                    }}>
-                                                        {onNavigateToTasks && (
-                                                            <button
-                                                                onClick={() => { onNavigateToTasks(project.Project_ID); setActionsDropdownProjectId(null); }}
-                                                                style={{ display: 'flex', alignItems: 'center', gap: '10px', width: '100%', padding: '10px 14px', border: 'none', background: 'none', cursor: 'pointer', fontSize: '13px', color: '#334155', transition: 'background 0.15s' }}
-                                                                onMouseEnter={e => e.currentTarget.style.background = '#f1f5f9'}
-                                                                onMouseLeave={e => e.currentTarget.style.background = 'none'}
-                                                            >
-                                                                <span className="material-icons-round" style={{ fontSize: '18px', color: '#64748b' }}>task_alt</span>
-                                                                Zadaci
-                                                            </button>
-                                                        )}
-                                                        <button
-                                                            onClick={() => { openProjectModal(project); setActionsDropdownProjectId(null); }}
-                                                            style={{ display: 'flex', alignItems: 'center', gap: '10px', width: '100%', padding: '10px 14px', border: 'none', background: 'none', cursor: 'pointer', fontSize: '13px', color: '#334155', transition: 'background 0.15s' }}
-                                                            onMouseEnter={e => e.currentTarget.style.background = '#f1f5f9'}
-                                                            onMouseLeave={e => e.currentTarget.style.background = 'none'}
-                                                        >
-                                                            <span className="material-icons-round" style={{ fontSize: '18px', color: '#64748b' }}>edit</span>
-                                                            Uredi projekat
-                                                        </button>
-                                                        <div style={{ height: '1px', background: '#f1f5f9', margin: '4px 0' }} />
-                                                        <button
-                                                            onClick={() => { handleDeleteProject(project.Project_ID); setActionsDropdownProjectId(null); }}
-                                                            style={{ display: 'flex', alignItems: 'center', gap: '10px', width: '100%', padding: '10px 14px', border: 'none', background: 'none', cursor: 'pointer', fontSize: '13px', color: '#ef4444', transition: 'background 0.15s' }}
-                                                            onMouseEnter={e => e.currentTarget.style.background = '#fef2f2'}
-                                                            onMouseLeave={e => e.currentTarget.style.background = 'none'}
-                                                        >
-                                                            <span className="material-icons-round" style={{ fontSize: '18px' }}>delete</span>
-                                                            Obriši projekat
-                                                        </button>
-                                                    </div>
+                                            <div className="project-actions" onClick={(e) => e.stopPropagation()}>
+                                                {onNavigateToTasks && (
+                                                    <button className="icon-btn" onClick={() => onNavigateToTasks(project.Project_ID)} title="Zadaci">
+                                                        <span className="material-icons-round">task_alt</span>
+                                                    </button>
                                                 )}
+                                                <button className="icon-btn" onClick={() => openProjectModal(project)} title="Uredi projekat">
+                                                    <span className="material-icons-round">edit</span>
+                                                </button>
+                                                <button className="icon-btn danger" onClick={() => handleDeleteProject(project.Project_ID)} title="Obriši projekat">
+                                                    <span className="material-icons-round">delete</span>
+                                                </button>
                                             </div>
                                         </div>
                                     </div>
