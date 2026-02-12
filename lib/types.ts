@@ -473,7 +473,7 @@ export interface WorkLog {
 
 export const PROJECT_STATUSES = ['Nacrt', 'Ponuđeno', 'Odobreno', 'U proizvodnji', 'Završeno', 'Otkazano'];
 export const PRODUCT_STATUSES = ['Na čekanju', 'Materijali naručeni', 'Materijali spremni', 'Rezanje', 'Kantiranje', 'Bušenje', 'Sklapanje', 'Spremno', 'Instalirano'];
-export const MATERIAL_STATUSES = ['Nije naručeno', 'Na stanju', 'Naručeno', 'Primljeno', 'U upotrebi', 'Instalirano'];
+export const MATERIAL_STATUSES = ['Nije naručeno', 'Na stanju', 'Naručeno', 'Primljeno'];
 export const OFFER_STATUSES = ['Nacrt', 'Poslano', 'Prihvaćeno', 'Odbijeno', 'Isteklo', 'Revidirano'];
 export const ORDER_STATUSES = ['Nacrt', 'Poslano', 'Potvrđeno', 'Isporučeno', 'Primljeno', 'Djelomično'];
 export const MATERIAL_CATEGORIES = ['Ploče i trake', 'Okovi', 'Staklo', 'Alu vrata', 'Ostalo'];
@@ -487,11 +487,9 @@ export const PROCESS_STATUSES = ['Na čekanju', 'U toku', 'Odloženo', 'Završen
 // Dopuštene tranzicije statusa materijala (source → allowed targets)
 export const ALLOWED_MATERIAL_TRANSITIONS: Record<string, string[]> = {
     'Nije naručeno': ['Na stanju', 'Naručeno'],
-    'Na stanju': ['Nije naručeno', 'U upotrebi'],
+    'Na stanju': ['Nije naručeno'],
     'Naručeno': ['Nije naručeno', 'Primljeno'],
-    'Primljeno': ['U upotrebi', 'Naručeno'],
-    'U upotrebi': ['Instalirano', 'Primljeno'],
-    'Instalirano': ['U upotrebi'],
+    'Primljeno': ['Naručeno'],
 };
 
 // Dopuštene tranzicije statusa narudžbe (source → allowed targets)

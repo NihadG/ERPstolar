@@ -360,10 +360,6 @@ export default function WorkOrderPrintTemplate({ workOrder, companyName = 'ERP S
                                         <span className="summary-label">Status:</span>
                                         <span className="summary-value">{workOrder.Status}</span>
                                     </div>
-                                    <div className="summary-item">
-                                        <span className="summary-label">Procesi:</span>
-                                        <span className="summary-value">{workOrder.Production_Steps?.join(', ')}</span>
-                                    </div>
                                 </div>
 
                                 {/* Products List */}
@@ -729,48 +725,48 @@ export default function WorkOrderPrintTemplate({ workOrder, companyName = 'ERP S
 
                 /* Materials Section */
                 .materials-row td { 
-                    padding: 0 12px 16px 12px; 
+                    padding: 0 12px 12px 12px; 
                     border-bottom: 1px solid #e5e5e5; 
                     background: #fff !important; 
                 }
                 
                 .materials-container {
-                    background: #F5F5F7;
-                    border-radius: 8px;
-                    padding: 12px 16px;
                     margin-left: 40px;
+                    padding: 8px 0;
                 }
 
                 .materials-header-label {
-                    font-size: 7.5pt;
+                    font-size: 7pt;
                     color: #86868b;
                     font-weight: 600;
                     text-transform: uppercase;
-                    letter-spacing: 0.05em;
-                    margin-bottom: 8px;
+                    letter-spacing: 0.08em;
+                    margin-bottom: 4px;
+                    padding-left: 2px;
                 }
 
                 .materials-table { width: 100%; border-collapse: collapse; }
                 .materials-table td {
-                    padding: 6px 0;
-                    border-bottom: 1px solid rgba(0,0,0,0.05);
-                    font-size: 9pt;
-                    color: #424245;
+                    padding: 4px 0;
+                    font-size: 8.5pt;
+                    color: #48484a;
+                    vertical-align: middle;
                 }
-                .materials-table tr:last-child td { border-bottom: none; }
+                .materials-table tr + tr td { border-top: 0.5px solid #f0f0f0; }
                 
-                .mat-name { font-weight: 500; color: #1d1d1f; }
-                .mat-supplier { color: #86868b; font-size: 8.5pt; margin-left: 6px; }
-                .mat-qty { font-weight: 500; font-size: 9pt; }
+                .mat-name { font-weight: 500; color: #1d1d1f; font-size: 8.5pt; }
+                .mat-supplier { color: #aeaeb2; font-size: 7.5pt; margin-left: 4px; }
+                .mat-qty { font-weight: 500; font-size: 8.5pt; color: #1d1d1f; }
 
                 /* Modern Badge */
                 .status-badge-modern {
                     display: inline-flex;
                     align-items: center;
-                    padding: 2px 8px;
-                    border-radius: 4px;
-                    font-size: 8pt;
+                    padding: 1px 6px;
+                    border-radius: 3px;
+                    font-size: 7pt;
                     font-weight: 500;
+                    letter-spacing: 0.01em;
                 }
                 .status-badge-modern.na-stanju { background: #e8f5e9; color: #1b5e20; }
                 .status-badge-modern.naručeno { background: #e3f2fd; color: #0d47a1; }
@@ -778,6 +774,7 @@ export default function WorkOrderPrintTemplate({ workOrder, companyName = 'ERP S
                 .status-badge-modern.primljeno { background: #e0f2f1; color: #004d40; }
                 .status-badge-modern.u-upotrebi { background: #fff8e1; color: #ff6f00; }
                 .status-badge-modern.unknown { background: #f5f5f5; color: #616161; }
+
 
                 /* Signature Area */
                 .signature-area {

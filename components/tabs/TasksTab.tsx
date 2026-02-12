@@ -46,7 +46,8 @@ import {
     Grid3X3,
     Flag,
     CalendarDays,
-    Printer
+    Printer,
+    MoreHorizontal
 } from 'lucide-react';
 import { useData } from '@/context/DataContext';
 import VoiceInput, { ExtractedTaskData } from '@/components/VoiceInput';
@@ -129,6 +130,9 @@ export default function TasksTab({ tasks, projects, workers, materials, workOrde
     const [dayTasksPopup, setDayTasksPopup] = useState<{ day: number; tasks: Task[] } | null>(null);
     // Print modal
     const [printingTask, setPrintingTask] = useState<Task | null>(null);
+    // Card menu dropdown
+    const [activeCardMenu, setActiveCardMenu] = useState<string | null>(null);
+    const cardMenuRef = useRef<HTMLDivElement>(null);
 
     // Initial check for mobile
     useEffect(() => {
@@ -136,6 +140,17 @@ export default function TasksTab({ tasks, projects, workers, materials, workOrde
             setShowControls(false);
         }
     }, []);
+
+    // Close card menu on outside click
+    useEffect(() => {
+        const handleClickOutside = (e: MouseEvent) => {
+            if (activeCardMenu && cardMenuRef.current && !cardMenuRef.current.contains(e.target as Node)) {
+                setActiveCardMenu(null);
+            }
+        };
+        document.addEventListener('mousedown', handleClickOutside);
+        return () => document.removeEventListener('mousedown', handleClickOutside);
+    }, [activeCardMenu]);
 
     const toggleControls = () => setShowControls(!showControls);
 
@@ -611,6 +626,9 @@ export default function TasksTab({ tasks, projects, workers, materials, workOrde
                                 {isExpanded ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
                             </button>
                         )}
+                        <button className="icon-btn" onClick={() => setPrintingTask(task)} title="Printaj">
+                            <Printer size={14} />
+                        </button>
                         <button className="icon-btn" onClick={() => handleEditTask(task)} title="Uredi">
                             <Edit3 size={16} />
                         </button>
@@ -876,185 +894,181 @@ export default function TasksTab({ tasks, projects, workers, materials, workOrde
         );
     };
 
-    // Render: Grid Card - Compact version for grid layout
+    // Render: Grid Card - Apple-style minimalist design
     const renderGridCard = (task: Task) => {
         const pColor = priorityColors[task.Priority];
         const isOverdue = task.Due_Date && task.Status !== 'completed' && new Date(task.Due_Date) < new Date();
-        const checklistProgress = task.Checklist?.length
-            ? task.Checklist.filter(c => c.completed).length / task.Checklist.length
-            : null;
         const isExpanded = expandedTasks.has(task.Task_ID);
+        const isMenuOpen = activeCardMenu === task.Task_ID;
+        const completedCount = task.Checklist?.filter(c => c.completed).length || 0;
+        const totalCount = task.Checklist?.length || 0;
 
         return (
             <div
                 key={task.Task_ID}
                 className={`task-card grid-card ${task.Status === 'completed' ? 'completed' : ''} ${isExpanded ? 'expanded' : ''}`}
-                style={{
-                    borderLeft: `4px solid ${pColor.border}`,
-                    background: task.Status === 'completed' ? 'rgba(0,0,0,0.02)' : undefined
-                }}
             >
-                {/* Actions - Absolute positioned */}
-                <div className="task-card-actions">
+                {/* Top row: status + title + menu */}
+                <div className="grid-card-header" onClick={() => toggleTaskExpansion(task.Task_ID)}>
                     <button
-                        className="icon-btn"
-                        onClick={(e) => { e.stopPropagation(); handleEditTask(task); }}
-                        title="Uredi"
+                        className="grid-status-toggle"
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            handleStatusChange(
+                                task.Task_ID,
+                                task.Status === 'completed' ? 'pending' : 'completed'
+                            );
+                        }}
+                        title={task.Status === 'completed' ? 'Označi kao nezavršeno' : 'Označi kao završeno'}
                     >
-                        <Edit3 size={14} />
+                        {task.Status === 'completed'
+                            ? <CheckCircle2 size={18} className="check-complete" />
+                            : <Circle size={18} className="check-pending" />
+                        }
                     </button>
-                    <button
-                        className="icon-btn danger"
-                        onClick={(e) => { e.stopPropagation(); handleDeleteTask(task.Task_ID); }}
-                        title="Obriši"
-                    >
-                        <Trash2 size={14} />
-                    </button>
+                    <span className="grid-priority-dot" style={{ background: pColor.border }} />
+                    <h4 className="grid-card-title">{task.Title}</h4>
+
+                    {/* ⋯ Menu */}
+                    <div className="grid-card-menu-wrapper" ref={isMenuOpen ? cardMenuRef : undefined}>
+                        <button
+                            className="grid-menu-btn"
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                setActiveCardMenu(isMenuOpen ? null : task.Task_ID);
+                            }}
+                        >
+                            <MoreHorizontal size={16} />
+                        </button>
+                        {isMenuOpen && (
+                            <div className="grid-card-dropdown">
+                                <button onClick={(e) => { e.stopPropagation(); handleEditTask(task); setActiveCardMenu(null); }}>
+                                    <Edit3 size={14} />
+                                    Uredi
+                                </button>
+                                <button onClick={(e) => { e.stopPropagation(); setPrintingTask(task); setActiveCardMenu(null); }}>
+                                    <Printer size={14} />
+                                    Printaj
+                                </button>
+                                <button className="danger" onClick={(e) => { e.stopPropagation(); handleDeleteTask(task.Task_ID); setActiveCardMenu(null); }}>
+                                    <Trash2 size={14} />
+                                    Obriši
+                                </button>
+                            </div>
+                        )}
+                    </div>
                 </div>
 
-                {/* Content */}
-                <div
-                    className="task-card-content"
-                    onClick={() => toggleTaskExpansion(task.Task_ID)}
-                >
-                    <h4 className="task-title" style={isExpanded ? { whiteSpace: 'normal' } : {}}>{task.Title}</h4>
+                {/* Description (collapsed: 2 lines, expanded: full) */}
+                {task.Description && (
+                    <p
+                        className="grid-card-desc"
+                        style={isExpanded ? { WebkitLineClamp: 'unset', display: 'block' } : {}}
+                        onClick={() => toggleTaskExpansion(task.Task_ID)}
+                    >
+                        {task.Description}
+                    </p>
+                )}
 
-                    {task.Description && (
-                        <p className="task-description" style={isExpanded ? { lineClamp: 'unset', WebkitLineClamp: 'unset', display: 'block' } : {}}>
-                            {task.Description}
-                        </p>
-                    )}
-
-                    {/* EXPANDED CONTENT */}
-                    {isExpanded && (
-                        <div className="task-expanded-details">
-                            {/* Checklist */}
-                            {task.Checklist && task.Checklist.length > 0 && (
-                                <div className="expanded-section">
-                                    <div className="section-header-row">
-                                        <h5 className="section-title">
-                                            <CheckSquare size={12} />
-                                            Checklist ({task.Checklist.filter(c => c.completed).length}/{task.Checklist.length})
-                                        </h5>
-                                        <div className="checklist-progress-track">
-                                            <div
-                                                className="checklist-progress-fill"
-                                                style={{
-                                                    width: `${(task.Checklist.filter(c => c.completed).length / task.Checklist.length) * 100}%`
-                                                }}
-                                            />
-                                        </div>
-                                    </div>
-                                    <div className="checklist-preview">
-                                        {task.Checklist.map(item => (
-                                            <div
-                                                key={item.id}
-                                                className={`checklist-item-preview ${item.completed ? 'completed' : ''}`}
-                                                onClick={(e) => {
-                                                    e.stopPropagation();
-                                                    handleToggleChecklist(task.Task_ID, item.id);
-                                                }}
-                                            >
-                                                <div className={`check-box ${item.completed ? 'checked' : ''}`}>
-                                                    {item.completed && <CheckCheck size={12} color="white" strokeWidth={3} />}
-                                                </div>
-                                                <span>{item.text}</span>
-                                            </div>
-                                        ))}
-                                    </div>
-                                </div>
-                            )}
-
-                            {/* Full Links */}
-                            {task.Links && task.Links.length > 0 && (
-                                <div className="expanded-section">
-                                    <h5 className="section-title">
-                                        <Link2 size={12} />
-                                        Poveznice
-                                    </h5>
-                                    <div className="links-preview">
-                                        {task.Links.map((link, idx) => (
-                                            <span
-                                                key={idx}
-                                                className={`entity-chip ${link.Entity_Type}`}
-                                                onClick={(e) => { e.stopPropagation(); /* Maybe navigate? */ }}
-                                            >
-                                                {renderGroupIcon(link.Entity_Type)}
-                                                {link.Entity_Name}
-                                            </span>
-                                        ))}
-                                    </div>
-                                </div>
-                            )}
-
-                            {/* Notes */}
-                            {task.Notes && (
-                                <div className="expanded-section">
-                                    <h5 className="section-title">
-                                        <MessageSquare size={12} />
-                                        Bilješke
-                                    </h5>
-                                    <p className="notes-text">{task.Notes}</p>
-                                </div>
-                            )}
-                        </div>
-                    )}
-                </div>
-
-                {/* Meta row - Hide when expanded to avoid clutter? Or keep it? Keeping it for quick status scan. */}
+                {/* Subtle meta line */}
                 {!isExpanded && (
-                    <div className="task-card-meta">
-                        {/* Category */}
-                        <span className="meta-chip category">
-                            {categoryIcons[task.Category]}
-                        </span>
-
-                        {/* Due date */}
+                    <div className="grid-card-meta">
                         {task.Due_Date && (
-                            <span className={`meta-chip due-date ${isOverdue ? 'overdue' : ''}`}>
-                                <Calendar size={12} />
+                            <span className={`grid-meta-item ${isOverdue ? 'overdue' : ''}`}>
                                 {new Date(task.Due_Date).toLocaleDateString('hr-HR', {
                                     day: 'numeric',
                                     month: 'short'
                                 })}
                             </span>
                         )}
-
-                        {/* Checklist indicator */}
-                        {checklistProgress !== null && (
-                            <span className="meta-chip">
-                                <CheckCheck size={12} />
-                                {task.Checklist?.filter(c => c.completed).length}/{task.Checklist?.length}
+                        {totalCount > 0 && (
+                            <span className="grid-meta-item">
+                                {completedCount}/{totalCount} ✓
                             </span>
                         )}
-
-                        {/* Links indicator */}
-                        {task.Links && task.Links.length > 0 && (
-                            <span className="meta-chip links-indicator">
-                                <Link2 size={11} />
-                                {task.Links.length}
+                        {task.Assigned_Worker_Name && (
+                            <span className="grid-meta-item worker">
+                                {task.Assigned_Worker_Name}
                             </span>
                         )}
                     </div>
                 )}
 
-                {/* Status button - Absolute positioned */}
-                <button
-                    className="task-status-btn"
-                    onClick={(e) => {
-                        e.stopPropagation();
-                        handleStatusChange(
-                            task.Task_ID,
-                            task.Status === 'completed' ? 'pending' : 'completed'
-                        );
-                    }}
-                    title={task.Status === 'completed' ? 'Označi kao nezavršeno' : 'Označi kao završeno'}
-                >
-                    {task.Status === 'completed'
-                        ? <CheckCircle2 size={20} className="check-complete" />
-                        : <Circle size={20} className="check-pending" />
-                    }
-                </button>
+                {/* EXPANDED CONTENT */}
+                {isExpanded && (
+                    <div className="grid-expanded-content" onClick={(e) => e.stopPropagation()}>
+                        {/* Checklist */}
+                        {task.Checklist && task.Checklist.length > 0 && (
+                            <div className="grid-exp-section">
+                                <div className="grid-exp-section-header">
+                                    <span className="grid-exp-label">Checklist</span>
+                                    <span className="grid-exp-count">{completedCount}/{totalCount}</span>
+                                </div>
+                                <div className="grid-exp-checklist">
+                                    {task.Checklist.map(item => (
+                                        <button
+                                            key={item.id}
+                                            className={`grid-check-item ${item.completed ? 'done' : ''}`}
+                                            onClick={() => handleToggleChecklist(task.Task_ID, item.id)}
+                                        >
+                                            {item.completed
+                                                ? <CheckCircle2 size={16} className="check-complete" />
+                                                : <Circle size={16} className="check-pending" />
+                                            }
+                                            <span>{item.text}</span>
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+
+                        {/* Links */}
+                        {task.Links && task.Links.length > 0 && (
+                            <div className="grid-exp-section">
+                                <span className="grid-exp-label">Poveznice</span>
+                                <div className="grid-exp-links">
+                                    {task.Links.map((link, idx) => (
+                                        <span key={idx} className={`entity-chip ${link.Entity_Type}`}>
+                                            {renderGroupIcon(link.Entity_Type)}
+                                            {link.Entity_Name}
+                                        </span>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+
+                        {/* Notes */}
+                        {task.Notes && (
+                            <div className="grid-exp-section">
+                                <span className="grid-exp-label">Bilješke</span>
+                                <p className="grid-exp-notes">{task.Notes}</p>
+                            </div>
+                        )}
+
+                        {/* Meta when expanded */}
+                        <div className="grid-exp-meta">
+                            <span className="grid-exp-meta-chip" style={{ background: pColor.bg, color: pColor.text }}>
+                                {TASK_PRIORITY_LABELS[task.Priority]}
+                            </span>
+                            <span className="grid-exp-meta-chip">
+                                {categoryIcons[task.Category]}
+                                {TASK_CATEGORY_LABELS[task.Category]}
+                            </span>
+                            {task.Due_Date && (
+                                <span className={`grid-exp-meta-chip ${isOverdue ? 'overdue' : ''}`}>
+                                    <Calendar size={12} />
+                                    {new Date(task.Due_Date).toLocaleDateString('hr-HR', { day: 'numeric', month: 'short' })}
+                                </span>
+                            )}
+                            {task.Assigned_Worker_Name && (
+                                <span className="grid-exp-meta-chip">
+                                    <User size={12} />
+                                    {task.Assigned_Worker_Name}
+                                </span>
+                            )}
+                        </div>
+                    </div>
+                )}
             </div>
         );
     };
@@ -1313,14 +1327,11 @@ export default function TasksTab({ tasks, projects, workers, materials, workOrde
                         ) : (
                             groupedTasks.map(group => (
                                 <div key={group.key} className="task-group">
-                                    <div className="task-group-header">
+                                    <div className={`task-group-header ${group.iconClass}`}>
                                         <div className={`task-group-icon ${group.iconClass}`}>
                                             {renderGroupIcon(group.iconClass)}
                                         </div>
-                                        <div className="task-group-info">
-                                            <h3 className="task-group-title">{group.label}</h3>
-                                            <span className="task-group-count">{group.tasks.length} {group.tasks.length === 1 ? 'zadatak' : 'zadataka'}</span>
-                                        </div>
+                                        <h3 className="task-group-title">{group.label}</h3>
                                     </div>
                                     <div className="task-group-content">
                                         {group.tasks.map(renderGridCard)}
@@ -1664,6 +1675,35 @@ export default function TasksTab({ tasks, projects, workers, materials, workOrde
                         </div>
                     </div>
                 </div>
+            )}
+
+            {/* Print Modal */}
+            {printingTask && (
+                <>
+                    <div className="task-print-overlay" onClick={() => setPrintingTask(null)}>
+                        <div className="task-print-modal" onClick={e => e.stopPropagation()}>
+                            <div className="print-modal-header">
+                                <h3>Pregled prije printanja</h3>
+                                <div className="print-header-actions">
+                                    <button className="btn-print" onClick={() => window.print()}>
+                                        <Printer size={16} />
+                                        Printaj
+                                    </button>
+                                    <button className="btn-close-print" onClick={() => setPrintingTask(null)}>
+                                        <X size={20} />
+                                    </button>
+                                </div>
+                            </div>
+                            <div className="print-preview-area">
+                                <TaskPrintView task={printingTask} />
+                            </div>
+                        </div>
+                    </div>
+                    {/* Hidden print document — only visible during @media print */}
+                    <div className="print-document task-print-document">
+                        <TaskPrintView task={printingTask} />
+                    </div>
+                </>
             )}
         </div>
     );
@@ -2100,3 +2140,126 @@ function TaskModal({ task, projects, products, workers, materials, workOrders, o
         </div>
     );
 }
+
+// ============================================
+// TASK PRINT VIEW COMPONENT — Clean A4 Layout
+// ============================================
+
+interface TaskPrintViewProps {
+    task: Task;
+}
+
+function TaskPrintView({ task }: TaskPrintViewProps) {
+    const pColor = priorityColors[task.Priority];
+    const isOverdue = task.Due_Date && task.Status !== 'completed' && new Date(task.Due_Date) < new Date();
+    const completedCount = task.Checklist?.filter(c => c.completed).length ?? 0;
+    const totalCount = task.Checklist?.length ?? 0;
+
+    return (
+        <div className="task-print-view">
+            {/* Header */}
+            <div className="tpv-header" style={{ borderLeftColor: pColor.border }}>
+                <div className="tpv-badges">
+                    <span className="tpv-priority" style={{
+                        background: pColor.bg,
+                        color: pColor.text,
+                        borderColor: pColor.border
+                    }}>
+                        {TASK_PRIORITY_LABELS[task.Priority]}
+                    </span>
+                    <span className={`tpv-status tpv-status--${task.Status}`}>
+                        {TASK_STATUS_LABELS[task.Status]}
+                    </span>
+                </div>
+                <h1 className="tpv-title">{task.Title}</h1>
+                <div className="tpv-meta">
+                    {task.Due_Date && (
+                        <span className={`tpv-meta-item ${isOverdue ? 'tpv-overdue' : ''}`}>
+                            <Calendar size={13} />
+                            {new Date(task.Due_Date).toLocaleDateString('hr-HR', {
+                                day: 'numeric', month: 'long', year: 'numeric'
+                            })}
+                        </span>
+                    )}
+                    {task.Assigned_Worker_Name && (
+                        <span className="tpv-meta-item">
+                            <User size={13} />
+                            {task.Assigned_Worker_Name}
+                        </span>
+                    )}
+                    <span className="tpv-meta-item">
+                        {categoryIcons[task.Category]}
+                        {TASK_CATEGORY_LABELS[task.Category]}
+                    </span>
+                </div>
+            </div>
+
+            {/* Divider */}
+            <div className="tpv-divider" />
+
+            {/* Description */}
+            {task.Description && (
+                <div className="tpv-section">
+                    <h3 className="tpv-section-label">Opis</h3>
+                    <p className="tpv-text">{task.Description}</p>
+                </div>
+            )}
+
+            {/* Checklist */}
+            {task.Checklist && task.Checklist.length > 0 && (
+                <div className="tpv-section">
+                    <div className="tpv-section-header">
+                        <h3 className="tpv-section-label">Kontrolna lista</h3>
+                        <span className="tpv-progress-label">{completedCount} / {totalCount}</span>
+                    </div>
+                    <div className="tpv-progress-track">
+                        <div className="tpv-progress-bar" style={{
+                            width: `${totalCount ? (completedCount / totalCount) * 100 : 0}%`,
+                            background: pColor.icon
+                        }} />
+                    </div>
+                    <ul className="tpv-checklist">
+                        {task.Checklist.map((item) => (
+                            <li key={item.id} className={`tpv-check-item ${item.completed ? 'done' : ''}`}>
+                                <span className="tpv-check-box">{item.completed ? '✓' : ''}</span>
+                                <span className="tpv-check-text">{item.text}</span>
+                            </li>
+                        ))}
+                    </ul>
+                </div>
+            )}
+
+            {/* Links */}
+            {task.Links && task.Links.length > 0 && (
+                <div className="tpv-section">
+                    <h3 className="tpv-section-label">Povezano</h3>
+                    <div className="tpv-links">
+                        {task.Links.map((link, idx) => (
+                            <span key={idx} className="tpv-link-chip">
+                                {link.Entity_Name}
+                            </span>
+                        ))}
+                    </div>
+                </div>
+            )}
+
+            {/* Notes */}
+            {task.Notes && (
+                <div className="tpv-section">
+                    <h3 className="tpv-section-label">Napomene</h3>
+                    <p className="tpv-text tpv-notes">{task.Notes}</p>
+                </div>
+            )}
+
+            {/* Footer */}
+            <div className="tpv-footer">
+                <span>Printano: {new Date().toLocaleDateString('hr-HR', {
+                    day: 'numeric', month: 'long', year: 'numeric'
+                })} u {new Date().toLocaleTimeString('hr-HR', {
+                    hour: '2-digit', minute: '2-digit'
+                })}</span>
+            </div>
+        </div>
+    );
+}
+

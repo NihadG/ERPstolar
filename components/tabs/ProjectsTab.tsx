@@ -93,6 +93,10 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
     // Material status dropdown
     const [statusDropdownMaterialId, setStatusDropdownMaterialId] = useState<string | null>(null);
 
+    // Pending status change with quantity prompt (for 'Na stanju' / 'Primljeno')
+    const [pendingStatusChange, setPendingStatusChange] = useState<{ materialId: string; status: string; currentQty: number } | null>(null);
+    const [statusQtyInput, setStatusQtyInput] = useState<number>(0);
+
     // Quick edit mode for materials
     const [quickEditMode, setQuickEditMode] = useState<string | null>(null); // Product_ID in quick edit mode
     const [editingMaterialValues, setEditingMaterialValues] = useState<Record<string, { qty: number; price: number }>>({});
@@ -486,19 +490,49 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
     }
 
     // Handle material status change (optimistic update to preserve UI state)
-    async function handleMaterialStatusChange(materialId: string, newStatus: string) {
+    async function handleMaterialStatusChange(materialId: string, newStatus: string, quantity?: number) {
         if (!organizationId) {
             showToast('Organization ID is required', 'error');
             return;
         }
-        const result = await updateProductMaterial(materialId, { Status: newStatus }, organizationId);
+
+        // Build update payload with quantity field sync
+        const updates: Record<string, unknown> = { Status: newStatus };
+
+        if (newStatus === 'Nije naručeno') {
+            // Only clear Order_ID — quantities are managed by the order system
+            // Zeroing them here would corrupt data if the material is in other active orders
+            updates.Order_ID = '';
+        } else if (newStatus === 'Na stanju') {
+            updates.On_Stock = quantity ?? 0;
+        } else if (newStatus === 'Primljeno') {
+            updates.Received_Quantity = quantity ?? 0;
+        }
+
+        const result = await updateProductMaterial(materialId, updates as any, organizationId);
         if (result.success) {
             showToast(`Status materijala promjenjen u "${newStatus}"`, 'success');
             setStatusDropdownMaterialId(null);
+            setPendingStatusChange(null);
             // Background refresh to sync data without disrupting UI
             onRefresh('projects');
         } else {
             showToast(result.message, 'error');
+        }
+    }
+
+    // Handle status click — some statuses need quantity input first
+    function handleStatusClick(material: ProductMaterial, targetStatus: string) {
+        if (targetStatus === 'Na stanju' || targetStatus === 'Primljeno') {
+            // Show quantity prompt
+            const defaultQty = targetStatus === 'Na stanju'
+                ? (material.On_Stock || material.Quantity || 0)
+                : (material.Quantity || 0);
+            setPendingStatusChange({ materialId: material.ID, status: targetStatus, currentQty: material.Quantity || 0 });
+            setStatusQtyInput(defaultQty);
+        } else {
+            // Direct change (no quantity needed)
+            handleMaterialStatusChange(material.ID, targetStatus);
         }
     }
 
@@ -1386,8 +1420,6 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                                                                                                 'Na stanju': 'inventory',
                                                                                                 'Naručeno': 'shopping_cart',
                                                                                                 'Primljeno': 'check_circle',
-                                                                                                'U upotrebi': 'build',
-                                                                                                'Instalirano': 'done_all',
                                                                                             };
                                                                                             if (allowedTransitions.length > 0) {
                                                                                                 return (
@@ -1407,16 +1439,68 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                                                                                                         </span>
                                                                                                         {statusDropdownMaterialId === material.ID && (
                                                                                                             <div className="status-dropdown-menu" onClick={(e) => e.stopPropagation()}>
-                                                                                                                {allowedTransitions.map(targetStatus => (
-                                                                                                                    <button
-                                                                                                                        key={targetStatus}
-                                                                                                                        className="status-dropdown-item"
-                                                                                                                        onClick={() => handleMaterialStatusChange(material.ID, targetStatus)}
-                                                                                                                    >
-                                                                                                                        <span className="material-icons-round">{statusIcons[targetStatus] || 'swap_horiz'}</span>
-                                                                                                                        {targetStatus}
-                                                                                                                    </button>
-                                                                                                                ))}
+                                                                                                                {pendingStatusChange && pendingStatusChange.materialId === material.ID ? (
+                                                                                                                    /* Quantity prompt for Na stanju / Primljeno */
+                                                                                                                    <div style={{ padding: '8px 12px', display: 'flex', flexDirection: 'column', gap: '6px', minWidth: '180px' }}>
+                                                                                                                        <span style={{ fontSize: '12px', fontWeight: 600, color: '#334155' }}>
+                                                                                                                            {pendingStatusChange.status === 'Na stanju' ? 'Količina na stanju' : 'Primljena količina'}
+                                                                                                                        </span>
+                                                                                                                        <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                                                                                                                            <input
+                                                                                                                                type="number"
+                                                                                                                                step="0.01"
+                                                                                                                                min="0"
+                                                                                                                                value={statusQtyInput}
+                                                                                                                                onChange={(e) => setStatusQtyInput(parseFloat(e.target.value) || 0)}
+                                                                                                                                onKeyDown={(e) => {
+                                                                                                                                    if (e.key === 'Enter') {
+                                                                                                                                        handleMaterialStatusChange(pendingStatusChange.materialId, pendingStatusChange.status, statusQtyInput);
+                                                                                                                                    } else if (e.key === 'Escape') {
+                                                                                                                                        setPendingStatusChange(null);
+                                                                                                                                    }
+                                                                                                                                }}
+                                                                                                                                autoFocus
+                                                                                                                                style={{
+                                                                                                                                    width: '80px', padding: '4px 8px', borderRadius: '6px',
+                                                                                                                                    border: '1px solid #cbd5e1', fontSize: '13px', textAlign: 'center',
+                                                                                                                                    outline: 'none'
+                                                                                                                                }}
+                                                                                                                            />
+                                                                                                                            <button
+                                                                                                                                onClick={() => handleMaterialStatusChange(pendingStatusChange.materialId, pendingStatusChange.status, statusQtyInput)}
+                                                                                                                                style={{
+                                                                                                                                    padding: '4px 10px', borderRadius: '6px', border: 'none',
+                                                                                                                                    background: '#2563eb', color: '#fff', fontSize: '12px',
+                                                                                                                                    fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap'
+                                                                                                                                }}
+                                                                                                                            >
+                                                                                                                                OK
+                                                                                                                            </button>
+                                                                                                                            <button
+                                                                                                                                onClick={() => setPendingStatusChange(null)}
+                                                                                                                                style={{
+                                                                                                                                    padding: '4px 8px', borderRadius: '6px', border: '1px solid #e2e8f0',
+                                                                                                                                    background: '#f8fafc', color: '#64748b', fontSize: '12px',
+                                                                                                                                    cursor: 'pointer'
+                                                                                                                                }}
+                                                                                                                            >
+                                                                                                                                ✕
+                                                                                                                            </button>
+                                                                                                                        </div>
+                                                                                                                    </div>
+                                                                                                                ) : (
+                                                                                                                    /* Normal status options list */
+                                                                                                                    allowedTransitions.map(targetStatus => (
+                                                                                                                        <button
+                                                                                                                            key={targetStatus}
+                                                                                                                            className="status-dropdown-item"
+                                                                                                                            onClick={() => handleStatusClick(material, targetStatus)}
+                                                                                                                        >
+                                                                                                                            <span className="material-icons-round">{statusIcons[targetStatus] || 'swap_horiz'}</span>
+                                                                                                                            {targetStatus}
+                                                                                                                        </button>
+                                                                                                                    ))
+                                                                                                                )}
                                                                                                             </div>
                                                                                                         )}
                                                                                                     </div>
@@ -1479,26 +1563,27 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
 
                                 {/* Grouped Materials Summary */}
                                 {(() => {
-                                    const materialMap = new Map<string, { name: string; unit: string; totalQty: number; orderedQty: number; receivedQty: number; notOrderedQty: number }>();
+                                    const materialMap = new Map<string, { name: string; unit: string; totalQty: number; onStockQty: number; orderedQty: number; receivedQty: number }>();
                                     (project.products || []).forEach(product => {
                                         (product.materials || []).forEach(mat => {
                                             const key = `${mat.Material_Name}||${mat.Unit}`;
                                             const qty = mat.Quantity || 0;
-                                            const isReceived = mat.Status === 'Primljeno' || mat.Status === 'U upotrebi' || mat.Status === 'Instalirano';
-                                            const isOrdered = mat.Status === 'Naručeno';
-                                            const isOnStock = mat.Status === 'Na stanju';
+
+                                            // Use real quantity fields with Status-based fallback for backward compat
+                                            const onStock = mat.On_Stock || 0;
+                                            const ordered = mat.Ordered_Quantity || (mat.Status === 'Naručeno' ? qty : 0);
+                                            const received = mat.Received_Quantity || (mat.Status === 'Primljeno' ? qty : (mat.Status === 'Na stanju' ? onStock : 0));
+
                                             if (materialMap.has(key)) {
                                                 const existing = materialMap.get(key)!;
                                                 existing.totalQty += qty;
-                                                if (isReceived || isOnStock) existing.receivedQty += qty;
-                                                else if (isOrdered) existing.orderedQty += qty;
-                                                else existing.notOrderedQty += qty;
+                                                existing.onStockQty += onStock;
+                                                existing.orderedQty += ordered;
+                                                existing.receivedQty += received;
                                             } else {
                                                 materialMap.set(key, {
                                                     name: mat.Material_Name, unit: mat.Unit, totalQty: qty,
-                                                    orderedQty: isOrdered ? qty : 0,
-                                                    receivedQty: (isReceived || isOnStock) ? qty : 0,
-                                                    notOrderedQty: (!isOrdered && !isReceived && !isOnStock) ? qty : 0,
+                                                    onStockQty: onStock, orderedQty: ordered, receivedQty: received,
                                                 });
                                             }
                                         });
@@ -1526,25 +1611,32 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                                                         <tr style={{ borderBottom: '2px solid #e2e8f0' }}>
                                                             <th style={{ textAlign: 'left', padding: '8px 8px 8px 0', color: '#64748b', fontWeight: 600, fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Materijal</th>
                                                             <th style={{ textAlign: 'right', padding: '8px', color: '#64748b', fontWeight: 600, fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Potrebno</th>
+                                                            <th style={{ textAlign: 'right', padding: '8px', color: '#64748b', fontWeight: 600, fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Na stanju</th>
                                                             <th style={{ textAlign: 'right', padding: '8px', color: '#64748b', fontWeight: 600, fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Naručeno</th>
                                                             <th style={{ textAlign: 'right', padding: '8px', color: '#64748b', fontWeight: 600, fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Primljeno</th>
+                                                            <th style={{ textAlign: 'right', padding: '8px', color: '#64748b', fontWeight: 600, fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Preostalo</th>
                                                             <th style={{ textAlign: 'right', padding: '8px 0 8px 8px', color: '#64748b', fontWeight: 600, fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Status</th>
                                                         </tr>
                                                     </thead>
                                                     <tbody>
                                                         {groupedMats.map((mat, i) => {
+                                                            const covered = mat.onStockQty + mat.orderedQty + mat.receivedQty;
+                                                            const remaining = Math.max(0, mat.totalQty - covered);
                                                             let statusLabel: string, statusColor: string, statusBg: string;
                                                             if (mat.receivedQty >= mat.totalQty) { statusLabel = 'Primljeno'; statusColor = '#10b981'; statusBg = '#ecfdf5'; }
                                                             else if (mat.receivedQty > 0) { statusLabel = 'Djelomično primljeno'; statusColor = '#06b6d4'; statusBg = '#ecfeff'; }
-                                                            else if (mat.orderedQty + mat.receivedQty >= mat.totalQty) { statusLabel = 'Naručeno'; statusColor = '#3b82f6'; statusBg = '#eff6ff'; }
+                                                            else if (covered >= mat.totalQty) { statusLabel = 'Naručeno'; statusColor = '#3b82f6'; statusBg = '#eff6ff'; }
                                                             else if (mat.orderedQty > 0) { statusLabel = 'Djelomično naručeno'; statusColor = '#8b5cf6'; statusBg = '#f5f3ff'; }
+                                                            else if (mat.onStockQty > 0) { statusLabel = 'Na stanju'; statusColor = '#10b981'; statusBg = '#ecfdf5'; }
                                                             else { statusLabel = 'Nije naručeno'; statusColor = '#f59e0b'; statusBg = '#fffbeb'; }
                                                             return (
                                                                 <tr key={i} style={{ borderBottom: '1px solid #f1f5f9' }}>
                                                                     <td style={{ padding: '8px 8px 8px 0', fontWeight: 500, color: '#1e293b' }}>{mat.name}</td>
                                                                     <td style={{ textAlign: 'right', padding: '8px', fontWeight: 600, color: '#334155' }}>{mat.totalQty} {mat.unit}</td>
-                                                                    <td style={{ textAlign: 'right', padding: '8px', fontWeight: 600, color: (mat.orderedQty + mat.receivedQty) >= mat.totalQty ? '#10b981' : mat.orderedQty > 0 ? '#3b82f6' : '#94a3b8' }}>{mat.orderedQty + mat.receivedQty} {mat.unit}</td>
-                                                                    <td style={{ textAlign: 'right', padding: '8px', fontWeight: 600, color: mat.receivedQty >= mat.totalQty ? '#10b981' : mat.receivedQty > 0 ? '#06b6d4' : '#94a3b8' }}>{mat.receivedQty} {mat.unit}</td>
+                                                                    <td style={{ textAlign: 'right', padding: '8px', fontWeight: 600, color: mat.onStockQty > 0 ? '#10b981' : '#94a3b8' }}>{mat.onStockQty} {mat.unit}</td>
+                                                                    <td style={{ textAlign: 'right', padding: '8px', fontWeight: 600, color: mat.orderedQty > 0 ? '#3b82f6' : '#94a3b8' }}>{mat.orderedQty} {mat.unit}</td>
+                                                                    <td style={{ textAlign: 'right', padding: '8px', fontWeight: 600, color: mat.receivedQty > 0 ? '#10b981' : '#94a3b8' }}>{mat.receivedQty} {mat.unit}</td>
+                                                                    <td style={{ textAlign: 'right', padding: '8px', fontWeight: 600, color: remaining > 0 ? '#ef4444' : '#10b981' }}>{remaining > 0 ? remaining : '✓'} {remaining > 0 ? mat.unit : ''}</td>
                                                                     <td style={{ textAlign: 'right', padding: '8px 0 8px 8px' }}>
                                                                         <span style={{ fontSize: '11px', padding: '3px 10px', borderRadius: '8px', background: statusBg, color: statusColor, fontWeight: 600, whiteSpace: 'nowrap' }}>{statusLabel}</span>
                                                                     </td>

@@ -501,11 +501,21 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
 
         const totalAmount = items.reduce((sum, item) => sum + item.Expected_Price, 0);
 
+        // Collect On_Stock values for selected materials
+        const onStockData: Record<string, number> = {};
+        for (const materialId of Array.from(selectedMaterialIds)) {
+            const onStock = onStockQuantities[materialId];
+            if (onStock !== undefined && onStock > 0) {
+                onStockData[materialId] = onStock;
+            }
+        }
+
         const result = await createOrder({
             Supplier_ID: selectedSupplierId,
             Supplier_Name: supplier.Name,
             Total_Amount: totalAmount,
             items: items as any,
+            onStockData,
         }, organizationId!);
 
         if (result.success) {
@@ -684,7 +694,6 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
 
         showToast('Količine ažurirane', 'success');
         setEditMode(false);
-        setEditedQuantities({});
         setEditedQuantities({});
         onRefresh('orders', 'projects');
         // Current order updates automatically via useMemo
@@ -980,7 +989,6 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
         if (result.success) {
             showToast('Materijali primljeni', 'success');
             onRefresh('orders', 'projects');
-            onRefresh('orders', 'projects');
             // Current order updates automatically via useMemo
         } else {
             showToast(result.message, 'error');
@@ -1182,7 +1190,7 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
                                             }
                                             const result = await markMaterialsReceived(unreceivedItems.map(i => i.ID), organizationId!);
                                             if (result.success) {
-                                                await updateOrderStatus(order.Order_ID, 'Primljeno', organizationId!);
+                                                // markMaterialsReceived already auto-sets order status to Primljeno
                                                 showToast('Sve stavke primljene', 'success');
                                                 onRefresh('orders', 'projects');
                                             } else {

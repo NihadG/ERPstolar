@@ -64,8 +64,8 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                 products.forEach(prod => {
                     (prod.materials || []).forEach(mat => {
                         totalMaterials++;
-                        // Consider 'Primljeno', 'U upotrebi', 'Instalirano' as ready/available
-                        if (['Primljeno', 'U upotrebi', 'Instalirano'].includes(mat.Status)) {
+                        // Consider 'Primljeno', 'Na stanju' as ready/available
+                        if (['Primljeno', 'Na stanju'].includes(mat.Status)) {
                             readyMaterials++;
                         }
                     });
@@ -223,6 +223,10 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
     const [dueDate, setDueDate] = useState('');
     const [notes, setNotes] = useState('');
     const [productSearch, setProductSearch] = useState('');
+
+    // Worker search dropdown state for step 4
+    const [openDropdown, setOpenDropdown] = useState<string | null>(null);
+    const [workerSearch, setWorkerSearch] = useState('');
 
     // Expansion State
     const [expandedOrderId, setExpandedOrderId] = useState<string | null>(null);
@@ -430,6 +434,25 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
         showToast(`${worker?.Name} dodijeljen za ${process} svim proizvodima`, 'success');
     }
 
+    function assignWorkerToAllProcesses(workerId: string) {
+        setSelectedProducts(selectedProducts.map(p => {
+            const newAssignments = { ...p.assignments };
+            selectedProcesses.forEach(proc => { newAssignments[proc] = workerId; });
+            return { ...p, assignments: newAssignments };
+        }));
+        const worker = workers.find(w => w.Worker_ID === workerId);
+        showToast(`${worker?.Name} dodijeljen svim procesima svih proizvoda`, 'success');
+    }
+
+    function assignHelpersToAllProcesses(helperIds: string[]) {
+        setSelectedProducts(selectedProducts.map(p => {
+            const newHelpers = { ...p.helperAssignments };
+            selectedProcesses.forEach(proc => { newHelpers[proc] = [...helperIds]; });
+            return { ...p, helperAssignments: newHelpers };
+        }));
+        showToast(`${helperIds.length} pomoćni${helperIds.length === 1 ? 'k' : 'ka'} dodijeljeno svim procesima`, 'success');
+    }
+
     async function handleCreateWorkOrder() {
         if (selectedProducts.length === 0) return;
 
@@ -543,7 +566,20 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
     }
 
     function handlePrintWorkOrder(wo: WorkOrder) {
-        setCurrentWorkOrderForPrint(wo);
+        // Enrich items with materials from project data for printing
+        const enrichedWo = {
+            ...wo,
+            items: wo.items?.map(item => {
+                // Find the product in projects to get its materials
+                const project = projects.find(p => p.Project_ID === item.Project_ID);
+                const product = project?.products?.find(prod => prod.Product_ID === item.Product_ID);
+                return {
+                    ...item,
+                    materials: product?.materials || item.materials || []
+                };
+            })
+        };
+        setCurrentWorkOrderForPrint(enrichedWo);
         setPrintModal(true);
     }
 
@@ -594,7 +630,7 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
 
             if (product?.materials) {
                 const missing = product.materials.filter(
-                    m => m.Is_Essential && m.Status !== 'Primljeno' && m.Status !== 'U upotrebi'
+                    m => m.Is_Essential && m.Status !== 'Primljeno' && m.Status !== 'Na stanju'
                 );
                 missing.forEach(m => missingMaterials.push(`${item.Product_Name}: ${m.Material_Name}`));
             }
@@ -1442,7 +1478,10 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
 
                         {/* STEP 4: DETAILS */}
                         {activeStep === 3 && (
-                            <div className="wizard-step step-details">
+                            <div className="wizard-step step-details" onClick={(e) => {
+                                // Close dropdowns when clicking outside
+                                if (!(e.target as HTMLElement).closest('.wdd')) { setOpenDropdown(null); setWorkerSearch(''); }
+                            }}>
                                 <div className="details-top">
                                     <div className="input-group">
                                         <label>Rok završetka</label>
@@ -1454,16 +1493,112 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                                     </div>
                                 </div>
 
+                                {/* Bulk assignment row */}
+                                <div className="bulk-assign-bar">
+                                    <div className="bulk-label">
+                                        <span className="material-icons-round" style={{ fontSize: 16 }}>bolt</span>
+                                        Dodjeli svima
+                                    </div>
+                                    <div className="bulk-controls">
+                                        {/* Bulk main worker */}
+                                        <div className="wdd" style={{ position: 'relative', flex: 1, minWidth: 180 }}>
+                                            <button type="button" className="wdd-trigger" onClick={() => { setOpenDropdown(openDropdown === 'bulk-main' ? null : 'bulk-main'); setWorkerSearch(''); }}>
+                                                <span className="material-icons-round wdd-icon">person</span>
+                                                <span className="wdd-label">Glavni radnik</span>
+                                                <span className="material-icons-round wdd-arrow">expand_more</span>
+                                            </button>
+                                            {openDropdown === 'bulk-main' && (
+                                                <div className="wdd-menu">
+                                                    <div className="wdd-search">
+                                                        <span className="material-icons-round" style={{ fontSize: 16, color: '#94a3b8' }}>search</span>
+                                                        <input autoFocus placeholder="Traži radnika..." value={workerSearch} onChange={e => setWorkerSearch(e.target.value)} />
+                                                    </div>
+                                                    <div className="wdd-options">
+                                                        {workers.filter(w => (w.Worker_Type === 'Glavni' || !w.Worker_Type) && w.Name.toLowerCase().includes(workerSearch.toLowerCase())).map(w => (
+                                                            <button key={w.Worker_ID} type="button" className="wdd-option" onClick={() => { assignWorkerToAllProcesses(w.Worker_ID); setOpenDropdown(null); setWorkerSearch(''); }}>
+                                                                <span className="wdd-name">{w.Name}</span>
+                                                                {w.Role && <span className="wdd-role">{w.Role}</span>}
+                                                            </button>
+                                                        ))}
+                                                        {workers.filter(w => (w.Worker_Type === 'Glavni' || !w.Worker_Type) && w.Name.toLowerCase().includes(workerSearch.toLowerCase())).length === 0 && (
+                                                            <div className="wdd-empty">Nema rezultata</div>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            )}
+                                        </div>
+                                        {/* Bulk helpers */}
+                                        <div className="wdd" style={{ position: 'relative', flex: 1, minWidth: 180 }}>
+                                            <button type="button" className="wdd-trigger" onClick={() => { setOpenDropdown(openDropdown === 'bulk-helpers' ? null : 'bulk-helpers'); setWorkerSearch(''); }}>
+                                                <span className="material-icons-round wdd-icon">group</span>
+                                                <span className="wdd-label">Pomoćnici</span>
+                                                <span className="material-icons-round wdd-arrow">expand_more</span>
+                                            </button>
+                                            {openDropdown === 'bulk-helpers' && (
+                                                <div className="wdd-menu">
+                                                    <div className="wdd-search">
+                                                        <span className="material-icons-round" style={{ fontSize: 16, color: '#94a3b8' }}>search</span>
+                                                        <input autoFocus placeholder="Traži pomoćnika..." value={workerSearch} onChange={e => setWorkerSearch(e.target.value)} />
+                                                    </div>
+                                                    <div className="wdd-options">
+                                                        {workers.filter(w => w.Name.toLowerCase().includes(workerSearch.toLowerCase())).map(w => {
+                                                            // Check if this helper is in the first product+process combo (as representative)
+                                                            const isSelected = selectedProducts.length > 0 && selectedProcesses.length > 0 &&
+                                                                (selectedProducts[0].helperAssignments?.[selectedProcesses[0]] || []).includes(w.Worker_ID);
+                                                            return (
+                                                                <button key={w.Worker_ID} type="button" className={`wdd-option ${isSelected ? 'selected' : ''}`}
+                                                                    onClick={() => {
+                                                                        // Toggle: if already assigned everywhere, remove; otherwise add
+                                                                        const currentGlobalHelpers = selectedProducts.length > 0 && selectedProcesses.length > 0
+                                                                            ? (selectedProducts[0].helperAssignments?.[selectedProcesses[0]] || [])
+                                                                            : [];
+                                                                        const newHelpers = currentGlobalHelpers.includes(w.Worker_ID)
+                                                                            ? currentGlobalHelpers.filter((id: string) => id !== w.Worker_ID)
+                                                                            : [...currentGlobalHelpers, w.Worker_ID];
+                                                                        assignHelpersToAllProcesses(newHelpers);
+                                                                    }}>
+                                                                    <span className="wdd-check">{isSelected ? '✓' : ''}</span>
+                                                                    <span className="wdd-name">{w.Name}</span>
+                                                                    {w.Role && <span className="wdd-role">{w.Role}</span>}
+                                                                </button>
+                                                            );
+                                                        })}
+                                                    </div>
+                                                </div>
+                                            )}
+                                        </div>
+                                    </div>
+                                </div>
+
                                 <div className="matrix-wrapper full-height">
                                     <div className="mw-header">
                                         <div className="m-col product">Proizvod</div>
                                         {selectedProcesses.map(proc => (
                                             <div key={proc} className="m-col process">
-                                                <span>{proc}</span>
-                                                <select onChange={e => e.target.value && assignWorkerToAll(proc, e.target.value)} value="">
-                                                    <option value="">▼</option>
-                                                    {workers.map(w => <option key={w.Worker_ID} value={w.Worker_ID}>{w.Name}</option>)}
-                                                </select>
+                                                <span className="process-header-title">{proc}</span>
+                                                {/* Per-process bulk assign */}
+                                                <div className="wdd" style={{ position: 'relative', width: '100%' }}>
+                                                    <button type="button" className="wdd-trigger compact" onClick={() => { setOpenDropdown(openDropdown === `hdr-${proc}` ? null : `hdr-${proc}`); setWorkerSearch(''); }}>
+                                                        <span className="wdd-label">Svima</span>
+                                                        <span className="material-icons-round wdd-arrow">expand_more</span>
+                                                    </button>
+                                                    {openDropdown === `hdr-${proc}` && (
+                                                        <div className="wdd-menu">
+                                                            <div className="wdd-search">
+                                                                <span className="material-icons-round" style={{ fontSize: 16, color: '#94a3b8' }}>search</span>
+                                                                <input autoFocus placeholder="Traži..." value={workerSearch} onChange={e => setWorkerSearch(e.target.value)} />
+                                                            </div>
+                                                            <div className="wdd-options">
+                                                                {workers.filter(w => w.Name.toLowerCase().includes(workerSearch.toLowerCase())).map(w => (
+                                                                    <button key={w.Worker_ID} type="button" className="wdd-option" onClick={() => { assignWorkerToAll(proc, w.Worker_ID); setOpenDropdown(null); setWorkerSearch(''); }}>
+                                                                        <span className="wdd-name">{w.Name}</span>
+                                                                        {w.Role && <span className="wdd-role">{w.Role}</span>}
+                                                                    </button>
+                                                                ))}
+                                                            </div>
+                                                        </div>
+                                                    )}
+                                                </div>
                                             </div>
                                         ))}
                                     </div>
@@ -1477,48 +1612,80 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                                                 {selectedProcesses.map(proc => {
                                                     const mainWorkerId = prod.assignments[proc];
                                                     const helpers = prod.helperAssignments?.[proc] || [];
-                                                    const availableHelpers = workers.filter(w =>
-                                                        w.Worker_ID !== mainWorkerId
-                                                    );
+                                                    const mainWorker = workers.find(w => w.Worker_ID === mainWorkerId);
+                                                    const dropdownId = `${prod.Product_ID}-${proc}`;
+                                                    const helperDropdownId = `${prod.Product_ID}-${proc}-helpers`;
 
                                                     return (
-                                                        <div key={proc} className="m-col process" style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                                                            <select
-                                                                value={mainWorkerId || ''}
-                                                                onChange={e => assignWorker(prod.Product_ID, proc, e.target.value)}
-                                                                className={mainWorkerId ? 'filled' : ''}
-                                                                style={{ marginBottom: '4px' }}
-                                                            >
-                                                                <option value="">— Glavni —</option>
-                                                                {workers.filter(w => w.Worker_Type === 'Glavni' || !w.Worker_Type).map(w => (
-                                                                    <option key={w.Worker_ID} value={w.Worker_ID}>{w.Name}</option>
-                                                                ))}
-                                                            </select>
-
-                                                            {mainWorkerId && availableHelpers.length > 0 && (
-                                                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
-                                                                    {availableHelpers.slice(0, 4).map(helper => {
-                                                                        const isSelected = helpers.includes(helper.Worker_ID);
-                                                                        return (
-                                                                            <button
-                                                                                key={helper.Worker_ID}
-                                                                                type="button"
-                                                                                onClick={() => toggleHelper(prod.Product_ID, proc, helper.Worker_ID)}
-                                                                                style={{
-                                                                                    padding: '2px 6px',
-                                                                                    fontSize: '10px',
-                                                                                    borderRadius: '4px',
-                                                                                    border: isSelected ? '1px solid #6366f1' : '1px solid #e0e0e0',
-                                                                                    background: isSelected ? '#eef2ff' : '#f9fafb',
-                                                                                    color: isSelected ? '#4f46e5' : '#666',
-                                                                                    cursor: 'pointer',
-                                                                                    fontWeight: isSelected ? 600 : 400
-                                                                                }}
-                                                                            >
-                                                                                {isSelected ? '✓ ' : '+'}{helper.Name.split(' ')[0]}
+                                                        <div key={proc} className="m-col process" style={{ gap: '4px' }}>
+                                                            {/* Main worker searchable dropdown */}
+                                                            <div className="wdd" style={{ position: 'relative', width: '100%' }}>
+                                                                <button type="button" className={`wdd-trigger compact ${mainWorkerId ? 'filled' : ''}`}
+                                                                    onClick={() => { setOpenDropdown(openDropdown === dropdownId ? null : dropdownId); setWorkerSearch(''); }}>
+                                                                    <span className="wdd-label">{mainWorker ? mainWorker.Name : 'Odaberi'}</span>
+                                                                    <span className="material-icons-round wdd-arrow">expand_more</span>
+                                                                </button>
+                                                                {openDropdown === dropdownId && (
+                                                                    <div className="wdd-menu">
+                                                                        <div className="wdd-search">
+                                                                            <span className="material-icons-round" style={{ fontSize: 16, color: '#94a3b8' }}>search</span>
+                                                                            <input autoFocus placeholder="Traži radnika..." value={workerSearch} onChange={e => setWorkerSearch(e.target.value)} />
+                                                                        </div>
+                                                                        <div className="wdd-options">
+                                                                            <button type="button" className="wdd-option wdd-option-clear" onClick={() => { assignWorker(prod.Product_ID, proc, ''); setOpenDropdown(null); setWorkerSearch(''); }}>
+                                                                                <span className="material-icons-round" style={{ fontSize: 14, color: '#94a3b8' }}>close</span>
+                                                                                <span className="wdd-name" style={{ color: '#94a3b8' }}>Ukloni odabir</span>
                                                                             </button>
-                                                                        );
+                                                                            {workers.filter(w => (w.Worker_Type === 'Glavni' || !w.Worker_Type) && w.Name.toLowerCase().includes(workerSearch.toLowerCase())).map(w => (
+                                                                                <button key={w.Worker_ID} type="button" className={`wdd-option ${w.Worker_ID === mainWorkerId ? 'selected' : ''}`}
+                                                                                    onClick={() => { assignWorker(prod.Product_ID, proc, w.Worker_ID); setOpenDropdown(null); setWorkerSearch(''); }}>
+                                                                                    <span className="wdd-name">{w.Name}</span>
+                                                                                    {w.Role && <span className="wdd-role">{w.Role}</span>}
+                                                                                </button>
+                                                                            ))}
+                                                                        </div>
+                                                                    </div>
+                                                                )}
+                                                            </div>
+
+                                                            {/* Helper pills + add button */}
+                                                            {mainWorkerId && (
+                                                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '3px', alignItems: 'center' }}>
+                                                                    {helpers.map(hId => {
+                                                                        const h = workers.find(w => w.Worker_ID === hId);
+                                                                        return h ? (
+                                                                            <span key={hId} className="helper-pill">
+                                                                                {h.Name.split(' ')[0]}
+                                                                                <button type="button" onClick={() => toggleHelper(prod.Product_ID, proc, hId)}>×</button>
+                                                                            </span>
+                                                                        ) : null;
                                                                     })}
+                                                                    <div className="wdd" style={{ position: 'relative' }}>
+                                                                        <button type="button" className="helper-add-btn"
+                                                                            onClick={() => { setOpenDropdown(openDropdown === helperDropdownId ? null : helperDropdownId); setWorkerSearch(''); }}>
+                                                                            +
+                                                                        </button>
+                                                                        {openDropdown === helperDropdownId && (
+                                                                            <div className="wdd-menu" style={{ minWidth: 200 }}>
+                                                                                <div className="wdd-search">
+                                                                                    <span className="material-icons-round" style={{ fontSize: 16, color: '#94a3b8' }}>search</span>
+                                                                                    <input autoFocus placeholder="Traži pomoćnika..." value={workerSearch} onChange={e => setWorkerSearch(e.target.value)} />
+                                                                                </div>
+                                                                                <div className="wdd-options">
+                                                                                    {workers.filter(w => w.Worker_ID !== mainWorkerId && w.Name.toLowerCase().includes(workerSearch.toLowerCase())).map(w => {
+                                                                                        const isH = helpers.includes(w.Worker_ID);
+                                                                                        return (
+                                                                                            <button key={w.Worker_ID} type="button" className={`wdd-option ${isH ? 'selected' : ''}`}
+                                                                                                onClick={() => toggleHelper(prod.Product_ID, proc, w.Worker_ID)}>
+                                                                                                <span className="wdd-check">{isH ? '✓' : ''}</span>
+                                                                                                <span className="wdd-name">{w.Name}</span>
+                                                                                            </button>
+                                                                                        );
+                                                                                    })}
+                                                                                </div>
+                                                                            </div>
+                                                                        )}
+                                                                    </div>
                                                                 </div>
                                                             )}
                                                         </div>
@@ -1816,68 +1983,98 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                 }
                 .add-process-row button:hover { background: #0056b3; transform: scale(1.02); }
 
-                /* Step 4: Matrix View */
-                .step-details { display: flex; flex-direction: column; overflow: hidden; }
+                /* Step 4: Matrix View — Premium Redesign */
+                .step-details { display: flex; flex-direction: column; overflow: hidden; gap: 12px; }
                 .details-top { 
                     flex-shrink: 0;
-                    padding: 16px 20px; 
-                    background: white; 
-                    border: 1px solid #e0e0e0; 
-                    border-radius: 10px; 
+                    padding: 18px 24px; 
+                    background: linear-gradient(135deg, #ffffff 0%, #fafbfd 100%);
+                    border: 1px solid rgba(0,0,0,0.06); 
+                    border-radius: 14px; 
                     display: flex; 
-                    gap: 20px; 
-                    margin-bottom: 16px; 
-                    box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+                    gap: 24px; 
+                    box-shadow: 0 2px 8px rgba(0,0,0,0.04), 0 0 0 1px rgba(0,0,0,0.02);
                 }
-                .input-group { display: flex; flex-direction: column; }
+                .input-group { display: flex; flex-direction: column; gap: 6px; }
                 .input-group.full { flex: 1; }
                 .input-group label { 
                     display: block; 
-                    font-size: 11px; 
-                    font-weight: 700; 
-                    color: var(--text-secondary); 
-                    text-transform: uppercase; 
-                    margin-bottom: 6px; 
-                    letter-spacing: 0.5px;
+                    font-size: 12px; 
+                    font-weight: 600; 
+                    color: #4a5568; 
+                    text-transform: none;
+                    letter-spacing: 0.1px;
                 }
                 .input-group input { 
                     width: 100%; 
                     padding: 10px 14px; 
-                    border: 1px solid #d0d0d0; 
-                    border-radius: 8px; 
+                    border: 1px solid rgba(0,0,0,0.1); 
+                    border-radius: 10px; 
                     font-size: 14px; 
-                    transition: all 0.2s; 
+                    font-weight: 400;
+                    color: var(--text-primary);
+                    background: #fafbfc;
+                    transition: all 0.2s ease; 
                     outline: none;
                 }
-                .input-group input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(0,113,227,0.1); }
+                .input-group input:hover { border-color: rgba(0,0,0,0.18); background: #fff; }
+                .input-group input:focus { 
+                    border-color: var(--accent); 
+                    box-shadow: 0 0 0 3px rgba(0,113,227,0.08); 
+                    background: #fff;
+                }
                 
+                /* Bulk Assignment Bar */
+                .bulk-assign-bar {
+                    flex-shrink: 0;
+                    display: flex;
+                    align-items: center;
+                    gap: 16px;
+                    padding: 10px 16px;
+                    background: linear-gradient(135deg, #f0f4ff 0%, #f8faff 100%);
+                    border: 1px solid rgba(99,102,241,0.12);
+                    border-left: 3px solid #6366f1;
+                    border-radius: 12px;
+                }
+                .bulk-label {
+                    display: flex;
+                    align-items: center;
+                    gap: 6px;
+                    font-size: 13px;
+                    font-weight: 600;
+                    color: #4f46e5;
+                    white-space: nowrap;
+                    letter-spacing: -0.1px;
+                }
+                .bulk-label .material-icons-round { color: #6366f1; }
+                .bulk-controls { display: flex; gap: 10px; flex: 1; }
+
+                /* Matrix Container */
                 .matrix-wrapper.full-height { 
                     flex: 1; 
                     display: flex; 
                     flex-direction: column; 
                     background: white; 
-                    border-radius: 12px; 
-                    border: 1px solid #e0e0e0; 
+                    border-radius: 14px; 
+                    border: 1px solid rgba(0,0,0,0.06); 
                     overflow: hidden; 
-                    box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+                    box-shadow: 0 2px 12px rgba(0,0,0,0.06), 0 0 0 1px rgba(0,0,0,0.02);
                 }
                 .mw-header { 
                     display: flex; 
-                    background: linear-gradient(180deg, #f8f9fa 0%, #f0f1f3 100%); 
-                    border-bottom: 2px solid #e0e0e0; 
-                    font-weight: 700; 
-                    font-size: 12px; 
+                    background: #fafbfc;
+                    border-bottom: 1px solid rgba(0,0,0,0.06); 
                     position: sticky;
                     top: 0;
                     z-index: 5;
                 }
                 .mw-body { flex: 1; overflow-y: auto; }
-                .m-row { display: flex; border-bottom: 1px solid #e8e8e8; transition: background 0.15s; }
-                .m-row:hover { background: #f9fafb; }
+                .m-row { display: flex; border-bottom: 1px solid rgba(0,0,0,0.04); transition: background 0.15s; }
+                .m-row:hover { background: #f8f9fb; }
                 .m-row:last-child { border-bottom: none; }
                 .m-col { 
-                    padding: 12px 16px; 
-                    border-right: 1px solid #e8e8e8; 
+                    padding: 14px 16px; 
+                    border-right: 1px solid rgba(0,0,0,0.04); 
                     display: flex; 
                     align-items: center; 
                 }
@@ -1888,11 +2085,11 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                     flex-direction: column; 
                     align-items: flex-start; 
                     justify-content: center; 
-                    gap: 4px; 
+                    gap: 3px; 
                     background: #fafbfc;
                 }
-                .m-col.product strong { font-size: 14px; font-weight: 600; color: var(--text-primary); }
-                .m-col.product small { font-size: 12px; color: var(--text-secondary); }
+                .m-col.product strong { font-size: 13px; font-weight: 600; color: var(--text-primary); letter-spacing: -0.1px; }
+                .m-col.product small { font-size: 11px; color: var(--text-secondary); font-weight: 400; }
                 .m-col.process { 
                     flex: 1; 
                     min-width: 160px; 
@@ -1900,26 +2097,220 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                     flex-direction: column; 
                     gap: 6px; 
                 }
-                .m-col.process span { font-size: 11px; font-weight: 600; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.3px; }
-                .m-col.process select { 
-                    width: 100%; 
-                    padding: 8px 12px; 
-                    border: 1px solid #d0d0d0; 
-                    border-radius: 6px; 
-                    font-size: 13px; 
-                    background: white; 
-                    cursor: pointer; 
-                    transition: all 0.2s; 
-                    outline: none;
+                /* Process header titles in matrix */
+                .process-header-title {
+                    font-size: 10px;
+                    font-weight: 700;
+                    color: #64748b;
+                    text-transform: uppercase;
+                    letter-spacing: 1px;
                 }
-                .m-col.process select:hover { border-color: #999; }
-                .m-col.process select:focus { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(0,113,227,0.1); }
-                .m-col.process select.filled { 
-                    border-color: var(--success); 
-                    background: #f0fff4; 
-                    color: #006400; 
+                .mw-header .m-col.process {
+                    padding: 12px 12px;
+                    gap: 8px;
+                }
+                .mw-header .m-col.product {
+                    font-size: 11px;
+                    font-weight: 600;
+                    color: #64748b;
+                    text-transform: uppercase;
+                    letter-spacing: 0.8px;
+                    padding: 12px 16px;
+                }
+
+                /* Worker Dropdown (wdd) — Modern Design */
+                .wdd-trigger {
+                    display: flex;
+                    align-items: center;
+                    gap: 8px;
+                    width: 100%;
+                    padding: 8px 12px;
+                    border: 1px solid rgba(0,0,0,0.1);
+                    border-radius: 10px;
+                    background: #f8f9fb;
+                    font-size: 13px;
+                    font-weight: 500;
+                    color: var(--text-primary);
+                    cursor: pointer;
+                    transition: all 0.2s ease;
+                    text-align: left;
+                    height: 38px;
+                }
+                .wdd-trigger:hover { 
+                    border-color: rgba(0,0,0,0.18); 
+                    background: #f0f2f5;
+                    box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+                }
+                .wdd-trigger.compact { 
+                    padding: 6px 10px; 
+                    font-size: 12px; 
+                    height: 34px; 
+                    border-radius: 8px;
+                    font-weight: 500;
+                }
+                .wdd-trigger.filled {
+                    border-color: rgba(16,185,129,0.3);
+                    background: linear-gradient(135deg, #ecfdf5 0%, #f0fdf4 100%);
+                    color: #065f46;
+                    font-weight: 600;
+                    box-shadow: 0 1px 3px rgba(16,185,129,0.08);
+                }
+                .wdd-trigger.filled:hover {
+                    border-color: rgba(16,185,129,0.5);
+                    background: linear-gradient(135deg, #d1fae5 0%, #ecfdf5 100%);
+                }
+                .wdd-icon { 
+                    font-size: 16px !important; 
+                    flex-shrink: 0; 
+                    color: #94a3b8;
+                }
+                .wdd-trigger.filled .wdd-icon { color: #059669; }
+                .wdd-label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+                .wdd-arrow { 
+                    font-size: 18px !important; 
+                    color: #94a3b8; 
+                    flex-shrink: 0; 
+                    line-height: 1;
+                    transition: transform 0.2s ease; 
+                }
+
+                /* Dropdown Menu */
+                .wdd-menu {
+                    position: absolute;
+                    top: calc(100% + 4px);
+                    left: 0;
+                    right: 0;
+                    min-width: 220px;
+                    background: white;
+                    border: 1px solid rgba(0,0,0,0.08);
+                    border-radius: 12px;
+                    box-shadow: 0 8px 24px rgba(0,0,0,0.12), 0 2px 6px rgba(0,0,0,0.06);
+                    z-index: 100;
+                    overflow: hidden;
+                    animation: wddFadeIn 0.15s ease-out;
+                }
+                @keyframes wddFadeIn {
+                    from { opacity: 0; transform: translateY(-6px) scale(0.98); }
+                    to { opacity: 1; transform: translateY(0) scale(1); }
+                }
+                .wdd-search {
+                    display: flex;
+                    align-items: center;
+                    gap: 8px;
+                    padding: 6px;
+                    margin: 8px 8px 4px 8px;
+                    background: #f5f7fa;
+                    border-radius: 8px;
+                    border: 1px solid transparent;
+                    transition: all 0.15s ease;
+                }
+                .wdd-search:focus-within {
+                    background: white;
+                    border-color: rgba(0,113,227,0.3);
+                    box-shadow: 0 0 0 2px rgba(0,113,227,0.06);
+                }
+                .wdd-search input {
+                    border: none;
+                    outline: none;
+                    background: transparent;
+                    font-size: 13px;
+                    font-weight: 400;
+                    width: 100%;
+                    color: var(--text-primary);
+                }
+                .wdd-search input::placeholder { color: #b0b8c4; }
+                .wdd-options {
+                    max-height: 200px;
+                    overflow-y: auto;
+                    padding: 4px 6px 6px 6px;
+                }
+                .wdd-options::-webkit-scrollbar { width: 4px; }
+                .wdd-options::-webkit-scrollbar-thumb { background: #d4d8de; border-radius: 4px; }
+                .wdd-option {
+                    display: flex;
+                    align-items: center;
+                    gap: 8px;
+                    width: 100%;
+                    padding: 8px 10px;
+                    border: none;
+                    background: transparent;
+                    font-size: 13px;
+                    font-weight: 450;
+                    color: var(--text-primary);
+                    cursor: pointer;
+                    text-align: left;
+                    border-radius: 8px;
+                    transition: all 0.12s ease;
+                }
+                .wdd-option:hover { background: #f1f5f9; }
+                .wdd-option.selected { 
+                    background: #eff6ff; 
+                    color: #1e40af; 
                     font-weight: 600;
                 }
+                .wdd-option-clear { border-bottom: 1px solid #f0f2f5; border-radius: 8px 8px 0 0; margin-bottom: 2px; }
+                .wdd-name { flex: 1; }
+                .wdd-role { 
+                    font-size: 11px; 
+                    color: #94a3b8; 
+                    font-weight: 500;
+                    background: #f1f5f9;
+                    padding: 1px 6px;
+                    border-radius: 4px;
+                }
+                .wdd-check { width: 16px; text-align: center; color: #3b82f6; font-weight: 700; font-size: 12px; }
+                .wdd-empty { padding: 16px; text-align: center; color: #94a3b8; font-size: 13px; }
+
+                /* Helper Pills — Refined */
+                .helper-pill {
+                    display: inline-flex;
+                    align-items: center;
+                    gap: 3px;
+                    padding: 2px 8px;
+                    background: linear-gradient(135deg, #eff6ff, #f0f7ff);
+                    border: 1px solid rgba(59,130,246,0.15);
+                    border-radius: 8px;
+                    font-size: 11px;
+                    font-weight: 500;
+                    color: #2563eb;
+                    line-height: 18px;
+                    letter-spacing: -0.1px;
+                }
+                .helper-pill button {
+                    background: none;
+                    border: none;
+                    color: #93c5fd;
+                    cursor: pointer;
+                    padding: 0 0 0 2px;
+                    font-size: 12px;
+                    line-height: 1;
+                    transition: color 0.15s;
+                }
+                .helper-pill button:hover { color: #ef4444; }
+
+                .helper-add-btn {
+                    width: 22px;
+                    height: 22px;
+                    border-radius: 6px;
+                    border: 1px solid rgba(59,130,246,0.2);
+                    background: #f0f5ff;
+                    color: #3b82f6;
+                    font-size: 13px;
+                    font-weight: 600;
+                    cursor: pointer;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    transition: all 0.15s ease;
+                    line-height: 1;
+                }
+                .helper-add-btn:hover { 
+                    background: #dbeafe; 
+                    border-color: #3b82f6; 
+                    transform: scale(1.05);
+                    box-shadow: 0 1px 4px rgba(59,130,246,0.15);
+                }
+
 
                 /* TABLET RESPONSIVE (768px - 1024px) */
                 @media (max-width: 1024px) and (min-width: 768px) {
@@ -1955,7 +2346,7 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                     .details-top { flex-direction: column; gap: 12px; padding: 12px 16px; }
                     .m-col.product { width: 200px; }
                     .m-col.process { min-width: 140px; }
-                    .m-col.process span { font-size: 10px; }
+                    .process-header-title { font-size: 9px; letter-spacing: 0.8px; }
                     .m-col.process select { padding: 6px 10px; font-size: 12px; }
                 }
 
