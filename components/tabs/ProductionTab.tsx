@@ -3,7 +3,7 @@
 import { useState, useMemo, useEffect } from 'react';
 import type { WorkOrder, Project, Worker } from '@/lib/types';
 import { createWorkOrder, deleteWorkOrder, startWorkOrder, getWorkOrder, updateWorkOrder } from '@/lib/database';
-import { repairAllProductStatuses } from '@/lib/attendance';
+import { repairAllProductStatuses, validateWorkOrderProfitData, checkMissingAttendanceForActiveOrders } from '@/lib/attendance';
 import { useData } from '@/context/DataContext';
 import Modal from '@/components/ui/Modal';
 import WorkOrderExpandedDetail from '@/components/ui/WorkOrderExpandedDetail';
@@ -42,8 +42,48 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
     const [projectSearch, setProjectSearch] = useState('');
     const [profitModalWorkOrder, setProfitModalWorkOrder] = useState<WorkOrder | null>(null);
 
+    // S16: Proactive attendance notification state
+    const [attendanceWarnings, setAttendanceWarnings] = useState<{
+        warnings: { Worker_ID: string; Worker_Name: string; Work_Order_ID: string; Work_Order_Name: string; Item_Name: string; Date: string }[];
+        missingCount: number;
+        totalAssigned: number;
+    } | null>(null);
+    const [attendanceBannerDismissed, setAttendanceBannerDismissed] = useState(false);
+
+    // Check attendance on mount and when workOrders change
+    useEffect(() => {
+        if (!organizationId) return;
+
+        // Only check if there are active work orders
+        const hasActiveOrders = workOrders.some(wo => wo.Status === 'U toku');
+        if (!hasActiveOrders) {
+            setAttendanceWarnings(null);
+            return;
+        }
+
+        checkMissingAttendanceForActiveOrders(organizationId)
+            .then(result => {
+                if (result.missingCount > 0) {
+                    setAttendanceWarnings(result);
+                    setAttendanceBannerDismissed(false); // Re-show on new warnings
+                } else {
+                    setAttendanceWarnings(null);
+                }
+            })
+            .catch(err => console.error('Attendance check failed:', err));
+    }, [organizationId, workOrders]);
+
     const sortedProjects = useMemo(() => {
         let filtered = projects;
+
+        // S2.5: Hide finished/cancelled projects from wizard
+        filtered = filtered.filter(p => {
+            if (p.Status === 'Završeno' || p.Status === 'Otkazano') return false;
+            // Also hide if all products are completed
+            const prods = p.products || [];
+            if (prods.length > 0 && prods.every(pr => pr.Status === 'Spremno' || pr.Status === 'Instalirano')) return false;
+            return true;
+        });
 
         // 1. Search Filter
         if (projectSearch.trim()) {
@@ -218,7 +258,7 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
     // Data State
     const [selectedProjectIds, setSelectedProjectIds] = useState<string[]>([]);
     const [selectedProducts, setSelectedProducts] = useState<ProductSelection[]>([]);
-    const [selectedProcesses, setSelectedProcesses] = useState<string[]>(['Rezanje', 'Kantiranje', 'Bušenje', 'Sklapanje']);
+    const [selectedProcesses, setSelectedProcesses] = useState<string[]>(['Priprema', 'Sklapanje', 'Farbanje', 'Montaža']);
     const [customProcessInput, setCustomProcessInput] = useState('');
     const [dueDate, setDueDate] = useState('');
     const [notes, setNotes] = useState('');
@@ -456,9 +496,27 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
     async function handleCreateWorkOrder() {
         if (selectedProducts.length === 0) return;
 
+        // S2.1: Guard against duplicate products already in active work orders
+        const duplicates: string[] = [];
+        for (const sp of selectedProducts) {
+            const existing = workOrders.find(wo =>
+                wo.Status !== 'Završeno' &&
+                wo.items?.some(item => item.Product_ID === sp.Product_ID)
+            );
+            if (existing) {
+                duplicates.push(`${sp.Product_Name} (nalog ${existing.Work_Order_Number})`);
+            }
+        }
+        if (duplicates.length > 0) {
+            showToast(`Proizvodi su već u aktivnim nalozima: ${duplicates.join(', ')}`, 'error');
+            return;
+        }
+
         // Calculate Total_Value and Material_Cost from products
         let totalValue = 0;
         let materialCost = 0;
+        let totalTransport = 0;
+        let totalServices = 0;
 
         selectedProducts.forEach(p => {
             // Get product data from project
@@ -474,6 +532,10 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
             if (offerProduct?.Selling_Price) {
                 totalValue += offerProduct.Selling_Price * p.Work_Order_Quantity;
             }
+
+            // Transport and services from offer
+            totalTransport += offerProduct?.Transport_Share || 0;
+            totalServices += (offerProduct?.extras || []).reduce((s: number, e: any) => s + (e.Total || 0), 0);
 
             // Calculate material cost from product materials
             if (product?.materials) {
@@ -508,6 +570,13 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                 Total_Product_Quantity: p.Quantity,
                 Product_Value: offerProduct?.Selling_Price ? offerProduct.Selling_Price * p.Work_Order_Quantity : undefined,
                 Material_Cost: itemMaterialCost > 0 ? itemMaterialCost : undefined,
+                // GAP-1 FIX: Carry Transport_Share and Services_Total from offer
+                Transport_Share: offerProduct?.Transport_Share || 0,
+                Services_Total: (offerProduct?.extras || []).reduce((s: number, e: any) => s + (e.Total || 0), 0),
+                // GAP-3 FIX: Carry Planned_Labor_Cost from offer (Workers × Days × Rate)
+                Planned_Labor_Cost: offerProduct
+                    ? (offerProduct.Labor_Workers || 1) * (offerProduct.Labor_Days || 0) * (offerProduct.Labor_Daily_Rate || 0)
+                    : undefined,
                 Processes: selectedProcesses.map(proc => {
                     const workerId = p.assignments[proc];
                     const worker = workers.find(w => w.Worker_ID === workerId);
@@ -530,8 +599,13 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
             };
         });
 
-        // Calculate initial profit (labor will be added later when work is completed)
-        const profit = totalValue - materialCost;
+        // GAP-2: Warn if no offer pricing exists
+        if (totalValue === 0) {
+            showToast('⚠️ Nema prihvaćene ponude — cijena proizvoda nije poznata. Profit neće biti tačan dok ručno ne unesete cijenu.', 'error');
+        }
+
+        // Calculate initial profit — now includes Transport + Services (GAP-1 fix)
+        const profit = totalValue - materialCost - totalTransport - totalServices;
         const profitMargin = totalValue > 0 ? (profit / totalValue) * 100 : 0;
 
         const result = await createWorkOrder({
@@ -556,6 +630,21 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
 
     // View/Edit/Delete/Print logic
     async function handleUpdateWorkOrder(workOrderId: string, updates: any) {
+        // S6.6: Validate all items before manual completion
+        if (updates.Status === 'Završeno') {
+            const wo = workOrders.find(w => w.Work_Order_ID === workOrderId);
+            if (wo) {
+                const unfinished = (wo.items || []).filter(
+                    item => item.Status !== 'Završeno'
+                );
+                if (unfinished.length > 0) {
+                    const names = unfinished.map(i => i.Product_Name).join(', ');
+                    showToast(`Stavke nisu završene: ${names}. Završite sve stavke prije kompletiranja naloga.`, 'error');
+                    return;
+                }
+            }
+        }
+
         const res = await updateWorkOrder(workOrderId, updates, organizationId || '');
         if (res.success) {
             showToast(res.message, 'success');
@@ -618,6 +707,15 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
         const wo = workOrders.find(w => w.Work_Order_ID === workOrderId);
         if (!wo) {
             showToast('Nalog nije pronađen', 'error');
+            return;
+        }
+
+        // S2.2: Check at least one worker is assigned
+        const hasWorker = (wo.items || []).some(item =>
+            (item.Processes || []).some(p => p.Worker_ID)
+        );
+        if (!hasWorker) {
+            showToast('Dodijelite barem jednog radnika prije pokretanja naloga', 'error');
             return;
         }
 
@@ -728,7 +826,7 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
         const totalHelpers = 0; // Simplified for new view
 
         const formatValue = (value?: number) =>
-            value ? `${value.toLocaleString('hr-HR', { minimumFractionDigits: 0, maximumFractionDigits: 0 })} KM` : null;
+            value && Number.isFinite(value) ? `${value.toLocaleString('hr-HR', { minimumFractionDigits: 0, maximumFractionDigits: 0 })} KM` : null;
 
         const getStatusDetails = (status: string) => {
             switch (status) {
@@ -817,6 +915,32 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                                     }
                                     return null;
                                 })()}
+
+                                {/* S16: Per-card Missing Attendance Badge */}
+                                {wo.Status === 'U toku' && attendanceWarnings && (() => {
+                                    const woWarnings = attendanceWarnings.warnings.filter(w => w.Work_Order_ID === wo.Work_Order_ID);
+                                    if (woWarnings.length === 0) return null;
+                                    return (
+                                        <span style={{
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            gap: '3px',
+                                            fontSize: '10px',
+                                            fontWeight: 600,
+                                            padding: '2px 8px',
+                                            borderRadius: '12px',
+                                            background: 'rgba(245, 158, 11, 0.15)',
+                                            color: '#d97706',
+                                            border: '1px solid rgba(245, 158, 11, 0.3)',
+                                            height: '20px',
+                                            marginLeft: '4px',
+                                            animation: 'pulse 2s ease-in-out infinite'
+                                        }} title={`Nedostaje prisustvo: ${woWarnings.map(w => w.Worker_Name).join(', ')}`}>
+                                            <span className="material-icons-round" style={{ fontSize: '12px' }}>person_off</span>
+                                            {woWarnings.length}
+                                        </span>
+                                    );
+                                })()}
                             </div>
                             {/* Client name moved to right side */}
                         </div>
@@ -849,7 +973,30 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                                     const laborVariance = plannedLaborCost - laborCost;
                                     const isLaborOver = laborCost > plannedLaborCost && plannedLaborCost > 0;
 
-                                    if (totalValue === 0) return null;
+                                    if (totalValue === 0) {
+                                        // GAP-2: Show missing price warning instead of hiding
+                                        return (
+                                            <span
+                                                className="summary-item"
+                                                style={{
+                                                    color: '#f59e0b',
+                                                    background: 'rgba(245, 158, 11, 0.1)',
+                                                    padding: '4px 10px',
+                                                    borderRadius: '6px',
+                                                    fontWeight: 600,
+                                                    fontSize: '11px'
+                                                }}
+                                                title="Cijena proizvoda nije postavljena. Otvorite ponudu ili ručno unesite cijenu."
+                                            >
+                                                <span className="material-icons-round" style={{ fontSize: '14px' }}>money_off</span>
+                                                Nedostaje cijena
+                                            </span>
+                                        );
+                                    }
+
+                                    // Get profit warnings
+                                    const profitWarnings = validateWorkOrderProfitData(wo);
+                                    const criticalWarnings = profitWarnings.filter(w => w.type === 'error').length;
 
                                     // Color coding
                                     const profitColor = profitMargin >= 30 ? '#10b981' : profitMargin >= 15 ? '#f59e0b' : '#ef4444';
@@ -870,7 +1017,7 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                                                 title="Klikni za detalje profita"
                                                 onClick={(e) => {
                                                     e.stopPropagation();
-                                                    setProfitModalWorkOrder(wo);
+                                                    toggleWorkOrder(wo.Work_Order_ID);
                                                 }}
                                             >
                                                 <span className="material-icons-round" style={{ fontSize: '16px' }}>
@@ -896,6 +1043,29 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                                                         {isLaborOver ? 'warning' : 'check_circle'}
                                                     </span>
                                                     Rad: {isLaborOver ? '+' : ''}{formatValue(Math.abs(laborVariance))}
+                                                </span>
+                                            )}
+                                            {/* Profit Warnings Badge */}
+                                            {criticalWarnings > 0 && (
+                                                <span
+                                                    className="summary-item"
+                                                    style={{
+                                                        color: '#ef4444',
+                                                        background: 'rgba(239, 68, 68, 0.1)',
+                                                        padding: '4px 8px',
+                                                        borderRadius: '6px',
+                                                        fontSize: '11px',
+                                                        fontWeight: 500,
+                                                        cursor: 'pointer'
+                                                    }}
+                                                    title={profitWarnings.filter(w => w.type === 'error').map(w => `${w.itemName ? w.itemName + ': ' : ''}${w.message}`).join('\n')}
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        toggleWorkOrder(wo.Work_Order_ID);
+                                                    }}
+                                                >
+                                                    <span className="material-icons-round" style={{ fontSize: '12px' }}>error_outline</span>
+                                                    {criticalWarnings} {criticalWarnings === 1 ? 'problem' : 'problema'}
                                                 </span>
                                             )}
                                         </>
@@ -1074,6 +1244,62 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                     </button>
                 </div>
             </div>
+
+            {/* S16: Proactive Attendance Notification Banner */}
+            {attendanceWarnings && attendanceWarnings.missingCount > 0 && !attendanceBannerDismissed && (
+                <div style={{
+                    margin: '0 24px 16px',
+                    padding: '14px 18px',
+                    background: 'linear-gradient(135deg, #fffbeb, #fef3c7)',
+                    border: '1px solid #fbbf24',
+                    borderRadius: '12px',
+                    display: 'flex',
+                    alignItems: 'flex-start',
+                    gap: '12px',
+                    boxShadow: '0 2px 8px rgba(251, 191, 36, 0.15)',
+                    animation: 'slideDown 0.3s ease-out'
+                }}>
+                    <span className="material-icons-round" style={{ color: '#d97706', fontSize: '22px', marginTop: '1px' }}>warning</span>
+                    <div style={{ flex: 1 }}>
+                        <div style={{ fontWeight: 600, fontSize: '13px', color: '#92400e', marginBottom: '4px' }}>
+                            ⚠️ {attendanceWarnings.missingCount} {attendanceWarnings.missingCount === 1 ? 'radnik nema' : 'radnika nemaju'} popunjeno prisustvo za danas
+                        </div>
+                        <div style={{ fontSize: '12px', color: '#a16207', lineHeight: '1.5' }}>
+                            {attendanceWarnings.warnings.slice(0, 5).map((w, i) => (
+                                <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: i > 0 ? '2px' : '0' }}>
+                                    <span className="material-icons-round" style={{ fontSize: '14px' }}>person_off</span>
+                                    <strong>{w.Worker_Name}</strong>
+                                    <span style={{ opacity: 0.7 }}>→</span>
+                                    <span>{w.Work_Order_Name}</span>
+                                </div>
+                            ))}
+                            {attendanceWarnings.warnings.length > 5 && (
+                                <div style={{ marginTop: '4px', fontStyle: 'italic', opacity: 0.8 }}>
+                                    ...i još {attendanceWarnings.warnings.length - 5} radnika
+                                </div>
+                            )}
+                        </div>
+                        <div style={{ marginTop: '8px', fontSize: '11px', color: '#b45309', opacity: 0.8 }}>
+                            💡 Otvorite tab "Sihtarica" i popunite prisustvo za navedene radnike da bi profit bio tačan.
+                        </div>
+                    </div>
+                    <button
+                        onClick={() => setAttendanceBannerDismissed(true)}
+                        style={{
+                            background: 'none',
+                            border: 'none',
+                            cursor: 'pointer',
+                            padding: '4px',
+                            color: '#92400e',
+                            opacity: 0.6,
+                            borderRadius: '6px'
+                        }}
+                        title="Sakrij obavijest"
+                    >
+                        <span className="material-icons-round" style={{ fontSize: '18px' }}>close</span>
+                    </button>
+                </div>
+            )}
 
             <div className="orders-list">
                 {filteredWorkOrders.length === 0 ? (
@@ -2502,7 +2728,7 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                                     <span className="option-icon">⏳</span>
                                     <div className="option-content">
                                         <strong>Vrati na čekanje</strong>
-                                        <span>Postavi status na "Čeka proizvodnju"</span>
+                                        <span>Postavi status na "Na čekanju"</span>
                                     </div>
                                 </button>
                             </div>

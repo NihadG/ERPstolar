@@ -58,9 +58,13 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
     const [editedQuantities, setEditedQuantities] = useState<Record<string, number>>({});
     const [selectedItemIds, setSelectedItemIds] = useState<Set<string>>(new Set());
 
+    // Submitting state (A8: double-click protection)
+    const [isSubmitting, setIsSubmitting] = useState(false);
+
     // Delete Order Dialog State
     const [deleteOrderModal, setDeleteOrderModal] = useState(false);
     const [deleteOrderId, setDeleteOrderId] = useState<string | null>(null);
+    const [deleteOrderStatus, setDeleteOrderStatus] = useState('');
     const [deleteMaterialAction, setDeleteMaterialAction] = useState<'received' | 'reset'>('reset');
 
     // Current order derived from expanded ID
@@ -458,72 +462,90 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
         }
 
         const supplier = suppliers.find(s => s.Supplier_ID === selectedSupplierId);
-        if (!supplier) return;
-
-        const rawItems = Array.from(selectedMaterialIds).map(materialId => {
-            const material = filteredMaterials.find(m => m.ID === materialId);
-            const product = availableProducts.find(p => p.Product_ID === material?.Product_ID);
-
-            // Use custom order quantity if set, otherwise default to needed amount
-            const onStock = onStockQuantities[materialId] ?? (material?.On_Stock || 0);
-            const orderQty = orderQuantities[materialId] ?? Math.max(0, (material?.Quantity || 0) - onStock);
-            const unitPrice = material?.Unit_Price || ((material?.Total_Price || 0) / (material?.Quantity || 1));
-            const orderPrice = orderQty * unitPrice;
-
-            return {
-                Product_Material_ID: materialId,
-                Product_ID: material?.Product_ID || '',
-                Product_Name: material?.Product_Name || '',
-                Project_ID: product?.Project_ID || '',
-                Material_Name: material?.Material_Name || '',
-                Quantity: orderQty,
-                Total_Needed: material?.Quantity || 0,
-                Unit: material?.Unit || '',
-                Expected_Price: orderPrice,
-            };
-        });
-
-        // Group materials by Material_Name + Unit to combine quantities
-        const grouped = new Map<string, typeof rawItems[0] & { Product_Material_IDs: string[] }>();
-        rawItems.forEach(item => {
-            const key = `${item.Material_Name}||${item.Unit}`;
-            if (grouped.has(key)) {
-                const existing = grouped.get(key)!;
-                existing.Quantity += item.Quantity;
-                existing.Expected_Price += item.Expected_Price;
-                existing.Total_Needed += item.Total_Needed;
-                existing.Product_Material_IDs.push(item.Product_Material_ID);
-            } else {
-                grouped.set(key, { ...item, Product_Material_IDs: [item.Product_Material_ID] });
-            }
-        });
-        const items = Array.from(grouped.values());
-
-        const totalAmount = items.reduce((sum, item) => sum + item.Expected_Price, 0);
-
-        // Collect On_Stock values for selected materials
-        const onStockData: Record<string, number> = {};
-        for (const materialId of Array.from(selectedMaterialIds)) {
-            const onStock = onStockQuantities[materialId];
-            if (onStock !== undefined && onStock > 0) {
-                onStockData[materialId] = onStock;
-            }
+        // A2: Toast for missing supplier
+        if (!supplier) {
+            showToast('Odaberite dobavljača', 'error');
+            return;
         }
 
-        const result = await createOrder({
-            Supplier_ID: selectedSupplierId,
-            Supplier_Name: supplier.Name,
-            Total_Amount: totalAmount,
-            items: items as any,
-            onStockData,
-        }, organizationId!);
+        // A8: Double-click protection
+        if (isSubmitting) return;
+        setIsSubmitting(true);
 
-        if (result.success) {
-            showToast(result.message, 'success');
-            setWizardModal(false);
-            onRefresh('orders', 'projects');
-        } else {
-            showToast(result.message, 'error');
+        try {
+            const rawItems = Array.from(selectedMaterialIds).map(materialId => {
+                const material = filteredMaterials.find(m => m.ID === materialId);
+                const product = availableProducts.find(p => p.Product_ID === material?.Product_ID);
+
+                // Use custom order quantity if set, otherwise default to needed amount
+                const onStock = onStockQuantities[materialId] ?? (material?.On_Stock || 0);
+                const orderQty = orderQuantities[materialId] ?? Math.max(0, (material?.Quantity || 0) - onStock);
+                const unitPrice = material?.Unit_Price || ((material?.Total_Price || 0) / (material?.Quantity || 1));
+                const orderPrice = orderQty * unitPrice;
+
+                return {
+                    Product_Material_ID: materialId,
+                    Product_ID: material?.Product_ID || '',
+                    Product_Name: material?.Product_Name || '',
+                    Project_ID: product?.Project_ID || '',
+                    Material_Name: material?.Material_Name || '',
+                    Quantity: orderQty,
+                    Total_Needed: material?.Quantity || 0,
+                    Unit: material?.Unit || '',
+                    Expected_Price: orderPrice,
+                };
+            });
+
+            // Group materials by Material_Name + Unit to combine quantities
+            const grouped = new Map<string, typeof rawItems[0] & { Product_Material_IDs: string[] }>();
+            rawItems.forEach(item => {
+                const key = `${item.Material_Name}||${item.Unit}`;
+                if (grouped.has(key)) {
+                    const existing = grouped.get(key)!;
+                    existing.Quantity += item.Quantity;
+                    existing.Expected_Price += item.Expected_Price;
+                    existing.Total_Needed += item.Total_Needed;
+                    existing.Product_Material_IDs.push(item.Product_Material_ID);
+                } else {
+                    grouped.set(key, { ...item, Product_Material_IDs: [item.Product_Material_ID] });
+                }
+            });
+
+            // A3: Filter out zero-quantity items
+            const items = Array.from(grouped.values()).filter(item => item.Quantity > 0);
+            if (items.length === 0) {
+                showToast('Sve količine su 0 — nema materijala za naručiti', 'error');
+                return;
+            }
+
+            const totalAmount = items.reduce((sum, item) => sum + item.Expected_Price, 0);
+
+            // Collect On_Stock values for selected materials
+            const onStockData: Record<string, number> = {};
+            for (const materialId of Array.from(selectedMaterialIds)) {
+                const onStock = onStockQuantities[materialId];
+                if (onStock !== undefined && onStock > 0) {
+                    onStockData[materialId] = onStock;
+                }
+            }
+
+            const result = await createOrder({
+                Supplier_ID: selectedSupplierId,
+                Supplier_Name: supplier.Name,
+                Total_Amount: totalAmount,
+                items: items as any,
+                onStockData,
+            }, organizationId!);
+
+            if (result.success) {
+                showToast(result.message, 'success');
+                setWizardModal(false);
+                onRefresh('orders', 'projects');
+            } else {
+                showToast(result.message, 'error');
+            }
+        } finally {
+            setIsSubmitting(false);
         }
     }
 
@@ -551,8 +573,16 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
     }
 
     function handleDeleteOrder(orderId: string) {
+        const order = orders.find(o => o.Order_ID === orderId);
+        const status = order?.Status || '';
         setDeleteOrderId(orderId);
-        setDeleteMaterialAction('reset');
+        setDeleteOrderStatus(status);
+        // C1: Smart default based on status
+        if (status === 'Primljeno') {
+            setDeleteMaterialAction('received');
+        } else {
+            setDeleteMaterialAction('reset');
+        }
         setDeleteOrderModal(true);
     }
 
@@ -563,6 +593,22 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
         // Confirmation for reverting to Nacrt (resets materials)
         if (newStatus === 'Nacrt' && (currentStatus === 'Poslano' || currentStatus === 'Potvrđeno')) {
             if (!confirm('Vraćanje na "Nacrt" će resetirati statuse materijala na "Nije naručeno". Nastaviti?')) {
+                return;
+            }
+        }
+        // B5: Confirm for manual "Primljeno"
+        if (newStatus === 'Primljeno') {
+            const order = orders.find(o => o.Order_ID === orderId);
+            const unreceivedCount = order?.items?.filter(i => i.Status !== 'Primljeno').length || 0;
+            if (!confirm(`Ovo će označiti svih ${unreceivedCount} neprimljenih stavki kao primljene. Nastaviti?`)) {
+                return;
+            }
+        }
+        // B8: Validate order has items before sending
+        if (newStatus === 'Poslano') {
+            const order = orders.find(o => o.Order_ID === orderId);
+            if (!order?.items || order.items.length === 0) {
+                showToast('Narudžba nema stavki za slanje', 'error');
                 return;
             }
         }
@@ -591,11 +637,16 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
     }
 
     async function handleSendOrder(orderId: string) {
+        // B8: Validate order has items before sending
+        const order = orders.find(o => o.Order_ID === orderId);
+        if (!order?.items || order.items.length === 0) {
+            showToast('Narudžba nema stavki za slanje', 'error');
+            return;
+        }
         const result = await markOrderSent(orderId, organizationId!);
         if (result.success) {
             showToast('Narudžba poslana', 'success');
             onRefresh('orders', 'projects');
-            // setViewModal(false); // No longer needed
         } else {
             showToast(result.message, 'error');
         }
@@ -606,12 +657,16 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
             showToast('Odaberite stavke za primanje', 'error');
             return;
         }
+        // E1: Block receiving from Nacrt status
+        if (currentOrder?.Status === 'Nacrt') {
+            showToast('Narudžba mora biti poslana prije primanja stavki', 'error');
+            return;
+        }
         const result = await markMaterialsReceived(Array.from(selectedItemIds), organizationId!);
         if (result.success) {
             showToast('Materijali primljeni', 'success');
             setSelectedItemIds(new Set());
             onRefresh('orders', 'projects');
-            // Current order updates automatically via useMemo
         } else {
             showToast(result.message, 'error');
         }
@@ -641,45 +696,91 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
             showToast('Odaberite stavke za brisanje', 'error');
             return;
         }
-        if (!confirm(`Obrisati ${selectedItemIds.size} stavki iz narudžbe?`)) return;
+        // F4: Block deletion of received items
+        const selectedItems = currentOrder?.items?.filter(i => selectedItemIds.has(i.ID)) || [];
+        const receivedItems = selectedItems.filter(i => i.Status === 'Primljeno');
+        const deletableItems = selectedItems.filter(i => i.Status !== 'Primljeno');
+        if (deletableItems.length === 0) {
+            showToast('Primljene stavke ne mogu biti obrisane', 'error');
+            return;
+        }
+        const skippedMsg = receivedItems.length > 0 ? ` (${receivedItems.length} primljenih stavki će biti preskočeno)` : '';
+        if (!confirm(`Obrisati ${deletableItems.length} stavki iz narudžbe?${skippedMsg}`)) return;
 
-        const result = await deleteOrderItemsByIds(Array.from(selectedItemIds), organizationId!);
+        const result = await deleteOrderItemsByIds(deletableItems.map(i => i.ID), organizationId!);
         if (result.success) {
             await recalculateOrderTotal(currentOrder!.Order_ID, organizationId!);
             showToast('Stavke obrisane', 'success');
             setSelectedItemIds(new Set());
             onRefresh('orders', 'projects');
-            // Current order updates automatically via useMemo
+
+            // F3: Offer to delete empty order
+            const remainingItems = (currentOrder?.items?.length || 0) - deletableItems.length;
+            if (remainingItems <= 0) {
+                if (confirm('Narudžba više nema stavki. Želite li obrisati i narudžbu?')) {
+                    handleDeleteOrder(currentOrder!.Order_ID);
+                }
+            }
         } else {
             showToast(result.message, 'error');
         }
     }
 
     // Start edit mode
+    // D3: Only allow editing non-received items
     function startEditMode() {
         const quantities: Record<string, number> = {};
         currentOrder?.items?.forEach(item => {
-            quantities[item.ID] = item.Quantity;
+            if (item.Status !== 'Primljeno') {
+                quantities[item.ID] = item.Quantity;
+            }
         });
         setEditedQuantities(quantities);
         setEditMode(true);
     }
 
     // Cancel edit mode
+    // D4: Confirm if unsaved changes exist
     function cancelEditMode() {
+        const hasChanges = currentOrder?.items?.some(item => {
+            const edited = editedQuantities[item.ID];
+            return edited !== undefined && edited !== item.Quantity;
+        });
+        if (hasChanges && !confirm('Imate nesačuvane promjene. Napustiti bez čuvanja?')) {
+            return;
+        }
         setEditMode(false);
         setEditedQuantities({});
     }
 
     // Save edited quantities
     async function saveEditedQuantities() {
-        const itemsToUpdate: { id: string; quantity: number }[] = [];
+        const itemsToUpdate: { id: string; quantity: number; oldQuantity: number; productMaterialId?: string }[] = [];
         currentOrder?.items?.forEach(item => {
             const newQty = editedQuantities[item.ID];
             if (newQty !== undefined && newQty !== item.Quantity) {
-                itemsToUpdate.push({ id: item.ID, quantity: newQty });
+                // D2: Min/Max validation
+                if (newQty <= 0 || newQty > 99999) {
+                    return; // skip invalid
+                }
+                itemsToUpdate.push({
+                    id: item.ID,
+                    quantity: newQty,
+                    oldQuantity: item.Quantity,
+                    productMaterialId: item.Product_Material_ID
+                });
             }
         });
+
+        // D2: Check for any invalid values
+        const hasInvalid = Object.entries(editedQuantities).some(([id, qty]) => {
+            const item = currentOrder?.items?.find(i => i.ID === id);
+            return item && qty !== item.Quantity && (qty <= 0 || qty > 99999);
+        });
+        if (hasInvalid) {
+            showToast('Količine moraju biti između 0.001 i 99999', 'error');
+            return;
+        }
 
         if (itemsToUpdate.length === 0) {
             showToast('Nema promjena za spremanje', 'info');
@@ -692,11 +793,34 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
         }
         await recalculateOrderTotal(currentOrder!.Order_ID, organizationId!);
 
-        showToast('Količine ažurirane', 'success');
+        // D1: Sync Ordered_Quantity when order is already sent
+        if (currentOrder?.Status && currentOrder.Status !== 'Nacrt') {
+            const materialUpdates: { materialId: string; status: string; orderId: string; orderedQty: number }[] = [];
+            for (const { id, quantity, oldQuantity } of itemsToUpdate) {
+                const item = currentOrder.items?.find(i => i.ID === id);
+                if (!item) continue;
+                // Support grouped materials: use Product_Material_IDs array if available, fallback to single ID
+                const matIds = item.Product_Material_IDs || (item.Product_Material_ID ? [item.Product_Material_ID] : []);
+                const deltaPerMat = matIds.length > 0 ? (quantity - oldQuantity) / matIds.length : 0;
+                for (const matId of matIds) {
+                    materialUpdates.push({
+                        materialId: matId,
+                        status: 'Naručeno',
+                        orderId: currentOrder.Order_ID,
+                        orderedQty: deltaPerMat,
+                    });
+                }
+            }
+            if (materialUpdates.length > 0) {
+                const { batchUpdateMaterialStatuses } = await import('@/lib/database');
+                await batchUpdateMaterialStatuses(materialUpdates, organizationId!);
+            }
+        }
+
+        showToast('Količine ažurirane', 'success');
         setEditMode(false);
         setEditedQuantities({});
         onRefresh('orders', 'projects');
-        // Current order updates automatically via useMemo
     }
 
     // Print order document
@@ -1188,9 +1312,15 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
                                                 showToast('Sve stavke su već primljene', 'info');
                                                 return;
                                             }
+                                            // E1: Block receiving from Nacrt status
+                                            if (order.Status === 'Nacrt') {
+                                                showToast('Narudžba mora biti poslana prije primanja stavki', 'error');
+                                                return;
+                                            }
+                                            // E3: Confirm for Quick Receive All
+                                            if (!confirm(`Primiti svih ${unreceivedItems.length} neprimljenih stavki?`)) return;
                                             const result = await markMaterialsReceived(unreceivedItems.map(i => i.ID), organizationId!);
                                             if (result.success) {
-                                                // markMaterialsReceived already auto-sets order status to Primljeno
                                                 showToast('Sve stavke primljene', 'success');
                                                 onRefresh('orders', 'projects');
                                             } else {
@@ -1247,7 +1377,7 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
                                                                         </span>
                                                                         {statusDropdownOrderId === order.Order_ID && (
                                                                             <div className="status-dropdown-menu" onClick={(e) => e.stopPropagation()} style={{ position: 'absolute', top: '100%', right: 0, zIndex: 50, background: 'var(--bg-card)', borderRadius: 8, boxShadow: '0 4px 16px rgba(0,0,0,0.15)', padding: '4px', minWidth: 160, marginTop: 4 }}>
-                                                                                {allowed.map(targetStatus => (
+                                                                                {allowed.filter(s => s !== 'Djelomično').map(targetStatus => (
                                                                                     <button
                                                                                         key={targetStatus}
                                                                                         className="status-dropdown-item"
@@ -1410,6 +1540,7 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
                 selectedTotal={selectedTotal}
                 formatCurrency={formatCurrency}
                 handleCreateOrder={handleCreateOrder}
+                isSubmitting={isSubmitting}
                 orderQuantities={orderQuantities}
                 onStockQuantities={onStockQuantities}
                 setOrderQuantity={(id, qty) => setOrderQuantities(prev => ({ ...prev, [id]: qty }))}
@@ -1428,57 +1559,70 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
                     </>
                 }
             >
-                <p style={{ marginBottom: '16px', color: 'var(--text-secondary)' }}>
-                    Šta želite učiniti s materijalima iz ove narudžbe?
-                </p>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                    <label style={{
-                        display: 'flex',
-                        alignItems: 'flex-start',
-                        gap: '12px',
-                        padding: '14px 16px',
-                        borderRadius: '10px',
-                        border: deleteMaterialAction === 'reset' ? '2px solid #2563eb' : '2px solid #e2e8f0',
-                        background: deleteMaterialAction === 'reset' ? '#eff6ff' : 'white',
-                        cursor: 'pointer',
-                        transition: 'all 0.2s'
-                    }}>
-                        <input
-                            type="radio"
-                            name="deleteAction"
-                            checked={deleteMaterialAction === 'reset'}
-                            onChange={() => setDeleteMaterialAction('reset')}
-                            style={{ marginTop: '2px' }}
-                        />
-                        <div>
-                            <div style={{ fontWeight: 600, color: '#1e293b', marginBottom: '2px' }}>Vrati na "Nije naručeno"</div>
-                            <div style={{ fontSize: '13px', color: '#64748b' }}>Materijali će biti vraćeni u status čekanja i moći ćete ih ponovo naručiti.</div>
+                {/* C1: Smart delete options based on order status */}
+                {deleteOrderStatus === 'Primljeno' ? (
+                    <p style={{ marginBottom: '16px', color: 'var(--text-secondary)' }}>
+                        Svi materijali iz ove narudžbe su već primljeni. Brisanje narudžbe neće utjecati na status materijala.
+                    </p>
+                ) : deleteOrderStatus === 'Nacrt' ? (
+                    <p style={{ marginBottom: '16px', color: 'var(--text-secondary)' }}>
+                        Narudžba još nije poslana. Materijali će biti vraćeni na "Nije naručeno".
+                    </p>
+                ) : (
+                    <>
+                        <p style={{ marginBottom: '16px', color: 'var(--text-secondary)' }}>
+                            Šta želite učiniti s materijalima iz ove narudžbe?
+                        </p>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                            <label style={{
+                                display: 'flex',
+                                alignItems: 'flex-start',
+                                gap: '12px',
+                                padding: '14px 16px',
+                                borderRadius: '10px',
+                                border: deleteMaterialAction === 'reset' ? '2px solid #2563eb' : '2px solid #e2e8f0',
+                                background: deleteMaterialAction === 'reset' ? '#eff6ff' : 'white',
+                                cursor: 'pointer',
+                                transition: 'all 0.2s'
+                            }}>
+                                <input
+                                    type="radio"
+                                    name="deleteAction"
+                                    checked={deleteMaterialAction === 'reset'}
+                                    onChange={() => setDeleteMaterialAction('reset')}
+                                    style={{ marginTop: '2px' }}
+                                />
+                                <div>
+                                    <div style={{ fontWeight: 600, color: '#1e293b', marginBottom: '2px' }}>Vrati na "Nije naručeno"</div>
+                                    <div style={{ fontSize: '13px', color: '#64748b' }}>Neprimljeni materijali će biti vraćeni u status čekanja. Već primljeni ostaju primljeni.</div>
+                                </div>
+                            </label>
+                            <label style={{
+                                display: 'flex',
+                                alignItems: 'flex-start',
+                                gap: '12px',
+                                padding: '14px 16px',
+                                borderRadius: '10px',
+                                border: deleteMaterialAction === 'received' ? '2px solid #10b981' : '2px solid #e2e8f0',
+                                background: deleteMaterialAction === 'received' ? '#ecfdf5' : 'white',
+                                cursor: 'pointer',
+                                transition: 'all 0.2s'
+                            }}>
+                                <input
+                                    type="radio"
+                                    name="deleteAction"
+                                    checked={deleteMaterialAction === 'received'}
+                                    onChange={() => setDeleteMaterialAction('received')}
+                                    style={{ marginTop: '2px' }}
+                                />
+                                <div>
+                                    <div style={{ fontWeight: 600, color: '#1e293b', marginBottom: '2px' }}>Označi kao primljene</div>
+                                    <div style={{ fontSize: '13px', color: '#64748b' }}>Materijali će biti označeni kao primljeni, npr. ako ste ih nabavili direktno.</div>
+                                </div>
+                            </label>
                         </div>
-                    </label>
-                    <label style={{
-                        display: 'flex',
-                        alignItems: 'flex-start',
-                        gap: '12px',
-                        padding: '14px 16px',
-                        borderRadius: '10px',
-                        border: deleteMaterialAction === 'received' ? '2px solid #10b981' : '2px solid #e2e8f0',
-                        background: deleteMaterialAction === 'received' ? '#ecfdf5' : 'white',
-                        cursor: 'pointer',
-                        transition: 'all 0.2s'
-                    }}>
-                        <input
-                            type="radio"
-                            name="deleteAction"
-                            checked={deleteMaterialAction === 'received'}
-                            onChange={() => setDeleteMaterialAction('received')}
-                            style={{ marginTop: '2px' }}
-                        />
-                        <div>
-                            <div style={{ fontWeight: 600, color: '#1e293b', marginBottom: '2px' }}>Označi kao primljene</div>
-                            <div style={{ fontSize: '13px', color: '#64748b' }}>Materijali će biti označeni kao primljeni, npr. ako ste ih nabavili direktno.</div>
-                        </div>
-                    </label>
-                </div>
+                    </>
+                )}
             </Modal>
         </div>
     );

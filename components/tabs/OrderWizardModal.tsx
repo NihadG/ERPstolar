@@ -56,6 +56,7 @@ interface OrderWizardModalProps {
     selectedTotal: number;
     formatCurrency: (value: number) => string;
     handleCreateOrder: () => void;
+    isSubmitting?: boolean;
     // New props for custom quantities
     orderQuantities: Record<string, number>;
     onStockQuantities: Record<string, number>;
@@ -86,6 +87,7 @@ export function OrderWizardModal({
     selectedTotal,
     formatCurrency,
     handleCreateOrder,
+    isSubmitting,
     orderQuantities,
     onStockQuantities,
     setOrderQuantity,
@@ -143,10 +145,16 @@ export function OrderWizardModal({
                             <button
                                 className="glass-btn glass-btn-primary wizard-nav-btn"
                                 onClick={handleCreateOrder}
-                                disabled={selectedMaterialIds.size === 0}
+                                disabled={selectedMaterialIds.size === 0 || isSubmitting}
                             >
-                                <span className="wizard-btn-text">Kreiraj</span>
-                                <span className="material-icons-round">check</span>
+                                {isSubmitting ? (
+                                    <span className="material-icons-round" style={{ animation: 'spin 1s linear infinite' }}>sync</span>
+                                ) : (
+                                    <>
+                                        <span className="wizard-btn-text">Kreiraj</span>
+                                        <span className="material-icons-round">check</span>
+                                    </>
+                                )}
                             </button>
                         ) : (
                             <button

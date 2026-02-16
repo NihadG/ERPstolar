@@ -76,12 +76,13 @@ export default function ProcessKanbanBoard({
                         totalQuantity: item.Quantity,
                         currentProcess: subTask.Current_Process,
                         status: subTask.Status,
-                        isPaused: subTask.Is_Paused || false, // Individual sub-task pause
+                        isPaused: subTask.Is_Paused || false,
                         workerId: subTask.Worker_ID,
                         workerName: subTask.Worker_Name,
+                        helpers: subTask.Helpers, // Now properly populated from SubTask
                         isSubTask: true,
                         subTaskId: subTask.SubTask_ID,
-                        canSplit: false, // Already split
+                        canSplit: false,
                         assignedWorkers: item.Assigned_Workers
                     });
                 });
@@ -192,15 +193,24 @@ export default function ProcessKanbanBoard({
         if (!card) return;
 
         if (card.isSubTask && onSubTaskMove) {
-            // Move sub-task
             onSubTaskMove(card.itemId, card.subTaskId!, targetColumn);
         } else {
-            // Move entire item (legacy)
             onMoveToStage(card.itemId, targetColumn, processes);
         }
 
         setDraggedCard(null);
         setDragOverColumn(null);
+
+        // Auto-prompt: When moving to Montaža and no worker assigned, open worker edit
+        if (targetColumn.toLowerCase() === 'montaža' && !card.workerId) {
+            // Small delay to let the move complete first
+            setTimeout(() => {
+                const updatedCard = { ...card, currentProcess: targetColumn };
+                setEditWorkerModalOpen(updatedCard.id);
+                setSelectedMainWorker('');
+                setSelectedHelpers([]);
+            }, 300);
+        }
     };
 
     // Worker assignment
@@ -386,11 +396,12 @@ export default function ProcessKanbanBoard({
         }));
 
         if (card.isSubTask && onSubTaskUpdate) {
-            // Update sub-task worker
+            // Update sub-task worker + helpers
             onSubTaskUpdate(card.itemId, card.subTaskId!, {
                 Worker_ID: mainWorker?.Worker_ID,
                 Worker_Name: mainWorker?.Name,
-                Status: 'U toku'
+                Status: 'U toku',
+                Helpers: helpers
             });
         } else {
             // Update process with main worker and helpers
@@ -420,9 +431,12 @@ export default function ProcessKanbanBoard({
                             onDragLeave={handleDragLeave}
                             onDrop={(e) => handleDrop(e, process)}
                         >
-                            <div className="column-header">
-                                <span className="step-number">{index + 1}</span>
-                                <span className="column-title">{process}</span>
+                            <div className="column-header" style={process.toLowerCase() === 'montaža' ? { background: 'linear-gradient(135deg, rgba(139, 92, 246, 0.05), rgba(139, 92, 246, 0.1))' } : undefined}>
+                                <span className="step-number" style={process.toLowerCase() === 'montaža' ? { background: '#8b5cf6', color: 'white' } : undefined}>{index + 1}</span>
+                                <span className="column-title">
+                                    {process.toLowerCase() === 'montaža' && <span className="material-icons-round" style={{ fontSize: '14px', marginRight: '4px', verticalAlign: 'middle', color: '#8b5cf6' }}>build</span>}
+                                    {process}
+                                </span>
                                 <span className="item-count">{columnCards.length}</span>
                             </div>
                             <div className="column-content">
@@ -475,6 +489,14 @@ export default function ProcessKanbanBoard({
                                                 )}
                                             </div>
 
+                                            {/* #3 Fix: Warning for unassigned Montaža cards */}
+                                            {process.toLowerCase() === 'montaža' && !card.workerId && (
+                                                <div className="montaza-warning">
+                                                    <span className="material-icons-round" style={{ fontSize: '13px' }}>warning</span>
+                                                    Radnik nije dodijeljen — trošak se ne bilježi!
+                                                </div>
+                                            )}
+
                                             <div className="card-footer">
                                                 <div className="workers-section">
                                                     <div className="worker-display">
@@ -486,7 +508,7 @@ export default function ProcessKanbanBoard({
                                                             <Edit2 size={10} />
                                                         </button>
                                                         <User size={12} />
-                                                        <span className="worker-name">
+                                                        <span className={`worker-name ${process.toLowerCase() === 'montaža' && !card.workerId ? 'unassigned-warning' : ''}`}>
                                                             {card.workerName || 'Nije dodijeljen'}
                                                         </span>
                                                     </div>
@@ -631,12 +653,25 @@ export default function ProcessKanbanBoard({
 
             {/* Worker Edit Modal */}
             {editWorkerModalOpen && (
-                <div className="split-modal-overlay" onClick={() => setEditWorkerModalOpen(null)}>
+                <div className="split-modal-overlay" onClick={() => {
+                    // #3 Fix: Warn when closing without worker on Montaža
+                    const card = kanbanCards.find(c => c.id === editWorkerModalOpen);
+                    if (card?.currentProcess?.toLowerCase() === 'montaža' && !selectedMainWorker) {
+                        if (!confirm('Zatvaranje bez odabira radnika znači da se trošak rada NEĆE bilježiti za ovu stavku. Nastaviti?')) return;
+                    }
+                    setEditWorkerModalOpen(null);
+                }}>
                     <div className="split-modal" onClick={e => e.stopPropagation()}>
                         <div className="split-modal-header">
                             <Edit2 size={20} />
                             <span>Uredi radnike</span>
-                            <button className="close-btn" onClick={() => setEditWorkerModalOpen(null)}>
+                            <button className="close-btn" onClick={() => {
+                                const card = kanbanCards.find(c => c.id === editWorkerModalOpen);
+                                if (card?.currentProcess?.toLowerCase() === 'montaža' && !selectedMainWorker) {
+                                    if (!confirm('Zatvaranje bez odabira radnika znači da se trošak rada NEĆE bilježiti za ovu stavku. Nastaviti?')) return;
+                                }
+                                setEditWorkerModalOpen(null);
+                            }}>
                                 <X size={18} />
                             </button>
                         </div>
@@ -692,7 +727,13 @@ export default function ProcessKanbanBoard({
                             })()}
                         </div>
                         <div className="split-modal-footer">
-                            <button className="btn-cancel" onClick={() => setEditWorkerModalOpen(null)}>Odustani</button>
+                            <button className="btn-cancel" onClick={() => {
+                                const card = kanbanCards.find(c => c.id === editWorkerModalOpen);
+                                if (card?.currentProcess?.toLowerCase() === 'montaža' && !selectedMainWorker) {
+                                    if (!confirm('Zatvaranje bez odabira radnika znači da se trošak rada NEĆE bilježiti za ovu stavku. Nastaviti?')) return;
+                                }
+                                setEditWorkerModalOpen(null);
+                            }}>Odustani</button>
                             <button className="btn-confirm" onClick={saveWorkerChanges}>Spremi</button>
                         </div>
                     </div>
@@ -1285,6 +1326,30 @@ export default function ProcessKanbanBoard({
                 }
                 .worker-change-notice strong {
                     color: #78350f;
+                }
+
+                /* #3 Fix: Montaža unassigned warning */
+                .montaza-warning {
+                    display: flex;
+                    align-items: center;
+                    gap: 4px;
+                    padding: 4px 8px;
+                    background: #fef2f2;
+                    border: 1px solid #fecaca;
+                    border-radius: 6px;
+                    font-size: 10px;
+                    color: #dc2626;
+                    font-weight: 500;
+                    animation: pulseWarn 2s ease-in-out infinite;
+                    margin-top: 4px;
+                }
+                @keyframes pulseWarn {
+                    0%, 100% { opacity: 1; }
+                    50% { opacity: 0.6; }
+                }
+                .worker-name.unassigned-warning {
+                    color: #dc2626 !important;
+                    font-weight: 600 !important;
                 }
             `}</style>
         </div >

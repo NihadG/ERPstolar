@@ -483,13 +483,53 @@ export async function deleteProject(projectId: string, organizationId: string): 
     }
 
     try {
-        // Delete all related products first
-        const products = await getProductsByProject(projectId, organizationId);
-        for (const product of products) {
-            await deleteProduct(product.Product_ID, organizationId);
+        // S5.1: Block deletion if project has active work orders
+        const woQuery = query(
+            collection(db, COLLECTIONS.WORK_ORDER_ITEMS),
+            where('Project_ID', '==', projectId),
+            where('Organization_ID', '==', organizationId)
+        );
+        const woItemsSnap = await getDocs(woQuery);
+
+        if (!woItemsSnap.empty) {
+            // Check if any of these items belong to non-completed work orders
+            const activeWoIds = new Set<string>();
+            for (const itemDoc of woItemsSnap.docs) {
+                const item = itemDoc.data();
+                if (item.Status !== 'Završeno') {
+                    activeWoIds.add(item.Work_Order_ID);
+                }
+            }
+            if (activeWoIds.size > 0) {
+                return {
+                    success: false,
+                    message: `Projekat ima ${activeWoIds.size} aktivni(h) radni(h) nalog(a). Završite ili obrišite radne naloge prije brisanja projekta.`
+                };
+            }
         }
 
-        // Delete project (with organization check)
+        // G4: Cascade-delete order items for this project's materials
+        const products = await getProductsByProject(projectId, organizationId);
+        for (const product of products) {
+            // G5: Cascade-delete order items for each product
+            await cascadeDeleteOrderItemsForProduct(product.Product_ID, organizationId);
+            await deleteProductMaterials(product.Product_ID, organizationId);
+        }
+
+        // Delete products
+        for (const product of products) {
+            const pq = query(
+                collection(db, COLLECTIONS.PRODUCTS),
+                where('Product_ID', '==', product.Product_ID),
+                where('Organization_ID', '==', organizationId)
+            );
+            const pSnap = await getDocs(pq);
+            if (!pSnap.empty) {
+                await deleteDoc(pSnap.docs[0].ref);
+            }
+        }
+
+        // Delete project
         const q = query(
             collection(db, COLLECTIONS.PROJECTS),
             where('Project_ID', '==', projectId),
@@ -500,7 +540,7 @@ export async function deleteProject(projectId: string, organizationId: string): 
             await deleteDoc(snapshot.docs[0].ref);
         }
 
-        return { success: true, message: 'Projekat obrisan' };
+        return { success: true, message: 'Projekat obrisan sa svim povezanim narudžbama' };
     } catch (error) {
         console.error('deleteProject error:', error);
         return { success: false, message: 'Greška pri brisanju projekta' };
@@ -636,7 +676,26 @@ export async function deleteProduct(productId: string, organizationId: string): 
     }
 
     try {
-        // Delete all related materials first
+        // S5.2: Block deletion if product is in an active work order
+        const woItemsQ = query(
+            collection(db, COLLECTIONS.WORK_ORDER_ITEMS),
+            where('Product_ID', '==', productId),
+            where('Organization_ID', '==', organizationId)
+        );
+        const woItemsSnap = await getDocs(woItemsQ);
+        const activeItem = woItemsSnap.docs.find(d => d.data().Status !== 'Završeno');
+        if (activeItem) {
+            const woId = activeItem.data().Work_Order_ID;
+            return {
+                success: false,
+                message: `Proizvod je u aktivnom radnom nalogu (${woId}). Završite radni nalog prije brisanja proizvoda.`
+            };
+        }
+
+        // G5: Cascade-delete order items for this product's materials
+        await cascadeDeleteOrderItemsForProduct(productId, organizationId);
+
+        // Delete all related materials
         await deleteProductMaterials(productId, organizationId);
 
         // Delete product
@@ -650,7 +709,7 @@ export async function deleteProduct(productId: string, organizationId: string): 
             await deleteDoc(snapshot.docs[0].ref);
         }
 
-        return { success: true, message: 'Proizvod obrisan' };
+        return { success: true, message: 'Proizvod obrisan sa povezanim narudžbama' };
     } catch (error) {
         console.error('deleteProduct error:', error);
         return { success: false, message: 'Greška pri brisanju proizvoda' };
@@ -908,6 +967,66 @@ export async function deleteProductMaterial(materialId: string, organizationId: 
     }
 }
 
+// G5: Cascade-delete order items for a specific product
+// When a product is deleted, remove all order items that reference its materials.
+// If an order becomes empty after deletion, delete the order itself.
+async function cascadeDeleteOrderItemsForProduct(productId: string, organizationId: string): Promise<void> {
+    if (!organizationId) return;
+
+    try {
+        // Find all order items that reference this product
+        const orderItemsQ = query(
+            collection(db, COLLECTIONS.ORDER_ITEMS),
+            where('Product_ID', '==', productId),
+            where('Organization_ID', '==', organizationId)
+        );
+        const orderItemsSnap = await getDocs(orderItemsQ);
+
+        if (orderItemsSnap.empty) return;
+
+        // Track affected orders to check if they become empty
+        const affectedOrderIds = new Set<string>();
+
+        // Delete each order item
+        const deleteBatch = writeBatch(db);
+        for (const docSnap of orderItemsSnap.docs) {
+            const item = docSnap.data() as OrderItem;
+            if (item.Order_ID) affectedOrderIds.add(item.Order_ID);
+            deleteBatch.delete(docSnap.ref);
+        }
+        await deleteBatch.commit();
+
+        // For each affected order, check if it still has remaining items
+        for (const orderId of Array.from(affectedOrderIds)) {
+            const remainingQ = query(
+                collection(db, COLLECTIONS.ORDER_ITEMS),
+                where('Order_ID', '==', orderId),
+                where('Organization_ID', '==', organizationId)
+            );
+            const remainingSnap = await getDocs(remainingQ);
+
+            if (remainingSnap.empty) {
+                // No items left → delete the order itself
+                const orderQ = query(
+                    collection(db, COLLECTIONS.ORDERS),
+                    where('Order_ID', '==', orderId),
+                    where('Organization_ID', '==', organizationId)
+                );
+                const orderSnap = await getDocs(orderQ);
+                if (!orderSnap.empty) {
+                    await deleteDoc(orderSnap.docs[0].ref);
+                }
+            } else {
+                // Recalculate order total with remaining items
+                await recalculateOrderTotal(orderId, organizationId);
+            }
+        }
+    } catch (error) {
+        console.error('cascadeDeleteOrderItemsForProduct error:', error);
+        // Non-fatal — continue with product/project deletion
+    }
+}
+
 export async function deleteProductMaterials(productId: string, organizationId: string): Promise<void> {
     if (!organizationId) return;
     const q = query(
@@ -1160,6 +1279,31 @@ export async function deleteWorker(workerId: string, organizationId: string): Pr
     }
 
     try {
+        // S5.3: Block deletion if worker is assigned to active work orders
+        const allItemsQ = query(
+            collection(db, COLLECTIONS.WORK_ORDER_ITEMS),
+            where('Organization_ID', '==', organizationId)
+        );
+        const allItemsSnap = await getDocs(allItemsQ);
+        const activeWoIds = new Set<string>();
+        for (const itemDoc of allItemsSnap.docs) {
+            const item = itemDoc.data();
+            if (item.Status === 'Završeno') continue;
+            const isAssigned =
+                item.Assigned_Workers?.some((w: any) => w.Worker_ID === workerId) ||
+                item.Processes?.some((p: any) => p.Worker_ID === workerId || p.Helpers?.some((h: any) => h.Worker_ID === workerId)) ||
+                item.SubTasks?.some((st: any) => st.Worker_ID === workerId);
+            if (isAssigned) {
+                activeWoIds.add(item.Work_Order_ID);
+            }
+        }
+        if (activeWoIds.size > 0) {
+            return {
+                success: false,
+                message: `Radnik je dodijeljen na ${activeWoIds.size} aktivni(h) radni(h) nalog(a). Zamijenite radnika prije brisanja.`
+            };
+        }
+
         const q = query(
             collection(db, COLLECTIONS.WORKERS),
             where('Worker_ID', '==', workerId),
@@ -1832,21 +1976,28 @@ export async function deleteOrder(orderId: string, organizationId: string, mater
         );
         const itemsSnap = await getDocs(itemsQ);
 
-        // Batch update material statuses + quantities based on user choice
+        // C6: Split received/unreceived items and handle separately
         if (materialAction) {
-            const newStatus = materialAction === 'received' ? 'Primljeno' : 'Nije naručeno';
             const materialUpdates: { materialId: string; status: string; orderId: string; orderedQty?: number; receivedQty?: number; onStock?: number; forceResetQty?: boolean }[] = [];
 
             for (const docSnap of itemsSnap.docs) {
                 const item = docSnap.data() as OrderItem;
                 const materialIds = extractMaterialIds(item);
                 const qtyPerMat = materialIds.length > 0 ? (item.Quantity || 0) / materialIds.length : 0;
+
+                if (item.Status === 'Primljeno') {
+                    // C6: Already received items — keep their received status, don't reset
+                    // No material status update needed for received items
+                    continue;
+                }
+
+                // Unreceived items: apply the user's chosen action
+                const newStatus = materialAction === 'received' ? 'Primljeno' : 'Nije naručeno';
                 for (const matId of materialIds) {
                     materialUpdates.push({
                         materialId: matId,
                         status: newStatus,
                         orderId: '',
-                        // Subtract this order's contribution instead of hard reset (safe for multi-order materials)
                         orderedQty: materialAction === 'reset' ? -qtyPerMat : undefined,
                         onStock: materialAction === 'reset' ? 0 : undefined,
                         receivedQty: materialAction === 'received' ? qtyPerMat : undefined,
@@ -2158,6 +2309,9 @@ export async function markMaterialsReceived(orderItemIds: string[], organization
             if (itemSnap.empty) continue;
 
             const item = itemSnap.docs[0].data() as OrderItem;
+
+            // E2: Skip items that are already received (prevent double-receive)
+            if (item.Status === 'Primljeno') continue;
 
             // Update order item status and received date
             await updateDoc(itemSnap.docs[0].ref, {
@@ -3192,7 +3346,7 @@ export async function deleteWorkOrder(
         const itemsSnap = await getDocs(itemsQ);
 
         // Determine new product status based on action
-        const newProductStatus = productAction === 'completed' ? 'Spremno' : 'Čeka proizvodnju';
+        const newProductStatus = productAction === 'completed' ? 'Spremno' : 'Na čekanju';
 
         // Update product statuses in projects before deleting
         const projectUpdates = new Map<string, Map<string, string>>();
@@ -3253,6 +3407,17 @@ export async function deleteWorkOrder(
                     await updateDoc(productSnap.docs[0].ref, { Status: newProductStatus });
                 }
             }
+        }
+
+        // S3.1: Flag orphaned work logs (preserve for cost history)
+        const workLogsQ = query(
+            collection(db, COLLECTIONS.WORK_LOGS),
+            where('Work_Order_ID', '==', workOrderId),
+            where('Organization_ID', '==', organizationId)
+        );
+        const workLogsSnap = await getDocs(workLogsQ);
+        for (const wlDoc of workLogsSnap.docs) {
+            await updateDoc(wlDoc.ref, { Work_Order_Deleted: true });
         }
 
         // Delete items
@@ -3805,6 +3970,256 @@ export async function autoCreateOrdersForWorkOrder(
 }
 
 // ============================================
+// ZERO MATERIAL COST DETECTION (S1)
+// ============================================
+
+/**
+ * Check for products with zero material cost that are scheduled to start production soon.
+ * Returns a list of products that need attention before production begins.
+ * 
+ * @param organizationId - Organization ID
+ * @param daysAhead - Number of days to look ahead (default 2: today + tomorrow)
+ * @returns Array of products with zero material cost that are about to start production
+ */
+export async function checkZeroMaterialCostProducts(
+    organizationId: string,
+    daysAhead: number = 2
+): Promise<{
+    Product_ID: string;
+    Product_Name: string;
+    Project_ID: string;
+    Project_Name: string;
+    Work_Order_ID: string;
+    Work_Order_Number: string;
+    Work_Order_Item_ID: string;
+    Planned_Start_Date: string;
+    Material_Cost: number;
+    Has_Materials: boolean;
+    Material_Count: number;
+}[]> {
+    if (!organizationId) return [];
+
+    try {
+        const firestore = getDb();
+
+        // Get all active (non-completed) work orders
+        const woQuery = query(
+            collection(firestore, COLLECTIONS.WORK_ORDERS),
+            where('Organization_ID', '==', organizationId),
+            where('Status', 'in', ['Na čekanju', 'U toku'])
+        );
+        const woSnap = await getDocs(woQuery);
+
+        if (woSnap.empty) return [];
+
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const cutoffDate = new Date(today);
+        cutoffDate.setDate(cutoffDate.getDate() + daysAhead);
+
+        const results: {
+            Product_ID: string;
+            Product_Name: string;
+            Project_ID: string;
+            Project_Name: string;
+            Work_Order_ID: string;
+            Work_Order_Number: string;
+            Work_Order_Item_ID: string;
+            Planned_Start_Date: string;
+            Material_Cost: number;
+            Has_Materials: boolean;
+            Material_Count: number;
+        }[] = [];
+
+        for (const woDoc of woSnap.docs) {
+            const wo = woDoc.data() as WorkOrder;
+
+            // Check if this WO is scheduled to start within the lookahead window
+            // or is already active ('U toku') but has unchecked items
+            const isScheduledSoon = wo.Planned_Start_Date &&
+                new Date(wo.Planned_Start_Date) <= cutoffDate;
+            const isActive = wo.Status === 'U toku';
+
+            if (!isScheduledSoon && !isActive) continue;
+
+            // Get items for this work order
+            const itemsQuery = query(
+                collection(firestore, COLLECTIONS.WORK_ORDER_ITEMS),
+                where('Work_Order_ID', '==', wo.Work_Order_ID),
+                where('Organization_ID', '==', organizationId)
+            );
+            const itemsSnap = await getDocs(itemsQuery);
+
+            for (const itemDoc of itemsSnap.docs) {
+                const item = itemDoc.data();
+
+                // Skip completed items
+                if (item.Status === 'Završeno') continue;
+
+                // Check if Material_Cost is zero or very close to zero
+                const materialCost = item.Material_Cost || 0;
+
+                if (materialCost < 0.01) {
+                    // Double-check: fetch actual materials for this product
+                    let materialCount = 0;
+                    let hasMaterials = false;
+
+                    if (item.Product_ID) {
+                        const materials = await getProductMaterials(item.Product_ID, organizationId);
+                        materialCount = materials.length;
+                        hasMaterials = materials.length > 0;
+
+                        // If product actually has materials with prices, the WO item just hasn't been synced
+                        const actualCost = materials.reduce((sum, m) => sum + (m.Total_Price || 0), 0);
+                        if (actualCost > 0.01) {
+                            // Materials exist with prices — this is a sync issue, not a missing data issue
+                            // Auto-fix: update the WO item
+                            try {
+                                await updateDoc(itemDoc.ref, { Material_Cost: actualCost });
+                            } catch (e) {
+                                console.warn('Auto-fix material cost failed:', e);
+                            }
+                            continue; // Skip — it's been fixed
+                        }
+                    }
+
+                    results.push({
+                        Product_ID: item.Product_ID || '',
+                        Product_Name: item.Product_Name || 'Nepoznat proizvod',
+                        Project_ID: item.Project_ID || '',
+                        Project_Name: item.Project_Name || 'Nepoznat projekt',
+                        Work_Order_ID: wo.Work_Order_ID,
+                        Work_Order_Number: wo.Work_Order_Number || '',
+                        Work_Order_Item_ID: item.ID || itemDoc.id,
+                        Planned_Start_Date: wo.Planned_Start_Date || '',
+                        Material_Cost: materialCost,
+                        Has_Materials: hasMaterials,
+                        Material_Count: materialCount,
+                    });
+                }
+            }
+        }
+
+        return results;
+    } catch (error) {
+        console.error('checkZeroMaterialCostProducts error:', error);
+        return [];
+    }
+}
+
+/**
+ * Set a manual estimated material cost on a work order item.
+ * Used when the product doesn't have detailed material breakdown but the user knows the approximate cost.
+ * Also updates the product's Material_Cost field for future consistency.
+ * 
+ * @param workOrderItemId - The work order item ID to update
+ * @param manualCost - The estimated material cost (KM)
+ * @param organizationId - Organization ID
+ * @param alsoUpdateProduct - If true, also updates the Product's Material_Cost field
+ */
+export async function setManualMaterialCost(
+    workOrderItemId: string,
+    manualCost: number,
+    organizationId: string,
+    alsoUpdateProduct: boolean = false
+): Promise<{ success: boolean; message: string }> {
+    if (!organizationId) {
+        return { success: false, message: 'Organization ID is required' };
+    }
+
+    try {
+        const firestore = getDb();
+
+        // Find the work order item
+        const itemQuery = query(
+            collection(firestore, COLLECTIONS.WORK_ORDER_ITEMS),
+            where('ID', '==', workOrderItemId),
+            where('Organization_ID', '==', organizationId)
+        );
+        const itemSnap = await getDocs(itemQuery);
+
+        if (itemSnap.empty) {
+            // Try by doc ID as fallback
+            const itemRef = doc(firestore, COLLECTIONS.WORK_ORDER_ITEMS, workOrderItemId);
+            const itemDoc = await getDoc(itemRef);
+            if (!itemDoc.exists()) {
+                return { success: false, message: 'Stavka radnog naloga nije pronađena' };
+            }
+
+            const itemData = itemDoc.data();
+            await updateDoc(itemRef, {
+                Material_Cost: manualCost,
+                Manual_Material_Cost: true,
+                Manual_Cost_Set_At: new Date().toISOString()
+            });
+
+            // Also update product if requested
+            if (alsoUpdateProduct && itemData.Product_ID) {
+                await updateProductMaterialCostDirect(itemData.Product_ID, manualCost, organizationId);
+            }
+
+            // Trigger work order recalculation
+            if (itemData.Work_Order_ID) {
+                const { recalculateWorkOrder } = await import('./attendance');
+                await recalculateWorkOrder(itemData.Work_Order_ID);
+            }
+
+            return { success: true, message: `Trošak materijala postavljen na ${manualCost.toFixed(2)} KM` };
+        }
+
+        const itemDoc = itemSnap.docs[0];
+        const itemData = itemDoc.data();
+
+        await updateDoc(itemDoc.ref, {
+            Material_Cost: manualCost,
+            Manual_Material_Cost: true,
+            Manual_Cost_Set_At: new Date().toISOString()
+        });
+
+        // Also update product if requested
+        if (alsoUpdateProduct && itemData.Product_ID) {
+            await updateProductMaterialCostDirect(itemData.Product_ID, manualCost, organizationId);
+        }
+
+        // Trigger work order recalculation
+        if (itemData.Work_Order_ID) {
+            const { recalculateWorkOrder } = await import('./attendance');
+            await recalculateWorkOrder(itemData.Work_Order_ID);
+        }
+
+        return { success: true, message: `Trošak materijala postavljen na ${manualCost.toFixed(2)} KM` };
+    } catch (error) {
+        console.error('setManualMaterialCost error:', error);
+        return { success: false, message: 'Greška pri postavljanju troška materijala' };
+    }
+}
+
+/**
+ * Directly set Material_Cost on a product (without going through material items).
+ * Used for manual cost override when no material breakdown exists.
+ */
+async function updateProductMaterialCostDirect(
+    productId: string,
+    cost: number,
+    organizationId: string
+): Promise<void> {
+    try {
+        const firestore = getDb();
+        const q = query(
+            collection(firestore, COLLECTIONS.PRODUCTS),
+            where('Product_ID', '==', productId),
+            where('Organization_ID', '==', organizationId)
+        );
+        const snap = await getDocs(q);
+        if (!snap.empty) {
+            await updateDoc(snap.docs[0].ref, { Material_Cost: cost });
+        }
+    } catch (error) {
+        console.error('updateProductMaterialCostDirect error:', error);
+    }
+}
+
+// ============================================
 // NOTIFICATIONS
 // ============================================
 
@@ -4130,6 +4545,8 @@ export async function createWorkLog(data: {
     Process_Name?: string;
     Hours_Worked?: number;
     Is_From_Attendance?: boolean;
+    Original_Daily_Rate?: number;
+    Split_Factor?: number;
     Notes?: string;
     Date?: string;
 }, organizationId: string): Promise<{ success: boolean; data?: { WorkLog_ID: string }; message: string }> {
@@ -4156,6 +4573,8 @@ export async function createWorkLog(data: {
             SubTask_ID: data.SubTask_ID,
             Process_Name: data.Process_Name,
             Is_From_Attendance: data.Is_From_Attendance ?? false,
+            Original_Daily_Rate: data.Original_Daily_Rate,
+            Split_Factor: data.Split_Factor,
             Notes: data.Notes,
             Created_At: now,
         };
@@ -5403,5 +5822,313 @@ export async function getOrgSettings(
     } catch (error) {
         console.error('getOrgSettings error:', error);
         return null;
+    }
+}
+
+// ============================================
+// DATA GAP DETECTION — Notification-driven integrity checks
+// ============================================
+
+/**
+ * N1: Check for Montaža processes that are "U toku" but have no Worker_ID
+ */
+export async function checkUnassignedMontazaItems(
+    organizationId: string
+): Promise<{
+    itemId: string;
+    itemName: string;
+    workOrderId: string;
+    workOrderNumber: string;
+    processName: string;
+}[]> {
+    if (!organizationId) return [];
+    try {
+        const firestore = getDb();
+        const woQuery = query(
+            collection(firestore, COLLECTIONS.WORK_ORDERS),
+            where('Organization_ID', '==', organizationId),
+            where('Status', '==', 'U toku')
+        );
+        const woSnap = await getDocs(woQuery);
+        if (woSnap.empty) return [];
+
+        const results: {
+            itemId: string;
+            itemName: string;
+            workOrderId: string;
+            workOrderNumber: string;
+            processName: string;
+        }[] = [];
+
+        for (const woDoc of woSnap.docs) {
+            const wo = woDoc.data();
+            const itemsQuery = query(
+                collection(firestore, COLLECTIONS.WORK_ORDER_ITEMS),
+                where('Work_Order_ID', '==', wo.Work_Order_ID),
+                where('Status', '==', 'U toku'),
+                where('Organization_ID', '==', organizationId)
+            );
+            const itemsSnap = await getDocs(itemsQuery);
+
+            for (const itemDoc of itemsSnap.docs) {
+                const item = itemDoc.data();
+                const processes = item.Processes || [];
+                for (const proc of processes) {
+                    const name = (proc.Process_Name || '').toLowerCase();
+                    if (name.includes('montaža') && proc.Status === 'U toku' && !proc.Worker_ID) {
+                        results.push({
+                            itemId: item.ID || itemDoc.id,
+                            itemName: item.Product_Name || item.Name || 'Nepoznat',
+                            workOrderId: wo.Work_Order_ID,
+                            workOrderNumber: wo.Work_Order_Number || wo.Name || '',
+                            processName: proc.Process_Name
+                        });
+                    }
+                }
+                // Also check SubTasks
+                const subTasks = item.SubTasks || [];
+                for (const st of subTasks) {
+                    const stProcess = (st.Current_Process || '').toLowerCase();
+                    if (stProcess.includes('montaža') && st.Status === 'U toku' && !st.Worker_ID) {
+                        results.push({
+                            itemId: item.ID || itemDoc.id,
+                            itemName: `${item.Product_Name || 'Nepoznat'} (${st.Quantity} kom)`,
+                            workOrderId: wo.Work_Order_ID,
+                            workOrderNumber: wo.Work_Order_Number || wo.Name || '',
+                            processName: st.Current_Process
+                        });
+                    }
+                }
+            }
+        }
+        return results;
+    } catch (error) {
+        console.error('checkUnassignedMontazaItems error:', error);
+        return [];
+    }
+}
+
+/**
+ * N3: Check for workers with Daily_Rate = 0 who are assigned to active items
+ */
+export async function checkZeroRateAssignedWorkers(
+    organizationId: string
+): Promise<{
+    workerId: string;
+    workerName: string;
+    itemNames: string[];
+}[]> {
+    if (!organizationId) return [];
+    try {
+        const firestore = getDb();
+        // 1. Get all workers with Daily_Rate = 0
+        const workersQuery = query(
+            collection(firestore, 'workers'),
+            where('Organization_ID', '==', organizationId)
+        );
+        const workersSnap = await getDocs(workersQuery);
+        const zeroRateWorkers = new Map<string, string>(); // id -> name
+        workersSnap.forEach(d => {
+            const data = d.data();
+            if (data.Worker_ID && (!data.Daily_Rate || data.Daily_Rate === 0)) {
+                zeroRateWorkers.set(data.Worker_ID, data.Name || data.Worker_Name || 'Nepoznat');
+            }
+        });
+
+        if (zeroRateWorkers.size === 0) return [];
+
+        // 2. Check if any zero-rate workers are assigned to active items
+        const woQuery = query(
+            collection(firestore, COLLECTIONS.WORK_ORDERS),
+            where('Organization_ID', '==', organizationId),
+            where('Status', '==', 'U toku')
+        );
+        const woSnap = await getDocs(woQuery);
+
+        const workerItems = new Map<string, string[]>(); // workerId -> itemName[]
+
+        for (const woDoc of woSnap.docs) {
+            const wo = woDoc.data();
+            const itemsQuery = query(
+                collection(firestore, COLLECTIONS.WORK_ORDER_ITEMS),
+                where('Work_Order_ID', '==', wo.Work_Order_ID),
+                where('Status', '==', 'U toku'),
+                where('Organization_ID', '==', organizationId)
+            );
+            const itemsSnap = await getDocs(itemsQuery);
+
+            for (const itemDoc of itemsSnap.docs) {
+                const item = itemDoc.data();
+                const itemLabel = `${item.Product_Name || 'Nepoznat'} (${wo.Work_Order_Number || ''})`;
+
+                // Check Processes
+                for (const proc of (item.Processes || [])) {
+                    if (proc.Worker_ID && zeroRateWorkers.has(proc.Worker_ID)) {
+                        const arr = workerItems.get(proc.Worker_ID) || [];
+                        if (!arr.includes(itemLabel)) arr.push(itemLabel);
+                        workerItems.set(proc.Worker_ID, arr);
+                    }
+                }
+                // Check SubTasks
+                for (const st of (item.SubTasks || [])) {
+                    if (st.Worker_ID && zeroRateWorkers.has(st.Worker_ID)) {
+                        const arr = workerItems.get(st.Worker_ID) || [];
+                        if (!arr.includes(itemLabel)) arr.push(itemLabel);
+                        workerItems.set(st.Worker_ID, arr);
+                    }
+                }
+            }
+        }
+
+        return Array.from(workerItems.entries()).map(([workerId, itemNames]) => ({
+            workerId,
+            workerName: zeroRateWorkers.get(workerId) || 'Nepoznat',
+            itemNames
+        }));
+    } catch (error) {
+        console.error('checkZeroRateAssignedWorkers error:', error);
+        return [];
+    }
+}
+
+/**
+ * N4: Check for active processes (Status "U toku") without a Worker_ID
+ */
+export async function checkProcessesWithoutWorkers(
+    organizationId: string
+): Promise<{
+    itemId: string;
+    itemName: string;
+    processName: string;
+    workOrderId: string;
+    workOrderNumber: string;
+}[]> {
+    if (!organizationId) return [];
+    try {
+        const firestore = getDb();
+        const woQuery = query(
+            collection(firestore, COLLECTIONS.WORK_ORDERS),
+            where('Organization_ID', '==', organizationId),
+            where('Status', '==', 'U toku')
+        );
+        const woSnap = await getDocs(woQuery);
+        const results: {
+            itemId: string;
+            itemName: string;
+            processName: string;
+            workOrderId: string;
+            workOrderNumber: string;
+        }[] = [];
+
+        for (const woDoc of woSnap.docs) {
+            const wo = woDoc.data();
+            const itemsQuery = query(
+                collection(firestore, COLLECTIONS.WORK_ORDER_ITEMS),
+                where('Work_Order_ID', '==', wo.Work_Order_ID),
+                where('Status', '==', 'U toku'),
+                where('Organization_ID', '==', organizationId)
+            );
+            const itemsSnap = await getDocs(itemsQuery);
+
+            for (const itemDoc of itemsSnap.docs) {
+                const item = itemDoc.data();
+                for (const proc of (item.Processes || [])) {
+                    // Skip Montaža — handled by N1 separately
+                    const name = (proc.Process_Name || '').toLowerCase();
+                    if (name.includes('montaža')) continue;
+
+                    if (proc.Status === 'U toku' && !proc.Worker_ID) {
+                        results.push({
+                            itemId: item.ID || itemDoc.id,
+                            itemName: item.Product_Name || 'Nepoznat',
+                            processName: proc.Process_Name,
+                            workOrderId: wo.Work_Order_ID,
+                            workOrderNumber: wo.Work_Order_Number || wo.Name || ''
+                        });
+                    }
+                }
+            }
+        }
+        return results;
+    } catch (error) {
+        console.error('checkProcessesWithoutWorkers error:', error);
+        return [];
+    }
+}
+
+/**
+ * N5: Check for active WO items missing transport/services costs
+ * Only flags items where totalValue > 0 (i.e., real work order, not test)
+ */
+export async function checkMissingCostFields(
+    organizationId: string
+): Promise<{
+    itemId: string;
+    itemName: string;
+    workOrderId: string;
+    workOrderNumber: string;
+    missingFields: string[];
+}[]> {
+    if (!organizationId) return [];
+    try {
+        const firestore = getDb();
+        const woQuery = query(
+            collection(firestore, COLLECTIONS.WORK_ORDERS),
+            where('Organization_ID', '==', organizationId),
+            where('Status', '==', 'U toku')
+        );
+        const woSnap = await getDocs(woQuery);
+        const results: {
+            itemId: string;
+            itemName: string;
+            workOrderId: string;
+            workOrderNumber: string;
+            missingFields: string[];
+        }[] = [];
+
+        for (const woDoc of woSnap.docs) {
+            const wo = woDoc.data();
+            const itemsQuery = query(
+                collection(firestore, COLLECTIONS.WORK_ORDER_ITEMS),
+                where('Work_Order_ID', '==', wo.Work_Order_ID),
+                where('Organization_ID', '==', organizationId)
+            );
+            const itemsSnap = await getDocs(itemsQuery);
+
+            for (const itemDoc of itemsSnap.docs) {
+                const item = itemDoc.data();
+                // Only flag items with real value
+                if (!item.Product_Value || item.Product_Value <= 0) continue;
+                if (item.Status === 'Završeno') continue;
+
+                const missing: string[] = [];
+                if (!item.Planned_Labor_Cost || item.Planned_Labor_Cost <= 0) {
+                    missing.push('Planirani trošak rada');
+                }
+                // Only flag transport/services if value is significant (> 500 KM)
+                if (item.Product_Value > 500) {
+                    if (!item.Transport_Share || item.Transport_Share <= 0) {
+                        missing.push('Transport');
+                    }
+                    if (!item.Services_Total || item.Services_Total <= 0) {
+                        missing.push('Usluge');
+                    }
+                }
+
+                if (missing.length > 0) {
+                    results.push({
+                        itemId: item.ID || itemDoc.id,
+                        itemName: item.Product_Name || 'Nepoznat',
+                        workOrderId: wo.Work_Order_ID,
+                        workOrderNumber: wo.Work_Order_Number || wo.Name || '',
+                        missingFields: missing
+                    });
+                }
+            }
+        }
+        return results;
+    } catch (error) {
+        console.error('checkMissingCostFields error:', error);
+        return [];
     }
 }

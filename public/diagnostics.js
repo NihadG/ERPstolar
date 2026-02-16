@@ -41,7 +41,7 @@
         'Rezanje', 'Kantiranje', 'Bušenje', 'Sklapanje',
         'Spremno', 'Instalirano'
     ];
-    const LEGACY_STATUSES = ['Čeka proizvodnju', 'U proizvodnji', 'Završeno'];
+    const LEGACY_STATUSES = ['U proizvodnji', 'Završeno'];
 
     (appState.projects || []).forEach(function (project) {
         (project.products || []).forEach(function (product) {

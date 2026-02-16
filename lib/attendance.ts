@@ -95,6 +95,385 @@ export async function saveWorkerAttendance(attendance: Partial<WorkerAttendance>
 }
 
 /**
+ * PROFIT-02: Check for missing attendance records on active work orders
+ * 
+ * Returns a list of workers who are assigned to active work order items
+ * but don't have attendance records for the given date.
+ * This allows the UI to show daily notifications:
+ * "⚠️ Amer nema uneseno prisustvo za danas — trošak rada može biti netačan"
+ * 
+ * @param organizationId - Organization ID
+ * @param date - Date to check (YYYY-MM-DD), defaults to today
+ * @returns Array of missing attendance warnings
+ */
+export async function checkMissingAttendanceForActiveOrders(
+    organizationId: string,
+    date?: string
+): Promise<{
+    warnings: {
+        Worker_ID: string;
+        Worker_Name: string;
+        Work_Order_ID: string;
+        Work_Order_Name: string;
+        Item_Name: string;
+        Date: string;
+    }[];
+    missingCount: number;
+    totalAssigned: number;
+}> {
+    if (!organizationId) return { warnings: [], missingCount: 0, totalAssigned: 0 };
+
+    try {
+        const firestore = getDb();
+        const checkDate = date || new Date().toISOString().split('T')[0];
+
+        // PROFIT-10 FIX: Use date string for day-of-week check to avoid timezone issues
+        // Parse as local noon to avoid midnight timezone shifts
+        const dateForDayCheck = new Date(checkDate + 'T12:00:00');
+        const dayOfWeek = dateForDayCheck.getDay();
+
+        // Skip weekends
+        if (dayOfWeek === 0 || dayOfWeek === 6) {
+            return { warnings: [], missingCount: 0, totalAssigned: 0 };
+        }
+
+        // Get all active work orders
+        const woQuery = query(
+            collection(firestore, COLLECTIONS.WORK_ORDERS),
+            where('Status', '==', 'U toku'),
+            where('Organization_ID', '==', organizationId)
+        );
+        const woSnap = await getDocs(woQuery);
+
+        if (woSnap.empty) return { warnings: [], missingCount: 0, totalAssigned: 0 };
+
+        // Get all attendance records for this date
+        const attendanceQuery = query(
+            collection(firestore, COLLECTIONS.WORKER_ATTENDANCE),
+            where('Date', '==', checkDate),
+            where('Organization_ID', '==', organizationId)
+        );
+        const attendanceSnap = await getDocs(attendanceQuery);
+
+        // Build set of workers who have attendance
+        const workersWithAttendance = new Set<string>();
+        attendanceSnap.forEach(d => {
+            const data = d.data();
+            if (data.Worker_ID && (data.Status === 'Prisutan' || data.Status === 'Teren' || data.Status === 'Odsutan' || data.Status === 'Bolovanje' || data.Status === 'Odmor')) {
+                workersWithAttendance.add(data.Worker_ID);
+            }
+        });
+
+        // Check each active work order's items for assigned workers without attendance
+        const warnings: {
+            Worker_ID: string;
+            Worker_Name: string;
+            Work_Order_ID: string;
+            Work_Order_Name: string;
+            Item_Name: string;
+            Date: string;
+        }[] = [];
+        const checkedWorkers = new Set<string>();
+        let totalAssigned = 0;
+
+        for (const woDoc of woSnap.docs) {
+            const wo = woDoc.data();
+            const itemsQuery = query(
+                collection(firestore, COLLECTIONS.WORK_ORDER_ITEMS),
+                where('Work_Order_ID', '==', wo.Work_Order_ID),
+                where('Status', '==', 'U toku'),
+                where('Organization_ID', '==', organizationId)
+            );
+            const itemsSnap = await getDocs(itemsQuery);
+
+            for (const itemDoc of itemsSnap.docs) {
+                const item = itemDoc.data() as WorkOrderItem;
+
+                // Collect workers from Processes
+                const itemWorkers: { id: string; name: string }[] = [];
+                if (item.Processes && item.Processes.length > 0) {
+                    for (const process of item.Processes) {
+                        if (process.Worker_ID) {
+                            itemWorkers.push({ id: process.Worker_ID, name: (process as any).Worker_Name || 'Nepoznat' });
+                        }
+                        if ((process as any).Helpers?.length > 0) {
+                            for (const h of (process as any).Helpers) {
+                                if (h.Worker_ID) {
+                                    itemWorkers.push({ id: h.Worker_ID, name: h.Worker_Name || 'Nepoznat' });
+                                }
+                            }
+                        }
+                    }
+                }
+                // Fallback to Assigned_Workers
+                if (itemWorkers.length === 0 && item.Assigned_Workers?.length) {
+                    for (const w of item.Assigned_Workers) {
+                        if (w.Worker_ID) {
+                            itemWorkers.push({ id: w.Worker_ID, name: w.Worker_Name || 'Nepoznat' });
+                        }
+                    }
+                }
+
+                totalAssigned += itemWorkers.length;
+
+                for (const worker of itemWorkers) {
+                    if (checkedWorkers.has(worker.id)) continue;
+                    if (!workersWithAttendance.has(worker.id)) {
+                        warnings.push({
+                            Worker_ID: worker.id,
+                            Worker_Name: worker.name,
+                            Work_Order_ID: wo.Work_Order_ID,
+                            Work_Order_Name: wo.Name || `RN-${wo.Work_Order_ID?.slice(-4)}`,
+                            Item_Name: item.Product_Name || 'Nepoznat proizvod',
+                            Date: checkDate,
+                        });
+                        checkedWorkers.add(worker.id);
+                    }
+                }
+            }
+        }
+
+        return {
+            warnings,
+            missingCount: warnings.length,
+            totalAssigned: new Set(Array.from(checkedWorkers).concat(Array.from(workersWithAttendance))).size,
+        };
+    } catch (error) {
+        console.error('Error checking missing attendance:', error);
+        return { warnings: [], missingCount: 0, totalAssigned: 0 };
+    }
+}
+
+/**
+ * Check for missing attendance history for a specific work order.
+ * Scans from Started_At to Completed_At (or Today) and checks if assigned workers
+ * have valid work logs for those dates.
+ * 
+ * Used for:
+ * 1. Warnings on finished work orders (Profit might be inaccurate)
+ * 2. Pre-completion checks
+ */
+export async function checkMissingAttendanceHistory(
+    workOrderId: string,
+    organizationId: string
+): Promise<{
+    missingDays: number;
+    details: { date: string; workerName: string }[]
+}> {
+    if (!workOrderId || !organizationId) return { missingDays: 0, details: [] };
+
+    try {
+        const firestore = getDb();
+
+        // 1. Get Work Order
+        const woRef = doc(firestore, COLLECTIONS.WORK_ORDERS, workOrderId);
+        const woSnap = await getDoc(woRef);
+        if (!woSnap.exists()) return { missingDays: 0, details: [] };
+
+        const wo = woSnap.data() as WorkOrder;
+        if (!wo.Started_At) return { missingDays: 0, details: [] };
+        if (wo.Status !== 'Završeno' && wo.Status !== 'U toku') return { missingDays: 0, details: [] };
+
+        const startDate = new Date(wo.Started_At);
+        const endDate = wo.Completed_At ? new Date(wo.Completed_At) : new Date();
+
+        // Normalize dates
+        startDate.setHours(0, 0, 0, 0);
+        endDate.setHours(23, 59, 59, 999);
+
+        // 2. Get assigned workers for this WO (from items)
+        const itemsQuery = query(
+            collection(firestore, COLLECTIONS.WORK_ORDER_ITEMS),
+            where('Work_Order_ID', '==', workOrderId),
+            where('Organization_ID', '==', organizationId)
+        );
+        const itemsSnap = await getDocs(itemsQuery);
+        const assignedWorkers = new Map<string, string>(); // ID -> Name
+
+        itemsSnap.docs.forEach(d => {
+            const item = d.data() as WorkOrderItem;
+            item.Assigned_Workers?.forEach(w => {
+                assignedWorkers.set(w.Worker_ID, w.Worker_Name);
+            });
+            // Also include workers active on processes
+            item.Processes?.forEach(p => {
+                if (p.Worker_ID) assignedWorkers.set(p.Worker_ID, (p as any).Worker_Name || 'Unknown');
+                p.Helpers?.forEach(h => assignedWorkers.set(h.Worker_ID, h.Worker_Name || 'Unknown'));
+            });
+        });
+
+        if (assignedWorkers.size === 0) return { missingDays: 0, details: [] };
+        const workerIds = Array.from(assignedWorkers.keys());
+
+        // 3. Fetch logs for this WO within the timeframe
+        // This confirms ACTUAL work done
+        const logsQuery = query(
+            collection(firestore, 'work_logs'),
+            where('Work_Order_ID', '==', workOrderId),
+            where('Organization_ID', '==', organizationId)
+        );
+        const logsSnap = await getDocs(logsQuery);
+
+        const workerLogDates = new Set<string>(); // "WorkerID_Date"
+        logsSnap.docs.forEach(d => {
+            const data = d.data();
+            workerLogDates.add(`${data.Worker_ID}_${data.Date}`);
+        });
+
+        // 4. Scan dates and check for missing logs
+        // IMPORTANT: We also need to check if the worker was even present (Attendance).
+        // If they were absent (Sick/Vacation), it's NOT a missing log.
+        // Fetch attendance for these workers in valid range (batch query by month is hard here, so we do simpler check)
+        // Optimization: Fetch all attendance for these workers in range? 
+        // Or assume business days = working days?
+
+        // To be accurate, we'll fetch attendance for the relevant period.
+        // Since period could be long, let's limit to check "Was there attendance but NO log?" or "Was there NO attendance?"
+        // Usually, if no attendance record exists, we assume they were absent or forgot to check in.
+        // If they checked in (Prisutan) but have NO log for this active WO, that's a gap.
+
+        // Let's implement simpler logic for MVP: Business days check.
+        // Ideally we should cross-reference attendance status, but that requires many reads.
+        // We'll proceed with Business Days approach and rely on user to know if they were sick.
+
+        const missingDetails: { date: string; workerName: string }[] = [];
+        const loopDate = new Date(startDate);
+
+        while (loopDate <= endDate) {
+            const day = loopDate.getDay();
+            if (day !== 0 && day !== 6) { // Mon-Fri
+                const dateStr = formatLocalDateISO(new Date(loopDate));
+
+                for (const workerId of workerIds) {
+                    // Check if log exists for this specific WO
+                    if (!workerLogDates.has(`${workerId}_${dateStr}`)) {
+                        // Log is missing.
+                        // Ideally we check if they were present on that day at all.
+                        // But for now, flagging it is safer — user can ignore if they know worker was sick.
+                        missingDetails.push({
+                            date: dateStr,
+                            workerName: assignedWorkers.get(workerId) || 'Unknown'
+                        });
+                    }
+                }
+            }
+            loopDate.setDate(loopDate.getDate() + 1);
+        }
+
+        return {
+            missingDays: missingDetails.length,
+            details: missingDetails
+        };
+
+    } catch (error) {
+        console.error('Error checking missing attendance history:', error);
+        return { missingDays: 0, details: [] };
+    }
+}
+
+/**
+ * PROFIT VALIDATION — GAP-2/5
+ * Validates a work order's profit data and returns warnings for the UI.
+ * This is called when expanding a work order card to show real-time data quality indicators.
+ */
+export interface ProfitWarning {
+    type: 'error' | 'warning' | 'info';
+    icon: string;
+    message: string;
+    itemName?: string;
+}
+
+export function validateWorkOrderProfitData(workOrder: any): ProfitWarning[] {
+    const warnings: ProfitWarning[] = [];
+    const items = workOrder?.items || [];
+
+    if (items.length === 0) return warnings;
+
+    // Check each item
+    for (const item of items) {
+        // Product_Value = 0 → No offer pricing
+        if (!item.Product_Value || item.Product_Value <= 0) {
+            warnings.push({
+                type: 'error',
+                icon: 'money_off',
+                message: `Cijena nije postavljena (nema ponude?)`,
+                itemName: item.Product_Name,
+            });
+        }
+
+        // Material_Cost = 0 → No materials assigned
+        if (!item.Material_Cost || item.Material_Cost <= 0) {
+            warnings.push({
+                type: 'warning',
+                icon: 'inventory_2',
+                message: `Materijali nisu dodati ili nemaju cijenu`,
+                itemName: item.Product_Name,
+            });
+        }
+
+        // Active item with no labor cost → Missing attendance
+        if (item.Status === 'U toku' && (!item.Actual_Labor_Cost || item.Actual_Labor_Cost <= 0)) {
+            warnings.push({
+                type: 'warning',
+                icon: 'person_off',
+                message: `Nema evidentiranog prisustva (trošak rada = 0)`,
+                itemName: item.Product_Name,
+            });
+        }
+
+        // Labor budget overrun (>20%)
+        if (item.Planned_Labor_Cost && item.Planned_Labor_Cost > 0 && item.Actual_Labor_Cost) {
+            if (item.Actual_Labor_Cost > item.Planned_Labor_Cost * 1.2) {
+                const overrun = Math.round(((item.Actual_Labor_Cost - item.Planned_Labor_Cost) / item.Planned_Labor_Cost) * 100);
+                warnings.push({
+                    type: 'error',
+                    icon: 'trending_up',
+                    message: `Prekoračen budžet rada za ${overrun}%`,
+                    itemName: item.Product_Name,
+                });
+            }
+        }
+    }
+
+    // Aggregate checks
+    const totalValue = items.reduce((s: number, i: any) => s + (i.Product_Value || 0), 0);
+    const totalMaterial = items.reduce((s: number, i: any) => s + (i.Material_Cost || 0), 0);
+    const totalLabor = items.reduce((s: number, i: any) => s + (i.Actual_Labor_Cost || 0), 0);
+    const totalTransport = items.reduce((s: number, i: any) => s + (i.Transport_Share || 0), 0);
+    const totalServices = items.reduce((s: number, i: any) => s + (i.Services_Total || 0), 0);
+
+    if (totalValue > 0) {
+        const netProfit = totalValue - totalMaterial - totalLabor - totalTransport - totalServices;
+        const margin = (netProfit / totalValue) * 100;
+
+        if (margin < -20) {
+            warnings.push({
+                type: 'error',
+                icon: 'warning',
+                message: `Negativna marža (${Math.round(margin)}%) — provjerite cijene i troškove`,
+            });
+        } else if (margin < 0) {
+            warnings.push({
+                type: 'warning',
+                icon: 'trending_down',
+                message: `Profit u minusu (${Math.round(margin)}%)`,
+            });
+        }
+    }
+
+    // Transport/Services = 0 but offer probably had them
+    if (totalValue > 0 && totalTransport === 0 && totalServices === 0) {
+        warnings.push({
+            type: 'info',
+            icon: 'local_shipping',
+            message: 'Transport i usluge = 0 KM (nalog kreiran bez podataka iz ponude?)',
+        });
+    }
+
+    return warnings;
+}
+
+/**
  * Mark worker attendance and automatically create/cleanup work logs
  * ENHANCED: 
  *   - Creates work_logs when status is 'Prisutan' or 'Teren'
@@ -111,10 +490,13 @@ export async function markAttendanceAndRecalculate(
 
         let workLogsCreated = 0;
         let workLogsDeleted = 0;
+        const affectedWorkOrderIds = new Set<string>();
 
         if (!attendance.Worker_ID || !attendance.Date || !attendance.Organization_ID) {
             return { success: true, affectedWorkOrders: [], workLogsCreated: 0, workLogsDeleted: 0 };
         }
+
+        const firestore = getDb();
 
         // 2. If worker is present (Prisutan or Teren), create work logs for all active items
         if (attendance.Status === 'Prisutan' || attendance.Status === 'Teren') {
@@ -125,6 +507,7 @@ export async function markAttendanceAndRecalculate(
             const workerName = attendance.Worker_Name || worker?.Name || 'Unknown';
 
             // Create work logs for all active work order items where worker is assigned
+            // NOW HANDLES BACKDATED ATTENDANCE (Checks Start/End dates instead of just Status)
             const result = await createWorkLogsForAttendance(
                 attendance.Worker_ID,
                 workerName,
@@ -134,11 +517,54 @@ export async function markAttendanceAndRecalculate(
             );
 
             workLogsCreated = result.created;
+            result.affectedWorkOrderIds.forEach(id => affectedWorkOrderIds.add(id));
+
             console.log(`Attendance marked: ${workerName} - ${attendance.Status} on ${attendance.Date}. Work logs created: ${result.created}, skipped: ${result.skipped}`);
         } else {
             // 3. NON-WORKING STATUS: Delete any existing work logs for this worker/date
             // This handles retroactive corrections (e.g., changing Prisutan → Odsutan)
             try {
+                // BEFORE deleting, find which WOs might be affected so we can recalculate them
+                // We need to find WOs active on this date where this worker IS assigned
+                // Same logic as createWorkLogsForAttendance
+                if (!options?.skipRecalculation) {
+                    const targetDate = new Date(attendance.Date);
+                    targetDate.setHours(0, 0, 0, 0);
+
+                    // Find WOs active on this date
+                    const woQuery = query(
+                        collection(firestore, COLLECTIONS.WORK_ORDERS),
+                        where('Organization_ID', '==', attendance.Organization_ID),
+                        where('Status', 'in', ['U toku', 'Završeno'])
+                    );
+                    const woSnap = await getDocs(woQuery);
+
+                    for (const doc of woSnap.docs) {
+                        const wo = doc.data() as WorkOrder;
+                        // Date check
+                        if (!wo.Started_At) continue;
+                        const start = new Date(wo.Started_At); start.setHours(0, 0, 0, 0);
+                        if (start > targetDate) continue;
+                        if (wo.Status === 'Završeno' && wo.Completed_At) {
+                            const end = new Date(wo.Completed_At); end.setHours(23, 59, 59, 999);
+                            if (end < targetDate) continue;
+                        }
+
+                        // Check items for assignment
+                        const itemsQuery = query(
+                            collection(firestore, COLLECTIONS.WORK_ORDER_ITEMS),
+                            where('Work_Order_ID', '==', wo.Work_Order_ID),
+                            where('Organization_ID', '==', attendance.Organization_ID)
+                        );
+                        const itemsSnap = await getDocs(itemsQuery);
+                        const isAssigned = itemsSnap.docs.some(d => isWorkerAssignedToItem(d.data() as WorkOrderItem, attendance.Worker_ID!));
+
+                        if (isAssigned) {
+                            affectedWorkOrderIds.add(wo.Work_Order_ID);
+                        }
+                    }
+                }
+
                 const cleanupResult = await deleteWorkLogsForWorkerOnDate(
                     attendance.Worker_ID,
                     attendance.Date,
@@ -156,43 +582,25 @@ export async function markAttendanceAndRecalculate(
 
         // 4. RECALCULATE affected work orders so profit/labor cost stays fresh
         //    (skipped when called in bulk — caller handles batch recalc)
-        const affectedWorkOrders: string[] = [];
-        if (!options?.skipRecalculation && (workLogsDeleted > 0 || workLogsCreated > 0)) {
+        const finalAffectedList = Array.from(affectedWorkOrderIds);
+
+        if (!options?.skipRecalculation && finalAffectedList.length > 0) {
             try {
-                const firestore = getDb();
-                // Find all active work orders for this org
-                const woQuery = query(
-                    collection(firestore, COLLECTIONS.WORK_ORDERS),
-                    where('Status', '==', 'U toku'),
-                    where('Organization_ID', '==', attendance.Organization_ID)
-                );
-                const woSnap = await getDocs(woQuery);
-                for (const woDoc of woSnap.docs) {
-                    const woData = woDoc.data();
-                    const woId = woData.Work_Order_ID;
-                    // Check if any item in this WO has this worker assigned
-                    const itemsQuery = query(
-                        collection(firestore, COLLECTIONS.WORK_ORDER_ITEMS),
-                        where('Work_Order_ID', '==', woId),
-                        where('Organization_ID', '==', attendance.Organization_ID)
-                    );
-                    const itemsSnap = await getDocs(itemsQuery);
-                    const isAffected = itemsSnap.docs.some(d => {
-                        const item = d.data() as WorkOrderItem;
-                        return isWorkerAssignedToItem(item, attendance.Worker_ID!) ||
-                            item.Assigned_Workers?.some(w => w.Worker_ID === attendance.Worker_ID);
-                    });
-                    if (isAffected) {
-                        affectedWorkOrders.push(woId);
-                        await recalculateWorkOrder(woId);
-                    }
-                }
+                // Determine if we need to update snapshots for finished orders
+                // recalculateWorkOrder handles the logic, but if a WO is finished, 
+                // we might need to recreate the snapshot? 
+                // Currently recalculateWorkOrder updates the WO document. 
+                // If the app relies on snapshots for finished orders, strictly speaking we should update them.
+                // But for now, ensuring the WO document has correct Actual_Labor_Cost is the priority (S16).
+
+                await Promise.all(finalAffectedList.map(woId => recalculateWorkOrder(woId)));
+                console.log(`Recalculated ${finalAffectedList.length} work orders affected by attendance change.`);
             } catch (recalcError) {
                 console.error('Failed to recalculate work orders after attendance change:', recalcError);
             }
         }
 
-        return { success: true, affectedWorkOrders, workLogsCreated, workLogsDeleted };
+        return { success: true, affectedWorkOrders: finalAffectedList, workLogsCreated, workLogsDeleted };
     } catch (error) {
         console.error('Error marking attendance:', error);
         throw error;
@@ -205,9 +613,27 @@ export async function markAttendanceAndRecalculate(
  * Create WorkLog entries for a worker's attendance
  * Finds all active work order items where the worker is assigned and creates work logs
  * 
+ * CRITICAL FIX (S2.6): Daily rate is now SPLIT across all active assignments.
+ * A worker assigned to 3 items gets dailyRate/3 per item, NOT dailyRate × 3.
+ * 
  * @param workerId - Worker ID
  * @param workerName - Worker name
- * @param dailyRate - Worker's daily rate
+ * @param dailyRate - Worker's daily rate (total, will be split)
+ * @param date - Attendance date (YYYY-MM-DD)
+ * @param organizationId - Organization ID for multi-tenancy
+ * @returns Number of work logs created
+ */
+/**
+ * Create WorkLog entries for a worker's attendance
+ * Finds all active work order items where the worker is assigned and creates work logs
+ * 
+ * CRITICAL FIX (S16): Now handles BACKDATED attendance correctly.
+ * Instead of checking current status, checks if the work order was active ON THE DATE provided.
+ * Logic: (Started_At <= Date) AND (Completed_At >= Date OR Completed_At IS NULL)
+ * 
+ * @param workerId - Worker ID
+ * @param workerName - Worker name
+ * @param dailyRate - Worker's daily rate (total, will be split)
  * @param date - Attendance date (YYYY-MM-DD)
  * @param organizationId - Organization ID for multi-tenancy
  * @returns Number of work logs created
@@ -218,47 +644,98 @@ export async function createWorkLogsForAttendance(
     dailyRate: number,
     date: string,
     organizationId: string
-): Promise<{ created: number; skipped: number }> {
+): Promise<{ created: number; skipped: number; affectedWorkOrderIds: string[] }> {
     if (!organizationId) {
         console.error('createWorkLogsForAttendance: organizationId is required');
-        return { created: 0, skipped: 0 };
+        return { created: 0, skipped: 0, affectedWorkOrderIds: [] };
     }
     try {
         const firestore = getDb();
         let created = 0;
         let skipped = 0;
+        const affectedWorkOrderIds: string[] = [];
 
-        // Find all active work orders (status = 'U toku') for this organization
-        const woQuery = query(
+        // Find work orders that were active ON THIS DATE
+        // We can't query this easily in Firestore due to composite index limitations on inequalities
+        // So we fetch all U toku, Na čekanju, AND Završeno (if recently finished)
+        // Optimization: Fetch 'U toku' AND 'Završeno' where Completed_At >= Date
+
+        const activeWoQuery = query(
             collection(firestore, COLLECTIONS.WORK_ORDERS),
-            where('Status', '==', 'U toku'),
-            where('Organization_ID', '==', organizationId)
+            where('Organization_ID', '==', organizationId),
+            where('Status', 'in', ['U toku', 'Završeno']) // Check finished ones too!
         );
-        const woSnapshot = await getDocs(woQuery);
+
+        const woSnapshot = await getDocs(activeWoQuery);
 
         if (woSnapshot.empty) {
-            console.log('No active work orders found');
-            return { created: 0, skipped: 0 };
+            console.log('No work orders found for attendance processing');
+            return { created: 0, skipped: 0, affectedWorkOrderIds: [] };
         }
 
-        const workOrderIds = woSnapshot.docs.map(d => d.data().Work_Order_ID);
+        const targetDate = new Date(date);
+        targetDate.setHours(0, 0, 0, 0); // Normalize to midnight
 
-        // For each active work order, find items where this worker is assigned
-        for (const workOrderId of workOrderIds) {
+        const validWorkOrderIds: string[] = [];
+
+        for (const doc of woSnapshot.docs) {
+            const wo = doc.data() as WorkOrder;
+
+            // Check start date
+            if (!wo.Started_At) continue;
+            const startDate = new Date(wo.Started_At);
+            startDate.setHours(0, 0, 0, 0);
+
+            if (startDate > targetDate) continue; // Started after this attendance date
+
+            // Check end date (if finished)
+            if (wo.Status === 'Završeno' && wo.Completed_At) {
+                const endDate = new Date(wo.Completed_At);
+                endDate.setHours(23, 59, 59, 999); // End of that day
+
+                if (endDate < targetDate) continue; // Finished before this attendance date
+            }
+
+            validWorkOrderIds.push(wo.Work_Order_ID);
+        }
+
+        // ═══════════════════════════════════════════════════════════════
+        // PASS 1: Count total active assignments to determine rate split
+        // ═══════════════════════════════════════════════════════════════
+        interface PendingWorkLog {
+            workOrderId: string;
+            item: WorkOrderItem;
+            processName: string | undefined;
+        }
+        const pendingLogs: PendingWorkLog[] = [];
+
+        for (const workOrderId of validWorkOrderIds) {
             const itemsQuery = query(
                 collection(firestore, COLLECTIONS.WORK_ORDER_ITEMS),
                 where('Work_Order_ID', '==', workOrderId),
-                where('Status', 'in', ['U toku', 'Na čekanju']),
                 where('Organization_ID', '==', organizationId)
+                // Don't filter by Item Status here, as item might be finished now but was active then
             );
             const itemsSnapshot = await getDocs(itemsQuery);
 
             for (const itemDoc of itemsSnapshot.docs) {
                 const item = itemDoc.data() as WorkOrderItem;
 
+                // Check if item was active on date
+                // Similar logic to WO check
+                if (item.Started_At) {
+                    const itemStart = new Date(item.Started_At);
+                    itemStart.setHours(0, 0, 0, 0);
+                    if (itemStart > targetDate) continue;
+                }
+                if (item.Status === 'Završeno' && item.Completed_At) {
+                    const itemEnd = new Date(item.Completed_At);
+                    itemEnd.setHours(23, 59, 59, 999);
+                    if (itemEnd < targetDate) continue;
+                }
+
                 // Check if worker is assigned to this item
                 const isAssigned = isWorkerAssignedToItem(item, workerId);
-
                 if (!isAssigned) continue;
 
                 // Check if work log already exists for this worker/item/date
@@ -268,32 +745,92 @@ export async function createWorkLogsForAttendance(
                     continue;
                 }
 
-                // Create work log with process name if available
                 const processName = getActiveProcessForWorker(item, workerId);
+                pendingLogs.push({ workOrderId, item, processName });
+            }
+        }
 
-                const result = await createWorkLog({
-                    Worker_ID: workerId,
-                    Worker_Name: workerName,
-                    Daily_Rate: dailyRate,
-                    Work_Order_ID: workOrderId,
-                    Work_Order_Item_ID: item.ID,
-                    Product_ID: item.Product_ID,
-                    Process_Name: processName,  // Now includes the active process
-                    Is_From_Attendance: true,
-                    Date: date,
-                }, organizationId);
+        // ═══════════════════════════════════════════════════════════════
+        // PASS 2: Create work logs with SPLIT daily rate
+        // Worker's daily rate is divided equally across all assignments
+        // e.g., 80 KM / 3 assignments = 26.67 KM per item
+        // ═══════════════════════════════════════════════════════════════
+        const totalAssignments = pendingLogs.length + skipped; // Total = new + existing
+        const splitRate = totalAssignments > 0 ? dailyRate / totalAssignments : dailyRate;
 
-                if (result.success) {
-                    created++;
+        for (const pending of pendingLogs) {
+            const result = await createWorkLog({
+                Worker_ID: workerId,
+                Worker_Name: workerName,
+                Daily_Rate: splitRate,
+                Original_Daily_Rate: dailyRate,
+                Split_Factor: totalAssignments,
+                Work_Order_ID: pending.workOrderId,
+                Work_Order_Item_ID: pending.item.ID,
+                Product_ID: pending.item.Product_ID,
+                Process_Name: pending.processName,
+                Is_From_Attendance: true,
+                Date: date,
+            }, organizationId);
+
+            if (result.success) {
+                created++;
+                if (!affectedWorkOrderIds.includes(pending.workOrderId)) {
+                    affectedWorkOrderIds.push(pending.workOrderId);
                 }
             }
         }
 
-        console.log(`WorkLogs: Created ${created}, Skipped ${skipped} for worker ${workerName} on ${date}`);
-        return { created, skipped };
+        console.log(`WorkLogs: Created ${created}, Skipped ${skipped} for worker ${workerName} on ${date} (split: ${splitRate.toFixed(2)} KM across ${totalAssignments} items)`);
+
+        // ═══════════════════════════════════════════════════════════════
+        // PASS 3: Reconcile ALL work logs for this worker/date
+        // ALWAYS run (not just when skipped > 0) to catch:
+        //   - Stale split rates from previous runs
+        //   - Orphan logs from items the worker was removed from
+        // ═══════════════════════════════════════════════════════════════
+        try {
+            const reconcileFirestore = getDb();
+            const existingLogsQuery = query(
+                collection(reconcileFirestore, 'work_logs'),
+                where('Worker_ID', '==', workerId),
+                where('Date', '==', date),
+                where('Organization_ID', '==', organizationId)
+            );
+            const existingSnap = await getDocs(existingLogsQuery);
+            const totalLogs = existingSnap.size;
+
+            if (totalLogs > 0) {
+                const correctSplitRate = dailyRate / totalLogs;
+                const batch = writeBatch(reconcileFirestore);
+                let updated = 0;
+
+                existingSnap.docs.forEach(docSnap => {
+                    const data = docSnap.data();
+                    // Update if split rate has changed
+                    if (Math.abs((data.Daily_Rate || 0) - correctSplitRate) > 0.01) {
+                        batch.update(docSnap.ref, {
+                            Daily_Rate: Math.round(correctSplitRate * 100) / 100,
+                            Original_Daily_Rate: dailyRate,
+                            Split_Factor: totalLogs
+                        });
+                        updated++;
+                    }
+                });
+
+                if (updated > 0) {
+                    await batch.commit();
+                    console.log(`WorkLogs: Reconciled ${updated} existing logs for ${workerName} on ${date} (new split: ${correctSplitRate.toFixed(2)} KM across ${totalLogs} items)`);
+                }
+            }
+        } catch (reconcileErr) {
+            console.warn('WorkLogs reconcile error (non-critical):', reconcileErr);
+        }
+
+        return { created, skipped, affectedWorkOrderIds };
     } catch (error) {
         console.error('createWorkLogsForAttendance error:', error);
-        return { created: 0, skipped: 0 };
+        return { created: 0, skipped: 0, affectedWorkOrderIds: [] };
     }
 }
 
@@ -323,8 +860,13 @@ function isWorkerAssignedToItem(item: WorkOrderItem, workerId: string): boolean 
         return true;
     }
 
-    // Check SubTasks
-    if (item.SubTasks?.some(st => st.Worker_ID === workerId && st.Status === 'U toku')) {
+    // Check SubTasks - main worker OR helper
+    if (item.SubTasks?.some(st =>
+        st.Status === 'U toku' && (
+            st.Worker_ID === workerId ||
+            st.Helpers?.some(h => h.Worker_ID === workerId)
+        )
+    )) {
         return true;
     }
 
@@ -800,7 +1342,8 @@ export async function completeWorkOrderItem(
 export async function calculateSubTaskLaborCost(
     subTask: any,
     itemQuantity: number,
-    organizationId: string
+    organizationId: string,
+    parentItemId?: string
 ): Promise<{ laborCost: number; workingDays: number }> {
     try {
         // If not started, no cost
@@ -808,9 +1351,8 @@ export async function calculateSubTaskLaborCost(
             return { laborCost: 0, workingDays: 0 };
         }
 
-        // If paused, skip calculation (no cost accumulation while paused)
+        // If paused, return existing stored values
         if (subTask.Is_Paused) {
-            // Return existing values if available
             return {
                 laborCost: subTask.Actual_Labor_Cost || 0,
                 workingDays: subTask.Working_Days || 0
@@ -838,110 +1380,49 @@ export async function calculateSubTaskLaborCost(
         const startDateStr = subTask.Started_At.split('T')[0];
         const endDateStr = subTask.Completed_At
             ? subTask.Completed_At.split('T')[0]
-            : new Date().toISOString().split('T')[0]; // Use today if not completed
+            : new Date().toISOString().split('T')[0];
 
-        // Fetch worker daily rates
-        const workersSnap = await getDocs(collection(firestore, 'workers'));
-        const workersMap = new Map<string, number>();
-        workersSnap.forEach(doc => {
-            const data = doc.data();
-            if (data.Worker_ID) {
-                workersMap.set(data.Worker_ID, data.Daily_Rate || 0);
+        // ═══════════════════════════════════════════════════════════════
+        // FIX A1: Use WorkLogs as source of truth (already split rates)
+        // Instead of fetching full Daily_Rate from workers collection,
+        // we query work_logs which contain the correctly SPLIT rate.
+        // This is consistent with calculateActualLaborCost.
+        // ═══════════════════════════════════════════════════════════════
+        const itemIdForQuery = parentItemId || subTask.Work_Order_Item_ID;
+
+        if (itemIdForQuery) {
+            // PRIMARY: Query work_logs for this item + workers + date range
+            const logsQuery = query(
+                collection(firestore, 'work_logs'),
+                where('Work_Order_Item_ID', '==', itemIdForQuery),
+                where('Date', '>=', startDateStr),
+                where('Date', '<=', endDateStr),
+                where('Organization_ID', '==', organizationId)
+            );
+            const logsSnap = await getDocs(logsQuery);
+
+            if (!logsSnap.empty) {
+                let totalCost = 0;
+                const uniqueDates = new Set<string>();
+
+                logsSnap.docs.forEach(d => {
+                    const data = d.data();
+                    // Only count logs for workers assigned to THIS sub-task
+                    if (workerIds.has(data.Worker_ID)) {
+                        totalCost += (data.Daily_Rate || 0);
+                        uniqueDates.add(data.Date);
+                    }
+                });
+
+                return {
+                    laborCost: Math.round(totalCost * 100) / 100,
+                    workingDays: uniqueDates.size
+                };
             }
-        });
-
-        // Batch fetch attendance records — FILTERED by Organization_ID to prevent cross-tenant leak
-        const attendanceQueryConstraints = [
-            where('Date', '>=', startDateStr),
-            where('Date', '<=', endDateStr),
-        ];
-        if (organizationId) {
-            attendanceQueryConstraints.push(where('Organization_ID', '==', organizationId));
-        }
-        const attendanceQuery = query(
-            collection(firestore, COLLECTIONS.WORKER_ATTENDANCE),
-            ...attendanceQueryConstraints
-        );
-        const attendanceSnap = await getDocs(attendanceQuery);
-        const attendanceMap = new Map<string, string>();
-        attendanceSnap.forEach(doc => {
-            const data = doc.data();
-            if (data.Worker_ID && data.Date && data.Status) {
-                attendanceMap.set(`${data.Worker_ID}_${data.Date}`, data.Status);
-            }
-        });
-
-        // Fetch holidays
-        const holidayQuery = query(
-            collection(firestore, 'holidays'),
-            where('Date', '>=', startDateStr),
-            where('Date', '<=', endDateStr)
-        );
-        const holidaySnap = await getDocs(holidayQuery);
-        const holidayDates = new Set<string>();
-        holidaySnap.forEach(doc => holidayDates.add(doc.data().Date));
-
-        // Get sub-task pause periods
-        const pausePeriods = subTask.Pause_Periods || [];
-
-        let totalCost = 0;
-        let workingDays = 0;
-        const startDate = new Date(subTask.Started_At);
-        const endDate = new Date(endDateStr);
-        const currentDate = new Date(startDate);
-
-        while (currentDate <= endDate) {
-            const dateStr = currentDate.toISOString().split('T')[0];
-
-            // SKIP: Weekends
-            const dayOfWeek = currentDate.getDay();
-            if (dayOfWeek === 0 || dayOfWeek === 6) {
-                currentDate.setDate(currentDate.getDate() + 1);
-                continue;
-            }
-
-            // SKIP: Holidays
-            if (holidayDates.has(dateStr)) {
-                currentDate.setDate(currentDate.getDate() + 1);
-                continue;
-            }
-
-            // SKIP: Paused periods for this sub-task
-            const isPausedOnDate = pausePeriods.some((p: { Started_At: string; Ended_At?: string }) => {
-                const pauseStart = new Date(p.Started_At).toISOString().split('T')[0];
-                const pauseEnd = p.Ended_At
-                    ? new Date(p.Ended_At).toISOString().split('T')[0]
-                    : new Date().toISOString().split('T')[0];
-                return dateStr >= pauseStart && dateStr <= pauseEnd;
-            });
-            if (isPausedOnDate) {
-                currentDate.setDate(currentDate.getDate() + 1);
-                continue;
-            }
-
-            // Count working day for any present worker
-            let dayHadWork = false;
-            for (const workerId of Array.from(workerIds)) {
-                const status = attendanceMap.get(`${workerId}_${dateStr}`);
-                if (status === 'Prisutan' || status === 'Teren') {
-                    const dailyRate = workersMap.get(workerId) || 0;
-                    totalCost += dailyRate;
-                    dayHadWork = true;
-                }
-            }
-            if (dayHadWork) workingDays++;
-
-            currentDate.setDate(currentDate.getDate() + 1);
         }
 
-        // Apply quantity ratio (proportion of total item)
-        const quantityRatio = itemQuantity > 0 ? subTask.Quantity / itemQuantity : 1;
-        const adjustedCost = totalCost * quantityRatio;
-
-        return {
-            laborCost: Math.round(adjustedCost * 100) / 100,
-            workingDays
-        };
+        // FALLBACK: No work logs yet — return 0 (consistent with calculateActualLaborCost)
+        return { laborCost: 0, workingDays: 0 };
     } catch (error) {
         console.error('Error calculating sub-task labor cost:', error);
         return { laborCost: 0, workingDays: 0 };
@@ -949,160 +1430,47 @@ export async function calculateSubTaskLaborCost(
 }
 
 /**
- * Calculate actual labor cost based on worker attendance
- * ENHANCED: Now handles SubTasks with individual pause periods
+ * Calculate actual labor cost based on WORK LOGS (single source of truth)
+ * 
+ * PROFIT-01 FIX: Previously used attendance + full Daily_Rate from workers collection,
+ * which caused 2-3x overcount when workers worked on multiple items simultaneously.
+ * Now uses work_logs which store the correctly SPLIT daily rate.
+ * 
+ * This ensures recalculateWorkOrder() and calculateProductProfitability() produce
+ * identical results.
  */
 export async function calculateActualLaborCost(item: any, organizationId?: string): Promise<number> {
     try {
         const orgId = organizationId || item.Organization_ID || '';
-
-        // ENHANCED: If item has SubTasks, calculate cost per sub-task
-        if (item.SubTasks && item.SubTasks.length > 0) {
-            let totalCost = 0;
-            for (const subTask of item.SubTasks) {
-                const result = await calculateSubTaskLaborCost(subTask, item.Quantity, orgId);
-                totalCost += result.laborCost;
-            }
-            return totalCost;
-        }
-
-        // Legacy: Item-level calculation if no SubTasks
-        if (!item.Started_At || !item.Completed_At) return 0;
-
-        // Collect all unique worker IDs from Processes (main workers + helpers)
-        const workerIds = new Set<string>();
-
-        if (item.Processes && item.Processes.length > 0) {
-            for (const process of item.Processes) {
-                if (process.Worker_ID) {
-                    workerIds.add(process.Worker_ID);
-                }
-                if (process.Helpers && process.Helpers.length > 0) {
-                    for (const helper of process.Helpers) {
-                        if (helper.Worker_ID) {
-                            workerIds.add(helper.Worker_ID);
-                        }
-                    }
-                }
-            }
-        }
-
-        // Fallback to legacy Assigned_Workers if no Processes
-        if (workerIds.size === 0 && item.Assigned_Workers && item.Assigned_Workers.length > 0) {
-            for (const worker of item.Assigned_Workers) {
-                if (worker.Worker_ID) {
-                    workerIds.add(worker.Worker_ID);
-                }
-            }
-        }
-
-        if (workerIds.size === 0) return 0;
-
         const firestore = getDb();
 
-        // Fetch worker daily rates from workers collection
-        const workersSnap = await getDocs(collection(firestore, 'workers'));
-        const workersMap = new Map<string, number>();
-        workersSnap.forEach(doc => {
-            const data = doc.data();
-            if (data.Worker_ID) {
-                workersMap.set(data.Worker_ID, data.Daily_Rate || 0);
-            }
-        });
-
-        const startDateStr = item.Started_At.split('T')[0]; // YYYY-MM-DD
-        const endDateStr = item.Completed_At.split('T')[0]; // YYYY-MM-DD
-
-        // OPTIMIZATION: Batch-fetch ALL attendance records for the date range
-        // FIXED: Filter by Organization_ID to prevent cross-tenant data leak
-        const attendanceQueryConstraints = [
-            where('Date', '>=', startDateStr),
-            where('Date', '<=', endDateStr),
+        // PRIMARY METHOD: Sum Daily_Rate from work_logs for this item
+        // Work logs already contain the correctly split rate (e.g., 80 KM / 3 items = 26.67 per item)
+        const logsQueryConstraints = [
+            where('Work_Order_Item_ID', '==', item.ID),
         ];
         if (orgId) {
-            attendanceQueryConstraints.push(where('Organization_ID', '==', orgId));
+            logsQueryConstraints.push(where('Organization_ID', '==', orgId));
         }
-        const attendanceQuery = query(
-            collection(firestore, 'worker_attendance'),
-            ...attendanceQueryConstraints
+        const logsQuery = query(
+            collection(firestore, 'work_logs'),
+            ...logsQueryConstraints
         );
-        const attendanceSnap = await getDocs(attendanceQuery);
+        const logsSnap = await getDocs(logsQuery);
 
-        // Build a map of worker+date -> status for O(1) lookup
-        const attendanceMap = new Map<string, string>();
-        attendanceSnap.forEach(doc => {
-            const data = doc.data();
-            if (data.Worker_ID && data.Date && data.Status) {
-                const key = `${data.Worker_ID}_${data.Date}`;
-                attendanceMap.set(key, data.Status);
-            }
-        });
-
-        let totalCost = 0;
-        const startDate = new Date(item.Started_At);
-        const endDate = new Date(item.Completed_At);
-        const currentDate = new Date(startDate);
-
-        // Pre-fetch holidays for the date range
-        const holidayQuery = query(
-            collection(firestore, 'holidays'),
-            where('Date', '>=', startDateStr),
-            where('Date', '<=', endDateStr)
-        );
-        const holidaySnap = await getDocs(holidayQuery);
-        const holidayDates = new Set<string>();
-        holidaySnap.forEach(doc => holidayDates.add(doc.data().Date));
-
-        // Get pause periods for this item (if tracking per-product)
-        const pausePeriods: Array<{ Started_At: string; Ended_At?: string }> = item.Pause_Periods || [];
-
-        // Iterate through each day
-        while (currentDate <= endDate) {
-            const dateStr = currentDate.toISOString().split('T')[0]; // YYYY-MM-DD
-
-            // SKIP 1: Weekends (Saturday=6, Sunday=0)
-            const dayOfWeek = currentDate.getDay();
-            if (dayOfWeek === 0 || dayOfWeek === 6) {
-                currentDate.setDate(currentDate.getDate() + 1);
-                continue;
-            }
-
-            // SKIP 2: Holidays
-            if (holidayDates.has(dateStr)) {
-                currentDate.setDate(currentDate.getDate() + 1);
-                continue;
-            }
-
-            // SKIP 3: Paused days for this item
-            const isPausedOnDate = pausePeriods.some(p => {
-                const pauseStart = new Date(p.Started_At).toISOString().split('T')[0];
-                const pauseEnd = p.Ended_At
-                    ? new Date(p.Ended_At).toISOString().split('T')[0]
-                    : new Date().toISOString().split('T')[0];
-                return dateStr >= pauseStart && dateStr <= pauseEnd;
-            });
-            if (isPausedOnDate) {
-                currentDate.setDate(currentDate.getDate() + 1);
-                continue;
-            }
-
-            // Check attendance for each worker using the pre-fetched map
-            for (const workerId of Array.from(workerIds)) {
-                const key = `${workerId}_${dateStr}`;
-                const status = attendanceMap.get(key);
-
-                // Count only if worker was Present or Field (Prisutan ili Teren)
-                if (status === 'Prisutan' || status === 'Teren') {
-                    const dailyRate = workersMap.get(workerId) || 0;
-                    totalCost += dailyRate;
-                }
-            }
-
-            // Move to next day
-            currentDate.setDate(currentDate.getDate() + 1);
+        if (!logsSnap.empty) {
+            // Work logs exist — use them as the definitive source
+            const totalCost = logsSnap.docs.reduce((sum, d) => {
+                const data = d.data();
+                return sum + (data.Daily_Rate || 0);
+            }, 0);
+            return Math.round(totalCost * 100) / 100;
         }
 
-        return totalCost;
+        // FALLBACK: No work logs yet (item just started, or attendance not entered)
+        // Return 0 — the missing attendance notification (PROFIT-02) will warn the user
+        // This is more honest than estimating incorrectly
+        return 0;
     } catch (error) {
         console.error('Error calculating actual labor cost:', error);
         return 0;
@@ -1134,10 +1502,15 @@ export async function recalculateWorkOrder(workOrderId: string): Promise<void> {
         for (const item of workOrder.items) {
             totalValue += item.Product_Value || 0;
 
-            // IMPORTANT: Fetch fresh material costs from database (not stale item.Material_Cost)
-            // Materials can change during production, so we always need current prices
+            // PROFIT-09 FIX: For completed items, use FROZEN material cost (don't re-fetch)
+            // This prevents retroactive profit changes when material prices change after completion.
+            // Active items still get fresh prices so profit is accurate during production.
             let itemMaterialCost = 0;
-            if (item.Product_ID && workOrder.Organization_ID) {
+            if (item.Status === 'Završeno' && (item.Material_Cost || 0) > 0) {
+                // Completed: use stored/frozen cost
+                itemMaterialCost = item.Material_Cost || 0;
+            } else if (item.Product_ID && workOrder.Organization_ID) {
+                // Active: fetch fresh material costs
                 const materials = await getProductMaterials(item.Product_ID, workOrder.Organization_ID);
                 itemMaterialCost = materials.reduce((sum, m) => sum + (m.Total_Price || 0), 0);
             } else {
@@ -1977,16 +2350,24 @@ export async function moveSubTask(
 
         let finalSubTasks = updatedSubTasks;
         if (allOnSameProcess) {
-            // Merge all sub-tasks into one
+            // Merge all sub-tasks into one — PRESERVE worker data (Fix A2)
             const totalQuantity = updatedSubTasks.reduce((sum, st) => sum + st.Quantity, 0);
+            const sourceWithWorker = updatedSubTasks.find(st => st.Worker_ID);
+            const sourceWithHelpers = updatedSubTasks.find(st => st.Helpers?.length);
+            const allPausePeriods = updatedSubTasks.flatMap(st => st.Pause_Periods || []);
+
             finalSubTasks = [{
                 SubTask_ID: `st-merged-${Date.now()}`,
                 Quantity: totalQuantity,
                 Current_Process: updatedSubTasks[0].Current_Process,
                 Status: updatedSubTasks[0].Status,
-                Started_At: updatedSubTasks.find(st => st.Started_At)?.Started_At
+                Started_At: updatedSubTasks.find(st => st.Started_At)?.Started_At,
+                Worker_ID: sourceWithWorker?.Worker_ID,
+                Worker_Name: sourceWithWorker?.Worker_Name,
+                Helpers: sourceWithHelpers?.Helpers || [],
+                ...(allPausePeriods.length > 0 ? { Pause_Periods: allPausePeriods } : {}),
             }];
-            console.log('Auto-merged sub-tasks into one:', totalQuantity);
+            console.log('Auto-merged sub-tasks into one:', totalQuantity, 'worker:', sourceWithWorker?.Worker_Name || 'none');
         }
 
         const sanitizedSubTasks = JSON.parse(JSON.stringify(finalSubTasks));

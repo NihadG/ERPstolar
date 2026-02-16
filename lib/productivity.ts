@@ -191,18 +191,18 @@ export async function calculateProductProfitability(
         const logsSnapshot = await getDocs(logsQuery);
         const workLogs = logsSnapshot.docs.map(doc => doc.data() as WorkLog);
 
-        // Calculate worker breakdown
-        const workerMap = new Map<string, { Name: string; Days: number; Cost: number }>();
+        // Calculate worker breakdown — PROFIT-07 FIX: use unique dates for day counting
+        const workerMap = new Map<string, { Name: string; UniqueDates: Set<string>; Cost: number }>();
 
         for (const log of workLogs) {
             const existing = workerMap.get(log.Worker_ID);
             if (existing) {
-                existing.Days += 1;
+                existing.UniqueDates.add(log.Date);
                 existing.Cost += log.Daily_Rate || 0;
             } else {
                 workerMap.set(log.Worker_ID, {
                     Name: log.Worker_Name,
-                    Days: 1,
+                    UniqueDates: new Set([log.Date]),
                     Cost: log.Daily_Rate || 0,
                 });
             }
@@ -211,7 +211,7 @@ export async function calculateProductProfitability(
         const workers = Array.from(workerMap.entries()).map(([workerId, data]) => ({
             Worker_ID: workerId,
             Name: data.Name,
-            Days: data.Days,
+            Days: data.UniqueDates.size,
             Cost: data.Cost,
         }));
 
@@ -219,10 +219,15 @@ export async function calculateProductProfitability(
         const sellingPrice = item.Product_Value || 0;
         const quantity = item.Quantity || 1;
 
-        // IMPORTANT: Fetch fresh material costs from database (not stale item.Material_Cost)
-        // Materials can change during production, so we always need current prices
-        const materials = await getProductMaterials(item.Product_ID, organizationId);
-        const materialCost = materials.reduce((sum, m) => sum + (m.Total_Price || 0), 0);
+        // PROFIT-09 FIX: For completed items, use frozen material cost
+        // For active items, fetch fresh prices so profit is accurate during production
+        let materialCost = 0;
+        if (item.Status === 'Završeno' && (item.Material_Cost || 0) > 0) {
+            materialCost = item.Material_Cost || 0;
+        } else {
+            const materials = await getProductMaterials(item.Product_ID, organizationId);
+            materialCost = materials.reduce((sum, m) => sum + (m.Total_Price || 0), 0);
+        }
 
         const transportShare = item.Transport_Share || 0;
         const servicesTotal = item.Services_Total || 0;
@@ -367,6 +372,10 @@ export async function calculateWorkOrderProfitability(
 /**
  * Get earnings summary for all workers in a period
  * For dashboard widget
+ * 
+ * PROFIT-07 FIX: Uses unique dates for day counting instead of counting each
+ * work log as 1 day. A worker with 3 items creates 3 logs per day, but that's
+ * still 1 working day.
  */
 export async function getWorkerEarningsSummary(
     dateFrom: string,
@@ -401,18 +410,18 @@ export async function getWorkerEarningsSummary(
             log.Date >= dateFrom && log.Date <= dateTo
         );
 
-        // Group by worker
-        const workerMap = new Map<string, { Name: string; Days: number; TotalRate: number }>();
+        // Group by worker — track unique dates for accurate day counting
+        const workerMap = new Map<string, { Name: string; UniqueDates: Set<string>; TotalRate: number }>();
 
         for (const log of logs) {
             const existing = workerMap.get(log.Worker_ID);
             if (existing) {
-                existing.Days += 1;
+                existing.UniqueDates.add(log.Date);
                 existing.TotalRate += log.Daily_Rate || 0;
             } else {
                 workerMap.set(log.Worker_ID, {
                     Name: log.Worker_Name,
-                    Days: 1,
+                    UniqueDates: new Set([log.Date]),
                     TotalRate: log.Daily_Rate || 0,
                 });
             }
@@ -422,8 +431,8 @@ export async function getWorkerEarningsSummary(
             .map(([workerId, data]) => ({
                 Worker_ID: workerId,
                 Worker_Name: data.Name,
-                Days: data.Days,
-                Avg_Daily_Rate: data.Days > 0 ? Math.round((data.TotalRate / data.Days) * 100) / 100 : 0,
+                Days: data.UniqueDates.size,
+                Avg_Daily_Rate: data.UniqueDates.size > 0 ? Math.round((data.TotalRate / data.UniqueDates.size) * 100) / 100 : 0,
                 Total_Earnings: data.TotalRate,
             }))
             .sort((a, b) => b.Total_Earnings - a.Total_Earnings);
@@ -447,8 +456,9 @@ export async function getWorkerEarningsSummary(
  * Enhanced: Also excludes holidays from the 'holidays' Firestore collection
  */
 async function countWorkingDays(dateFrom: string, dateTo: string): Promise<number> {
-    const start = new Date(dateFrom);
-    const end = new Date(dateTo);
+    // PROFIT-10 FIX: Parse as noon to avoid timezone midnight edge cases
+    const start = new Date(dateFrom + 'T12:00:00');
+    const end = new Date(dateTo + 'T12:00:00');
 
     // Fetch holidays for the date range
     let holidayDates = new Set<string>();

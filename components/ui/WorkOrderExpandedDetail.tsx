@@ -1,6 +1,8 @@
 import { useState, useEffect, useMemo } from 'react';
-import { Calendar, Play, CheckCircle, Clock, Edit2, Plus, X, TrendingUp } from 'lucide-react';
-import type { WorkOrder, Worker, WorkOrderItem, ItemProcessStatus, SubTask } from '@/lib/types';
+import { Calendar, Play, CheckCircle, Clock, Edit2, Plus, X, TrendingUp, AlertTriangle } from 'lucide-react';
+import { useData } from '@/context/DataContext';
+import { checkMissingAttendanceHistory } from '@/lib/attendance';
+import type { WorkOrder, Worker, WorkOrderItem, ItemProcessStatus, SubTask, WorkLog } from '@/lib/types';
 import ProcessKanbanBoard from './ProcessKanbanBoard';
 import ProfitOverviewWidget from './ProfitOverviewWidget';
 import PlanVsActualCard from './PlanVsActualCard';
@@ -14,6 +16,7 @@ import {
     moveSubTask,
     canWorkerStartProcess
 } from '@/lib/attendance';
+import { getWorkLogsForWorkOrder } from '@/lib/database';
 
 interface WorkOrderExpandedDetailProps {
     workOrder: WorkOrder;
@@ -41,6 +44,31 @@ export default function WorkOrderExpandedDetail({
     const [editingProcesses, setEditingProcesses] = useState(false);
     const [localProcesses, setLocalProcesses] = useState<string[]>([]);
     const [newProcessName, setNewProcessName] = useState('');
+    const { organizationId } = useData();
+
+    // S16: Missing Attendance State
+    const [missingAttendance, setMissingAttendance] = useState<{ count: number; details: string[] } | null>(null);
+
+    // Workers Timeline State
+    const [workLogs, setWorkLogs] = useState<WorkLog[]>([]);
+    const [showTimeline, setShowTimeline] = useState(false);
+
+    useEffect(() => {
+        if (workOrder?.Work_Order_ID && organizationId && workOrder.Started_At) {
+            checkMissingAttendanceHistory(workOrder.Work_Order_ID, organizationId)
+                .then(result => {
+                    if (result.missingDays > 0) {
+                        setMissingAttendance({
+                            count: result.missingDays,
+                            details: result.details.map(d => `${d.workerName} (${d.date})`)
+                        });
+                    } else {
+                        setMissingAttendance(null);
+                    }
+                })
+                .catch(err => console.error('Error checking attendance:', err));
+        }
+    }, [workOrder?.Work_Order_ID, organizationId, workOrder?.Started_At]);
 
     // Initialize local state
     useEffect(() => {
@@ -64,7 +92,72 @@ export default function WorkOrderExpandedDetail({
         } else {
             setLocalProcesses(PRODUCTION_STEPS);
         }
+
+        // #2 Fix: Auto-merge legacy process names from item data
+        // If items have process names that don't exist in the column list, add them
+        if (workOrder?.items) {
+            const columnProcesses = new Set(workOrder?.Production_Steps || PRODUCTION_STEPS);
+            const missingProcesses: string[] = [];
+            workOrder.items.forEach(item => {
+                item.Processes?.forEach(p => {
+                    if (p.Process_Name && !columnProcesses.has(p.Process_Name) && !missingProcesses.includes(p.Process_Name)) {
+                        missingProcesses.push(p.Process_Name);
+                    }
+                });
+                item.SubTasks?.forEach(st => {
+                    if (st.Current_Process && !columnProcesses.has(st.Current_Process) && !missingProcesses.includes(st.Current_Process)) {
+                        missingProcesses.push(st.Current_Process);
+                    }
+                });
+            });
+            if (missingProcesses.length > 0) {
+                setLocalProcesses(prev => [...prev, ...missingProcesses]);
+            }
+        }
     }, [workOrder]);
+
+    // Fetch work logs for timeline
+    useEffect(() => {
+        if (workOrder?.Work_Order_ID && organizationId && showTimeline) {
+            getWorkLogsForWorkOrder(workOrder.Work_Order_ID, organizationId)
+                .then(logs => setWorkLogs(logs))
+                .catch(err => console.error('Error fetching work logs:', err));
+        }
+    }, [workOrder?.Work_Order_ID, organizationId, showTimeline]);
+
+    // Process work logs into timeline data
+    const timelineData = useMemo(() => {
+        if (workLogs.length === 0) return null;
+
+        // Get unique dates (sorted)
+        const dates = Array.from(new Set(workLogs.map(l => l.Date))).sort();
+        // Get unique workers
+        const workerMap = new Map<string, { name: string; totalCost: number; totalDays: number }>();
+        workLogs.forEach(l => {
+            const existing = workerMap.get(l.Worker_ID) || { name: l.Worker_Name, totalCost: 0, totalDays: 0 };
+            existing.totalCost += l.Daily_Rate;
+            existing.totalDays += 1;
+            workerMap.set(l.Worker_ID, existing);
+        });
+
+        // Build grid: worker -> date -> process entries
+        const grid = new Map<string, Map<string, { process: string; rate: number; originalRate?: number; splitFactor?: number }[]>>();
+        workLogs.forEach(l => {
+            if (!grid.has(l.Worker_ID)) grid.set(l.Worker_ID, new Map());
+            const workerGrid = grid.get(l.Worker_ID)!;
+            if (!workerGrid.has(l.Date)) workerGrid.set(l.Date, []);
+            workerGrid.get(l.Date)!.push({
+                process: l.Process_Name || '—',
+                rate: l.Daily_Rate,
+                originalRate: l.Original_Daily_Rate,
+                splitFactor: l.Split_Factor
+            });
+        });
+
+        const totalLaborCost = Array.from(workerMap.values()).reduce((s, w) => s + w.totalCost, 0);
+
+        return { dates, workerMap, grid, totalLaborCost };
+    }, [workLogs]);
 
     // Format helpers
     const formatDate = (dateStr: string | undefined): string => {
@@ -225,6 +318,24 @@ export default function WorkOrderExpandedDetail({
 
     return (
         <div className="wo-detail-v2">
+            {/* S16: Attendance Warning */}
+            {missingAttendance && (
+                <div className="mb-4 bg-amber-50 border border-amber-200 rounded-lg p-3 flex items-start gap-3">
+                    <AlertTriangle className="w-5 h-5 text-amber-600 mt-0.5" />
+                    <div>
+                        <h4 className="font-medium text-amber-900 text-sm">Nedostaje evidencija rada ({missingAttendance.count} dana)</h4>
+                        <p className="text-amber-700 text-xs mt-1">
+                            Pronađene su rupe u sihtarici. Profit možda nije tačan.
+                            <br />
+                            <span className="opacity-75">
+                                {missingAttendance.details.slice(0, 3).join(', ')}
+                                {missingAttendance.details.length > 3 && ` i još ${missingAttendance.details.length - 3}...`}
+                            </span>
+                        </p>
+                    </div>
+                </div>
+            )}
+
             {/* === HEADER: DATES === */}
             <div className="header-bar">
                 <div className="date-chips">
@@ -380,6 +491,111 @@ export default function WorkOrderExpandedDetail({
                     });
                 }}
             />
+
+            {/* === WORKERS TIMELINE === */}
+            <div className="timeline-section">
+                <button
+                    className="timeline-toggle"
+                    onClick={() => setShowTimeline(!showTimeline)}
+                >
+                    <span className="material-icons-round" style={{ fontSize: '16px' }}>
+                        {showTimeline ? 'expand_less' : 'schedule'}
+                    </span>
+                    <span>Radnici — Timeline</span>
+                    {workLogs.length > 0 && (
+                        <span className="timeline-badge">{workLogs.length} zapisa</span>
+                    )}
+                </button>
+
+                {showTimeline && timelineData && timelineData.dates.length > 0 && (
+                    <div className="timeline-content">
+                        <div className="timeline-summary">
+                            <div className="summary-stat">
+                                <span className="stat-label">Ukupan trošak rada</span>
+                                <span className="stat-value">{timelineData.totalLaborCost.toFixed(2)} KM</span>
+                            </div>
+                            <div className="summary-stat">
+                                <span className="stat-label">Radnika</span>
+                                <span className="stat-value">{timelineData.workerMap.size}</span>
+                            </div>
+                            <div className="summary-stat">
+                                <span className="stat-label">Dana</span>
+                                <span className="stat-value">{timelineData.dates.length}</span>
+                            </div>
+                        </div>
+
+                        <div className="timeline-grid-wrapper">
+                            <table className="timeline-grid">
+                                <thead>
+                                    <tr>
+                                        <th className="worker-col">Radnik</th>
+                                        {timelineData.dates.map(date => {
+                                            const d = new Date(date + 'T00:00:00');
+                                            const dayName = d.toLocaleDateString('bs-BA', { weekday: 'short' });
+                                            const dayNum = d.getDate();
+                                            const month = d.getMonth() + 1;
+                                            return (
+                                                <th key={date} className="date-col">
+                                                    <div className="date-header">
+                                                        <span className="day-name">{dayName}</span>
+                                                        <span className="day-num">{dayNum}.{month}.</span>
+                                                    </div>
+                                                </th>
+                                            );
+                                        })}
+                                        <th className="total-col">Ukupno</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {Array.from(timelineData.workerMap.entries()).map(([workerId, info]) => (
+                                        <tr key={workerId}>
+                                            <td className="worker-cell">
+                                                <span className="worker-name-tl">{info.name}</span>
+                                                <span className="worker-days">{info.totalDays} dana</span>
+                                            </td>
+                                            {timelineData.dates.map(date => {
+                                                const entries = timelineData.grid.get(workerId)?.get(date);
+                                                return (
+                                                    <td key={date} className={`grid-cell ${entries ? 'has-data' : ''}`}>
+                                                        {entries ? (
+                                                            <div className="cell-content" title={
+                                                                entries[0].originalRate && entries[0].splitFactor && entries[0].splitFactor > 1
+                                                                    ? `Original: ${entries[0].originalRate} KM ÷ ${entries[0].splitFactor} stavki`
+                                                                    : undefined
+                                                            }>
+                                                                <span className="cell-process">{entries[0].process}</span>
+                                                                <span className="cell-rate">
+                                                                    {entries.reduce((s, e) => s + e.rate, 0).toFixed(0)}
+                                                                    {entries[0].splitFactor && entries[0].splitFactor > 1 && (
+                                                                        <span className="split-indicator">
+                                                                            ÷{entries[0].splitFactor}
+                                                                        </span>
+                                                                    )}
+                                                                </span>
+                                                            </div>
+                                                        ) : (
+                                                            <span className="cell-empty">—</span>
+                                                        )}
+                                                    </td>
+                                                );
+                                            })}
+                                            <td className="total-cell">
+                                                <strong>{info.totalCost.toFixed(2)} KM</strong>
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                )}
+
+                {showTimeline && (!timelineData || timelineData.dates.length === 0) && (
+                    <div className="timeline-empty">
+                        Nema zabilježenih radnih dana. Radnici dobijaju zapise kada se popuni sihtarica.
+                    </div>
+                )}
+            </div>
 
             <style jsx>{`
                 .wo-detail-v2 {
@@ -590,6 +806,225 @@ export default function WorkOrderExpandedDetail({
                 @media (max-width: 768px) {
                     .wo-detail-v2 { padding: 10px; }
                     .header-bar { flex-direction: column; align-items: flex-start; }
+                }
+
+                /* Timeline Section */
+                .timeline-section {
+                    margin-top: 16px;
+                }
+
+                .timeline-toggle {
+                    display: flex;
+                    align-items: center;
+                    gap: 8px;
+                    width: 100%;
+                    padding: 12px 16px;
+                    background: white;
+                    border: 1px solid #e2e8f0;
+                    border-radius: 12px;
+                    font-size: 14px;
+                    font-weight: 600;
+                    color: #334155;
+                    cursor: pointer;
+                    transition: all 0.2s;
+                }
+
+                .timeline-toggle:hover {
+                    background: #f8fafc;
+                    border-color: #cbd5e1;
+                }
+
+                .timeline-badge {
+                    margin-left: auto;
+                    padding: 2px 10px;
+                    background: #eff6ff;
+                    color: #3b82f6;
+                    border-radius: 12px;
+                    font-size: 11px;
+                    font-weight: 600;
+                }
+
+                .timeline-content {
+                    margin-top: 8px;
+                    background: white;
+                    border-radius: 12px;
+                    border: 1px solid #e2e8f0;
+                    overflow: hidden;
+                }
+
+                .timeline-summary {
+                    display: flex;
+                    gap: 24px;
+                    padding: 14px 16px;
+                    border-bottom: 1px solid #f1f5f9;
+                    background: linear-gradient(135deg, #f8fafc, #f1f5f9);
+                }
+
+                .summary-stat {
+                    display: flex;
+                    flex-direction: column;
+                    gap: 2px;
+                }
+
+                .stat-label {
+                    font-size: 11px;
+                    color: #94a3b8;
+                    font-weight: 500;
+                    text-transform: uppercase;
+                    letter-spacing: 0.5px;
+                }
+
+                .stat-value {
+                    font-size: 16px;
+                    font-weight: 700;
+                    color: #1e293b;
+                }
+
+                .timeline-grid-wrapper {
+                    overflow-x: auto;
+                    -webkit-overflow-scrolling: touch;
+                }
+
+                .timeline-grid {
+                    width: 100%;
+                    min-width: max-content;
+                    border-collapse: collapse;
+                    font-size: 12px;
+                }
+
+                .timeline-grid th {
+                    padding: 8px 6px;
+                    text-align: center;
+                    font-weight: 600;
+                    color: #64748b;
+                    border-bottom: 2px solid #e2e8f0;
+                    white-space: nowrap;
+                    position: sticky;
+                    top: 0;
+                    background: white;
+                }
+
+                .worker-col {
+                    text-align: left !important;
+                    min-width: 120px;
+                    position: sticky;
+                    left: 0;
+                    z-index: 2;
+                    background: white !important;
+                }
+
+                .date-col {
+                    min-width: 60px;
+                }
+
+                .date-header {
+                    display: flex;
+                    flex-direction: column;
+                    align-items: center;
+                    gap: 1px;
+                }
+
+                .day-name {
+                    font-size: 10px;
+                    color: #94a3b8;
+                    font-weight: 500;
+                    text-transform: uppercase;
+                }
+
+                .day-num {
+                    font-size: 12px;
+                    font-weight: 600;
+                    color: #475569;
+                }
+
+                .total-col {
+                    min-width: 90px;
+                    text-align: right !important;
+                }
+
+                .timeline-grid td {
+                    padding: 6px;
+                    text-align: center;
+                    border-bottom: 1px solid #f1f5f9;
+                }
+
+                .worker-cell {
+                    display: flex;
+                    flex-direction: column;
+                    gap: 1px;
+                    text-align: left !important;
+                    position: sticky;
+                    left: 0;
+                    background: white;
+                    z-index: 1;
+                    padding-left: 12px !important;
+                }
+
+                .worker-name-tl {
+                    font-weight: 600;
+                    color: #1e293b;
+                    font-size: 12px;
+                }
+
+                .worker-days {
+                    font-size: 10px;
+                    color: #94a3b8;
+                }
+
+                .grid-cell.has-data {
+                    background: rgba(59, 130, 246, 0.04);
+                }
+
+                .cell-content {
+                    display: flex;
+                    flex-direction: column;
+                    align-items: center;
+                    gap: 1px;
+                }
+
+                .cell-process {
+                    font-size: 10px;
+                    color: #3b82f6;
+                    font-weight: 500;
+                    max-width: 60px;
+                    overflow: hidden;
+                    text-overflow: ellipsis;
+                    white-space: nowrap;
+                }
+
+                .cell-rate {
+                    font-size: 10px;
+                    color: #64748b;
+                }
+
+                .split-indicator {
+                    font-size: 8px;
+                    color: #f59e0b;
+                    font-weight: 600;
+                    margin-left: 2px;
+                }
+
+                .cell-empty {
+                    color: #e2e8f0;
+                    font-size: 10px;
+                }
+
+                .total-cell {
+                    text-align: right !important;
+                    padding-right: 12px !important;
+                    font-size: 12px;
+                    color: #1e293b;
+                }
+
+                .timeline-empty {
+                    padding: 24px;
+                    text-align: center;
+                    color: #94a3b8;
+                    font-size: 13px;
+                    background: white;
+                    border-radius: 12px;
+                    border: 1px solid #e2e8f0;
+                    margin-top: 8px;
                 }
             `}</style>
         </div>

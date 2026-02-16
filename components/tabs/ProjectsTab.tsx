@@ -647,7 +647,7 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
         // 2. U proizvodnji - any production step in progress
         // 3. Završeno - production complete
 
-        const waitingStatuses = ['Na čekanju', 'Materijali naručeni', 'Materijali spremni', 'Čeka proizvodnju'];
+        const waitingStatuses = ['Na čekanju', 'Materijali naručeni', 'Materijali spremni'];
         const inProductionStatuses = ['Rezanje', 'Kantiranje', 'Bušenje', 'Sklapanje', 'U proizvodnji'];
         const completedStatuses = ['Spremno', 'Instalirano', 'Završeno'];
 

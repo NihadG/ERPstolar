@@ -227,11 +227,13 @@ export interface Notification {
     organizationId: string;
     title: string;
     message: string;
-    type: 'info' | 'success' | 'warning' | 'error';
+    type: 'info' | 'success' | 'warning' | 'error' | 'material-warning';
     createdAt: string;
     read: boolean;
     relatedId?: string;
     link?: string;
+    targetTab?: string;
+    metadata?: Record<string, unknown>;
 }
 
 // ============================================
@@ -447,7 +449,9 @@ export interface WorkLog {
     // Radnik
     Worker_ID: string;
     Worker_Name: string;
-    Daily_Rate: number;              // Snimljena dnevnica tog dana
+    Daily_Rate: number;              // Snimljena dnevnica tog dana (može biti split)
+    Original_Daily_Rate?: number;    // Originalna dnevnica prije splita
+    Split_Factor?: number;           // Na koliko stavki je dnevnica podijeljena
     Hours_Worked: number;            // Default 8, može biti manje/više
 
     // Veza sa proizvodom
@@ -480,7 +484,7 @@ export const MATERIAL_CATEGORIES = ['Ploče i trake', 'Okovi', 'Staklo', 'Alu vr
 export const WORKER_ROLES = ['Rezač', 'Kantiranje', 'Bušenje', 'Montaža', 'Instalacija', 'Opći'];
 export const WORKER_TYPES = ['Glavni', 'Pomoćnik'] as const;
 export const WORK_ORDER_STATUSES = ['Na čekanju', 'U toku', 'Završeno', 'Otkazano'];
-export const PRODUCTION_STEPS = ['Rezanje', 'Kantiranje', 'Bušenje', 'Sklapanje'];
+export const PRODUCTION_STEPS = ['Priprema', 'Sklapanje', 'Farbanje', 'Montaža'];
 export const ATTENDANCE_STATUSES = ['Prisutan', 'Odsutan', 'Bolovanje', 'Odmor', 'Teren', 'Vikend', 'Praznik'] as const;
 export const PROCESS_STATUSES = ['Na čekanju', 'U toku', 'Odloženo', 'Završeno'] as const;
 

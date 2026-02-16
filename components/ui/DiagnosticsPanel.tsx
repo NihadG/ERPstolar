@@ -21,7 +21,7 @@ const VALID_PRODUCT_STATUSES = [
     'Rezanje', 'Kantiranje', 'Bušenje', 'Sklapanje',
     'Spremno', 'Instalirano'
 ];
-const LEGACY_STATUSES = ['Čeka proizvodnju', 'U proizvodnji', 'Završeno'];
+const LEGACY_STATUSES = ['U proizvodnji', 'Završeno'];
 
 export default function DiagnosticsPanel({ appState, onClose }: DiagnosticsPanelProps) {
     const [issues, setIssues] = useState<DiagnosticIssue[]>([]);
