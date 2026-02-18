@@ -295,6 +295,9 @@ export interface WorkOrder {
     Production_Steps: string[];
     Notes: string;
 
+    // TIP NALOGA
+    Work_Order_Type?: WorkOrderType;  // Default: 'Proizvodnja'
+
     // DATUMI (agregat iz items)
     Started_At?: string;           // Najraniji Started_At iz items
     Completed_Date?: string;       // Legacy field (use Completed_At)
@@ -407,6 +410,9 @@ export interface WorkOrderItem {
     // NAPOMENE
     Notes?: string;
 
+    // MONTAŽA — veza sa originalnim proizvodnim nalogom
+    Source_Work_Order_ID?: string;  // ID originalnog proizvodnog naloga (za montažne naloge)
+
     // LEGACY - Za backward compatibility, brišemo kasnije
     Process_Assignments?: Record<string, any>;
 
@@ -476,7 +482,7 @@ export interface WorkLog {
 // ============================================
 
 export const PROJECT_STATUSES = ['Nacrt', 'Ponuđeno', 'Odobreno', 'U proizvodnji', 'Završeno', 'Otkazano'];
-export const PRODUCT_STATUSES = ['Na čekanju', 'Materijali naručeni', 'Materijali spremni', 'Rezanje', 'Kantiranje', 'Bušenje', 'Sklapanje', 'Spremno', 'Instalirano'];
+export const PRODUCT_STATUSES = ['Na čekanju', 'Materijali naručeni', 'Materijali spremni', 'Rezanje', 'Kantiranje', 'Bušenje', 'Sklapanje', 'Spremno', 'Transport', 'Montaža', 'Čišćenje', 'Primopredaja', 'Instalirano'];
 export const MATERIAL_STATUSES = ['Nije naručeno', 'Na stanju', 'Naručeno', 'Primljeno'];
 export const OFFER_STATUSES = ['Nacrt', 'Poslano', 'Prihvaćeno', 'Odbijeno', 'Isteklo', 'Revidirano'];
 export const ORDER_STATUSES = ['Nacrt', 'Poslano', 'Potvrđeno', 'Isporučeno', 'Primljeno', 'Djelomično'];
@@ -485,6 +491,9 @@ export const WORKER_ROLES = ['Rezač', 'Kantiranje', 'Bušenje', 'Montaža', 'In
 export const WORKER_TYPES = ['Glavni', 'Pomoćnik'] as const;
 export const WORK_ORDER_STATUSES = ['Na čekanju', 'U toku', 'Završeno', 'Otkazano'];
 export const PRODUCTION_STEPS = ['Priprema', 'Sklapanje', 'Farbanje', 'Montaža'];
+export type WorkOrderType = 'Proizvodnja' | 'Montaža';
+export const WORK_ORDER_TYPES: WorkOrderType[] = ['Proizvodnja', 'Montaža'];
+export const MONTAZA_STEPS = ['Transport', 'Montaža', 'Čišćenje', 'Primopredaja'];
 export const ATTENDANCE_STATUSES = ['Prisutan', 'Odsutan', 'Bolovanje', 'Odmor', 'Teren', 'Vikend', 'Praznik'] as const;
 export const PROCESS_STATUSES = ['Na čekanju', 'U toku', 'Odloženo', 'Završeno'] as const;
 

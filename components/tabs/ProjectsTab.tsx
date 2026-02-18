@@ -642,13 +642,15 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
     function getProductStatus(product: Product): string {
         const status = product.Status || 'Na čekanju';
 
-        // Simplify to 3 states for display in Projects tab:
+        // Simplify to 4 states for display in Projects tab:
         // 1. Na čekanju - waiting for production
         // 2. U proizvodnji - any production step in progress
-        // 3. Završeno - production complete
+        // 3. U montaži - any montaža step in progress
+        // 4. Završeno - fully complete (Spremno for non-montaža, Instalirano for montaža)
 
         const waitingStatuses = ['Na čekanju', 'Materijali naručeni', 'Materijali spremni'];
         const inProductionStatuses = ['Rezanje', 'Kantiranje', 'Bušenje', 'Sklapanje', 'U proizvodnji'];
+        const inMontazaStatuses = ['Transport', 'Montaža', 'Čišćenje', 'Primopredaja'];
         const completedStatuses = ['Spremno', 'Instalirano', 'Završeno'];
 
         if (waitingStatuses.includes(status)) {
@@ -656,6 +658,9 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
         }
         if (inProductionStatuses.includes(status)) {
             return 'U proizvodnji';
+        }
+        if (inMontazaStatuses.includes(status)) {
+            return 'U montaži';
         }
         if (completedStatuses.includes(status)) {
             return 'Završeno';

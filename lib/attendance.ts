@@ -1554,7 +1554,8 @@ export async function recalculateWorkOrder(workOrderId: string): Promise<void> {
         }
 
         // SAFETY CHECK: If calculated total is 0 but existing WO has value, preserve it (Legacy Data Protection)
-        if (totalValue === 0 && (workOrder.Total_Value || 0) > 0) {
+        // Skip for Montaža WOs which intentionally carry 0 Total_Value
+        if (totalValue === 0 && (workOrder.Total_Value || 0) > 0 && workOrder.Work_Order_Type !== 'Montaža') {
             totalValue = workOrder.Total_Value || 0;
         }
 
@@ -1660,6 +1661,20 @@ async function syncProductStatuses(items: any[]): Promise<void> {
     console.log('=== syncProductStatuses START ===');
     console.log('Items received:', items.length);
 
+    // Status hierarchy — higher index = more advanced in lifecycle
+    // CRITICAL: syncProductStatuses must NEVER regress a product to a lower status
+    const STATUS_HIERARCHY = [
+        'Na čekanju', 'Materijali naručeni', 'Materijali spremni',
+        'Rezanje', 'Kantiranje', 'Bušenje', 'Sklapanje', 'Spremno',
+        'Transport', 'Montaža', 'Čišćenje', 'Primopredaja', 'Instalirano'
+    ];
+
+    // Map: last completed process → final product status
+    const FINAL_STATUS_MAP: Record<string, string> = {
+        'Sklapanje': 'Spremno',
+        'Primopredaja': 'Instalirano',
+    };
+
     try {
         const firestore = getDb();
 
@@ -1678,18 +1693,29 @@ async function syncProductStatuses(items: any[]): Promise<void> {
                 projectUpdates.set(item.Project_ID, new Map());
             }
 
-            // Determine product status based on work order item status
-            // NOTE: Mapping WO item status to PRODUCT_STATUSES:
-            // - 'Na čekanju' (WO) → 'Na čekanju' (Product) - Waiting in production queue
-            // - 'U toku' (WO) → Keep current process status or 'Sklapanje' - Active production
-            // - 'Završeno' (WO) → 'Spremno' (Product) - Production complete, ready for install
+            // Determine product status based on work order item processes
             let productStatus = 'Na čekanju';
             if (item.Status === 'Završeno') {
-                productStatus = 'Spremno';
+                // Check the LAST process name to determine final product status
+                const lastProcess = item.Processes?.[item.Processes.length - 1];
+                const lastProcessName = lastProcess?.Process_Name || '';
+                productStatus = FINAL_STATUS_MAP[lastProcessName] || 'Spremno';
             } else if (item.Status === 'U toku') {
-                // Try to get current process from item, fallback to 'Sklapanje'
+                // Find the active (U toku) process for intermediate status
                 const activeProcess = item.Processes?.find((p: any) => p.Status === 'U toku');
-                productStatus = activeProcess?.Process_Name || 'Sklapanje';
+                if (activeProcess) {
+                    productStatus = activeProcess.Process_Name;
+                } else {
+                    // All prior completed, find first waiting process
+                    const nextWaiting = item.Processes?.find((p: any) => p.Status === 'Na čekanju');
+                    if (nextWaiting) {
+                        // Product is at the last completed process stage
+                        const lastCompleted = [...(item.Processes || [])].reverse().find((p: any) => p.Status === 'Završeno');
+                        productStatus = lastCompleted?.Process_Name || 'Sklapanje';
+                    } else {
+                        productStatus = 'Sklapanje';
+                    }
+                }
             }
 
             console.log(`  -> Mapped status: "${item.Status}" => "${productStatus}"`);
@@ -1717,16 +1743,24 @@ async function syncProductStatuses(items: any[]): Promise<void> {
                 continue;
             }
 
-            // Update each product document individually
+            // Update each product document — NEVER REGRESS status
             let updatedCount = 0;
             for (const productDoc of productsSnap.docs) {
                 const productData = productDoc.data();
                 const newStatus = productStatuses.get(productData.Product_ID);
 
-                if (newStatus && productData.Status !== newStatus) {
+                if (!newStatus) continue;
+
+                const currentRank = STATUS_HIERARCHY.indexOf(productData.Status || '');
+                const newRank = STATUS_HIERARCHY.indexOf(newStatus);
+
+                // Only update if new status is HIGHER in hierarchy (never regress)
+                if (newRank > currentRank) {
                     console.log(`    -> Updating product "${productData.Name || productData.Product_ID}": "${productData.Status}" => "${newStatus}"`);
                     await updateDoc(productDoc.ref, { Status: newStatus });
                     updatedCount++;
+                } else if (newStatus !== productData.Status) {
+                    console.log(`    -> SKIPPED regression for "${productData.Name || productData.Product_ID}": "${productData.Status}" => "${newStatus}" (would be regression)`);
                 }
             }
 
@@ -1742,8 +1776,8 @@ async function syncProductStatuses(items: any[]): Promise<void> {
 
 /**
  * Sync project status based on products and work orders
- * - 'U proizvodnji' if any product is in active production
- * - 'Završeno' if ALL products are Spremno or Instalirano
+ * - 'U proizvodnji' if any product is in active production or montaža
+ * - 'Završeno' if ALL products are truly complete (Instalirano, or Spremno with no pending montaža)
  */
 export async function syncProjectStatus(projectId: string, organizationId?: string): Promise<void> {
     try {
@@ -1789,14 +1823,57 @@ export async function syncProjectStatus(projectId: string, organizationId?: stri
 
         const products = productsSnap.docs.map(d => d.data());
 
-        // Check product statuses
-        const completedStatuses = ['Spremno', 'Instalirano'];
-        const waitingStatuses = ['Na čekanju', 'Materijali naručeni', 'Materijali spremni'];
+        // Check for active montaža WOs that reference products in this project
+        // This prevents premature "Završeno" when products are Spremno but montaža is pending
+        let montazaProductIds = new Set<string>();
+        try {
+            const montazaWoQuery = query(
+                collection(firestore, COLLECTIONS.WORK_ORDERS),
+                where('Work_Order_Type', '==', 'Montaža'),
+                where('Status', 'in', ['Na čekanju', 'U toku'])
+            );
+            const montazaSnap = await getDocs(montazaWoQuery);
+            for (const mDoc of montazaSnap.docs) {
+                const mData = mDoc.data();
+                // Query work order items for this montaža WO
+                const itemsQuery = query(
+                    collection(firestore, COLLECTIONS.WORK_ORDER_ITEMS),
+                    where('Work_Order_ID', '==', mData.Work_Order_ID),
+                    where('Project_ID', '==', projectId)
+                );
+                const itemsSnap = await getDocs(itemsQuery);
+                itemsSnap.docs.forEach(d => {
+                    const itemData = d.data();
+                    if (itemData.Product_ID) montazaProductIds.add(itemData.Product_ID);
+                });
+            }
+        } catch (err) {
+            console.warn('syncProjectStatus: Error checking montaža WOs:', err);
+        }
 
-        const allComplete = products.every(p => completedStatuses.includes(p.Status || ''));
-        const anyInProduction = products.some(p =>
-            !waitingStatuses.includes(p.Status || '') && !completedStatuses.includes(p.Status || '')
-        );
+        // Statuses
+        const waitingStatuses = ['Na čekanju', 'Materijali naručeni', 'Materijali spremni'];
+        const montazaActiveStatuses = ['Transport', 'Montaža', 'Čišćenje', 'Primopredaja'];
+
+        // Per-product completion check
+        const allComplete = products.every(p => {
+            const status = p.Status || '';
+            // Products in active montaža WOs: only 'Instalirano' is truly complete
+            if (montazaProductIds.has(p.Product_ID || '')) {
+                return status === 'Instalirano';
+            }
+            // Products NOT in montaža: Spremno or Instalirano is complete
+            return status === 'Spremno' || status === 'Instalirano';
+        });
+
+        // Any product actively in production or montaža?
+        const anyInProduction = products.some(p => {
+            const status = p.Status || '';
+            return !waitingStatuses.includes(status)
+                && status !== 'Spremno'
+                && status !== 'Instalirano'
+                || montazaActiveStatuses.includes(status);
+        });
 
         let newStatus = project.Status;
 

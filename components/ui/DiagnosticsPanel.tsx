@@ -19,7 +19,7 @@ interface DiagnosticsPanelProps {
 const VALID_PRODUCT_STATUSES = [
     'Na čekanju', 'Materijali naručeni', 'Materijali spremni',
     'Rezanje', 'Kantiranje', 'Bušenje', 'Sklapanje',
-    'Spremno', 'Instalirano'
+    'Spremno', 'Transport', 'Montaža', 'Čišćenje', 'Primopredaja', 'Instalirano'
 ];
 const LEGACY_STATUSES = ['U proizvodnji', 'Završeno'];
 
@@ -61,7 +61,7 @@ export default function DiagnosticsPanel({ appState, onClose }: DiagnosticsPanel
                 const product = project?.products?.find((p: Product) => p.Product_ID === item.Product_ID);
 
                 if (product) {
-                    if (item.Status === 'Završeno' && !['Spremno', 'Instalirano'].includes(product.Status || '')) {
+                    if (item.Status === 'Završeno' && !['Spremno', 'Instalirano', 'Transport', 'Montaža', 'Čišćenje', 'Primopredaja'].includes(product.Status || '')) {
                         foundIssues.push({
                             category: 'Sync Mismatch',
                             severity: 'HIGH',
@@ -87,8 +87,10 @@ export default function DiagnosticsPanel({ appState, onClose }: DiagnosticsPanel
             if (wo.Status === 'Završeno') {
                 const calculatedTotalValue = (wo.items || []).reduce((sum: number, i: WorkOrderItem) => sum + (i.Product_Value || 0), 0);
                 const calculatedMaterialCost = (wo.items || []).reduce((sum: number, i: WorkOrderItem) => sum + (i.Material_Cost || 0), 0);
+                const calculatedTransport = (wo.items || []).reduce((sum: number, i: WorkOrderItem) => sum + ((i as any).Transport_Share || 0), 0);
+                const calculatedServices = (wo.items || []).reduce((sum: number, i: WorkOrderItem) => sum + ((i as any).Services_Total || 0), 0);
                 const calculatedLaborCost = (wo.items || []).reduce((sum: number, i: WorkOrderItem) => sum + (i.Actual_Labor_Cost || 0), 0);
-                const calculatedProfit = calculatedTotalValue - calculatedMaterialCost - calculatedLaborCost;
+                const calculatedProfit = calculatedTotalValue - calculatedMaterialCost - calculatedTransport - calculatedServices - calculatedLaborCost;
 
                 if (wo.Profit !== undefined && Math.abs(wo.Profit - calculatedProfit) > 1) {
                     foundIssues.push({

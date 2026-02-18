@@ -3013,13 +3013,14 @@ export async function deleteAluDoorItemsByMaterial(productMaterialId: string): P
 // WORK ORDERS CRUD (Multi-tenancy enabled)
 // ============================================
 
-export function generateWorkOrderNumber(): string {
+export function generateWorkOrderNumber(type?: 'Proizvodnja' | 'Montaža'): string {
     const now = new Date();
     const year = now.getFullYear();
     const month = String(now.getMonth() + 1).padStart(2, '0');
     const day = String(now.getDate()).padStart(2, '0');
     const random = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
-    return `RN-${year}${month}${day}-${random}`;
+    const prefix = type === 'Montaža' ? 'MN' : 'RN';
+    return `${prefix}-${year}${month}${day}-${random}`;
 }
 
 export async function getWorkOrders(organizationId: string): Promise<WorkOrder[]> {
@@ -3075,6 +3076,7 @@ export async function getWorkOrder(workOrderId: string, organizationId: string):
 }
 
 export async function createWorkOrder(data: {
+    Work_Order_Type?: 'Proizvodnja' | 'Montaža';
     Production_Steps: string[];
     Due_Date?: string;
     Notes?: string;
@@ -3092,6 +3094,7 @@ export async function createWorkOrder(data: {
         Product_Value?: number;
         Material_Cost?: number;
         Planned_Labor_Cost?: number;
+        Source_Work_Order_ID?: string;
         Process_Assignments?: Record<string, {
             Worker_ID?: string;
             Worker_Name?: string;
@@ -3106,7 +3109,7 @@ export async function createWorkOrder(data: {
 
     try {
         const workOrderId = generateUUID();
-        const workOrderNumber = generateWorkOrderNumber();
+        const workOrderNumber = generateWorkOrderNumber(data.Work_Order_Type);
 
         const workOrder: WorkOrder = {
             Work_Order_ID: workOrderId,
@@ -3117,6 +3120,7 @@ export async function createWorkOrder(data: {
             Status: 'Na čekanju',
             Production_Steps: data.Production_Steps,
             Notes: data.Notes || '',
+            Work_Order_Type: data.Work_Order_Type || 'Proizvodnja',
             ...(data.Total_Value && { Total_Value: data.Total_Value }),
             ...(data.Material_Cost && { Material_Cost: data.Material_Cost }),
             ...(data.Labor_Cost && { Labor_Cost: data.Labor_Cost }),
@@ -3164,6 +3168,7 @@ export async function createWorkOrder(data: {
                 Product_Value: item.Product_Value ?? 0,
                 Material_Cost: item.Material_Cost ?? 0,
                 Planned_Labor_Cost: item.Planned_Labor_Cost ?? 0,
+                ...(item.Source_Work_Order_ID && { Source_Work_Order_ID: item.Source_Work_Order_ID }),
             };
             await addDoc(collection(db, COLLECTIONS.WORK_ORDER_ITEMS), workOrderItem);
         }
@@ -3290,12 +3295,29 @@ export async function completeWorkOrderItem(itemId: string, productionStep: stri
             'Kantiranje': 'Bušenje',
             'Bušenje': 'Sklapanje',
             'Sklapanje': 'Spremno',
+            // Montažni procesi
+            'Transport': 'Montaža',
+            'Montaža': 'Čišćenje',
+            'Čišćenje': 'Primopredaja',
+            'Primopredaja': 'Instalirano',
         };
         const nextStatus = statusMap[productionStep] || 'Spremno';
 
+        // ANTI-REGRESSION: Never write a lower status than current
+        const STATUS_HIERARCHY = [
+            'Na čekanju', 'Materijali naručeni', 'Materijali spremni',
+            'Rezanje', 'Kantiranje', 'Bušenje', 'Sklapanje', 'Spremno',
+            'Transport', 'Montaža', 'Čišćenje', 'Primopredaja', 'Instalirano'
+        ];
+
         // Update standalone PRODUCTS collection
         if (!productSnap.empty) {
-            await updateDoc(productSnap.docs[0].ref, { Status: nextStatus });
+            const currentStatus = productSnap.docs[0].data().Status || '';
+            const currentRank = STATUS_HIERARCHY.indexOf(currentStatus);
+            const newRank = STATUS_HIERARCHY.indexOf(nextStatus);
+            if (newRank > currentRank) {
+                await updateDoc(productSnap.docs[0].ref, { Status: nextStatus });
+            }
         }
 
         // Also update embedded products array in PROJECTS document
@@ -3309,9 +3331,12 @@ export async function completeWorkOrderItem(itemId: string, productionStep: stri
             if (!projectSnap.empty) {
                 const projectData = projectSnap.docs[0].data();
                 const products = projectData.products || [];
-                const updatedProducts = products.map((p: any) =>
-                    p.Product_ID === item.Product_ID ? { ...p, Status: nextStatus } : p
-                );
+                const updatedProducts = products.map((p: any) => {
+                    if (p.Product_ID !== item.Product_ID) return p;
+                    const curRank = STATUS_HIERARCHY.indexOf(p.Status || '');
+                    const nRank = STATUS_HIERARCHY.indexOf(nextStatus);
+                    return nRank > curRank ? { ...p, Status: nextStatus } : p;
+                });
                 await updateDoc(projectSnap.docs[0].ref, { products: updatedProducts });
             }
 
@@ -3346,7 +3371,21 @@ export async function deleteWorkOrder(
         const itemsSnap = await getDocs(itemsQ);
 
         // Determine new product status based on action
-        const newProductStatus = productAction === 'completed' ? 'Spremno' : 'Na čekanju';
+        // MONTAŽA FIX: If this is a montaža WO, products should ALWAYS revert to 'Spremno'
+        // because they were already production-complete before montaža started
+        let newProductStatus = productAction === 'completed' ? 'Spremno' : 'Na čekanju';
+
+        // Check if this is a montaža WO
+        const woCheckQ = query(
+            collection(db, COLLECTIONS.WORK_ORDERS),
+            where('Work_Order_ID', '==', workOrderId),
+            where('Organization_ID', '==', organizationId)
+        );
+        const woCheckSnap = await getDocs(woCheckQ);
+        const isMontazaWO = !woCheckSnap.empty && woCheckSnap.docs[0].data().Work_Order_Type === 'Montaža';
+        if (isMontazaWO) {
+            newProductStatus = 'Spremno'; // Always revert to Spremno for montaža
+        }
 
         // Update product statuses in projects before deleting
         const projectUpdates = new Map<string, Map<string, string>>();

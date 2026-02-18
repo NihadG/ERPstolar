@@ -3,14 +3,15 @@
 import { useState, useMemo, useEffect } from 'react';
 import type { WorkOrder, Project, Worker } from '@/lib/types';
 import { createWorkOrder, deleteWorkOrder, startWorkOrder, getWorkOrder, updateWorkOrder } from '@/lib/database';
-import { repairAllProductStatuses, validateWorkOrderProfitData, checkMissingAttendanceForActiveOrders } from '@/lib/attendance';
+import { repairAllProductStatuses, validateWorkOrderProfitData, checkMissingAttendanceForActiveOrders, recalculateWorkOrder, startWorkOrderItem, completeWorkOrderItem, assignWorkersToItem, syncProjectStatus } from '@/lib/attendance';
 import { useData } from '@/context/DataContext';
 import Modal from '@/components/ui/Modal';
 import WorkOrderExpandedDetail from '@/components/ui/WorkOrderExpandedDetail';
 import WorkOrderPrintTemplate from '@/components/ui/WorkOrderPrintTemplate';
 import ProfitOverviewWidget from '@/components/ui/ProfitOverviewWidget';
 import PlanVsActualCard from '@/components/ui/PlanVsActualCard';
-import { WORK_ORDER_STATUSES, PRODUCTION_STEPS } from '@/lib/types';
+import { WORK_ORDER_STATUSES, PRODUCTION_STEPS, MONTAZA_STEPS } from '@/lib/types';
+import type { WorkOrderType } from '@/lib/types';
 import MobileWorkOrdersView from './mobile/MobileWorkOrdersView';
 
 interface ProductionTabProps {
@@ -33,6 +34,7 @@ interface ProductSelection {
     Status: string;
     assignments: Record<string, string>;
     helperAssignments: Record<string, string[]>;
+    Source_Work_Order_ID?: string; // For montaža: links to original production order
 }
 
 export default function ProductionTab({ workOrders, projects, workers, onRefresh, showToast }: ProductionTabProps) {
@@ -254,6 +256,7 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
     // Create Modal State
     const [createModal, setCreateModal] = useState(false);
     const [activeStep, setActiveStep] = useState(0); // 0: Projects, 1: Products, 2: Processes, 3: Details
+    const [wizardMode, setWizardMode] = useState<'production' | 'montaza'>('production');
 
     // Data State
     const [selectedProjectIds, setSelectedProjectIds] = useState<string[]>([]);
@@ -330,6 +333,53 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
         return products;
     }, [projects, selectedProjectIds, productSearch, workOrders]);
 
+    // Montaža: Eligible products are those with status 'Spremno' across ALL projects
+    const eligibleMontazaProducts = useMemo(() => {
+        let products: any[] = [];
+        projects.forEach(project => {
+            (project.products || []).forEach(product => {
+                if (product.Status !== 'Spremno') return;
+
+                // Check not already in an active montaža work order
+                const alreadyInMontaza = workOrders.some(wo =>
+                    wo.Work_Order_Type === 'Montaža' &&
+                    wo.Status !== 'Otkazano' &&
+                    wo.Status !== 'Završeno' &&
+                    wo.items?.some(item => item.Product_ID === product.Product_ID)
+                );
+                if (alreadyInMontaza) return;
+
+                // Find source work order for this product
+                const sourceWO = workOrders.find(wo =>
+                    wo.Work_Order_Type !== 'Montaža' &&
+                    wo.items?.some(item => item.Product_ID === product.Product_ID)
+                );
+
+                products.push({
+                    Product_ID: product.Product_ID,
+                    Product_Name: product.Name,
+                    Project_ID: project.Project_ID,
+                    Project_Name: project.Client_Name,
+                    Quantity: product.Quantity || 1,
+                    TotalQuantity: product.Quantity || 1,
+                    UsedQuantity: 0,
+                    Status: product.Status,
+                    Source_Work_Order_ID: sourceWO?.Work_Order_ID,
+                    Source_Work_Order_Number: sourceWO?.Work_Order_Number,
+                });
+            });
+        });
+
+        if (productSearch.trim()) {
+            const search = productSearch.toLowerCase();
+            products = products.filter(p =>
+                p.Product_Name.toLowerCase().includes(search) ||
+                p.Project_Name.toLowerCase().includes(search)
+            );
+        }
+        return products;
+    }, [projects, productSearch, workOrders]);
+
     function getStatusClass(status: string): string {
         return 'status-' + status.toLowerCase().replace(/\s+/g, '-').replace(/č/g, 'c').replace(/ć/g, 'c').replace(/š/g, 's').replace(/ž/g, 'z').replace(/đ/g, 'd');
     }
@@ -340,6 +390,7 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
     }
 
     function openCreateModal() {
+        setWizardMode('production');
         setSelectedProcesses(['Rezanje', 'Kantiranje', 'Bušenje', 'Sklapanje']);
         setSelectedProducts([]);
         setDueDate('');
@@ -350,23 +401,50 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
         setCreateModal(true);
     }
 
-    // Step Logic
-    const steps = [
+    function openMontazaModal() {
+        setWizardMode('montaza');
+        setSelectedProcesses([...MONTAZA_STEPS]);
+        setSelectedProducts([]);
+        setDueDate('');
+        setNotes('');
+        setProductSearch('');
+        setSelectedProjectIds([]);
+        setActiveStep(0);  // Step 0 = Odabir Spremnih proizvoda
+        setCreateModal(true);
+    }
+
+    // Step Logic — montaža has 3 steps (no project selection), production has 4
+    const montazaSteps = [
+        { id: 0, title: 'Proizvodi', subtitle: 'Odaberite spremne proizvode' },
+        { id: 1, title: 'Procesi', subtitle: 'Definišite procese montaže' },
+        { id: 2, title: 'Dodjela', subtitle: 'Raspored radnika' }
+    ];
+
+    const productionSteps = [
         { id: 0, title: 'Projekti', subtitle: 'Odaberite projekat' },
         { id: 1, title: 'Proizvodi', subtitle: 'Odaberite proizvode' },
         { id: 2, title: 'Procesi', subtitle: 'Definišite procese' },
         { id: 3, title: 'Dodjela', subtitle: 'Raspored radnika' }
     ];
 
+    const steps = wizardMode === 'montaza' ? montazaSteps : productionSteps;
+    const lastStep = steps[steps.length - 1].id;
+
     const canGoNext = useMemo(() => {
+        if (wizardMode === 'montaza') {
+            if (activeStep === 0) return selectedProducts.length > 0;
+            if (activeStep === 1) return selectedProcesses.length > 0;
+            return true;
+        }
+        // Production mode
         if (activeStep === 0) return selectedProjectIds.length > 0;
         if (activeStep === 1) return selectedProducts.length > 0;
         if (activeStep === 2) return selectedProcesses.length > 0;
         return true;
-    }, [activeStep, selectedProjectIds, selectedProducts, selectedProcesses]);
+    }, [activeStep, selectedProjectIds, selectedProducts, selectedProcesses, wizardMode]);
 
     function handleNext() {
-        if (activeStep < 3 && canGoNext) setActiveStep(activeStep + 1);
+        if (activeStep < lastStep && canGoNext) setActiveStep(activeStep + 1);
     }
 
     function handleBack() {
@@ -513,37 +591,41 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
         }
 
         // Calculate Total_Value and Material_Cost from products
+        // MONTAŽA FIX: Skip financial accumulation for montaža — only labor costs matter
         let totalValue = 0;
         let materialCost = 0;
         let totalTransport = 0;
         let totalServices = 0;
+        const isMontazaMode = wizardMode === 'montaza';
 
-        selectedProducts.forEach(p => {
-            // Get product data from project
-            const project = projects.find(proj => proj.Project_ID === p.Project_ID);
-            const product = project?.products?.find(prod => prod.Product_ID === p.Product_ID);
+        if (!isMontazaMode) {
+            selectedProducts.forEach(p => {
+                // Get product data from project
+                const project = projects.find(proj => proj.Project_ID === p.Project_ID);
+                const product = project?.products?.find(prod => prod.Product_ID === p.Product_ID);
 
-            // Get offer product for selling price
-            const offer = project?.offers?.find(o => o.Status === 'Prihvaćeno');
-            const offerProduct = offer?.products?.find(op => op.Product_ID === p.Product_ID);
+                // Get offer product for selling price
+                const offer = project?.offers?.find(o => o.Status === 'Prihvaćeno');
+                const offerProduct = offer?.products?.find(op => op.Product_ID === p.Product_ID);
 
-            // Calculate value (Selling_Price × quantity ratio)
-            const qtyRatio = p.Work_Order_Quantity / p.Quantity;
-            if (offerProduct?.Selling_Price) {
-                totalValue += offerProduct.Selling_Price * p.Work_Order_Quantity;
-            }
+                // Calculate value (Selling_Price × quantity ratio)
+                const qtyRatio = p.Work_Order_Quantity / p.Quantity;
+                if (offerProduct?.Selling_Price) {
+                    totalValue += offerProduct.Selling_Price * p.Work_Order_Quantity;
+                }
 
-            // Transport and services from offer
-            totalTransport += offerProduct?.Transport_Share || 0;
-            totalServices += (offerProduct?.extras || []).reduce((s: number, e: any) => s + (e.Total || 0), 0);
+                // Transport and services from offer
+                totalTransport += offerProduct?.Transport_Share || 0;
+                totalServices += (offerProduct?.extras || []).reduce((s: number, e: any) => s + (e.Total || 0), 0);
 
-            // Calculate material cost from product materials
-            if (product?.materials) {
-                const productMaterialCost = product.materials.reduce((sum, m) =>
-                    sum + (m.Unit_Price * m.Quantity), 0);
-                materialCost += productMaterialCost * qtyRatio;
-            }
-        });
+                // Calculate material cost from product materials
+                if (product?.materials) {
+                    const productMaterialCost = product.materials.reduce((sum, m) =>
+                        sum + (m.Unit_Price * m.Quantity), 0);
+                    materialCost += productMaterialCost * qtyRatio;
+                }
+            });
+        }
 
         const items = selectedProducts.map(p => {
             // Get offer product for Product_Value
@@ -568,15 +650,14 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                 Project_Name: p.Project_Name,
                 Quantity: p.Work_Order_Quantity,
                 Total_Product_Quantity: p.Quantity,
-                Product_Value: offerProduct?.Selling_Price ? offerProduct.Selling_Price * p.Work_Order_Quantity : undefined,
-                Material_Cost: itemMaterialCost > 0 ? itemMaterialCost : undefined,
-                // GAP-1 FIX: Carry Transport_Share and Services_Total from offer
-                Transport_Share: offerProduct?.Transport_Share || 0,
-                Services_Total: (offerProduct?.extras || []).reduce((s: number, e: any) => s + (e.Total || 0), 0),
-                // GAP-3 FIX: Carry Planned_Labor_Cost from offer (Workers × Days × Rate)
-                Planned_Labor_Cost: offerProduct
+                // MONTAŽA FIX: Zero out financial fields — revenue/costs already on production WO
+                Product_Value: isMontazaMode ? 0 : (offerProduct?.Selling_Price ? offerProduct.Selling_Price * p.Work_Order_Quantity : undefined),
+                Material_Cost: isMontazaMode ? 0 : (itemMaterialCost > 0 ? itemMaterialCost : undefined),
+                Transport_Share: isMontazaMode ? 0 : (offerProduct?.Transport_Share || 0),
+                Services_Total: isMontazaMode ? 0 : (offerProduct?.extras || []).reduce((s: number, e: any) => s + (e.Total || 0), 0),
+                Planned_Labor_Cost: isMontazaMode ? 0 : (offerProduct
                     ? (offerProduct.Labor_Workers || 1) * (offerProduct.Labor_Days || 0) * (offerProduct.Labor_Daily_Rate || 0)
-                    : undefined,
+                    : undefined),
                 Processes: selectedProcesses.map(proc => {
                     const workerId = p.assignments[proc];
                     const worker = workers.find(w => w.Worker_ID === workerId);
@@ -596,6 +677,8 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                 }),
                 // Legacy support but simplified
                 Process_Assignments: {},
+                // Montaža: link back to source production work order
+                ...(p.Source_Work_Order_ID && { Source_Work_Order_ID: p.Source_Work_Order_ID }),
             };
         });
 
@@ -609,13 +692,14 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
         const profitMargin = totalValue > 0 ? (profit / totalValue) * 100 : 0;
 
         const result = await createWorkOrder({
+            Work_Order_Type: wizardMode === 'montaza' ? 'Montaža' : 'Proizvodnja',
             Production_Steps: selectedProcesses,
             Due_Date: dueDate,
             Notes: notes,
-            Total_Value: totalValue > 0 ? totalValue : undefined,
-            Material_Cost: materialCost > 0 ? materialCost : undefined,
-            Profit: profit > 0 ? profit : undefined,
-            Profit_Margin: profitMargin > 0 ? profitMargin : undefined,
+            Total_Value: isMontazaMode ? 0 : (totalValue > 0 ? totalValue : undefined),
+            Material_Cost: isMontazaMode ? 0 : (materialCost > 0 ? materialCost : undefined),
+            Profit: isMontazaMode ? 0 : (profit > 0 ? profit : undefined),
+            Profit_Margin: isMontazaMode ? 0 : (profitMargin > 0 ? profitMargin : undefined),
             items: items as any,
         }, organizationId || '');
 
@@ -841,14 +925,19 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
 
         const statusDetails = getStatusDetails(wo.Status);
 
+        const isMontaza = wo.Work_Order_Type === 'Montaža';
+
         return (
             <div key={wo.Work_Order_ID} className={`project-card ${isExpanded ? 'active' : ''}`}
                 style={{
-                    background: `linear-gradient(90deg, ${statusDetails.color}33 0%, transparent 200px), white`,
+                    background: isMontaza
+                        ? `linear-gradient(90deg, #00C7BE33 0%, transparent 200px), white`
+                        : `linear-gradient(90deg, ${statusDetails.color}33 0%, transparent 200px), white`,
                     position: 'relative',
                     overflow: 'hidden',
-                    border: 'none', // Remove the thin frame
-                    boxShadow: '0 4px 20px rgba(0, 0, 0, 0.08)' // Slightly enhance shadow to maintain definition
+                    border: 'none',
+                    boxShadow: '0 4px 20px rgba(0, 0, 0, 0.08)',
+                    borderLeft: isMontaza ? '4px solid #00C7BE' : undefined,
                 }}>
                 <div className="project-header" onClick={() => toggleWorkOrder(wo.Work_Order_ID)}>
                     <button className={`expand-btn ${isExpanded ? 'expanded' : ''}`}>
@@ -878,6 +967,27 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                                     <span className="material-icons-round" style={{ fontSize: '12px' }}>{statusDetails.icon}</span>
                                     {wo.Status}
                                 </span>
+
+                                {isMontaza && (
+                                    <span style={{
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        gap: '3px',
+                                        fontSize: '10px',
+                                        fontWeight: 700,
+                                        padding: '2px 8px',
+                                        borderRadius: '12px',
+                                        background: 'linear-gradient(135deg, rgba(0, 199, 190, 0.15), rgba(0, 199, 190, 0.25))',
+                                        color: '#00897b',
+                                        border: '1px solid rgba(0, 199, 190, 0.3)',
+                                        textTransform: 'uppercase',
+                                        letterSpacing: '0.3px',
+                                        height: '20px'
+                                    }}>
+                                        <span className="material-icons-round" style={{ fontSize: '12px' }}>build</span>
+                                        Montaža
+                                    </span>
+                                )}
 
                                 {/* Active Groups Badge */}
                                 {(() => {
@@ -1242,6 +1352,19 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                         <span className="material-icons-round">add</span>
                         Novi Radni Nalog
                     </button>
+                    <button
+                        className="glass-btn"
+                        onClick={openMontazaModal}
+                        style={{
+                            background: 'linear-gradient(135deg, #00C7BE 0%, #00a89e 100%)',
+                            color: 'white',
+                            border: 'none',
+                            fontWeight: 600,
+                        }}
+                    >
+                        <span className="material-icons-round">build</span>
+                        Montažni Nalog
+                    </button>
                 </div>
             </div>
 
@@ -1504,7 +1627,7 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
             `}</style>
 
             {/* ========== FULL-SCREEN WIZARD MODAL ========== */}
-            <Modal isOpen={createModal} onClose={() => setCreateModal(false)} title="Novi Radni Nalog" size="fullscreen" footer={null}>
+            <Modal isOpen={createModal} onClose={() => setCreateModal(false)} title={wizardMode === 'montaza' ? 'Montažni Nalog' : 'Novi Radni Nalog'} size="fullscreen" footer={null}>
                 <div className="wizard-container">
                     {/* COMPACT HEADER WITH NAVIGATION */}
                     <div className="wizard-header">
@@ -1528,13 +1651,17 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                         </div>
 
                         <div className="header-right">
-                            {activeStep === 3 ? (
-                                <button className="btn-nav finish" onClick={handleCreateWorkOrder}>
+                            {activeStep === lastStep ? (
+                                <button className="btn-nav finish" onClick={handleCreateWorkOrder}
+                                    style={wizardMode === 'montaza' ? { background: 'linear-gradient(135deg, #00C7BE 0%, #00a89e 100%)' } : undefined}
+                                >
                                     Kreiraj
                                     <span className="material-icons-round">check</span>
                                 </button>
                             ) : (
-                                <button className="btn-nav next" onClick={handleNext} disabled={!canGoNext}>
+                                <button className="btn-nav next" onClick={handleNext} disabled={!canGoNext}
+                                    style={wizardMode === 'montaza' ? { background: 'linear-gradient(135deg, #00C7BE 0%, #00a89e 100%)' } : undefined}
+                                >
                                     Dalje
                                     <span className="material-icons-round">arrow_forward</span>
                                 </button>
@@ -1544,8 +1671,8 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
 
                     {/* CONTENT BODY - MAXIMIZED */}
                     <div className="wizard-body">
-                        {/* STEP 1: PROJECTS */}
-                        {activeStep === 0 && (
+                        {/* STEP 1: PROJECTS (Production only) */}
+                        {activeStep === 0 && wizardMode === 'production' && (
                             <div className="wizard-step step-projects">
                                 <div className="step-page-header">
                                     <h3>Odaberite projekat</h3>
@@ -1588,8 +1715,101 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                             </div>
                         )}
 
-                        {/* STEP 2: PRODUCTS */}
-                        {activeStep === 1 && (
+                        {/* MONTAŽA STEP 0: Select Spremno Products */}
+                        {activeStep === 0 && wizardMode === 'montaza' && (
+                            <div className="wizard-step step-products">
+                                <div className="step-toolbar sticky">
+                                    <div className="tb-left">
+                                        <h3 style={{ color: '#00C7BE' }}>🔧 Odaberite spremne proizvode</h3>
+                                        <span className="tb-stats">{selectedProducts.length} odabrano od {eligibleMontazaProducts.length} spremnih</span>
+                                    </div>
+                                    <div className="tb-right">
+                                        <div className="search-input">
+                                            <span className="material-icons-round">search</span>
+                                            <input placeholder="Pretraži..." value={productSearch} onChange={e => setProductSearch(e.target.value)} />
+                                        </div>
+                                        <button className="btn-text" onClick={() => {
+                                            setSelectedProducts(eligibleMontazaProducts.map((p: any) => ({
+                                                Product_ID: p.Product_ID,
+                                                Product_Name: p.Product_Name,
+                                                Project_ID: p.Project_ID,
+                                                Project_Name: p.Project_Name,
+                                                Quantity: p.Quantity,
+                                                Work_Order_Quantity: p.Quantity,
+                                                Status: p.Status,
+                                                assignments: {},
+                                                helperAssignments: {},
+                                                Unit_Price: undefined,
+                                                Material_Cost: undefined,
+                                                Source_Work_Order_ID: p.Source_Work_Order_ID,
+                                            })));
+                                        }}>Odaberi sve</button>
+                                        {selectedProducts.length > 0 && <button className="btn-text danger" onClick={() => setSelectedProducts([])}>Poništi</button>}
+                                    </div>
+                                </div>
+
+                                {eligibleMontazaProducts.length === 0 ? (
+                                    <div style={{ textAlign: 'center', padding: '60px 20px', color: 'var(--text-secondary)' }}>
+                                        <span className="material-icons-round" style={{ fontSize: '48px', opacity: 0.4, marginBottom: '12px', display: 'block' }}>inventory_2</span>
+                                        <h4>Nema spremnih proizvoda</h4>
+                                        <p style={{ fontSize: '13px', maxWidth: '400px', margin: '8px auto' }}>Proizvodi moraju imati status "Spremno" da bi bili dostupni za montažu. Završite proizvodnju najprije.</p>
+                                    </div>
+                                ) : (
+                                    <div className="wz-scroll-container">
+                                        <div className="wz-list">
+                                            {eligibleMontazaProducts.map((prod: any) => {
+                                                const isSelected = selectedProducts.some(p => p.Product_ID === prod.Product_ID);
+                                                return (
+                                                    <div key={prod.Product_ID}
+                                                        className={`wz-list-item ${isSelected ? 'selected' : ''}`}
+                                                        style={{ flexDirection: 'column', alignItems: 'stretch', gap: '8px' }}>
+                                                        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}
+                                                            onClick={() => {
+                                                                if (isSelected) {
+                                                                    setSelectedProducts(selectedProducts.filter(p => p.Product_ID !== prod.Product_ID));
+                                                                } else {
+                                                                    setSelectedProducts([...selectedProducts, {
+                                                                        Product_ID: prod.Product_ID,
+                                                                        Product_Name: prod.Product_Name,
+                                                                        Project_ID: prod.Project_ID,
+                                                                        Project_Name: prod.Project_Name,
+                                                                        Quantity: prod.Quantity,
+                                                                        Work_Order_Quantity: prod.Quantity,
+                                                                        Status: prod.Status,
+                                                                        assignments: {},
+                                                                        helperAssignments: {},
+                                                                        Unit_Price: undefined,
+                                                                        Material_Cost: undefined,
+                                                                    }]);
+                                                                }
+                                                            }}>
+                                                            <span className="material-icons-round icon-check">
+                                                                {isSelected ? 'check_box' : 'check_box_outline_blank'}
+                                                            </span>
+                                                            <div className="li-content">
+                                                                <span className="li-title">{prod.Product_Name}</span>
+                                                                <span className="li-sub">
+                                                                    {prod.Project_Name}
+                                                                    {prod.Source_Work_Order_Number && (
+                                                                        <span style={{ marginLeft: '8px', color: '#00C7BE', fontSize: '11px' }}>
+                                                                            ← {prod.Source_Work_Order_Number}
+                                                                        </span>
+                                                                    )}
+                                                                </span>
+                                                            </div>
+                                                            <span className="li-qty" style={{ background: '#e0f7f6', color: '#00897b' }}>{prod.Quantity} kom</span>
+                                                        </div>
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                        )}
+
+                        {/* STEP 2: PRODUCTS (Production only, montaža handles this in step 0) */}
+                        {activeStep === 1 && wizardMode === 'production' && (
                             <div className="wizard-step step-products">
                                 <div className="step-toolbar sticky">
                                     <div className="tb-left">
@@ -1679,8 +1899,8 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                             </div>
                         )}
 
-                        {/* STEP 3: PROCESSES */}
-                        {activeStep === 2 && (
+                        {/* STEP 3: PROCESSES (production step 2, montaža step 1) */}
+                        {((wizardMode === 'production' && activeStep === 2) || (wizardMode === 'montaza' && activeStep === 1)) && (
                             <div className="wizard-step step-processes">
                                 <div className="step-page-header text-center">
                                     <h3>Definišite procese</h3>
@@ -1702,8 +1922,8 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                             </div>
                         )}
 
-                        {/* STEP 4: DETAILS */}
-                        {activeStep === 3 && (
+                        {/* STEP 4: DETAILS & WORKERS (production step 3, montaža step 2) */}
+                        {((wizardMode === 'production' && activeStep === 3) || (wizardMode === 'montaza' && activeStep === 2)) && (
                             <div className="wizard-step step-details" onClick={(e) => {
                                 // Close dropdowns when clicking outside
                                 if (!(e.target as HTMLElement).closest('.wdd')) { setOpenDropdown(null); setWorkerSearch(''); }

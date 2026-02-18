@@ -339,6 +339,23 @@ export default function WorkOrderExpandedDetail({
             {/* === HEADER: DATES === */}
             <div className="header-bar">
                 <div className="date-chips">
+                    {workOrder.Work_Order_Type === 'Montaža' && (
+                        <div style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '6px',
+                            padding: '4px 12px',
+                            background: 'linear-gradient(135deg, rgba(0, 199, 190, 0.15), rgba(0, 199, 190, 0.25))',
+                            color: '#00897b',
+                            border: '1px solid rgba(0, 199, 190, 0.3)',
+                            borderRadius: '8px',
+                            fontSize: '12px',
+                            fontWeight: 700,
+                        }}>
+                            <span className="material-icons-round" style={{ fontSize: '14px' }}>build</span>
+                            Montažni Nalog
+                        </div>
+                    )}
                     <div className="date-chip">
                         <Calendar size={14} />
                         <span>Kreiran</span>
