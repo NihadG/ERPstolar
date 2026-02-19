@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useMemo, useRef, useEffect } from 'react';
-import type { Task, Project, Worker, Product, Material, WorkOrder, Order, TaskLink, TaskPriority, TaskCategory, ChecklistItem } from '@/lib/types';
+import type { Task, TaskProfile, Project, Worker, Product, Material, WorkOrder, Order, TaskLink, TaskPriority, TaskCategory, ChecklistItem } from '@/lib/types';
 import {
     TASK_PRIORITY_LABELS,
     TASK_STATUS_LABELS,
@@ -10,7 +10,7 @@ import {
     TASK_CATEGORIES
 } from '@/lib/types';
 import { DragDropContext, Droppable, Draggable, DropResult } from '@hello-pangea/dnd';
-import { saveTask, deleteTask, updateTaskStatus, toggleTaskChecklistItem, generateUUID } from '@/lib/database';
+import { saveTask, deleteTask, updateTaskStatus, toggleTaskChecklistItem, generateUUID, saveTaskProfile, deleteTaskProfile } from '@/lib/database';
 import './TasksTab.css';
 import {
     Plus,
@@ -47,7 +47,9 @@ import {
     Flag,
     CalendarDays,
     Printer,
-    MoreHorizontal
+    MoreHorizontal,
+    Users,
+    UserPlus
 } from 'lucide-react';
 import { useData } from '@/context/DataContext';
 import VoiceInput, { ExtractedTaskData } from '@/components/VoiceInput';
@@ -63,6 +65,7 @@ interface TasksTabProps {
     materials: Material[];
     workOrders?: WorkOrder[];
     orders?: Order[];
+    taskProfiles?: TaskProfile[];
     onRefresh: (...collections: string[]) => void;
     showToast: (message: string, type: 'success' | 'error' | 'info') => void;
     projectFilter?: string | null;  // Filter tasks by project ID
@@ -108,8 +111,28 @@ const categoryIcons: Record<TaskCategory, React.ReactNode> = {
 // MAIN COMPONENT
 // ============================================
 
-export default function TasksTab({ tasks, projects, workers, materials, workOrders = [], orders = [], onRefresh, showToast, projectFilter, onClearFilter }: TasksTabProps) {
+export default function TasksTab({ tasks, projects, workers, materials, workOrders = [], orders = [], taskProfiles = [], onRefresh, showToast, projectFilter, onClearFilter }: TasksTabProps) {
     const { organizationId } = useData();
+
+    // Profile state
+    const [selectedProfileId, setSelectedProfileId] = useState<string>('__all__');
+    const [showProfileMenu, setShowProfileMenu] = useState(false);
+    const [newProfileName, setNewProfileName] = useState('');
+    const [isCreatingProfile, setIsCreatingProfile] = useState(false);
+    const profileDropdownRef = useRef<HTMLDivElement>(null);
+
+    // Close profile dropdown on outside click
+    useEffect(() => {
+        function handleClickOutside(event: MouseEvent) {
+            if (profileDropdownRef.current && !profileDropdownRef.current.contains(event.target as Node)) {
+                setShowProfileMenu(false);
+            }
+        }
+        if (showProfileMenu) {
+            document.addEventListener('mousedown', handleClickOutside);
+            return () => document.removeEventListener('mousedown', handleClickOutside);
+        }
+    }, [showProfileMenu]);
     // State
     const [searchQuery, setSearchQuery] = useState('');
     const [filterStatus, setFilterStatus] = useState<FilterStatus>('all');
@@ -217,6 +240,12 @@ export default function TasksTab({ tasks, projects, workers, materials, workOrde
     // Filter tasks
     const filteredTasks = useMemo(() => {
         return localTasks.filter(task => { // Use localTasks instead of tasks from props
+            // Profile filter
+            if (selectedProfileId !== '__all__') {
+                if (task.Profile_ID !== selectedProfileId) return false;
+            }
+            // selectedProfileId === '__all__' shows all tasks
+
             // Project filter (from cross-tab navigation)
             if (projectFilter) {
                 const project = projects.find(p => p.Project_ID === projectFilter);
@@ -281,7 +310,7 @@ export default function TasksTab({ tasks, projects, workers, materials, workOrde
 
             return 0;
         });
-    }, [localTasks, searchQuery, filterStatus, filterPriority, filterCategory, projectFilter, projects, showCompleted]);
+    }, [localTasks, searchQuery, filterStatus, filterPriority, filterCategory, projectFilter, projects, showCompleted, selectedProfileId]);
 
     // Group tasks by status for board view (exclude reminders - they're not workflow items)
     const boardTasks = useMemo(() =>
@@ -486,11 +515,48 @@ export default function TasksTab({ tasks, projects, workers, materials, workOrde
     };
 
     const handleSaveTask = async (taskData: Partial<Task>) => {
+        // Assign profile to new tasks if a specific profile is selected
+        if (!taskData.Task_ID && selectedProfileId !== '__all__') {
+            taskData.Profile_ID = selectedProfileId;
+        }
+        // If creating on "all" view, ensure Profile_ID is empty (shared)
+        if (!taskData.Task_ID && selectedProfileId === '__all__') {
+            taskData.Profile_ID = '';
+        }
         const result = await saveTask(taskData, organizationId!);
         if (result.success) {
             showToast(result.message, 'success');
             onRefresh('tasks');
             setIsModalOpen(false);
+        } else {
+            showToast(result.message, 'error');
+        }
+    };
+
+    // Profile management handlers
+    const handleCreateProfile = async () => {
+        if (!newProfileName.trim()) return;
+        const result = await saveTaskProfile({ Name: newProfileName.trim() }, organizationId!);
+        if (result.success) {
+            showToast(result.message, 'success');
+            onRefresh('taskProfiles');
+            setNewProfileName('');
+            setIsCreatingProfile(false);
+            if (result.data) {
+                setSelectedProfileId(result.data.Profile_ID);
+            }
+        } else {
+            showToast(result.message, 'error');
+        }
+    };
+
+    const handleDeleteProfile = async (profileId: string) => {
+        if (!confirm('Obrisati ovaj profil? Svi zadaci neće biti obrisani, već prebačeni u zajedničke.')) return;
+        const result = await deleteTaskProfile(profileId, organizationId!);
+        if (result.success) {
+            showToast(result.message, 'success');
+            setSelectedProfileId('__shared__');
+            onRefresh('tasks', 'taskProfiles');
         } else {
             showToast(result.message, 'error');
         }
@@ -1106,11 +1172,81 @@ export default function TasksTab({ tasks, projects, workers, materials, workOrde
                         Zadaci
                     </h2>
                     <div className="tasks-count-wrapper">
-                        <span className="tasks-count">{tasks.length} ukupno</span>
+                        <span className="tasks-count">{filteredTasks.length} ukupno</span>
                         <button className="mobile-toggle-btn" onClick={toggleControls}>
                             {showControls ? <ChevronUp size={20} /> : <SlidersHorizontal size={20} />}
                         </button>
                     </div>
+                </div>
+
+                {/* Profile Selector */}
+                <div className="profile-selector-wrapper" ref={profileDropdownRef}>
+                    <button
+                        className={`profile-selector-btn ${showProfileMenu ? 'active' : ''}`}
+                        onClick={() => setShowProfileMenu(!showProfileMenu)}
+                    >
+                        <Users size={16} />
+                        <span>
+                            {selectedProfileId === '__all__' ? 'Svi zadaci' :
+                                taskProfiles.find(p => p.Profile_ID === selectedProfileId)?.Name || 'Svi zadaci'}
+                        </span>
+                        <ChevronDown size={14} className={`chevron ${showProfileMenu ? 'rotated' : ''}`} />
+                    </button>
+
+                    {showProfileMenu && (
+                        <div className="profile-dropdown">
+                            <button
+                                className={`profile-option ${selectedProfileId === '__all__' ? 'active' : ''}`}
+                                onClick={() => { setSelectedProfileId('__all__'); setShowProfileMenu(false); }}
+                            >
+                                <CheckSquare size={14} />
+                                <span>Svi zadaci</span>
+                            </button>
+                            {taskProfiles.length > 0 && <div className="profile-divider" />}
+                            {taskProfiles.map(profile => (
+                                <div key={profile.Profile_ID} className={`profile-option ${selectedProfileId === profile.Profile_ID ? 'active' : ''}`}>
+                                    <button
+                                        className="profile-option-main"
+                                        onClick={() => { setSelectedProfileId(profile.Profile_ID); setShowProfileMenu(false); }}
+                                    >
+                                        <User size={14} />
+                                        <span>{profile.Name}</span>
+                                    </button>
+                                    <button
+                                        className="profile-delete-btn"
+                                        onClick={(e) => { e.stopPropagation(); handleDeleteProfile(profile.Profile_ID); }}
+                                        title="Obriši profil"
+                                    >
+                                        <Trash2 size={12} />
+                                    </button>
+                                </div>
+                            ))}
+                            <div className="profile-divider" />
+                            {isCreatingProfile ? (
+                                <div className="profile-create-form">
+                                    <input
+                                        type="text"
+                                        placeholder="Ime profila..."
+                                        value={newProfileName}
+                                        onChange={(e) => setNewProfileName(e.target.value)}
+                                        onKeyDown={(e) => { if (e.key === 'Enter') handleCreateProfile(); if (e.key === 'Escape') setIsCreatingProfile(false); }}
+                                        autoFocus
+                                    />
+                                    <button className="profile-create-confirm" onClick={handleCreateProfile}>
+                                        <Check size={14} />
+                                    </button>
+                                    <button className="profile-create-cancel" onClick={() => { setIsCreatingProfile(false); setNewProfileName(''); }}>
+                                        <X size={14} />
+                                    </button>
+                                </div>
+                            ) : (
+                                <button className="profile-add-btn" onClick={() => setIsCreatingProfile(true)}>
+                                    <UserPlus size={14} />
+                                    <span>Novi profil</span>
+                                </button>
+                            )}
+                        </div>
+                    )}
                 </div>
 
                 <button className="btn-primary-tasks" onClick={handleCreateTask}>

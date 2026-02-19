@@ -1505,9 +1505,14 @@ export async function recalculateWorkOrder(workOrderId: string): Promise<void> {
             // PROFIT-09 FIX: For completed items, use FROZEN material cost (don't re-fetch)
             // This prevents retroactive profit changes when material prices change after completion.
             // Active items still get fresh prices so profit is accurate during production.
+            // PRICE-MODAL FIX: If Material_Cost was manually set (Material_Cost_Source === 'manual'),
+            // preserve the stored value — user explicitly entered this price.
             let itemMaterialCost = 0;
             if (item.Status === 'Završeno' && (item.Material_Cost || 0) > 0) {
                 // Completed: use stored/frozen cost
+                itemMaterialCost = item.Material_Cost || 0;
+            } else if ((item as any).Material_Cost_Source === 'manual' && (item.Material_Cost || 0) > 0) {
+                // Manually set via PriceEditModal: preserve user's value
                 itemMaterialCost = item.Material_Cost || 0;
             } else if (item.Product_ID && workOrder.Organization_ID) {
                 // Active: fetch fresh material costs

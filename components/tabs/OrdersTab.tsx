@@ -5,7 +5,6 @@ import type { Order, Supplier, Project, ProductMaterial, OrderItem } from '@/lib
 import { createOrder, deleteOrder, updateOrderStatus, markOrderSent, markMaterialsReceived, getOrder, deleteOrderItemsByIds, updateOrderItem, recalculateOrderTotal } from '@/lib/database';
 import { useData } from '@/context/DataContext';
 import { generateOrderPDF, generatePDFFromHTML, type OrderPDFData } from '@/lib/pdfGenerator';
-import { getOrgSettings } from '@/lib/database';
 import { DropdownMenu } from '@/components/ui/DropdownMenu';
 import Modal from '@/components/ui/Modal';
 import { OrderWizardModal } from './OrderWizardModal';
@@ -72,45 +71,9 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
         orders.find(o => o.Order_ID === expandedOrderId) || null
         , [orders, expandedOrderId]);
 
-    // Company Info (read from Settings page)
-    const [companyInfo, setCompanyInfo] = useState({
-        name: 'Vaša Firma',
-        address: 'Ulica i broj, Grad',
-        phone: '+387 XX XXX XXX',
-        email: 'info@firma.ba',
-        idNumber: '',
-        pdvNumber: '',
-        website: '',
-        logoBase64: '',
-        hideNameWhenLogo: false,
-        bankAccounts: [] as { bankName: string; accountNumber: string }[]
-    });
+    // Company Info (centralized in DataContext)
+    const { companyInfo } = useData();
 
-    // Load company info from Firestore (with localStorage fallback)
-    useMemo(() => {
-        if (typeof window !== 'undefined' && organizationId) {
-            getOrgSettings(organizationId).then(firestoreData => {
-                if (firestoreData?.companyInfo) {
-                    setCompanyInfo(prev => ({ ...prev, ...firestoreData.companyInfo }));
-                    localStorage.setItem(`companyInfo_${organizationId}`, JSON.stringify(firestoreData.companyInfo));
-                    return;
-                }
-                const saved = localStorage.getItem(`companyInfo_${organizationId}`);
-                if (saved) {
-                    try {
-                        setCompanyInfo(prev => ({ ...prev, ...JSON.parse(saved) }));
-                    } catch (e) { /* ignore */ }
-                }
-            }).catch(() => {
-                const saved = localStorage.getItem(`companyInfo_${organizationId}`);
-                if (saved) {
-                    try {
-                        setCompanyInfo(prev => ({ ...prev, ...JSON.parse(saved) }));
-                    } catch (e) { /* ignore */ }
-                }
-            });
-        }
-    }, [organizationId]);
 
     // Handle pending order materials from Overview tab
     useEffect(() => {
@@ -1143,12 +1106,11 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
                     </div>
                     <div className="header-actions">
                         <button
-                            className={`glass-btn ${isFiltersOpen ? 'active' : ''}`}
+                            className={`filter-toggle ${isFiltersOpen ? 'active' : ''}`}
                             onClick={() => setIsFiltersOpen(!isFiltersOpen)}
                         >
-                            <span className="material-icons-round">filter_list</span>
-                            <span>{isFiltersOpen ? 'Sakrij pretragu' : 'Pretraga i filteri'}</span>
-                            <span className="material-icons-round">{isFiltersOpen ? 'expand_less' : 'expand_more'}</span>
+                            <span className="material-icons-round">tune</span>
+                            <span>{isFiltersOpen ? 'Zatvori filtere' : 'Filteri'}</span>
                         </button>
                         <button className="glass-btn glass-btn-primary" onClick={openWizard}>
                             <span className="material-icons-round">add</span>
@@ -1338,13 +1300,19 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
 
                                                     <div className="order-info-group">
                                                         <div className="order-top-row">
-                                                            <span className="order-id-text">{order.Name || order.Order_Number}</span>
-                                                            {order.Name && <span style={{ fontSize: '11px', color: '#9ca3af', fontWeight: 400 }}>#{order.Order_Number}</span>}
+                                                            <span className="order-id-text">{order.Name || `#${order.Order_Number}`}</span>
+                                                            {order.Name && <span style={{ fontSize: '11px', color: '#9ca3af', fontWeight: 500 }}>#{order.Order_Number}</span>}
                                                             {groupBy !== 'project' && projectName !== 'N/A' && (
-                                                                <span className="order-project-text">{projectName}</span>
+                                                                <>
+                                                                    <span className="meta-separator">•</span>
+                                                                    <span className="order-project-text">{projectName}</span>
+                                                                </>
                                                             )}
                                                             {groupBy !== 'supplier' && (
-                                                                <span className="order-supplier-text">{order.Supplier_Name}</span>
+                                                                <>
+                                                                    <span className="meta-separator">•</span>
+                                                                    <span className="order-supplier-text">{order.Supplier_Name}</span>
+                                                                </>
                                                             )}
                                                         </div>
                                                         <div className="order-meta-info">
@@ -1405,8 +1373,8 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
                                                                 onClick={handleQuickReceiveAll}
                                                                 title="Primi sve"
                                                             >
-                                                                <span className="material-icons-round">check_circle</span>
-                                                                <span className="btn-text-responsive">Primi sve</span>
+                                                                <span className="material-icons-round" style={{ fontSize: 18 }}>check_circle</span>
+                                                                <span className="btn-text-responsive" style={{ marginLeft: 6 }}>Primi sve</span>
                                                             </button>
                                                         )}
 
@@ -1466,7 +1434,7 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
                                                                 onClick={() => {
                                                                     if (!isReceived) toggleItemSelection(item.ID, !isSelected);
                                                                 }}
-                                                                style={{ cursor: 'pointer', borderColor: isSelected ? 'var(--accent)' : undefined }}
+                                                                style={{ background: isSelected ? '#eff6ff' : undefined }}
                                                             >
                                                                 <div className="product-header">
                                                                     {!isReceived ? (

@@ -10,6 +10,8 @@ import WorkOrderExpandedDetail from '@/components/ui/WorkOrderExpandedDetail';
 import WorkOrderPrintTemplate from '@/components/ui/WorkOrderPrintTemplate';
 import ProfitOverviewWidget from '@/components/ui/ProfitOverviewWidget';
 import PlanVsActualCard from '@/components/ui/PlanVsActualCard';
+import PriceEditModal from '@/components/ui/PriceEditModal';
+import AttendanceFixModal from '@/components/ui/AttendanceFixModal';
 import { WORK_ORDER_STATUSES, PRODUCTION_STEPS, MONTAZA_STEPS } from '@/lib/types';
 import type { WorkOrderType } from '@/lib/types';
 import MobileWorkOrdersView from './mobile/MobileWorkOrdersView';
@@ -51,6 +53,8 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
         totalAssigned: number;
     } | null>(null);
     const [attendanceBannerDismissed, setAttendanceBannerDismissed] = useState(false);
+    const [priceEditWorkOrder, setPriceEditWorkOrder] = useState<WorkOrder | null>(null);
+    const [attendanceFixWorkOrder, setAttendanceFixWorkOrder] = useState<WorkOrder | null>(null);
 
     // Check attendance on mount and when workOrders change
     useEffect(() => {
@@ -930,14 +934,8 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
         return (
             <div key={wo.Work_Order_ID} className={`project-card ${isExpanded ? 'active' : ''}`}
                 style={{
-                    background: isMontaza
-                        ? `linear-gradient(90deg, #00C7BE33 0%, transparent 200px), white`
-                        : `linear-gradient(90deg, ${statusDetails.color}33 0%, transparent 200px), white`,
                     position: 'relative',
-                    overflow: 'hidden',
-                    border: 'none',
-                    boxShadow: '0 4px 20px rgba(0, 0, 0, 0.08)',
-                    borderLeft: isMontaza ? '4px solid #00C7BE' : undefined,
+                    borderLeft: `3px solid ${isMontaza ? '#00C7BE' : statusDetails.color}`,
                 }}>
                 <div className="project-header" onClick={() => toggleWorkOrder(wo.Work_Order_ID)}>
                     <button className={`expand-btn ${isExpanded ? 'expanded' : ''}`}>
@@ -946,115 +944,112 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
 
                     <div className="project-main-info">
                         <div className="project-title-section">
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                <div className="project-name">{wo.Name || wo.Work_Order_Number}</div>
-                                {wo.Name && <span style={{ fontSize: '11px', color: '#9ca3af', fontWeight: 400 }}>#{wo.Work_Order_Number}</span>}
-                                <span style={{
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    gap: '3px',
-                                    fontSize: '10px',
-                                    fontWeight: 600,
-                                    padding: '2px 8px',
-                                    borderRadius: '12px',
-                                    background: statusDetails.bg,
-                                    color: statusDetails.color,
-                                    border: `1px solid ${statusDetails.color}30`,
-                                    textTransform: 'uppercase',
-                                    letterSpacing: '0.3px',
-                                    height: '20px'
-                                }}>
-                                    <span className="material-icons-round" style={{ fontSize: '12px' }}>{statusDetails.icon}</span>
-                                    {wo.Status}
-                                </span>
-
-                                {isMontaza && (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                                    <div className="project-name">{wo.Name || `#${wo.Work_Order_Number}`}</div>
+                                    {wo.Name && <span style={{ fontSize: '12px', color: '#9ca3af', fontWeight: 500 }}>#{wo.Work_Order_Number}</span>}
+                                    {wo.items?.[0]?.Project_Name && (
+                                        <>
+                                            <span style={{ color: '#d1d5db' }}>•</span>
+                                            <span style={{ fontSize: '13px', color: '#4b5563', fontWeight: 500 }}>
+                                                {wo.items[0].Project_Name}
+                                            </span>
+                                        </>
+                                    )}
+                                </div>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
                                     <span style={{
                                         display: 'flex',
                                         alignItems: 'center',
-                                        gap: '3px',
-                                        fontSize: '10px',
-                                        fontWeight: 700,
-                                        padding: '2px 8px',
-                                        borderRadius: '12px',
-                                        background: 'linear-gradient(135deg, rgba(0, 199, 190, 0.15), rgba(0, 199, 190, 0.25))',
-                                        color: '#00897b',
-                                        border: '1px solid rgba(0, 199, 190, 0.3)',
-                                        textTransform: 'uppercase',
-                                        letterSpacing: '0.3px',
-                                        height: '20px'
+                                        gap: '4px',
+                                        fontSize: '12px',
+                                        fontWeight: 600,
+                                        color: statusDetails.color,
                                     }}>
-                                        <span className="material-icons-round" style={{ fontSize: '12px' }}>build</span>
-                                        Montaža
+                                        <span className="material-icons-round" style={{ fontSize: '14px' }}>{statusDetails.icon}</span>
+                                        {wo.Status}
                                     </span>
-                                )}
-
-                                {/* Active Groups Badge */}
-                                {(() => {
-                                    let activeGroups = 0;
-                                    wo.items?.forEach(item => {
-                                        if (item.SubTasks && item.SubTasks.length > 0) {
-                                            // Count subtasks that are In Progress
-                                            activeGroups += item.SubTasks.filter(st => st.Status === 'U toku').length;
-                                        } else if (item.Status === 'U toku') {
-                                            // Item itself is active
-                                            activeGroups += 1;
-                                        }
-                                    });
-
-                                    if (activeGroups > 0) {
-                                        return (
+                                    {isMontaza && (
+                                        <>
+                                            <span style={{ color: '#d1d5db' }}>•</span>
                                             <span style={{
                                                 display: 'flex',
                                                 alignItems: 'center',
-                                                gap: '3px',
-                                                fontSize: '10px',
-                                                fontWeight: 500,
-                                                padding: '2px 8px',
-                                                borderRadius: '12px',
-                                                background: '#f3f4f6',
-                                                color: '#4b5563',
-                                                border: '1px solid #e5e7eb',
-                                                height: '20px',
-                                                marginLeft: '4px'
-                                            }} title={`${activeGroups} aktivnih grupa u proizvodnji`}>
-                                                <span className="material-icons-round" style={{ fontSize: '12px' }}>layers</span>
-                                                {activeGroups}
+                                                gap: '4px',
+                                                fontSize: '12px',
+                                                fontWeight: 700,
+                                                color: '#00897b',
+                                            }}>
+                                                <span className="material-icons-round" style={{ fontSize: '14px' }}>build</span>
+                                                Montaža
                                             </span>
-                                        );
-                                    }
-                                    return null;
-                                })()}
+                                        </>
+                                    )}
 
-                                {/* S16: Per-card Missing Attendance Badge */}
-                                {wo.Status === 'U toku' && attendanceWarnings && (() => {
-                                    const woWarnings = attendanceWarnings.warnings.filter(w => w.Work_Order_ID === wo.Work_Order_ID);
-                                    if (woWarnings.length === 0) return null;
-                                    return (
-                                        <span style={{
-                                            display: 'flex',
-                                            alignItems: 'center',
-                                            gap: '3px',
-                                            fontSize: '10px',
-                                            fontWeight: 600,
-                                            padding: '2px 8px',
-                                            borderRadius: '12px',
-                                            background: 'rgba(245, 158, 11, 0.15)',
-                                            color: '#d97706',
-                                            border: '1px solid rgba(245, 158, 11, 0.3)',
-                                            height: '20px',
-                                            marginLeft: '4px',
-                                            animation: 'pulse 2s ease-in-out infinite'
-                                        }} title={`Nedostaje prisustvo: ${woWarnings.map(w => w.Worker_Name).join(', ')}`}>
-                                            <span className="material-icons-round" style={{ fontSize: '12px' }}>person_off</span>
-                                            {woWarnings.length}
-                                        </span>
-                                    );
-                                })()}
+                                    {/* Active Groups Badge */}
+                                    {(() => {
+                                        let activeGroups = 0;
+                                        wo.items?.forEach(item => {
+                                            if (item.SubTasks && item.SubTasks.length > 0) {
+                                                activeGroups += item.SubTasks.filter(st => st.Status === 'U toku').length;
+                                            } else if (item.Status === 'U toku') {
+                                                activeGroups += 1;
+                                            }
+                                        });
+
+                                        if (activeGroups > 0) {
+                                            return (
+                                                <>
+                                                    <span style={{ color: '#d1d5db' }}>•</span>
+                                                    <span style={{
+                                                        display: 'flex',
+                                                        alignItems: 'center',
+                                                        gap: '4px',
+                                                        fontSize: '12px',
+                                                        fontWeight: 500,
+                                                        color: '#4b5563',
+                                                    }} title={`${activeGroups} aktivnih grupa u proizvodnji`}>
+                                                        <span className="material-icons-round" style={{ fontSize: '14px' }}>layers</span>
+                                                        {activeGroups}
+                                                    </span>
+                                                </>
+                                            );
+                                        }
+                                        return null;
+                                    })()}
+
+                                    {/* S16: Per-card Missing Attendance Badge — clickable */}
+                                    {wo.Status === 'U toku' && attendanceWarnings && (() => {
+                                        const woWarnings = attendanceWarnings.warnings.filter(w => w.Work_Order_ID === wo.Work_Order_ID);
+                                        if (woWarnings.length === 0) return null;
+                                        return (
+                                            <>
+                                                <span style={{ color: '#d1d5db' }}>•</span>
+                                                <span style={{
+                                                    display: 'flex',
+                                                    alignItems: 'center',
+                                                    gap: '4px',
+                                                    fontSize: '12px',
+                                                    fontWeight: 600,
+                                                    color: '#d97706',
+                                                    cursor: 'pointer',
+                                                    transition: 'opacity 0.2s',
+                                                }}
+                                                    title={`Kliknite za popunu prisustva: ${woWarnings.map(w => w.Worker_Name).join(', ')}`}
+                                                    onClick={(e) => { e.stopPropagation(); setAttendanceFixWorkOrder(wo); }}
+                                                    onMouseEnter={(e) => (e.currentTarget.style.opacity = '0.7')}
+                                                    onMouseLeave={(e) => (e.currentTarget.style.opacity = '1')}
+                                                >
+                                                    <span className="material-icons-round" style={{ fontSize: '14px', animation: 'pulse 2s ease-in-out infinite' }}>person_off</span>
+                                                    {woWarnings.length}
+                                                </span>
+                                            </>
+                                        );
+                                    })()}
+                                </div>
                             </div>
-                            {/* Client name moved to right side */}
                         </div>
-                        <div className="project-details">
+                        <div className="project-details" style={{ marginTop: '12px' }}>
                             <div className="project-summary">
                                 <span className="summary-item">
                                     <span className="material-icons-round">inventory_2</span>
@@ -1084,114 +1079,61 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                                     const isLaborOver = laborCost > plannedLaborCost && plannedLaborCost > 0;
 
                                     if (totalValue === 0) {
-                                        // GAP-2: Show missing price warning instead of hiding
+                                        // GAP-2: Show missing price warning — clickable to open price editor
                                         return (
                                             <span
                                                 className="summary-item"
                                                 style={{
                                                     color: '#f59e0b',
-                                                    background: 'rgba(245, 158, 11, 0.1)',
-                                                    padding: '4px 10px',
-                                                    borderRadius: '6px',
-                                                    fontWeight: 600,
-                                                    fontSize: '11px'
+                                                    fontWeight: 500,
+                                                    fontSize: '13px',
+                                                    cursor: 'pointer',
+                                                    transition: 'opacity 0.2s',
                                                 }}
-                                                title="Cijena proizvoda nije postavljena. Otvorite ponudu ili ručno unesite cijenu."
+                                                title="Kliknite za ručni unos cijena"
+                                                onClick={(e) => { e.stopPropagation(); setPriceEditWorkOrder(wo); }}
+                                                onMouseEnter={(e) => (e.currentTarget.style.opacity = '0.7')}
+                                                onMouseLeave={(e) => (e.currentTarget.style.opacity = '1')}
                                             >
-                                                <span className="material-icons-round" style={{ fontSize: '14px' }}>money_off</span>
+                                                <span className="material-icons-round" style={{ fontSize: '16px' }}>money_off</span>
                                                 Nedostaje cijena
                                             </span>
                                         );
                                     }
 
-                                    // Get profit warnings
-                                    const profitWarnings = validateWorkOrderProfitData(wo);
-                                    const criticalWarnings = profitWarnings.filter(w => w.type === 'error').length;
-
                                     // Color coding
                                     const profitColor = profitMargin >= 30 ? '#10b981' : profitMargin >= 15 ? '#f59e0b' : '#ef4444';
-                                    const profitBg = profitMargin >= 30 ? 'rgba(16, 185, 129, 0.1)' : profitMargin >= 15 ? 'rgba(245, 158, 11, 0.1)' : 'rgba(239, 68, 68, 0.1)';
 
                                     return (
-                                        <>
-                                            <span
-                                                className="summary-item"
-                                                style={{
-                                                    color: profitColor,
-                                                    background: profitBg,
-                                                    padding: '4px 10px',
-                                                    borderRadius: '6px',
-                                                    fontWeight: 600,
-                                                    cursor: 'pointer'
-                                                }}
-                                                title="Klikni za detalje profita"
-                                                onClick={(e) => {
-                                                    e.stopPropagation();
-                                                    toggleWorkOrder(wo.Work_Order_ID);
-                                                }}
-                                            >
-                                                <span className="material-icons-round" style={{ fontSize: '16px' }}>
-                                                    {profitMargin >= 30 ? 'trending_up' : profitMargin >= 15 ? 'trending_flat' : 'trending_down'}
-                                                </span>
-                                                {formatValue(profit)} ({profitMargin.toFixed(0)}%)
+                                        <span
+                                            className="summary-item"
+                                            style={{
+                                                color: profitColor,
+                                                fontWeight: 600,
+                                                fontSize: '13px',
+                                                cursor: 'pointer'
+                                            }}
+                                            title="Klikni za detalje profita"
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                toggleWorkOrder(wo.Work_Order_ID);
+                                            }}
+                                        >
+                                            <span className="material-icons-round" style={{ fontSize: '18px' }}>
+                                                {profitMargin >= 30 ? 'trending_up' : profitMargin >= 15 ? 'trending_flat' : 'trending_down'}
                                             </span>
-                                            {/* Labor Variance Badge */}
-                                            {plannedLaborCost > 0 && laborCost > 0 && (
-                                                <span
-                                                    className="summary-item"
-                                                    style={{
-                                                        color: isLaborOver ? '#ef4444' : '#10b981',
-                                                        background: isLaborOver ? 'rgba(239, 68, 68, 0.1)' : 'rgba(16, 185, 129, 0.1)',
-                                                        padding: '4px 8px',
-                                                        borderRadius: '6px',
-                                                        fontSize: '11px',
-                                                        fontWeight: 500
-                                                    }}
-                                                    title={`Planirano: ${formatValue(plannedLaborCost)} | Stvarno: ${formatValue(laborCost)}`}
-                                                >
-                                                    <span className="material-icons-round" style={{ fontSize: '12px' }}>
-                                                        {isLaborOver ? 'warning' : 'check_circle'}
-                                                    </span>
-                                                    Rad: {isLaborOver ? '+' : ''}{formatValue(Math.abs(laborVariance))}
-                                                </span>
-                                            )}
-                                            {/* Profit Warnings Badge */}
-                                            {criticalWarnings > 0 && (
-                                                <span
-                                                    className="summary-item"
-                                                    style={{
-                                                        color: '#ef4444',
-                                                        background: 'rgba(239, 68, 68, 0.1)',
-                                                        padding: '4px 8px',
-                                                        borderRadius: '6px',
-                                                        fontSize: '11px',
-                                                        fontWeight: 500,
-                                                        cursor: 'pointer'
-                                                    }}
-                                                    title={profitWarnings.filter(w => w.type === 'error').map(w => `${w.itemName ? w.itemName + ': ' : ''}${w.message}`).join('\n')}
-                                                    onClick={(e) => {
-                                                        e.stopPropagation();
-                                                        toggleWorkOrder(wo.Work_Order_ID);
-                                                    }}
-                                                >
-                                                    <span className="material-icons-round" style={{ fontSize: '12px' }}>error_outline</span>
-                                                    {criticalWarnings} {criticalWarnings === 1 ? 'problem' : 'problema'}
-                                                </span>
-                                            )}
-                                        </>
+                                            {formatValue(profit)}
+                                            <span style={{ fontSize: '11px', opacity: 0.8, fontWeight: 500, marginLeft: '2px' }}>
+                                                ({profitMargin.toFixed(0)}%)
+                                            </span>
+                                        </span>
                                     );
                                 })()}
                             </div>
                         </div>
                     </div>
 
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                        {wo.items?.[0]?.Project_Name && (
-                            <div className="project-client" style={{ marginRight: '8px' }}>
-                                {wo.items[0].Project_Name}
-                            </div>
-                        )}
-
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                         <button className="icon-btn" title="Printaj Nalog" onClick={(e) => {
                             e.stopPropagation();
                             handlePrintWorkOrder(wo);
@@ -1300,15 +1242,15 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
 
     return (
         <div className="tab-content active">
-            <div className="content-header" style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap', padding: '16px 24px' }}>
+            <div className="content-header" style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '12px 24px' }}>
                 {/* Glass Search */}
-                <div className="glass-search">
+                <div className="glass-search" style={{ flex: '1 1 180px', minWidth: '140px' }}>
                     <span className="material-icons-round">search</span>
-                    <input type="text" placeholder="Pretraži radne naloge..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
+                    <input type="text" placeholder="Pretraži naloge..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
                 </div>
 
                 {/* Glass Controls Group */}
-                <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+                <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexShrink: 0 }}>
                     {/* Grouping Control */}
                     <div className="glass-control-group">
                         <span className="control-label">Grupiši:</span>
@@ -1330,7 +1272,7 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                 </div>
 
                 {/* Action Buttons */}
-                <div style={{ display: 'flex', gap: '10px', marginLeft: 'auto' }}>
+                <div style={{ display: 'flex', gap: '8px', flexShrink: 0 }}>
                     <button
                         className="glass-btn"
                         onClick={async () => {
@@ -1344,26 +1286,28 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                             }
                         }}
                         title="Sinkroniziraj statuse svih proizvoda sa radnim nalozima"
+                        style={{ padding: '8px 12px' }}
                     >
-                        <span className="material-icons-round">sync</span>
-                        Sinkroniziraj Statuse
+                        <span className="material-icons-round" style={{ fontSize: '18px' }}>sync</span>
                     </button>
-                    <button className="glass-btn glass-btn-primary" onClick={openCreateModal}>
-                        <span className="material-icons-round">add</span>
-                        Novi Radni Nalog
+                    <button className="glass-btn glass-btn-primary" onClick={openCreateModal} style={{ padding: '8px 14px', whiteSpace: 'nowrap' }}>
+                        <span className="material-icons-round" style={{ fontSize: '18px' }}>add</span>
+                        Novi nalog
                     </button>
                     <button
                         className="glass-btn"
                         onClick={openMontazaModal}
                         style={{
-                            background: 'linear-gradient(135deg, #00C7BE 0%, #00a89e 100%)',
+                            background: '#00C7BE',
                             color: 'white',
                             border: 'none',
                             fontWeight: 600,
+                            padding: '8px 14px',
+                            whiteSpace: 'nowrap',
                         }}
                     >
-                        <span className="material-icons-round">build</span>
-                        Montažni Nalog
+                        <span className="material-icons-round" style={{ fontSize: '18px' }}>build</span>
+                        Montaža
                     </button>
                 </div>
             </div>
@@ -1403,7 +1347,7 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                             )}
                         </div>
                         <div style={{ marginTop: '8px', fontSize: '11px', color: '#b45309', opacity: 0.8 }}>
-                            💡 Otvorite tab "Sihtarica" i popunite prisustvo za navedene radnike da bi profit bio tačan.
+                            💡 Kliknite na badge pored radnog naloga za popunu prisustva direktno.
                         </div>
                     </div>
                     <button
@@ -3153,6 +3097,24 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                         );
                     })()}
                 </Modal>
+            )}
+            {priceEditWorkOrder && (
+                <PriceEditModal
+                    workOrder={priceEditWorkOrder}
+                    onClose={() => setPriceEditWorkOrder(null)}
+                    onSaved={() => onRefresh('workOrders')}
+                    showToast={showToast}
+                />
+            )}
+            {attendanceFixWorkOrder && organizationId && (
+                <AttendanceFixModal
+                    workOrder={attendanceFixWorkOrder}
+                    organizationId={organizationId}
+                    warnings={attendanceWarnings?.warnings}
+                    onClose={() => setAttendanceFixWorkOrder(null)}
+                    onSaved={() => onRefresh('workOrders')}
+                    showToast={showToast}
+                />
             )}
         </div >
     );

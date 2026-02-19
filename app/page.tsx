@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { ChevronRight, ChevronLeft } from 'lucide-react';
-import { getAllData, getProjects, getMaterialsCatalog, getSuppliers, getWorkers, getOffers, getOrders, getWorkOrders, getTasks } from '@/lib/database';
+import { getAllData, getProjects, getMaterialsCatalog, getSuppliers, getWorkers, getOffers, getOrders, getWorkOrders, getTasks, getTaskProfiles } from '@/lib/database';
 import { signOut } from '@/lib/auth';
 import { useAuth } from '@/context/AuthContext';
 import type { AppState, Project, Product, Material, Offer, Order, Supplier, Worker } from '@/lib/types';
@@ -93,6 +93,7 @@ export default function Home() {
         aluDoorItems: [],
         workLogs: [],
         tasks: [],
+        taskProfiles: [],
     });
 
     // Refs for click-outside detection
@@ -181,6 +182,7 @@ export default function Home() {
         orders: getOrders,
         workOrders: getWorkOrders,
         tasks: getTasks,
+        taskProfiles: getTaskProfiles,
     };
 
     /**
@@ -433,6 +435,7 @@ export default function Home() {
                                 materials={appState.materials}
                                 workOrders={appState.workOrders}
                                 orders={appState.orders}
+                                taskProfiles={appState.taskProfiles}
                                 onRefresh={refreshCollections}
                                 showToast={showToast}
                                 projectFilter={tasksProjectFilter}
@@ -446,6 +449,7 @@ export default function Home() {
                                 materials={appState.materials}
                                 workOrders={appState.workOrders}
                                 orders={appState.orders}
+                                taskProfiles={appState.taskProfiles}
                                 onRefresh={refreshCollections}
                                 showToast={showToast}
                                 projectFilter={tasksProjectFilter}

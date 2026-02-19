@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/context/AuthContext';
+import { useData } from '@/context/DataContext';
 import { saveOrgSettings, getOrgSettings } from '@/lib/database';
 import Link from 'next/link';
 
@@ -64,6 +65,7 @@ const DEFAULT_SETTINGS: AppSettings = {
 export default function SettingsPage() {
     const router = useRouter();
     const { user, loading: authLoading, firebaseUser, organization, signOut } = useAuth();
+    const { refreshOrgSettings } = useData();
     const fileInputRef = useRef<HTMLInputElement>(null);
 
     const currentPlan = organization?.Subscription_Plan || 'free';
@@ -152,6 +154,10 @@ export default function SettingsPage() {
             // Cache in localStorage
             localStorage.setItem(`companyInfo_${orgKey}`, JSON.stringify(companyInfo));
             localStorage.setItem(`appSettings_${orgKey}`, JSON.stringify(appSettings));
+
+            // Sync DataContext so all tabs get updated immediately
+            await refreshOrgSettings();
+
             showMessage('Postavke sačuvane uspješno', 'success');
         } catch (error) {
             showMessage('Greška pri čuvanju postavki', 'error');

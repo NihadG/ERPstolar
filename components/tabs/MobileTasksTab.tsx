@@ -1,7 +1,7 @@
 'use client';
 
-import { useState, useMemo, useEffect, useCallback } from 'react';
-import type { Task, Project, Worker, Product, Material, WorkOrder, Order, TaskLink, TaskPriority, TaskCategory, ChecklistItem } from '@/lib/types';
+import { useState, useMemo, useEffect, useCallback, useRef } from 'react';
+import type { Task, TaskProfile, Project, Worker, Product, Material, WorkOrder, Order, TaskLink, TaskPriority, TaskCategory, ChecklistItem } from '@/lib/types';
 import {
     TASK_PRIORITY_LABELS,
     TASK_STATUS_LABELS,
@@ -9,7 +9,7 @@ import {
     TASK_PRIORITIES,
     TASK_CATEGORIES
 } from '@/lib/types';
-import { saveTask, deleteTask, updateTaskStatus, toggleTaskChecklistItem, generateUUID } from '@/lib/database';
+import { saveTask, deleteTask, updateTaskStatus, toggleTaskChecklistItem, generateUUID, saveTaskProfile, deleteTaskProfile } from '@/lib/database';
 import {
     Plus,
     Search,
@@ -42,7 +42,9 @@ import {
     Mic,
     Home,
     Settings,
-    LayoutGrid
+    LayoutGrid,
+    Users,
+    UserPlus
 } from 'lucide-react';
 import { useData } from '@/context/DataContext';
 import VoiceInput, { ExtractedTaskData } from '@/components/VoiceInput';
@@ -58,6 +60,7 @@ interface MobileTasksTabProps {
     materials: Material[];
     workOrders?: WorkOrder[];
     orders?: Order[];
+    taskProfiles?: TaskProfile[];
     onRefresh: (...collections: string[]) => void;
     showToast: (message: string, type: 'success' | 'error' | 'info') => void;
     projectFilter?: string | null;
@@ -107,12 +110,33 @@ export default function MobileTasksTab({
     materials,
     workOrders = [],
     orders = [],
+    taskProfiles = [],
     onRefresh,
     showToast,
     projectFilter,
     onClearFilter
 }: MobileTasksTabProps) {
     const { organizationId } = useData();
+
+    // Profile state
+    const [selectedProfileId, setSelectedProfileId] = useState<string>('__all__');
+    const [showProfileMenu, setShowProfileMenu] = useState(false);
+    const [newProfileName, setNewProfileName] = useState('');
+    const [isCreatingProfile, setIsCreatingProfile] = useState(false);
+    const profileDropdownRef = useRef<HTMLDivElement>(null);
+
+    // Close profile dropdown on outside click
+    useEffect(() => {
+        function handleClickOutside(event: MouseEvent) {
+            if (profileDropdownRef.current && !profileDropdownRef.current.contains(event.target as Node)) {
+                setShowProfileMenu(false);
+            }
+        }
+        if (showProfileMenu) {
+            document.addEventListener('mousedown', handleClickOutside);
+            return () => document.removeEventListener('mousedown', handleClickOutside);
+        }
+    }, [showProfileMenu]);
 
     // State
     const [searchQuery, setSearchQuery] = useState('');
@@ -144,6 +168,11 @@ export default function MobileTasksTab({
     // Filter tasks
     const filteredTasks = useMemo(() => {
         return localTasks.filter(task => {
+            // Profile filter
+            if (selectedProfileId !== '__all__') {
+                if (task.Profile_ID !== selectedProfileId) return false;
+            }
+
             // Project filter
             if (projectFilter) {
                 const project = projects.find(p => p.Project_ID === projectFilter);
@@ -208,7 +237,7 @@ export default function MobileTasksTab({
 
             return 0;
         });
-    }, [localTasks, searchQuery, filterStatus, filterPriority, filterCategory, projectFilter, projects]);
+    }, [localTasks, searchQuery, filterStatus, filterPriority, filterCategory, projectFilter, projects, selectedProfileId]);
 
     // Group tasks
     interface TaskGroup {
@@ -385,11 +414,47 @@ export default function MobileTasksTab({
     }, []);
 
     const handleSaveTask = useCallback(async (taskData: Partial<Task>) => {
+        // Assign profile to new tasks if a specific profile is selected
+        if (!taskData.Task_ID && selectedProfileId !== '__all__') {
+            taskData.Profile_ID = selectedProfileId;
+        }
+        if (!taskData.Task_ID && selectedProfileId === '__all__') {
+            taskData.Profile_ID = '';
+        }
         const result = await saveTask(taskData, organizationId!);
         if (result.success) {
             showToast(result.message, 'success');
             onRefresh('tasks');
             setIsModalOpen(false);
+        } else {
+            showToast(result.message, 'error');
+        }
+    }, [organizationId, showToast, onRefresh, selectedProfileId]);
+
+    // Profile management handlers
+    const handleCreateProfile = useCallback(async () => {
+        if (!newProfileName.trim()) return;
+        const result = await saveTaskProfile({ Name: newProfileName.trim() }, organizationId!);
+        if (result.success) {
+            showToast(result.message, 'success');
+            onRefresh('taskProfiles');
+            setNewProfileName('');
+            setIsCreatingProfile(false);
+            if (result.data) {
+                setSelectedProfileId(result.data.Profile_ID);
+            }
+        } else {
+            showToast(result.message, 'error');
+        }
+    }, [newProfileName, organizationId, showToast, onRefresh]);
+
+    const handleDeleteProfile = useCallback(async (profileId: string) => {
+        if (!confirm('Obrisati ovaj profil? Zadaci će biti prebačeni u zajedničke.')) return;
+        const result = await deleteTaskProfile(profileId, organizationId!);
+        if (result.success) {
+            showToast(result.message, 'success');
+            setSelectedProfileId('__shared__');
+            onRefresh('tasks', 'taskProfiles');
         } else {
             showToast(result.message, 'error');
         }
@@ -631,8 +696,72 @@ export default function MobileTasksTab({
                         Zadaci
                     </h1>
                     <div className="mobile-header-stats">
-                        <span className="mobile-stat">{stats.total}</span>
+                        <span className="mobile-stat">{filteredTasks.length}</span>
                     </div>
+                </div>
+
+                {/* Profile Selector */}
+                <div className="mobile-profile-selector" ref={profileDropdownRef}>
+                    <button
+                        className={`mobile-profile-btn ${showProfileMenu ? 'active' : ''}`}
+                        onClick={() => setShowProfileMenu(!showProfileMenu)}
+                    >
+                        <Users size={16} />
+                        <span>
+                            {selectedProfileId === '__all__' ? 'Svi zadaci' :
+                                taskProfiles.find(p => p.Profile_ID === selectedProfileId)?.Name || 'Svi zadaci'}
+                        </span>
+                        <ChevronDown size={14} className={showProfileMenu ? 'rotated' : ''} />
+                    </button>
+
+                    {showProfileMenu && (
+                        <div className="mobile-profile-dropdown">
+                            <button
+                                className={`mobile-profile-option ${selectedProfileId === '__all__' ? 'active' : ''}`}
+                                onClick={() => { setSelectedProfileId('__all__'); setShowProfileMenu(false); }}
+                            >
+                                <CheckSquare size={14} />
+                                <span>Svi zadaci</span>
+                            </button>
+                            {taskProfiles.map(profile => (
+                                <div key={profile.Profile_ID} className={`mobile-profile-option ${selectedProfileId === profile.Profile_ID ? 'active' : ''}`}>
+                                    <button
+                                        className="mobile-profile-option-main"
+                                        onClick={() => { setSelectedProfileId(profile.Profile_ID); setShowProfileMenu(false); }}
+                                    >
+                                        <User size={14} />
+                                        <span>{profile.Name}</span>
+                                    </button>
+                                    <button
+                                        className="mobile-profile-delete"
+                                        onClick={(e) => { e.stopPropagation(); handleDeleteProfile(profile.Profile_ID); }}
+                                    >
+                                        <Trash2 size={12} />
+                                    </button>
+                                </div>
+                            ))}
+                            <div className="mobile-profile-divider" />
+                            {isCreatingProfile ? (
+                                <div className="mobile-profile-create">
+                                    <input
+                                        type="text"
+                                        placeholder="Ime profila..."
+                                        value={newProfileName}
+                                        onChange={(e) => setNewProfileName(e.target.value)}
+                                        onKeyDown={(e) => { if (e.key === 'Enter') handleCreateProfile(); if (e.key === 'Escape') setIsCreatingProfile(false); }}
+                                        autoFocus
+                                    />
+                                    <button onClick={handleCreateProfile}><Check size={14} /></button>
+                                    <button onClick={() => { setIsCreatingProfile(false); setNewProfileName(''); }}><X size={14} /></button>
+                                </div>
+                            ) : (
+                                <button className="mobile-profile-add" onClick={() => setIsCreatingProfile(true)}>
+                                    <UserPlus size={14} />
+                                    <span>Novi profil</span>
+                                </button>
+                            )}
+                        </div>
+                    )}
                 </div>
 
                 {/* Quick stats bar */}

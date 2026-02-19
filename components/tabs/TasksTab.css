@@ -1855,3 +1855,393 @@
         transform: translateY(0);
     }
 }
+
+/* ============================================
+   PROFILE SELECTOR — Desktop
+   ============================================ */
+
+.profile-selector-wrapper {
+    position: relative;
+}
+
+.profile-selector-btn {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 0 16px;
+    height: 42px;
+    background: white;
+    border: 1px solid var(--border-light);
+    border-radius: 12px;
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--text-primary);
+    cursor: pointer;
+    transition: all 0.2s ease;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+}
+
+.profile-selector-btn:hover {
+    border-color: var(--accent);
+    box-shadow: 0 2px 8px rgba(0, 113, 227, 0.1);
+}
+
+.profile-selector-btn.active {
+    border-color: var(--accent);
+    background: var(--level-1-accent);
+    color: var(--accent);
+}
+
+.profile-selector-btn .chevron {
+    transition: transform 0.2s ease;
+    color: var(--text-tertiary);
+}
+
+.profile-selector-btn .chevron.rotated {
+    transform: rotate(180deg);
+}
+
+.profile-dropdown {
+    position: absolute;
+    top: calc(100% + 6px);
+    left: 0;
+    min-width: 220px;
+    background: white;
+    border: 1px solid var(--border-light);
+    border-radius: 14px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12);
+    z-index: 100;
+    padding: 6px;
+    animation: fadeInDown 0.15s ease;
+}
+
+@keyframes fadeInDown {
+    from { opacity: 0; transform: translateY(-4px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+.profile-option {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    padding: 8px 12px;
+    border: none;
+    background: transparent;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-primary);
+    cursor: pointer;
+    border-radius: 8px;
+    transition: background 0.15s ease;
+}
+
+.profile-option:hover {
+    background: var(--surface);
+}
+
+.profile-option.active {
+    background: var(--level-1-accent);
+    color: var(--accent);
+}
+
+.profile-option.active svg {
+    color: var(--accent);
+}
+
+.profile-option-main {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: 1;
+    border: none;
+    background: transparent;
+    font-size: 13px;
+    font-weight: 500;
+    color: inherit;
+    cursor: pointer;
+    padding: 0;
+}
+
+.profile-delete-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    border: none;
+    background: transparent;
+    color: var(--text-tertiary);
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    opacity: 0;
+}
+
+.profile-option:hover .profile-delete-btn {
+    opacity: 1;
+}
+
+.profile-delete-btn:hover {
+    background: rgba(255, 59, 48, 0.1);
+    color: #FF3B30;
+}
+
+.profile-divider {
+    height: 1px;
+    background: var(--border-light);
+    margin: 4px 8px;
+}
+
+.profile-add-btn {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    padding: 8px 12px;
+    border: none;
+    background: transparent;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--accent);
+    cursor: pointer;
+    border-radius: 8px;
+    transition: background 0.15s ease;
+}
+
+.profile-add-btn:hover {
+    background: var(--level-1-accent);
+}
+
+.profile-create-form {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 8px;
+}
+
+.profile-create-form input {
+    flex: 1;
+    height: 32px;
+    padding: 0 10px;
+    border: 1px solid var(--border-light);
+    border-radius: 8px;
+    font-size: 13px;
+    color: var(--text-primary);
+    background: var(--surface);
+    outline: none;
+    transition: border-color 0.2s ease;
+}
+
+.profile-create-form input:focus {
+    border-color: var(--accent);
+    background: white;
+}
+
+.profile-create-confirm,
+.profile-create-cancel {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+
+.profile-create-confirm {
+    background: rgba(52, 199, 89, 0.1);
+    color: #34C759;
+}
+
+.profile-create-confirm:hover {
+    background: rgba(52, 199, 89, 0.2);
+}
+
+.profile-create-cancel {
+    background: rgba(255, 59, 48, 0.1);
+    color: #FF3B30;
+}
+
+.profile-create-cancel:hover {
+    background: rgba(255, 59, 48, 0.2);
+}
+
+/* ============================================
+   PROFILE SELECTOR — Mobile
+   ============================================ */
+
+.mobile-profile-selector {
+    position: relative;
+    margin: 0 16px 8px;
+}
+
+.mobile-profile-btn {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    padding: 10px 14px;
+    background: white;
+    border: 1px solid var(--border-light);
+    border-radius: 12px;
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--text-primary);
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.mobile-profile-btn.active {
+    border-color: var(--accent);
+    background: var(--level-1-accent);
+    color: var(--accent);
+}
+
+.mobile-profile-btn span {
+    flex: 1;
+    text-align: left;
+}
+
+.mobile-profile-btn .rotated {
+    transform: rotate(180deg);
+}
+
+.mobile-profile-dropdown {
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0;
+    right: 0;
+    background: white;
+    border: 1px solid var(--border-light);
+    border-radius: 14px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12);
+    z-index: 100;
+    padding: 6px;
+    animation: fadeInDown 0.15s ease;
+}
+
+.mobile-profile-option {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    padding: 10px 12px;
+    border: none;
+    background: transparent;
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--text-primary);
+    cursor: pointer;
+    border-radius: 10px;
+    transition: background 0.15s ease;
+}
+
+.mobile-profile-option.active {
+    background: var(--level-1-accent);
+    color: var(--accent);
+}
+
+.mobile-profile-option-main {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: 1;
+    border: none;
+    background: transparent;
+    font-size: 14px;
+    font-weight: 500;
+    color: inherit;
+    cursor: pointer;
+    padding: 0;
+}
+
+.mobile-profile-delete {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border: none;
+    background: transparent;
+    color: var(--text-tertiary);
+    border-radius: 8px;
+    cursor: pointer;
+}
+
+.mobile-profile-delete:hover {
+    background: rgba(255, 59, 48, 0.1);
+    color: #FF3B30;
+}
+
+.mobile-profile-divider {
+    height: 1px;
+    background: var(--border-light);
+    margin: 4px 8px;
+}
+
+.mobile-profile-add {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    padding: 10px 12px;
+    border: none;
+    background: transparent;
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--accent);
+    cursor: pointer;
+    border-radius: 10px;
+}
+
+.mobile-profile-add:hover {
+    background: var(--level-1-accent);
+}
+
+.mobile-profile-create {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 8px;
+}
+
+.mobile-profile-create input {
+    flex: 1;
+    height: 36px;
+    padding: 0 12px;
+    border: 1px solid var(--border-light);
+    border-radius: 10px;
+    font-size: 14px;
+    color: var(--text-primary);
+    background: var(--surface);
+    outline: none;
+}
+
+.mobile-profile-create input:focus {
+    border-color: var(--accent);
+    background: white;
+}
+
+.mobile-profile-create button {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+}
+
+.mobile-profile-create button:first-of-type {
+    background: rgba(52, 199, 89, 0.1);
+    color: #34C759;
+}
+
+.mobile-profile-create button:last-of-type {
+    background: rgba(255, 59, 48, 0.1);
+    color: #FF3B30;
+}

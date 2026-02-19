@@ -277,11 +277,21 @@ export interface Task {
     Assigned_Worker_ID?: string;
     Assigned_Worker_Name?: string;
 
+    // Profile (user-level task ownership)
+    Profile_ID?: string;
+
     // Notes
     Notes?: string;
 
     // Checklist items for sub-tasks
     Checklist?: ChecklistItem[];
+}
+
+export interface TaskProfile {
+    Profile_ID: string;
+    Organization_ID: string;
+    Name: string;
+    Created_Date: string;
 }
 
 export interface WorkOrder {
@@ -559,6 +569,7 @@ export interface AppState {
     aluDoorItems: AluDoorItem[];
     workLogs: WorkLog[];
     tasks: Task[];
+    taskProfiles: TaskProfile[];
 }
 
 // ============================================

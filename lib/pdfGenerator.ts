@@ -2,6 +2,7 @@
 
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
+import { sortProductsByName } from './sortProducts';
 
 // ============================================
 // PDF GENERATION UTILITIES
@@ -147,7 +148,8 @@ export async function generateOfferPDF(data: OfferPDFData): Promise<void> {
 }
 
 function createOfferHTML(data: OfferPDFData): string {
-    const productsHTML = data.products.map((p, i) => `
+    const sortedProducts = sortProductsByName(data.products, p => p.name);
+    const productsHTML = sortedProducts.map((p, i) => `
         <tr>
             <td style="padding: 12px; border-bottom: 1px solid #e5e7eb; font-size: 13px; text-align: center;">${i + 1}</td>
             <td style="padding: 12px; border-bottom: 1px solid #e5e7eb; font-size: 15px;">
@@ -327,7 +329,7 @@ function createOfferHTML(data: OfferPDFData): string {
 
             <div class="totals">
                 <div class="totals-row">
-                    <span>Međuzbroj:</span>
+                    <span>Suma:</span>
                     <span>${formatCurrency(data.subtotal)}</span>
                 </div>
                 ${data.transportCost > 0 ? `

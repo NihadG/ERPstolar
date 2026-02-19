@@ -34,6 +34,7 @@ import type {
     WorkerAttendance,
     WorkLog,
     Task,
+    TaskProfile,
     ChecklistItem,
     Notification,
     ProductionSnapshot,
@@ -80,6 +81,7 @@ const COLLECTIONS = {
     WORKER_ATTENDANCE: 'worker_attendance',
     WORK_LOGS: 'work_logs',
     TASKS: 'tasks',
+    TASK_PROFILES: 'task_profiles',
     NOTIFICATIONS: 'notifications',
     PRODUCTION_SNAPSHOTS: 'production_snapshots',
 };
@@ -131,6 +133,7 @@ export async function getAllData(organizationId: string): Promise<AppState> {
             aluDoorItems: [],
             workLogs: [],
             tasks: [],
+            taskProfiles: [],
         };
     }
 
@@ -156,6 +159,7 @@ export async function getAllData(organizationId: string): Promise<AppState> {
             workOrderItemsSnap,
             workLogsSnap,
             tasksSnap,
+            taskProfilesSnap,
         ] = await Promise.all([
             getDocs(query(collection(db, COLLECTIONS.PROJECTS), orgFilter)),
             getDocs(query(collection(db, COLLECTIONS.PRODUCTS), orgFilter)),
@@ -174,6 +178,7 @@ export async function getAllData(organizationId: string): Promise<AppState> {
             getDocs(query(collection(db, COLLECTIONS.WORK_ORDER_ITEMS), orgFilter)),
             getDocs(query(collection(db, COLLECTIONS.WORK_LOGS), orgFilter)),
             getDocs(query(collection(db, COLLECTIONS.TASKS), orgFilter)),
+            getDocs(query(collection(db, COLLECTIONS.TASK_PROFILES), orgFilter)),
         ]);
 
         const projects = projectsSnap.docs.map(doc => ({ ...doc.data() } as Project));
@@ -193,6 +198,7 @@ export async function getAllData(organizationId: string): Promise<AppState> {
         const workLogs = workLogsSnap.docs.map(doc => ({ ...doc.data() } as WorkLog));
         const workOrderItems = workOrderItemsSnap.docs.map(doc => ({ ...doc.data() } as WorkOrderItem));
         const tasks = tasksSnap.docs.map(doc => ({ ...doc.data() } as Task));
+        const taskProfiles = taskProfilesSnap.docs.map(doc => ({ ...doc.data() } as TaskProfile));
 
         // ============================================
         // OPTIMIZATION: Build Maps for O(1) lookups instead of O(n²) filters
@@ -329,6 +335,7 @@ export async function getAllData(organizationId: string): Promise<AppState> {
             aluDoorItems,
             workLogs,
             tasks,
+            taskProfiles,
         };
     } catch (error) {
         console.error('getAllData error:', error);
@@ -346,6 +353,7 @@ export async function getAllData(organizationId: string): Promise<AppState> {
             aluDoorItems: [],
             workLogs: [],
             tasks: [],
+            taskProfiles: [],
         };
     }
 }
@@ -1326,9 +1334,53 @@ export async function deleteWorker(workerId: string, organizationId: string): Pr
 
 export async function getOffers(organizationId: string): Promise<Offer[]> {
     if (!organizationId) return [];
-    const q = query(collection(db, COLLECTIONS.OFFERS), where('Organization_ID', '==', organizationId));
-    const snapshot = await getDocs(q);
-    return snapshot.docs.map(doc => ({ ...doc.data() } as Offer));
+    const orgFilter = where('Organization_ID', '==', organizationId);
+
+    // Fetch offers, projects, offer_products, and offer_extras in parallel
+    const [offersSnap, projectsSnap, offerProductsSnap, offerExtrasSnap] = await Promise.all([
+        getDocs(query(collection(db, COLLECTIONS.OFFERS), orgFilter)),
+        getDocs(query(collection(db, COLLECTIONS.PROJECTS), orgFilter)),
+        getDocs(query(collection(db, COLLECTIONS.OFFER_PRODUCTS), orgFilter)),
+        getDocs(query(collection(db, COLLECTIONS.OFFER_EXTRAS), orgFilter)),
+    ]);
+
+    const offers = offersSnap.docs.map(doc => ({ ...doc.data() } as Offer));
+    const projects = projectsSnap.docs.map(doc => ({ ...doc.data() }) as { Project_ID: string; Client_Name: string; Client_Phone?: string; Client_Email?: string; Address?: string });
+
+    // Build lookup maps
+    const projectsMap = new Map<string, { Client_Name: string; Client_Phone?: string; Client_Email?: string; Address?: string }>();
+    projects.forEach(p => projectsMap.set(p.Project_ID, { Client_Name: p.Client_Name, Client_Phone: p.Client_Phone, Client_Email: p.Client_Email, Address: p.Address }));
+
+    const offerProducts = offerProductsSnap.docs.map(doc => ({ ...doc.data() } as OfferProduct));
+    const offerExtras = offerExtrasSnap.docs.map(doc => ({ ...doc.data() } as OfferExtra));
+
+    const offerProductsByOffer = new Map<string, OfferProduct[]>();
+    offerProducts.forEach(op => {
+        if (!offerProductsByOffer.has(op.Offer_ID)) offerProductsByOffer.set(op.Offer_ID, []);
+        offerProductsByOffer.get(op.Offer_ID)!.push(op);
+    });
+
+    const extrasByOfferProduct = new Map<string, OfferExtra[]>();
+    offerExtras.forEach(e => {
+        if (!extrasByOfferProduct.has(e.Offer_Product_ID)) extrasByOfferProduct.set(e.Offer_Product_ID, []);
+        extrasByOfferProduct.get(e.Offer_Product_ID)!.push(e);
+    });
+
+    // Enrich offers with Client_Name, Client_Phone, Client_Email, Address and products (with extras)
+    offers.forEach(offer => {
+        const proj = projectsMap.get(offer.Project_ID);
+        offer.Client_Name = proj?.Client_Name || '';
+        (offer as any).Client_Phone = proj?.Client_Phone || '';
+        (offer as any).Client_Email = proj?.Client_Email || '';
+        (offer as any).Client_Address = proj?.Address || '';
+        const prods = offerProductsByOffer.get(offer.Offer_ID) || [];
+        prods.forEach(prod => {
+            (prod as any).extras = extrasByOfferProduct.get(prod.ID) || [];
+        });
+        (offer as any).products = prods;
+    });
+
+    return offers;
 }
 
 export async function getOffer(offerId: string, organizationId: string): Promise<Offer | null> {
@@ -4812,6 +4864,100 @@ export async function workLogExists(workerId: string, workOrderItemId: string, d
     } catch (error) {
         console.error('workLogExists error:', error);
         return false;
+    }
+}
+
+// ============================================
+// TASK PROFILES CRUD (Multi-tenancy enabled)
+// ============================================
+
+export async function getTaskProfiles(organizationId: string): Promise<TaskProfile[]> {
+    if (!organizationId) return [];
+    const firestore = getDb();
+    const q = query(collection(firestore, COLLECTIONS.TASK_PROFILES), where('Organization_ID', '==', organizationId));
+    const snapshot = await getDocs(q);
+    return snapshot.docs.map(doc => ({ ...doc.data() } as TaskProfile));
+}
+
+export async function saveTaskProfile(
+    data: Partial<TaskProfile>,
+    organizationId: string
+): Promise<{ success: boolean; data?: { Profile_ID: string }; message: string }> {
+    if (!organizationId) {
+        return { success: false, message: 'Organization ID is required' };
+    }
+    try {
+        const firestore = getDb();
+        const isNew = !data.Profile_ID;
+
+        const cleanData = Object.fromEntries(
+            Object.entries(data).filter(([_, value]) => value !== undefined)
+        ) as Partial<TaskProfile>;
+
+        if (isNew) {
+            cleanData.Profile_ID = generateUUID();
+            cleanData.Organization_ID = organizationId;
+            cleanData.Created_Date = new Date().toISOString();
+            await addDoc(collection(firestore, COLLECTIONS.TASK_PROFILES), cleanData);
+        } else {
+            const q = query(
+                collection(firestore, COLLECTIONS.TASK_PROFILES),
+                where('Profile_ID', '==', cleanData.Profile_ID),
+                where('Organization_ID', '==', organizationId)
+            );
+            const snapshot = await getDocs(q);
+            if (!snapshot.empty) {
+                await updateDoc(snapshot.docs[0].ref, cleanData as Record<string, unknown>);
+            }
+        }
+
+        return { success: true, data: { Profile_ID: cleanData.Profile_ID! }, message: isNew ? 'Profil kreiran' : 'Profil ažuriran' };
+    } catch (error) {
+        console.error('saveTaskProfile error:', error);
+        return { success: false, message: 'Greška pri spremanju profila' };
+    }
+}
+
+export async function deleteTaskProfile(
+    profileId: string,
+    organizationId: string
+): Promise<{ success: boolean; message: string }> {
+    if (!organizationId) {
+        return { success: false, message: 'Organization ID is required' };
+    }
+    try {
+        const firestore = getDb();
+
+        // Delete the profile
+        const profileQuery = query(
+            collection(firestore, COLLECTIONS.TASK_PROFILES),
+            where('Profile_ID', '==', profileId),
+            where('Organization_ID', '==', organizationId)
+        );
+        const profileSnap = await getDocs(profileQuery);
+        if (!profileSnap.empty) {
+            await deleteDoc(profileSnap.docs[0].ref);
+        }
+
+        // Unassign tasks from this profile (move them to shared)
+        const tasksQuery = query(
+            collection(firestore, COLLECTIONS.TASKS),
+            where('Profile_ID', '==', profileId),
+            where('Organization_ID', '==', organizationId)
+        );
+        const tasksSnap = await getDocs(tasksQuery);
+        const batch = writeBatch(firestore);
+        tasksSnap.docs.forEach(doc => {
+            batch.update(doc.ref, { Profile_ID: '' });
+        });
+        if (!tasksSnap.empty) {
+            await batch.commit();
+        }
+
+        return { success: true, message: 'Profil obrisan' };
+    } catch (error) {
+        console.error('deleteTaskProfile error:', error);
+        return { success: false, message: 'Greška pri brisanju profila' };
     }
 }
 

@@ -10,9 +10,9 @@
 
 /* Page Header */
 .page-header {
-    background: white;
+    background: #ffffff;
     padding: 20px 24px;
-    border-bottom: 1px solid #e5e7eb;
+    border-bottom: 1px solid #f3f4f6;
 }
 
 .header-content {
@@ -44,20 +44,21 @@
 .filter-toggle {
     display: flex;
     align-items: center;
-    gap: 8px;
-    padding: 10px 16px;
-    background: #f3f4f6;
-    border: none;
-    border-radius: 10px;
-    font-size: 14px;
+    gap: 6px;
+    padding: 8px 14px;
+    background: transparent;
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    font-size: 13px;
     font-weight: 500;
-    color: #374151;
+    color: #4b5563;
     cursor: pointer;
     transition: all 0.2s;
 }
 
 .filter-toggle:hover {
-    background: #e5e7eb;
+    background: #f9fafb;
+    border-color: #d1d5db;
 }
 
 .filter-toggle.active {
@@ -72,12 +73,11 @@
 /* Control Bar */
 .control-bar {
     background: #ffffff;
-    border-bottom: 1px solid #e5e7eb;
+    border-bottom: 1px solid #f3f4f6;
     max-height: 0;
     overflow: hidden;
-    transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
     opacity: 0;
-    /* Soft shadow only when open */
 }
 
 .control-bar.open {
@@ -340,27 +340,26 @@
 /* Group Card */
 .group-card {
     background: white;
-    border-radius: 16px;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06), 0 2px 8px rgba(0, 0, 0, 0.04);
-    /* overflow: hidden;  REMOVED TO ALLOW DROPDOWN OVERFLOW */
-    border: 1px solid #e5e7eb;
+    border-radius: 12px;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+    border: 1px solid #f3f4f6;
+    margin-bottom: 12px;
 }
 
 .group-card-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 16px 20px;
-    background: #fafafa;
-    border-bottom: 1px solid #e5e7eb;
+    padding: 14px 20px;
+    background: #ffffff;
+    border-bottom: 1px solid #f9fafb;
     cursor: pointer;
     transition: background 0.2s;
-    border-radius: 16px 16px 0 0;
-    /* Manual border radius */
+    border-radius: 12px 12px 0 0;
 }
 
 .group-card-header:hover {
-    background: #f5f5f5;
+    background: #fafafa;
 }
 
 /* Mobile Responsive Header */
@@ -392,23 +391,23 @@
 
 .toggle-chevron {
     font-size: 20px;
-    color: #6b7280;
+    color: #9ca3af;
     transition: transform 0.2s;
 }
 
 .group-title {
-    font-size: 16px;
+    font-size: 15px;
     font-weight: 600;
-    color: #111827;
+    color: #374151;
 }
 
 .group-count-badge {
-    font-size: 12px;
-    font-weight: 500;
+    font-size: 11px;
+    font-weight: 600;
     color: #6b7280;
-    background: #e5e7eb;
-    padding: 4px 10px;
-    border-radius: 20px;
+    background: #f3f4f6;
+    padding: 2px 8px;
+    border-radius: 12px;
 }
 
 .group-right {
@@ -418,77 +417,67 @@
 }
 
 .group-total {
-    font-size: 15px;
+    font-size: 14px;
     font-weight: 600;
-    color: #2563eb;
+    color: #4b5563;
 }
 
 /* Expanded Products Area */
 .project-products {
-    background: #f9fafb;
+    background: #ffffff;
     border-top: 1px solid #f3f4f6;
-    padding: 0 20px 20px;
-    border-radius: 0 0 16px 16px;
-    /* Manual border radius for bottom */
+    padding: 0 0 12px 0;
+    border-radius: 0 0 12px 12px;
 }
 
 .products-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 16px 4px 12px;
+    padding: 16px 20px 12px;
 }
 
 .products-header h4 {
-    font-size: 13px;
+    font-size: 12px;
     font-weight: 600;
-    color: #6b7280;
+    color: #9ca3af;
     margin: 0;
     text-transform: uppercase;
     letter-spacing: 0.05em;
     padding-bottom: 4px;
-    /* Added spacing */
 }
 
 .product-card {
-    background: #ffffff;
-    border: 1px solid #e5e7eb;
-    border-radius: 8px;
-    /* Slightly smaller radius */
-    padding: 8px 12px;
-    /* Reduced padding */
-    margin-bottom: 4px;
-    /* Reduced spacing */
-    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-    position: relative;
-    overflow: hidden;
+    background: transparent;
+    border-bottom: 1px solid #f9fafb;
+    padding: 10px 20px;
+    transition: background 0.2s ease;
+    cursor: pointer;
+}
+
+.product-card:last-child {
+    border-bottom: none;
 }
 
 .product-card:hover {
-    border-color: #d1d5db;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.03);
-    transform: translateY(-1px);
+    background: #fdfdfd;
 }
 
 .product-header {
     display: flex;
     align-items: center;
     gap: 12px;
-    /* Reduced gap */
 }
 
 .product-info {
     flex: 1;
     min-width: 0;
-    /* Truncation fix */
 }
 
 .product-name {
-    font-size: 14px;
-    /* Reduced from 15px */
+    font-size: 13px;
     font-weight: 500;
-    /* Reduced from 600 */
-    color: #111827;
+    color: #374151;
     margin-bottom: 2px;
     white-space: nowrap;
     overflow: hidden;
@@ -497,8 +486,7 @@
 
 .product-dims {
     font-size: 12px;
-    /* Reduced from 13px */
-    color: #6b7280;
+    color: #9ca3af;
     display: flex;
     align-items: center;
     gap: 6px;
@@ -518,6 +506,11 @@
 /* Order Item */
 .order-item {
     border-bottom: 1px solid #f3f4f6;
+    transition: background 0.2s;
+}
+
+.order-item:hover {
+    background: #fafafa;
 }
 
 .order-item:last-child {
@@ -525,12 +518,13 @@
 }
 
 .order-supplier-text {
-    font-size: 13px;
+    font-size: 12px;
     color: #6b7280;
     font-weight: 500;
-    background: #f3f4f6;
+    background: transparent;
+    border: 1px solid #e5e7eb;
     padding: 2px 8px;
-    border-radius: 4px;
+    border-radius: 12px;
 }
 
 /* Empty State */
@@ -541,24 +535,24 @@
     justify-content: center;
     padding: 60px 20px;
     text-align: center;
-    color: #6b7280;
+    color: #9ca3af;
 }
 
 .orders-page .empty-state .material-icons-round {
     font-size: 48px;
-    color: #d1d5db;
+    color: #e5e7eb;
     margin-bottom: 16px;
 }
 
 .orders-page .empty-state h3 {
-    font-size: 18px;
+    font-size: 16px;
     font-weight: 600;
-    color: #111827;
+    color: #374151;
     margin: 0 0 8px 0;
 }
 
 .orders-page .empty-state p {
-    font-size: 14px;
+    font-size: 13px;
     color: #6b7280;
     margin: 0;
 }
@@ -574,14 +568,14 @@
     font-size: 13px;
     font-weight: 500;
     cursor: pointer;
-    padding: 8px 12px;
-    border-radius: 8px;
+    padding: 6px 12px;
+    border-radius: 6px;
     transition: all 0.2s;
 }
 
 .btn-text:hover {
     background: #f3f4f6;
-    color: #111827;
+    color: #374151;
 }
 
 .btn-text .material-icons-round {
@@ -595,7 +589,7 @@
     display: flex;
     align-items: center;
     gap: 16px;
-    padding: 16px 20px;
+    padding: 12px 20px;
     width: 100%;
 }
 
@@ -603,7 +597,7 @@
 .order-info-group {
     display: flex;
     flex-direction: column;
-    gap: 4px;
+    gap: 2px;
     flex: 1;
     min-width: 0;
 }
@@ -611,24 +605,23 @@
 .order-top-row {
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: 8px;
 }
 
 .order-id-text {
-    font-size: 11px;
-    font-weight: 500;
-    color: #6b7280;
-    font-family: 'Roboto Mono', monospace;
-    /* Monospace for ID */
-    background: #f5f5f7;
-    padding: 2px 6px;
-    border-radius: 4px;
-    letter-spacing: -0.5px;
+    font-size: 12px;
+    font-weight: 600;
+    color: #4b5563;
+    font-family: inherit;
+    background: transparent;
+    padding: 0;
+    border-radius: 0;
+    letter-spacing: normal;
 }
 
 .order-project-text {
-    font-size: 14px;
-    color: #1d1d1f;
+    font-size: 13px;
+    color: #1f2937;
     font-weight: 500;
     white-space: nowrap;
     overflow: hidden;
@@ -638,63 +631,80 @@
 .order-meta-info {
     display: flex;
     align-items: center;
-    gap: 4px;
+    gap: 6px;
     font-size: 12px;
-    color: #86868b;
+    color: #9ca3af;
     flex-wrap: wrap;
 }
 
 .meta-separator {
-    color: #e5e7eb;
-    margin: 0 4px;
+    color: #d1d5db;
+    margin: 0 2px;
 }
 
 /* RIGHT SIDE: Status + Actions in ONE LINE */
 .order-actions-group {
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: 8px;
     flex-shrink: 0;
 }
 
 /* Unified dimensions for actions */
 .action-item {
-    height: 36px;
-    /* Fiksna visina za uskladjenost */
+    height: 32px;
     display: flex;
     align-items: center;
-    border-radius: 8px;
+    border-radius: 6px;
 }
 
 .status-badge-custom {
-    height: 32px;
-    padding: 0 12px;
+    height: 28px;
+    padding: 0 10px;
     display: flex;
     align-items: center;
-    font-size: 12px;
+    font-size: 11px;
     font-weight: 600;
-    border-radius: 8px;
+    border-radius: 6px;
     text-transform: uppercase;
-    letter-spacing: 0.02em;
+    letter-spacing: 0.03em;
 }
 
 .btn-receive-all {
     /* Existing style override */
-    height: 36px !important;
-    padding: 0 16px !important;
-    font-size: 13px !important;
+    height: 32px !important;
+    padding: 0 12px !important;
+    font-size: 12px !important;
+    background: transparent !important;
+    color: #10b981 !important;
+    border: 1px solid transparent !important;
+}
+
+.btn-receive-all:hover {
+    background: #ecfdf5 !important;
+}
+
+/* Only show text on larger screens */
+@media (max-width: 768px) {
+    .btn-text-responsive {
+        display: none;
+    }
+
+    .btn-receive-all {
+        padding: 0 8px !important;
+    }
 }
 
 .icon-btn-custom {
-    width: 36px;
-    height: 36px;
+    width: 32px;
+    height: 32px;
     display: flex;
     align-items: center;
     justify-content: center;
     background: transparent;
-    border: 1px solid transparent;
-    border-radius: 8px;
-    color: #86868b;
+    border: none;
+    border-radius: 6px;
+    color: #9ca3af;
     cursor: pointer;
     transition: all 0.2s;
 }

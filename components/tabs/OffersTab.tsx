@@ -5,9 +5,9 @@ import type { Offer, Project, OfferProduct, Product } from '@/lib/types';
 import { getOffer, createOfferWithProducts, deleteOffer, updateOfferStatus, saveOffer, updateOfferWithProducts } from '@/lib/database';
 import { useData } from '@/context/DataContext';
 import { generateOfferPDF, type OfferPDFData } from '@/lib/pdfGenerator';
-import { getOrgSettings } from '@/lib/database';
 import Modal from '@/components/ui/Modal';
 import { OFFER_STATUSES } from '@/lib/types';
+import { sortProductsByName } from '@/lib/sortProducts';
 
 interface Extra {
     name: string;
@@ -59,6 +59,7 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
     // Extras Modal State
     const [extrasModal, setExtrasModal] = useState(false);
     const [currentProductIndex, setCurrentProductIndex] = useState<number | null>(null);
+    const [editingExtraIndex, setEditingExtraIndex] = useState<number | null>(null);
     const [extraName, setExtraName] = useState('');
     const [extraCustomName, setExtraCustomName] = useState('');
     const [extraQty, setExtraQty] = useState(1);
@@ -76,71 +77,9 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
     const [includePDV, setIncludePDV] = useState(true);
     const [pdvRate, setPdvRate] = useState(17);
 
-    // Company Info (read from Settings page, stored in Firestore)
-    const [companyInfo, setCompanyInfo] = useState({
-        name: 'Vaša Firma',
-        address: 'Ulica i broj, Grad',
-        phone: '+387 XX XXX XXX',
-        email: 'info@firma.ba',
-        idNumber: '',
-        pdvNumber: '',
-        website: '',
-        logoBase64: '',
-        hideNameWhenLogo: false,
-        bankAccounts: [] as { bankName: string; accountNumber: string }[]
-    });
+    // Company Info & App Settings (centralized in DataContext)
+    const { companyInfo, appSettings } = useData();
 
-    // Load company info from Firestore (with localStorage fallback)
-    useMemo(() => {
-        if (typeof window !== 'undefined' && organizationId) {
-            // Try Firestore first
-            getOrgSettings(organizationId).then(firestoreData => {
-                if (firestoreData?.companyInfo) {
-                    setCompanyInfo(prev => ({ ...prev, ...firestoreData.companyInfo }));
-                    localStorage.setItem(`companyInfo_${organizationId}`, JSON.stringify(firestoreData.companyInfo));
-                    return;
-                }
-                // Fallback to localStorage
-                const saved = localStorage.getItem(`companyInfo_${organizationId}`);
-                if (saved) {
-                    try {
-                        const parsed = JSON.parse(saved);
-                        setCompanyInfo(prev => ({ ...prev, ...parsed }));
-                    } catch (e) { /* ignore */ }
-                }
-            }).catch(() => {
-                const saved = localStorage.getItem(`companyInfo_${organizationId}`);
-                if (saved) {
-                    try {
-                        const parsed = JSON.parse(saved);
-                        setCompanyInfo(prev => ({ ...prev, ...parsed }));
-                    } catch (e) { /* ignore */ }
-                }
-            });
-        }
-    }, [organizationId]);
-
-    // App Settings (read from Settings page, stored in localStorage)
-    const [appSettings, setAppSettings] = useState({
-        currency: 'KM',
-        pdvRate: 17,
-        offerValidityDays: 14,
-        defaultOfferNote: 'Hvala na povjerenju!',
-        offerTerms: 'Plaćanje: Avansno ili po dogovoru\nRok isporuke: Po dogovoru nakon potvrde'
-    });
-
-    // Load app settings from localStorage on mount
-    useMemo(() => {
-        if (typeof window !== 'undefined' && organizationId) {
-            const saved = localStorage.getItem(`appSettings_${organizationId}`);
-            if (saved) {
-                try {
-                    const parsed = JSON.parse(saved);
-                    setAppSettings(prev => ({ ...prev, ...parsed }));
-                } catch (e) { /* ignore */ }
-            }
-        }
-    }, [organizationId]);
 
     const filteredOffers = offers.filter(offer => {
         const matchesSearch = offer.Offer_Number?.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -240,7 +179,7 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
             laborDailyRate: 0
         }));
 
-        setOfferProducts(products);
+        setOfferProducts(sortProductsByName(products, p => p.Product_Name));
     }
 
     function toggleProductIncluded(index: number, included: boolean) {
@@ -285,14 +224,35 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
     // EXTRAS MODAL
     // ============================================
 
-    function openExtrasModal(productIndex: number) {
+    function openExtrasModal(productIndex: number, extraIndex?: number) {
         setCurrentProductIndex(productIndex);
-        setExtraName('');
-        setExtraCustomName('');
-        setExtraQty(1);
-        setExtraUnit('kom');
-        setExtraPrice(0);
-        setExtraNote('');
+        setEditingExtraIndex(extraIndex !== undefined ? extraIndex : null);
+
+        if (extraIndex !== undefined) {
+            // Edit mode — pre-fill with existing extra data
+            const extra = offerProducts[productIndex].extras[extraIndex];
+            const predefined = ['LED instalacija', 'Ugradnja česme', 'Fugiranje', 'Montaža lajsni', 'Ugradnja spotova', 'Silikoniranje'];
+            if (predefined.includes(extra.name)) {
+                setExtraName(extra.name);
+                setExtraCustomName('');
+            } else {
+                setExtraName('custom');
+                setExtraCustomName(extra.name);
+            }
+            setExtraQty(extra.qty);
+            setExtraUnit(extra.unit);
+            setExtraPrice(extra.price);
+            setExtraNote(extra.note || '');
+        } else {
+            // Add mode — reset fields
+            setExtraName('');
+            setExtraCustomName('');
+            setExtraQty(1);
+            setExtraUnit('kom');
+            setExtraPrice(0);
+            setExtraNote('');
+        }
+
         setExtrasModal(true);
     }
 
@@ -315,11 +275,19 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
         };
 
         const updated = [...offerProducts];
-        updated[currentProductIndex].extras.push(extra);
-        setOfferProducts(updated);
-
-        setExtrasModal(false);
-        showToast('Dodatak dodan', 'success');
+        if (editingExtraIndex !== null) {
+            // Edit mode — replace existing extra
+            updated[currentProductIndex].extras[editingExtraIndex] = extra;
+            setOfferProducts(updated);
+            setExtrasModal(false);
+            showToast('Dodatak ažuriran', 'success');
+        } else {
+            // Add mode — push new extra
+            updated[currentProductIndex].extras.push(extra);
+            setOfferProducts(updated);
+            setExtrasModal(false);
+            showToast('Dodatak dodan', 'success');
+        }
     }
 
     function removeExtra(productIndex: number, extraIndex: number) {
@@ -494,7 +462,7 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
             laborDailyRate: (p as any).Labor_Daily_Rate || (p as any).laborDailyRate || 0
         }));
 
-        setOfferProducts(products);
+        setOfferProducts(sortProductsByName(products, p => p.Product_Name));
         setTransportCost(fullOffer.Transport_Cost || 0);
         setOnsiteAssembly(fullOffer.Onsite_Assembly || false);
         setOnsiteDiscount(fullOffer.Onsite_Discount || 0);
@@ -511,11 +479,14 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
 
     function handlePrintOffer(offer: Offer) {
         // Use stored prices from the database — they already include labor, extras, etc.
-        const products = (offer.products || []).filter(p => p.Included !== false).map(p => ({
-            ...p,
-            Selling_Price: p.Selling_Price || 0,
-            Total_Price: p.Total_Price || 0
-        }));
+        const products = sortProductsByName(
+            (offer.products || []).filter(p => p.Included !== false).map(p => ({
+                ...p,
+                Selling_Price: p.Selling_Price || 0,
+                Total_Price: p.Total_Price || 0
+            })),
+            p => p.Product_Name
+        );
 
         // Use stored subtotal and total from the offer
         const subtotal = offer.Subtotal || products.reduce((sum, p) => sum + p.Total_Price, 0);
@@ -535,33 +506,26 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
                 <meta charset="UTF-8">
                 <title>Ponuda ${offer.Offer_Number}</title>
                 <style>
-                    @import url('https://fonts.googleapis.com/css2?family=Google+Sans:wght@400;500;700&display=swap');
+                    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
                     
                     * { margin: 0; padding: 0; box-sizing: border-box; }
                     
                     body { 
-                        font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', Roboto, sans-serif;
-                        font-size: 13px;
-                        line-height: 1.6;
-                        color: #1d1d1f;
-                        background: linear-gradient(135deg, #f5f5f7 0%, #ffffff 50%, #f5f5f7 100%);
-                        min-height: 100vh;
-                        padding: 40px;
+                        font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+                        font-size: 12px;
+                        line-height: 1.5;
+                        color: #1a1a1a;
+                        background: #f8f8f8;
+                        -webkit-print-color-adjust: exact;
+                        print-color-adjust: exact;
                     }
                     
-                    .document {
-                        max-width: 800px;
-                        margin: 0 auto;
-                        background: rgba(255, 255, 255, 0.85);
-                        backdrop-filter: blur(20px);
-                        -webkit-backdrop-filter: blur(20px);
-                        border-radius: 24px;
-                        border: 1px solid rgba(255, 255, 255, 0.5);
-                        box-shadow: 
-                            0 4px 24px rgba(0, 0, 0, 0.06),
-                            0 1px 2px rgba(0, 0, 0, 0.04),
-                            inset 0 1px 0 rgba(255, 255, 255, 0.6);
-                        padding: 48px;
+                    .page {
+                        max-width: 780px;
+                        margin: 20px auto;
+                        background: white;
+                        padding: 48px 44px;
+                        box-shadow: 0 1px 8px rgba(0,0,0,0.08);
                     }
                     
                     /* Header */
@@ -569,539 +533,489 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
                         display: flex;
                         justify-content: space-between;
                         align-items: flex-start;
-                        margin-bottom: 40px;
-                        padding-bottom: 32px;
-                        border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+                        padding-bottom: 24px;
+                        border-bottom: 2px solid #e8e8e8;
+                        margin-bottom: 28px;
                     }
                     
                     .company-info {
                         display: flex;
                         flex-direction: column;
-                        gap: 8px;
+                        gap: 6px;
                     }
                     
                     .company-logo {
-                        max-width: 180px;
-                        max-height: 60px;
+                        max-width: 160px;
+                        max-height: 50px;
                         width: auto;
                         height: auto;
                         object-fit: contain;
                     }
                     
                     .company-name {
-                        font-size: 22px;
+                        font-size: 20px;
                         font-weight: 700;
-                        letter-spacing: -0.3px;
-                        color: #1d1d1f;
+                        color: #111;
                         margin: 0;
-                    }
-                    
-                    .company-details {
-                        display: flex;
-                        flex-direction: column;
-                        gap: 2px;
                     }
                     
                     .company-details p {
-                        font-size: 11px;
-                        color: #86868b;
-                        margin: 0;
+                        font-size: 10px;
+                        color: #777;
+                        margin: 1px 0;
                     }
                     
-                    .document-badge {
+                    .doc-info {
                         text-align: right;
                     }
                     
-                    .document-badge .badge {
+                    .doc-type {
                         display: inline-block;
-                        background: linear-gradient(135deg, rgba(0, 113, 227, 0.12) 0%, rgba(0, 113, 227, 0.06) 100%);
-                        color: #0071e3;
-                        font-size: 11px;
+                        background: #0066cc;
+                        color: white;
+                        font-size: 9px;
                         font-weight: 600;
-                        letter-spacing: 0.5px;
+                        letter-spacing: 1px;
                         text-transform: uppercase;
-                        padding: 6px 14px;
-                        border-radius: 20px;
-                        margin-bottom: 12px;
-                    }
-                    
-                    .document-badge .number {
-                        font-size: 24px;
-                        font-weight: 600;
-                        color: #1d1d1f;
-                        letter-spacing: -0.5px;
-                    }
-                    
-                    .document-badge .date {
-                        font-size: 12px;
-                        color: #86868b;
-                        margin-top: 4px;
-                    }
-                    
-                    /* Client Card */
-                    .client-card {
-                        background: linear-gradient(135deg, rgba(245, 245, 247, 0.8) 0%, rgba(255, 255, 255, 0.6) 100%);
-                        border: 1px solid rgba(0, 0, 0, 0.04);
-                        border-radius: 16px;
-                        padding: 24px;
-                        margin-bottom: 32px;
-                        text-align: left;
-                    }
-                    
-                    .client-card .label {
-                        font-size: 11px;
-                        font-weight: 500;
-                        color: #86868b;
-                        text-transform: uppercase;
-                        letter-spacing: 0.5px;
+                        padding: 4px 12px;
+                        border-radius: 12px;
                         margin-bottom: 8px;
                     }
                     
-                    .client-card .name {
+                    .doc-number {
                         font-size: 18px;
                         font-weight: 600;
-                        color: #1d1d1f;
+                        color: #111;
+                    }
+                    
+                    .doc-date {
+                        font-size: 11px;
+                        color: #888;
+                        margin-top: 2px;
+                    }
+                    
+                    /* Client */
+                    .client-section {
+                        background: #f5f5f5;
+                        border: 1px solid #eaeaea;
+                        border-radius: 8px;
+                        padding: 16px 20px;
+                        margin-bottom: 28px;
+                    }
+                    
+                    .client-label {
+                        font-size: 9px;
+                        font-weight: 600;
+                        color: #999;
+                        text-transform: uppercase;
+                        letter-spacing: 0.8px;
                         margin-bottom: 4px;
                     }
                     
-                    .client-card .contact {
-                        font-size: 13px;
-                        color: #86868b;
+                    .client-name {
+                        font-size: 15px;
+                        font-weight: 600;
+                        color: #111;
+                        margin-bottom: 2px;
+                    }
+                    
+                    .client-contact {
+                        font-size: 11px;
+                        color: #777;
                     }
                     
                     /* Products Table */
-                    .products-section {
-                        margin-bottom: 48px;
-                        text-align: left;
-                    }
-                    
-                    .products-section h3 {
-                        font-size: 16px;
-                        font-weight: 600;
-                        color: #1d1d1f;
-                        margin-bottom: 24px;
-                    }
-                    
-                    .products-section table {
-                        width: 100%;
-                        border-collapse: collapse;
-                        table-layout: fixed;
-                    }
-                    
-                    .products-section th {
-                        font-size: 15px;
-                        font-weight: 700;
-                        color: #4b5563;
-                        padding: 12px 14px;
-                        border-bottom: 1px solid #e5e7eb;
-                        text-align: left;
-                    }
-                    
-                    .products-section th:first-child { width: 50px; text-align: center; }
-                    .products-section th:nth-child(2) { width: auto; }
-                    .products-section th:nth-child(3) { width: 100px; text-align: center; }
-                    .products-section th:nth-child(4) { width: 130px; text-align: right; }
-                    .products-section th:nth-child(5) { width: 140px; text-align: right; }
-                    
-                    .products-section td {
-                        padding: 28px 14px;
-                        line-height: 2.5;
-                        border-bottom: 1px solid #e8e8e8;
-                        vertical-align: middle;
-                        text-align: left;
-                        font-size: 15px;
-                        color: #3d3d3d;
-                        font-weight: 400;
-                        letter-spacing: 0px;
-                    }
-                    
-                    .products-section td:first-child { text-align: center; color: #6e6e73; font-size: 13px; }
-                    .products-section td:nth-child(3) { text-align: center; color: #5a5a5a; }
-                    .products-section td:nth-child(4) { text-align: right; color: #3d3d3d; }
-                    .products-section td:nth-child(5) { text-align: right; color: #1d1d1f; font-size: 16px; }
-                    
-                    .products-section tr:last-child td { border-bottom: none; }
-                    
-                    .products-section .product-name {
-                        font-family: 'Google Sans', 'Roboto', sans-serif;
-                        font-weight: 400;
-                        font-size: 15px;
-                        color: #2d2d2d;
-                        letter-spacing: 0.3px;
-                    }
-                    
-                    .products-section .product-dimensions {
-                        font-size: 11px;
-                        color: #86868b;
-                        margin-top: 2px;
-                        font-weight: 400;
-                    }
-                    
-                    .totals-card {
-                        background: linear-gradient(135deg, rgba(0, 113, 227, 0.08) 0%, rgba(0, 113, 227, 0.03) 100%);
-                        backdrop-filter: blur(10px);
-                        border: 1px solid rgba(0, 113, 227, 0.1);
-                        border-radius: 14px;
-                        padding: 18px 20px;
-                        width: 280px;
-                        flex-shrink: 0;
-                    }
-                    
-                    .totals-row {
-                        display: flex;
-                        justify-content: space-between;
-                        align-items: center;
-                        padding: 6px 0;
-                        font-size: 12px;
-                    }
-                    
-                    .totals-row .label {
-                        color: #86868b;
-                    }
-                    
-                    .totals-row .value {
-                        font-weight: 500;
-                        color: #1d1d1f;
-                    }
-                    
-                    .totals-row.discount {
-                        background: linear-gradient(135deg, rgba(52, 199, 89, 0.15) 0%, rgba(52, 199, 89, 0.05) 100%);
-                        margin: 6px -12px;
-                        padding: 8px 12px;
-                        border-radius: 8px;
-                        font-size: 11px;
-                    }
-                    
-                    .totals-row.discount .label,
-                    .totals-row.discount .value {
-                        color: #34c759;
-                        font-weight: 500;
-                    }
-                    
-                    .totals-row.total {
-                        margin-top: 10px;
-                        padding-top: 12px;
-                        border-top: 1px solid rgba(0, 113, 227, 0.15);
-                    }
-                    
-                    .totals-row.total .label {
-                        font-size: 12px;
-                        font-weight: 500;
-                        color: #1d1d1f;
-                    }
-                    
-                    .totals-row.total .value {
-                        font-size: 18px;
-                        font-weight: 700;
-                        color: #0071e3;
-                        letter-spacing: -0.3px;
-                    }
-                    
-                    /* Summary Row - Notes + Totals side by side */
-                    .summary-row {
-                        display: flex;
-                        gap: 32px;
-                        margin-bottom: 32px;
-                        align-items: flex-start;
-                        page-break-inside: avoid;
-                        break-inside: avoid;
-                    }
-                    
-                    /* Notes */
-                    .notes-card {
-                        flex: 1;
-                        background: linear-gradient(135deg, rgba(255, 149, 0, 0.08) 0%, rgba(255, 149, 0, 0.03) 100%);
-                        border: 1px solid rgba(255, 149, 0, 0.12);
-                        border-radius: 16px;
-                        padding: 20px 24px;
-                    }
-                    
-                    .notes-card h4 {
-                        font-size: 11px;
-                        font-weight: 600;
-                        color: #bf6c00;
-                        text-transform: uppercase;
-                        letter-spacing: 0.5px;
-                        margin-bottom: 8px;
-                    }
-                    
-                    .notes-card p {
-                        color: #1d1d1f;
+                    .products-title {
                         font-size: 13px;
-                    }
-                    
-                    /* Terms */
-                    .terms-section {
-                        margin-bottom: 40px;
-                        text-align: left;
-                    }
-                    
-                    .terms-section h4 {
-                        font-size: 11px;
-                        font-weight: 500;
-                        color: #86868b;
-                        text-transform: uppercase;
-                        letter-spacing: 0.5px;
+                        font-weight: 600;
+                        color: #333;
                         margin-bottom: 12px;
                     }
                     
-                    .terms-section ul {
-                        list-style: none;
-                        padding: 0;
+                    .products-table {
+                        width: 100%;
+                        border-collapse: collapse;
+                        margin-bottom: 28px;
                     }
                     
-                    .terms-section li {
-                        position: relative;
-                        padding-left: 20px;
-                        margin-bottom: 8px;
-                        font-size: 12px;
-                        color: #1d1d1f;
+                    .products-table th {
+                        font-size: 9px;
+                        font-weight: 600;
+                        color: #888;
+                        text-transform: uppercase;
+                        letter-spacing: 0.6px;
+                        padding: 8px 10px;
+                        border-bottom: 2px solid #ddd;
+                        text-align: left;
                     }
                     
-                    .terms-section li::before {
-                        content: '';
-                        position: absolute;
-                        left: 0;
-                        top: 7px;
-                        width: 5px;
-                        height: 5px;
-                        background: #0071e3;
-                        border-radius: 50%;
+                    .products-table th.col-num { width: 32px; text-align: center; }
+                    .products-table th.col-name { }
+                    .products-table th.col-qty { width: 70px; text-align: center; }
+                    .products-table th.col-price { width: 100px; text-align: right; }
+                    .products-table th.col-total { width: 110px; text-align: right; }
+                    
+                    .products-table td {
+                        padding: 9px 10px;
+                        border-bottom: 1px solid #f0f0f0;
+                        vertical-align: middle;
+                        font-size: 11px;
+                        color: #333;
+                    }
+                    
+                    .products-table td.col-num { text-align: center; color: #aaa; font-size: 10px; }
+                    .products-table td.col-qty { text-align: center; color: #555; }
+                    .products-table td.col-price { text-align: right; color: #555; font-size: 10px; }
+                    .products-table td.col-total { text-align: right; font-weight: 600; color: #111; }
+                    
+                    .products-table tr:last-child td { border-bottom: none; }
+                    
+                    .product-name {
+                        font-weight: 400;
+                        color: #222;
+                        font-size: 11px;
+                    }
+                    
+                    .product-dims {
+                        font-size: 9px;
+                        color: #aaa;
+                        margin-top: 1px;
+                    }
+                    
+                    /* Bottom section */
+                    .bottom-section {
+                        display: flex;
+                        gap: 24px;
+                        align-items: flex-start;
+                        margin-bottom: 40px;
+                    }
+                    
+                    /* Notes */
+                    .notes-box {
+                        flex: 1;
+                        background: #fff8f0;
+                        border: 1px solid #f0dcc0;
+                        border-radius: 8px;
+                        padding: 14px 18px;
+                    }
+                    
+                    .notes-title {
+                        font-size: 9px;
+                        font-weight: 700;
+                        color: #c07b20;
+                        text-transform: uppercase;
+                        letter-spacing: 0.6px;
+                        margin-bottom: 6px;
+                    }
+                    
+                    .notes-box p {
+                        font-size: 11px;
+                        color: #333;
+                        margin: 2px 0;
+                    }
+                    
+                    /* Totals */
+                    .totals-box {
+                        width: 240px;
+                        flex-shrink: 0;
+                        background: #eef4fb;
+                        border: 1px solid #c8ddf0;
+                        border-radius: 8px;
+                        padding: 14px 18px;
+                    }
+                    
+                    .totals-line {
+                        display: flex;
+                        justify-content: space-between;
+                        align-items: center;
+                        padding: 4px 0;
+                        font-size: 11px;
+                    }
+                    
+                    .totals-line .t-label {
+                        color: #5a7a9a;
+                    }
+                    
+                    .totals-line .t-value {
+                        font-weight: 500;
+                        color: #1a3a5c;
+                    }
+                    
+                    .totals-line.discount {
+                        background: #e8f8ee;
+                        margin: 4px -10px;
+                        padding: 5px 10px;
+                        border-radius: 4px;
+                    }
+                    
+                    .totals-line.discount .t-label,
+                    .totals-line.discount .t-value {
+                        color: #1a8a3a;
+                        font-weight: 500;
+                    }
+                    
+                    .totals-line.grand-total {
+                        margin-top: 6px;
+                        padding-top: 8px;
+                        border-top: 1px solid #b0ccdf;
+                    }
+                    
+                    .totals-line.grand-total .t-label {
+                        font-weight: 600;
+                        color: #1a3a5c;
+                    }
+                    
+                    .totals-line.grand-total .t-value {
+                        font-size: 16px;
+                        font-weight: 700;
+                        color: #0055aa;
                     }
                     
                     /* Signatures */
                     .signatures {
                         display: flex;
                         justify-content: space-between;
-                        gap: 48px;
-                        margin-top: 60px;
+                        gap: 60px;
+                        margin-top: 80px;
                     }
                     
-                    .signature-block {
+                    .sig-block {
                         flex: 1;
                         text-align: center;
                     }
                     
-                    .signature-line {
+                    .sig-line {
                         height: 1px;
-                        background: linear-gradient(90deg, transparent, rgba(0, 0, 0, 0.15), transparent);
-                        margin-bottom: 12px;
+                        background: #ccc;
+                        margin-bottom: 8px;
                     }
                     
-                    .signature-label {
-                        font-size: 11px;
-                        color: #86868b;
+                    .sig-label {
+                        font-size: 9px;
+                        color: #999;
                         text-transform: uppercase;
-                        letter-spacing: 0.5px;
+                        letter-spacing: 0.8px;
                     }
                     
                     /* Footer */
                     .footer {
                         text-align: center;
-                        margin-top: 48px;
-                        padding-top: 24px;
-                        border-top: 1px solid rgba(0, 0, 0, 0.04);
+                        margin-top: 32px;
+                        padding-top: 16px;
+                        border-top: 1px solid #eee;
                     }
                     
                     .footer p {
-                        font-size: 13px;
-                        color: #86868b;
-                        font-weight: 500;
+                        font-size: 11px;
+                        color: #999;
                     }
                     
-                    /* Print Styles */
+                    .bank-accounts {
+                        margin-bottom: 12px;
+                        text-align: left;
+                    }
+                    
+                    .bank-accounts .bank-title {
+                        font-size: 9px;
+                        font-weight: 600;
+                        color: #999;
+                        text-transform: uppercase;
+                        letter-spacing: 0.5px;
+                        margin-bottom: 6px;
+                    }
+                    
+                    .bank-accounts .bank-item {
+                        font-size: 10px;
+                        color: #555;
+                        margin-bottom: 3px;
+                    }
+                    
+                    /* ===== PRINT ===== */
                     @media print {
                         body {
-                            background: white;
-                            padding: 0;
+                            background: white !important;
                         }
                         
-                        .document {
+                        .print-layout {
                             box-shadow: none;
-                            border: none;
-                            background: white;
-                            padding: 0;
-                            border-radius: 0;
                         }
                         
-                        /* Repeating header on each page */
-                        .print-table {
-                            width: 100%;
-                        }
-                        
-                        .print-table thead {
+                        .print-layout > thead {
                             display: table-header-group;
                         }
                         
-                        .print-table tfoot {
-                            display: table-footer-group;
-                        }
-                        
-                        .print-header-row td {
-                            padding-bottom: 20px;
+                        .print-layout > thead td,
+                        .print-layout > tbody > tr > td {
+                            padding: 0;
                         }
                         
                         @page {
-                            margin: 15mm;
+                            margin: 14mm 12mm;
+                            size: A4;
+                        }
+                        
+                        .products-table tr {
+                            page-break-inside: avoid;
+                        }
+                        
+                        .bottom-section {
+                            page-break-inside: avoid;
+                        }
+                        
+                        .signatures {
+                            page-break-inside: avoid;
+                        }
+                        
+                        .footer {
+                            page-break-inside: avoid;
                         }
                     }
                     
-                    /* Print Table Structure */
-                    .print-table {
+                    /* Print table layout for repeating header */
+                    .print-layout {
                         width: 100%;
                         border-collapse: collapse;
+                        max-width: 780px;
+                        margin: 0 auto;
                     }
                     
-                    .print-table > thead td,
-                    .print-table > tfoot td,
-                    .print-table > tbody td {
+                    .print-layout > thead td {
                         padding: 0;
-                        text-align: left;
-                    }
-                    
-                    .print-table > tbody > tr > td {
                         vertical-align: top;
-                        text-align: left;
                     }
                     
-                    .print-header-content {
-                        display: flex;
-                        justify-content: space-between;
-                        align-items: flex-start;
-                        padding-bottom: 24px;
-                        border-bottom: 1px solid rgba(0, 0, 0, 0.06);
-                        margin-bottom: 16px;
+                    .print-layout > tbody > tr > td {
+                        padding: 0;
+                        vertical-align: top;
                     }
-            </style>
+                    
+                    .header-spacer {
+                        height: 8px;
+                    }
+                </style>
             </head>
             <body>
-                <table class="print-table">
+                <table class="print-layout">
                     <thead>
-                        <tr class="print-header-row">
+                        <tr>
                             <td>
-                                <div class="print-header-content">
+                                <div class="header">
                                     <div class="company-info">
                                         ${companyInfo.logoBase64 ? `<img class="company-logo" src="${companyInfo.logoBase64}" alt="${companyInfo.name}" />` : ''}
                                         ${(!companyInfo.logoBase64 || !companyInfo.hideNameWhenLogo) ? `<h1 class="company-name">${companyInfo.name}</h1>` : ''}
                                         <div class="company-details">
                                             <p>${companyInfo.address}</p>
                                             <p>${[companyInfo.phone, companyInfo.email].filter(Boolean).join(' · ')}</p>
-                                            ${companyInfo.idNumber || companyInfo.pdvNumber ? `<p style="margin-top: 4px; font-size: 10px; color: #a1a1a6;">${[companyInfo.idNumber ? 'ID: ' + companyInfo.idNumber : '', companyInfo.pdvNumber ? 'PDV: ' + companyInfo.pdvNumber : ''].filter(Boolean).join(' | ')}</p>` : ''}
+                                            ${companyInfo.idNumber || companyInfo.pdvNumber ? `<p style="margin-top: 2px; font-size: 9px; color: #aaa;">${[companyInfo.idNumber ? 'ID: ' + companyInfo.idNumber : '', companyInfo.pdvNumber ? 'PDV: ' + companyInfo.pdvNumber : ''].filter(Boolean).join(' | ')}</p>` : ''}
                                         </div>
                                     </div>
-                                    <div class="document-badge">
-                                        <div class="badge">Ponuda</div>
-                                        <div class="number">${offer.Offer_Number}</div>
-                                        <div class="date">${formatDate(offer.Created_Date)}</div>
+                                    <div class="doc-info">
+                                        <div class="doc-type">Ponuda</div>
+                                        <div class="doc-number">${offer.Offer_Number}</div>
+                                        <div class="doc-date">${formatDate(offer.Created_Date)}</div>
                                     </div>
                                 </div>
+                                <div class="header-spacer"></div>
                             </td>
                         </tr>
                     </thead>
                     <tbody>
                         <tr>
                             <td>
-                                <div class="document">
-                                    <div class="client-card">
-                                        <div class="label">Kupac</div>
-                                        <div class="name">${offer.Client_Name || '-'}</div>
-                                        ${(offer as any).Client_Address ? `<div class="contact" style="margin-bottom: 2px;">${(offer as any).Client_Address}</div>` : ''}
-                                        <div class="contact">${[offer.Client_Phone, offer.Client_Email].filter(Boolean).join(' · ') || '-'}</div>
+                                <div class="client-section">
+                                    <div class="client-label">Kupac</div>
+                                    <div class="client-name">${offer.Client_Name || '-'}</div>
+                                    ${(offer as any).Client_Address ? `<div class="client-contact">${(offer as any).Client_Address}</div>` : ''}
+                                    ${(offer as any).Client_Phone ? `<div class="client-contact">Tel: ${(offer as any).Client_Phone}</div>` : ''}
+                                    ${(offer as any).Client_Email ? `<div class="client-contact">Email: ${(offer as any).Client_Email}</div>` : ''}
+                                </div>
+
+                                <div class="products-title">Proizvodi</div>
+                                <table class="products-table">
+                                    <thead>
+                                        <tr>
+                                            <th class="col-num">#</th>
+                                            <th class="col-name">Naziv</th>
+                                            <th class="col-qty">Količina</th>
+                                            <th class="col-price">Cijena</th>
+                                            <th class="col-total">Ukupno</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        ${products.map((p, i) => `
+                                            <tr>
+                                                <td class="col-num">${i + 1}</td>
+                                                <td>
+                                                    <div class="product-name">${p.Product_Name}</div>
+                                                    ${(p as any).Width && (p as any).Height ? `<div class="product-dims">${(p as any).Width} × ${(p as any).Height} cm</div>` : ''}
+                                                </td>
+                                                <td class="col-qty">${p.Quantity}</td>
+                                                <td class="col-price">${formatCurrency(p.Selling_Price)}</td>
+                                                <td class="col-total">${formatCurrency(p.Total_Price)}</td>
+                                            </tr>
+                                        `).join('')}
+                                    </tbody>
+                                </table>
+
+                                <div class="bottom-section">
+                                    <div class="notes-box">
+                                        <div class="notes-title">Napomena</div>
+                                        <p>Ponuda vrijedi do: <strong>${formatDate(offer.Valid_Until)}</strong></p>
+                                        <p>Plaćanje: Avansno ili po dogovoru</p>
+                                        <p>Rok isporuke: Po dogovoru nakon potvrde</p>
+                                        ${offer.Notes ? `<p style="margin-top: 8px;">${offer.Notes}</p>` : ''}
                                     </div>
-
-                                    <div class="products-section">
-                                        <h3>Proizvodi</h3>
-                                        <table>
-                                            <thead>
-                                                <tr>
-                                                    <th>#</th>
-                                                    <th>Naziv</th>
-                                                    <th>Količina</th>
-                                                    <th>Cijena</th>
-                                                    <th>Ukupno</th>
-                                                </tr>
-                                            </thead>
-                                            <tbody>
-                                                ${products.map((p, i) => `
-                                                    <tr>
-                                                        <td>${i + 1}</td>
-                                                        <td>
-                                                            <div class="product-name">${p.Product_Name}</div>
-                                                            ${(p as any).Width && (p as any).Height ? `<div class="product-dimensions">${(p as any).Width} × ${(p as any).Height} cm</div>` : ''}
-                                                        </td>
-                                                        <td class="product-qty">${p.Quantity}</td>
-                                                        <td class="product-price">${formatCurrency(p.Selling_Price)}</td>
-                                                        <td class="product-total">${formatCurrency(p.Total_Price)}</td>
-                                                    </tr>
-                                                `).join('')}
-                                            </tbody>
-                                        </table>
-                                    </div>
-
-                                    <div class="summary-row">
-                                        <div class="notes-card">
-                                            <h4>Napomena</h4>
-                                            <p>Ponuda vrijedi do: <strong>${formatDate(offer.Valid_Until)}</strong></p>
-                                            <p>Plaćanje: Avansno ili po dogovoru</p>
-                                            <p>Rok isporuke: Po dogovoru nakon potvrde</p>
-                                            ${offer.Notes ? `<p style="margin-top: 12px;">${offer.Notes}</p>` : ''}
+                                    <div class="totals-box">
+                                        <div class="totals-line">
+                                            <span class="t-label">Suma</span>
+                                            <span class="t-value">${formatCurrency(subtotal)}</span>
                                         </div>
-                                        <div class="totals-card">
-                                            <div class="totals-row">
-                                                <span class="label">Međuzbroj</span>
-                                                <span class="value">${formatCurrency(subtotal)}</span>
-                                            </div>
-                                            ${transport > 0 ? `
-                                                <div class="totals-row">
-                                                    <span class="label">Transport</span>
-                                                    <span class="value">${formatCurrency(transport)}</span>
-                                                </div>
-                                            ` : ''}
-                                            ${discount > 0 ? `
-                                                <div class="totals-row discount">
-                                                    <span class="label">Popust (sklapanje na licu mjesta)</span>
-                                                    <span class="value">-${formatCurrency(discount)}</span>
-                                                </div>
-                                            ` : ''}
-                                            ${offerIncludePDV ? `
-                                                <div class="totals-row">
-                                                    <span class="label">PDV (${offerPdvRate}%)</span>
-                                                    <span class="value">${formatCurrency(total * offerPdvRate / 100)}</span>
-                                                </div>
-                                            ` : ''}
-                                            <div class="totals-row total">
-                                                <span class="label">Ukupno${offerIncludePDV ? ' (sa PDV)' : ''}</span>
-                                                <span class="value">${formatCurrency(offerIncludePDV ? total * (1 + offerPdvRate / 100) : total)}</span>
-                                            </div>
-                                        </div>
-                                    </div>
-
-
-
-                                    <div class="signatures">
-                                        <div class="signature-block">
-                                            <div class="signature-line"></div>
-                                            <div class="signature-label">Ponuđač</div>
-                                        </div>
-                                        <div class="signature-block">
-                                            <div class="signature-line"></div>
-                                            <div class="signature-label">Naručilac</div>
-                                        </div>
-                                    </div>
-
-                                    <div class="footer">
-                                        ${(companyInfo.bankAccounts || []).length > 0 ? `
-                                            <div style="margin-bottom: 16px; text-align: left;">
-                                                <div style="font-size: 11px; font-weight: 500; color: #86868b; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 10px;">Bankovni računi</div>
-                                                ${(companyInfo.bankAccounts || []).map(acc => `
-                                                    <div style="margin-bottom: 6px; font-size: 12px; color: #1d1d1f;">
-                                                        <span style="font-weight: 500;">${acc.bankName}:</span> ${acc.accountNumber}
-                                                    </div>
-                                                `).join('')}
+                                        ${transport > 0 ? `
+                                            <div class="totals-line">
+                                                <span class="t-label">Transport</span>
+                                                <span class="t-value">${formatCurrency(transport)}</span>
                                             </div>
                                         ` : ''}
-                                        <p>Hvala na povjerenju</p>
+                                        ${discount > 0 ? `
+                                            <div class="totals-line discount">
+                                                <span class="t-label">Popust</span>
+                                                <span class="t-value">-${formatCurrency(discount)}</span>
+                                            </div>
+                                        ` : ''}
+                                        ${offerIncludePDV ? `
+                                            <div class="totals-line">
+                                                <span class="t-label">PDV (${offerPdvRate}%)</span>
+                                                <span class="t-value">${formatCurrency(total * offerPdvRate / 100)}</span>
+                                            </div>
+                                        ` : ''}
+                                        <div class="totals-line grand-total">
+                                            <span class="t-label">Ukupno${offerIncludePDV ? ' (sa PDV)' : ''}</span>
+                                            <span class="t-value">${formatCurrency(offerIncludePDV ? total * (1 + offerPdvRate / 100) : total)}</span>
+                                        </div>
                                     </div>
+                                </div>
+
+                                <div class="signatures">
+                                    <div class="sig-block">
+                                        <div class="sig-line"></div>
+                                        <div class="sig-label">Ponuđač</div>
+                                    </div>
+                                    <div class="sig-block">
+                                        <div class="sig-line"></div>
+                                        <div class="sig-label">Naručilac</div>
+                                    </div>
+                                </div>
+
+                                <div class="footer">
+                                    ${(companyInfo.bankAccounts || []).length > 0 ? `
+                                        <div class="bank-accounts">
+                                            <div class="bank-title">Bankovni računi</div>
+                                            ${(companyInfo.bankAccounts || []).map(acc => `
+                                                <div class="bank-item"><strong>${acc.bankName}:</strong> ${acc.accountNumber}</div>
+                                            `).join('')}
+                                        </div>
+                                    ` : ''}
+                                    <p>Hvala na povjerenju</p>
                                 </div>
                             </td>
                         </tr>
@@ -1128,30 +1042,33 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
     async function handleDownloadPDF(offer: Offer) {
         try {
             // Use stored prices from database
-            const productsWithPrices = (offer.products || []).filter(p => p.Included !== false).map(p => {
-                const laborWorkers = (p as any).Labor_Workers || 0;
-                const laborDays = (p as any).Labor_Days || 0;
-                const laborRate = (p as any).Labor_Daily_Rate || 0;
-                const laborTotal = laborWorkers * laborDays * laborRate;
+            const productsWithPrices = sortProductsByName(
+                (offer.products || []).filter(p => p.Included !== false).map(p => {
+                    const laborWorkers = (p as any).Labor_Workers || 0;
+                    const laborDays = (p as any).Labor_Days || 0;
+                    const laborRate = (p as any).Labor_Daily_Rate || 0;
+                    const laborTotal = laborWorkers * laborDays * laborRate;
 
-                const width = (p as any).Width;
-                const height = (p as any).Height;
-                const dimensions = width && height ? `${width} × ${height} cm` : undefined;
+                    const width = (p as any).Width;
+                    const height = (p as any).Height;
+                    const dimensions = width && height ? `${width} × ${height} cm` : undefined;
 
-                return {
-                    name: p.Product_Name,
-                    quantity: p.Quantity || 1,
-                    dimensions: dimensions,
-                    materialCost: p.Material_Cost || 0,
-                    laborCost: laborTotal,
-                    extras: (p.extras || []).map((e: any) => ({
-                        name: e.name || e.Name,
-                        total: e.total || e.Total || 0
-                    })),
-                    sellingPrice: p.Selling_Price || 0,
-                    totalPrice: p.Total_Price || 0
-                };
-            });
+                    return {
+                        name: p.Product_Name,
+                        quantity: p.Quantity || 1,
+                        dimensions: dimensions,
+                        materialCost: p.Material_Cost || 0,
+                        laborCost: laborTotal,
+                        extras: (p.extras || []).map((e: any) => ({
+                            name: e.name || e.Name,
+                            total: e.total || e.Total || 0
+                        })),
+                        sellingPrice: p.Selling_Price || 0,
+                        totalPrice: p.Total_Price || 0
+                    };
+                }),
+                p => p.name
+            );
 
             const subtotal = offer.Subtotal || productsWithPrices.reduce((sum, p) => sum + p.totalPrice, 0);
             const transport = offer.Transport_Cost || 0;
@@ -1492,10 +1409,10 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
                                                             <span className="section-label">Dodatne Usluge</span>
                                                             <div className="extras-wrapper">
                                                                 {product.extras.map((extra, ei) => (
-                                                                    <div key={ei} className="chip">
+                                                                    <div key={ei} className="chip" style={{ cursor: 'pointer' }} onClick={() => openExtrasModal(index, ei)} title="Klikni za uređivanje">
                                                                         <span>{extra.name}</span>
                                                                         <span className="chip-price">{formatCurrency(extra.total)}</span>
-                                                                        <button className="chip-remove" type="button" onClick={() => removeExtra(index, ei)}>
+                                                                        <button className="chip-remove" type="button" onClick={(e) => { e.stopPropagation(); removeExtra(index, ei); }}>
                                                                             <span className="material-icons-round">close</span>
                                                                         </button>
                                                                     </div>
@@ -1653,12 +1570,12 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
             <Modal
                 isOpen={extrasModal}
                 onClose={() => setExtrasModal(false)}
-                title="Dodaj Uslugu/Dodatak"
+                title={editingExtraIndex !== null ? 'Uredi Uslugu/Dodatak' : 'Dodaj Uslugu/Dodatak'}
                 zIndex={2000}
                 footer={
                     <>
                         <button className="btn btn-secondary" onClick={() => setExtrasModal(false)}>Otkaži</button>
-                        <button className="btn btn-primary" onClick={addExtraToProduct}>Dodaj</button>
+                        <button className="btn btn-primary" onClick={addExtraToProduct}>{editingExtraIndex !== null ? 'Spremi' : 'Dodaj'}</button>
                     </>
                 }
             >
@@ -1848,7 +1765,7 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
                         <div style={{ background: 'var(--accent-light)', padding: '20px', borderRadius: '12px' }}>
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxWidth: '400px', marginLeft: 'auto' }}>
                                 <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                                    <span>Međuzbroj:</span>
+                                    <span>Suma:</span>
                                     <span>{formatCurrency(currentOffer.Subtotal)}</span>
                                 </div>
                                 <div style={{ display: 'flex', justifyContent: 'space-between' }}>

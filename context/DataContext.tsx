@@ -1,6 +1,6 @@
 'use client';
 
-import React, { createContext, useContext, useState, useCallback, ReactNode, useRef } from 'react';
+import React, { createContext, useContext, useState, useCallback, useEffect, ReactNode, useRef } from 'react';
 import type { AppState, Project, Material, Offer, Order, Supplier, Worker, WorkOrder, Task } from '@/lib/types';
 import {
     getProjects,
@@ -11,6 +11,7 @@ import {
     getOrders,
     getWorkOrders,
     getTasks,
+    getOrgSettings,
     getAllData,
 } from '@/lib/database';
 import { useAuth } from './AuthContext';
@@ -21,12 +22,56 @@ import { useAuth } from './AuthContext';
 
 type CollectionName = 'projects' | 'materials' | 'suppliers' | 'workers' | 'offers' | 'orders' | 'workOrders' | 'tasks';
 
+export interface CompanyInfo {
+    name: string;
+    address: string;
+    phone: string;
+    email: string;
+    idNumber: string;
+    pdvNumber: string;
+    website: string;
+    logoBase64: string;
+    hideNameWhenLogo: boolean;
+    bankAccounts: { bankName: string; accountNumber: string }[];
+}
+
+export interface OrgAppSettings {
+    currency: string;
+    pdvRate: number;
+    offerValidityDays: number;
+    defaultOfferNote: string;
+    offerTerms: string;
+}
+
+const DEFAULT_COMPANY: CompanyInfo = {
+    name: 'Vaša Firma',
+    address: 'Ulica i broj, Grad',
+    phone: '+387 XX XXX XXX',
+    email: 'info@firma.ba',
+    idNumber: '',
+    pdvNumber: '',
+    website: '',
+    logoBase64: '',
+    hideNameWhenLogo: false,
+    bankAccounts: []
+};
+
+const DEFAULT_APP_SETTINGS: OrgAppSettings = {
+    currency: 'KM',
+    pdvRate: 17,
+    offerValidityDays: 14,
+    defaultOfferNote: 'Hvala na povjerenju!',
+    offerTerms: 'Plaćanje: Avansno ili po dogovoru\nRok isporuke: Po dogovoru nakon potvrde'
+};
+
 interface DataContextType {
     // State
     appState: AppState;
     loading: boolean;
     loadedCollections: Set<CollectionName>;
     organizationId: string | null;
+    companyInfo: CompanyInfo;
+    appSettings: OrgAppSettings;
 
     // Actions
     loadTabData: (tabName: string) => Promise<void>;
@@ -34,6 +79,7 @@ interface DataContextType {
     refreshData: () => Promise<void>;
     invalidateTab: (tabName: string) => void;
     invalidateCollection: (collection: CollectionName) => void;
+    refreshOrgSettings: () => Promise<void>;
 
     // Status
     isTabLoaded: (tabName: string) => boolean;
@@ -53,6 +99,7 @@ const initialAppState: AppState = {
     aluDoorItems: [],
     workLogs: [],
     tasks: [],
+    taskProfiles: [],
 };
 
 // ============================================
@@ -106,6 +153,8 @@ export function DataProvider({ children }: DataProviderProps) {
     const [appState, setAppState] = useState<AppState>(initialAppState);
     const [loading, setLoading] = useState(false);
     const [loadedCollections, setLoadedCollections] = useState<Set<CollectionName>>(new Set());
+    const [companyInfo, setCompanyInfo] = useState<CompanyInfo>(DEFAULT_COMPANY);
+    const [appSettings, setAppSettings] = useState<OrgAppSettings>(DEFAULT_APP_SETTINGS);
 
     // Track which tabs have been "visited" for UI purposes
     const loadedTabs = useRef<Set<string>>(new Set());
@@ -234,16 +283,56 @@ export function DataProvider({ children }: DataProviderProps) {
         return requiredCollections.every(c => loadedCollections.has(c));
     }, [loadedCollections]);
 
+    // ============================================
+    // ORGANIZATION SETTINGS (company info + app settings)
+    // ============================================
+
+    const refreshOrgSettings = useCallback(async () => {
+        if (!organizationId) return;
+        try {
+            const data = await getOrgSettings(organizationId);
+            if (data?.companyInfo) {
+                const merged = { ...DEFAULT_COMPANY, ...data.companyInfo };
+                setCompanyInfo(merged);
+                localStorage.setItem(`companyInfo_${organizationId}`, JSON.stringify(merged));
+            }
+            if (data?.appSettings) {
+                const merged = { ...DEFAULT_APP_SETTINGS, ...data.appSettings };
+                setAppSettings(merged);
+                localStorage.setItem(`appSettings_${organizationId}`, JSON.stringify(merged));
+            }
+        } catch (e) {
+            console.warn('Failed to load org settings from Firestore, using localStorage fallback', e);
+            // Fallback to localStorage
+            try {
+                const savedCompany = localStorage.getItem(`companyInfo_${organizationId}`);
+                if (savedCompany) setCompanyInfo({ ...DEFAULT_COMPANY, ...JSON.parse(savedCompany) });
+                const savedSettings = localStorage.getItem(`appSettings_${organizationId}`);
+                if (savedSettings) setAppSettings({ ...DEFAULT_APP_SETTINGS, ...JSON.parse(savedSettings) });
+            } catch { /* ignore parse errors */ }
+        }
+    }, [organizationId]);
+
+    // Load org settings when organizationId becomes available
+    useEffect(() => {
+        if (organizationId) {
+            refreshOrgSettings();
+        }
+    }, [organizationId, refreshOrgSettings]);
+
     const value: DataContextType = {
         appState,
         loading,
         loadedCollections,
         organizationId,
+        companyInfo,
+        appSettings,
         loadTabData,
         loadAllData,
         refreshData,
         invalidateTab,
         invalidateCollection,
+        refreshOrgSettings,
         isTabLoaded,
     };
 
