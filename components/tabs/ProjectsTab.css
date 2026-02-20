@@ -1,0 +1,1096 @@
+/* ============================================
+   PROJECTS TAB — Apple-like Redesign
+   Scoped under #projects-content to avoid
+   breaking shared classes in other tabs.
+   ============================================ */
+
+/* ---- Status Group Headers ---- */
+#projects-content .status-group-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 4px;
+    margin-bottom: 4px;
+    cursor: pointer;
+    user-select: none;
+    transition: all 0.2s ease;
+    border-radius: 10px;
+}
+
+#projects-content .status-group-header:hover {
+    background: rgba(0, 0, 0, 0.02);
+}
+
+#projects-content .status-group-chevron {
+    font-size: 16px;
+    color: #c4c4c6;
+    transition: transform 0.25s ease, color 0.2s ease;
+}
+
+#projects-content .status-group-header:hover .status-group-chevron {
+    color: #86868b;
+}
+
+#projects-content .status-group-label {
+    font-weight: 600;
+    font-size: 14px;
+    color: #1d1d1f;
+    letter-spacing: -0.01em;
+}
+
+#projects-content .status-group-line {
+    flex: 1;
+    height: 1px;
+    background: rgba(0, 0, 0, 0.06);
+    margin: 0 8px;
+}
+
+#projects-content .status-group-count {
+    font-size: 11px;
+    font-weight: 600;
+    padding: 2px 10px;
+    border-radius: 100px;
+    white-space: nowrap;
+}
+
+/* ---- Toolbar ---- */
+#projects-content .projects-toolbar,
+.projects-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+    padding: 16px 24px;
+}
+
+#projects-content .projects-toolbar .glass-btn-primary {
+    margin-left: auto;
+}
+
+/* ---- Project List ---- */
+#projects-content .projects-list {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+/* ---- Project Card ---- */
+#projects-content .project-card {
+    background: #ffffff;
+    border-radius: 16px;
+    overflow: hidden;
+    border: 1px solid rgba(0, 0, 0, 0.06);
+    box-shadow: none;
+    transition: box-shadow 0.3s ease;
+}
+
+#projects-content .project-card:hover {
+    box-shadow: 0 2px 20px rgba(0, 0, 0, 0.06);
+    transform: none;
+}
+
+/* ---- Project Header ---- */
+#projects-content .project-header {
+    display: flex;
+    align-items: center;
+    padding: 18px 24px;
+    gap: 16px;
+    cursor: pointer;
+    transition: background 0.2s ease;
+}
+
+#projects-content .project-header:hover {
+    background: rgba(0, 0, 0, 0.015);
+}
+
+/* ---- Expand Button ---- */
+#projects-content .expand-btn {
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    color: #c4c4c6;
+    padding: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 8px;
+    transition: all 0.25s ease;
+    width: 28px;
+    height: 28px;
+    min-width: 28px;
+    min-height: 28px;
+    flex-shrink: 0;
+}
+
+#projects-content .expand-btn:hover {
+    color: var(--accent);
+    background: rgba(0, 113, 227, 0.06);
+}
+
+#projects-content .expand-btn.expanded {
+    transform: rotate(90deg);
+    color: var(--accent);
+    background: rgba(0, 113, 227, 0.08);
+}
+
+/* ---- Project Info ---- */
+#projects-content .project-main-info {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+#projects-content .project-name {
+    font-weight: 600;
+    font-size: 15px;
+    margin-bottom: 0;
+    color: #1d1d1f;
+    line-height: 1.35;
+    letter-spacing: -0.01em;
+}
+
+#projects-content .project-client-subtitle {
+    font-size: 13px;
+    color: #86868b;
+    font-weight: 400;
+    margin-bottom: 2px;
+    line-height: 1.4;
+}
+
+#projects-content .project-details {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
+#projects-content .project-client {
+    font-size: 13px;
+    color: #86868b;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+#projects-content .project-summary {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    color: #86868b;
+}
+
+#projects-content .summary-item .material-icons-round {
+    font-size: 15px;
+    color: #aeaeb2;
+}
+
+/* ---- Project Badges ---- */
+#projects-content .project-badges {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+/* ---- Project Actions (icons) ---- */
+#projects-content .project-actions {
+    display: flex;
+    gap: 2px;
+}
+
+#projects-content .icon-btn {
+    background: none;
+    border: none;
+    padding: 6px;
+    border-radius: 8px;
+    cursor: pointer;
+    color: #c4c4c6;
+    transition: all 0.2s ease;
+}
+
+#projects-content .icon-btn:hover {
+    color: #1d1d1f;
+    background: rgba(0, 0, 0, 0.04);
+}
+
+#projects-content .icon-btn.danger:hover {
+    color: #ff3b30;
+    background: rgba(255, 59, 48, 0.06);
+}
+
+/* ============================================
+   PRODUCTS SECTION — Flat, clean
+   ============================================ */
+#projects-content .project-products {
+    display: none;
+    padding: 0 24px 24px;
+    margin: 0;
+    background: transparent;
+    border-top: none;
+    border-radius: 0;
+}
+
+#projects-content .project-products.expanded {
+    display: block;
+    animation: ptFadeIn 0.25s ease-out;
+}
+
+@keyframes ptFadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(-6px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+#projects-content .products-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 0 14px 0;
+    margin-bottom: 0;
+    border-bottom: none;
+}
+
+#projects-content .products-header h4 {
+    font-size: 13px;
+    font-weight: 600;
+    color: #86868b;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+/* ---- Product Card — Borderless, clean ---- */
+#projects-content .product-card {
+    background: rgba(0, 0, 0, 0.018);
+    border-radius: 14px;
+    margin-bottom: 8px;
+    border: none;
+    box-shadow: none;
+    overflow: hidden;
+    transition: background 0.2s ease;
+}
+
+#projects-content .product-card:last-child {
+    margin-bottom: 0;
+}
+
+#projects-content .product-card:hover {
+    background: rgba(0, 0, 0, 0.028);
+    border-color: transparent;
+    box-shadow: none;
+}
+
+#projects-content .product-header {
+    display: flex;
+    align-items: center;
+    padding: 14px 18px;
+    gap: 14px;
+    cursor: pointer;
+    transition: background 0.15s ease;
+    border-radius: 14px;
+}
+
+#projects-content .product-header:hover {
+    background: rgba(0, 0, 0, 0.02);
+}
+
+#projects-content .product-name {
+    font-weight: 600;
+    font-size: 14px;
+    color: #1d1d1f;
+    margin-bottom: 2px;
+    letter-spacing: -0.01em;
+}
+
+#projects-content .product-dims {
+    font-size: 12px;
+    color: #aeaeb2;
+}
+
+/* ============================================
+   MATERIALS SECTION — Minimal, no card-in-card
+   ============================================ */
+#projects-content .product-materials {
+    display: none;
+    padding: 4px 18px 16px;
+    background: transparent;
+    border-top: none;
+    margin: 0;
+}
+
+#projects-content .product-materials.expanded {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    animation: ptFadeIn 0.2s ease-out;
+}
+
+#projects-content .materials-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding-bottom: 8px;
+    margin-bottom: 4px;
+    border-bottom: none;
+}
+
+#projects-content .materials-header h5 {
+    font-size: 12px;
+    font-weight: 600;
+    color: #86868b;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+/* ---- Category Section — Flat, no bordered container ---- */
+#projects-content .material-category-section {
+    background: transparent;
+    border: none;
+    border-radius: 0;
+    box-shadow: none;
+    margin-bottom: 16px;
+    overflow: visible;
+}
+
+#projects-content .material-category-section:last-child {
+    margin-bottom: 0;
+}
+
+/* ---- Category Header — Simple label ---- */
+#projects-content .category-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 2px;
+    background: transparent;
+    border-bottom: none;
+}
+
+#projects-content .cat-title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    font-weight: 600;
+    color: #86868b;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+#projects-content .cat-dot {
+    width: 7px;
+    height: 7px;
+    background: var(--accent);
+    border-radius: 50%;
+    opacity: 0.7;
+}
+
+#projects-content .cat-total {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--accent);
+    background: transparent;
+    padding: 0;
+    border-radius: 0;
+}
+
+#projects-content .cat-count-badge {
+    font-size: 11px;
+    background: rgba(0, 0, 0, 0.04);
+    color: #aeaeb2;
+    padding: 1px 6px;
+    border-radius: 10px;
+    font-weight: 500;
+}
+
+/* ---- Category Items ---- */
+#projects-content .category-items {
+    padding: 0;
+}
+
+/* ---- Table Header ---- */
+#projects-content .materials-table-header.mini {
+    display: grid;
+    grid-template-columns: 3fr 1fr 1fr 1fr 1.2fr 0.8fr;
+    gap: 12px;
+    padding: 6px 4px;
+    background: transparent;
+    border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+    font-size: 11px;
+    font-weight: 600;
+    color: #aeaeb2;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+}
+
+/* ---- Material Row ---- */
+#projects-content .material-row {
+    display: grid;
+    grid-template-columns: 3fr 1fr 1fr 1fr 1.2fr 0.8fr;
+    gap: 12px;
+    align-items: center;
+    padding: 10px 4px;
+    border-bottom: 1px solid rgba(0, 0, 0, 0.035);
+    font-size: 13px;
+    transition: background 0.15s ease;
+}
+
+#projects-content .material-row:last-child {
+    border-bottom: none;
+}
+
+#projects-content .material-row:hover {
+    background: rgba(0, 0, 0, 0.02);
+    border-radius: 8px;
+}
+
+/* ---- Material Columns ---- */
+#projects-content .mat-col-name {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    overflow: hidden;
+}
+
+#projects-content .material-name-text {
+    font-weight: 500;
+    color: #1d1d1f;
+    text-overflow: ellipsis;
+    overflow: hidden;
+    white-space: nowrap;
+    font-size: 13px;
+}
+
+#projects-content .mat-col-qty,
+#projects-content .mat-col-price,
+#projects-content .mat-col-total {
+    font-feature-settings: "tnum";
+    font-variant-numeric: tabular-nums;
+    color: #86868b;
+    font-size: 13px;
+}
+
+#projects-content .mat-col-total strong {
+    color: #1d1d1f;
+    font-weight: 600;
+}
+
+#projects-content .mat-col-actions {
+    display: flex;
+    justify-content: flex-end;
+}
+
+#projects-content .action-buttons {
+    display: flex;
+    gap: 2px;
+    opacity: 0;
+    transition: opacity 0.2s ease;
+}
+
+#projects-content .material-row:hover .action-buttons {
+    opacity: 1;
+}
+
+#projects-content .mobile-label {
+    display: none;
+}
+
+/* ---- Material Indicators ---- */
+#projects-content .material-indicator {
+    font-size: 11px;
+    padding: 1px 6px;
+    border-radius: 6px;
+    font-weight: 500;
+}
+
+#projects-content .material-indicator.essential {
+    font-size: 12px;
+}
+
+#projects-content .material-indicator.glass {
+    color: #3b82f6;
+    background: rgba(59, 130, 246, 0.08);
+}
+
+#projects-content .material-indicator.alu-door {
+    color: #8b5cf6;
+    background: rgba(139, 92, 246, 0.08);
+}
+
+/* ---- Quick Edit ---- */
+#projects-content .btn-quick-edit {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    border: none;
+    border-radius: 8px;
+    background: rgba(0, 0, 0, 0.03);
+    color: #86868b;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+#projects-content .btn-quick-edit:hover {
+    background: rgba(0, 113, 227, 0.08);
+    color: var(--accent);
+}
+
+#projects-content .btn-quick-edit.active {
+    background: var(--accent);
+    color: #ffffff;
+}
+
+#projects-content .btn-quick-edit .material-icons-round {
+    font-size: 16px;
+}
+
+#projects-content .quick-edit-input {
+    width: 80px;
+    padding: 4px 8px;
+    border: 1.5px solid rgba(0, 113, 227, 0.3);
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 500;
+    color: #1d1d1f;
+    background: #ffffff;
+    outline: none;
+    transition: border-color 0.2s ease;
+    text-align: center;
+    font-feature-settings: "tnum";
+}
+
+#projects-content .quick-edit-input:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(0, 113, 227, 0.08);
+}
+
+#projects-content .material-row.editing {
+    background: rgba(0, 113, 227, 0.02);
+    border-radius: 8px;
+}
+
+/* ---- Add Buttons — Clean, subtle ---- */
+#projects-content .btn-add-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 14px;
+    background: transparent;
+    border: 1px solid rgba(0, 0, 0, 0.08);
+    border-radius: 10px;
+    color: #86868b;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    width: fit-content;
+}
+
+#projects-content .btn-add-item:hover {
+    background: rgba(0, 113, 227, 0.04);
+    border-color: rgba(0, 113, 227, 0.2);
+    color: var(--accent);
+    transform: none;
+    box-shadow: none;
+}
+
+#projects-content .btn-add-item .material-icons-round {
+    font-size: 16px;
+    transition: color 0.2s;
+}
+
+#projects-content .btn-add-item:hover .material-icons-round {
+    color: var(--accent);
+}
+
+/* ============================================
+   STATUS BADGES — Softer, pill-shaped
+   ============================================ */
+#projects-content .status-badge {
+    padding: 4px 12px;
+    border-radius: 100px;
+    font-size: 11px;
+    font-weight: 600;
+    white-space: nowrap;
+    letter-spacing: 0.01em;
+}
+
+#projects-content .status-nacrt {
+    background: #f5f5f7;
+    color: #86868b;
+}
+
+#projects-content .status-ponudeno {
+    background: #fff8e8;
+    color: #c17c00;
+}
+
+#projects-content .status-odobreno {
+    background: #e8faf0;
+    color: #1a8d52;
+}
+
+#projects-content .status-u-proizvodnji {
+    background: #e8f4ff;
+    color: #0066cc;
+}
+
+#projects-content .status-sklapanje {
+    background: #e8f7f7;
+    color: #0c7a7a;
+}
+
+#projects-content .status-montaza {
+    background: #f0ebfa;
+    color: #6b3fa0;
+}
+
+#projects-content .status-zavrseno {
+    background: #e5f6ec;
+    color: #1a8d52;
+}
+
+#projects-content .status-otkazano {
+    background: #fef2f2;
+    color: #dc2626;
+}
+
+#projects-content .status-na-cekanju {
+    background: #f5f5f7;
+    color: #86868b;
+}
+
+#projects-content .status-materijali-naruceni {
+    background: #fff8e8;
+    color: #c17c00;
+}
+
+#projects-content .status-materijali-spremni {
+    background: #e8faf0;
+    color: #1a8d52;
+}
+
+#projects-content .status-nije-naruceno {
+    background: #fef2f2;
+    color: #dc2626;
+}
+
+#projects-content .status-naruceno {
+    background: #fff8e8;
+    color: #c17c00;
+}
+
+#projects-content .status-primljeno {
+    background: #e8faf0;
+    color: #1a8d52;
+}
+
+#projects-content .status-poslano {
+    background: #e8f4ff;
+    color: #0066cc;
+}
+
+#projects-content .status-prihvaceno {
+    background: #e5f6ec;
+    color: #1a8d52;
+}
+
+#projects-content .status-odbijeno {
+    background: #fef2f2;
+    color: #dc2626;
+}
+
+#projects-content .status-na-stanju {
+    background: #e8faf0;
+    color: #0d9488;
+}
+
+/* Clickable status */
+#projects-content .status-badge.clickable {
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    transition: all 0.2s;
+}
+
+#projects-content .status-badge.clickable:hover {
+    filter: brightness(0.96);
+}
+
+/* Status Dropdown */
+#projects-content .status-dropdown-wrapper {
+    position: relative;
+    display: inline-block;
+}
+
+#projects-content .status-dropdown-menu {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    margin-top: 4px;
+    background: #ffffff;
+    border: 1px solid rgba(0, 0, 0, 0.06);
+    border-radius: 14px;
+    box-shadow: 0 4px 30px rgba(0, 0, 0, 0.1);
+    min-width: 160px;
+    z-index: 100;
+    overflow: hidden;
+    animation: ptFadeIn 0.15s ease-out;
+    padding: 4px;
+}
+
+#projects-content .status-dropdown-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    padding: 10px 12px;
+    border: none;
+    background: transparent;
+    font-size: 13px;
+    font-weight: 500;
+    color: #1d1d1f;
+    cursor: pointer;
+    text-align: left;
+    transition: background 0.15s;
+    border-radius: 8px;
+}
+
+#projects-content .status-dropdown-item:hover {
+    background: rgba(0, 0, 0, 0.04);
+}
+
+#projects-content .status-dropdown-item .material-icons-round {
+    font-size: 18px;
+    color: #0d9488;
+}
+
+/* ============================================
+   EMPTY STATE
+   ============================================ */
+#projects-content .empty-state {
+    text-align: center;
+    padding: 60px 20px;
+    background: transparent;
+    border-radius: 20px;
+    border: 2px dashed rgba(0, 0, 0, 0.06);
+}
+
+#projects-content .empty-state .material-icons-round {
+    font-size: 48px;
+    color: #c4c4c6;
+    margin-bottom: 16px;
+}
+
+#projects-content .empty-state h3 {
+    font-size: 17px;
+    font-weight: 600;
+    color: #1d1d1f;
+    margin-bottom: 6px;
+}
+
+#projects-content .empty-state p {
+    font-size: 14px;
+    color: #86868b;
+}
+
+/* ============================================
+   RESPONSIVE — Mobile
+   ============================================ */
+@media (max-width: 768px) {
+    .projects-toolbar {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 12px;
+        padding: 16px;
+    }
+
+    .projects-toolbar .glass-search {
+        width: 100%;
+    }
+
+    .projects-toolbar .glass-search input {
+        width: 100%;
+    }
+
+    .projects-toolbar .glass-select-standalone {
+        width: 100%;
+    }
+
+    .projects-toolbar .glass-btn-primary {
+        width: 100%;
+        margin-left: 0;
+        justify-content: center;
+    }
+
+    #projects-content .materials-table-header.mini {
+        display: none;
+    }
+
+    #projects-content .material-row {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        padding: 14px 16px;
+        background: transparent;
+        position: relative;
+        border-bottom: 1px solid rgba(0, 0, 0, 0.04);
+    }
+
+    #projects-content .mat-col-name {
+        width: 100%;
+        margin-bottom: 2px;
+    }
+
+    #projects-content .material-name-text {
+        font-size: 14px;
+        white-space: normal;
+    }
+
+    #projects-content .mat-col-qty,
+    #projects-content .mat-col-price,
+    #projects-content .mat-col-total,
+    #projects-content .mat-col-status {
+        display: flex;
+        justify-content: space-between;
+        width: 100%;
+        padding: 6px 0;
+        border-bottom: 1px solid rgba(0, 0, 0, 0.03);
+    }
+
+    #projects-content .mobile-label {
+        display: inline-block;
+        font-weight: 500;
+        color: #aeaeb2;
+        font-size: 12px;
+    }
+
+    #projects-content .action-buttons {
+        opacity: 1;
+        margin-top: 6px;
+        width: 100%;
+        justify-content: flex-end;
+        gap: 8px;
+    }
+
+    #projects-content .icon-btn {
+        padding: 8px;
+        background: rgba(0, 0, 0, 0.03);
+        border-radius: 8px;
+    }
+
+    #projects-content .product-materials {
+        padding: 8px 12px 14px;
+    }
+
+    /* PROJECT HEADER — Mobile */
+    #projects-content .project-header {
+        display: flex;
+        flex-wrap: wrap;
+        padding: 16px;
+        gap: 12px;
+    }
+
+    #projects-content .project-header>.expand-btn {
+        flex-shrink: 0;
+    }
+
+    #projects-content .project-main-info {
+        flex: 1;
+        min-width: 0;
+    }
+
+    #projects-content .project-title-section {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 6px;
+    }
+
+    #projects-content .project-name {
+        font-size: 16px;
+    }
+
+    #projects-content .project-badges {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+    }
+
+    #projects-content .project-details {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 4px;
+        margin-top: 4px;
+    }
+
+    #projects-content .project-actions {
+        width: 100%;
+        display: flex;
+        justify-content: flex-end;
+        gap: 8px;
+        padding-top: 10px;
+        border-top: 1px solid rgba(0, 0, 0, 0.04);
+    }
+
+    #projects-content .project-actions .icon-btn {
+        padding: 10px;
+        background: rgba(0, 0, 0, 0.03);
+        border-radius: 8px;
+    }
+
+    /* PRODUCT HEADER — Mobile */
+    #projects-content .product-header {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: flex-start;
+        padding: 14px 16px;
+        gap: 10px;
+    }
+
+    #projects-content .product-header>.expand-btn,
+    #projects-content .product-header>button.expand-btn {
+        flex-shrink: 0;
+        align-self: flex-start;
+    }
+
+    #projects-content .product-name {
+        font-size: 14px;
+    }
+
+    #projects-content .product-dims {
+        font-size: 12px;
+        color: #aeaeb2;
+        margin-top: 2px;
+    }
+
+    #projects-content .product-header .status-badge {
+        order: 10;
+        width: auto;
+    }
+
+    #projects-content .product-header .project-actions {
+        order: 11;
+        margin-left: auto;
+        display: flex;
+        gap: 8px;
+    }
+
+    #projects-content .product-header .project-actions .icon-btn {
+        padding: 10px;
+        background: rgba(0, 0, 0, 0.03);
+        border-radius: 8px;
+    }
+}
+
+/* ============================================
+   MATERIAL SUMMARY TABLE
+   ============================================ */
+#projects-content .mat-summary-wrapper {
+    padding: 0 20px 20px;
+}
+
+#projects-content .mat-summary-toggle {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    padding: 10px 0;
+    border-top: 1px solid rgba(0, 0, 0, 0.04);
+    user-select: none;
+}
+
+#projects-content .mat-summary-chevron {
+    font-size: 16px;
+    color: #c4c4c6;
+    transition: transform 0.25s ease, color 0.2s ease;
+}
+
+#projects-content .mat-summary-toggle:hover .mat-summary-chevron {
+    color: #86868b;
+}
+
+#projects-content .mat-summary-label {
+    font-weight: 600;
+    font-size: 13px;
+    color: #1d1d1f;
+    letter-spacing: -0.01em;
+}
+
+#projects-content .mat-summary-count {
+    font-size: 11px;
+    color: #aeaeb2;
+    font-weight: 500;
+}
+
+#projects-content .mat-summary-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+    margin-top: 4px;
+}
+
+#projects-content .mat-summary-table thead tr {
+    border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+}
+
+#projects-content .mat-summary-th {
+    text-align: right;
+    padding: 8px;
+    color: #aeaeb2;
+    font-weight: 600;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+}
+
+#projects-content .mat-summary-th.left {
+    text-align: left;
+    padding-left: 0;
+}
+
+#projects-content .mat-summary-row {
+    border-bottom: 1px solid rgba(0, 0, 0, 0.035);
+}
+
+#projects-content .mat-summary-row:last-child {
+    border-bottom: none;
+}
+
+#projects-content .mat-summary-td {
+    padding: 8px;
+    font-feature-settings: "tnum";
+    font-variant-numeric: tabular-nums;
+}
+
+#projects-content .mat-summary-name {
+    padding-left: 0;
+    font-weight: 500;
+    color: #1d1d1f;
+}
+
+#projects-content .mat-summary-num {
+    text-align: right;
+    font-weight: 600;
+    color: #1d1d1f;
+}
+
+#projects-content .mat-summary-status {
+    font-size: 11px;
+    padding: 3px 10px;
+    border-radius: 100px;
+    font-weight: 600;
+    white-space: nowrap;
+}

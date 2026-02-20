@@ -26,6 +26,7 @@ interface WorkOrderExpandedDetailProps {
     onDelete: (workOrderId: string) => Promise<void>;
     onStart: (workOrderId: string) => Promise<void>;
     onRefresh?: (...collections: string[]) => void;
+    showToast?: (message: string, type: 'success' | 'error' | 'info') => void;
 }
 
 export default function WorkOrderExpandedDetail({
@@ -35,7 +36,8 @@ export default function WorkOrderExpandedDetail({
     onPrint,
     onDelete,
     onStart,
-    onRefresh
+    onRefresh,
+    showToast
 }: WorkOrderExpandedDetailProps) {
     const [localItems, setLocalItems] = useState<WorkOrderItem[]>([]);
     const [isLoading, setIsLoading] = useState<string | null>(null);
@@ -436,6 +438,8 @@ export default function WorkOrderExpandedDetail({
                 items={localItems}
                 processes={localProcesses}
                 workers={workers}
+                organizationId={organizationId || undefined}
+                showToast={showToast}
                 onProcessUpdate={handleProcessUpdate}
                 onMoveToStage={handleMoveToStage}
                 onSubTaskUpdate={async (itemId, subTaskId, updates) => {

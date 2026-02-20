@@ -88,6 +88,16 @@ export default function WorkersTab({ workers, onRefresh, showToast }: WorkersTab
             showToast(result.message, 'success');
             setWorkerModal(false);
             onRefresh('workers');
+
+            // WARN-1: Alert user about rate change consequences
+            if (result.rateChanged && result.oldRate !== undefined && result.newRate !== undefined) {
+                setTimeout(() => {
+                    showToast(
+                        `⚠️ Dnevnica promijenjena: ${result.oldRate} → ${result.newRate} KM. Postojeći work logovi NISU ažurirani — samo budući će koristiti novu cijenu.`,
+                        'info'
+                    );
+                }, 500); // Small delay so the "Radnik ažuriran" toast is visible first
+            }
         } else {
             showToast(result.message, 'error');
         }

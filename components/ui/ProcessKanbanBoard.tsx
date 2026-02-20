@@ -3,18 +3,20 @@
 import { useState, DragEvent, useMemo } from 'react';
 import { GripVertical, User, CheckCircle, Clock, Scissors, Plus, X, Pause, Play, Edit2 } from 'lucide-react';
 import type { WorkOrderItem, ItemProcessStatus, Worker, SubTask } from '@/lib/types';
-import { canWorkerStartProcess } from '@/lib/attendance';
+import { canWorkerStartProcess, triggerWorkLogReconciliation } from '@/lib/attendance';
 
 interface ProcessKanbanBoardProps {
     items: WorkOrderItem[];
     processes: string[];
     workers: Worker[];
+    organizationId?: string;
     onProcessUpdate: (itemId: string, processName: string, updates: Partial<ItemProcessStatus>) => void;
     onMoveToStage: (itemId: string, targetProcess: string, allProcesses: string[]) => void;
     onSubTaskUpdate?: (itemId: string, subTaskId: string, updates: Partial<SubTask>) => void;
     onSubTaskCreate?: (itemId: string, subTasks: SubTask[]) => void;
     onSubTaskMove?: (itemId: string, subTaskId: string, targetProcess: string) => void;
     onPauseToggle?: (itemId: string, isPaused: boolean) => void;
+    showToast?: (message: string, type: 'success' | 'error' | 'info') => void;
 }
 
 // Unified card type for rendering (can be legacy process-based or sub-task)
@@ -41,12 +43,14 @@ export default function ProcessKanbanBoard({
     items,
     processes,
     workers,
+    organizationId,
     onProcessUpdate,
     onMoveToStage,
     onSubTaskUpdate,
     onSubTaskCreate,
     onSubTaskMove,
-    onPauseToggle
+    onPauseToggle,
+    showToast
 }: ProcessKanbanBoardProps) {
     const [draggedCard, setDraggedCard] = useState<string | null>(null);
     const [dragOverColumn, setDragOverColumn] = useState<string | null>(null);
@@ -239,6 +243,19 @@ export default function ProcessKanbanBoard({
                 Worker_Name: worker.Name
             });
         }
+
+        // FIX-1: Immediately create WorkLog for this assignment
+        if (organizationId) {
+            triggerWorkLogReconciliation(workerId, organizationId).then(result => {
+                if (result.created > 0) {
+                    showToast?.(`✅ ${result.message}`, 'success');
+                } else {
+                    showToast?.(`ℹ️ ${result.message}`, 'info');
+                }
+            }).catch(err => {
+                console.error('WorkLog reconciliation failed:', err);
+            });
+        }
     };
 
     // Split functionality - supports N groups
@@ -343,6 +360,8 @@ export default function ProcessKanbanBoard({
                     Is_Paused: true,
                     Pause_Periods: [...currentPausePeriods, { Started_At: now }]
                 });
+                // WARN-3: Informative toast
+                showToast?.('⏸️ Proizvod pauziran od sutra. Danas evidentiran rad ostaje.', 'info');
             } else {
                 // RESUMING: Close the last open pause period
                 const updatedPeriods = currentPausePeriods.map((p: any, idx: number) => {
@@ -355,10 +374,16 @@ export default function ProcessKanbanBoard({
                     Is_Paused: false,
                     Pause_Periods: updatedPeriods
                 });
+                showToast?.('▶️ Proizvod nastavljen — dnevnice se ponovo obračunavaju.', 'success');
             }
         } else if (onPauseToggle) {
             // Legacy item-level pause
             onPauseToggle(card.itemId, !card.isPaused);
+            if (!card.isPaused) {
+                showToast?.('⏸️ Proizvod pauziran od sutra. Danas evidentiran rad ostaje.', 'info');
+            } else {
+                showToast?.('▶️ Proizvod nastavljen — dnevnice se ponovo obračunavaju.', 'success');
+            }
         }
     };
 
@@ -395,6 +420,9 @@ export default function ProcessKanbanBoard({
             Worker_Name: w.Name
         }));
 
+        // Collect all worker IDs that need WorkLog reconciliation
+        const workerIdsToReconcile: string[] = [];
+
         if (card.isSubTask && onSubTaskUpdate) {
             // Update sub-task worker + helpers
             onSubTaskUpdate(card.itemId, card.subTaskId!, {
@@ -409,6 +437,24 @@ export default function ProcessKanbanBoard({
                 Worker_ID: mainWorker?.Worker_ID,
                 Worker_Name: mainWorker?.Name,
                 Helpers: helpers
+            });
+        }
+
+        // FIX-1: Reconcile WorkLogs for main worker + all helpers
+        if (organizationId) {
+            if (mainWorker) workerIdsToReconcile.push(mainWorker.Worker_ID);
+            helperWorkers.forEach(w => workerIdsToReconcile.push(w.Worker_ID));
+
+            // Fire-and-forget reconciliation for all assigned workers
+            Promise.all(
+                workerIdsToReconcile.map(wId => triggerWorkLogReconciliation(wId, organizationId))
+            ).then(results => {
+                const totalCreated = results.reduce((sum, r) => sum + r.created, 0);
+                if (totalCreated > 0) {
+                    showToast?.(`✅ WorkLog kreiran za ${totalCreated} dodjelu/e`, 'success');
+                }
+            }).catch(err => {
+                console.error('WorkLog reconciliation failed:', err);
             });
         }
 

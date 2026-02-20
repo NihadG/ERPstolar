@@ -1159,6 +1159,7 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                         onDelete={handleDeleteWorkOrder}
                         onStart={handleStartWorkOrder}
                         onRefresh={onRefresh}
+                        showToast={showToast}
                     />
                 )}
             </div>

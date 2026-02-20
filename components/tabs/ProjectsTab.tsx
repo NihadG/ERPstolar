@@ -22,6 +22,7 @@ import AluDoorModal, { type AluDoorModalData } from '@/components/ui/AluDoorModa
 import { SearchableSelect } from '@/components/ui/SearchableSelect';
 
 import ProductTimelineModal from '@/components/ui/ProductTimelineModal';
+import ProjectMaterialsModal from '@/components/ui/ProjectMaterialsModal';
 import { useData } from '@/context/DataContext';
 import { PROJECT_STATUSES, PRODUCTION_STEPS, MATERIAL_CATEGORIES } from '@/lib/types';
 import { useIsMobile } from '@/hooks/useIsMobile';
@@ -30,6 +31,7 @@ import MobileMaterialEditModal from './mobile/MobileMaterialEditModal';
 import MobileProjectModal from './mobile/MobileProjectModal';
 import MobileProductModal from './mobile/MobileProductModal';
 import MobileMaterialAddModal from './mobile/MobileMaterialAddModal';
+import './ProjectsTab.css';
 
 interface ProjectsTabProps {
     projects: Project[];
@@ -50,6 +52,7 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
     const [expandedProducts, setExpandedProducts] = useState<Set<string>>(new Set());
     const [expandedStatusGroups, setExpandedStatusGroups] = useState<Set<string>>(new Set());
     const [showMaterialsSummary, setShowMaterialsSummary] = useState<Set<string>>(new Set());
+    const [materialsOverviewProject, setMaterialsOverviewProject] = useState<Project | null>(null);
 
     function toggleStatusGroup(status: string) {
         const newExpanded = new Set(expandedStatusGroups);
@@ -1029,6 +1032,15 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                     </Modal>
                 )}
 
+                {/* Project Materials Overview Modal */}
+                {materialsOverviewProject && (
+                    <ProjectMaterialsModal
+                        isOpen={!!materialsOverviewProject}
+                        onClose={() => setMaterialsOverviewProject(null)}
+                        project={materialsOverviewProject}
+                    />
+                )}
+
                 {/* Product Timeline Modal */}
                 <ProductTimelineModal
                     isOpen={timelineProduct !== null}
@@ -1116,6 +1128,9 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                                         </div>
 
                                         <div className="project-actions" onClick={(e) => e.stopPropagation()}>
+                                            <button className="icon-btn" onClick={() => setMaterialsOverviewProject(project)} title="Pregled materijala">
+                                                <span className="material-icons-round">inventory</span>
+                                            </button>
                                             {onNavigateToTasks && (
                                                 <button className="icon-btn" onClick={() => onNavigateToTasks(project.Project_ID)} title="Zadaci">
                                                     <span className="material-icons-round">task_alt</span>
@@ -1151,7 +1166,7 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                                         const pozB = extractPoz(b.Name || '');
                                         if (pozA !== pozB) return pozA - pozB;
                                         return (a.Name || '').localeCompare(b.Name || '', 'hr', { numeric: true });
-                                    }).map(product => (
+                                    }).filter(product => expandedProducts.size === 0 || expandedProducts.has(product.Product_ID)).map(product => (
                                         <div key={product.Product_ID} className="product-card">
                                             <div className="product-header" onClick={() => toggleProduct(product.Product_ID)}>
                                                 <button className={`expand-btn ${expandedProducts.has(product.Product_ID) ? 'expanded' : ''}`}>
@@ -1597,30 +1612,30 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                                     const groupedMats = Array.from(materialMap.values()).sort((a, b) => a.name.localeCompare(b.name, 'hr'));
                                     const isOpen = showMaterialsSummary.has(project.Project_ID);
                                     return (
-                                        <div style={{ padding: '0 20px 20px' }}>
+                                        <div className="mat-summary-wrapper">
                                             <div
+                                                className="mat-summary-toggle"
                                                 onClick={() => {
                                                     const next = new Set(showMaterialsSummary);
                                                     if (next.has(project.Project_ID)) next.delete(project.Project_ID); else next.add(project.Project_ID);
                                                     setShowMaterialsSummary(next);
                                                 }}
-                                                style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', padding: '10px 0', borderTop: '1px solid #f1f5f9', userSelect: 'none' }}
                                             >
-                                                <span className="material-icons-round" style={{ fontSize: '18px', color: '#64748b', transition: 'transform 0.2s', transform: isOpen ? 'rotate(90deg)' : 'rotate(0deg)' }}>chevron_right</span>
-                                                <span style={{ fontWeight: 600, fontSize: '13px', color: '#334155' }}>Pregled materijala</span>
-                                                <span style={{ fontSize: '11px', color: '#94a3b8', fontWeight: 500 }}>({groupedMats.length})</span>
+                                                <span className="material-icons-round mat-summary-chevron" style={{ transform: isOpen ? 'rotate(90deg)' : 'rotate(0deg)' }}>chevron_right</span>
+                                                <span className="mat-summary-label">Pregled materijala</span>
+                                                <span className="mat-summary-count">({groupedMats.length})</span>
                                             </div>
                                             {isOpen && (
-                                                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px', marginTop: '4px' }}>
+                                                <table className="mat-summary-table">
                                                     <thead>
-                                                        <tr style={{ borderBottom: '2px solid #e2e8f0' }}>
-                                                            <th style={{ textAlign: 'left', padding: '8px 8px 8px 0', color: '#64748b', fontWeight: 600, fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Materijal</th>
-                                                            <th style={{ textAlign: 'right', padding: '8px', color: '#64748b', fontWeight: 600, fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Potrebno</th>
-                                                            <th style={{ textAlign: 'right', padding: '8px', color: '#64748b', fontWeight: 600, fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Na stanju</th>
-                                                            <th style={{ textAlign: 'right', padding: '8px', color: '#64748b', fontWeight: 600, fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Naručeno</th>
-                                                            <th style={{ textAlign: 'right', padding: '8px', color: '#64748b', fontWeight: 600, fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Primljeno</th>
-                                                            <th style={{ textAlign: 'right', padding: '8px', color: '#64748b', fontWeight: 600, fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Preostalo</th>
-                                                            <th style={{ textAlign: 'right', padding: '8px 0 8px 8px', color: '#64748b', fontWeight: 600, fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Status</th>
+                                                        <tr>
+                                                            <th className="mat-summary-th left">Materijal</th>
+                                                            <th className="mat-summary-th">Potrebno</th>
+                                                            <th className="mat-summary-th">Na stanju</th>
+                                                            <th className="mat-summary-th">Naručeno</th>
+                                                            <th className="mat-summary-th">Primljeno</th>
+                                                            <th className="mat-summary-th">Preostalo</th>
+                                                            <th className="mat-summary-th">Status</th>
                                                         </tr>
                                                     </thead>
                                                     <tbody>
@@ -1635,15 +1650,15 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                                                             else if (mat.onStockQty > 0) { statusLabel = 'Na stanju'; statusColor = '#10b981'; statusBg = '#ecfdf5'; }
                                                             else { statusLabel = 'Nije naručeno'; statusColor = '#f59e0b'; statusBg = '#fffbeb'; }
                                                             return (
-                                                                <tr key={i} style={{ borderBottom: '1px solid #f1f5f9' }}>
-                                                                    <td style={{ padding: '8px 8px 8px 0', fontWeight: 500, color: '#1e293b' }}>{mat.name}</td>
-                                                                    <td style={{ textAlign: 'right', padding: '8px', fontWeight: 600, color: '#334155' }}>{mat.totalQty} {mat.unit}</td>
-                                                                    <td style={{ textAlign: 'right', padding: '8px', fontWeight: 600, color: mat.onStockQty > 0 ? '#10b981' : '#94a3b8' }}>{mat.onStockQty} {mat.unit}</td>
-                                                                    <td style={{ textAlign: 'right', padding: '8px', fontWeight: 600, color: mat.orderedQty > 0 ? '#3b82f6' : '#94a3b8' }}>{mat.orderedQty} {mat.unit}</td>
-                                                                    <td style={{ textAlign: 'right', padding: '8px', fontWeight: 600, color: mat.receivedQty > 0 ? '#10b981' : '#94a3b8' }}>{mat.receivedQty} {mat.unit}</td>
-                                                                    <td style={{ textAlign: 'right', padding: '8px', fontWeight: 600, color: remaining > 0 ? '#ef4444' : '#10b981' }}>{remaining > 0 ? remaining : '✓'} {remaining > 0 ? mat.unit : ''}</td>
-                                                                    <td style={{ textAlign: 'right', padding: '8px 0 8px 8px' }}>
-                                                                        <span style={{ fontSize: '11px', padding: '3px 10px', borderRadius: '8px', background: statusBg, color: statusColor, fontWeight: 600, whiteSpace: 'nowrap' }}>{statusLabel}</span>
+                                                                <tr key={i} className="mat-summary-row">
+                                                                    <td className="mat-summary-td mat-summary-name">{mat.name}</td>
+                                                                    <td className="mat-summary-td mat-summary-num">{mat.totalQty} {mat.unit}</td>
+                                                                    <td className="mat-summary-td mat-summary-num" style={{ color: mat.onStockQty > 0 ? '#10b981' : '#aeaeb2' }}>{mat.onStockQty} {mat.unit}</td>
+                                                                    <td className="mat-summary-td mat-summary-num" style={{ color: mat.orderedQty > 0 ? '#3b82f6' : '#aeaeb2' }}>{mat.orderedQty} {mat.unit}</td>
+                                                                    <td className="mat-summary-td mat-summary-num" style={{ color: mat.receivedQty > 0 ? '#10b981' : '#aeaeb2' }}>{mat.receivedQty} {mat.unit}</td>
+                                                                    <td className="mat-summary-td mat-summary-num" style={{ color: remaining > 0 ? '#ef4444' : '#10b981' }}>{remaining > 0 ? remaining : '✓'} {remaining > 0 ? mat.unit : ''}</td>
+                                                                    <td className="mat-summary-td" style={{ textAlign: 'right' }}>
+                                                                        <span className="mat-summary-status" style={{ background: statusBg, color: statusColor }}>{statusLabel}</span>
                                                                     </td>
                                                                 </tr>
                                                             );
@@ -1660,75 +1675,28 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                 ) : (
                     // Grouped view by status when no project is expanded
                     groupedProjects.map(group => (
-                        <div key={group.status} className="status-group" style={{ marginBottom: '24px' }}>
+                        <div key={group.status} className="status-group" style={{ marginBottom: '16px' }}>
                             <div
-                                className="status-group-header"
+                                className={`status-group-header ${expandedStatusGroups.has(group.status) ? 'expanded' : ''}`}
                                 onClick={() => toggleStatusGroup(group.status)}
-                                style={{
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    gap: '12px',
-                                    padding: '8px 12px',
-                                    borderRadius: '8px',
-                                    marginBottom: '4px',
-                                    background: expandedStatusGroups.has(group.status) ? getStatusColor(group.status).bg : 'transparent',
-                                    border: `1px solid ${expandedStatusGroups.has(group.status) ? getStatusColor(group.status).border : 'transparent'}`,
-                                    cursor: 'pointer',
-                                    userSelect: 'none',
-                                    transition: 'all 0.2s ease',
-                                    width: '100%'
-                                }}
-                                onMouseEnter={(e) => {
-                                    if (!expandedStatusGroups.has(group.status)) {
-                                        e.currentTarget.style.background = 'rgba(0,0,0,0.02)';
-                                    }
-                                }}
-                                onMouseLeave={(e) => {
-                                    if (!expandedStatusGroups.has(group.status)) {
-                                        e.currentTarget.style.background = 'transparent';
-                                    }
-                                }}
                             >
-                                <div style={{
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    justifyContent: 'center',
-                                    width: '24px',
-                                    height: '24px',
-                                    borderRadius: '6px',
-                                    background: getStatusColor(group.status).bg,
-                                    color: getStatusColor(group.status).color
-                                }}>
-                                    <span
-                                        className="material-icons-round"
-                                        style={{
-                                            fontSize: '18px',
-                                            transition: 'transform 0.2s ease',
-                                            transform: expandedStatusGroups.has(group.status) ? 'rotate(90deg)' : 'rotate(0deg)'
-                                        }}
-                                    >
-                                        chevron_right
-                                    </span>
-                                </div>
                                 <span
+                                    className="material-icons-round status-group-chevron"
                                     style={{
-                                        fontWeight: 600,
-                                        fontSize: '14px',
-                                        color: '#1e293b'
+                                        transform: expandedStatusGroups.has(group.status) ? 'rotate(90deg)' : 'rotate(0deg)'
                                     }}
                                 >
+                                    chevron_right
+                                </span>
+                                <span className="status-group-label">
                                     {group.status}
                                 </span>
-                                <div style={{ flex: 1, height: '1px', background: '#e2e8f0', margin: '0 16px' }}></div>
+                                <div className="status-group-line"></div>
                                 <span
+                                    className="status-group-count"
                                     style={{
-                                        fontSize: '12px',
                                         color: getStatusColor(group.status).color,
-                                        fontWeight: 500,
-                                        background: getStatusColor(group.status).bg,
-                                        padding: '2px 8px',
-                                        borderRadius: '10px',
-                                        border: `1px solid ${getStatusColor(group.status).border}`
+                                        background: getStatusColor(group.status).bg
                                     }}
                                 >
                                     {group.projects.length} {group.projects.length === 1 ? 'projekat' : 'projekata'}
@@ -1760,6 +1728,9 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                                             </div>
 
                                             <div className="project-actions" onClick={(e) => e.stopPropagation()}>
+                                                <button className="icon-btn" onClick={() => setMaterialsOverviewProject(project)} title="Pregled materijala">
+                                                    <span className="material-icons-round">inventory</span>
+                                                </button>
                                                 {onNavigateToTasks && (
                                                     <button className="icon-btn" onClick={() => onNavigateToTasks(project.Project_ID)} title="Zadaci">
                                                         <span className="material-icons-round">task_alt</span>
@@ -1780,6 +1751,15 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                     ))
                 )}
             </div>
+
+            {/* Project Materials Overview Modal */}
+            {materialsOverviewProject && (
+                <ProjectMaterialsModal
+                    isOpen={!!materialsOverviewProject}
+                    onClose={() => setMaterialsOverviewProject(null)}
+                    project={materialsOverviewProject}
+                />
+            )}
 
             {/* Project Modal */}
             <Modal

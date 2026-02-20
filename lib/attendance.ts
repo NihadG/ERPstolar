@@ -970,6 +970,72 @@ export function formatLocalDateISO(date: Date = new Date()): string {
 }
 
 /**
+ * FIX-1: Trigger WorkLog creation/reconciliation when a worker is assigned via Kanban.
+ * This ensures labor costs are captured immediately, without waiting for sihtarica.
+ * 
+ * Idempotent — workLogExists() prevents duplicate logs.
+ * If the worker already has logs for today, this will reconcile split rates.
+ * 
+ * @param workerId - Worker being assigned
+ * @param organizationId - Organization ID for multi-tenancy
+ * @returns Object with created count and informational message
+ */
+export async function triggerWorkLogReconciliation(
+    workerId: string,
+    organizationId: string
+): Promise<{ created: number; message: string }> {
+    try {
+        if (!workerId || !organizationId) {
+            return { created: 0, message: 'Missing workerId or organizationId' };
+        }
+
+        // 1. Get worker details (name + daily rate)
+        const allWorkers = await getWorkers(organizationId);
+        const worker = allWorkers.find(w => w.Worker_ID === workerId);
+        if (!worker) {
+            return { created: 0, message: 'Worker not found' };
+        }
+
+        if (!worker.Daily_Rate || worker.Daily_Rate <= 0) {
+            return { created: 0, message: `${worker.Name} ima dnevnicu 0 KM — WorkLog nije kreiran.` };
+        }
+
+        const today = formatLocalDateISO(new Date());
+
+        // 2. Create/reconcile work logs for today
+        const result = await createWorkLogsForAttendance(
+            worker.Worker_ID,
+            worker.Name,
+            worker.Daily_Rate,
+            today,
+            organizationId
+        );
+
+        // 3. Recalculate affected work orders
+        if (result.affectedWorkOrderIds.length > 0) {
+            await Promise.all(
+                result.affectedWorkOrderIds.map(woId => recalculateWorkOrder(woId))
+            );
+        }
+
+        if (result.created > 0) {
+            return {
+                created: result.created,
+                message: `WorkLog kreiran za ${worker.Name} (${worker.Daily_Rate} KM ÷ ${result.created + result.skipped} stavki)`
+            };
+        } else {
+            return {
+                created: 0,
+                message: `WorkLog za ${worker.Name} već postoji za danas.`
+            };
+        }
+    } catch (error) {
+        console.error('triggerWorkLogReconciliation error:', error);
+        return { created: 0, message: 'Greška pri kreiranju WorkLog-a' };
+    }
+}
+
+/**
  * Check if a worker can start a process today
  * NOTE: Always returns allowed=true now. Attendance status is for work log creation,
  * not for blocking work order operations. Users can adjust work orders anytime.
@@ -1299,6 +1365,7 @@ export async function startWorkOrderItem(
 
 /**
  * Complete a Work Order Item and calculate actual labor cost
+ * FIX-3: Also freezes labor cost so backdated attendance won't retroactively change profit
  */
 export async function completeWorkOrderItem(
     workOrderId: string,
@@ -1320,7 +1387,8 @@ export async function completeWorkOrderItem(
         await updateDoc(itemRef, {
             Status: 'Završeno',
             Completed_At: new Date().toISOString(),
-            Actual_Labor_Cost: actualLaborCost
+            Actual_Labor_Cost: actualLaborCost,
+            Labor_Cost_Frozen: true  // FIX-3: Freeze labor cost on completion
         });
 
         await recalculateWorkOrder(workOrderId);
@@ -1531,8 +1599,13 @@ export async function recalculateWorkOrder(workOrderId: string): Promise<void> {
             plannedLaborCost += item.Planned_Labor_Cost || 0;
 
             // CRITICAL FIX: Calculate FRESH labor cost instead of using stale stored value
-            // This ensures profit is accurate in real-time, not just after item completion
-            const freshItemLaborCost = await calculateActualLaborCost(item, workOrder.Organization_ID);
+            // FIX-3: For COMPLETED items with frozen labor, use stored value (consistent with material freeze)
+            let freshItemLaborCost: number;
+            if (item.Status === 'Završeno' && (item as any).Labor_Cost_Frozen === true && (item.Actual_Labor_Cost || 0) > 0) {
+                freshItemLaborCost = item.Actual_Labor_Cost || 0;
+            } else {
+                freshItemLaborCost = await calculateActualLaborCost(item, workOrder.Organization_ID);
+            }
             actualLaborCost += freshItemLaborCost;
 
             // SYNC: Update item-level Material_Cost and Actual_Labor_Cost for consistency

@@ -111,6 +111,7 @@ export async function generatePDFFromHTML(
 export interface OfferPDFData {
     offerNumber: string;
     clientName: string;
+    clientAddress?: string;
     clientPhone?: string;
     clientEmail?: string;
     createdDate: string;
@@ -153,8 +154,7 @@ function createOfferHTML(data: OfferPDFData): string {
         <tr>
             <td style="padding: 12px; border-bottom: 1px solid #e5e7eb; font-size: 13px; text-align: center;">${i + 1}</td>
             <td style="padding: 12px; border-bottom: 1px solid #e5e7eb; font-size: 15px;">
-                <div style="font-weight: 400;">${p.name}</div>
-                ${p.dimensions ? `<div style="font-size: 11px; color: #86868b; margin-top: 2px;">${p.dimensions}</div>` : ''}
+                <div style="font-weight: 400;">${p.name}${p.dimensions ? `<span style="color: #86868b;">, ${p.dimensions}</span>` : ''}</div>
             </td>
             <td style="padding: 12px; border-bottom: 1px solid #e5e7eb; text-align: center; font-size: 15px;">${p.quantity}</td>
             <td style="padding: 12px; border-bottom: 1px solid #e5e7eb; text-align: right; font-size: 15px;">${formatCurrency(p.sellingPrice)}</td>
@@ -216,6 +216,12 @@ function createOfferHTML(data: OfferPDFData): string {
                     padding: 20px;
                     border-radius: 8px;
                     margin-bottom: 30px;
+                    display: flex;
+                    justify-content: space-between;
+                    align-items: flex-start;
+                }
+                .client-details {
+                    flex: 1;
                 }
                 .client-section h3 {
                     font-size: 14px;
@@ -231,6 +237,22 @@ function createOfferHTML(data: OfferPDFData): string {
                 .client-section .contact {
                     color: #6b7280;
                     font-size: 14px;
+                }
+                .bank-accounts {
+                    text-align: right;
+                }
+                .bank-accounts .bank-title {
+                    font-size: 11px;
+                    font-weight: 500;
+                    color: #9ca3af;
+                    text-transform: uppercase;
+                    letter-spacing: 0.5px;
+                    margin-bottom: 8px;
+                }
+                .bank-accounts .bank-item {
+                    margin-bottom: 4px;
+                    font-size: 12px;
+                    color: #6b7280;
                 }
                 table { 
                     width: 100%; 
@@ -295,20 +317,33 @@ function createOfferHTML(data: OfferPDFData): string {
                     <p>${data.companyAddress || ''}</p>
                     <p>${data.companyPhone || ''} ${data.companyEmail ? '• ' + data.companyEmail : ''}</p>
                 </div>
+                <div class="bank-accounts">
+                    ${(data.bankAccounts || []).length > 0 ? `
+                        <div class="bank-title">Bankovni računi</div>
+                        ${(data.bankAccounts || []).map(acc => `
+                            <div class="bank-item">
+                                <span style="font-weight: 500;">${acc.bankName}:</span> ${acc.accountNumber}
+                            </div>
+                        `).join('')}
+                    ` : ''}
+                </div>
+            </div>
+
+            <div class="client-section">
+                <div class="client-details">
+                    <h3>Klijent</h3>
+                    <div class="name">${data.clientName}</div>
+                    <div class="contact">
+                        ${data.clientAddress ? `${data.clientAddress}<br>` : ''}
+                        ${data.clientPhone || ''} ${data.clientEmail ? '• ' + data.clientEmail : ''}
+                    </div>
+                </div>
                 <div class="offer-info">
                     <div class="offer-number">PONUDA ${data.offerNumber}</div>
                     <div class="offer-date">
                         Datum: ${formatDate(data.createdDate)}<br>
                         Važi do: ${formatDate(data.validUntil)}
                     </div>
-                </div>
-            </div>
-
-            <div class="client-section">
-                <h3>Klijent</h3>
-                <div class="name">${data.clientName}</div>
-                <div class="contact">
-                    ${data.clientPhone || ''} ${data.clientEmail ? '• ' + data.clientEmail : ''}
                 </div>
             </div>
 
@@ -358,16 +393,6 @@ function createOfferHTML(data: OfferPDFData): string {
             ` : ''}
 
             <div class="footer">
-                ${(data.bankAccounts || []).length > 0 ? `
-                    <div style="margin-bottom: 16px; text-align: left;">
-                        <div style="font-size: 11px; font-weight: 500; color: #9ca3af; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px;">Bankovni računi</div>
-                        ${(data.bankAccounts || []).map(acc => `
-                            <div style="margin-bottom: 4px; font-size: 12px; color: #6b7280;">
-                                <span style="font-weight: 500;">${acc.bankName}:</span> ${acc.accountNumber}
-                            </div>
-                        `).join('')}
-                    </div>
-                ` : ''}
                 <p>Hvala na povjerenju! • Ponuda generirana: ${new Date().toLocaleDateString('hr-HR')}</p>
             </div>
         </body>

@@ -1248,13 +1248,16 @@ export async function getWorkers(organizationId: string): Promise<Worker[]> {
     return snapshot.docs.map(doc => ({ ...doc.data() } as Worker));
 }
 
-export async function saveWorker(data: Partial<Worker>, organizationId: string): Promise<{ success: boolean; data?: { Worker_ID: string }; message: string }> {
+export async function saveWorker(data: Partial<Worker>, organizationId: string): Promise<{ success: boolean; data?: { Worker_ID: string }; message: string; rateChanged?: boolean; oldRate?: number; newRate?: number }> {
     if (!organizationId) {
         return { success: false, message: 'Organization ID is required' };
     }
 
     try {
         const isNew = !data.Worker_ID;
+        let rateChanged = false;
+        let oldRate: number | undefined;
+        let newRate: number | undefined;
 
         if (isNew) {
             data.Worker_ID = generateUUID();
@@ -1269,12 +1272,29 @@ export async function saveWorker(data: Partial<Worker>, organizationId: string):
             );
             const snapshot = await getDocs(q);
             if (!snapshot.empty) {
+                // WARN-1: Detect Daily_Rate change
+                const existingData = snapshot.docs[0].data();
+                if (data.Daily_Rate !== undefined && existingData.Daily_Rate !== undefined) {
+                    if (Math.abs((data.Daily_Rate || 0) - (existingData.Daily_Rate || 0)) > 0.01) {
+                        rateChanged = true;
+                        oldRate = existingData.Daily_Rate;
+                        newRate = data.Daily_Rate;
+                    }
+                }
+
                 const { Organization_ID, ...updateData } = data;
                 await updateDoc(snapshot.docs[0].ref, updateData as Record<string, unknown>);
             }
         }
 
-        return { success: true, data: { Worker_ID: data.Worker_ID! }, message: isNew ? 'Radnik kreiran' : 'Radnik ažuriran' };
+        return {
+            success: true,
+            data: { Worker_ID: data.Worker_ID! },
+            message: isNew ? 'Radnik kreiran' : 'Radnik ažuriran',
+            rateChanged,
+            oldRate,
+            newRate
+        };
     } catch (error) {
         console.error('saveWorker error:', error);
         return { success: false, message: 'Greška pri spremanju radnika' };

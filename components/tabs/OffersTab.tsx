@@ -130,7 +130,7 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
         setOnsiteAssembly(false);
         setOnsiteDiscount(0);
         setValidUntil(getDefaultValidDate());
-        setNotes('');
+        setNotes('Plaćanje: Avansno ili po dogovoru\nRok isporuke: Po dogovoru nakon potvrde');
         setCreateModal(true);
     }
 
@@ -478,6 +478,15 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
     // ============================================
 
     function handlePrintOffer(offer: Offer) {
+        // Build a dimension lookup from project products
+        const dimLookup: Record<string, { Width: number; Height: number; Depth: number }> = {};
+        const project = projects.find(p => p.Project_ID === offer.Project_ID);
+        if (project?.products) {
+            for (const prod of project.products) {
+                dimLookup[prod.Product_ID] = { Width: prod.Width, Height: prod.Height, Depth: prod.Depth };
+            }
+        }
+
         // Use stored prices from the database — they already include labor, extras, etc.
         const products = sortProductsByName(
             (offer.products || []).filter(p => p.Included !== false).map(p => ({
@@ -601,6 +610,13 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
                         border-radius: 8px;
                         padding: 16px 20px;
                         margin-bottom: 28px;
+                        display: flex;
+                        justify-content: space-between;
+                        align-items: flex-start;
+                    }
+                    
+                    .client-details {
+                        flex: 1;
                     }
                     
                     .client-label {
@@ -677,9 +693,7 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
                     }
                     
                     .product-dims {
-                        font-size: 9px;
                         color: #aaa;
-                        margin-top: 1px;
                     }
                     
                     /* Bottom section */
@@ -775,8 +789,8 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
                     .signatures {
                         display: flex;
                         justify-content: space-between;
-                        gap: 60px;
-                        margin-top: 80px;
+                        gap: 40px;
+                        margin-top: 100px;
                     }
                     
                     .sig-block {
@@ -786,23 +800,23 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
                     
                     .sig-line {
                         height: 1px;
-                        background: #ccc;
-                        margin-bottom: 8px;
+                        background: #ddd;
+                        margin-bottom: 6px;
+                        width: 60%;
+                        margin-left: auto;
+                        margin-right: auto;
                     }
                     
                     .sig-label {
                         font-size: 9px;
-                        color: #999;
+                        color: #aaa;
                         text-transform: uppercase;
                         letter-spacing: 0.8px;
                     }
                     
-                    /* Footer */
+                    /* Footer (hidden) */
                     .footer {
-                        text-align: center;
-                        margin-top: 32px;
-                        padding-top: 16px;
-                        border-top: 1px solid #eee;
+                        display: none;
                     }
                     
                     .footer p {
@@ -811,8 +825,7 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
                     }
                     
                     .bank-accounts {
-                        margin-bottom: 12px;
-                        text-align: left;
+                        text-align: right;
                     }
                     
                     .bank-accounts .bank-title {
@@ -909,10 +922,13 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
                                             ${companyInfo.idNumber || companyInfo.pdvNumber ? `<p style="margin-top: 2px; font-size: 9px; color: #aaa;">${[companyInfo.idNumber ? 'ID: ' + companyInfo.idNumber : '', companyInfo.pdvNumber ? 'PDV: ' + companyInfo.pdvNumber : ''].filter(Boolean).join(' | ')}</p>` : ''}
                                         </div>
                                     </div>
-                                    <div class="doc-info">
-                                        <div class="doc-type">Ponuda</div>
-                                        <div class="doc-number">${offer.Offer_Number}</div>
-                                        <div class="doc-date">${formatDate(offer.Created_Date)}</div>
+                                    <div class="bank-accounts">
+                                        ${(companyInfo.bankAccounts || []).length > 0 ? `
+                                            <div class="bank-title">Bankovni računi</div>
+                                            ${(companyInfo.bankAccounts || []).map(acc => `
+                                                <div class="bank-item"><strong>${acc.bankName}:</strong> ${acc.accountNumber}</div>
+                                            `).join('')}
+                                        ` : ''}
                                     </div>
                                 </div>
                                 <div class="header-spacer"></div>
@@ -923,11 +939,18 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
                         <tr>
                             <td>
                                 <div class="client-section">
-                                    <div class="client-label">Kupac</div>
-                                    <div class="client-name">${offer.Client_Name || '-'}</div>
-                                    ${(offer as any).Client_Address ? `<div class="client-contact">${(offer as any).Client_Address}</div>` : ''}
-                                    ${(offer as any).Client_Phone ? `<div class="client-contact">Tel: ${(offer as any).Client_Phone}</div>` : ''}
-                                    ${(offer as any).Client_Email ? `<div class="client-contact">Email: ${(offer as any).Client_Email}</div>` : ''}
+                                    <div class="client-details">
+                                        <div class="client-label">Kupac</div>
+                                        <div class="client-name">${offer.Client_Name || '-'}</div>
+                                        ${(offer as any).Client_Address ? `<div class="client-contact">${(offer as any).Client_Address}</div>` : ''}
+                                        ${(offer as any).Client_Phone ? `<div class="client-contact">Tel: ${(offer as any).Client_Phone}</div>` : ''}
+                                        ${(offer as any).Client_Email ? `<div class="client-contact">Email: ${(offer as any).Client_Email}</div>` : ''}
+                                    </div>
+                                    <div class="doc-info">
+                                        <div class="doc-type">Ponuda</div>
+                                        <div class="doc-number">${offer.Offer_Number}</div>
+                                        <div class="doc-date">${formatDate(offer.Created_Date)}</div>
+                                    </div>
                                 </div>
 
                                 <div class="products-title">Proizvodi</div>
@@ -946,8 +969,7 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
                                             <tr>
                                                 <td class="col-num">${i + 1}</td>
                                                 <td>
-                                                    <div class="product-name">${p.Product_Name}</div>
-                                                    ${(p as any).Width && (p as any).Height ? `<div class="product-dims">${(p as any).Width} × ${(p as any).Height} cm</div>` : ''}
+                                                    <div class="product-name">${p.Product_Name}${(() => { const d = dimLookup[p.Product_ID]; return d && d.Width && d.Height && d.Depth ? `, <span class="product-dims">${d.Width} × ${d.Height} × ${d.Depth} mm</span>` : ''; })()}</div>
                                                 </td>
                                                 <td class="col-qty">${p.Quantity}</td>
                                                 <td class="col-price">${formatCurrency(p.Selling_Price)}</td>
@@ -961,9 +983,7 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
                                     <div class="notes-box">
                                         <div class="notes-title">Napomena</div>
                                         <p>Ponuda vrijedi do: <strong>${formatDate(offer.Valid_Until)}</strong></p>
-                                        <p>Plaćanje: Avansno ili po dogovoru</p>
-                                        <p>Rok isporuke: Po dogovoru nakon potvrde</p>
-                                        ${offer.Notes ? `<p style="margin-top: 8px;">${offer.Notes}</p>` : ''}
+                                        ${offer.Notes ? offer.Notes.split('\n').map((line: string) => `<p>${line}</p>`).join('') : ''}
                                     </div>
                                     <div class="totals-box">
                                         <div class="totals-line">
@@ -1006,17 +1026,7 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
                                     </div>
                                 </div>
 
-                                <div class="footer">
-                                    ${(companyInfo.bankAccounts || []).length > 0 ? `
-                                        <div class="bank-accounts">
-                                            <div class="bank-title">Bankovni računi</div>
-                                            ${(companyInfo.bankAccounts || []).map(acc => `
-                                                <div class="bank-item"><strong>${acc.bankName}:</strong> ${acc.accountNumber}</div>
-                                            `).join('')}
-                                        </div>
-                                    ` : ''}
-                                    <p>Hvala na povjerenju</p>
-                                </div>
+                                <div class="footer"></div>
                             </td>
                         </tr>
                     </tbody>
@@ -1041,6 +1051,9 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
 
     async function handleDownloadPDF(offer: Offer) {
         try {
+            // Find the project for dimension lookup
+            const pdfProject = projects.find(p => p.Project_ID === offer.Project_ID);
+
             // Use stored prices from database
             const productsWithPrices = sortProductsByName(
                 (offer.products || []).filter(p => p.Included !== false).map(p => {
@@ -1049,9 +1062,11 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
                     const laborRate = (p as any).Labor_Daily_Rate || 0;
                     const laborTotal = laborWorkers * laborDays * laborRate;
 
-                    const width = (p as any).Width;
-                    const height = (p as any).Height;
-                    const dimensions = width && height ? `${width} × ${height} cm` : undefined;
+                    // Get dimensions from project product
+                    const projProduct = pdfProject?.products?.find((pp: any) => pp.Product_ID === p.Product_ID);
+                    const dimensions = projProduct && projProduct.Width && projProduct.Height && projProduct.Depth
+                        ? `${projProduct.Width} × ${projProduct.Height} × ${projProduct.Depth} mm`
+                        : undefined;
 
                     return {
                         name: p.Product_Name,
@@ -1078,6 +1093,7 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
             const pdfData: OfferPDFData = {
                 offerNumber: offer.Offer_Number,
                 clientName: offer.Client_Name || 'Nepoznat klijent',
+                clientAddress: (offer as any).Client_Address,
                 clientPhone: offer.Client_Phone,
                 clientEmail: offer.Client_Email,
                 createdDate: offer.Created_Date,
@@ -1522,7 +1538,7 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
                                         <textarea
                                             value={notes}
                                             onChange={(e) => setNotes(e.target.value)}
-                                            rows={2}
+                                            rows={4}
                                             placeholder="Dodatne napomene za ponudu..."
                                         />
                                     </div>
@@ -1748,15 +1764,24 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    {(currentOffer.products || []).filter(p => p.Included).map((product) => (
-                                        <tr key={product.ID} style={{ borderBottom: '1px solid var(--border-light)' }}>
-                                            <td style={{ padding: '12px' }}>{product.Product_Name}</td>
-                                            <td style={{ padding: '12px', textAlign: 'right' }}>{product.Quantity}</td>
-                                            <td style={{ padding: '12px', textAlign: 'right' }}>{formatCurrency(product.Material_Cost)}</td>
-                                            <td style={{ padding: '12px', textAlign: 'right' }}>{formatCurrency(product.Margin)}</td>
-                                            <td style={{ padding: '12px', textAlign: 'right', fontWeight: 600 }}>{formatCurrency(product.Total_Price)}</td>
-                                        </tr>
-                                    ))}
+                                    {(currentOffer.products || []).filter(p => p.Included).map((product) => {
+                                        const proj = projects.find(p => p.Project_ID === currentOffer.Project_ID);
+                                        const pp = proj?.products?.find(pp => pp.Product_ID === product.Product_ID);
+                                        const dims = pp && pp.Width && pp.Height && pp.Depth
+                                            ? `${pp.Width} × ${pp.Height} × ${pp.Depth} mm` : null;
+                                        return (
+                                            <tr key={product.ID} style={{ borderBottom: '1px solid var(--border-light)' }}>
+                                                <td style={{ padding: '12px' }}>
+                                                    {product.Product_Name}
+                                                    {dims && <span style={{ color: 'var(--text-secondary)' }}>, {dims}</span>}
+                                                </td>
+                                                <td style={{ padding: '12px', textAlign: 'right' }}>{product.Quantity}</td>
+                                                <td style={{ padding: '12px', textAlign: 'right' }}>{formatCurrency(product.Material_Cost)}</td>
+                                                <td style={{ padding: '12px', textAlign: 'right' }}>{formatCurrency(product.Margin)}</td>
+                                                <td style={{ padding: '12px', textAlign: 'right', fontWeight: 600 }}>{formatCurrency(product.Total_Price)}</td>
+                                            </tr>
+                                        );
+                                    })}
                                 </tbody>
                             </table>
                         </div>
