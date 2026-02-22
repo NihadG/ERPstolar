@@ -528,7 +528,6 @@ export default function Home() {
                     margin: 0 auto;
                     width: 100%;
                     box-sizing: border-box;
-                    overflow-x: hidden;
                 }
 
                 @media (max-width: 768px) {

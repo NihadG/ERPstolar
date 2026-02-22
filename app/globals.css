@@ -1501,173 +1501,373 @@ textarea::placeholder {
 }
 
 /* ============================================
-   OFFER CARDS
+   OFFER LIST – APPLE MINIMAL ROWS
    ============================================ */
-.offer-card {
-  background: var(--background);
-  border-radius: var(--radius-lg);
-  border: 1px solid var(--border-light);
-  box-shadow: 0 2px 8px var(--shadow);
-  overflow: hidden;
-  transition: box-shadow 0.2s, border-color 0.2s;
-}
 
-.offer-card:hover {
-  box-shadow: 0 4px 16px var(--shadow-md);
-  border-color: var(--border);
-}
-
-.offer-card-header {
+/* Container – overflow visible so dropdowns aren't clipped */
+.offers-list {
   display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  padding: 20px;
-  gap: 16px;
+  flex-direction: column;
+  padding: 0 20px 20px;
+  gap: 1px;
+  overflow: visible;
+}
+
+/* Single row */
+.offer-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  background: var(--background);
+  border-radius: 12px;
+  border: 1px solid transparent;
+  cursor: default;
+  transition: background 0.15s, border-color 0.15s;
+  overflow: visible;
+  position: relative;
+}
+
+.offer-row:hover {
+  background: rgba(0, 0, 0, 0.025);
+  border-color: var(--border-light);
+}
+
+/* Left info block – clickable */
+.offer-row-info {
+  flex: 1;
+  min-width: 0;
+  cursor: pointer;
+}
+
+.offer-row-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-bottom: 2px;
+}
+
+.offer-row-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-secondary);
   flex-wrap: wrap;
 }
 
-.offer-card-info {
-  flex: 1;
-  min-width: 200px;
+.offer-row-dot {
+  color: var(--text-tertiary);
+  font-size: 10px;
 }
 
-.offer-number {
-  font-size: 16px;
+.offer-row-num {
+  color: var(--text-tertiary);
+  font-size: 11px;
+}
+
+/* Right block */
+.offer-row-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.offer-row-amount {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* === CUSTOM STATUS BADGE + DROPDOWN === */
+.offer-status-wrapper {
+  position: relative;
+}
+
+.offer-status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: none;
+  border-radius: 20px;
+  padding: 5px 12px;
+  font-size: 11px;
   font-weight: 600;
-  color: var(--accent);
-  margin-bottom: 4px;
+  cursor: pointer;
+  font-family: inherit;
+  transition: filter 0.15s, box-shadow 0.15s;
+  white-space: nowrap;
 }
 
-.offer-client {
-  font-size: 15px;
+.offer-status-badge:hover {
+  filter: brightness(0.95);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
+}
+
+/* Status colors */
+.offer-status-badge.status-nacrt,
+.status-option.status-nacrt .status-dot {
+  background: #f0f0f2;
+  color: #555;
+}
+
+.offer-status-badge.status-poslano,
+.status-option.status-poslano .status-dot {
+  background: #fff3cd;
+  color: #856404;
+}
+
+.offer-status-badge.status-prihvaceno,
+.status-option.status-prihvaceno .status-dot {
+  background: #d1f5e0;
+  color: #1a7a40;
+}
+
+.offer-status-badge.status-odbijeno,
+.status-option.status-odbijeno .status-dot {
+  background: #fde8eb;
+  color: #c0392b;
+}
+
+.offer-status-badge.status-isteklo,
+.status-option.status-isteklo .status-dot {
+  background: #f5f5f7;
+  color: #999;
+}
+
+.offer-status-badge.status-revidirano,
+.status-option.status-revidirano .status-dot {
+  background: #e8f0fe;
+  color: #1967d2;
+}
+
+/* Colored dot inside badge */
+.offer-status-badge .status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.offer-status-badge.status-nacrt .status-dot {
+  background: #aaa;
+}
+
+.offer-status-badge.status-poslano .status-dot {
+  background: #d4a017;
+}
+
+.offer-status-badge.status-prihvaceno .status-dot {
+  background: #27ae60;
+}
+
+.offer-status-badge.status-odbijeno .status-dot {
+  background: #e53935;
+}
+
+.offer-status-badge.status-isteklo .status-dot {
+  background: #bbb;
+}
+
+.offer-status-badge.status-revidirano .status-dot {
+  background: #1967d2;
+}
+
+/* Status dropdown menu */
+.status-dropdown-menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  z-index: 1000;
+  background: #ffffff;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 12px;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.14);
+  padding: 4px;
+  min-width: 170px;
+  animation: dropdownIn 0.12s ease;
+}
+
+.status-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 12px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  font-size: 13px;
   font-weight: 500;
   color: var(--text-primary);
-  margin-bottom: 4px;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.12s;
+  font-family: inherit;
 }
 
-.offer-date {
-  font-size: 13px;
-  color: var(--text-secondary);
+.status-option:hover {
+  background: rgba(0, 0, 0, 0.04);
 }
 
-.offer-card-price {
-  text-align: right;
-  padding: 12px 16px;
-  background: var(--accent-light);
-  border-radius: var(--radius-md);
+.status-option.active {
+  font-weight: 600;
 }
 
-.offer-card-price .price-label {
-  font-size: 11px;
-  color: var(--text-secondary);
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  margin-bottom: 4px;
+.status-option .status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
 }
 
-.offer-card-price .price-value {
-  font-size: 20px;
-  font-weight: 700;
-  color: var(--accent);
+.status-option.status-nacrt .status-dot {
+  background: #aaa;
 }
 
-.offer-card-footer {
+.status-option.status-poslano .status-dot {
+  background: #d4a017;
+}
+
+.status-option.status-prihvaceno .status-dot {
+  background: #27ae60;
+}
+
+.status-option.status-odbijeno .status-dot {
+  background: #e53935;
+}
+
+.status-option.status-isteklo .status-dot {
+  background: #bbb;
+}
+
+.status-option.status-revidirano .status-dot {
+  background: #1967d2;
+}
+
+/* Three-dot menu */
+.offer-menu-wrapper {
+  position: relative;
+}
+
+.offer-menu-btn {
   display: flex;
-  justify-content: space-between;
   align-items: center;
-  padding: 16px 20px;
-  background: var(--surface);
-  border-top: 1px solid var(--border-light);
-  gap: 16px;
-  flex-wrap: wrap;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  cursor: pointer;
+  color: var(--text-secondary);
+  transition: background 0.15s, color 0.15s;
 }
 
-.status-dropdown {
-  flex: 0 0 auto;
+.offer-menu-btn:hover {
+  background: rgba(0, 0, 0, 0.06);
+  color: var(--text-primary);
 }
 
-.status-select {
-  padding: 8px 32px 8px 12px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
+.offer-menu-btn .material-icons-round {
+  font-size: 20px;
+}
+
+/* Dropdown */
+.offer-dropdown {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  z-index: 1000;
+  background: #ffffff;
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  border-radius: 12px;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.12);
+  padding: 6px;
+  min-width: 160px;
+  animation: dropdownIn 0.12s ease;
+}
+
+@keyframes dropdownIn {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.98);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.offer-dropdown-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 12px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
   font-size: 13px;
   font-weight: 500;
-  background: white;
+  color: var(--text-primary);
   cursor: pointer;
-  appearance: none;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%2386868b' d='M2 4l4 4 4-4'/%3E%3C/svg%3E");
-  background-repeat: no-repeat;
-  background-position: right 10px center;
+  text-align: left;
+  transition: background 0.12s;
+  font-family: inherit;
 }
 
-.status-select:focus {
-  outline: none;
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-light);
+.offer-dropdown-item:hover {
+  background: rgba(0, 0, 0, 0.05);
 }
 
-.status-select.status-nacrt {
-  background-color: #f5f5f7;
+.offer-dropdown-item .material-icons-round {
+  font-size: 16px;
+  color: var(--text-secondary);
+  flex-shrink: 0;
 }
 
-.status-select.status-poslano {
-  background-color: #fff3cd;
+.offer-dropdown-item.danger {
+  color: #e53935;
 }
 
-.status-select.status-prihvaceno {
-  background-color: #d4edda;
+.offer-dropdown-item.danger .material-icons-round {
+  color: #e53935;
 }
 
-.status-select.status-odbijeno {
-  background-color: #f8d7da;
+.offer-dropdown-item.danger:hover {
+  background: rgba(229, 57, 53, 0.07);
 }
 
-.offer-actions {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-.offer-actions .btn-sm {
-  padding: 8px 12px;
-}
-
-.offer-actions .btn-sm .material-icons-round {
-  font-size: 18px;
+.offer-dropdown-divider {
+  height: 1px;
+  background: var(--border-light);
+  margin: 4px 6px;
 }
 
 @media (max-width: 600px) {
-  .offer-card-header {
-    flex-direction: column;
+  .offers-list {
+    padding: 0 12px 16px;
   }
 
-  .offer-card-price {
-    width: 100%;
-    text-align: left;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
+  .offer-row {
+    padding: 10px 12px;
   }
 
-  .offer-card-price .price-label {
-    margin-bottom: 0;
+  .offer-row-amount {
+    font-size: 13px;
   }
 
-  .offer-card-footer {
-    flex-direction: column;
-    align-items: stretch;
-  }
-
-  .status-dropdown {
-    width: 100%;
-  }
-
-  .status-select {
-    width: 100%;
-  }
-
-  .offer-actions {
-    justify-content: flex-end;
+  .offer-status-badge {
+    padding: 4px 8px;
+    font-size: 10px;
   }
 }
 
@@ -2379,6 +2579,14 @@ input[type=number] {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
+  display: flex;
+  justify-content: center;
+  padding: 20px 24px;
+}
+
+.modal-xl .modal-body>.offer-form {
+  width: 100%;
+  max-width: 1100px;
 }
 
 .modal-fullscreen {
@@ -3916,6 +4124,202 @@ input[type=number] {
 .offer-summary-row.total .value {
   font-weight: 700;
   color: var(--accent);
+}
+
+/* Offer Top Row: Name + Project side by side */
+.offer-top-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.offer-name-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.offer-name-field label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.offer-name-field input {
+  padding: 10px 14px;
+  font-size: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: white;
+  transition: all 0.2s ease;
+}
+
+.offer-name-field input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-light);
+}
+
+.offer-name-field input::placeholder {
+  color: var(--text-tertiary);
+  font-size: 13px;
+}
+
+/* EUR Toggle Button */
+.eur-toggle-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  margin-top: 10px;
+  padding: 8px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  background: white;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.eur-toggle-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--accent-light);
+}
+
+.eur-toggle-btn.active {
+  background: var(--accent);
+  color: white;
+  border-color: var(--accent);
+}
+
+/* EUR Value Display */
+.eur-val {
+  display: block;
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--text-secondary);
+  opacity: 0.8;
+  margin-top: 1px;
+}
+
+.offer-summary-row.total .value .eur-val {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--accent);
+  opacity: 0.7;
+}
+
+/* Compact product card overrides */
+.offer-project-select {
+  margin-bottom: 0 !important;
+}
+
+.offer-project-select select {
+  padding: 10px 14px !important;
+  font-size: 14px !important;
+  border-radius: var(--radius-md) !important;
+}
+
+.offer-project-select label {
+  font-size: 11px !important;
+  margin-bottom: 4px !important;
+}
+
+.offer-client-info {
+  padding: 10px 14px !important;
+  margin-bottom: 12px !important;
+  border-radius: 10px !important;
+}
+
+.offer-client-info .client-avatar {
+  width: 36px !important;
+  height: 36px !important;
+  font-size: 16px !important;
+  border-radius: 8px !important;
+}
+
+.offer-client-info .client-name {
+  font-size: 14px !important;
+}
+
+.offer-products-header {
+  margin-bottom: 8px !important;
+}
+
+.offer-products-header h3 {
+  font-size: 13px !important;
+}
+
+/* More compact product details card */
+.product-details-card .card-body {
+  padding: 8px 10px !important;
+}
+
+.product-details-card .top-grid {
+  gap: 10px !important;
+}
+
+.product-details-card .section-label {
+  font-size: 9px !important;
+}
+
+.product-details-card .clean-input {
+  height: 28px !important;
+  font-size: 12px !important;
+  padding: 4px 8px !important;
+}
+
+.product-details-card .card-footer {
+  padding: 6px 10px !important;
+}
+
+.product-details-card .total-label {
+  font-size: 10px !important;
+}
+
+.product-details-card .total-amount {
+  font-size: 14px !important;
+}
+
+.product-details-card .labor-col span {
+  font-size: 9px !important;
+}
+
+.product-details-card .labor-result {
+  padding: 4px 8px !important;
+}
+
+.product-details-card .labor-result-val {
+  font-size: 12px !important;
+}
+
+/* Compact settings section in right column */
+.offer-settings-compact h4 {
+  font-size: 12px !important;
+  margin: 0 0 2px 0 !important;
+}
+
+.offer-summary-row {
+  font-size: 13px !important;
+  padding: 4px 0;
+}
+
+.offer-summary-row.total {
+  font-size: 16px !important;
+}
+
+/* Responsive: stack on mobile */
+@media (max-width: 600px) {
+  .offer-top-row {
+    grid-template-columns: 1fr;
+  }
 }
 
 /* Responsive */

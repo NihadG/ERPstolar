@@ -1527,6 +1527,7 @@ export async function createOfferWithProducts(offerData: any, organizationId: st
         const offer: Offer = {
             Offer_ID: offerId,
             Organization_ID: organizationId,
+            Name: offerData.Name || '',
             Project_ID: offerData.Project_ID,
             Offer_Number: offerNumber,
             Created_Date: new Date().toISOString(),
@@ -1541,6 +1542,8 @@ export async function createOfferWithProducts(offerData: any, organizationId: st
             Accepted_Date: '',
             Include_PDV: offerData.Include_PDV ?? true,
             PDV_Rate: offerData.PDV_Rate ?? 17,
+            Currency: offerData.Currency || 'KM',
+            Language: offerData.Language || 'bs',
         };
 
         await addDoc(collection(db, COLLECTIONS.OFFERS), offer);
@@ -1683,6 +1686,7 @@ export async function updateOfferWithProducts(offerData: any, organizationId: st
 
         // Update offer document
         await updateDoc(offerSnap.docs[0].ref, {
+            Name: offerData.Name || '',
             Transport_Cost: transportCost,
             Onsite_Assembly: offerData.Onsite_Assembly || false,
             Onsite_Discount: offerData.Onsite_Discount || 0,
@@ -1692,6 +1696,8 @@ export async function updateOfferWithProducts(offerData: any, organizationId: st
             Total: total,
             Include_PDV: offerData.Include_PDV ?? true,
             PDV_Rate: offerData.PDV_Rate ?? 17,
+            Currency: offerData.Currency || 'KM',
+            Language: offerData.Language || 'bs',
         });
 
         // Delete existing offer products and their extras
@@ -1818,7 +1824,7 @@ export async function deleteOffer(offerId: string, organizationId: string): Prom
     }
 }
 
-export async function updateOfferStatus(offerId: string, status: string, organizationId: string): Promise<{ success: boolean; message: string }> {
+export async function updateOfferStatus(offerId: string, status: string, organizationId: string): Promise<{ success: boolean; message: string; conflicts?: { Product_ID: string; Product_Name: string }[]; conflictingOfferNames?: string[] }> {
     if (!organizationId) {
         return { success: false, message: 'Organization ID is required' };
     }
@@ -1845,6 +1851,58 @@ export async function updateOfferStatus(offerId: string, status: string, organiz
             }
 
             if (status === 'Prihvaćeno') {
+                // ── DUPLICATE ACCEPTANCE CHECK ──
+                // Get THIS offer's included products
+                const thisOfferProducts = await getOfferProducts(offerId, organizationId);
+                const thisIncludedProductIds = new Set(
+                    thisOfferProducts.filter(p => p.Included !== false).map(p => p.Product_ID)
+                );
+
+                if (offer.Project_ID && thisIncludedProductIds.size > 0) {
+                    // Get all OTHER accepted offers for the same project
+                    const otherOffersQ = query(
+                        collection(db, COLLECTIONS.OFFERS),
+                        where('Project_ID', '==', offer.Project_ID),
+                        where('Organization_ID', '==', organizationId),
+                        where('Status', '==', 'Prihvaćeno')
+                    );
+                    const otherOffersSnap = await getDocs(otherOffersQ);
+
+                    // Collect all Product_IDs already accepted in other offers
+                    const acceptedProductIds = new Map<string, string>(); // Product_ID → Offer name
+                    const conflictingOfferNamesSet = new Set<string>();
+
+                    for (const offerDoc of otherOffersSnap.docs) {
+                        const otherOffer = offerDoc.data() as Offer;
+                        if (otherOffer.Offer_ID === offerId) continue; // skip self
+                        const otherProducts = await getOfferProducts(otherOffer.Offer_ID, organizationId);
+                        for (const p of otherProducts) {
+                            if (p.Included !== false) {
+                                acceptedProductIds.set(p.Product_ID, otherOffer.Name || otherOffer.Offer_Number);
+                            }
+                        }
+                    }
+
+                    // Find overlapping products
+                    const conflicts: { Product_ID: string; Product_Name: string }[] = [];
+                    for (const p of thisOfferProducts) {
+                        if (p.Included !== false && acceptedProductIds.has(p.Product_ID)) {
+                            conflicts.push({ Product_ID: p.Product_ID, Product_Name: p.Product_Name });
+                            conflictingOfferNamesSet.add(acceptedProductIds.get(p.Product_ID)!);
+                        }
+                    }
+
+                    if (conflicts.length > 0) {
+                        const names = conflicts.map(c => c.Product_Name).join(', ');
+                        return {
+                            success: false,
+                            message: `Proizvodi već prihvaćeni u drugoj ponudi: ${names}. Uredite ponudu i uklonite duplikate.`,
+                            conflicts,
+                            conflictingOfferNames: Array.from(conflictingOfferNamesSet),
+                        };
+                    }
+                }
+
                 updateData.Accepted_Date = new Date().toISOString();
 
                 if (offer.Project_ID) {

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useRef, useEffect } from 'react';
 import type { Offer, Project, OfferProduct, Product } from '@/lib/types';
 import { getOffer, createOfferWithProducts, deleteOffer, updateOfferStatus, saveOffer, updateOfferWithProducts } from '@/lib/database';
 import { useData } from '@/context/DataContext';
@@ -49,12 +49,15 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
     // Create Offer Modal State
     const [createModal, setCreateModal] = useState(false);
     const [selectedProjectId, setSelectedProjectId] = useState('');
+    const [offerName, setOfferName] = useState('');
     const [offerProducts, setOfferProducts] = useState<OfferProductState[]>([]);
     const [transportCost, setTransportCost] = useState(0);
     const [onsiteAssembly, setOnsiteAssembly] = useState(false);
     const [onsiteDiscount, setOnsiteDiscount] = useState(0);
     const [validUntil, setValidUntil] = useState('');
     const [notes, setNotes] = useState('');
+    const [offerCurrency, setOfferCurrency] = useState<'KM' | 'EUR'>('KM');
+    const [offerLanguage, setOfferLanguage] = useState<'bs' | 'en'>('bs');
 
     // Extras Modal State
     const [extrasModal, setExtrasModal] = useState(false);
@@ -77,16 +80,44 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
     const [includePDV, setIncludePDV] = useState(true);
     const [pdvRate, setPdvRate] = useState(17);
 
+    // Dropdown per-card (actions + status)
+    const [activeDropdown, setActiveDropdown] = useState<string | null>(null);
+    const [activeStatusDropdown, setActiveStatusDropdown] = useState<string | null>(null);
+    const dropdownRef = useRef<HTMLDivElement>(null);
+    const statusDropdownRef = useRef<HTMLDivElement>(null);
+
+    useEffect(() => {
+        function handleClickOutside(e: MouseEvent) {
+            if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+                setActiveDropdown(null);
+            }
+            if (statusDropdownRef.current && !statusDropdownRef.current.contains(e.target as Node)) {
+                setActiveStatusDropdown(null);
+            }
+        }
+        if (activeDropdown || activeStatusDropdown) document.addEventListener('mousedown', handleClickOutside);
+        return () => document.removeEventListener('mousedown', handleClickOutside);
+    }, [activeDropdown, activeStatusDropdown]);
+
     // Company Info & App Settings (centralized in DataContext)
     const { companyInfo, appSettings } = useData();
 
 
     const filteredOffers = offers.filter(offer => {
-        const matchesSearch = offer.Offer_Number?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-            offer.Client_Name?.toLowerCase().includes(searchTerm.toLowerCase());
+        const term = searchTerm.toLowerCase();
+        const matchesSearch = offer.Offer_Number?.toLowerCase().includes(term) ||
+            offer.Client_Name?.toLowerCase().includes(term) ||
+            offer.Name?.toLowerCase().includes(term);
         const matchesStatus = !statusFilter || offer.Status === statusFilter;
         return matchesSearch && matchesStatus;
     });
+
+    const EUR_RATE = 1.95583;
+    const toEUR = (km: number) => km / EUR_RATE;
+    const formatPrice = (amount: number, currency: 'KM' | 'EUR' = 'KM') => {
+        if (currency === 'EUR') return toEUR(amount).toFixed(2) + ' €';
+        return formatCurrency(amount);
+    };
 
     // Get selected project
     const selectedProject = useMemo(() => {
@@ -125,12 +156,15 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
 
     function openCreateModal() {
         setSelectedProjectId('');
+        setOfferName('');
         setOfferProducts([]);
         setTransportCost(0);
         setOnsiteAssembly(false);
         setOnsiteDiscount(0);
         setValidUntil(getDefaultValidDate());
         setNotes('Plaćanje: Avansno ili po dogovoru\nRok isporuke: Po dogovoru nakon potvrde');
+        setOfferCurrency('KM');
+        setOfferLanguage('bs');
         setCreateModal(true);
     }
 
@@ -314,25 +348,38 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
 
         const offerData = {
             Project_ID: selectedProjectId,
-            Transport_Cost: transportCost,
+            Name: offerName || '',
+            Transport_Cost: offerCurrency === 'EUR' ? toEUR(transportCost) : transportCost,
             Onsite_Assembly: onsiteAssembly,
-            Onsite_Discount: onsiteDiscount,
+            Onsite_Discount: offerCurrency === 'EUR' ? toEUR(onsiteDiscount) : onsiteDiscount,
             Valid_Until: validUntil,
             Notes: notes,
             Include_PDV: includePDV,
             PDV_Rate: pdvRate,
-            products: offerProducts.map(p => ({
-                Product_ID: p.Product_ID,
-                Product_Name: p.Product_Name,
-                Quantity: p.Quantity,
-                Included: p.included,
-                Material_Cost: p.Material_Cost,
-                Margin: p.margin,
-                Extras: p.extras,
-                Labor_Workers: p.laborWorkers,
-                Labor_Days: p.laborDays,
-                Labor_Daily_Rate: p.laborDailyRate
-            }))
+            Currency: offerCurrency,
+            Language: offerLanguage,
+            products: offerProducts.map(p => {
+                const convMargin = offerCurrency === 'EUR' ? toEUR(p.margin) : p.margin;
+                return {
+                    Product_ID: p.Product_ID,
+                    Product_Name: p.Product_Name,
+                    Quantity: p.Quantity,
+                    Included: p.included,
+                    Material_Cost: offerCurrency === 'EUR' ? toEUR(p.Material_Cost) : p.Material_Cost,
+                    Margin: convMargin,
+                    Extras: p.extras.map(e => {
+                        const convPrice = offerCurrency === 'EUR' ? toEUR(e.price) : e.price;
+                        return {
+                            ...e,
+                            price: convPrice,
+                            total: e.qty * convPrice
+                        };
+                    }),
+                    Labor_Workers: p.laborWorkers,
+                    Labor_Days: p.laborDays,
+                    Labor_Daily_Rate: offerCurrency === 'EUR' ? toEUR(p.laborDailyRate) : p.laborDailyRate
+                };
+            })
         };
 
         let result;
@@ -406,11 +453,62 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
         const result = await updateOfferStatus(offerId, status, organizationId!);
         if (result.success) {
             showToast('Status ažuriran', 'success');
-            onRefresh('offers');
+            onRefresh('offers', 'projects');
             // Refresh view modal if open
             if (currentOffer && currentOffer.Offer_ID === offerId) {
                 const updated = await getOffer(offerId, organizationId!);
                 setCurrentOffer(updated);
+            }
+        } else if (result.conflicts && result.conflicts.length > 0) {
+            // Show conflict notification
+            showToast(result.message, 'error');
+
+            // Open edit modal with conflicting products de-selected
+            const offer = offers.find(o => o.Offer_ID === offerId);
+            if (offer) {
+                const conflictIds = new Set(result.conflicts.map(c => c.Product_ID));
+                // Open edit modal, then after loading, de-select conflicting products
+                const fullOffer = await getOffer(offerId, organizationId!);
+                if (fullOffer) {
+                    setCurrentOffer(fullOffer);
+                    setIsEditMode(true);
+                    setSelectedProjectId(fullOffer.Project_ID);
+                    setOfferName(fullOffer.Name || '');
+                    setTransportCost(fullOffer.Transport_Cost || 0);
+                    setOnsiteAssembly(fullOffer.Onsite_Assembly || false);
+                    setOnsiteDiscount(fullOffer.Onsite_Discount || 0);
+                    setValidUntil(fullOffer.Valid_Until ? fullOffer.Valid_Until.split('T')[0] : getDefaultValidDate());
+                    setNotes(fullOffer.Notes || '');
+                    setIncludePDV((fullOffer as any).Include_PDV ?? true);
+                    setPdvRate((fullOffer as any).PDV_Rate ?? 17);
+                    setOfferCurrency((fullOffer as any).Currency || 'KM');
+                    setOfferLanguage((fullOffer as any).Language || 'bs');
+
+                    const products: OfferProductState[] = (fullOffer.products || []).map(p => ({
+                        Product_ID: p.Product_ID,
+                        Product_Name: p.Product_Name,
+                        Quantity: p.Quantity || 1,
+                        Height: 0, Width: 0, Depth: 0,
+                        Material_Cost: p.Material_Cost || 0,
+                        // De-select conflicting products
+                        included: p.Included !== false && !conflictIds.has(p.Product_ID),
+                        margin: p.Margin || 0,
+                        extras: ((p as any).Extras || (p as any).extras || []).map((e: any) => ({
+                            name: e.name || e.Name || '',
+                            qty: e.qty || e.Qty || 1,
+                            unit: e.unit || e.Unit || 'kom',
+                            price: e.price || e.Price || 0,
+                            total: e.total || e.Total || 0,
+                            note: e.note || e.Note || ''
+                        })),
+                        laborWorkers: (p as any).Labor_Workers || (p as any).laborWorkers || 0,
+                        laborDays: (p as any).Labor_Days || (p as any).laborDays || 0,
+                        laborDailyRate: (p as any).Labor_Daily_Rate || (p as any).laborDailyRate || 0
+                    }));
+
+                    setOfferProducts(sortProductsByName(products, p => p.Product_Name));
+                    setCreateModal(true);
+                }
             }
         } else {
             showToast(result.message, 'error');
@@ -463,6 +561,7 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
         }));
 
         setOfferProducts(sortProductsByName(products, p => p.Product_Name));
+        setOfferName(fullOffer.Name || '');
         setTransportCost(fullOffer.Transport_Cost || 0);
         setOnsiteAssembly(fullOffer.Onsite_Assembly || false);
         setOnsiteDiscount(fullOffer.Onsite_Discount || 0);
@@ -470,6 +569,8 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
         setNotes(fullOffer.Notes || '');
         setIncludePDV((fullOffer as any).Include_PDV ?? true);
         setPdvRate((fullOffer as any).PDV_Rate ?? 17);
+        setOfferCurrency((fullOffer as any).Currency || 'KM');
+        setOfferLanguage((fullOffer as any).Language || 'bs');
         setCurrentOffer(fullOffer);
     }
 
@@ -486,6 +587,40 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
                 dimLookup[prod.Product_ID] = { Width: prod.Width, Height: prod.Height, Depth: prod.Depth };
             }
         }
+
+        // Language & Currency from stored offer
+        const lang = (offer as any).Language || 'bs';
+        const curr = (offer as any).Currency || 'KM';
+        const isEN = lang === 'en';
+        const isEUR = curr === 'EUR';
+
+        // Translation map
+        const t = {
+            offer: isEN ? 'Quotation' : 'Ponuda',
+            client: isEN ? 'Client' : 'Kupac',
+            products: isEN ? 'Products' : 'Proizvodi',
+            name: isEN ? 'Description' : 'Naziv',
+            qty: isEN ? 'Qty' : 'Količina',
+            price: isEN ? 'Unit Price' : 'Cijena',
+            total: isEN ? 'Total' : 'Ukupno',
+            subtotal: isEN ? 'Subtotal' : 'Suma',
+            transport: isEN ? 'Transport' : 'Transport',
+            discount: isEN ? 'Discount' : 'Popust',
+            grandTotal: isEN ? 'Total' : 'Ukupno',
+            grandTotalVat: isEN ? 'Total (incl. VAT)' : 'Ukupno (sa PDV)',
+            vat: isEN ? 'VAT' : 'PDV',
+            notes: isEN ? 'Notes' : 'Napomena',
+            validUntil: isEN ? 'Valid until' : 'Ponuda vrijedi do',
+            supplier: isEN ? 'Supplier' : 'Ponuđač',
+            buyer: isEN ? 'Client' : 'Naručilac',
+            bankAccounts: isEN ? 'Bank accounts' : 'Bankovni računi',
+        };
+
+        // Currency formatter
+        const fmtCurr = (val: number) => {
+            if (isEUR) return val.toFixed(2) + ' \u20ac';
+            return val.toLocaleString('bs-BA', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' KM';
+        };
 
         // Use stored prices from the database — they already include labor, extras, etc.
         const products = sortProductsByName(
@@ -513,7 +648,7 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
             <html>
             <head>
                 <meta charset="UTF-8">
-                <title>Ponuda ${offer.Offer_Number}</title>
+                <title>${t.offer} ${offer.Offer_Number}</title>
                 <style>
                     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
                     
@@ -587,210 +722,191 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
                         letter-spacing: 1px;
                         text-transform: uppercase;
                         padding: 4px 12px;
-                        border-radius: 12px;
+                        border-radius: 3px;
                         margin-bottom: 8px;
                     }
                     
                     .doc-number {
-                        font-size: 18px;
-                        font-weight: 600;
+                        font-size: 22px;
+                        font-weight: 700;
                         color: #111;
+                        letter-spacing: -0.5px;
+                        margin-bottom: 4px;
                     }
                     
                     .doc-date {
-                        font-size: 11px;
+                        font-size: 12px;
                         color: #888;
-                        margin-top: 2px;
                     }
                     
-                    /* Client */
+                    /* Client Section */
                     .client-section {
-                        background: #f5f5f5;
-                        border: 1px solid #eaeaea;
-                        border-radius: 8px;
-                        padding: 16px 20px;
-                        margin-bottom: 28px;
                         display: flex;
                         justify-content: space-between;
                         align-items: flex-start;
+                        margin-bottom: 28px;
+                        padding: 20px;
+                        background: #fafafa;
+                        border-radius: 6px;
+                        border: 1px solid #eee;
                     }
                     
-                    .client-details {
-                        flex: 1;
-                    }
+                    .client-details { flex: 1; }
                     
                     .client-label {
                         font-size: 9px;
                         font-weight: 600;
-                        color: #999;
+                        color: #aaa;
                         text-transform: uppercase;
                         letter-spacing: 0.8px;
-                        margin-bottom: 4px;
+                        margin-bottom: 6px;
                     }
                     
                     .client-name {
-                        font-size: 15px;
+                        font-size: 16px;
                         font-weight: 600;
                         color: #111;
-                        margin-bottom: 2px;
+                        margin-bottom: 4px;
                     }
                     
                     .client-contact {
                         font-size: 11px;
-                        color: #777;
+                        color: #666;
+                        margin-bottom: 2px;
                     }
                     
                     /* Products Table */
                     .products-title {
-                        font-size: 13px;
+                        font-size: 11px;
                         font-weight: 600;
-                        color: #333;
-                        margin-bottom: 12px;
+                        color: #999;
+                        text-transform: uppercase;
+                        letter-spacing: 0.5px;
+                        margin-bottom: 10px;
                     }
                     
                     .products-table {
                         width: 100%;
                         border-collapse: collapse;
-                        margin-bottom: 28px;
+                        margin-bottom: 24px;
                     }
                     
-                    .products-table th {
-                        font-size: 9px;
+                    .products-table thead th {
+                        background: #f5f6f7;
+                        padding: 8px 12px;
+                        font-size: 10px;
                         font-weight: 600;
                         color: #888;
                         text-transform: uppercase;
-                        letter-spacing: 0.6px;
-                        padding: 8px 10px;
-                        border-bottom: 2px solid #ddd;
+                        letter-spacing: 0.5px;
+                        border-bottom: 2px solid #e8e8e8;
                         text-align: left;
                     }
                     
-                    .products-table th.col-num { width: 32px; text-align: center; }
-                    .products-table th.col-name { }
-                    .products-table th.col-qty { width: 70px; text-align: center; }
-                    .products-table th.col-price { width: 100px; text-align: right; }
-                    .products-table th.col-total { width: 110px; text-align: right; }
-                    
-                    .products-table td {
-                        padding: 9px 10px;
+                    .products-table tbody td {
+                        padding: 10px 12px;
+                        font-size: 12px;
                         border-bottom: 1px solid #f0f0f0;
                         vertical-align: middle;
-                        font-size: 11px;
-                        color: #333;
                     }
                     
-                    .products-table td.col-num { text-align: center; color: #aaa; font-size: 10px; }
-                    .products-table td.col-qty { text-align: center; color: #555; }
-                    .products-table td.col-price { text-align: right; color: #555; font-size: 10px; }
-                    .products-table td.col-total { text-align: right; font-weight: 600; color: #111; }
-                    
-                    .products-table tr:last-child td { border-bottom: none; }
-                    
-                    .product-name {
-                        font-weight: 400;
-                        color: #222;
-                        font-size: 11px;
+                    .products-table tbody tr:last-child td {
+                        border-bottom: 2px solid #e8e8e8;
                     }
                     
-                    .product-dims {
-                        color: #aaa;
-                    }
+                    .col-num { width: 40px; text-align: center; color: #aaa; }
+                    .col-name { }
+                    .col-qty { width: 70px; text-align: center; }
+                    .col-price { width: 110px; text-align: right; }
+                    .col-total { width: 120px; text-align: right; font-weight: 500; }
                     
-                    /* Bottom section */
+                    .product-name { font-weight: 500; color: #333; }
+                    .product-dims { color: #999; font-size: 11px; }
+                    
+                    /* Bottom Section */
                     .bottom-section {
                         display: flex;
-                        gap: 24px;
-                        align-items: flex-start;
+                        gap: 32px;
                         margin-bottom: 40px;
                     }
                     
-                    /* Notes */
                     .notes-box {
                         flex: 1;
-                        background: #fff8f0;
-                        border: 1px solid #f0dcc0;
-                        border-radius: 8px;
-                        padding: 14px 18px;
+                        padding: 16px 18px;
+                        background: #f8f9fa;
+                        border-radius: 6px;
+                        border-left: 3px solid #0066cc;
                     }
                     
                     .notes-title {
-                        font-size: 9px;
-                        font-weight: 700;
-                        color: #c07b20;
+                        font-size: 10px;
+                        font-weight: 600;
+                        color: #999;
                         text-transform: uppercase;
-                        letter-spacing: 0.6px;
-                        margin-bottom: 6px;
+                        letter-spacing: 0.5px;
+                        margin-bottom: 8px;
                     }
                     
                     .notes-box p {
                         font-size: 11px;
-                        color: #333;
-                        margin: 2px 0;
+                        color: #555;
+                        margin-bottom: 3px;
+                        line-height: 1.5;
                     }
                     
-                    /* Totals */
                     .totals-box {
-                        width: 240px;
+                        width: 280px;
                         flex-shrink: 0;
-                        background: #eef4fb;
-                        border: 1px solid #c8ddf0;
-                        border-radius: 8px;
-                        padding: 14px 18px;
                     }
                     
                     .totals-line {
                         display: flex;
                         justify-content: space-between;
                         align-items: center;
-                        padding: 4px 0;
-                        font-size: 11px;
+                        padding: 6px 0;
+                        border-bottom: 1px solid #f0f0f0;
                     }
                     
-                    .totals-line .t-label {
-                        color: #5a7a9a;
+                    .totals-line:last-child { border-bottom: none; }
+                    
+                    .t-label {
+                        font-size: 12px;
+                        color: #666;
                     }
                     
-                    .totals-line .t-value {
+                    .t-value {
+                        font-size: 12px;
                         font-weight: 500;
-                        color: #1a3a5c;
+                        color: #333;
                     }
                     
-                    .totals-line.discount {
-                        background: #e8f8ee;
-                        margin: 4px -10px;
-                        padding: 5px 10px;
-                        border-radius: 4px;
-                    }
-                    
-                    .totals-line.discount .t-label,
-                    .totals-line.discount .t-value {
-                        color: #1a8a3a;
-                        font-weight: 500;
-                    }
+                    .totals-line.discount .t-value { color: #34c759; }
                     
                     .totals-line.grand-total {
-                        margin-top: 6px;
-                        padding-top: 8px;
-                        border-top: 1px solid #b0ccdf;
+                        padding-top: 12px;
+                        margin-top: 4px;
+                        border-top: 2px solid #111;
+                        border-bottom: none;
                     }
                     
                     .totals-line.grand-total .t-label {
+                        font-size: 14px;
                         font-weight: 600;
-                        color: #1a3a5c;
+                        color: #111;
                     }
                     
                     .totals-line.grand-total .t-value {
-                        font-size: 16px;
+                        font-size: 18px;
                         font-weight: 700;
-                        color: #0055aa;
+                        color: #0066cc;
                     }
                     
                     /* Signatures */
                     .signatures {
                         display: flex;
                         justify-content: space-between;
-                        gap: 40px;
-                        margin-top: 100px;
+                        gap: 60px;
+                        margin-top: 48px;
                     }
                     
                     .sig-block {
@@ -799,12 +915,8 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
                     }
                     
                     .sig-line {
-                        height: 1px;
-                        background: #ddd;
+                        border-top: 1px solid #ccc;
                         margin-bottom: 6px;
-                        width: 60%;
-                        margin-left: auto;
-                        margin-right: auto;
                     }
                     
                     .sig-label {
@@ -919,12 +1031,12 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
                                         <div class="company-details">
                                             <p>${companyInfo.address}</p>
                                             <p>${[companyInfo.phone, companyInfo.email].filter(Boolean).join(' · ')}</p>
-                                            ${companyInfo.idNumber || companyInfo.pdvNumber ? `<p style="margin-top: 2px; font-size: 9px; color: #aaa;">${[companyInfo.idNumber ? 'ID: ' + companyInfo.idNumber : '', companyInfo.pdvNumber ? 'PDV: ' + companyInfo.pdvNumber : ''].filter(Boolean).join(' | ')}</p>` : ''}
+                                            ${companyInfo.idNumber || companyInfo.pdvNumber ? `<p style="margin-top: 2px; font-size: 9px; color: #aaa;">${[companyInfo.idNumber ? 'ID: ' + companyInfo.idNumber : '', companyInfo.pdvNumber ? (isEN ? 'VAT: ' : 'PDV: ') + companyInfo.pdvNumber : ''].filter(Boolean).join(' | ')}</p>` : ''}
                                         </div>
                                     </div>
                                     <div class="bank-accounts">
                                         ${(companyInfo.bankAccounts || []).length > 0 ? `
-                                            <div class="bank-title">Bankovni računi</div>
+                                            <div class="bank-title">${t.bankAccounts}</div>
                                             ${(companyInfo.bankAccounts || []).map(acc => `
                                                 <div class="bank-item"><strong>${acc.bankName}:</strong> ${acc.accountNumber}</div>
                                             `).join('')}
@@ -940,28 +1052,28 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
                             <td>
                                 <div class="client-section">
                                     <div class="client-details">
-                                        <div class="client-label">Kupac</div>
+                                        <div class="client-label">${t.client}</div>
                                         <div class="client-name">${offer.Client_Name || '-'}</div>
                                         ${(offer as any).Client_Address ? `<div class="client-contact">${(offer as any).Client_Address}</div>` : ''}
-                                        ${(offer as any).Client_Phone ? `<div class="client-contact">Tel: ${(offer as any).Client_Phone}</div>` : ''}
+                                        ${(offer as any).Client_Phone ? `<div class="client-contact">${isEN ? 'Phone' : 'Tel'}: ${(offer as any).Client_Phone}</div>` : ''}
                                         ${(offer as any).Client_Email ? `<div class="client-contact">Email: ${(offer as any).Client_Email}</div>` : ''}
                                     </div>
                                     <div class="doc-info">
-                                        <div class="doc-type">Ponuda</div>
+                                        <div class="doc-type">${t.offer}</div>
                                         <div class="doc-number">${offer.Offer_Number}</div>
                                         <div class="doc-date">${formatDate(offer.Created_Date)}</div>
                                     </div>
                                 </div>
 
-                                <div class="products-title">Proizvodi</div>
+                                <div class="products-title">${t.products}</div>
                                 <table class="products-table">
                                     <thead>
                                         <tr>
                                             <th class="col-num">#</th>
-                                            <th class="col-name">Naziv</th>
-                                            <th class="col-qty">Količina</th>
-                                            <th class="col-price">Cijena</th>
-                                            <th class="col-total">Ukupno</th>
+                                            <th class="col-name">${t.name}</th>
+                                            <th class="col-qty">${t.qty}</th>
+                                            <th class="col-price">${t.price}</th>
+                                            <th class="col-total">${t.total}</th>
                                         </tr>
                                     </thead>
                                     <tbody>
@@ -972,8 +1084,8 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
                                                     <div class="product-name">${p.Product_Name}${(() => { const d = dimLookup[p.Product_ID]; return d && d.Width && d.Height && d.Depth ? `, <span class="product-dims">${d.Width} × ${d.Height} × ${d.Depth} mm</span>` : ''; })()}</div>
                                                 </td>
                                                 <td class="col-qty">${p.Quantity}</td>
-                                                <td class="col-price">${formatCurrency(p.Selling_Price)}</td>
-                                                <td class="col-total">${formatCurrency(p.Total_Price)}</td>
+                                                <td class="col-price">${fmtCurr(p.Selling_Price)}</td>
+                                                <td class="col-total">${fmtCurr(p.Total_Price)}</td>
                                             </tr>
                                         `).join('')}
                                     </tbody>
@@ -981,36 +1093,36 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
 
                                 <div class="bottom-section">
                                     <div class="notes-box">
-                                        <div class="notes-title">Napomena</div>
-                                        <p>Ponuda vrijedi do: <strong>${formatDate(offer.Valid_Until)}</strong></p>
+                                        <div class="notes-title">${t.notes}</div>
+                                        <p>${t.validUntil}: <strong>${formatDate(offer.Valid_Until)}</strong></p>
                                         ${offer.Notes ? offer.Notes.split('\n').map((line: string) => `<p>${line}</p>`).join('') : ''}
                                     </div>
                                     <div class="totals-box">
                                         <div class="totals-line">
-                                            <span class="t-label">Suma</span>
-                                            <span class="t-value">${formatCurrency(subtotal)}</span>
+                                            <span class="t-label">${t.subtotal}</span>
+                                            <span class="t-value">${fmtCurr(subtotal)}</span>
                                         </div>
                                         ${transport > 0 ? `
                                             <div class="totals-line">
-                                                <span class="t-label">Transport</span>
-                                                <span class="t-value">${formatCurrency(transport)}</span>
+                                                <span class="t-label">${t.transport}</span>
+                                                <span class="t-value">${fmtCurr(transport)}</span>
                                             </div>
                                         ` : ''}
                                         ${discount > 0 ? `
                                             <div class="totals-line discount">
-                                                <span class="t-label">Popust</span>
-                                                <span class="t-value">-${formatCurrency(discount)}</span>
+                                                <span class="t-label">${t.discount}</span>
+                                                <span class="t-value">-${fmtCurr(discount)}</span>
                                             </div>
                                         ` : ''}
                                         ${offerIncludePDV ? `
                                             <div class="totals-line">
-                                                <span class="t-label">PDV (${offerPdvRate}%)</span>
-                                                <span class="t-value">${formatCurrency(total * offerPdvRate / 100)}</span>
+                                                <span class="t-label">${t.vat} (${offerPdvRate}%)</span>
+                                                <span class="t-value">${fmtCurr(total * offerPdvRate / 100)}</span>
                                             </div>
                                         ` : ''}
                                         <div class="totals-line grand-total">
-                                            <span class="t-label">Ukupno${offerIncludePDV ? ' (sa PDV)' : ''}</span>
-                                            <span class="t-value">${formatCurrency(offerIncludePDV ? total * (1 + offerPdvRate / 100) : total)}</span>
+                                            <span class="t-label">${offerIncludePDV ? t.grandTotalVat : t.grandTotal}</span>
+                                            <span class="t-value">${fmtCurr(offerIncludePDV ? total * (1 + offerPdvRate / 100) : total)}</span>
                                         </div>
                                     </div>
                                 </div>
@@ -1018,11 +1130,11 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
                                 <div class="signatures">
                                     <div class="sig-block">
                                         <div class="sig-line"></div>
-                                        <div class="sig-label">Ponuđač</div>
+                                        <div class="sig-label">${t.supplier}</div>
                                     </div>
                                     <div class="sig-block">
                                         <div class="sig-line"></div>
-                                        <div class="sig-label">Naručilac</div>
+                                        <div class="sig-label">${t.buyer}</div>
                                     </div>
                                 </div>
 
@@ -1170,70 +1282,76 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
                     </div>
                 ) : (
                     filteredOffers.map(offer => (
-                        <div key={offer.Offer_ID} className="offer-card">
-                            <div className="offer-card-header">
-                                <div className="offer-card-info">
-                                    <div className="offer-number">{offer.Name || offer.Offer_Number}</div>
-                                    {offer.Name && <div style={{ fontSize: '11px', color: '#9ca3af', fontWeight: 400 }}>#{offer.Offer_Number}</div>}
-                                    <div className="offer-client">{offer.Client_Name || 'Nepoznat klijent'}</div>
-                                    <div className="offer-date">Kreirano: {formatDate(offer.Created_Date)}</div>
-                                </div>
-                                <div className="offer-card-price">
-                                    <div className="price-label">Ukupno</div>
-                                    <div className="price-value">{formatCurrency(offer.Total || 0)}</div>
+                        <div key={offer.Offer_ID} className="offer-row" onClick={() => openViewModal(offer.Offer_ID)} style={{ cursor: 'pointer' }}>
+                            {/* Left: main info */}
+                            <div className="offer-row-info">
+                                <div className="offer-row-title">{offer.Name || offer.Offer_Number}</div>
+                                <div className="offer-row-meta">
+                                    <span>{offer.Client_Name || 'Nepoznat klijent'}</span>
+                                    <span className="offer-row-dot">·</span>
+                                    <span>{formatDate(offer.Created_Date)}</span>
+                                    {offer.Name && (
+                                        <>
+                                            <span className="offer-row-dot">·</span>
+                                            <span className="offer-row-num">#{offer.Offer_Number}</span>
+                                        </>
+                                    )}
                                 </div>
                             </div>
 
-                            <div className="offer-card-footer">
-                                {/* Quick Status Dropdown */}
-                                <div className="status-dropdown">
-                                    <select
-                                        value={offer.Status || 'Nacrt'}
-                                        onChange={(e) => handleUpdateStatus(offer.Offer_ID, e.target.value)}
-                                        className={`status-select ${getStatusClass(offer.Status)}`}
-                                    >
-                                        {OFFER_STATUSES.map(status => (
-                                            <option key={status} value={status}>{status}</option>
-                                        ))}
-                                    </select>
-                                </div>
+                            {/* Right: amount + status pill + actions */}
+                            <div className="offer-row-right">
+                                <span className="offer-row-amount">{formatCurrency(offer.Total || 0)}</span>
 
-                                {/* Action Buttons */}
-                                <div className="offer-actions">
+                                {/* Custom status badge with dropdown */}
+                                <div className="offer-status-wrapper" ref={activeStatusDropdown === offer.Offer_ID ? statusDropdownRef : undefined}>
                                     <button
-                                        className="btn btn-sm btn-secondary"
-                                        onClick={() => openViewModal(offer.Offer_ID)}
-                                        title="Pregledaj ponudu"
+                                        className={`offer-status-badge ${getStatusClass(offer.Status)}`}
+                                        onClick={(e) => { e.stopPropagation(); setActiveStatusDropdown(activeStatusDropdown === offer.Offer_ID ? null : offer.Offer_ID); setActiveDropdown(null); }}
                                     >
-                                        <span className="material-icons-round">visibility</span>
+                                        <span className="status-dot" />
+                                        {offer.Status || 'Nacrt'}
+                                    </button>
+                                    {activeStatusDropdown === offer.Offer_ID && (
+                                        <div className="status-dropdown-menu">
+                                            {OFFER_STATUSES.map(status => (
+                                                <button
+                                                    key={status}
+                                                    className={`status-option ${status === (offer.Status || 'Nacrt') ? 'active' : ''} ${getStatusClass(status)}`}
+                                                    onClick={(e) => { e.stopPropagation(); setActiveStatusDropdown(null); handleUpdateStatus(offer.Offer_ID, status); }}
+                                                >
+                                                    <span className={`status-dot ${getStatusClass(status)}`} />
+                                                    {status}
+                                                    {status === (offer.Status || 'Nacrt') && <span className="material-icons-round" style={{ fontSize: 14, marginLeft: 'auto' }}>check</span>}
+                                                </button>
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
+                                <div className="offer-actions-inline" style={{ display: 'flex', gap: '8px', marginLeft: '12px' }}>
+                                    <button
+                                        className="action-icon-btn"
+                                        onClick={(e) => { e.stopPropagation(); openEditModal(offer); }}
+                                        title="Uredi"
+                                        style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)', padding: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '4px', transition: 'all 0.2s' }}
+                                    >
+                                        <span className="material-icons-round" style={{ fontSize: '20px' }}>edit</span>
                                     </button>
                                     <button
-                                        className="btn btn-sm btn-secondary"
-                                        onClick={() => openEditModal(offer)}
-                                        title="Uredi ponudu"
+                                        className="action-icon-btn"
+                                        onClick={(e) => { e.stopPropagation(); handlePrintOffer(offer); }}
+                                        title="Printaj"
+                                        style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)', padding: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '4px', transition: 'all 0.2s' }}
                                     >
-                                        <span className="material-icons-round">edit</span>
+                                        <span className="material-icons-round" style={{ fontSize: '20px' }}>print</span>
                                     </button>
                                     <button
-                                        className="btn btn-sm btn-secondary"
-                                        onClick={() => handleDownloadPDF(offer)}
-                                        title="Preuzmi PDF"
+                                        className="action-icon-btn danger"
+                                        onClick={(e) => { e.stopPropagation(); handleDeleteOffer(offer.Offer_ID); }}
+                                        title="Obriši"
+                                        style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#ef4444', padding: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '4px', transition: 'all 0.2s' }}
                                     >
-                                        <span className="material-icons-round">picture_as_pdf</span>
-                                    </button>
-                                    <button
-                                        className="btn btn-sm btn-secondary"
-                                        onClick={() => handlePrintOffer(offer)}
-                                        title="Štampaj ponudu"
-                                    >
-                                        <span className="material-icons-round">print</span>
-                                    </button>
-                                    <button
-                                        className="btn btn-sm btn-danger"
-                                        onClick={() => handleDeleteOffer(offer.Offer_ID)}
-                                        title="Obriši ponudu"
-                                    >
-                                        <span className="material-icons-round">delete</span>
+                                        <span className="material-icons-round" style={{ fontSize: '20px' }}>delete</span>
                                     </button>
                                 </div>
                             </div>
@@ -1280,20 +1398,31 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
                     <div className="offer-form">
                         {/* Left Column */}
                         <div className="offer-form-left">
-                            {/* Project Selector */}
-                            <div className="offer-project-select">
-                                <label>Odaberi Projekat</label>
-                                <select
-                                    value={selectedProjectId}
-                                    onChange={(e) => loadProjectForOffer(e.target.value)}
-                                >
-                                    <option value="">-- Odaberi projekat --</option>
-                                    {projects.map(project => (
-                                        <option key={project.Project_ID} value={project.Project_ID}>
-                                            {project.Client_Name} ({project.products?.length || 0} proizvoda)
-                                        </option>
-                                    ))}
-                                </select>
+                            {/* Offer Name + Project Selector Row */}
+                            <div className="offer-top-row">
+                                <div className="offer-name-field">
+                                    <label>Naziv ponude</label>
+                                    <input
+                                        type="text"
+                                        value={offerName}
+                                        onChange={(e) => setOfferName(e.target.value)}
+                                        placeholder="npr. Kuhinja Perić, Dnevni boravak..."
+                                    />
+                                </div>
+                                <div className="offer-project-select">
+                                    <label>Projekat</label>
+                                    <select
+                                        value={selectedProjectId}
+                                        onChange={(e) => loadProjectForOffer(e.target.value)}
+                                    >
+                                        <option value="">-- Odaberi projekat --</option>
+                                        {projects.map(project => (
+                                            <option key={project.Project_ID} value={project.Project_ID}>
+                                                {project.Client_Name} ({project.products?.length || 0} proizvoda)
+                                            </option>
+                                        ))}
+                                    </select>
+                                </div>
                             </div>
 
                             {/* Client Info */}
@@ -1549,31 +1678,51 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
                                     <div className="offer-summary-rows">
                                         <div className="offer-summary-row">
                                             <span className="label">Proizvodi</span>
-                                            <span className="value">{formatCurrency(totals.subtotal)}</span>
+                                            <span className="value">{formatPrice(totals.subtotal, offerCurrency)}</span>
                                         </div>
                                         {totals.transport > 0 && (
                                             <div className="offer-summary-row">
                                                 <span className="label">Transport</span>
-                                                <span className="value">{formatCurrency(totals.transport)}</span>
+                                                <span className="value">{formatPrice(totals.transport, offerCurrency)}</span>
                                             </div>
                                         )}
                                         {totals.discount > 0 && (
                                             <div className="offer-summary-row discount">
                                                 <span className="label">Popust</span>
-                                                <span className="value">-{formatCurrency(totals.discount)}</span>
+                                                <span className="value">-{formatPrice(totals.discount, offerCurrency)}</span>
                                             </div>
                                         )}
                                         {includePDV && totals.pdvAmount > 0 && (
                                             <div className="offer-summary-row pdv">
                                                 <span className="label">PDV ({pdvRate}%)</span>
-                                                <span className="value">{formatCurrency(totals.pdvAmount)}</span>
+                                                <span className="value">{formatPrice(totals.pdvAmount, offerCurrency)}</span>
                                             </div>
                                         )}
                                         <div className="offer-summary-divider" />
                                         <div className="offer-summary-row total">
                                             <span className="label">UKUPNO</span>
-                                            <span className="value">{formatCurrency(totals.total)}</span>
+                                            <span className="value">{formatPrice(totals.total, offerCurrency)}</span>
                                         </div>
+                                    </div>
+                                    <div style={{ display: 'flex', gap: '6px', marginTop: '10px' }}>
+                                        <button
+                                            type="button"
+                                            className={`eur-toggle-btn ${offerCurrency === 'EUR' ? 'active' : ''}`}
+                                            onClick={() => setOfferCurrency(offerCurrency === 'EUR' ? 'KM' : 'EUR')}
+                                            style={{ flex: 1 }}
+                                        >
+                                            <span className="material-icons-round" style={{ fontSize: '14px' }}>euro</span>
+                                            {offerCurrency === 'EUR' ? 'EUR' : 'KM'}
+                                        </button>
+                                        <button
+                                            type="button"
+                                            className={`eur-toggle-btn ${offerLanguage === 'en' ? 'active' : ''}`}
+                                            onClick={() => setOfferLanguage(offerLanguage === 'en' ? 'bs' : 'en')}
+                                            style={{ flex: 1 }}
+                                        >
+                                            <span className="material-icons-round" style={{ fontSize: '14px' }}>translate</span>
+                                            {offerLanguage === 'en' ? 'EN' : 'BS'}
+                                        </button>
                                     </div>
                                 </div>
                             </div>

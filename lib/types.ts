@@ -122,6 +122,8 @@ export interface Offer {
     Accepted_Date: string;
     Include_PDV: boolean;
     PDV_Rate: number;
+    Currency?: 'KM' | 'EUR';       // Default: KM
+    Language?: 'bs' | 'en';         // Default: bs (Bosnian)
     Client_Name?: string;
     Client_Phone?: string;
     Client_Email?: string;
