@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import type { Project, Material, Product, ProductMaterial, WorkOrder, Offer, OfferProduct, WorkLog } from '@/lib/types';
+import type { Project, Material, Product, ProductMaterial, WorkOrder, WorkOrderItem, Offer, OfferProduct, WorkLog } from '@/lib/types';
 import { ALLOWED_MATERIAL_TRANSITIONS } from '@/lib/types';
 import {
     saveProject,
@@ -14,7 +14,8 @@ import {
     addGlassMaterialToProduct,
     updateGlassMaterial,
     addAluDoorMaterialToProduct,
-    updateAluDoorMaterial
+    updateAluDoorMaterial,
+    saveProfitOverrides
 } from '@/lib/database';
 import Modal from '@/components/ui/Modal';
 import GlassModal, { type GlassModalData } from '@/components/ui/GlassModal';
@@ -105,7 +106,19 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
     const [editingMaterialValues, setEditingMaterialValues] = useState<Record<string, { qty: number; price: number }>>({});
 
     // Product Timeline Modal
-    const [timelineProduct, setTimelineProduct] = useState<{ product: Product; sellingPrice?: number; materialCost?: number; laborCost?: number; profit?: number; profitMargin?: number } | null>(null);
+    const [timelineProduct, setTimelineProduct] = useState<{
+        product: Product;
+        sellingPrice?: number;
+        materialCost?: number;
+        laborCost?: number;
+        profit?: number;
+        profitMargin?: number;
+        workOrderItemId?: string;
+        originalSellingPrice?: number;
+        originalExtras?: number;
+        originalTransport?: number;
+        hasOverrides?: boolean;
+    } | null>(null);
 
     // Filter projects
     const filteredProjects = projects.filter(project => {
@@ -1186,55 +1199,68 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                                                 </span>
                                                 {/* Profit Badge */}
                                                 {(() => {
-                                                    // Find OfferProduct from accepted offers and calculate full costs
-                                                    let sellingPrice: number | undefined;
-                                                    let materialCost: number | undefined;
+                                                    // === STEP 1: Get ORIGINAL offer values (the contract baseline) ===
+                                                    let originalSellingPrice: number | undefined;
+                                                    let originalExtras = 0;
+                                                    let originalTransport = 0;
                                                     let offerRef: Offer | undefined;
                                                     const acceptedOffers = offers.filter(o => o.Status === 'Prihvaćeno');
                                                     for (const offer of acceptedOffers) {
                                                         const offerProduct = (offer.products || []).find(op => op.Product_ID === product.Product_ID);
                                                         if (offerProduct) {
                                                             offerRef = offer;
-                                                            sellingPrice = offerProduct.Selling_Price || offerProduct.Total_Price;
+                                                            originalSellingPrice = offerProduct.Selling_Price || offerProduct.Total_Price;
 
-                                                            // All cost components
-                                                            materialCost = (offerProduct.Material_Cost || 0);
-
-                                                            // Add LED, Grouting, Sink, Extras costs
+                                                            // Extras from offer
                                                             const ledCost = offerProduct.LED_Total || 0;
                                                             const groutingCost = offerProduct.Grouting ? (offerProduct.Grouting_Price || 0) : 0;
                                                             const sinkCost = offerProduct.Sink_Faucet ? (offerProduct.Sink_Faucet_Price || 0) : 0;
                                                             const extrasCost = ((offerProduct as any).extras || []).reduce((sum: number, e: any) =>
                                                                 sum + (e.Total || e.total || 0), 0);
+                                                            originalExtras = ledCost + groutingCost + sinkCost + extrasCost;
 
-                                                            materialCost = materialCost + ledCost + groutingCost + sinkCost + extrasCost;
+                                                            // Transport share from offer
+                                                            if (offerRef && originalSellingPrice) {
+                                                                const offerSubtotal = offerRef.Subtotal || 0;
+                                                                if (offerSubtotal > 0) {
+                                                                    const productRatio = originalSellingPrice / offerSubtotal;
+                                                                    originalTransport = (offerRef.Transport_Cost || 0) * productRatio;
+                                                                }
+                                                            }
                                                             break;
                                                         }
                                                     }
 
-                                                    // Calculate labor cost from workLogs
+                                                    // === STEP 2: Find matching WorkOrderItem for overrides ===
+                                                    let woItem: WorkOrderItem | undefined;
+                                                    for (const wo of workOrders) {
+                                                        const item = (wo.items || []).find(i => i.Product_ID === product.Product_ID);
+                                                        if (item) {
+                                                            woItem = item;
+                                                            break;
+                                                        }
+                                                    }
+
+                                                    // === STEP 3: Use overrides OR original offer values ===
+                                                    const hasOverrides = !!woItem?.Profit_Overrides;
+                                                    const sellingPrice = woItem?.Profit_Overrides?.Selling_Price ?? originalSellingPrice;
+                                                    const extrasTotal = woItem?.Profit_Overrides?.Extras_Total ?? originalExtras;
+                                                    const transportShare = woItem?.Profit_Overrides?.Transport_Share ?? originalTransport;
+
+                                                    // === STEP 4: Material cost from ACTUAL project materials ===
+                                                    const actualMaterials = product.materials || [];
+                                                    const actualMaterialCost = actualMaterials.reduce((sum, m) => sum + (m.Total_Price || 0), 0);
+
+                                                    // Total costs = actual materials + extras (from offer or override)
+                                                    const materialCost = actualMaterialCost + extrasTotal;
+
+                                                    // === STEP 5: Labor cost from ACTUAL work logs ===
                                                     const productWorkLogs = workLogs.filter(wl => wl.Product_ID === product.Product_ID);
                                                     const laborCost = productWorkLogs.reduce((sum, wl) => sum + (wl.Daily_Rate || 0), 0);
 
-                                                    // Calculate profit if we have selling price
+                                                    // === STEP 6: Calculate profit ===
                                                     if (sellingPrice && sellingPrice > 0) {
-                                                        // Calculate proportional transport/discount
-                                                        let transportShare = 0;
-                                                        let discountShare = 0;
-
-                                                        if (offerRef) {
-                                                            const offerSubtotal = offerRef.Subtotal || 0;
-                                                            if (offerSubtotal > 0) {
-                                                                const productRatio = sellingPrice / offerSubtotal;
-                                                                transportShare = (offerRef.Transport_Cost || 0) * productRatio;
-                                                                discountShare = offerRef.Onsite_Assembly ?
-                                                                    (offerRef.Onsite_Discount || 0) * productRatio : 0;
-                                                            }
-                                                        }
-
-                                                        // Profit = Selling Price - Costs (material + labor)
-                                                        // Transport is pass-through, not production profit
-                                                        const profit = sellingPrice - (materialCost || 0) - laborCost;
+                                                        const profit = sellingPrice - materialCost - laborCost;
                                                         const profitMargin = sellingPrice > 0 ? (profit / sellingPrice) * 100 : 0;
 
                                                         return (
@@ -1253,14 +1279,30 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                                                                     fontWeight: 600,
                                                                     fontSize: '12px',
                                                                     marginLeft: '8px',
-                                                                    cursor: 'pointer'
+                                                                    cursor: 'pointer',
+                                                                    position: 'relative'
                                                                 }}
-                                                                title="Klikni za detaljan izvještaj"
+                                                                title={hasOverrides ? 'Prilagođeni profit — klikni za uređivanje' : 'Klikni za detaljan izvještaj'}
                                                                 onClick={(e) => {
                                                                     e.stopPropagation();
-                                                                    setTimelineProduct({ product, sellingPrice, materialCost, laborCost, profit, profitMargin });
+                                                                    setTimelineProduct({
+                                                                        product,
+                                                                        sellingPrice,
+                                                                        materialCost,
+                                                                        laborCost,
+                                                                        profit,
+                                                                        profitMargin,
+                                                                        workOrderItemId: woItem?.ID,
+                                                                        originalSellingPrice,
+                                                                        originalExtras,
+                                                                        originalTransport,
+                                                                        hasOverrides
+                                                                    });
                                                                 }}
                                                             >
+                                                                {hasOverrides && (
+                                                                    <span className="material-icons-round" style={{ fontSize: '12px', marginRight: '2px' }}>tune</span>
+                                                                )}
                                                                 <span className="material-icons-round" style={{ fontSize: '14px' }}>
                                                                     {profitMargin >= 30 ? 'trending_up' : profitMargin >= 15 ? 'trending_flat' : 'trending_down'}
                                                                 </span>
@@ -2089,6 +2131,26 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                 laborCost={timelineProduct?.laborCost}
                 profit={timelineProduct?.profit}
                 profitMargin={timelineProduct?.profitMargin}
+                workOrderItemId={timelineProduct?.workOrderItemId}
+                originalSellingPrice={timelineProduct?.originalSellingPrice}
+                originalExtras={timelineProduct?.originalExtras}
+                originalTransport={timelineProduct?.originalTransport}
+                hasOverrides={timelineProduct?.hasOverrides}
+                onSaveOverrides={async (overrides) => {
+                    if (!timelineProduct?.workOrderItemId || !organizationId) return;
+                    const result = await saveProfitOverrides(
+                        timelineProduct.workOrderItemId,
+                        overrides,
+                        organizationId
+                    );
+                    if (result.success) {
+                        showToast('Prilagodbe profita sačuvane', 'success');
+                        onRefresh('workOrders');
+                        setTimelineProduct(null);
+                    } else {
+                        showToast(result.message || 'Greška pri spremanju', 'error');
+                    }
+                }}
             />
 
             <style jsx>{`

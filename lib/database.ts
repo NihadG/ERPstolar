@@ -6089,6 +6089,85 @@ export async function getOrgSettings(
 }
 
 // ============================================
+// PROFIT OVERRIDES — Per-product profit adjustments
+// ============================================
+
+/**
+ * Save profit overrides on a work order item.
+ * These override the original offer values for profit calculation
+ * WITHOUT modifying the original offer (which is the contract record).
+ * After saving, triggers recalculateWorkOrder to propagate changes.
+ */
+export async function saveProfitOverrides(
+    workOrderItemId: string,
+    overrides: {
+        Selling_Price?: number;
+        Extras_Total?: number;
+        Transport_Share?: number;
+        Notes?: string;
+    },
+    organizationId: string
+): Promise<{ success: boolean; message: string }> {
+    if (!organizationId) {
+        return { success: false, message: 'Organization ID is required' };
+    }
+
+    try {
+        const firestore = getDb();
+        const itemQuery = query(
+            collection(firestore, COLLECTIONS.WORK_ORDER_ITEMS),
+            where('ID', '==', workOrderItemId),
+            where('Organization_ID', '==', organizationId)
+        );
+        const itemSnap = await getDocs(itemQuery);
+
+        if (itemSnap.empty) {
+            return { success: false, message: 'Stavka radnog naloga nije pronađena' };
+        }
+
+        const itemDoc = itemSnap.docs[0];
+        const itemData = itemDoc.data();
+
+        // Build the overrides object
+        const profitOverrides = {
+            ...overrides,
+            Updated_At: new Date().toISOString(),
+        };
+
+        // Also update Product_Value if Selling_Price override is set
+        // This ensures recalculateWorkOrder uses the correct selling price
+        const updateData: Record<string, unknown> = {
+            Profit_Overrides: profitOverrides,
+        };
+
+        if (overrides.Selling_Price !== undefined) {
+            updateData.Product_Value = overrides.Selling_Price;
+        }
+        if (overrides.Extras_Total !== undefined) {
+            updateData.Services_Total = overrides.Extras_Total;
+        }
+        if (overrides.Transport_Share !== undefined) {
+            updateData.Transport_Share = overrides.Transport_Share;
+        }
+
+        await updateDoc(itemDoc.ref, updateData);
+
+        // Trigger recalculation so profit updates everywhere immediately
+        try {
+            const { recalculateWorkOrder } = await import('./attendance');
+            await recalculateWorkOrder(itemData.Work_Order_ID);
+        } catch (err) {
+            console.warn('saveProfitOverrides: recalculation failed (non-critical):', err);
+        }
+
+        return { success: true, message: 'Prilagodbe profita sačuvane' };
+    } catch (error) {
+        console.error('saveProfitOverrides error:', error);
+        return { success: false, message: 'Greška pri spremanju prilagodbi' };
+    }
+}
+
+// ============================================
 // DATA GAP DETECTION — Notification-driven integrity checks
 // ============================================
 

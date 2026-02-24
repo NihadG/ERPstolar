@@ -41,6 +41,18 @@ interface ProductTimelineModalProps {
     };
     // Retroactive editing
     onAttendanceChange?: (workerId: string, workerName: string, date: string, newStatus: string) => Promise<void>;
+    // Profit overrides
+    workOrderItemId?: string;
+    originalSellingPrice?: number;
+    originalExtras?: number;
+    originalTransport?: number;
+    hasOverrides?: boolean;
+    onSaveOverrides?: (overrides: {
+        Selling_Price?: number;
+        Extras_Total?: number;
+        Transport_Share?: number;
+        Notes?: string;
+    }) => Promise<void>;
 }
 
 type DayType = 'working' | 'paused' | 'weekend' | 'holiday' | 'no_work' | 'future';
@@ -114,11 +126,56 @@ export default function ProductTimelineModal({
     profit,
     profitMargin,
     costBreakdown,
-    onAttendanceChange
+    onAttendanceChange,
+    workOrderItemId,
+    originalSellingPrice,
+    originalExtras,
+    originalTransport,
+    hasOverrides,
+    onSaveOverrides
 }: ProductTimelineModalProps) {
     const [expandedDays, setExpandedDays] = useState<Set<string>>(new Set());
     const [editingEntry, setEditingEntry] = useState<{ date: string; workerId: string } | null>(null);
     const [editLoading, setEditLoading] = useState(false);
+
+    // === PROFIT OVERRIDE EDITING STATE ===
+    const [isEditingProfit, setIsEditingProfit] = useState(false);
+    const [editSellingPrice, setEditSellingPrice] = useState<number>(0);
+    const [editExtras, setEditExtras] = useState<number>(0);
+    const [editTransport, setEditTransport] = useState<number>(0);
+    const [editNotes, setEditNotes] = useState<string>('');
+    const [savingOverrides, setSavingOverrides] = useState(false);
+
+    // Initialize edit fields when modal opens or override state changes
+    const startEditing = () => {
+        setEditSellingPrice(sellingPrice || originalSellingPrice || 0);
+        setEditExtras(originalExtras || 0);
+        setEditTransport(originalTransport || 0);
+        setEditNotes('');
+        setIsEditingProfit(true);
+    };
+
+    const cancelEditing = () => {
+        setIsEditingProfit(false);
+    };
+
+    const handleSaveOverrides = async () => {
+        if (!onSaveOverrides) return;
+        setSavingOverrides(true);
+        try {
+            await onSaveOverrides({
+                Selling_Price: editSellingPrice,
+                Extras_Total: editExtras,
+                Transport_Share: editTransport,
+                Notes: editNotes || undefined,
+            });
+            setIsEditingProfit(false);
+        } catch (err) {
+            console.error('Error saving overrides:', err);
+        } finally {
+            setSavingOverrides(false);
+        }
+    };
 
     // Build worker IDs set from assigned workers + work logs
     const assignedWorkerIds = useMemo(() => {
@@ -366,34 +423,222 @@ export default function ProductTimelineModal({
                         background: 'linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%)',
                         borderRadius: '16px', padding: '18px', border: '1px solid #e2e8f0'
                     }}>
-                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '12px' }}>
-                            {(() => {
-                                // Use backend laborCost as authoritative source; fall back to timeline sum
-                                const displayLaborCost = laborCost ?? stats.totalLaborCost;
-                                const displayProfit = profit ?? (sellingPrice - (materialCost || 0) - displayLaborCost);
-                                const displayMargin = profitMargin ?? (sellingPrice > 0 ? (displayProfit / sellingPrice) * 100 : 0);
-                                return [
-                                    { label: 'Prodajna', value: sellingPrice, icon: DollarSign, color: '#0f172a' },
-                                    { label: 'Materijal', value: materialCost || 0, icon: Package, color: '#dc2626' },
-                                    { label: 'Rad', value: displayLaborCost, icon: User, color: '#ea580c' },
-                                    { label: 'Profit', value: displayProfit, icon: displayMargin >= 15 ? TrendingUp : TrendingDown, color: getProfitColor(displayMargin) }
-                                ];
-                            })().map((item, i) => (
-                                <div key={i} style={{
-                                    display: 'flex', alignItems: 'center', gap: '10px',
-                                    padding: '12px', background: 'white', borderRadius: '12px',
-                                    border: `1px solid ${i === 3 ? item.color + '40' : '#e5e7eb'}`
+                        {/* Override indicator */}
+                        {hasOverrides && !isEditingProfit && (
+                            <div style={{
+                                display: 'flex', alignItems: 'center', gap: '6px',
+                                marginBottom: '12px', padding: '6px 12px',
+                                background: 'rgba(99, 102, 241, 0.08)', borderRadius: '8px',
+                                fontSize: '12px', color: '#6366f1', fontWeight: 500
+                            }}>
+                                <span className="material-icons-round" style={{ fontSize: '14px' }}>tune</span>
+                                Prilagođene vrijednosti — razlikuju se od originalne ponude
+                            </div>
+                        )}
+
+                        {/* Edit button */}
+                        {workOrderItemId && onSaveOverrides && !isEditingProfit && (
+                            <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '8px' }}>
+                                <button
+                                    onClick={startEditing}
+                                    style={{
+                                        display: 'inline-flex', alignItems: 'center', gap: '6px',
+                                        padding: '6px 14px', borderRadius: '8px',
+                                        border: '1px solid #e2e8f0', background: 'white',
+                                        cursor: 'pointer', fontSize: '12px', color: '#6366f1',
+                                        fontWeight: 500, transition: 'all 0.15s'
+                                    }}
+                                >
+                                    <Edit3 size={13} />
+                                    Prilagodi profit
+                                </button>
+                            </div>
+                        )}
+
+                        {/* === EDITING MODE === */}
+                        {isEditingProfit ? (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                                <div style={{
+                                    display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '12px'
                                 }}>
-                                    <item.icon size={20} style={{ color: item.color, flexShrink: 0 }} />
-                                    <div style={{ minWidth: 0 }}>
-                                        <div style={{ fontSize: '11px', color: '#6b7280' }}>{item.label}</div>
-                                        <div style={{ fontSize: '15px', fontWeight: 700, color: item.color }}>
-                                            {item.value.toLocaleString('hr-HR')} KM
+                                    {/* Selling Price */}
+                                    <div style={{
+                                        padding: '14px', background: 'white', borderRadius: '12px',
+                                        border: '2px solid #6366f1'
+                                    }}>
+                                        <div style={{ fontSize: '11px', color: '#6b7280', marginBottom: '6px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                            <DollarSign size={13} /> Prodajna cijena
                                         </div>
+                                        <input
+                                            type="number"
+                                            value={editSellingPrice}
+                                            onChange={(e) => setEditSellingPrice(parseFloat(e.target.value) || 0)}
+                                            style={{
+                                                width: '100%', padding: '8px 10px', borderRadius: '8px',
+                                                border: '1px solid #e2e8f0', fontSize: '15px', fontWeight: 700,
+                                                color: '#0f172a', outline: 'none'
+                                            }}
+                                        />
+                                        {originalSellingPrice && originalSellingPrice !== editSellingPrice && (
+                                            <div style={{ fontSize: '11px', color: '#94a3b8', marginTop: '4px' }}>
+                                                Ponuda: {originalSellingPrice.toLocaleString('hr-HR')} KM
+                                            </div>
+                                        )}
+                                    </div>
+
+                                    {/* Extras */}
+                                    <div style={{
+                                        padding: '14px', background: 'white', borderRadius: '12px',
+                                        border: '2px solid #f59e0b'
+                                    }}>
+                                        <div style={{ fontSize: '11px', color: '#6b7280', marginBottom: '6px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                            <Package size={13} /> Dodaci / Usluge
+                                        </div>
+                                        <input
+                                            type="number"
+                                            value={editExtras}
+                                            onChange={(e) => setEditExtras(parseFloat(e.target.value) || 0)}
+                                            style={{
+                                                width: '100%', padding: '8px 10px', borderRadius: '8px',
+                                                border: '1px solid #e2e8f0', fontSize: '15px', fontWeight: 700,
+                                                color: '#0f172a', outline: 'none'
+                                            }}
+                                        />
+                                        {originalExtras != null && originalExtras !== editExtras && (
+                                            <div style={{ fontSize: '11px', color: '#94a3b8', marginTop: '4px' }}>
+                                                Ponuda: {originalExtras.toLocaleString('hr-HR')} KM
+                                            </div>
+                                        )}
+                                    </div>
+
+                                    {/* Transport */}
+                                    <div style={{
+                                        padding: '14px', background: 'white', borderRadius: '12px',
+                                        border: '2px solid #10b981'
+                                    }}>
+                                        <div style={{ fontSize: '11px', color: '#6b7280', marginBottom: '6px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                            <Package size={13} /> Transport
+                                        </div>
+                                        <input
+                                            type="number"
+                                            value={editTransport}
+                                            onChange={(e) => setEditTransport(parseFloat(e.target.value) || 0)}
+                                            style={{
+                                                width: '100%', padding: '8px 10px', borderRadius: '8px',
+                                                border: '1px solid #e2e8f0', fontSize: '15px', fontWeight: 700,
+                                                color: '#0f172a', outline: 'none'
+                                            }}
+                                        />
+                                        {originalTransport != null && originalTransport !== editTransport && (
+                                            <div style={{ fontSize: '11px', color: '#94a3b8', marginTop: '4px' }}>
+                                                Ponuda: {originalTransport.toLocaleString('hr-HR')} KM
+                                            </div>
+                                        )}
                                     </div>
                                 </div>
-                            ))}
-                        </div>
+
+                                {/* Notes */}
+                                <div style={{
+                                    padding: '14px', background: 'white', borderRadius: '12px',
+                                    border: '1px solid #e2e8f0'
+                                }}>
+                                    <div style={{ fontSize: '11px', color: '#6b7280', marginBottom: '6px' }}>
+                                        Napomena (opciono)
+                                    </div>
+                                    <input
+                                        type="text"
+                                        value={editNotes}
+                                        onChange={(e) => setEditNotes(e.target.value)}
+                                        placeholder="Razlog prilagodbe..."
+                                        style={{
+                                            width: '100%', padding: '8px 10px', borderRadius: '8px',
+                                            border: '1px solid #e2e8f0', fontSize: '13px',
+                                            color: '#0f172a', outline: 'none'
+                                        }}
+                                    />
+                                </div>
+
+                                {/* Live Preview + Save/Cancel */}
+                                {(() => {
+                                    const previewProfit = editSellingPrice - (materialCost || 0) + editExtras - (laborCost ?? stats.totalLaborCost);
+                                    const previewMargin = editSellingPrice > 0 ? (previewProfit / editSellingPrice) * 100 : 0;
+                                    return (
+                                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                                            <div style={{
+                                                display: 'flex', alignItems: 'center', gap: '8px',
+                                                padding: '8px 14px', borderRadius: '10px',
+                                                background: previewMargin >= 15 ? 'rgba(16, 185, 129, 0.1)' : 'rgba(239, 68, 68, 0.1)'
+                                            }}>
+                                                {previewMargin >= 15 ? <TrendingUp size={16} style={{ color: '#10b981' }} /> : <TrendingDown size={16} style={{ color: '#ef4444' }} />}
+                                                <span style={{
+                                                    fontSize: '14px', fontWeight: 700,
+                                                    color: previewMargin >= 15 ? '#10b981' : '#ef4444'
+                                                }}>
+                                                    Procjena: {previewProfit.toLocaleString('hr-HR')} KM ({previewMargin.toFixed(1)}%)
+                                                </span>
+                                            </div>
+                                            <div style={{ display: 'flex', gap: '8px' }}>
+                                                <button
+                                                    onClick={cancelEditing}
+                                                    disabled={savingOverrides}
+                                                    style={{
+                                                        display: 'inline-flex', alignItems: 'center', gap: '6px',
+                                                        padding: '8px 16px', borderRadius: '8px',
+                                                        border: '1px solid #e2e8f0', background: 'white',
+                                                        cursor: 'pointer', fontSize: '13px', color: '#64748b', fontWeight: 500
+                                                    }}
+                                                >
+                                                    <X size={14} /> Odustani
+                                                </button>
+                                                <button
+                                                    onClick={handleSaveOverrides}
+                                                    disabled={savingOverrides}
+                                                    style={{
+                                                        display: 'inline-flex', alignItems: 'center', gap: '6px',
+                                                        padding: '8px 16px', borderRadius: '8px',
+                                                        border: 'none', background: '#6366f1',
+                                                        cursor: savingOverrides ? 'wait' : 'pointer',
+                                                        fontSize: '13px', color: 'white', fontWeight: 600,
+                                                        opacity: savingOverrides ? 0.7 : 1
+                                                    }}
+                                                >
+                                                    <Check size={14} /> {savingOverrides ? 'Spremam...' : 'Sačuvaj'}
+                                                </button>
+                                            </div>
+                                        </div>
+                                    );
+                                })()}
+                            </div>
+                        ) : (
+                            /* === DISPLAY MODE (existing cards) === */
+                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '12px' }}>
+                                {(() => {
+                                    const displayLaborCost = laborCost ?? stats.totalLaborCost;
+                                    const displayProfit = profit ?? (sellingPrice - (materialCost || 0) - displayLaborCost);
+                                    const displayMargin = profitMargin ?? (sellingPrice > 0 ? (displayProfit / sellingPrice) * 100 : 0);
+                                    return [
+                                        { label: 'Prodajna', value: sellingPrice, icon: DollarSign, color: '#0f172a' },
+                                        { label: 'Materijal', value: materialCost || 0, icon: Package, color: '#dc2626' },
+                                        { label: 'Rad', value: displayLaborCost, icon: User, color: '#ea580c' },
+                                        { label: 'Profit', value: displayProfit, icon: displayMargin >= 15 ? TrendingUp : TrendingDown, color: getProfitColor(displayMargin) }
+                                    ];
+                                })().map((item, i) => (
+                                    <div key={i} style={{
+                                        display: 'flex', alignItems: 'center', gap: '10px',
+                                        padding: '12px', background: 'white', borderRadius: '12px',
+                                        border: `1px solid ${i === 3 ? item.color + '40' : '#e5e7eb'}`
+                                    }}>
+                                        <item.icon size={20} style={{ color: item.color, flexShrink: 0 }} />
+                                        <div style={{ minWidth: 0 }}>
+                                            <div style={{ fontSize: '11px', color: '#6b7280' }}>{item.label}</div>
+                                            <div style={{ fontSize: '15px', fontWeight: 700, color: item.color }}>
+                                                {item.value.toLocaleString('hr-HR')} KM
+                                            </div>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
                     </div>
                 )}
 

@@ -419,6 +419,15 @@ export interface WorkOrderItem {
     Product_Value?: number;    // Cijena proizvoda iz ponude
     Material_Cost?: number;    // Trošak materijala za ovaj proizvod
 
+    // PROFIT OVERRIDES — Prilagodbe koje ne mijenjaju originalnu ponudu
+    Profit_Overrides?: {
+        Selling_Price?: number;    // Prilagođena prodajna cijena
+        Extras_Total?: number;     // Prilagođeni dodaci/usluge
+        Transport_Share?: number;  // Prilagođeni transportni udio
+        Notes?: string;            // Razlog prilagodbe
+        Updated_At?: string;       // ISO timestamp zadnje prilagodbe
+    };
+
     // NAPOMENE
     Notes?: string;
 
