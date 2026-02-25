@@ -61,11 +61,6 @@ const HINGE_TYPES = [
     { value: 'polukrive', label: 'Polukrive' },
 ];
 
-const HINGE_SIDES = [
-    { value: 'lijevo', label: 'Lijevo' },
-    { value: 'desno', label: 'Desno' },
-];
-
 const DEFAULT_ITEM: AluDoorItemInput = {
     Qty: 1,
     Width: 0,
@@ -239,781 +234,714 @@ export default function AluDoorModal({
                 </>
             }
         >
-            <div className="alu-modal">
-                {/* Header */}
-                <div className="alu-header">
-                    <div className="alu-header-left">
-                        <span className="alu-icon">🚪</span>
-                        <div>
-                            <div className="alu-title">{material?.Name || existingMaterial?.Material_Name}</div>
-                            <div className="alu-subtitle">{material?.Default_Supplier || existingMaterial?.Supplier || 'Nema dobavljača'}</div>
-                        </div>
+            <div className="am">
+                {/* Compact header */}
+                <div className="am-topbar">
+                    <div className="am-info">
+                        <span className="am-name">{material?.Name || existingMaterial?.Material_Name}</span>
+                        <span className="am-supplier">{material?.Default_Supplier || existingMaterial?.Supplier || ''}</span>
                     </div>
-                    <div className="alu-header-right">
-                        <div className="price-input-group">
-                            <label>Cijena/m²</label>
-                            <div className="price-input-wrapper">
-                                <input
-                                    type="number"
-                                    value={pricePerM2 || ''}
-                                    onChange={(e) => setPricePerM2(parseFloat(e.target.value) || 0)}
-                                    step="0.01"
-                                    min="0"
-                                />
-                                <span>KM</span>
-                            </div>
-                        </div>
+                    <div className="am-price">
+                        <label>KM/m²</label>
+                        <input
+                            type="number"
+                            value={pricePerM2 || ''}
+                            onChange={(e) => setPricePerM2(parseFloat(e.target.value) || 0)}
+                            step="0.01"
+                            min="0"
+                        />
                     </div>
                 </div>
 
-                {/* Door Tabs */}
-                <div className="door-tabs">
-                    <div className="door-tabs-list">
-                        {items.map((item, index) => (
-                            <button
-                                key={index}
-                                type="button"
-                                className={`door-tab ${activeTab === index ? 'active' : ''}`}
-                                onClick={() => setActiveTab(index)}
-                            >
-                                <span className="tab-number">{index + 1}</span>
-                                <span className="tab-label">
-                                    {item.Width > 0 && item.Height > 0
-                                        ? `${item.Width}×${item.Height}`
-                                        : 'Vrata'}
-                                </span>
-                            </button>
-                        ))}
-                        <button type="button" className="door-tab add-tab" onClick={addItem}>
-                            <span className="material-icons-round">add</span>
-                        </button>
-                    </div>
-                </div>
-
-                {/* Active Door Form */}
-                <div className="door-form">
-                    {/* Delete Button */}
-                    {items.length > 1 && (
+                {/* Compact tabs */}
+                <div className="am-tabs">
+                    {items.map((item, index) => (
                         <button
+                            key={index}
                             type="button"
-                            className="door-delete-btn"
-                            onClick={() => removeItem(activeTab)}
+                            className={`am-tab ${activeTab === index ? 'active' : ''}`}
+                            onClick={() => setActiveTab(index)}
                         >
-                            <span className="material-icons-round">delete</span>
-                            Obriši ova vrata
+                            <span className="am-tab-num">{index + 1}</span>
+                            {item.Width > 0 && item.Height > 0 && (
+                                <span className="am-tab-dims">{item.Width}×{item.Height}</span>
+                            )}
+                            {items.length > 1 && activeTab === index && (
+                                <button
+                                    type="button"
+                                    className="am-tab-del"
+                                    onClick={(e) => { e.stopPropagation(); removeItem(index); }}
+                                    title="Obriši"
+                                >
+                                    <span className="material-icons-round">close</span>
+                                </button>
+                            )}
                         </button>
-                    )}
+                    ))}
+                    <button type="button" className="am-tab am-tab-add" onClick={addItem}>
+                        <span className="material-icons-round">add</span>
+                    </button>
+                </div>
 
-                    {/* Dimensions Section */}
-                    <div className="form-section">
-                        <div className="section-title">
-                            <span className="section-icon">📐</span>
-                            Dimenzije
-                        </div>
-                        <div className="section-grid cols-3">
-                            <div className="form-field">
-                                <label>Količina</label>
-                                <input
-                                    type="number"
-                                    value={currentItem.Qty || ''}
-                                    min="1"
-                                    onChange={(e) => updateItem(activeTab, 'Qty', parseInt(e.target.value) || 1)}
-                                />
-                            </div>
-                            <div className="form-field">
-                                <label>Širina (mm)</label>
-                                <input
-                                    type="number"
-                                    value={currentItem.Width || ''}
-                                    min="0"
-                                    placeholder="0"
-                                    onChange={(e) => updateItem(activeTab, 'Width', parseFloat(e.target.value) || 0)}
-                                />
-                            </div>
-                            <div className="form-field">
-                                <label>Visina (mm)</label>
-                                <input
-                                    type="number"
-                                    value={currentItem.Height || ''}
-                                    min="0"
-                                    placeholder="0"
-                                    onChange={(e) => updateItem(activeTab, 'Height', parseFloat(e.target.value) || 0)}
-                                />
-                            </div>
-                        </div>
-                    </div>
-
-                    {/* Appearance Section */}
-                    <div className="form-section">
-                        <div className="section-title">
-                            <span className="section-icon">🎨</span>
-                            Izgled
-                        </div>
-                        <div className="section-grid cols-2">
-                            <div className="form-field">
-                                <label>Vrsta rama</label>
-                                <select
-                                    value={currentItem.Frame_Type}
-                                    onChange={(e) => updateItem(activeTab, 'Frame_Type', e.target.value)}
-                                >
-                                    {FRAME_TYPES.map(f => <option key={f.value} value={f.value}>{f.label}</option>)}
-                                </select>
-                            </div>
-                            <div className="form-field">
-                                <label>Vrsta stakla</label>
-                                <select
-                                    value={currentItem.Glass_Type}
-                                    onChange={(e) => updateItem(activeTab, 'Glass_Type', e.target.value)}
-                                >
-                                    {GLASS_TYPES.map(g => <option key={g.value} value={g.value}>{g.label}</option>)}
-                                </select>
-                            </div>
-                            <div className="form-field">
-                                <label>Boja rama</label>
-                                <input
-                                    type="text"
-                                    value={currentItem.Frame_Color}
-                                    placeholder="npr. Crna, Bijela..."
-                                    onChange={(e) => updateItem(activeTab, 'Frame_Color', e.target.value)}
-                                />
-                            </div>
-                            <div className="form-field checkbox-field">
-                                <label>
-                                    <input
-                                        type="checkbox"
-                                        checked={currentItem.Integrated_Handle}
-                                        onChange={(e) => updateItem(activeTab, 'Integrated_Handle', e.target.checked)}
-                                    />
-                                    <span>Integrisana ručka</span>
-                                </label>
-                            </div>
-                        </div>
-                    </div>
-
-                    {/* Hinges Section */}
-                    <div className="form-section">
-                        <div className="section-title">
-                            <span className="section-icon">🔩</span>
-                            Baglame
-                        </div>
-                        <div className="section-grid cols-2">
-                            <div className="form-field">
-                                <label>Tip baglama</label>
-                                <select
-                                    value={currentItem.Hinge_Type}
-                                    onChange={(e) => updateItem(activeTab, 'Hinge_Type', e.target.value)}
-                                >
-                                    {HINGE_TYPES.map(h => <option key={h.value} value={h.value}>{h.label}</option>)}
-                                </select>
-                            </div>
-                            <div className="form-field">
-                                <label>Boja baglama</label>
-                                <input
-                                    type="text"
-                                    value={currentItem.Hinge_Color}
-                                    placeholder="npr. Crna, Inox..."
-                                    onChange={(e) => updateItem(activeTab, 'Hinge_Color', e.target.value)}
-                                />
-                            </div>
-                            <div className="form-field">
-                                <label>Strana otvaranja</label>
-                                <div className="radio-group">
-                                    {HINGE_SIDES.map(s => (
-                                        <label key={s.value} className="radio-label">
-                                            <input
-                                                type="radio"
-                                                name={`hinge-side-${activeTab}`}
-                                                value={s.value}
-                                                checked={currentItem.Hinge_Side === s.value}
-                                                onChange={(e) => updateItem(activeTab, 'Hinge_Side', e.target.value)}
-                                            />
-                                            <span>{s.label}</span>
-                                        </label>
-                                    ))}
-                                </div>
-                            </div>
-                            <div className="form-field">
-                                <label>Raspored baglama</label>
-                                <div className="radio-group">
-                                    <label className="radio-label">
-                                        <input
-                                            type="radio"
-                                            name={`hinge-layout-${activeTab}`}
-                                            value="osnovna"
-                                            checked={currentItem.Hinge_Layout === 'osnovna'}
-                                            onChange={(e) => updateItem(activeTab, 'Hinge_Layout', e.target.value)}
-                                        />
-                                        <span>Osnovna</span>
-                                    </label>
-                                    <label className="radio-label">
-                                        <input
-                                            type="radio"
-                                            name={`hinge-layout-${activeTab}`}
-                                            value="specijalna"
-                                            checked={currentItem.Hinge_Layout === 'specijalna'}
-                                            onChange={(e) => updateItem(activeTab, 'Hinge_Layout', e.target.value)}
-                                        />
-                                        <span>Specijalna</span>
-                                    </label>
-                                </div>
-                            </div>
-                        </div>
-
-                        {/* Custom Hinge Positions */}
-                        {currentItem.Hinge_Layout === 'specijalna' && (
-                            <div className="hinge-positions">
-                                <div className="hinge-positions-title">Pozicije baglama od dna (mm)</div>
-                                <div className="hinge-positions-list">
-                                    {currentItem.Hinge_Positions.map((pos, hingeIdx) => (
-                                        <div key={hingeIdx} className="hinge-position-item">
-                                            <span className="hinge-label">#{hingeIdx + 1}</span>
-                                            <input
-                                                type="number"
-                                                value={pos || ''}
-                                                min="0"
-                                                placeholder="mm"
-                                                onChange={(e) => updateHingePosition(activeTab, hingeIdx, parseFloat(e.target.value) || 0)}
-                                            />
-                                            <button
-                                                type="button"
-                                                className="hinge-remove"
-                                                onClick={() => removeHingePosition(activeTab, hingeIdx)}
-                                            >
-                                                <span className="material-icons-round">close</span>
-                                            </button>
-                                        </div>
-                                    ))}
-                                    <button type="button" className="hinge-add" onClick={() => addHingePosition(activeTab)}>
-                                        <span className="material-icons-round">add</span>
-                                        Dodaj
-                                    </button>
-                                </div>
-                            </div>
-                        )}
-                    </div>
-
-                    {/* Note */}
-                    <div className="form-section">
-                        <div className="form-field">
-                            <label>Napomena</label>
+                {/* Form — two-column dense layout */}
+                <div className="am-form">
+                    {/* Row 1: Dimensions */}
+                    <div className="am-row am-row-3">
+                        <div className="am-field">
+                            <label>Količina</label>
                             <input
-                                type="text"
-                                value={currentItem.Note}
-                                placeholder="Dodatne napomene za ova vrata..."
-                                onChange={(e) => updateItem(activeTab, 'Note', e.target.value)}
+                                type="number"
+                                value={currentItem.Qty || ''}
+                                min="1"
+                                onChange={(e) => updateItem(activeTab, 'Qty', parseInt(e.target.value) || 1)}
+                            />
+                        </div>
+                        <div className="am-field">
+                            <label>Širina (mm)</label>
+                            <input
+                                type="number"
+                                value={currentItem.Width || ''}
+                                min="0"
+                                placeholder="0"
+                                onChange={(e) => updateItem(activeTab, 'Width', parseFloat(e.target.value) || 0)}
+                            />
+                        </div>
+                        <div className="am-field">
+                            <label>Visina (mm)</label>
+                            <input
+                                type="number"
+                                value={currentItem.Height || ''}
+                                min="0"
+                                placeholder="0"
+                                onChange={(e) => updateItem(activeTab, 'Height', parseFloat(e.target.value) || 0)}
                             />
                         </div>
                     </div>
 
-                    {/* Item Summary */}
-                    <div className="item-summary">
-                        <div className="item-summary-stat">
-                            <span>Površina:</span>
-                            <strong>{calculateItemArea(currentItem).toFixed(4)} m²</strong>
+                    {/* Divider */}
+                    <div className="am-divider"></div>
+
+                    {/* Row 2: Appearance */}
+                    <div className="am-row am-row-2">
+                        <div className="am-field">
+                            <label>Ram</label>
+                            <div className="seg-group">
+                                {FRAME_TYPES.map(f => (
+                                    <button
+                                        key={f.value}
+                                        type="button"
+                                        className={`seg-btn ${currentItem.Frame_Type === f.value ? 'active' : ''}`}
+                                        onClick={() => updateItem(activeTab, 'Frame_Type', f.value)}
+                                    >
+                                        {f.label}
+                                    </button>
+                                ))}
+                            </div>
                         </div>
-                        <div className="item-summary-stat">
-                            <span>Cijena:</span>
-                            <strong>{calculateItemPrice(currentItem).toFixed(2)} KM</strong>
+                        <div className="am-field">
+                            <label>Staklo</label>
+                            <select
+                                value={currentItem.Glass_Type}
+                                onChange={(e) => updateItem(activeTab, 'Glass_Type', e.target.value)}
+                            >
+                                {GLASS_TYPES.map(g => <option key={g.value} value={g.value}>{g.label}</option>)}
+                            </select>
                         </div>
+                    </div>
+
+                    <div className="am-row am-row-2">
+                        <div className="am-field">
+                            <label>Boja rama</label>
+                            <input
+                                type="text"
+                                value={currentItem.Frame_Color}
+                                placeholder="npr. Crna, Bijela..."
+                                onChange={(e) => updateItem(activeTab, 'Frame_Color', e.target.value)}
+                            />
+                        </div>
+                        <div className="am-field am-field-check">
+                            <label>
+                                <input
+                                    type="checkbox"
+                                    checked={currentItem.Integrated_Handle}
+                                    onChange={(e) => updateItem(activeTab, 'Integrated_Handle', e.target.checked)}
+                                />
+                                Integrisana ručka
+                            </label>
+                        </div>
+                    </div>
+
+                    {/* Divider */}
+                    <div className="am-divider"></div>
+
+                    {/* Row 3: Hinges */}
+                    <div className="am-row am-row-2">
+                        <div className="am-field">
+                            <label>Baglame</label>
+                            <div className="seg-group">
+                                {HINGE_TYPES.map(h => (
+                                    <button
+                                        key={h.value}
+                                        type="button"
+                                        className={`seg-btn ${currentItem.Hinge_Type === h.value ? 'active' : ''}`}
+                                        onClick={() => updateItem(activeTab, 'Hinge_Type', h.value)}
+                                    >
+                                        {h.label}
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+                        <div className="am-field">
+                            <label>Boja baglama</label>
+                            <input
+                                type="text"
+                                value={currentItem.Hinge_Color}
+                                placeholder="npr. Crna, Inox..."
+                                onChange={(e) => updateItem(activeTab, 'Hinge_Color', e.target.value)}
+                            />
+                        </div>
+                    </div>
+
+                    <div className="am-row am-row-2">
+                        <div className="am-field">
+                            <label>Strana</label>
+                            <div className="seg-group">
+                                <button
+                                    type="button"
+                                    className={`seg-btn ${currentItem.Hinge_Side === 'lijevo' ? 'active' : ''}`}
+                                    onClick={() => updateItem(activeTab, 'Hinge_Side', 'lijevo')}
+                                >
+                                    ← Lijevo
+                                </button>
+                                <button
+                                    type="button"
+                                    className={`seg-btn ${currentItem.Hinge_Side === 'desno' ? 'active' : ''}`}
+                                    onClick={() => updateItem(activeTab, 'Hinge_Side', 'desno')}
+                                >
+                                    Desno →
+                                </button>
+                            </div>
+                        </div>
+                        <div className="am-field">
+                            <label>Raspored</label>
+                            <div className="seg-group">
+                                <button
+                                    type="button"
+                                    className={`seg-btn ${currentItem.Hinge_Layout === 'osnovna' ? 'active' : ''}`}
+                                    onClick={() => updateItem(activeTab, 'Hinge_Layout', 'osnovna')}
+                                >
+                                    Osnovna
+                                </button>
+                                <button
+                                    type="button"
+                                    className={`seg-btn ${currentItem.Hinge_Layout === 'specijalna' ? 'active' : ''}`}
+                                    onClick={() => updateItem(activeTab, 'Hinge_Layout', 'specijalna')}
+                                >
+                                    Specijalna
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Custom hinge positions */}
+                    {currentItem.Hinge_Layout === 'specijalna' && (
+                        <div className="am-hinges">
+                            <span className="am-hinges-label">Pozicije od dna (mm):</span>
+                            <div className="am-hinges-list">
+                                {currentItem.Hinge_Positions.map((pos, hingeIdx) => (
+                                    <div key={hingeIdx} className="am-hinge-chip">
+                                        <input
+                                            type="number"
+                                            value={pos || ''}
+                                            min="0"
+                                            placeholder="mm"
+                                            onChange={(e) => updateHingePosition(activeTab, hingeIdx, parseFloat(e.target.value) || 0)}
+                                        />
+                                        <button
+                                            type="button"
+                                            onClick={() => removeHingePosition(activeTab, hingeIdx)}
+                                        >
+                                            <span className="material-icons-round">close</span>
+                                        </button>
+                                    </div>
+                                ))}
+                                <button type="button" className="am-hinge-add" onClick={() => addHingePosition(activeTab)}>
+                                    <span className="material-icons-round">add</span>
+                                </button>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Note */}
+                    <div className="am-field am-field-full">
+                        <label>Napomena</label>
+                        <input
+                            type="text"
+                            value={currentItem.Note}
+                            placeholder="Dodatne napomene..."
+                            onChange={(e) => updateItem(activeTab, 'Note', e.target.value)}
+                        />
+                    </div>
+
+                    {/* Item stats */}
+                    <div className="am-item-stats">
+                        <span>{calculateItemArea(currentItem).toFixed(3)} m²</span>
+                        <span className="am-item-price">{calculateItemPrice(currentItem).toFixed(2)} KM</span>
                     </div>
                 </div>
 
-                {/* Total Summary */}
-                <div className="alu-summary">
-                    <div className="summary-item">
-                        <span className="summary-label">Vrata</span>
-                        <span className="summary-value">{getTotalCount()}</span>
+                {/* Total summary */}
+                <div className="am-summary">
+                    <div className="am-stat">
+                        <span>{getTotalCount()}</span> vrata
                     </div>
-                    <div className="summary-item">
-                        <span className="summary-label">Površina</span>
-                        <span className="summary-value">{getTotalArea().toFixed(2)} m²</span>
+                    <div className="am-stat">
+                        <span>{getTotalArea().toFixed(2)}</span> m²
                     </div>
-                    <div className="summary-item summary-total">
-                        <span className="summary-label">Ukupno</span>
-                        <span className="summary-value">{getTotalPrice().toFixed(2)} KM</span>
+                    <div className="am-total">
+                        {getTotalPrice().toFixed(2)} KM
                     </div>
                 </div>
             </div>
 
             <style jsx>{`
-                .alu-modal {
+                .am {
                     display: flex;
                     flex-direction: column;
-                    gap: 20px;
+                    gap: 12px;
                 }
 
-                /* Header */
-                .alu-header {
+                /* Top bar */
+                .am-topbar {
                     display: flex;
-                    justify-content: space-between;
                     align-items: center;
-                    padding: 16px 20px;
-                    background: linear-gradient(135deg, #ffecd2 0%, #fcb69f 100%);
-                    border-radius: 12px;
-                    gap: 16px;
+                    justify-content: space-between;
+                    padding: 10px 14px;
+                    background: linear-gradient(135deg, #fef3e2 0%, #fdf0e8 100%);
+                    border-radius: 10px;
+                    gap: 12px;
                     flex-wrap: wrap;
                 }
 
-                .alu-header-left {
+                .am-info {
                     display: flex;
                     align-items: center;
-                    gap: 14px;
+                    gap: 10px;
+                    min-width: 0;
                 }
 
-                .alu-icon {
-                    font-size: 32px;
-                    line-height: 1;
-                }
-
-                .alu-title {
-                    font-size: 16px;
+                .am-name {
+                    font-size: 14px;
                     font-weight: 600;
                     color: var(--text-primary);
                 }
 
-                .alu-subtitle {
-                    font-size: 13px;
+                .am-supplier {
+                    font-size: 12px;
                     color: var(--text-secondary);
                 }
 
-                .alu-header-right {
+                .am-price {
                     display: flex;
                     align-items: center;
+                    gap: 6px;
+                    flex-shrink: 0;
                 }
 
-                .price-input-group {
+                .am-price label {
+                    font-size: 11px;
+                    font-weight: 600;
+                    color: var(--text-secondary);
+                }
+
+                .am-price input {
+                    width: 72px;
+                    padding: 6px 8px;
+                    border: 1px solid var(--border);
+                    border-radius: 6px;
+                    font-size: 14px;
+                    font-weight: 600;
+                    text-align: right;
+                    background: white;
+                    outline: none;
+                }
+
+                .am-price input:focus {
+                    border-color: var(--accent);
+                }
+
+                /* Tabs */
+                .am-tabs {
+                    display: flex;
+                    gap: 4px;
+                    overflow-x: auto;
+                    padding: 4px;
+                    background: var(--surface, #f9fafb);
+                    border-radius: 10px;
+                }
+
+                .am-tab {
+                    display: flex;
+                    align-items: center;
+                    gap: 5px;
+                    padding: 6px 12px;
+                    background: white;
+                    border: 1px solid var(--border-light, #e5e7eb);
+                    border-radius: 7px;
+                    font-size: 12px;
+                    font-weight: 500;
+                    color: var(--text-secondary);
+                    cursor: pointer;
+                    transition: all 0.12s;
+                    white-space: nowrap;
+                    position: relative;
+                }
+
+                .am-tab:hover { border-color: var(--accent); }
+
+                .am-tab.active {
+                    background: var(--accent, #0071e3);
+                    border-color: var(--accent);
+                    color: white;
+                }
+
+                .am-tab-num {
+                    width: 18px;
+                    height: 18px;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    background: var(--surface, #f3f4f6);
+                    border-radius: 50%;
+                    font-size: 10px;
+                    font-weight: 700;
+                }
+
+                .am-tab.active .am-tab-num {
+                    background: rgba(255,255,255,0.25);
+                    color: white;
+                }
+
+                .am-tab-dims {
+                    font-size: 11px;
+                    opacity: 0.8;
+                }
+
+                .am-tab-del {
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    width: 16px;
+                    height: 16px;
+                    border: none;
+                    border-radius: 50%;
+                    background: rgba(255,255,255,0.3);
+                    color: white;
+                    cursor: pointer;
+                    padding: 0;
+                    margin-left: 2px;
+                }
+
+                .am-tab-del:hover {
+                    background: rgba(255,255,255,0.5);
+                }
+
+                .am-tab-del .material-icons-round {
+                    font-size: 12px;
+                }
+
+                .am-tab-add {
+                    background: transparent !important;
+                    border-style: dashed !important;
+                    color: var(--text-tertiary) !important;
+                }
+
+                .am-tab-add:hover {
+                    color: var(--accent) !important;
+                    border-color: var(--accent) !important;
+                }
+
+                .am-tab-add .material-icons-round {
+                    font-size: 16px;
+                }
+
+                /* Form */
+                .am-form {
+                    background: white;
+                    border: 1px solid var(--border-light, #e5e7eb);
+                    border-radius: 10px;
+                    padding: 16px;
+                    display: flex;
+                    flex-direction: column;
+                    gap: 12px;
+                }
+
+                .am-divider {
+                    height: 1px;
+                    background: var(--border-light, #f3f4f6);
+                    margin: 2px 0;
+                }
+
+                .am-row {
+                    display: grid;
+                    gap: 12px;
+                }
+
+                .am-row-2 { grid-template-columns: 1fr 1fr; }
+                .am-row-3 { grid-template-columns: 1fr 1fr 1fr; }
+
+                @media (max-width: 540px) {
+                    .am-row-2, .am-row-3 { grid-template-columns: 1fr; }
+                }
+
+                .am-field {
                     display: flex;
                     flex-direction: column;
                     gap: 4px;
                 }
 
-                .price-input-group label {
-                    font-size: 11px;
-                    font-weight: 500;
-                    color: var(--text-secondary);
-                    text-transform: uppercase;
+                .am-field-full {
+                    grid-column: 1 / -1;
                 }
 
-                .price-input-wrapper {
-                    display: flex;
-                    align-items: center;
-                    background: white;
-                    border: 1px solid var(--border);
-                    border-radius: 8px;
-                    overflow: hidden;
-                }
-
-                .price-input-wrapper input {
-                    width: 80px;
-                    padding: 8px 10px;
-                    border: none;
-                    font-size: 14px;
-                    font-weight: 600;
-                    text-align: right;
-                    outline: none;
-                }
-
-                .price-input-wrapper span {
-                    padding: 8px 10px 8px 4px;
-                    font-size: 13px;
-                    color: var(--text-secondary);
-                    background: var(--surface);
-                }
-
-                /* Door Tabs */
-                .door-tabs {
-                    background: var(--surface);
-                    border-radius: 12px;
-                    padding: 8px;
-                }
-
-                .door-tabs-list {
-                    display: flex;
-                    gap: 6px;
-                    overflow-x: auto;
-                    padding-bottom: 4px;
-                }
-
-                .door-tab {
-                    display: flex;
-                    align-items: center;
-                    gap: 8px;
-                    padding: 10px 16px;
-                    background: white;
-                    border: 1px solid var(--border-light);
-                    border-radius: 8px;
-                    font-size: 13px;
-                    font-weight: 500;
-                    color: var(--text-secondary);
-                    cursor: pointer;
-                    transition: all 0.15s;
-                    white-space: nowrap;
-                }
-
-                .door-tab:hover {
-                    border-color: var(--accent);
-                }
-
-                .door-tab.active {
-                    background: var(--accent);
-                    border-color: var(--accent);
-                    color: white;
-                }
-
-                .door-tab .tab-number {
-                    width: 20px;
-                    height: 20px;
-                    display: flex;
-                    align-items: center;
-                    justify-content: center;
-                    background: var(--surface);
-                    border-radius: 50%;
+                .am-field > label {
                     font-size: 11px;
                     font-weight: 600;
-                }
-
-                .door-tab.active .tab-number {
-                    background: rgba(255,255,255,0.3);
-                    color: white;
-                }
-
-                .door-tab.add-tab {
-                    background: transparent;
-                    border-style: dashed;
-                    color: var(--text-tertiary);
-                }
-
-                .door-tab.add-tab:hover {
-                    color: var(--accent);
-                    border-color: var(--accent);
-                }
-
-                .door-tab .material-icons-round {
-                    font-size: 18px;
-                }
-
-                /* Door Form */
-                .door-form {
-                    background: white;
-                    border: 1px solid var(--border-light);
-                    border-radius: 12px;
-                    padding: 24px;
-                    display: flex;
-                    flex-direction: column;
-                    gap: 20px;
-                    flex: 1;
-                    min-height: 0;
-                    overflow-y: auto;
-                }
-
-                .door-delete-btn {
-                    align-self: flex-end;
-                    display: flex;
-                    align-items: center;
-                    gap: 6px;
-                    padding: 8px 12px;
-                    background: var(--error-bg);
-                    border: none;
-                    border-radius: 6px;
-                    font-size: 12px;
-                    font-weight: 500;
-                    color: var(--error);
-                    cursor: pointer;
-                    transition: all 0.15s;
-                }
-
-                .door-delete-btn:hover {
-                    background: var(--error);
-                    color: white;
-                }
-
-                .door-delete-btn .material-icons-round {
-                    font-size: 16px;
-                }
-
-                /* Form Sections */
-                .form-section {
-                    padding: 16px;
-                    background: var(--surface);
-                    border-radius: 10px;
-                }
-
-                .section-title {
-                    display: flex;
-                    align-items: center;
-                    gap: 8px;
-                    font-size: 13px;
-                    font-weight: 600;
-                    color: var(--text-primary);
-                    margin-bottom: 14px;
-                }
-
-                .section-icon {
-                    font-size: 16px;
-                }
-
-                .section-grid {
-                    display: grid;
-                    gap: 14px;
-                }
-
-                .section-grid.cols-2 {
-                    grid-template-columns: repeat(2, 1fr);
-                }
-
-                .section-grid.cols-3 {
-                    grid-template-columns: repeat(3, 1fr);
-                }
-
-                @media (max-width: 768px) {
-                    .section-grid.cols-3 {
-                        grid-template-columns: repeat(2, 1fr);
-                    }
-                }
-
-                @media (max-width: 540px) {
-                    .section-grid.cols-2,
-                    .section-grid.cols-3 {
-                        grid-template-columns: 1fr;
-                    }
-                    
-                    .radio-group {
-                        flex-direction: column;
-                        gap: 10px;
-                    }
-                }
-
-                .form-field {
-                    display: flex;
-                    flex-direction: column;
-                    gap: 6px;
-                }
-
-                .form-field > label {
-                    font-size: 11px;
-                    font-weight: 500;
-                    color: var(--text-secondary);
+                    color: var(--text-secondary, #6b7280);
                     text-transform: uppercase;
                     letter-spacing: 0.3px;
                 }
 
-                .form-field input[type="text"],
-                .form-field input[type="number"],
-                .form-field select {
-                    padding: 10px 12px;
-                    border: 1px solid var(--border);
-                    border-radius: 8px;
-                    font-size: 14px;
+                .am-field input[type="text"],
+                .am-field input[type="number"],
+                .am-field select {
+                    padding: 7px 10px;
+                    border: 1px solid var(--border, #e0e0e0);
+                    border-radius: 7px;
+                    font-size: 13px;
                     background: white;
-                    transition: border-color 0.2s, box-shadow 0.2s;
-                }
-
-                .form-field input:focus,
-                .form-field select:focus {
                     outline: none;
-                    border-color: var(--accent);
-                    box-shadow: 0 0 0 3px var(--accent-light);
+                    transition: border-color 0.15s;
                 }
 
-                .checkbox-field label {
+                .am-field input:focus,
+                .am-field select:focus {
+                    border-color: var(--accent);
+                }
+
+                /* Checkbox field */
+                .am-field-check {
+                    justify-content: flex-end;
+                }
+
+                .am-field-check label {
                     display: flex;
                     align-items: center;
-                    gap: 10px;
-                    cursor: pointer;
-                    padding: 10px 0;
+                    gap: 8px;
                     font-size: 13px;
+                    font-weight: 400;
                     color: var(--text-primary);
                     text-transform: none;
                     letter-spacing: 0;
-                    font-weight: 400;
-                }
-
-                .checkbox-field input[type="checkbox"] {
-                    width: 18px;
-                    height: 18px;
-                    accent-color: var(--accent);
-                }
-
-                .radio-group {
-                    display: flex;
-                    gap: 16px;
-                }
-
-                .radio-label {
-                    display: flex;
-                    align-items: center;
-                    gap: 6px;
-                    font-size: 13px;
-                    color: var(--text-primary);
                     cursor: pointer;
+                    padding: 7px 0;
                 }
 
-                .radio-label input[type="radio"] {
+                .am-field-check input[type="checkbox"] {
                     width: 16px;
                     height: 16px;
                     accent-color: var(--accent);
                 }
 
-                /* Hinge Positions */
-                .hinge-positions {
-                    margin-top: 14px;
-                    padding-top: 14px;
-                    border-top: 1px solid var(--border-light);
-                }
-
-                .hinge-positions-title {
-                    font-size: 12px;
-                    color: var(--text-secondary);
-                    margin-bottom: 10px;
-                }
-
-                .hinge-positions-list {
+                /* Segmented buttons */
+                .seg-group {
                     display: flex;
-                    flex-wrap: wrap;
-                    gap: 8px;
-                    align-items: center;
+                    border: 1px solid var(--border, #e0e0e0);
+                    border-radius: 7px;
+                    overflow: hidden;
                 }
 
-                .hinge-position-item {
-                    display: flex;
-                    align-items: center;
-                    gap: 6px;
-                    padding: 6px 10px;
+                .seg-btn {
+                    flex: 1;
+                    padding: 7px 8px;
+                    border: none;
                     background: white;
-                    border: 1px solid var(--border);
-                    border-radius: 6px;
-                }
-
-                .hinge-label {
-                    font-size: 11px;
-                    font-weight: 600;
+                    font-size: 12px;
+                    font-weight: 500;
                     color: var(--text-secondary);
+                    cursor: pointer;
+                    transition: all 0.12s;
+                    border-right: 1px solid var(--border-light, #f3f4f6);
+                    white-space: nowrap;
                 }
 
-                .hinge-position-item input {
-                    width: 60px;
-                    padding: 6px 8px;
-                    border: 1px solid var(--border-light);
-                    border-radius: 4px;
-                    font-size: 13px;
+                .seg-btn:last-child { border-right: none; }
+
+                .seg-btn.active {
+                    background: var(--accent, #0071e3);
+                    color: white;
+                    font-weight: 600;
+                }
+
+                .seg-btn:hover:not(.active) {
+                    background: #f9fafb;
+                }
+
+                /* Hinge positions */
+                .am-hinges {
+                    display: flex;
+                    align-items: center;
+                    gap: 10px;
+                    flex-wrap: wrap;
+                    padding: 8px 0;
+                }
+
+                .am-hinges-label {
+                    font-size: 11px;
+                    font-weight: 500;
+                    color: var(--text-secondary);
+                    white-space: nowrap;
+                }
+
+                .am-hinges-list {
+                    display: flex;
+                    gap: 6px;
+                    flex-wrap: wrap;
+                    align-items: center;
+                }
+
+                .am-hinge-chip {
+                    display: flex;
+                    align-items: center;
+                    background: var(--surface, #f3f4f6);
+                    border-radius: 6px;
+                    overflow: hidden;
+                }
+
+                .am-hinge-chip input {
+                    width: 52px;
+                    padding: 5px 6px;
+                    border: none;
+                    background: transparent;
+                    font-size: 12px;
                     text-align: center;
+                    outline: none;
                 }
 
-                .hinge-remove {
+                .am-hinge-chip button {
                     display: flex;
                     align-items: center;
                     justify-content: center;
                     width: 22px;
                     height: 22px;
-                    background: transparent;
                     border: none;
-                    border-radius: 4px;
+                    background: transparent;
                     color: var(--text-tertiary);
                     cursor: pointer;
+                    padding: 0;
                 }
 
-                .hinge-remove:hover {
-                    background: var(--error-bg);
-                    color: var(--error);
+                .am-hinge-chip button:hover {
+                    color: #ef4444;
                 }
 
-                .hinge-remove .material-icons-round {
-                    font-size: 16px;
+                .am-hinge-chip button .material-icons-round {
+                    font-size: 14px;
                 }
 
-                .hinge-add {
+                .am-hinge-add {
                     display: flex;
                     align-items: center;
-                    gap: 4px;
-                    padding: 6px 12px;
-                    background: transparent;
+                    justify-content: center;
+                    width: 28px;
+                    height: 28px;
                     border: 1px dashed var(--border);
                     border-radius: 6px;
-                    font-size: 12px;
-                    color: var(--text-secondary);
+                    background: transparent;
+                    color: var(--text-tertiary);
                     cursor: pointer;
-                    transition: all 0.15s;
+                    transition: all 0.12s;
                 }
 
-                .hinge-add:hover {
+                .am-hinge-add:hover {
                     border-color: var(--accent);
                     color: var(--accent);
                 }
 
-                .hinge-add .material-icons-round {
-                    font-size: 14px;
-                }
-
-                /* Item Summary */
-                .item-summary {
-                    display: flex;
-                    justify-content: flex-end;
-                    gap: 24px;
-                    padding: 14px 16px;
-                    background: var(--surface);
-                    border-radius: 8px;
-                }
-
-                .item-summary-stat {
-                    display: flex;
-                    align-items: center;
-                    gap: 8px;
-                    font-size: 13px;
-                }
-
-                .item-summary-stat span {
-                    color: var(--text-secondary);
-                }
-
-                .item-summary-stat strong {
-                    color: var(--accent);
-                    font-weight: 600;
-                }
-
-                /* Total Summary */
-                .alu-summary {
-                    display: flex;
-                    justify-content: flex-end;
-                    gap: 32px;
-                    padding: 16px 20px;
-                    background: var(--surface);
-                    border-radius: 12px;
-                }
-
-                @media (max-width: 480px) {
-                    .alu-summary {
-                        flex-direction: column;
-                        gap: 12px;
-                    }
-                }
-
-                .summary-item {
-                    display: flex;
-                    align-items: center;
-                    gap: 10px;
-                }
-
-                .summary-label {
-                    font-size: 13px;
-                    color: var(--text-secondary);
-                }
-
-                .summary-value {
+                .am-hinge-add .material-icons-round {
                     font-size: 16px;
+                }
+
+                /* Item stats */
+                .am-item-stats {
+                    display: flex;
+                    gap: 16px;
+                    justify-content: flex-end;
+                    padding: 8px 0 0;
+                    border-top: 1px solid var(--border-light, #f3f4f6);
+                    font-size: 12px;
+                    color: var(--text-secondary);
+                }
+
+                .am-item-price {
+                    font-weight: 600;
+                    color: var(--accent);
+                }
+
+                /* Summary */
+                .am-summary {
+                    display: flex;
+                    align-items: center;
+                    justify-content: flex-end;
+                    gap: 20px;
+                    padding: 10px 14px;
+                    background: var(--surface, #f9fafb);
+                    border-radius: 10px;
+                }
+
+                .am-stat {
+                    font-size: 13px;
+                    color: var(--text-secondary);
+                }
+
+                .am-stat span {
                     font-weight: 600;
                     color: var(--text-primary);
+                    margin-right: 3px;
                 }
 
-                .summary-total {
-                    padding: 10px 20px;
-                    background: var(--accent);
-                    border-radius: 8px;
-                    margin-left: 8px;
-                }
-
-                .summary-total .summary-label,
-                .summary-total .summary-value {
+                .am-total {
+                    padding: 6px 16px;
+                    background: var(--accent, #0071e3);
                     color: white;
+                    border-radius: 8px;
+                    font-size: 14px;
+                    font-weight: 700;
+                }
+
+                /* Mobile */
+                @media (max-width: 540px) {
+                    .am-topbar {
+                        flex-direction: column;
+                        align-items: stretch;
+                    }
+
+                    .am-price {
+                        justify-content: space-between;
+                    }
+
+                    .am-summary {
+                        flex-wrap: wrap;
+                        gap: 12px;
+                    }
+
+                    .seg-group {
+                        flex-wrap: wrap;
+                    }
+
+                    .seg-btn {
+                        min-width: auto;
+                    }
                 }
             `}</style>
         </Modal>

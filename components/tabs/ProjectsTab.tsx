@@ -25,6 +25,7 @@ import { SearchableSelect } from '@/components/ui/SearchableSelect';
 import ProductTimelineModal from '@/components/ui/ProductTimelineModal';
 import ProjectMaterialsModal from '@/components/ui/ProjectMaterialsModal';
 import { useData } from '@/context/DataContext';
+import { syncAllProjectData } from '@/lib/attendance';
 import { PROJECT_STATUSES, PRODUCTION_STEPS, MATERIAL_CATEGORIES } from '@/lib/types';
 import { useIsMobile } from '@/hooks/useIsMobile';
 import MobileProjectsView from './mobile/MobileProjectsView';
@@ -54,6 +55,7 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
     const [expandedStatusGroups, setExpandedStatusGroups] = useState<Set<string>>(new Set());
     const [showMaterialsSummary, setShowMaterialsSummary] = useState<Set<string>>(new Set());
     const [materialsOverviewProject, setMaterialsOverviewProject] = useState<Project | null>(null);
+    const [syncing, setSyncing] = useState(false);
 
     function toggleStatusGroup(status: string) {
         const newExpanded = new Set(expandedStatusGroups);
@@ -114,6 +116,7 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
         profit?: number;
         profitMargin?: number;
         workOrderItemId?: string;
+        workOrderItem?: WorkOrderItem;
         originalSellingPrice?: number;
         originalExtras?: number;
         originalTransport?: number;
@@ -1060,6 +1063,7 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                     onClose={() => setTimelineProduct(null)}
                     productId={timelineProduct?.product.Product_ID || ''}
                     productName={timelineProduct?.product.Name || ''}
+                    workOrderItem={timelineProduct?.workOrderItem}
                     workLogs={workLogs.filter(wl => wl.Product_ID === timelineProduct?.product.Product_ID)}
                     sellingPrice={timelineProduct?.sellingPrice}
                     materialCost={timelineProduct?.materialCost}
@@ -1096,6 +1100,28 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                 <button className="glass-btn glass-btn-primary" onClick={() => openProjectModal()}>
                     <span className="material-icons-round">add</span>
                     Novi Projekat
+                </button>
+                <button
+                    className="glass-btn"
+                    disabled={syncing || !organizationId}
+                    onClick={async () => {
+                        if (!organizationId) return;
+                        setSyncing(true);
+                        showToast('Sinkronizacija u toku...', 'info');
+                        try {
+                            const result = await syncAllProjectData(organizationId);
+                            showToast(`Sinkronizacija završena: ${result.workLogsCreated} logova kreirano, ${result.workOrdersRecalculated} naloga preračunato`, 'success');
+                            onRefresh('projects', 'workOrders');
+                        } catch (err) {
+                            console.error('Sync error:', err);
+                            showToast('Greška pri sinkronizaciji', 'error');
+                        } finally {
+                            setSyncing(false);
+                        }
+                    }}
+                >
+                    <span className="material-icons-round">{syncing ? 'hourglass_empty' : 'sync'}</span>
+                    {syncing ? 'Sinkronizacija...' : 'Sinkroniziraj'}
                 </button>
             </div>
 
@@ -1197,7 +1223,7 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                                                 <span className={`status-badge ${getStatusClass(getProductStatus(product))}`}>
                                                     {getProductStatus(product)}
                                                 </span>
-                                                {/* Profit Badge */}
+                                                {/* Profit Badge or Material Cost Badge */}
                                                 {(() => {
                                                     // === STEP 1: Get ORIGINAL offer values (the contract baseline) ===
                                                     let originalSellingPrice: number | undefined;
@@ -1241,26 +1267,54 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                                                         }
                                                     }
 
-                                                    // === STEP 3: Use overrides OR original offer values ===
+                                                    // === STEP 3: Material cost from ACTUAL project materials ===
+                                                    const actualMaterials = product.materials || [];
+                                                    const actualMaterialCost = actualMaterials.reduce((sum, m) => sum + (m.Total_Price || 0), 0);
+
+                                                    // === If product is NOT in a work order, show material cost ===
+                                                    if (!woItem) {
+                                                        if (actualMaterialCost > 0) {
+                                                            return (
+                                                                <span
+                                                                    className="profit-badge"
+                                                                    style={{
+                                                                        display: 'inline-flex',
+                                                                        alignItems: 'center',
+                                                                        gap: '4px',
+                                                                        padding: '4px 10px',
+                                                                        borderRadius: '6px',
+                                                                        background: 'rgba(59, 130, 246, 0.1)',
+                                                                        color: '#3b82f6',
+                                                                        fontWeight: 600,
+                                                                        fontSize: '12px',
+                                                                        marginLeft: '8px',
+                                                                    }}
+                                                                    title="Cijena materijala — proizvod nije dodat u naloge"
+                                                                >
+                                                                    <span className="material-icons-round" style={{ fontSize: '14px' }}>inventory_2</span>
+                                                                    {actualMaterialCost.toLocaleString('hr-HR')} KM
+                                                                </span>
+                                                            );
+                                                        }
+                                                        return null;
+                                                    }
+
+                                                    // === Product IS in a work order — show profit ===
                                                     const hasOverrides = !!woItem?.Profit_Overrides;
                                                     const sellingPrice = woItem?.Profit_Overrides?.Selling_Price ?? originalSellingPrice;
                                                     const extrasTotal = woItem?.Profit_Overrides?.Extras_Total ?? originalExtras;
                                                     const transportShare = woItem?.Profit_Overrides?.Transport_Share ?? originalTransport;
 
-                                                    // === STEP 4: Material cost from ACTUAL project materials ===
-                                                    const actualMaterials = product.materials || [];
-                                                    const actualMaterialCost = actualMaterials.reduce((sum, m) => sum + (m.Total_Price || 0), 0);
-
                                                     // Total costs = actual materials + extras (from offer or override)
                                                     const materialCost = actualMaterialCost + extrasTotal;
 
-                                                    // === STEP 5: Labor cost from ACTUAL work logs ===
+                                                    // Labor cost from ACTUAL work logs
                                                     const productWorkLogs = workLogs.filter(wl => wl.Product_ID === product.Product_ID);
                                                     const laborCost = productWorkLogs.reduce((sum, wl) => sum + (wl.Daily_Rate || 0), 0);
 
-                                                    // === STEP 6: Calculate profit ===
+                                                    // Calculate profit
                                                     if (sellingPrice && sellingPrice > 0) {
-                                                        const profit = sellingPrice - materialCost - laborCost;
+                                                        const profit = sellingPrice - materialCost - laborCost - transportShare;
                                                         const profitMargin = sellingPrice > 0 ? (profit / sellingPrice) * 100 : 0;
 
                                                         return (
@@ -1293,6 +1347,7 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                                                                         profit,
                                                                         profitMargin,
                                                                         workOrderItemId: woItem?.ID,
+                                                                        workOrderItem: woItem,
                                                                         originalSellingPrice,
                                                                         originalExtras,
                                                                         originalTransport,
@@ -1307,6 +1362,31 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                                                                     {profitMargin >= 30 ? 'trending_up' : profitMargin >= 15 ? 'trending_flat' : 'trending_down'}
                                                                 </span>
                                                                 {profit.toLocaleString('hr-HR')} KM ({profitMargin.toFixed(0)}%)
+                                                            </span>
+                                                        );
+                                                    }
+
+                                                    // Product is in WO but no selling price — show material cost as fallback
+                                                    if (actualMaterialCost > 0) {
+                                                        return (
+                                                            <span
+                                                                className="profit-badge"
+                                                                style={{
+                                                                    display: 'inline-flex',
+                                                                    alignItems: 'center',
+                                                                    gap: '4px',
+                                                                    padding: '4px 10px',
+                                                                    borderRadius: '6px',
+                                                                    background: 'rgba(59, 130, 246, 0.1)',
+                                                                    color: '#3b82f6',
+                                                                    fontWeight: 600,
+                                                                    fontSize: '12px',
+                                                                    marginLeft: '8px',
+                                                                }}
+                                                                title="Cijena materijala — nedostaje prodajna cijena za profit"
+                                                            >
+                                                                <span className="material-icons-round" style={{ fontSize: '14px' }}>inventory_2</span>
+                                                                {actualMaterialCost.toLocaleString('hr-HR')} KM
                                                             </span>
                                                         );
                                                     }
@@ -2125,6 +2205,7 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                 onClose={() => setTimelineProduct(null)}
                 productId={timelineProduct?.product.Product_ID || ''}
                 productName={timelineProduct?.product.Name || ''}
+                workOrderItem={timelineProduct?.workOrderItem}
                 workLogs={workLogs.filter(wl => wl.Product_ID === timelineProduct?.product.Product_ID)}
                 sellingPrice={timelineProduct?.sellingPrice}
                 materialCost={timelineProduct?.materialCost}

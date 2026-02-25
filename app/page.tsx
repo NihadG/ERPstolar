@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { ChevronRight, ChevronLeft } from 'lucide-react';
-import { getAllData, getProjects, getMaterialsCatalog, getSuppliers, getWorkers, getOffers, getOrders, getWorkOrders, getTasks, getTaskProfiles } from '@/lib/database';
+import { getAllData, getProjects, getMaterialsCatalog, getSuppliers, getWorkers, getOffers, getOrders, getWorkOrders, getWorkLogs, getTasks, getTaskProfiles } from '@/lib/database';
 import { signOut } from '@/lib/auth';
 import { useAuth } from '@/context/AuthContext';
 import type { AppState, Project, Product, Material, Offer, Order, Supplier, Worker } from '@/lib/types';
@@ -166,9 +166,26 @@ export default function Home() {
         }
     }, [authLoading, firebaseUser, router]);
 
+    // Track if startup sync has already run this session
+    const startupSyncDone = useRef(false);
+
     useEffect(() => {
         if (firebaseUser && organization?.Organization_ID) {
             refreshCollections();
+
+            // Run startup sync once per session (background, non-blocking)
+            if (!startupSyncDone.current) {
+                startupSyncDone.current = true;
+                import('@/lib/attendance').then(({ runStartupSync }) => {
+                    runStartupSync(organization.Organization_ID)
+                        .then(result => {
+                            if (result.scheduled > 0 || result.recalculated > 0 || result.projectsSynced > 0) {
+                                refreshCollections('workOrders', 'projects');
+                            }
+                        })
+                        .catch(e => console.error('Startup sync error:', e));
+                });
+            }
         }
     }, [firebaseUser, organization]);
 
@@ -181,6 +198,7 @@ export default function Home() {
         offers: getOffers,
         orders: getOrders,
         workOrders: getWorkOrders,
+        workLogs: getWorkLogs,
         tasks: getTasks,
         taskProfiles: getTaskProfiles,
     };
@@ -217,7 +235,8 @@ export default function Home() {
         // Expand with dependencies: if projects change, workOrders need fresh data too
         // (material costs feed into WO profit calculations)
         const deps: Record<string, string[]> = {
-            projects: ['workOrders'],  // material cost → WO profit
+            projects: ['workOrders', 'workLogs'],  // material cost → WO profit, work logs → labor cost
+            workOrders: ['workLogs'],               // WO changes affect labor cost display
         };
         const expanded = new Set(collections);
         collections.forEach(c => deps[c]?.forEach(d => expanded.add(d)));

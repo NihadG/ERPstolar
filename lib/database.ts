@@ -368,13 +368,17 @@ export async function getProjects(organizationId: string): Promise<Project[]> {
     const orgFilter = where('Organization_ID', '==', organizationId);
 
     // Fetch projects + related collections in parallel for proper assembly
-    const [projectsSnap, productsSnap, productMaterialsSnap, glassItemsSnap, aluDoorItemsSnap, offersSnap] = await Promise.all([
+    // NOTE: Also fetch OFFER_PRODUCTS and OFFER_EXTRAS so offer.products[].Selling_Price
+    // is available for profit calculations in ProductionTab during WO creation.
+    const [projectsSnap, productsSnap, productMaterialsSnap, glassItemsSnap, aluDoorItemsSnap, offersSnap, offerProductsSnap, offerExtrasSnap] = await Promise.all([
         getDocs(query(collection(db, COLLECTIONS.PROJECTS), orgFilter)),
         getDocs(query(collection(db, COLLECTIONS.PRODUCTS), orgFilter)),
         getDocs(query(collection(db, COLLECTIONS.PRODUCT_MATERIALS), orgFilter)),
         getDocs(query(collection(db, COLLECTIONS.GLASS_ITEMS), orgFilter)),
         getDocs(query(collection(db, COLLECTIONS.ALU_DOOR_ITEMS), orgFilter)),
         getDocs(query(collection(db, COLLECTIONS.OFFERS), orgFilter)),
+        getDocs(query(collection(db, COLLECTIONS.OFFER_PRODUCTS), orgFilter)),
+        getDocs(query(collection(db, COLLECTIONS.OFFER_EXTRAS), orgFilter)),
     ]);
 
     const projects = projectsSnap.docs.map(doc => ({ ...doc.data() } as Project));
@@ -383,6 +387,8 @@ export async function getProjects(organizationId: string): Promise<Project[]> {
     const glassItems = glassItemsSnap.docs.map(doc => ({ ...doc.data() } as GlassItem));
     const aluDoorItems = aluDoorItemsSnap.docs.map(doc => ({ ...doc.data() } as AluDoorItem));
     const offers = offersSnap.docs.map(doc => ({ ...doc.data() } as Offer));
+    const offerProducts = offerProductsSnap.docs.map(doc => ({ ...doc.data() } as OfferProduct));
+    const offerExtras = offerExtrasSnap.docs.map(doc => ({ ...doc.data() } as OfferExtra));
 
     // Build maps for O(1) lookups (same logic as getAllData)
     const glassItemsByMaterial = new Map<string, GlassItem[]>();
@@ -421,6 +427,30 @@ export async function getProjects(organizationId: string): Promise<Project[]> {
         const key = o.Project_ID;
         if (!offersByProject.has(key)) offersByProject.set(key, []);
         offersByProject.get(key)!.push(o);
+    });
+
+    // Build offer product and extras maps (mirrors getAllData logic)
+    const offerProductsByOffer = new Map<string, OfferProduct[]>();
+    offerProducts.forEach(op => {
+        const key = op.Offer_ID;
+        if (!offerProductsByOffer.has(key)) offerProductsByOffer.set(key, []);
+        offerProductsByOffer.get(key)!.push(op);
+    });
+
+    const extrasByOfferProduct = new Map<string, OfferExtra[]>();
+    offerExtras.forEach(e => {
+        const key = e.Offer_Product_ID;
+        if (!extrasByOfferProduct.has(key)) extrasByOfferProduct.set(key, []);
+        extrasByOfferProduct.get(key)!.push(e);
+    });
+
+    // Attach offer products (with extras) to offers
+    offers.forEach(offer => {
+        const prods = offerProductsByOffer.get(offer.Offer_ID) || [];
+        prods.forEach(prod => {
+            (prod as any).extras = extrasByOfferProduct.get(prod.ID) || [];
+        });
+        (offer as any).products = prods;
     });
 
     // Attach assembled products and offers to projects
@@ -1778,6 +1808,31 @@ export async function updateOfferWithProducts(offerData: any, organizationId: st
                 };
 
                 await addDoc(collection(db, COLLECTIONS.OFFER_EXTRAS), extraDoc);
+            }
+        }
+
+        // SYNC: If offer is accepted, propagate updated prices to WO items
+        const currentOfferStatus = offerSnap.docs[0].data().Status || offerData.Status;
+        if (currentOfferStatus === 'Prihvaćeno') {
+            try {
+                for (const product of includedProducts) {
+                    const sellingPrice = parseFloat(product.Selling_Price) || parseFloat(product.Total_Price) || 0;
+                    if (sellingPrice > 0 && product.Product_ID) {
+                        const woItemsQ = query(
+                            collection(db, COLLECTIONS.WORK_ORDER_ITEMS),
+                            where('Product_ID', '==', product.Product_ID),
+                            where('Organization_ID', '==', organizationId)
+                        );
+                        const woItemsSnap = await getDocs(woItemsQ);
+                        for (const woItemDoc of woItemsSnap.docs) {
+                            const qty = woItemDoc.data().Quantity || 1;
+                            await updateDoc(woItemDoc.ref, { Product_Value: sellingPrice * qty });
+                        }
+                    }
+                }
+                console.log('Synced offer prices to WO items');
+            } catch (syncErr) {
+                console.warn('Failed to sync offer prices to WO items (non-critical):', syncErr);
             }
         }
 
@@ -3716,9 +3771,17 @@ export async function startWorkOrder(workOrderId: string, organizationId: string
         }
 
         // All validations passed - start the work order
+        const now = new Date();
         await updateDoc(snapshot.docs[0].ref, {
             Status: 'U toku',
-            Started_At: new Date().toISOString()
+            Started_At: now.toISOString(),
+            // Auto-schedule in Planer if not already scheduled
+            ...(!workOrderData.Is_Scheduled && {
+                Is_Scheduled: true,
+                Planned_Start_Date: now.toISOString().split('T')[0],
+                Planned_End_Date: workOrderData.Due_Date || new Date(now.getTime() + 7 * 86400000).toISOString().split('T')[0],
+                Scheduled_At: now.toISOString(),
+            }),
         });
 
         // Update all items to "U toku"
@@ -3781,6 +3844,66 @@ export async function startWorkOrder(workOrderId: string, organizationId: string
                 const { syncProjectStatus } = await import('./attendance');
                 await syncProjectStatus(projectId, organizationId);
             } catch (e) { console.error('syncProjectStatus error after startWorkOrder:', e); }
+        }
+
+        // FIX-3: Auto-create work logs for workers who are already present today
+        // This handles the case where attendance was marked in the morning but the WO is started mid-day
+        try {
+            const today = new Date().toISOString().split('T')[0];
+            const attendanceQ = query(
+                collection(db, 'worker_attendance'),
+                where('Date', '==', today),
+                where('Organization_ID', '==', organizationId),
+                where('Status', 'in', ['Prisutan', 'Teren'])
+            );
+            const attendanceSnap = await getDocs(attendanceQ);
+            const presentWorkers = new Map<string, { name: string; dailyRate: number }>();
+
+            if (!attendanceSnap.empty) {
+                // Get worker daily rates
+                const workers = await getWorkers(organizationId);
+                const workerMap = new Map(workers.map(w => [w.Worker_ID, w]));
+
+                attendanceSnap.docs.forEach(d => {
+                    const att = d.data();
+                    const worker = workerMap.get(att.Worker_ID);
+                    if (worker) {
+                        presentWorkers.set(att.Worker_ID, {
+                            name: att.Worker_Name || worker.Name,
+                            dailyRate: worker.Daily_Rate || 0
+                        });
+                    }
+                });
+
+                // For each present worker assigned to this WO, create work logs via attendance module
+                const { createWorkLogsForAttendance } = await import('./attendance');
+                for (const [workerId, info] of Array.from(presentWorkers.entries())) {
+                    // Check if this worker is assigned to any item in this WO
+                    const isAssigned = itemsSnap.docs.some(d => {
+                        const item = d.data();
+                        // Check Processes
+                        if (item.Processes?.some((p: any) =>
+                            p.Worker_ID === workerId ||
+                            p.Helpers?.some((h: any) => h.Worker_ID === workerId)
+                        )) return true;
+                        // Check Assigned_Workers
+                        if (item.Assigned_Workers?.some((w: any) => w.Worker_ID === workerId)) return true;
+                        return false;
+                    });
+
+                    if (isAssigned && info.dailyRate > 0) {
+                        await createWorkLogsForAttendance(
+                            workerId,
+                            info.name,
+                            info.dailyRate,
+                            today,
+                            organizationId
+                        );
+                    }
+                }
+            }
+        } catch (wlErr) {
+            console.warn('Auto work-log creation on WO start (non-critical):', wlErr);
         }
 
         return { success: true, message: 'Radni nalog pokrenut' };
@@ -3864,6 +3987,43 @@ export async function updateWorkOrder(workOrderId: string, updates: Partial<Work
     } catch (error) {
         console.error('updateWorkOrder error:', error);
         return { success: false, message: 'Greška pri ažuriranju radnog naloga' };
+    }
+}
+
+/**
+ * Update Due_Date AND Planned_End_Date atomically.
+ * This ensures the Nalozi "Rok" and Planer bar end date stay in sync.
+ */
+export async function updateDueDate(
+    workOrderId: string,
+    newDueDate: string,
+    organizationId: string
+): Promise<{ success: boolean; message: string }> {
+    if (!organizationId) return { success: false, message: 'Organization ID is required' };
+
+    try {
+        const firestore = getDb();
+        const q = query(
+            collection(firestore, COLLECTIONS.WORK_ORDERS),
+            where('Work_Order_ID', '==', workOrderId),
+            where('Organization_ID', '==', organizationId)
+        );
+        const snapshot = await getDocs(q);
+
+        if (snapshot.empty) {
+            return { success: false, message: 'Radni nalog nije pronađen' };
+        }
+
+        // Update both Due_Date and Planned_End_Date atomically
+        await updateDoc(snapshot.docs[0].ref, {
+            Due_Date: newDueDate,
+            Planned_End_Date: newDueDate,
+        });
+
+        return { success: true, message: 'Rok ažuriran' };
+    } catch (error) {
+        console.error('updateDueDate error:', error);
+        return { success: false, message: 'Greška pri ažuriranju roka' };
     }
 }
 
@@ -4779,6 +4939,26 @@ export async function getWorkLogsForItem(workOrderItemId: string, organizationId
         return snapshot.docs.map(doc => doc.data() as WorkLog);
     } catch (error) {
         console.error('getWorkLogsForItem error:', error);
+        return [];
+    }
+}
+
+/**
+ * Get ALL work logs for an organization (collection-level loader for refresh pipeline)
+ */
+export async function getWorkLogs(organizationId: string): Promise<WorkLog[]> {
+    if (!organizationId) return [];
+
+    try {
+        const firestore = getDb();
+        const q = query(
+            collection(firestore, COLLECTIONS.WORK_LOGS),
+            where('Organization_ID', '==', organizationId)
+        );
+        const snapshot = await getDocs(q);
+        return snapshot.docs.map(doc => doc.data() as WorkLog);
+    } catch (error) {
+        console.error('getWorkLogs error:', error);
         return [];
     }
 }
@@ -6129,10 +6309,14 @@ export async function saveProfitOverrides(
         const itemData = itemDoc.data();
 
         // Build the overrides object
-        const profitOverrides = {
+        const profitOverrides: Record<string, unknown> = {
             ...overrides,
             Updated_At: new Date().toISOString(),
         };
+        // Firestore rejects undefined values — strip them
+        Object.keys(profitOverrides).forEach(key =>
+            profitOverrides[key] === undefined && delete profitOverrides[key]
+        );
 
         // Also update Product_Value if Selling_Price override is set
         // This ensures recalculateWorkOrder uses the correct selling price

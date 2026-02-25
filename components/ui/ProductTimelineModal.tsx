@@ -246,9 +246,21 @@ export default function ProductTimelineModal({
 
     // Build the full timeline — ALL days from Started_At to today/Completed_At
     const timeline = useMemo((): TimelineDay[] => {
-        const startDate = workOrderItem?.Started_At
+        // Start from item Started_At, then WO Created_Date, then earliest work log
+        // NEVER use a date before the WO was created
+        const woCreatedDate = (workOrderItem as any)?.Created_Date
+            ? new Date((workOrderItem as any).Created_Date)
+            : null;
+
+        let startDate: Date | null = workOrderItem?.Started_At
             ? new Date(workOrderItem.Started_At)
-            : (workLogs.length > 0 ? new Date([...workLogs].sort((a, b) => a.Date.localeCompare(b.Date))[0].Date) : null);
+            : woCreatedDate;
+
+        // If still no start date, use earliest work log — but clamp to WO creation
+        if (!startDate && workLogs.length > 0) {
+            const earliest = new Date([...workLogs].sort((a, b) => a.Date.localeCompare(b.Date))[0].Date);
+            startDate = woCreatedDate && woCreatedDate > earliest ? woCreatedDate : earliest;
+        }
 
         if (!startDate) return [];
 
@@ -560,7 +572,7 @@ export default function ProductTimelineModal({
 
                                 {/* Live Preview + Save/Cancel */}
                                 {(() => {
-                                    const previewProfit = editSellingPrice - (materialCost || 0) + editExtras - (laborCost ?? stats.totalLaborCost);
+                                    const previewProfit = editSellingPrice - (materialCost || 0) - editExtras - editTransport - (laborCost ?? stats.totalLaborCost);
                                     const previewMargin = editSellingPrice > 0 ? (previewProfit / editSellingPrice) * 100 : 0;
                                     return (
                                         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>

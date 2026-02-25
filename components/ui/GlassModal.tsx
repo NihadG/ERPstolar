@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import type { Material, ProductMaterial } from '@/lib/types';
 import Modal from './Modal';
 
@@ -51,6 +51,7 @@ export default function GlassModal({
     const [items, setItems] = useState<GlassItemInput[]>([{ ...DEFAULT_ITEM }]);
     const [pricePerM2, setPricePerM2] = useState(0);
     const [saving, setSaving] = useState(false);
+    const [noteIndex, setNoteIndex] = useState<number | null>(null);
 
     useEffect(() => {
         if (isOpen) {
@@ -67,6 +68,7 @@ export default function GlassModal({
                 setItems([{ ...DEFAULT_ITEM }]);
                 setPricePerM2(material?.Default_Unit_Price || 0);
             }
+            setNoteIndex(null);
         }
     }, [isOpen, existingMaterial, material]);
 
@@ -77,6 +79,8 @@ export default function GlassModal({
     function removeItem(index: number) {
         if (items.length > 1) {
             setItems(items.filter((_, i) => i !== index));
+            if (noteIndex === index) setNoteIndex(null);
+            else if (noteIndex !== null && noteIndex > index) setNoteIndex(noteIndex - 1);
         }
     }
 
@@ -151,529 +155,558 @@ export default function GlassModal({
                 </>
             }
         >
-            <div className="glass-modal">
-                {/* Header Info Bar */}
-                <div className="glass-header">
-                    <div className="glass-header-left">
-                        <span className="glass-icon">🪟</span>
-                        <div>
-                            <div className="glass-title">{material?.Name || existingMaterial?.Material_Name}</div>
-                            <div className="glass-subtitle">{material?.Default_Supplier || existingMaterial?.Supplier || 'Nema dobavljača'}</div>
-                        </div>
+            <div className="gm">
+                {/* Compact top bar: material name + price/m² */}
+                <div className="gm-topbar">
+                    <div className="gm-info">
+                        <span className="gm-name">{material?.Name || existingMaterial?.Material_Name}</span>
+                        <span className="gm-supplier">{material?.Default_Supplier || existingMaterial?.Supplier || ''}</span>
                     </div>
-                    <div className="glass-header-right">
-                        <div className="price-input-group">
-                            <label>Cijena/m²</label>
-                            <div className="price-input-wrapper">
-                                <input
-                                    type="number"
-                                    value={pricePerM2 || ''}
-                                    onChange={(e) => setPricePerM2(parseFloat(e.target.value) || 0)}
-                                    step="0.01"
-                                    min="0"
-                                    placeholder="0.00"
-                                />
-                                <span>KM</span>
-                            </div>
-                        </div>
+                    <div className="gm-price">
+                        <label>KM/m²</label>
+                        <input
+                            type="number"
+                            value={pricePerM2 || ''}
+                            onChange={(e) => setPricePerM2(parseFloat(e.target.value) || 0)}
+                            step="0.01"
+                            min="0"
+                            placeholder="0"
+                        />
                     </div>
                 </div>
 
-                {/* Glass Items List */}
-                <div className="glass-items">
-                    {items.map((item, index) => (
-                        <div key={index} className="glass-item">
-                            <div className="glass-item-header">
-                                <span className="glass-item-number">{index + 1}</span>
-                                <span className="glass-item-dims">
-                                    {item.Width > 0 && item.Height > 0
-                                        ? `${item.Width} × ${item.Height} mm`
-                                        : 'Unesite dimenzije'}
-                                </span>
-                                <button
-                                    type="button"
-                                    className="glass-item-delete"
-                                    onClick={() => removeItem(index)}
-                                    disabled={items.length <= 1}
-                                    title="Obriši"
-                                >
-                                    <span className="material-icons-round">close</span>
-                                </button>
-                            </div>
-
-                            <div className="glass-item-body">
-                                <div className="glass-field">
-                                    <label>Kom</label>
-                                    <input
-                                        type="number"
-                                        value={item.Qty || ''}
-                                        onChange={(e) => updateItem(index, 'Qty', parseInt(e.target.value) || 1)}
-                                        min="1"
-                                        className="input-qty"
-                                    />
-                                </div>
-                                <div className="glass-field">
-                                    <label>Širina</label>
-                                    <div className="input-with-unit">
-                                        <input
-                                            type="number"
-                                            value={item.Width || ''}
-                                            onChange={(e) => updateItem(index, 'Width', parseFloat(e.target.value) || 0)}
-                                            min="0"
-                                            placeholder="0"
-                                        />
-                                        <span>mm</span>
-                                    </div>
-                                </div>
-                                <div className="glass-field">
-                                    <label>Visina</label>
-                                    <div className="input-with-unit">
-                                        <input
-                                            type="number"
-                                            value={item.Height || ''}
-                                            onChange={(e) => updateItem(index, 'Height', parseFloat(e.target.value) || 0)}
-                                            min="0"
-                                            placeholder="0"
-                                        />
-                                        <span>mm</span>
-                                    </div>
-                                </div>
-                                <div className="glass-field glass-field-checkbox">
-                                    <label>
-                                        <input
-                                            type="checkbox"
-                                            checked={item.Edge_Processing}
-                                            onChange={(e) => updateItem(index, 'Edge_Processing', e.target.checked)}
-                                        />
-                                        <span>Obrada rubova (+10%)</span>
-                                    </label>
-                                </div>
-                                <div className="glass-field glass-field-note">
-                                    <label>Napomena</label>
-                                    <input
-                                        type="text"
-                                        value={item.Note}
-                                        onChange={(e) => updateItem(index, 'Note', e.target.value)}
-                                        placeholder="Opcionalno..."
-                                    />
-                                </div>
-                            </div>
-
-                            <div className="glass-item-footer">
-                                <div className="glass-item-stat">
-                                    <span className="stat-label">Površina</span>
-                                    <span className="stat-value">{calculateItemArea(item).toFixed(4)} m²</span>
-                                </div>
-                                <div className="glass-item-stat">
-                                    <span className="stat-label">Cijena</span>
-                                    <span className="stat-value stat-price">{calculateItemPrice(item).toFixed(2)} KM</span>
-                                </div>
-                            </div>
-                        </div>
-                    ))}
+                {/* Table */}
+                <div className="gm-table-wrap">
+                    <table className="gm-table">
+                        <thead>
+                            <tr>
+                                <th className="th-num">#</th>
+                                <th className="th-qty">Kom</th>
+                                <th className="th-dim">Širina</th>
+                                <th className="th-dim">Visina</th>
+                                <th className="th-edge">Obrada</th>
+                                <th className="th-area">m²</th>
+                                <th className="th-price">Cijena</th>
+                                <th className="th-actions"></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {items.map((item, index) => {
+                                const area = calculateItemArea(item);
+                                const price = calculateItemPrice(item);
+                                return (
+                                    <React.Fragment key={index}>
+                                        <tr key={index} className={noteIndex === index ? 'row-active' : ''}>
+                                            <td className="td-num">{index + 1}</td>
+                                            <td>
+                                                <input
+                                                    type="number"
+                                                    value={item.Qty || ''}
+                                                    onChange={(e) => updateItem(index, 'Qty', parseInt(e.target.value) || 1)}
+                                                    min="1"
+                                                    className="inp inp-qty"
+                                                />
+                                            </td>
+                                            <td>
+                                                <div className="inp-unit">
+                                                    <input
+                                                        type="number"
+                                                        value={item.Width || ''}
+                                                        onChange={(e) => updateItem(index, 'Width', parseFloat(e.target.value) || 0)}
+                                                        min="0"
+                                                        placeholder="0"
+                                                        className="inp"
+                                                    />
+                                                    <span>mm</span>
+                                                </div>
+                                            </td>
+                                            <td>
+                                                <div className="inp-unit">
+                                                    <input
+                                                        type="number"
+                                                        value={item.Height || ''}
+                                                        onChange={(e) => updateItem(index, 'Height', parseFloat(e.target.value) || 0)}
+                                                        min="0"
+                                                        placeholder="0"
+                                                        className="inp"
+                                                    />
+                                                    <span>mm</span>
+                                                </div>
+                                            </td>
+                                            <td>
+                                                <button
+                                                    type="button"
+                                                    className={`edge-pill ${item.Edge_Processing ? 'on' : 'off'}`}
+                                                    onClick={() => updateItem(index, 'Edge_Processing', !item.Edge_Processing)}
+                                                    title={item.Edge_Processing ? 'Obrada rubova uključena (+10%)' : 'Bez obrade rubova'}
+                                                >
+                                                    {item.Edge_Processing ? '+10%' : 'Ne'}
+                                                </button>
+                                            </td>
+                                            <td className="td-val">{area > 0 ? area.toFixed(3) : '—'}</td>
+                                            <td className="td-val td-price">{price > 0 ? `${price.toFixed(2)}` : '—'}</td>
+                                            <td className="td-actions">
+                                                <button
+                                                    type="button"
+                                                    className="act-btn"
+                                                    onClick={() => setNoteIndex(noteIndex === index ? null : index)}
+                                                    title="Napomena"
+                                                >
+                                                    <span className="material-icons-round" style={{ fontSize: '16px', color: item.Note ? 'var(--accent)' : undefined }}>
+                                                        {item.Note ? 'sticky_note_2' : 'note_add'}
+                                                    </span>
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    className="act-btn act-del"
+                                                    onClick={() => removeItem(index)}
+                                                    disabled={items.length <= 1}
+                                                    title="Obriši"
+                                                >
+                                                    <span className="material-icons-round" style={{ fontSize: '16px' }}>close</span>
+                                                </button>
+                                            </td>
+                                        </tr>
+                                        {noteIndex === index && (
+                                            <tr key={`note-${index}`} className="note-row">
+                                                <td></td>
+                                                <td colSpan={7}>
+                                                    <input
+                                                        type="text"
+                                                        className="inp inp-note"
+                                                        value={item.Note}
+                                                        onChange={(e) => updateItem(index, 'Note', e.target.value)}
+                                                        placeholder="Napomena za ovaj komad..."
+                                                        autoFocus
+                                                    />
+                                                </td>
+                                            </tr>
+                                        )}
+                                    </React.Fragment>
+                                );
+                            })}
+                        </tbody>
+                    </table>
                 </div>
 
-                {/* Add Button */}
-                <button type="button" className="glass-add-btn" onClick={addItem}>
+                {/* Add row */}
+                <button type="button" className="gm-add" onClick={addItem}>
                     <span className="material-icons-round">add</span>
-                    Dodaj komad stakla
+                    Dodaj komad
                 </button>
 
-                {/* Summary Bar */}
-                <div className="glass-summary">
-                    <div className="summary-item">
-                        <span className="summary-label">Komada</span>
-                        <span className="summary-value">{getTotalCount()}</span>
+                {/* Summary */}
+                <div className="gm-summary">
+                    <div className="gm-stat">
+                        <span>{getTotalCount()}</span> kom
                     </div>
-                    <div className="summary-item">
-                        <span className="summary-label">Površina</span>
-                        <span className="summary-value">{getTotalArea().toFixed(2)} m²</span>
+                    <div className="gm-stat">
+                        <span>{getTotalArea().toFixed(2)}</span> m²
                     </div>
-                    <div className="summary-item summary-total">
-                        <span className="summary-label">Ukupno</span>
-                        <span className="summary-value">{getTotalPrice().toFixed(2)} KM</span>
+                    <div className="gm-total">
+                        {getTotalPrice().toFixed(2)} KM
                     </div>
                 </div>
             </div>
 
             <style jsx>{`
-                .glass-modal {
+                .gm {
                     display: flex;
                     flex-direction: column;
-                    gap: 20px;
+                    gap: 12px;
                 }
 
-                /* Header */
-                .glass-header {
+                /* Top bar */
+                .gm-topbar {
                     display: flex;
-                    justify-content: space-between;
                     align-items: center;
-                    padding: 16px 20px;
-                    background: linear-gradient(135deg, #e3f2fd 0%, #f5f5f7 100%);
-                    border-radius: 12px;
-                    gap: 16px;
+                    justify-content: space-between;
+                    padding: 10px 14px;
+                    background: linear-gradient(135deg, #e8f4fd 0%, #f0f4f8 100%);
+                    border-radius: 10px;
+                    gap: 12px;
                     flex-wrap: wrap;
                 }
 
-                .glass-header-left {
+                .gm-info {
                     display: flex;
                     align-items: center;
-                    gap: 14px;
+                    gap: 10px;
+                    min-width: 0;
                 }
 
-                .glass-icon {
-                    font-size: 32px;
-                    line-height: 1;
-                }
-
-                .glass-title {
-                    font-size: 16px;
+                .gm-name {
+                    font-size: 14px;
                     font-weight: 600;
                     color: var(--text-primary);
-                }
-
-                .glass-subtitle {
-                    font-size: 13px;
-                    color: var(--text-secondary);
-                }
-
-                .glass-header-right {
-                    display: flex;
-                    align-items: center;
-                }
-
-                .price-input-group {
-                    display: flex;
-                    flex-direction: column;
-                    gap: 4px;
-                }
-
-                .price-input-group label {
-                    font-size: 11px;
-                    font-weight: 500;
-                    color: var(--text-secondary);
-                    text-transform: uppercase;
-                    letter-spacing: 0.5px;
-                }
-
-                .price-input-wrapper {
-                    display: flex;
-                    align-items: center;
-                    background: white;
-                    border: 1px solid var(--border);
-                    border-radius: 8px;
+                    white-space: nowrap;
                     overflow: hidden;
+                    text-overflow: ellipsis;
                 }
 
-                .price-input-wrapper input {
-                    width: 80px;
-                    padding: 8px 10px;
-                    border: none;
+                .gm-supplier {
+                    font-size: 12px;
+                    color: var(--text-secondary);
+                    white-space: nowrap;
+                }
+
+                .gm-price {
+                    display: flex;
+                    align-items: center;
+                    gap: 6px;
+                    flex-shrink: 0;
+                }
+
+                .gm-price label {
+                    font-size: 11px;
+                    font-weight: 600;
+                    color: var(--text-secondary);
+                    white-space: nowrap;
+                }
+
+                .gm-price input {
+                    width: 72px;
+                    padding: 6px 8px;
+                    border: 1px solid var(--border);
+                    border-radius: 6px;
                     font-size: 14px;
                     font-weight: 600;
                     text-align: right;
-                    outline: none;
-                }
-
-                .price-input-wrapper span {
-                    padding: 8px 10px 8px 4px;
-                    font-size: 13px;
-                    color: var(--text-secondary);
-                    background: var(--surface);
-                }
-
-                /* Items List */
-                .glass-items {
-                    display: flex;
-                    flex-direction: column;
-                    gap: 12px;
-                    flex: 1;
-                    min-height: 0;
-                    overflow-y: auto;
-                    padding-right: 4px;
-                }
-
-                .glass-item {
                     background: white;
-                    border: 1px solid var(--border-light);
-                    border-radius: 12px;
-                    overflow: hidden;
-                    transition: box-shadow 0.2s;
+                    outline: none;
+                    transition: border-color 0.15s;
                 }
 
-                .glass-item:hover {
-                    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+                .gm-price input:focus {
+                    border-color: var(--accent);
                 }
 
-                .glass-item-header {
-                    display: flex;
-                    align-items: center;
-                    gap: 12px;
-                    padding: 12px 16px;
-                    background: var(--surface);
-                    border-bottom: 1px solid var(--border-light);
+                /* Table */
+                .gm-table-wrap {
+                    overflow-x: auto;
+                    border: 1px solid var(--border-light, #e5e7eb);
+                    border-radius: 10px;
+                    background: white;
                 }
 
-                .glass-item-number {
-                    width: 24px;
-                    height: 24px;
-                    display: flex;
-                    align-items: center;
-                    justify-content: center;
-                    background: var(--accent);
-                    color: white;
-                    border-radius: 50%;
-                    font-size: 12px;
+                .gm-table {
+                    width: 100%;
+                    border-collapse: collapse;
+                    font-size: 13px;
+                }
+
+                .gm-table thead {
+                    position: sticky;
+                    top: 0;
+                    z-index: 1;
+                }
+
+                .gm-table th {
+                    padding: 8px 10px;
+                    font-size: 11px;
                     font-weight: 600;
+                    color: var(--text-secondary, #6b7280);
+                    text-transform: uppercase;
+                    letter-spacing: 0.3px;
+                    text-align: left;
+                    background: var(--surface, #f9fafb);
+                    border-bottom: 1px solid var(--border-light, #e5e7eb);
+                    white-space: nowrap;
                 }
 
-                .glass-item-dims {
-                    flex: 1;
-                    font-size: 14px;
+                .th-num { width: 36px; text-align: center; }
+                .th-qty { width: 60px; }
+                .th-dim { width: 110px; }
+                .th-edge { width: 64px; text-align: center; }
+                .th-area { width: 70px; text-align: right; }
+                .th-price { width: 80px; text-align: right; }
+                .th-actions { width: 64px; }
+
+                .gm-table td {
+                    padding: 6px 10px;
+                    border-bottom: 1px solid var(--border-light, #f3f4f6);
+                    vertical-align: middle;
+                }
+
+                .gm-table tr:last-child td {
+                    border-bottom: none;
+                }
+
+                .gm-table tr:hover {
+                    background: #fafbfc;
+                }
+
+                .gm-table tr.row-active {
+                    background: #f0f7ff;
+                }
+
+                .td-num {
+                    text-align: center;
+                    font-weight: 600;
+                    font-size: 12px;
+                    color: var(--text-secondary);
+                }
+
+                .td-val {
+                    text-align: right;
                     font-weight: 500;
+                    color: var(--text-secondary);
+                    font-variant-numeric: tabular-nums;
+                    font-size: 12px;
+                    white-space: nowrap;
+                }
+
+                .td-price {
+                    font-weight: 600;
                     color: var(--text-primary);
                 }
 
-                .glass-item-delete {
+                .td-actions {
                     display: flex;
+                    gap: 2px;
                     align-items: center;
-                    justify-content: center;
-                    width: 28px;
-                    height: 28px;
-                    background: transparent;
-                    border: none;
+                    justify-content: flex-end;
+                }
+
+                /* Inputs */
+                .inp {
+                    width: 100%;
+                    padding: 6px 8px;
+                    border: 1px solid var(--border, #e0e0e0);
                     border-radius: 6px;
-                    color: var(--text-tertiary);
-                    cursor: pointer;
-                    transition: all 0.15s;
-                }
-
-                .glass-item-delete:hover:not(:disabled) {
-                    background: var(--error-bg);
-                    color: var(--error);
-                }
-
-                .glass-item-delete:disabled {
-                    opacity: 0.3;
-                    cursor: not-allowed;
-                }
-
-                .glass-item-delete .material-icons-round {
-                    font-size: 18px;
-                }
-
-                .glass-item-body {
-                    display: grid;
-                    grid-template-columns: 80px 1fr 1fr 160px 1.5fr;
-                    gap: 16px;
-                    padding: 20px;
-                    align-items: end;
-                }
-
-                @media (max-width: 900px) {
-                    .glass-item-body {
-                        grid-template-columns: 80px 1fr 1fr;
-                    }
-                    
-                    .glass-field-checkbox,
-                    .glass-field-note {
-                        grid-column: span 3;
-                    }
-                }
-
-                @media (max-width: 540px) {
-                    .glass-item-body {
-                        grid-template-columns: 1fr 1fr;
-                    }
-                    
-                    .glass-field-checkbox,
-                    .glass-field-note {
-                        grid-column: span 2;
-                    }
-                }
-
-                .glass-field {
-                    display: flex;
-                    flex-direction: column;
-                    gap: 4px;
-                }
-
-                .glass-field label {
-                    font-size: 11px;
-                    font-weight: 500;
-                    color: var(--text-secondary);
-                    text-transform: uppercase;
-                    letter-spacing: 0.3px;
-                }
-
-                .glass-field input[type="number"],
-                .glass-field input[type="text"] {
-                    padding: 10px 12px;
-                    border: 1px solid var(--border);
-                    border-radius: 8px;
-                    font-size: 14px;
-                    transition: border-color 0.2s, box-shadow 0.2s;
-                }
-
-                .glass-field input:focus {
+                    font-size: 13px;
                     outline: none;
-                    border-color: var(--accent);
-                    box-shadow: 0 0 0 3px var(--accent-light);
+                    transition: border-color 0.15s;
+                    background: white;
                 }
 
-                .input-qty {
+                .inp:focus {
+                    border-color: var(--accent);
+                }
+
+                .inp-qty {
+                    width: 48px;
                     text-align: center;
                     font-weight: 600;
                 }
 
-                .input-with-unit {
+                .inp-unit {
                     display: flex;
                     align-items: center;
-                    border: 1px solid var(--border);
-                    border-radius: 8px;
+                    border: 1px solid var(--border, #e0e0e0);
+                    border-radius: 6px;
                     overflow: hidden;
-                    transition: border-color 0.2s, box-shadow 0.2s;
+                    transition: border-color 0.15s;
                 }
 
-                .input-with-unit:focus-within {
+                .inp-unit:focus-within {
                     border-color: var(--accent);
-                    box-shadow: 0 0 0 3px var(--accent-light);
                 }
 
-                .input-with-unit input {
+                .inp-unit input {
                     flex: 1;
-                    padding: 10px 12px;
+                    padding: 6px 8px;
                     border: none;
-                    font-size: 14px;
-                    outline: none;
-                }
-
-                .input-with-unit span {
-                    padding: 10px 10px 10px 4px;
-                    font-size: 12px;
-                    color: var(--text-tertiary);
-                }
-
-                .glass-field-checkbox label {
-                    display: flex;
-                    align-items: center;
-                    gap: 8px;
-                    cursor: pointer;
                     font-size: 13px;
-                    color: var(--text-primary);
-                    text-transform: none;
-                    letter-spacing: 0;
-                    font-weight: 400;
-                    padding: 10px 0;
+                    outline: none;
+                    min-width: 0;
                 }
 
-                .glass-field-checkbox input[type="checkbox"] {
-                    width: 18px;
-                    height: 18px;
-                    accent-color: var(--accent);
+                .inp-unit span {
+                    padding: 6px 6px 6px 2px;
+                    font-size: 11px;
+                    color: var(--text-tertiary, #9ca3af);
+                    flex-shrink: 0;
                 }
 
-                .glass-item-footer {
-                    display: flex;
-                    justify-content: flex-end;
-                    gap: 24px;
-                    padding: 12px 16px;
-                    background: var(--surface);
-                    border-top: 1px solid var(--border-light);
-                }
-
-                .glass-item-stat {
-                    display: flex;
-                    align-items: center;
-                    gap: 8px;
-                }
-
-                .stat-label {
+                .inp-note {
+                    border-color: var(--accent);
                     font-size: 12px;
-                    color: var(--text-secondary);
+                    padding: 5px 8px;
                 }
 
-                .stat-value {
-                    font-size: 14px;
+                /* Edge pill toggle */
+                .edge-pill {
+                    display: inline-flex;
+                    align-items: center;
+                    justify-content: center;
+                    padding: 4px 10px;
+                    border-radius: 12px;
+                    font-size: 11px;
                     font-weight: 600;
-                    color: var(--text-primary);
+                    border: none;
+                    cursor: pointer;
+                    transition: all 0.15s;
+                    white-space: nowrap;
                 }
 
-                .stat-price {
-                    color: var(--accent);
+                .edge-pill.on {
+                    background: #dbeafe;
+                    color: #2563eb;
                 }
 
-                /* Add Button */
-                .glass-add-btn {
+                .edge-pill.off {
+                    background: #f3f4f6;
+                    color: #9ca3af;
+                }
+
+                .edge-pill:hover {
+                    opacity: 0.8;
+                }
+
+                /* Note row */
+                .note-row td {
+                    padding: 0 10px 8px !important;
+                    border-bottom: 1px solid var(--border-light, #f3f4f6) !important;
+                }
+
+                /* Action buttons */
+                .act-btn {
                     display: flex;
                     align-items: center;
                     justify-content: center;
-                    gap: 8px;
-                    padding: 14px;
-                    background: white;
-                    border: 2px dashed var(--border);
-                    border-radius: 12px;
-                    font-size: 14px;
+                    width: 26px;
+                    height: 26px;
+                    border: none;
+                    border-radius: 6px;
+                    background: transparent;
+                    color: var(--text-tertiary, #9ca3af);
+                    cursor: pointer;
+                    transition: all 0.12s;
+                }
+
+                .act-btn:hover:not(:disabled) {
+                    background: #f3f4f6;
+                    color: var(--text-primary);
+                }
+
+                .act-del:hover:not(:disabled) {
+                    background: #fef2f2;
+                    color: #ef4444;
+                }
+
+                .act-btn:disabled {
+                    opacity: 0.2;
+                    cursor: not-allowed;
+                }
+
+                /* Add button */
+                .gm-add {
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    gap: 6px;
+                    padding: 10px;
+                    background: transparent;
+                    border: 1.5px dashed var(--border, #e0e0e0);
+                    border-radius: 8px;
+                    font-size: 13px;
                     font-weight: 500;
                     color: var(--text-secondary);
                     cursor: pointer;
-                    transition: all 0.2s;
+                    transition: all 0.15s;
                 }
 
-                .glass-add-btn:hover {
+                .gm-add:hover {
                     border-color: var(--accent);
                     color: var(--accent);
-                    background: var(--accent-light);
+                    background: rgba(0, 113, 227, 0.04);
                 }
 
-                .glass-add-btn .material-icons-round {
-                    font-size: 20px;
+                .gm-add .material-icons-round {
+                    font-size: 18px;
                 }
 
-                /* Summary Bar */
-                .glass-summary {
-                    display: flex;
-                    justify-content: flex-end;
-                    gap: 32px;
-                    padding: 16px 20px;
-                    background: var(--surface);
-                    border-radius: 12px;
-                }
-
-                @media (max-width: 480px) {
-                    .glass-summary {
-                        flex-direction: column;
-                        gap: 12px;
-                    }
-                }
-
-                .summary-item {
+                /* Summary */
+                .gm-summary {
                     display: flex;
                     align-items: center;
-                    gap: 10px;
+                    justify-content: flex-end;
+                    gap: 20px;
+                    padding: 10px 14px;
+                    background: var(--surface, #f9fafb);
+                    border-radius: 10px;
                 }
 
-                .summary-label {
+                .gm-stat {
                     font-size: 13px;
                     color: var(--text-secondary);
                 }
 
-                .summary-value {
-                    font-size: 16px;
+                .gm-stat span {
                     font-weight: 600;
                     color: var(--text-primary);
+                    margin-right: 3px;
                 }
 
-                .summary-total {
-                    padding: 10px 20px;
-                    background: var(--accent);
-                    border-radius: 8px;
-                    margin-left: 8px;
-                }
-
-                .summary-total .summary-label,
-                .summary-total .summary-value {
+                .gm-total {
+                    padding: 6px 16px;
+                    background: var(--accent, #0071e3);
                     color: white;
+                    border-radius: 8px;
+                    font-size: 14px;
+                    font-weight: 700;
+                }
+
+                /* Mobile table → mini cards */
+                @media (max-width: 640px) {
+                    .gm-table thead { display: none; }
+
+                    .gm-table, .gm-table tbody, .gm-table tr, .gm-table td {
+                        display: block;
+                    }
+
+                    .gm-table tr {
+                        padding: 10px 12px;
+                        border-bottom: 1px solid var(--border-light, #f3f4f6);
+                        display: grid;
+                        grid-template-columns: 24px 48px 1fr 1fr;
+                        gap: 6px 8px;
+                        align-items: center;
+                    }
+
+                    .gm-table tr.note-row {
+                        display: block;
+                        padding: 0 12px 10px;
+                    }
+
+                    .gm-table td { padding: 0; border: none; }
+
+                    .td-num {
+                        grid-row: 1 / 3;
+                        align-self: center;
+                    }
+
+                    .td-actions {
+                        grid-column: 4;
+                        grid-row: 1;
+                        justify-self: end;
+                    }
+
+                    .td-val {
+                        text-align: left;
+                        font-size: 11px;
+                    }
+
+                    .td-val::before {
+                        font-size: 10px;
+                        color: var(--text-tertiary);
+                        margin-right: 4px;
+                    }
+
+                    .gm-topbar {
+                        flex-direction: column;
+                        align-items: stretch;
+                    }
+
+                    .gm-price {
+                        justify-content: space-between;
+                    }
+
+                    .gm-summary {
+                        flex-wrap: wrap;
+                        gap: 12px;
+                    }
                 }
             `}</style>
         </Modal>

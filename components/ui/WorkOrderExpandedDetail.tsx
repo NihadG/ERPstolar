@@ -373,10 +373,49 @@ export default function WorkOrderExpandedDetail({
                         <span>Završeno</span>
                         <strong>{formatDate(workOrder.Completed_At)}</strong>
                     </div>
-                    <div className="date-chip deadline">
+                    <div className="date-chip deadline" style={{ cursor: 'pointer', position: 'relative' }}
+                        onClick={() => {
+                            const input = document.getElementById(`due-date-${workOrder.Work_Order_ID}`) as HTMLInputElement;
+                            if (input) input.showPicker();
+                        }}
+                    >
                         <Clock size={14} />
                         <span>Rok</span>
                         <strong>{formatDate(workOrder.Due_Date)}</strong>
+                        <Edit2 size={10} style={{ color: '#86868b', marginLeft: 4 }} />
+                        <input
+                            id={`due-date-${workOrder.Work_Order_ID}`}
+                            type="date"
+                            value={workOrder.Due_Date?.split('T')[0] || ''}
+                            onChange={async (e) => {
+                                const newDate = e.target.value;
+                                if (!newDate) return;
+                                try {
+                                    const { updateDueDate } = await import('@/lib/database');
+                                    const orgId = workOrder.Organization_ID;
+                                    const res = await updateDueDate(workOrder.Work_Order_ID, newDate, orgId);
+                                    if (res.success) {
+                                        showToast?.('Rok ažuriran', 'success');
+                                        onRefresh?.('workOrders');
+                                    } else {
+                                        showToast?.(res.message, 'error');
+                                    }
+                                } catch (err) {
+                                    showToast?.('Greška pri ažuriranju roka', 'error');
+                                }
+                            }}
+                            onClick={(e) => e.stopPropagation()}
+                            style={{
+                                position: 'absolute',
+                                bottom: 0,
+                                left: 0,
+                                width: 0,
+                                height: 0,
+                                opacity: 0,
+                                overflow: 'hidden',
+                                pointerEvents: 'none',
+                            }}
+                        />
                     </div>
                 </div>
 

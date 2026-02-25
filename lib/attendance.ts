@@ -1,4 +1,4 @@
-import { db } from './firebase';
+﻿import { db } from './firebase';
 import {
     collection,
     doc,
@@ -29,6 +29,9 @@ const COLLECTIONS = {
     WORK_ORDERS: 'work_orders',
     WORK_ORDER_ITEMS: 'work_order_items',
     PROJECTS: 'projects',
+    PRODUCTS: 'products',
+    OFFERS: 'offers',
+    OFFER_PRODUCTS: 'offer_products',
 };
 
 // Start Helper: Get Work Order Item Reference by ID query
@@ -1568,7 +1571,48 @@ export async function recalculateWorkOrder(workOrderId: string): Promise<void> {
 
         // Use for...of to support async material + labor cost fetching
         for (const item of workOrder.items) {
-            totalValue += item.Product_Value || 0;
+            // BACKFILL: If Product_Value is 0, recover from accepted offer (one-time self-healing)
+            let itemValue = item.Product_Value || 0;
+            if (itemValue <= 0 && item.Product_ID && item.Project_ID && workOrder.Organization_ID) {
+                try {
+                    // Find accepted offer for this project
+                    const offerQuery = query(
+                        collection(firestore, COLLECTIONS.OFFERS),
+                        where('Project_ID', '==', item.Project_ID),
+                        where('Status', '==', 'Prihvaćeno'),
+                        where('Organization_ID', '==', workOrder.Organization_ID)
+                    );
+                    const offerSnap = await getDocs(offerQuery);
+                    if (!offerSnap.empty) {
+                        const offerId = offerSnap.docs[0].data().Offer_ID;
+                        // Find the offer product matching this item
+                        const opQuery = query(
+                            collection(firestore, COLLECTIONS.OFFER_PRODUCTS),
+                            where('Offer_ID', '==', offerId),
+                            where('Product_ID', '==', item.Product_ID),
+                            where('Organization_ID', '==', workOrder.Organization_ID)
+                        );
+                        const opSnap = await getDocs(opQuery);
+                        if (!opSnap.empty) {
+                            const sellingPrice = opSnap.docs[0].data().Selling_Price || 0;
+                            if (sellingPrice > 0) {
+                                itemValue = sellingPrice * (item.Quantity || 1);
+                                // Write back to WO item so this only runs once
+                                try {
+                                    const itemRef = doc(firestore, COLLECTIONS.WORK_ORDER_ITEMS, item.ID);
+                                    await updateDoc(itemRef, { Product_Value: itemValue });
+                                    console.log(`Backfilled Product_Value=${itemValue} for item ${item.Product_Name} from offer`);
+                                } catch (writeErr) {
+                                    console.warn('Failed to persist backfilled Product_Value:', writeErr);
+                                }
+                            }
+                        }
+                    }
+                } catch (backfillErr) {
+                    console.warn('Product_Value backfill failed (non-critical):', backfillErr);
+                }
+            }
+            totalValue += itemValue;
 
             // PROFIT-09 FIX: For completed items, use FROZEN material cost (don't re-fetch)
             // This prevents retroactive profit changes when material prices change after completion.
@@ -2576,4 +2620,263 @@ async function recalculateItemStatusFromSubTasks(
         console.error('Error recalculating item status from sub-tasks:', error);
         throw error;
     }
+}
+
+/**
+ * Comprehensive data sync — backfills missing work logs from attendance history
+ * and recalculates all active work orders. Call this after code fixes or data corrections.
+ */
+export async function syncAllProjectData(
+    organizationId: string,
+    onProgress?: (msg: string) => void
+): Promise<{ workLogsCreated: number; workOrdersRecalculated: number }> {
+    if (!organizationId) throw new Error('Organization ID required');
+    const log = (msg: string) => { console.log(`[SYNC] ${msg}`); onProgress?.(msg); };
+
+    let workLogsCreated = 0;
+    let workOrdersRecalculated = 0;
+
+    // Step 1: Get all active/completed work orders with their items
+    log('Učitavanje radnih naloga...');
+    const woSnap = await getDocs(query(
+        collection(db, COLLECTIONS.WORK_ORDERS),
+        where('Organization_ID', '==', organizationId),
+        where('Status', 'in', ['U toku', 'Završeno'])
+    ));
+    const woItemsSnap = await getDocs(query(
+        collection(db, COLLECTIONS.WORK_ORDER_ITEMS),
+        where('Organization_ID', '==', organizationId)
+    ));
+    const allItems = woItemsSnap.docs.map(d => d.data() as WorkOrderItem);
+
+    const workOrders = woSnap.docs.map(d => {
+        const wo = d.data() as WorkOrder;
+        wo.items = allItems.filter(i => i.Work_Order_ID === wo.Work_Order_ID);
+        return wo;
+    });
+
+    if (workOrders.length === 0) {
+        log('Nema aktivnih naloga');
+        return { workLogsCreated: 0, workOrdersRecalculated: 0 };
+    }
+
+    // Step 2: Get ALL attendance records for the org
+    log('Učitavanje evidencije prisustva...');
+    const attSnap = await getDocs(query(
+        collection(db, COLLECTIONS.WORKER_ATTENDANCE),
+        where('Organization_ID', '==', organizationId),
+        where('Status', 'in', ['Prisutan', 'Teren'])
+    ));
+
+    // Build attendance map: date -> worker[]
+    const attendanceByDate = new Map<string, Array<{ Worker_ID: string; Worker_Name: string }>>();
+    attSnap.docs.forEach(d => {
+        const att = d.data();
+        const date = att.Date;
+        if (!attendanceByDate.has(date)) attendanceByDate.set(date, []);
+        attendanceByDate.get(date)!.push({
+            Worker_ID: att.Worker_ID,
+            Worker_Name: att.Worker_Name || att.Worker_ID
+        });
+    });
+
+    // Step 3: Get workers for daily rates
+    log('Učitavanje radnika...');
+    const workers = await getWorkers(organizationId);
+    const workerMap = new Map(workers.map(w => [w.Worker_ID, w]));
+
+    // Step 4: For each active WO, backfill missing work logs for present workers
+    // KEY FIX: If workers are NOT specifically assigned to items, distribute ALL present
+    // workers across ALL active items in the WO (matching real-world usage)
+    log(`Sinkronizacija ${workOrders.length} naloga...`);
+    for (const wo of workOrders) {
+        const woStartDate = wo.Started_At
+            ? new Date(wo.Started_At).toISOString().split('T')[0]
+            : wo.Created_Date
+                ? new Date(wo.Created_Date).toISOString().split('T')[0]
+                : null;
+        if (!woStartDate) continue;
+
+        // AUTO-FIX: If WO is active but has no Started_At, set it from Created_Date
+        if (!wo.Started_At && wo.Created_Date) {
+            try {
+                const firestore = getDb();
+                const woQuery = query(
+                    collection(firestore, 'work_orders'),
+                    where('Work_Order_ID', '==', wo.Work_Order_ID),
+                    where('Organization_ID', '==', organizationId)
+                );
+                const woSnap = await getDocs(woQuery);
+                if (!woSnap.empty) {
+                    await updateDoc(woSnap.docs[0].ref, { Started_At: wo.Created_Date });
+                    log(`Auto-set Started_At=${wo.Created_Date} on WO ${wo.Work_Order_Number}`);
+                }
+            } catch (e) {
+                console.warn('Failed to auto-set Started_At:', e);
+            }
+        }
+
+        // Get active items (not paused)
+        const activeItems = (wo.items || []).filter(item => !item.Is_Paused);
+        if (activeItems.length === 0) continue;
+
+        // Check if ANY item in this WO has explicit worker assignments
+        const hasAnyAssignment = activeItems.some(it =>
+            ((it.Assigned_Workers || []).length > 0) ||
+            ((it.Processes || []).some((p: any) => p.Worker_ID))
+        );
+
+        // Check each date with attendance
+        for (const [date, presentWorkers] of Array.from(attendanceByDate.entries())) {
+            if (date < woStartDate) continue;
+
+            for (const attWorker of presentWorkers) {
+                for (const item of activeItems) {
+                    const itemStartDate = item.Started_At
+                        ? new Date(item.Started_At).toISOString().split('T')[0]
+                        : woStartDate;
+                    if (date < itemStartDate) continue;
+                    if (item.Status === 'Završeno' && item.Completed_At && date > item.Completed_At.split('T')[0]) continue;
+
+                    // If there are explicit assignments, only assigned workers get logs
+                    if (hasAnyAssignment) {
+                        const isAssigned =
+                            (item.Assigned_Workers || []).some((w: any) => w.Worker_ID === attWorker.Worker_ID) ||
+                            (item.Processes || []).some((p: any) =>
+                                p.Worker_ID === attWorker.Worker_ID ||
+                                (p.Helpers || []).some((h: any) => h.Worker_ID === attWorker.Worker_ID)
+                            );
+                        if (!isAssigned) continue;
+                    }
+                    // If NO assignments at all, ALL present workers get logs for ALL items
+
+                    // Check if work log already exists
+                    const exists = await workLogExists(attWorker.Worker_ID, item.ID, date, organizationId);
+                    if (exists) continue;
+
+                    // Count total active items for daily rate splitting
+                    const worker = workerMap.get(attWorker.Worker_ID);
+                    const dailyRate = worker?.Daily_Rate || 0;
+                    const splitRate = activeItems.length > 0 ? dailyRate / activeItems.length : dailyRate;
+
+                    await createWorkLog({
+                        Worker_ID: attWorker.Worker_ID,
+                        Worker_Name: attWorker.Worker_Name,
+                        Work_Order_ID: wo.Work_Order_ID,
+                        Work_Order_Item_ID: item.ID,
+                        Product_ID: item.Product_ID || '',
+                        Date: date,
+                        Daily_Rate: splitRate,
+                        Hours_Worked: 8,
+                        Process_Name: '',
+                        Is_From_Attendance: true,
+                    }, organizationId);
+                    workLogsCreated++;
+                }
+            }
+        }
+
+        // Recalculate this work order
+        try {
+            await recalculateWorkOrder(wo.Work_Order_ID);
+            workOrdersRecalculated++;
+        } catch (e) {
+            console.warn(`Recalculate WO ${wo.Work_Order_Number} failed:`, e);
+        }
+    }
+
+    log(`Završeno: ${workLogsCreated} work logova kreirano, ${workOrdersRecalculated} naloga preračunato`);
+    return { workLogsCreated, workOrdersRecalculated };
+}
+
+/**
+ * Lightweight startup sync — runs silently on every app open.
+ * 1. Auto-schedules active WOs missing from Planer
+ * 2. Recalculates all active WO profits/costs
+ * 3. Syncs project statuses from WO data
+ */
+export async function runStartupSync(organizationId: string): Promise<{
+    scheduled: number;
+    recalculated: number;
+    projectsSynced: number;
+}> {
+    if (!organizationId) return { scheduled: 0, recalculated: 0, projectsSynced: 0 };
+
+    const firestore = getDb();
+    let scheduled = 0;
+    let recalculated = 0;
+    let projectsSynced = 0;
+
+    try {
+        // Step 1: Get all active work orders
+        const woSnap = await getDocs(query(
+            collection(firestore, COLLECTIONS.WORK_ORDERS),
+            where('Organization_ID', '==', organizationId),
+            where('Status', 'in', ['U toku', 'Na čekanju'])
+        ));
+
+        const projectIds = new Set<string>();
+        const now = new Date();
+
+        for (const woDoc of woSnap.docs) {
+            const wo = woDoc.data();
+
+            // Step 1a: Auto-schedule active WOs not in Planer
+            if (wo.Status === 'U toku' && !wo.Is_Scheduled) {
+                await updateDoc(woDoc.ref, {
+                    Is_Scheduled: true,
+                    Planned_Start_Date: wo.Started_At
+                        ? new Date(wo.Started_At).toISOString().split('T')[0]
+                        : now.toISOString().split('T')[0],
+                    Planned_End_Date: wo.Due_Date || new Date(now.getTime() + 7 * 86400000).toISOString().split('T')[0],
+                    Scheduled_At: now.toISOString(),
+                });
+                scheduled++;
+                console.log(`[STARTUP-SYNC] Auto-scheduled WO ${wo.Work_Order_Number}`);
+            }
+
+            // Step 1b: Auto-set Started_At if WO is active but missing it
+            if (wo.Status === 'U toku' && !wo.Started_At && wo.Created_Date) {
+                await updateDoc(woDoc.ref, { Started_At: wo.Created_Date });
+                console.log(`[STARTUP-SYNC] Auto-set Started_At on WO ${wo.Work_Order_Number}`);
+            }
+
+            // Step 2: Recalculate active WO profits
+            if (wo.Status === 'U toku') {
+                try {
+                    await recalculateWorkOrder(wo.Work_Order_ID);
+                    recalculated++;
+                } catch (e) {
+                    console.warn(`[STARTUP-SYNC] Recalculate failed for ${wo.Work_Order_Number}:`, e);
+                }
+            }
+
+            // Collect project IDs for step 3
+            const itemsSnap = await getDocs(query(
+                collection(firestore, COLLECTIONS.WORK_ORDER_ITEMS),
+                where('Work_Order_ID', '==', wo.Work_Order_ID),
+                where('Organization_ID', '==', organizationId)
+            ));
+            itemsSnap.docs.forEach(d => {
+                const pid = d.data().Project_ID;
+                if (pid) projectIds.add(pid);
+            });
+        }
+
+        // Step 3: Sync project statuses
+        for (const projectId of Array.from(projectIds)) {
+            try {
+                await syncProjectStatus(projectId, organizationId);
+                projectsSynced++;
+            } catch (e) {
+                console.warn(`[STARTUP-SYNC] Project sync failed for ${projectId}:`, e);
+            }
+        }
+
+        console.log(`[STARTUP-SYNC] Done: ${scheduled} scheduled, ${recalculated} recalculated, ${projectsSynced} projects synced`);
+    } catch (error) {
+        console.error('[STARTUP-SYNC] Error:', error);
+    }
+
+    return { scheduled, recalculated, projectsSynced };
 }

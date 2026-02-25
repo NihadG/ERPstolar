@@ -4,7 +4,7 @@ import { useState, useMemo, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { DragDropContext, Droppable, Draggable, DropResult } from '@hello-pangea/dnd';
 import type { WorkOrder, Worker, WorkOrderItem, WorkerConflict } from '@/lib/types';
-import { scheduleWorkOrder, unscheduleWorkOrder, startWorkOrder, checkWorkerConflicts, rescheduleWorkOrder } from '@/lib/database';
+import { scheduleWorkOrder, unscheduleWorkOrder, startWorkOrder, checkWorkerConflicts, rescheduleWorkOrder, updateDueDate } from '@/lib/database';
 import { useAuth } from '@/context/AuthContext';
 import {
     ChevronLeft,
@@ -12,6 +12,7 @@ import {
     Calendar,
     X,
     Play,
+    Edit2,
     ZoomIn,
     ZoomOut,
     Package,
@@ -697,18 +698,34 @@ export default function PlannerTab({ workOrders, workers, onRefresh, showToast }
                                     <span className="date-label">Završeno</span>
                                     <span className="date-value">{detailPanel.wo.Completed_At?.split('T')[0] || '—'}</span>
                                 </div>
-                                <div className="date-item">
-                                    <span className="date-label">Rok</span>
+                                <div className="date-item editable" style={{ cursor: 'pointer', position: 'relative' }}
+                                    onClick={() => {
+                                        const input = document.getElementById(`planer-due-date-${detailPanel.wo!.Work_Order_ID}`) as HTMLInputElement;
+                                        if (input) input.showPicker();
+                                    }}
+                                >
+                                    <span className="date-label">Rok <Edit2 size={9} style={{ marginLeft: 2, opacity: 0.5 }} /></span>
                                     <span className="date-value deadline">{detailPanel.wo.Due_Date?.split('T')[0] || '—'}</span>
+                                    <input
+                                        id={`planer-due-date-${detailPanel.wo.Work_Order_ID}`}
+                                        type="date"
+                                        value={detailPanel.wo.Due_Date?.split('T')[0] || ''}
+                                        onChange={async (e) => {
+                                            const val = e.target.value;
+                                            if (!val || !orgId) return;
+                                            const res = await updateDueDate(detailPanel.wo!.Work_Order_ID, val, orgId);
+                                            if (res.success) {
+                                                showToast('Rok ažuriran', 'success');
+                                                closeDetailPanel();
+                                                onRefresh('workOrders');
+                                            } else {
+                                                showToast(res.message, 'error');
+                                            }
+                                        }}
+                                        onClick={(e) => e.stopPropagation()}
+                                        style={{ position: 'absolute', bottom: 0, left: 0, width: 0, height: 0, opacity: 0, overflow: 'hidden', pointerEvents: 'none' }}
+                                    />
                                 </div>
-                            </div>
-
-                            {/* Planned Range */}
-                            <div className="date-range">
-                                <Calendar size={14} />
-                                <span>
-                                    Planirano: {detailPanel.wo.Planned_Start_Date || '—'} → {detailPanel.wo.Planned_End_Date || '—'}
-                                </span>
                             </div>
 
                             {/* Products */}

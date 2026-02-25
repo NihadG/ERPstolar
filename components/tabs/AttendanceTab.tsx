@@ -273,7 +273,7 @@ export default function AttendanceTab({ workers, onRefresh, showToast }: Attenda
 
             // Reload just this month to confirm
             loadMonth(date.getFullYear(), date.getMonth() + 1);
-            onRefresh('workers');
+            onRefresh('workers', 'workOrders');
         } catch (error) {
             showToast('Greška pri spremanju', 'error');
             loadMonth(date.getFullYear(), date.getMonth() + 1);
@@ -325,7 +325,7 @@ export default function AttendanceTab({ workers, onRefresh, showToast }: Attenda
             const result = await backfillWorkLogsFromAttendance(organizationId, dateFrom, dateTo);
 
             showToast(`Sinkronizacija završena: ${result.totalCreated} work logova kreirano`, 'success');
-            onRefresh('workers');
+            onRefresh('workers', 'workOrders');
         } catch (error) {
             console.error('Backfill error:', error);
             showToast('Greška pri sinkronizaciji', 'error');
@@ -449,7 +449,7 @@ export default function AttendanceTab({ workers, onRefresh, showToast }: Attenda
 
             showToast(`Prisustvo sačuvano za ${workersToUpdate.length} radnika`, 'success');
             loadMonth(date.getFullYear(), date.getMonth() + 1);
-            onRefresh('workers');
+            onRefresh('workers', 'workOrders');
         } catch (error) {
             showToast('Greška pri čuvanju prisustva', 'error');
             loadMonth(date.getFullYear(), date.getMonth() + 1);

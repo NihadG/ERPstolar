@@ -495,9 +495,9 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
                         margin: p.Margin || 0,
                         extras: ((p as any).Extras || (p as any).extras || []).map((e: any) => ({
                             name: e.name || e.Name || '',
-                            qty: e.qty || e.Qty || 1,
+                            qty: e.qty || e.Qty || e.Quantity || 1,
                             unit: e.unit || e.Unit || 'kom',
-                            price: e.price || e.Price || 0,
+                            price: e.price || e.Price || e.Unit_Price || 0,
                             total: e.total || e.Total || 0,
                             note: e.note || e.Note || ''
                         })),
@@ -536,29 +536,38 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
         // Set the project
         setSelectedProjectId(fullOffer.Project_ID);
 
+        // Get fresh product data from project for material cost fallback
+        const project = projects.find(pr => pr.Project_ID === fullOffer.Project_ID);
+        const projectProducts = project?.products || [];
+
         // Load products from the offer
-        const products: OfferProductState[] = (fullOffer.products || []).map(p => ({
-            Product_ID: p.Product_ID,
-            Product_Name: p.Product_Name,
-            Quantity: p.Quantity || 1,
-            Height: 0,
-            Width: 0,
-            Depth: 0,
-            Material_Cost: p.Material_Cost || 0,
-            included: p.Included !== false,
-            margin: p.Margin || 0,
-            extras: ((p as any).Extras || (p as any).extras || []).map((e: any) => ({
-                name: e.name || e.Name || '',
-                qty: e.qty || e.Qty || 1,
-                unit: e.unit || e.Unit || 'kom',
-                price: e.price || e.Price || 0,
-                total: e.total || e.Total || 0,
-                note: e.note || e.Note || ''
-            })),
-            laborWorkers: (p as any).Labor_Workers || (p as any).laborWorkers || 0,
-            laborDays: (p as any).Labor_Days || (p as any).laborDays || 0,
-            laborDailyRate: (p as any).Labor_Daily_Rate || (p as any).laborDailyRate || 0
-        }));
+        const products: OfferProductState[] = (fullOffer.products || []).map(p => {
+            // Fall back to fresh product Material_Cost when offer value is 0
+            const freshProduct = projectProducts.find(pp => pp.Product_ID === p.Product_ID);
+            const materialCost = p.Material_Cost || freshProduct?.Material_Cost || 0;
+            return {
+                Product_ID: p.Product_ID,
+                Product_Name: p.Product_Name,
+                Quantity: p.Quantity || 1,
+                Height: freshProduct?.Height || 0,
+                Width: freshProduct?.Width || 0,
+                Depth: freshProduct?.Depth || 0,
+                Material_Cost: materialCost,
+                included: p.Included !== false,
+                margin: p.Margin || 0,
+                extras: ((p as any).Extras || (p as any).extras || []).map((e: any) => ({
+                    name: e.name || e.Name || '',
+                    qty: e.qty || e.Qty || e.Quantity || 1,
+                    unit: e.unit || e.Unit || 'kom',
+                    price: e.price || e.Price || e.Unit_Price || 0,
+                    total: e.total || e.Total || 0,
+                    note: e.note || e.Note || ''
+                })),
+                laborWorkers: (p as any).Labor_Workers || (p as any).laborWorkers || 0,
+                laborDays: (p as any).Labor_Days || (p as any).laborDays || 0,
+                laborDailyRate: (p as any).Labor_Daily_Rate || (p as any).laborDailyRate || 0
+            };
+        });
 
         setOfferProducts(sortProductsByName(products, p => p.Product_Name));
         setOfferName(fullOffer.Name || '');

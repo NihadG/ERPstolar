@@ -760,7 +760,24 @@
 
 /* Detail Modal */
 .detail-modal {
-    max-width: 480px;
+    max-width: 440px;
+    max-height: 85vh;
+    display: flex;
+    flex-direction: column;
+}
+
+.detail-modal .modal-body {
+    overflow-y: auto;
+    max-height: calc(85vh - 70px);
+}
+
+.date-item.editable {
+    border-left: 3px solid #0071e3;
+    transition: background 0.15s;
+}
+
+.date-item.editable:hover {
+    background: #eef3ff;
 }
 
 .detail-modal .header-info {
