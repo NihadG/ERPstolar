@@ -172,6 +172,7 @@ export default function ProductTimelineModal({
     const [savingTimeline, setSavingTimeline] = useState(false);
     const [addingWorkerDay, setAddingWorkerDay] = useState<string | null>(null);
     const [newDayDate, setNewDayDate] = useState('');
+    const [extraDates, setExtraDates] = useState<Set<string>>(new Set());
 
     const startTimelineEdit = () => {
         // Clone work logs into editable state
@@ -195,6 +196,7 @@ export default function ProductTimelineModal({
         setEditedLogs([]);
         setAddingWorkerDay(null);
         setNewDayDate('');
+        setExtraDates(new Set());
     };
 
     const handleSaveTimeline = async () => {
@@ -387,6 +389,15 @@ export default function ProductTimelineModal({
             ? new Date(workOrderItem.Completed_At)
             : new Date();
 
+        // Extend range to include any extra dates added during editing
+        if (extraDates.size > 0 && startDate) {
+            extraDates.forEach(d => {
+                const extraDate = new Date(d + 'T12:00:00');
+                if (extraDate < startDate!) startDate = new Date(extraDate);
+                if (extraDate > endDate) endDate.setTime(extraDate.getTime());
+            });
+        }
+
         const days: TimelineDay[] = [];
         let cumulativeCost = 0;
         const current = new Date(startDate);
@@ -487,11 +498,11 @@ export default function ProductTimelineModal({
         }
 
         return days;
-    }, [workOrderItem, workLogs, workLogsByDate, holidays, isPausedOnDate, assignedWorkerIds, attendanceMap, pausePeriods, materialEvents]);
+    }, [workOrderItem, workLogs, workLogsByDate, holidays, isPausedOnDate, assignedWorkerIds, attendanceMap, pausePeriods, materialEvents, extraDates]);
 
     // Summary stats
     const stats = useMemo(() => {
-        const workingDays = timeline.filter(d => d.dayType === 'working').length;
+        const workingDays = timeline.filter(d => d.entries.some(e => e.type === 'worker')).length;
         const pausedDays = timeline.filter(d => d.dayType === 'paused').length;
         const totalDays = timeline.filter(d => d.dayType !== 'future').length;
         const totalLaborCost = timeline.reduce((sum, d) => sum + d.dailyLaborCost, 0);
@@ -745,7 +756,7 @@ export default function ProductTimelineModal({
                             /* === DISPLAY MODE (existing cards) === */
                             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '12px' }}>
                                 {(() => {
-                                    const displayLaborCost = laborCost ?? stats.totalLaborCost;
+                                    const displayLaborCost = stats.totalLaborCost;
                                     const displayProfit = profit ?? (sellingPrice - (materialCost || 0) - displayLaborCost);
                                     const displayMargin = profitMargin ?? (sellingPrice > 0 ? (displayProfit / sellingPrice) * 100 : 0);
                                     return [
@@ -897,11 +908,11 @@ export default function ProductTimelineModal({
                                 }}>
                                     {/* Day Header — always visible */}
                                     <div
-                                        onClick={() => hasEntries && toggleDay(day.date)}
+                                        onClick={() => (hasEntries || isEditingTimeline) && toggleDay(day.date)}
                                         style={{
                                             display: 'flex', alignItems: 'center', justifyContent: 'space-between',
                                             padding: '10px 14px',
-                                            cursor: hasEntries ? 'pointer' : 'default',
+                                            cursor: (hasEntries || isEditingTimeline) ? 'pointer' : 'default',
                                             gap: '12px'
                                         }}
                                     >
@@ -951,7 +962,7 @@ export default function ProductTimelineModal({
                                                     {day.dailyLaborCost.toLocaleString('hr-HR')} KM
                                                 </span>
                                             )}
-                                            {hasEntries && (
+                                            {(hasEntries || isEditingTimeline) && (
                                                 isExpanded
                                                     ? <ChevronUp size={16} style={{ color: '#94a3b8' }} />
                                                     : <ChevronDown size={16} style={{ color: '#94a3b8' }} />
@@ -1245,6 +1256,7 @@ export default function ProductTimelineModal({
                             <button
                                 onClick={() => {
                                     if (!newDayDate) return;
+                                    setExtraDates(prev => { const next = new Set(prev); next.add(newDayDate); return next; });
                                     setExpandedDays(prev => { const next = new Set(Array.from(prev)); next.add(newDayDate); return next; });
                                     setAddingWorkerDay(newDayDate);
                                     setNewDayDate('');

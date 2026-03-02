@@ -1,12 +1,12 @@
-import { useState, useEffect, useMemo } from 'react';
-import { Calendar, Play, CheckCircle, Clock, Edit2, Plus, X, TrendingUp, AlertTriangle } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { Calendar, Play, CheckCircle, Clock, Edit2, Plus, X, AlertTriangle } from 'lucide-react';
 import { useData } from '@/context/DataContext';
-import { checkMissingAttendanceHistory, getWorkLogsForWorkOrder } from '@/lib/services';
+import { checkMissingAttendanceHistory, getWorkLogsForWorkOrder, overrideWorkLogs } from '@/lib/services';
 import type { WorkOrder, Worker, WorkOrderItem, ItemProcessStatus, SubTask, WorkLog } from '@/lib/types';
 import ProcessKanbanBoard from './ProcessKanbanBoard';
-import ProfitOverviewWidget from './ProfitOverviewWidget';
-import PlanVsActualCard from './PlanVsActualCard';
+import ProductTimelineModal from './ProductTimelineModal';
 import { PRODUCTION_STEPS } from '@/lib/types';
+
 import {
     updateItemProcess,
     updateAllItemProcesses,
@@ -53,6 +53,7 @@ export default function WorkOrderExpandedDetail({
     // Workers Timeline State
     const [workLogs, setWorkLogs] = useState<WorkLog[]>([]);
     const [showTimeline, setShowTimeline] = useState(false);
+    const [timelineItem, setTimelineItem] = useState<WorkOrderItem | null>(null);
 
     useEffect(() => {
         if (workOrder?.Work_Order_ID && organizationId && workOrder.Started_At) {
@@ -125,40 +126,6 @@ export default function WorkOrderExpandedDetail({
                 .catch(err => console.error('Error fetching work logs:', err));
         }
     }, [workOrder?.Work_Order_ID, organizationId, showTimeline]);
-
-    // Process work logs into timeline data
-    const timelineData = useMemo(() => {
-        if (workLogs.length === 0) return null;
-
-        // Get unique dates (sorted)
-        const dates = Array.from(new Set(workLogs.map(l => l.Date))).sort();
-        // Get unique workers
-        const workerMap = new Map<string, { name: string; totalCost: number; totalDays: number }>();
-        workLogs.forEach(l => {
-            const existing = workerMap.get(l.Worker_ID) || { name: l.Worker_Name, totalCost: 0, totalDays: 0 };
-            existing.totalCost += l.Daily_Rate;
-            existing.totalDays += 1;
-            workerMap.set(l.Worker_ID, existing);
-        });
-
-        // Build grid: worker -> date -> process entries
-        const grid = new Map<string, Map<string, { process: string; rate: number; originalRate?: number; splitFactor?: number }[]>>();
-        workLogs.forEach(l => {
-            if (!grid.has(l.Worker_ID)) grid.set(l.Worker_ID, new Map());
-            const workerGrid = grid.get(l.Worker_ID)!;
-            if (!workerGrid.has(l.Date)) workerGrid.set(l.Date, []);
-            workerGrid.get(l.Date)!.push({
-                process: l.Process_Name || '—',
-                rate: l.Daily_Rate,
-                originalRate: l.Original_Daily_Rate,
-                splitFactor: l.Split_Factor
-            });
-        });
-
-        const totalLaborCost = Array.from(workerMap.values()).reduce((s, w) => s + w.totalCost, 0);
-
-        return { dates, workerMap, grid, totalLaborCost };
-    }, [workLogs]);
 
     // Format helpers
     const formatDate = (dateStr: string | undefined): string => {
@@ -631,7 +598,7 @@ export default function WorkOrderExpandedDetail({
                 }}
             />
 
-            {/* === WORKERS TIMELINE === */}
+            {/* === PER-PRODUCT TIMELINES === */}
             <div className="timeline-section">
                 <button
                     className="timeline-toggle"
@@ -646,95 +613,98 @@ export default function WorkOrderExpandedDetail({
                     )}
                 </button>
 
-                {showTimeline && timelineData && timelineData.dates.length > 0 && (
-                    <div className="timeline-content">
-                        <div className="timeline-summary">
-                            <div className="summary-stat">
-                                <span className="stat-label">Ukupan trošak rada</span>
-                                <span className="stat-value">{timelineData.totalLaborCost.toFixed(2)} KM</span>
-                            </div>
-                            <div className="summary-stat">
-                                <span className="stat-label">Radnika</span>
-                                <span className="stat-value">{timelineData.workerMap.size}</span>
-                            </div>
-                            <div className="summary-stat">
-                                <span className="stat-label">Dana</span>
-                                <span className="stat-value">{timelineData.dates.length}</span>
-                            </div>
-                        </div>
-
-                        <div className="timeline-grid-wrapper">
-                            <table className="timeline-grid">
-                                <thead>
-                                    <tr>
-                                        <th className="worker-col">Radnik</th>
-                                        {timelineData.dates.map(date => {
-                                            const d = new Date(date + 'T00:00:00');
-                                            const dayName = d.toLocaleDateString('bs-BA', { weekday: 'short' });
-                                            const dayNum = d.getDate();
-                                            const month = d.getMonth() + 1;
-                                            return (
-                                                <th key={date} className="date-col">
-                                                    <div className="date-header">
-                                                        <span className="day-name">{dayName}</span>
-                                                        <span className="day-num">{dayNum}.{month}.</span>
-                                                    </div>
-                                                </th>
-                                            );
-                                        })}
-                                        <th className="total-col">Ukupno</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    {Array.from(timelineData.workerMap.entries()).map(([workerId, info]) => (
-                                        <tr key={workerId}>
-                                            <td className="worker-cell">
-                                                <span className="worker-name-tl">{info.name}</span>
-                                                <span className="worker-days">{info.totalDays} dana</span>
-                                            </td>
-                                            {timelineData.dates.map(date => {
-                                                const entries = timelineData.grid.get(workerId)?.get(date);
-                                                return (
-                                                    <td key={date} className={`grid-cell ${entries ? 'has-data' : ''}`}>
-                                                        {entries ? (
-                                                            <div className="cell-content" title={
-                                                                entries[0].originalRate && entries[0].splitFactor && entries[0].splitFactor > 1
-                                                                    ? `Original: ${entries[0].originalRate} KM ÷ ${entries[0].splitFactor} stavki`
-                                                                    : undefined
-                                                            }>
-                                                                <span className="cell-process">{entries[0].process}</span>
-                                                                <span className="cell-rate">
-                                                                    {entries.reduce((s, e) => s + e.rate, 0).toFixed(0)}
-                                                                    {entries[0].splitFactor && entries[0].splitFactor > 1 && (
-                                                                        <span className="split-indicator">
-                                                                            ÷{entries[0].splitFactor}
-                                                                        </span>
-                                                                    )}
-                                                                </span>
-                                                            </div>
-                                                        ) : (
-                                                            <span className="cell-empty">—</span>
-                                                        )}
-                                                    </td>
-                                                );
-                                            })}
-                                            <td className="total-cell">
-                                                <strong>{info.totalCost.toFixed(2)} KM</strong>
-                                            </td>
-                                        </tr>
-                                    ))}
-                                </tbody>
-                            </table>
-                        </div>
+                {showTimeline && localItems.length > 0 && (
+                    <div style={{
+                        display: 'flex', flexDirection: 'column', gap: '6px',
+                        padding: '12px', background: 'white', borderRadius: '10px',
+                        border: '1px solid #e5e7eb', marginTop: '8px'
+                    }}>
+                        {localItems.map(item => {
+                            const itemLogs = workLogs.filter(wl => wl.Product_ID === item.Product_ID);
+                            const laborCost = itemLogs.reduce((sum, wl) => sum + (wl.Daily_Rate || 0), 0);
+                            const workerCount = new Set(itemLogs.map(wl => wl.Worker_ID)).size;
+                            return (
+                                <button
+                                    key={item.ID}
+                                    onClick={() => setTimelineItem(item)}
+                                    style={{
+                                        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                                        padding: '10px 14px', borderRadius: '8px',
+                                        border: '1px solid #e2e8f0', background: '#f9fafb',
+                                        cursor: 'pointer', width: '100%', textAlign: 'left',
+                                        transition: 'all 0.15s'
+                                    }}
+                                    onMouseEnter={e => { e.currentTarget.style.background = '#f0f9ff'; e.currentTarget.style.borderColor = '#93c5fd'; }}
+                                    onMouseLeave={e => { e.currentTarget.style.background = '#f9fafb'; e.currentTarget.style.borderColor = '#e2e8f0'; }}
+                                >
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                                        <span className="material-icons-round" style={{ fontSize: '18px', color: '#3b82f6' }}>timeline</span>
+                                        <div>
+                                            <div style={{ fontWeight: 600, fontSize: '13px', color: '#0f172a' }}>
+                                                {item.Product_Name}
+                                            </div>
+                                            <div style={{ fontSize: '11px', color: '#64748b' }}>
+                                                {workerCount > 0 ? `${workerCount} radnik(a) • ${itemLogs.length} zapisa` : 'Nema zapisa'}
+                                            </div>
+                                        </div>
+                                    </div>
+                                    {laborCost > 0 && (
+                                        <span style={{ fontSize: '13px', fontWeight: 600, color: '#374151' }}>
+                                            {laborCost.toLocaleString('hr-HR')} KM
+                                        </span>
+                                    )}
+                                </button>
+                            );
+                        })}
                     </div>
                 )}
 
-                {showTimeline && (!timelineData || timelineData.dates.length === 0) && (
+                {showTimeline && localItems.length === 0 && (
                     <div className="timeline-empty">
-                        Nema zabilježenih radnih dana. Radnici dobijaju zapise kada se popuni sihtarica.
+                        Nema stavki u ovom nalogu.
                     </div>
                 )}
             </div>
+
+            {/* ProductTimelineModal for selected item */}
+            {timelineItem && (
+                <ProductTimelineModal
+                    isOpen={true}
+                    onClose={() => setTimelineItem(null)}
+                    productId={timelineItem.Product_ID}
+                    productName={timelineItem.Product_Name}
+                    workOrderItem={timelineItem}
+                    workLogs={workLogs.filter(wl => wl.Product_ID === timelineItem.Product_ID)}
+                    sellingPrice={timelineItem.Product_Value}
+                    materialCost={timelineItem.Material_Cost}
+                    laborCost={timelineItem.Actual_Labor_Cost}
+                    workers={workers}
+                    onOverrideWorkLogs={async (entries) => {
+                        if (!timelineItem?.Work_Order_ID || !timelineItem?.ID || !organizationId) {
+                            return { success: false, message: 'Nedostaju podaci' };
+                        }
+                        const result = await overrideWorkLogs(
+                            timelineItem.Work_Order_ID,
+                            timelineItem.ID,
+                            entries,
+                            organizationId,
+                            timelineItem.Product_ID
+                        );
+                        if (result.success) {
+                            showToast?.('Timeline ažuriran', 'success');
+                            // Re-fetch work logs
+                            getWorkLogsForWorkOrder(workOrder.Work_Order_ID, organizationId)
+                                .then(logs => setWorkLogs(logs))
+                                .catch(err => console.error('Error re-fetching work logs:', err));
+                            onRefresh?.('workOrders', 'projects');
+                            setTimelineItem(null);
+                        } else {
+                            showToast?.(result.message, 'error');
+                        }
+                        return result;
+                    }}
+                />
+            )}
 
             <style jsx>{`
                 .wo-detail-v2 {
@@ -981,178 +951,6 @@ export default function WorkOrderExpandedDetail({
                     border-radius: 12px;
                     font-size: 11px;
                     font-weight: 600;
-                }
-
-                .timeline-content {
-                    margin-top: 8px;
-                    background: white;
-                    border-radius: 12px;
-                    border: 1px solid #e2e8f0;
-                    overflow: hidden;
-                }
-
-                .timeline-summary {
-                    display: flex;
-                    gap: 24px;
-                    padding: 14px 16px;
-                    border-bottom: 1px solid #f1f5f9;
-                    background: linear-gradient(135deg, #f8fafc, #f1f5f9);
-                }
-
-                .summary-stat {
-                    display: flex;
-                    flex-direction: column;
-                    gap: 2px;
-                }
-
-                .stat-label {
-                    font-size: 11px;
-                    color: #94a3b8;
-                    font-weight: 500;
-                    text-transform: uppercase;
-                    letter-spacing: 0.5px;
-                }
-
-                .stat-value {
-                    font-size: 16px;
-                    font-weight: 700;
-                    color: #1e293b;
-                }
-
-                .timeline-grid-wrapper {
-                    overflow-x: auto;
-                    -webkit-overflow-scrolling: touch;
-                }
-
-                .timeline-grid {
-                    width: 100%;
-                    min-width: max-content;
-                    border-collapse: collapse;
-                    font-size: 12px;
-                }
-
-                .timeline-grid th {
-                    padding: 8px 6px;
-                    text-align: center;
-                    font-weight: 600;
-                    color: #64748b;
-                    border-bottom: 2px solid #e2e8f0;
-                    white-space: nowrap;
-                    position: sticky;
-                    top: 0;
-                    background: white;
-                }
-
-                .worker-col {
-                    text-align: left !important;
-                    min-width: 120px;
-                    position: sticky;
-                    left: 0;
-                    z-index: 2;
-                    background: white !important;
-                }
-
-                .date-col {
-                    min-width: 60px;
-                }
-
-                .date-header {
-                    display: flex;
-                    flex-direction: column;
-                    align-items: center;
-                    gap: 1px;
-                }
-
-                .day-name {
-                    font-size: 10px;
-                    color: #94a3b8;
-                    font-weight: 500;
-                    text-transform: uppercase;
-                }
-
-                .day-num {
-                    font-size: 12px;
-                    font-weight: 600;
-                    color: #475569;
-                }
-
-                .total-col {
-                    min-width: 90px;
-                    text-align: right !important;
-                }
-
-                .timeline-grid td {
-                    padding: 6px;
-                    text-align: center;
-                    border-bottom: 1px solid #f1f5f9;
-                }
-
-                .worker-cell {
-                    display: flex;
-                    flex-direction: column;
-                    gap: 1px;
-                    text-align: left !important;
-                    position: sticky;
-                    left: 0;
-                    background: white;
-                    z-index: 1;
-                    padding-left: 12px !important;
-                }
-
-                .worker-name-tl {
-                    font-weight: 600;
-                    color: #1e293b;
-                    font-size: 12px;
-                }
-
-                .worker-days {
-                    font-size: 10px;
-                    color: #94a3b8;
-                }
-
-                .grid-cell.has-data {
-                    background: rgba(59, 130, 246, 0.04);
-                }
-
-                .cell-content {
-                    display: flex;
-                    flex-direction: column;
-                    align-items: center;
-                    gap: 1px;
-                }
-
-                .cell-process {
-                    font-size: 10px;
-                    color: #3b82f6;
-                    font-weight: 500;
-                    max-width: 60px;
-                    overflow: hidden;
-                    text-overflow: ellipsis;
-                    white-space: nowrap;
-                }
-
-                .cell-rate {
-                    font-size: 10px;
-                    color: #64748b;
-                }
-
-                .split-indicator {
-                    font-size: 8px;
-                    color: #f59e0b;
-                    font-weight: 600;
-                    margin-left: 2px;
-                }
-
-                .cell-empty {
-                    color: #e2e8f0;
-                    font-size: 10px;
-                }
-
-                .total-cell {
-                    text-align: right !important;
-                    padding-right: 12px !important;
-                    font-size: 12px;
-                    color: #1e293b;
                 }
 
                 .timeline-empty {

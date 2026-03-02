@@ -1172,6 +1172,79 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                                                     <span className="material-icons-round">inventory_2</span>
                                                     {totalProducts} {totalProducts === 1 ? 'proizvod' : 'proizvoda'}
                                                 </span>
+                                                {/* Project-level profit sum */}
+                                                {(() => {
+                                                    let projectProfit = 0;
+                                                    let projectSellingTotal = 0;
+                                                    let hasAnyProfit = false;
+
+                                                    (project.products || []).forEach(product => {
+                                                        // Find offer values
+                                                        let sellingPrice: number | undefined;
+                                                        let originalExtras = 0;
+                                                        let originalTransport = 0;
+                                                        const acceptedOffers = offers.filter(o => o.Status === 'Prihvaćeno');
+                                                        for (const offer of acceptedOffers) {
+                                                            const offerProduct = (offer.products || []).find(op => op.Product_ID === product.Product_ID);
+                                                            if (offerProduct) {
+                                                                sellingPrice = offerProduct.Selling_Price || offerProduct.Total_Price;
+                                                                const ledCost = offerProduct.LED_Total || 0;
+                                                                const groutingCost = offerProduct.Grouting ? (offerProduct.Grouting_Price || 0) : 0;
+                                                                const sinkCost = offerProduct.Sink_Faucet ? (offerProduct.Sink_Faucet_Price || 0) : 0;
+                                                                const extrasCost = ((offerProduct as any).extras || []).reduce((sum: number, e: any) => sum + (e.Total || e.total || 0), 0);
+                                                                originalExtras = ledCost + groutingCost + sinkCost + extrasCost;
+                                                                if (offer && sellingPrice) {
+                                                                    const offerSubtotal = offer.Subtotal || 0;
+                                                                    if (offerSubtotal > 0) {
+                                                                        originalTransport = (offer.Transport_Cost || 0) * (sellingPrice / offerSubtotal);
+                                                                    }
+                                                                }
+                                                                break;
+                                                            }
+                                                        }
+
+                                                        // Find work order item
+                                                        let woItem: any;
+                                                        for (const wo of workOrders) {
+                                                            const item = (wo.items || []).find(i => i.Product_ID === product.Product_ID);
+                                                            if (item) { woItem = item; break; }
+                                                        }
+
+                                                        // Use overrides if available
+                                                        const finalSellingPrice = woItem?.Profit_Overrides?.Selling_Price ?? sellingPrice;
+                                                        const extrasTotal = woItem?.Profit_Overrides?.Extras_Total ?? originalExtras;
+                                                        const transportShare = woItem?.Profit_Overrides?.Transport_Share ?? originalTransport;
+
+                                                        if (!finalSellingPrice || finalSellingPrice <= 0) return;
+
+                                                        const actualMaterialCost = (product.materials || []).reduce((sum, m) => sum + (m.Total_Price || 0), 0) + extrasTotal;
+                                                        const productLogs = workLogs.filter(wl => wl.Product_ID === product.Product_ID);
+                                                        const laborCost = productLogs.reduce((sum, wl) => sum + (wl.Daily_Rate || 0), 0);
+
+                                                        projectProfit += finalSellingPrice - actualMaterialCost - laborCost - transportShare;
+                                                        projectSellingTotal += finalSellingPrice;
+                                                        hasAnyProfit = true;
+                                                    });
+
+                                                    if (!hasAnyProfit) return null;
+                                                    const projectMargin = projectSellingTotal > 0 ? (projectProfit / projectSellingTotal) * 100 : 0;
+                                                    return (
+                                                        <span
+                                                            className="summary-item"
+                                                            style={{
+                                                                fontWeight: 600,
+                                                                fontSize: '12px',
+                                                                color: projectMargin >= 30 ? '#10b981' : projectMargin >= 15 ? '#f59e0b' : '#ef4444',
+                                                            }}
+                                                            title={`Ukupni profit projekta: ${projectProfit.toLocaleString('hr-HR')} KM (${projectMargin.toFixed(0)}%)`}
+                                                        >
+                                                            <span className="material-icons-round" style={{ fontSize: '16px' }}>
+                                                                {projectMargin >= 30 ? 'trending_up' : projectMargin >= 15 ? 'trending_flat' : 'trending_down'}
+                                                            </span>
+                                                            {projectProfit.toLocaleString('hr-HR')} KM ({projectMargin.toFixed(0)}%)
+                                                        </span>
+                                                    );
+                                                })()}
                                             </div>
                                         </div>
                                     </div>
@@ -1862,6 +1935,76 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                                                             <span className="material-icons-round">inventory_2</span>
                                                             {totalProducts} {totalProducts === 1 ? 'proizvod' : 'proizvoda'}
                                                         </span>
+                                                        {/* Project-level profit sum */}
+                                                        {(() => {
+                                                            let projectProfit = 0;
+                                                            let projectSellingTotal = 0;
+                                                            let hasAnyProfit = false;
+
+                                                            (project.products || []).forEach(product => {
+                                                                let sellingPrice: number | undefined;
+                                                                let originalExtras = 0;
+                                                                let originalTransport = 0;
+                                                                const acceptedOffers = offers.filter(o => o.Status === 'Prihvaćeno');
+                                                                for (const offer of acceptedOffers) {
+                                                                    const offerProduct = (offer.products || []).find(op => op.Product_ID === product.Product_ID);
+                                                                    if (offerProduct) {
+                                                                        sellingPrice = offerProduct.Selling_Price || offerProduct.Total_Price;
+                                                                        const ledCost = offerProduct.LED_Total || 0;
+                                                                        const groutingCost = offerProduct.Grouting ? (offerProduct.Grouting_Price || 0) : 0;
+                                                                        const sinkCost = offerProduct.Sink_Faucet ? (offerProduct.Sink_Faucet_Price || 0) : 0;
+                                                                        const extrasCost = ((offerProduct as any).extras || []).reduce((sum: number, e: any) => sum + (e.Total || e.total || 0), 0);
+                                                                        originalExtras = ledCost + groutingCost + sinkCost + extrasCost;
+                                                                        if (offer && sellingPrice) {
+                                                                            const offerSubtotal = offer.Subtotal || 0;
+                                                                            if (offerSubtotal > 0) {
+                                                                                originalTransport = (offer.Transport_Cost || 0) * (sellingPrice / offerSubtotal);
+                                                                            }
+                                                                        }
+                                                                        break;
+                                                                    }
+                                                                }
+
+                                                                let woItem: any;
+                                                                for (const wo of workOrders) {
+                                                                    const item = (wo.items || []).find(i => i.Product_ID === product.Product_ID);
+                                                                    if (item) { woItem = item; break; }
+                                                                }
+
+                                                                const finalSellingPrice = woItem?.Profit_Overrides?.Selling_Price ?? sellingPrice;
+                                                                const extrasTotal = woItem?.Profit_Overrides?.Extras_Total ?? originalExtras;
+                                                                const transportShare = woItem?.Profit_Overrides?.Transport_Share ?? originalTransport;
+
+                                                                if (!finalSellingPrice || finalSellingPrice <= 0) return;
+
+                                                                const actualMaterialCost = (product.materials || []).reduce((sum, m) => sum + (m.Total_Price || 0), 0) + extrasTotal;
+                                                                const productLogs = workLogs.filter(wl => wl.Product_ID === product.Product_ID);
+                                                                const laborCost = productLogs.reduce((sum, wl) => sum + (wl.Daily_Rate || 0), 0);
+
+                                                                projectProfit += finalSellingPrice - actualMaterialCost - laborCost - transportShare;
+                                                                projectSellingTotal += finalSellingPrice;
+                                                                hasAnyProfit = true;
+                                                            });
+
+                                                            if (!hasAnyProfit) return null;
+                                                            const projectMargin = projectSellingTotal > 0 ? (projectProfit / projectSellingTotal) * 100 : 0;
+                                                            return (
+                                                                <span
+                                                                    className="summary-item"
+                                                                    style={{
+                                                                        fontWeight: 600,
+                                                                        fontSize: '12px',
+                                                                        color: projectMargin >= 30 ? '#10b981' : projectMargin >= 15 ? '#f59e0b' : '#ef4444',
+                                                                    }}
+                                                                    title={`Ukupni profit projekta: ${projectProfit.toLocaleString('hr-HR')} KM (${projectMargin.toFixed(0)}%)`}
+                                                                >
+                                                                    <span className="material-icons-round" style={{ fontSize: '16px' }}>
+                                                                        {projectMargin >= 30 ? 'trending_up' : projectMargin >= 15 ? 'trending_flat' : 'trending_down'}
+                                                                    </span>
+                                                                    {projectProfit.toLocaleString('hr-HR')} KM ({projectMargin.toFixed(0)}%)
+                                                                </span>
+                                                            );
+                                                        })()}
                                                     </div>
                                                 </div>
                                             </div>

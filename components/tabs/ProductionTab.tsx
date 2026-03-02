@@ -9,8 +9,7 @@ import { useData } from '@/context/DataContext';
 import Modal from '@/components/ui/Modal';
 import WorkOrderExpandedDetail from '@/components/ui/WorkOrderExpandedDetail';
 import WorkOrderPrintTemplate from '@/components/ui/WorkOrderPrintTemplate';
-import ProfitOverviewWidget from '@/components/ui/ProfitOverviewWidget';
-import PlanVsActualCard from '@/components/ui/PlanVsActualCard';
+
 import PriceEditModal from '@/components/ui/PriceEditModal';
 import AttendanceFixModal from '@/components/ui/AttendanceFixModal';
 import { WORK_ORDER_STATUSES, PRODUCTION_STEPS, MONTAZA_STEPS } from '@/lib/types';
@@ -45,7 +44,7 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
     const [searchTerm, setSearchTerm] = useState('');
     const [statusFilter, setStatusFilter] = useState('');
     const [projectSearch, setProjectSearch] = useState('');
-    const [profitModalWorkOrder, setProfitModalWorkOrder] = useState<WorkOrder | null>(null);
+
 
     // S16: Proactive attendance notification state
     const [attendanceWarnings, setAttendanceWarnings] = useState<{
@@ -1066,70 +1065,7 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                                         {mainWorkers.map(([, w]) => w.name.split(' ')[0]).join(', ')}
                                     </span>
                                 )}
-                                {/* Real-time Profit Display */}
-                                {(() => {
-                                    const totalValue = wo.items?.reduce((sum, item) => sum + (item.Product_Value || 0), 0) || 0;
-                                    const materialCost = wo.items?.reduce((sum, item) => sum + (item.Material_Cost || 0), 0) || 0;
-                                    const laborCost = wo.items?.reduce((sum, item) => sum + (item.Actual_Labor_Cost || 0), 0) || 0;
-                                    const plannedLaborCost = wo.items?.reduce((sum, item) => sum + (item.Planned_Labor_Cost || 0), 0) || 0;
-                                    const transportCost = wo.items?.reduce((sum, item) => sum + (item.Transport_Share || 0), 0) || 0;
-                                    const servicesCost = wo.items?.reduce((sum, item) => sum + (item.Services_Total || 0), 0) || 0;
-                                    const profit = totalValue - materialCost - laborCost - transportCost - servicesCost;
-                                    const profitMargin = totalValue > 0 ? (profit / totalValue) * 100 : 0;
-                                    const laborVariance = plannedLaborCost - laborCost;
-                                    const isLaborOver = laborCost > plannedLaborCost && plannedLaborCost > 0;
 
-                                    if (totalValue === 0) {
-                                        // GAP-2: Show missing price warning — clickable to open price editor
-                                        return (
-                                            <span
-                                                className="summary-item"
-                                                style={{
-                                                    color: '#f59e0b',
-                                                    fontWeight: 500,
-                                                    fontSize: '13px',
-                                                    cursor: 'pointer',
-                                                    transition: 'opacity 0.2s',
-                                                }}
-                                                title="Kliknite za ručni unos cijena"
-                                                onClick={(e) => { e.stopPropagation(); setPriceEditWorkOrder(wo); }}
-                                                onMouseEnter={(e) => (e.currentTarget.style.opacity = '0.7')}
-                                                onMouseLeave={(e) => (e.currentTarget.style.opacity = '1')}
-                                            >
-                                                <span className="material-icons-round" style={{ fontSize: '16px' }}>money_off</span>
-                                                Nedostaje cijena
-                                            </span>
-                                        );
-                                    }
-
-                                    // Color coding
-                                    const profitColor = profitMargin >= 30 ? '#10b981' : profitMargin >= 15 ? '#f59e0b' : '#ef4444';
-
-                                    return (
-                                        <span
-                                            className="summary-item"
-                                            style={{
-                                                color: profitColor,
-                                                fontWeight: 600,
-                                                fontSize: '13px',
-                                                cursor: 'pointer'
-                                            }}
-                                            title="Klikni za detalje profita"
-                                            onClick={(e) => {
-                                                e.stopPropagation();
-                                                toggleWorkOrder(wo.Work_Order_ID);
-                                            }}
-                                        >
-                                            <span className="material-icons-round" style={{ fontSize: '18px' }}>
-                                                {profitMargin >= 30 ? 'trending_up' : profitMargin >= 15 ? 'trending_flat' : 'trending_down'}
-                                            </span>
-                                            {formatValue(profit)}
-                                            <span style={{ fontSize: '11px', opacity: 0.8, fontWeight: 500, marginLeft: '2px' }}>
-                                                ({profitMargin.toFixed(0)}%)
-                                            </span>
-                                        </span>
-                                    );
-                                })()}
                             </div>
                         </div>
                     </div>
@@ -3051,55 +2987,7 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                 }
             `}</style>
 
-            {/* Profit Analysis Modal */}
-            {profitModalWorkOrder && (
-                <Modal
-                    isOpen={true}
-                    onClose={() => setProfitModalWorkOrder(null)}
-                    title={`Profit: ${profitModalWorkOrder.Name || profitModalWorkOrder.Work_Order_Number}`}
-                    size="large"
-                >
-                    {(() => {
-                        const wo = profitModalWorkOrder;
-                        const totalValue = wo.items?.reduce((sum, item) => sum + (item.Product_Value || 0), 0) || 0;
-                        const materialCost = wo.items?.reduce((sum, item) => sum + (item.Material_Cost || 0), 0) || 0;
-                        const laborCost = wo.items?.reduce((sum, item) => sum + (item.Actual_Labor_Cost || 0), 0) || 0;
-                        const plannedLaborCost = wo.items?.reduce((sum, item) => sum + (item.Planned_Labor_Cost || 0), 0) || 0;
-                        const transportCost = wo.items?.reduce((sum, item) => sum + (item.Transport_Share || 0), 0) || 0;
-                        const servicesCost = wo.items?.reduce((sum, item) => sum + (item.Services_Total || 0), 0) || 0;
-                        const plannedWorkers = wo.items?.reduce((sum, item) => sum + (item.Planned_Labor_Workers || 0), 0) || 0;
-                        const plannedDays = wo.items?.reduce((sum, item) => sum + (item.Planned_Labor_Days || 0), 0) || 0;
-                        const plannedRate = (wo.items?.reduce((sum, item) => sum + (item.Planned_Labor_Rate || 0), 0) || 0) / (wo.items?.length || 1);
-                        const actualDays = wo.items?.reduce((sum, item) => sum + (item.Actual_Labor_Days || 0), 0) || 0;
-                        const actualWorkers = wo.items?.reduce((sum, item) => sum + (item.Actual_Workers_Count || 0), 0) || 0;
 
-                        return (
-                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '20px' }}>
-                                <ProfitOverviewWidget
-                                    title="Pregled Troškova i Profita"
-                                    subtitle={wo.Name || wo.Work_Order_Number}
-                                    totalValue={totalValue}
-                                    materialCost={materialCost}
-                                    transportCost={transportCost}
-                                    servicesCost={servicesCost}
-                                    laborCost={laborCost}
-                                    plannedLaborCost={plannedLaborCost}
-                                />
-                                <PlanVsActualCard
-                                    plannedWorkers={plannedWorkers}
-                                    actualWorkers={actualWorkers}
-                                    plannedDays={plannedDays}
-                                    actualDays={actualDays}
-                                    plannedRate={plannedRate}
-                                    actualRate={laborCost > 0 && actualDays > 0 ? laborCost / actualDays : 0}
-                                    plannedCost={plannedLaborCost}
-                                    actualCost={laborCost}
-                                />
-                            </div>
-                        );
-                    })()}
-                </Modal>
-            )}
             {priceEditWorkOrder && (
                 <PriceEditModal
                     workOrder={priceEditWorkOrder}
