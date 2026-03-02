@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { checkMissingAttendanceForActiveOrders, markAttendanceAndRecalculate, recalculateWorkOrder } from '@/lib/attendance';
+import { checkMissingAttendanceForActiveOrders, markAttendanceAndRecalculate, recalculateWorkOrder } from '@/lib/services';
 import type { WorkOrder } from '@/lib/types';
 
 interface AttendanceWarning {
@@ -65,8 +65,8 @@ export default function AttendanceFixModal({ workOrder, organizationId, warnings
                 } else {
                     // Fallback: fetch fresh from same function as badge
                     const result = await checkMissingAttendanceForActiveOrders(organizationId);
-                    const woWarnings = result.warnings.filter(w => w.Work_Order_ID === workOrder.Work_Order_ID);
-                    missingEntries = woWarnings.map(w => ({
+                    const woWarnings = result.warnings.filter((w: any) => w.Work_Order_ID === workOrder.Work_Order_ID);
+                    missingEntries = woWarnings.map((w: any) => ({
                         date: w.Date,
                         workerName: w.Worker_Name,
                         workerId: w.Worker_ID,

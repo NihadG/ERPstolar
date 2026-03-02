@@ -25,7 +25,7 @@ import { SearchableSelect } from '@/components/ui/SearchableSelect';
 import ProductTimelineModal from '@/components/ui/ProductTimelineModal';
 import ProjectMaterialsModal from '@/components/ui/ProjectMaterialsModal';
 import { useData } from '@/context/DataContext';
-import { syncAllProjectData, overrideWorkLogs } from '@/lib/attendance';
+import { syncAllProjectData, overrideWorkLogs } from '@/lib/services';
 import { PROJECT_STATUSES, PRODUCTION_STEPS, MATERIAL_CATEGORIES } from '@/lib/types';
 import { useIsMobile } from '@/hooks/useIsMobile';
 import MobileProjectsView from './mobile/MobileProjectsView';

@@ -2,7 +2,7 @@
 
 import { useState, useMemo, useEffect } from 'react';
 import type { Order, Supplier, Project, ProductMaterial, OrderItem } from '@/lib/types';
-import { createOrder, deleteOrder, updateOrderStatus, markOrderSent, markMaterialsReceived, getOrder, deleteOrderItemsByIds, updateOrderItem, recalculateOrderTotal } from '@/lib/database';
+import { createOrder, deleteOrder, updateOrderStatus, markOrderSent, markMaterialsReceived, getOrder, deleteOrderItemsByIds, updateOrderItem, recalculateOrderTotal } from '@/lib/services';
 import { useData } from '@/context/DataContext';
 import { generateOrderPDF, generatePDFFromHTML, type OrderPDFData } from '@/lib/pdfGenerator';
 import { DropdownMenu } from '@/components/ui/DropdownMenu';
@@ -775,7 +775,7 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
                 }
             }
             if (materialUpdates.length > 0) {
-                const { batchUpdateMaterialStatuses } = await import('@/lib/database');
+                const { batchUpdateMaterialStatuses } = await import('@/lib/services');
                 await batchUpdateMaterialStatuses(materialUpdates, organizationId!);
             }
         }

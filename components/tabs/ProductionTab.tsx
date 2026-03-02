@@ -2,8 +2,9 @@
 
 import { useState, useMemo, useEffect } from 'react';
 import type { WorkOrder, Project, Worker } from '@/lib/types';
-import { createWorkOrder, deleteWorkOrder, startWorkOrder, getWorkOrder, updateWorkOrder } from '@/lib/database';
-import { repairAllProductStatuses, validateWorkOrderProfitData, checkMissingAttendanceForActiveOrders, recalculateWorkOrder, startWorkOrderItem, completeWorkOrderItem, assignWorkersToItem, syncProjectStatus } from '@/lib/attendance';
+import { createWorkOrder, deleteWorkOrder, startWorkOrder, getWorkOrder, updateWorkOrder } from '@/lib/services';
+import { validateWorkOrderProfitData, checkMissingAttendanceForActiveOrders, recalculateWorkOrder, assignWorkersToItem, syncProjectStatus } from '@/lib/services';
+import { repairAllProductStatuses, startWorkOrderItem, completeWorkOrderItem } from '@/lib/services';
 import { useData } from '@/context/DataContext';
 import Modal from '@/components/ui/Modal';
 import WorkOrderExpandedDetail from '@/components/ui/WorkOrderExpandedDetail';
@@ -828,7 +829,7 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
         }
 
         // VALIDATION 2: Check ALL workers (all processes + helpers) are present today
-        const { canWorkerStartProcess } = await import('@/lib/attendance');
+        const { canWorkerStartProcess } = await import('@/lib/services');
         const workerIssues: string[] = [];
         const checkedWorkers = new Set<string>(); // Avoid duplicate checks
 

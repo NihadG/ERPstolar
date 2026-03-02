@@ -2,7 +2,8 @@
 
 import { useState, useMemo, useRef, useEffect } from 'react';
 import type { Offer, Project, OfferProduct, Product } from '@/lib/types';
-import { getOffer, createOfferWithProducts, deleteOffer, updateOfferStatus, saveOffer, updateOfferWithProducts } from '@/lib/database';
+import { createOfferWithProducts, deleteOffer, updateOfferStatus, saveOffer, updateOfferWithProducts } from '@/lib/services';
+import { getOffer } from '@/lib/database';
 import { useData } from '@/context/DataContext';
 import { generateOfferPDF, type OfferPDFData } from '@/lib/pdfGenerator';
 import Modal from '@/components/ui/Modal';

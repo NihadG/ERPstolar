@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import type { Worker, WorkerProductivity } from '@/lib/types';
-import { saveWorker, deleteWorker } from '@/lib/database';
+import { saveWorker, deleteWorker } from '@/lib/services';
 import { useData } from '@/context/DataContext';
 import Modal from '@/components/ui/Modal';
 import { WORKER_ROLES, WORKER_TYPES } from '@/lib/types';

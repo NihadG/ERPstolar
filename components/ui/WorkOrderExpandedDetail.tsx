@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { Calendar, Play, CheckCircle, Clock, Edit2, Plus, X, TrendingUp, AlertTriangle } from 'lucide-react';
 import { useData } from '@/context/DataContext';
-import { checkMissingAttendanceHistory } from '@/lib/attendance';
+import { checkMissingAttendanceHistory, getWorkLogsForWorkOrder } from '@/lib/services';
 import type { WorkOrder, Worker, WorkOrderItem, ItemProcessStatus, SubTask, WorkLog } from '@/lib/types';
 import ProcessKanbanBoard from './ProcessKanbanBoard';
 import ProfitOverviewWidget from './ProfitOverviewWidget';
@@ -15,8 +15,7 @@ import {
     updateSubTask,
     moveSubTask,
     canWorkerStartProcess
-} from '@/lib/attendance';
-import { getWorkLogsForWorkOrder } from '@/lib/database';
+} from '@/lib/services';
 
 interface WorkOrderExpandedDetailProps {
     workOrder: WorkOrder;
@@ -62,7 +61,7 @@ export default function WorkOrderExpandedDetail({
                     if (result.missingDays > 0) {
                         setMissingAttendance({
                             count: result.missingDays,
-                            details: result.details.map(d => `${d.workerName} (${d.date})`)
+                            details: result.details.map((d: any) => `${d.workerName} (${d.date})`)
                         });
                     } else {
                         setMissingAttendance(null);
@@ -382,7 +381,7 @@ export default function WorkOrderExpandedDetail({
                                 const newDate = e.target.value;
                                 if (!newDate) return;
                                 try {
-                                    const { adjustWorkOrderDates } = await import('@/lib/attendance');
+                                    const { adjustWorkOrderDates } = await import('@/lib/services');
                                     const orgId = workOrder.Organization_ID;
                                     const res = await adjustWorkOrderDates(workOrder.Work_Order_ID, { Started_At: newDate }, orgId);
                                     if (res.success) {
@@ -427,7 +426,7 @@ export default function WorkOrderExpandedDetail({
                                 const newDate = e.target.value;
                                 if (!newDate) return;
                                 try {
-                                    const { adjustWorkOrderDates } = await import('@/lib/attendance');
+                                    const { adjustWorkOrderDates } = await import('@/lib/services');
                                     const orgId = workOrder.Organization_ID;
                                     const res = await adjustWorkOrderDates(workOrder.Work_Order_ID, { Completed_At: newDate }, orgId);
                                     if (res.success) {
@@ -471,7 +470,7 @@ export default function WorkOrderExpandedDetail({
                                 const newDate = e.target.value;
                                 if (!newDate) return;
                                 try {
-                                    const { updateDueDate } = await import('@/lib/database');
+                                    const { updateDueDate } = await import('@/lib/services');
                                     const orgId = workOrder.Organization_ID;
                                     const res = await updateDueDate(workOrder.Work_Order_ID, newDate, orgId);
                                     if (res.success) {
@@ -624,7 +623,7 @@ export default function WorkOrderExpandedDetail({
                     ));
 
                     // Then persist to database
-                    import('@/lib/attendance').then(({ toggleItemPause }) => {
+                    import('@/lib/services').then(({ toggleItemPause }) => {
                         toggleItemPause(workOrder.Work_Order_ID, itemId, isPaused)
                             .then(() => onRefresh?.('workOrders', 'projects'))
                             .catch(error => console.error('Error toggling pause:', error));

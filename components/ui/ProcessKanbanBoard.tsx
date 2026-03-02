@@ -3,7 +3,7 @@
 import { useState, DragEvent, useMemo } from 'react';
 import { GripVertical, User, CheckCircle, Clock, Scissors, Plus, X, Pause, Play, Edit2 } from 'lucide-react';
 import type { WorkOrderItem, ItemProcessStatus, Worker, SubTask } from '@/lib/types';
-import { canWorkerStartProcess, triggerWorkLogReconciliation } from '@/lib/attendance';
+import { canWorkerStartProcess, triggerWorkLogReconciliation } from '@/lib/services';
 
 interface ProcessKanbanBoardProps {
     items: WorkOrderItem[];

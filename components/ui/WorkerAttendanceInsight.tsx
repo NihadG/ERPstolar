@@ -3,7 +3,8 @@
 import { useState, useEffect } from 'react';
 import { UserCheck, UserX, Briefcase, Calendar, AlertCircle, Clock, Users } from 'lucide-react';
 import type { Worker, WorkerAttendance } from '@/lib/types';
-import { getWorkerAttendance, getWorkerMonthlyAttendance, canWorkerStartProcess } from '@/lib/attendance';
+import { getWorkerAttendance } from '@/lib/services';
+import { getWorkerMonthlyAttendance, canWorkerStartProcess } from '@/lib/services';
 
 interface WorkerAttendanceInsightProps {
     workerId: string;

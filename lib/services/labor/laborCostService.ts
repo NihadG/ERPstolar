@@ -1,0 +1,363 @@
+/**
+ * laborCostService.ts — Attendance, Work Logs, and Labor Cost Pipeline
+ * 
+ * Facade over attendance.ts functions, providing a clean service interface
+ * for the attendance → work log → labor cost → recalculation pipeline.
+ */
+
+import { eventBus } from '../eventBus';
+import type { WorkerAttendance } from '../../types';
+
+// ============================================
+// ATTENDANCE
+// ============================================
+
+export async function markAttendanceAndRecalculate(
+    attendance: Partial<WorkerAttendance>,
+    options?: { skipRecalculation?: boolean }
+): Promise<{ success: boolean; affectedWorkOrders: string[]; workLogsCreated: number; workLogsDeleted: number }> {
+    const { markAttendanceAndRecalculate: _mark } = await import('../../attendance');
+    const result = await _mark(attendance, options);
+
+    if (result.success && attendance.Worker_ID && attendance.Date) {
+        eventBus.emit('attendance:marked', {
+            workerId: attendance.Worker_ID,
+            date: attendance.Date,
+            status: attendance.Status || '',
+            organizationId: attendance.Organization_ID || '',
+        });
+    }
+
+    return result;
+}
+
+export async function saveWorkerAttendance(
+    attendance: Partial<WorkerAttendance>
+): Promise<string> {
+    const { saveWorkerAttendance: _save } = await import('../../attendance');
+    return _save(attendance);
+}
+
+export async function getWorkerAttendance(
+    workerId: string,
+    date: string,
+    organizationId?: string
+): Promise<WorkerAttendance | null> {
+    const { getWorkerAttendance: _get } = await import('../../attendance');
+    return _get(workerId, date, organizationId);
+}
+
+export async function getWorkerAttendanceByMonth(
+    workerId: string,
+    year: string,
+    month: string
+): Promise<WorkerAttendance[]> {
+    const { getWorkerAttendanceByMonth: _get } = await import('../../attendance');
+    return _get(workerId, year, month);
+}
+
+export async function getAllAttendanceByMonth(
+    year: string,
+    month: string,
+    organizationId?: string
+): Promise<WorkerAttendance[]> {
+    const { getAllAttendanceByMonth: _get } = await import('../../attendance');
+    return _get(year, month, organizationId);
+}
+
+export async function autoPopulateWeekends(
+    workers: any[],
+    year: number,
+    month: number,
+    organizationId?: string
+): Promise<void> {
+    const { autoPopulateWeekends: _auto } = await import('../../attendance');
+    return _auto(workers, year, month, organizationId);
+}
+
+// ============================================
+// WORK LOG CREATION
+// ============================================
+
+export async function createWorkLogsForAttendance(
+    workerId: string,
+    workerName: string,
+    dailyRate: number,
+    date: string,
+    organizationId: string,
+    attendanceStatus?: string
+): Promise<{ created: number; skipped: number; affectedWorkOrderIds: string[] }> {
+    const { createWorkLogsForAttendance: _create } = await import('../../attendance');
+    return _create(workerId, workerName, dailyRate, date, organizationId, attendanceStatus);
+}
+
+export async function backfillWorkLogsFromAttendance(
+    organizationId: string,
+    dateFrom: string,
+    dateTo: string
+): Promise<{ totalCreated: number; totalSkipped: number; processedDays: number }> {
+    const mod = await import('../../attendance');
+    return mod.backfillWorkLogsFromAttendance(organizationId, dateFrom, dateTo);
+}
+
+// ============================================
+// RECALCULATION
+// ============================================
+
+export async function recalculateWorkOrder(workOrderId: string): Promise<void> {
+    const { recalculateWorkOrder: _recalc } = await import('../../attendance');
+    await _recalc(workOrderId);
+
+    eventBus.emit('workOrder:recalculated', { workOrderId, organizationId: '' });
+}
+
+export async function recalculateAllActiveWorkOrders(
+    organizationId: string,
+    options?: { includeCompleted?: boolean }
+): Promise<void> {
+    const { recalculateAllActiveWorkOrders: _recalcAll } = await import('../../attendance');
+    await _recalcAll(organizationId, options);
+}
+
+// ============================================
+// SYNC PIPELINE
+// ============================================
+
+export async function syncProjectStatus(
+    projectId: string,
+    organizationId?: string
+): Promise<void> {
+    const { syncProjectStatus: _sync } = await import('../../attendance');
+    return _sync(projectId, organizationId);
+}
+
+export async function syncAllProjectData(organizationId: string): Promise<{
+    workLogsCreated: number;
+    workOrdersRecalculated: number;
+}> {
+    const { syncAllProjectData: _sync } = await import('../../attendance');
+    return _sync(organizationId);
+}
+
+export async function runStartupSync(organizationId: string): Promise<{
+    scheduled: number;
+    recalculated: number;
+    projectsSynced: number;
+}> {
+    const { runStartupSync: _run } = await import('../../attendance');
+    return _run(organizationId);
+}
+
+// ============================================
+// MISSING ATTENDANCE DETECTION
+// ============================================
+
+export async function checkMissingAttendanceForActiveOrders(
+    organizationId: string,
+    date?: string
+): Promise<any> {
+    const { checkMissingAttendanceForActiveOrders: _check } = await import('../../attendance');
+    return _check(organizationId, date);
+}
+
+export async function checkMissingAttendanceHistory(
+    workOrderId: string,
+    organizationId: string
+): Promise<any> {
+    const { checkMissingAttendanceHistory: _check } = await import('../../attendance');
+    return _check(workOrderId, organizationId);
+}
+
+// ============================================
+// PROCESS MANAGEMENT
+// ============================================
+
+export async function updateAllItemProcesses(
+    workOrderId: string,
+    itemId: string,
+    processes: any[]
+): Promise<void> {
+    const { updateAllItemProcesses: _update } = await import('../../attendance');
+    return _update(workOrderId, itemId, processes);
+}
+
+export async function assignWorkersToItem(
+    workOrderId: string,
+    itemId: string,
+    workers: any[],
+    organizationId?: string
+): Promise<void> {
+    const { assignWorkersToItem: _assign } = await import('../../attendance');
+    return _assign(workOrderId, itemId, workers, organizationId);
+}
+
+export async function toggleItemPause(
+    workOrderId: string,
+    itemId: string,
+    isPaused: boolean
+): Promise<{ success: boolean; message: string }> {
+    const { toggleItemPause: _toggle } = await import('../../attendance');
+    return _toggle(workOrderId, itemId, isPaused);
+}
+
+// ============================================
+// LABOR COST CALCULATIONS
+// ============================================
+
+export async function calculateActualLaborCost(
+    item: any,
+    organizationId?: string
+): Promise<number> {
+    const { calculateActualLaborCost: _calc } = await import('../../attendance');
+    return _calc(item, organizationId);
+}
+
+export async function calculateSubTaskLaborCost(
+    subTask: any,
+    itemQuantity: number,
+    organizationId: string,
+    parentItemId?: string
+): Promise<{ laborCost: number; workingDays: number }> {
+    const { calculateSubTaskLaborCost: _calc } = await import('../../attendance');
+    return _calc(subTask, itemQuantity, organizationId, parentItemId);
+}
+
+// ============================================
+// PROFIT VALIDATION
+// ============================================
+
+export { validateWorkOrderProfitData } from '../../attendance';
+export type { ProfitWarning } from '../../attendance';
+
+export async function adjustWorkOrderDates(
+    workOrderId: string,
+    updates: { Started_At?: string; Completed_At?: string },
+    organizationId: string
+): Promise<{ success: boolean; message: string }> {
+    const { adjustWorkOrderDates: _fn } = await import('../../attendance');
+    return _fn(workOrderId, updates, organizationId);
+}
+
+// ============================================
+// REMAINING ATTENDANCE FUNCTIONS
+// ============================================
+
+export async function updateItemProcess(
+    workOrderId: string,
+    itemId: string,
+    processName: string,
+    updates: any
+): Promise<void> {
+    const { updateItemProcess: _fn } = await import('../../attendance');
+    return _fn(workOrderId, itemId, processName, updates);
+}
+
+export async function bulkUpdateProcesses(
+    workOrderId: string,
+    itemIds: string[],
+    processName: string | 'all',
+    updates: any
+): Promise<void> {
+    const { bulkUpdateProcesses: _fn } = await import('../../attendance');
+    return _fn(workOrderId, itemIds, processName, updates);
+}
+
+export async function createSubTasks(
+    workOrderId: string,
+    itemId: string,
+    subTasks: any[]
+): Promise<void> {
+    const { createSubTasks: _fn } = await import('../../attendance');
+    return _fn(workOrderId, itemId, subTasks);
+}
+
+export async function updateSubTask(
+    workOrderId: string,
+    itemId: string,
+    subTaskId: string,
+    updates: any
+): Promise<void> {
+    const { updateSubTask: _fn } = await import('../../attendance');
+    return _fn(workOrderId, itemId, subTaskId, updates);
+}
+
+export async function moveSubTask(
+    workOrderId: string,
+    itemId: string,
+    subTaskId: string,
+    targetProcess: string
+): Promise<void> {
+    const { moveSubTask: _fn } = await import('../../attendance');
+    return _fn(workOrderId, itemId, subTaskId, targetProcess);
+}
+
+export async function canWorkerStartProcess(
+    workerId: string
+): Promise<{ allowed: boolean; reason?: string; status?: string }> {
+    const { canWorkerStartProcess: _fn } = await import('../../attendance');
+    return _fn(workerId);
+}
+
+export async function triggerWorkLogReconciliation(
+    workerId: string,
+    organizationId: string
+): Promise<{ created: number; message: string }> {
+    const { triggerWorkLogReconciliation: _fn } = await import('../../attendance');
+    return _fn(workerId, organizationId);
+}
+
+export async function getWorkerMonthlyAttendance(
+    workerId: string,
+    year: number,
+    month: number
+): Promise<any[]> {
+    const { getWorkerMonthlyAttendance: _fn } = await import('../../attendance');
+    return _fn(workerId, year, month);
+}
+
+export async function overrideWorkLogs(
+    workOrderId: string,
+    itemId: string,
+    entries: Array<{
+        Worker_ID: string;
+        Worker_Name: string;
+        Date: string;
+        Daily_Rate: number;
+        Process_Name?: string;
+    }>,
+    organizationId: string,
+    productId?: string
+): Promise<{ success: boolean; message: string }> {
+    const { overrideWorkLogs: _fn } = await import('../../attendance');
+    return _fn(workOrderId, itemId, entries, organizationId, productId);
+}
+
+export async function repairAllProductStatuses(): Promise<{ success: boolean; message: string; count: number }> {
+    const { repairAllProductStatuses: _fn } = await import('../../attendance');
+    return _fn();
+}
+
+export async function startWorkOrderItem(
+    workOrderId: string,
+    itemId: string,
+    options?: { customDate?: string }
+): Promise<void> {
+    const { startWorkOrderItem: _fn } = await import('../../attendance');
+    return _fn(workOrderId, itemId, options);
+}
+
+export async function completeWorkOrderItem(
+    workOrderId: string,
+    itemId: string,
+    options?: { customDate?: string }
+): Promise<void> {
+    const { completeWorkOrderItem: _fn } = await import('../../attendance');
+    return _fn(workOrderId, itemId, options);
+}
+
+export function formatLocalDateISO(date: Date): string {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+}

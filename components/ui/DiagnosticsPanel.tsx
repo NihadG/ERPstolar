@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import type { AppState, Project, Product, WorkOrder, WorkOrderItem } from '@/lib/types';
-import { repairAllProductStatuses } from '@/lib/attendance';
+import { repairAllProductStatuses } from '@/lib/services';
 
 interface DiagnosticIssue {
     category: string;

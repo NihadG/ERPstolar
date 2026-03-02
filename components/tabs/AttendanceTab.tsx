@@ -9,7 +9,7 @@ import {
     autoPopulateWeekends,
     formatLocalDateISO,
     backfillWorkLogsFromAttendance,
-} from '@/lib/attendance';
+} from '@/lib/services';
 import {
     CheckCircle2,
     XCircle,
@@ -420,7 +420,7 @@ export default function AttendanceTab({ workers, onRefresh, showToast }: Attenda
             const totalChanges = results.reduce((sum, r) => sum + r.workLogsCreated + r.workLogsDeleted, 0);
             if (totalChanges > 0 && organizationId) {
                 try {
-                    const { recalculateAllActiveWorkOrders } = await import('@/lib/attendance');
+                    const { recalculateAllActiveWorkOrders } = await import('@/lib/services');
                     await recalculateAllActiveWorkOrders(organizationId, { includeCompleted: true });
                 } catch (recalcError) {
                     console.error('Batch recalculation failed:', recalcError);

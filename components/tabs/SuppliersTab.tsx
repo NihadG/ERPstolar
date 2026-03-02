@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import type { Supplier } from '@/lib/types';
-import { saveSupplier, deleteSupplier } from '@/lib/database';
+import { saveSupplier, deleteSupplier } from '@/lib/services';
 import { useData } from '@/context/DataContext';
 import Modal from '@/components/ui/Modal';
 

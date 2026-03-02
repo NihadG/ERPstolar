@@ -3,7 +3,8 @@
 import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { ChevronRight, ChevronLeft } from 'lucide-react';
-import { getAllData, getProjects, getMaterialsCatalog, getSuppliers, getWorkers, getOffers, getOrders, getWorkOrders, getWorkLogs, getTasks, getTaskProfiles } from '@/lib/database';
+import { getProjects, getMaterialsCatalog, getSuppliers, getWorkers, getOffers, getOrders, getWorkOrders, getTasks } from '@/lib/services';
+import { getAllData, getWorkLogs, getTaskProfiles } from '@/lib/database';
 import { signOut } from '@/lib/auth';
 import { useAuth } from '@/context/AuthContext';
 import type { AppState, Project, Product, Material, Offer, Order, Supplier, Worker } from '@/lib/types';

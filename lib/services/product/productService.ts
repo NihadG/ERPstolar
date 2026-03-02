@@ -1,0 +1,233 @@
+/**
+ * productService.ts — Product CRUD + cost calculation
+ * 
+ * Extracted from database.ts (functions: getProductsByProject, getProduct,
+ * saveProduct, deleteProduct, updateProductStatus, recalculateProductCost)
+ */
+
+import { COLLECTIONS } from '../shared/collections';
+import {
+    queryByOrg,
+    findByIdAndOrg,
+    findRef,
+    createDoc,
+    updateDocByRef,
+    getDb,
+    query,
+    collection,
+    where,
+    getDocs,
+    deleteDoc,
+} from '../shared/firestoreClient';
+import { eventBus } from '../eventBus';
+import { v4 as uuidv4 } from 'uuid';
+import type { Product, ProductMaterial } from '../../types';
+
+// ============================================
+// READ
+// ============================================
+
+export async function getProductsByProject(projectId: string, organizationId: string): Promise<Product[]> {
+    if (!organizationId) return [];
+
+    const db = getDb();
+    const q = query(
+        collection(db, COLLECTIONS.PRODUCTS),
+        where('Project_ID', '==', projectId),
+        where('Organization_ID', '==', organizationId)
+    );
+    const snapshot = await getDocs(q);
+    const products = snapshot.docs.map(doc => ({ ...doc.data() } as Product));
+
+    if (products.length === 0) return products;
+
+    // PERFORMANCE: Batch-fetch all materials for all products instead of N queries
+    const productIds = products.map(p => p.Product_ID);
+    const materialsByProduct = new Map<string, ProductMaterial[]>();
+
+    const batchSize = 30; // Firestore 'in' query limit
+    for (let i = 0; i < productIds.length; i += batchSize) {
+        const batchIds = productIds.slice(i, i + batchSize);
+        const materialsQ = query(
+            collection(db, COLLECTIONS.PRODUCT_MATERIALS),
+            where('Product_ID', 'in', batchIds),
+            where('Organization_ID', '==', organizationId)
+        );
+        const materialsSnap = await getDocs(materialsQ);
+
+        materialsSnap.docs.forEach(doc => {
+            const mat = doc.data() as ProductMaterial;
+            if (!materialsByProduct.has(mat.Product_ID)) {
+                materialsByProduct.set(mat.Product_ID, []);
+            }
+            materialsByProduct.get(mat.Product_ID)!.push(mat);
+        });
+    }
+
+    products.forEach(product => {
+        product.materials = materialsByProduct.get(product.Product_ID) || [];
+    });
+
+    return products;
+}
+
+export async function getProduct(productId: string, organizationId: string): Promise<Product | null> {
+    if (!organizationId) return null;
+    const result = await findByIdAndOrg<Product>(COLLECTIONS.PRODUCTS, 'Product_ID', productId, organizationId);
+    if (!result.data) return null;
+
+    const { getProductMaterials } = await import('../../database');
+    result.data.materials = await getProductMaterials(productId, organizationId);
+    return result.data;
+}
+
+// ============================================
+// WRITE
+// ============================================
+
+export async function saveProduct(
+    data: Partial<Product>,
+    organizationId: string
+): Promise<{ success: boolean; data?: { Product_ID: string }; message: string }> {
+    if (!organizationId) {
+        return { success: false, message: 'Organization ID is required' };
+    }
+
+    try {
+        const isNew = !data.Product_ID;
+
+        if (isNew) {
+            data.Product_ID = uuidv4();
+            data.Organization_ID = organizationId;
+            data.Status = data.Status || 'Na čekanju';
+            data.Material_Cost = 0;
+            await createDoc(COLLECTIONS.PRODUCTS, data as Record<string, unknown>);
+        } else {
+            const ref = await findRef(COLLECTIONS.PRODUCTS, 'Product_ID', data.Product_ID!, organizationId);
+            if (ref) {
+                const { Organization_ID, ...updateData } = data;
+                await updateDocByRef(ref, updateData as Record<string, unknown>);
+            }
+        }
+
+        return {
+            success: true,
+            data: { Product_ID: data.Product_ID! },
+            message: isNew ? 'Proizvod kreiran' : 'Proizvod ažuriran',
+        };
+    } catch (error) {
+        console.error('saveProduct error:', error);
+        return { success: false, message: 'Greška pri spremanju proizvoda' };
+    }
+}
+
+export async function deleteProduct(
+    productId: string,
+    organizationId: string
+): Promise<{ success: boolean; message: string }> {
+    if (!organizationId) {
+        return { success: false, message: 'Organization ID is required' };
+    }
+
+    try {
+        const db = getDb();
+
+        // S5.2: Block deletion if product is in an active work order
+        const woItemsQ = query(
+            collection(db, COLLECTIONS.WORK_ORDER_ITEMS),
+            where('Product_ID', '==', productId),
+            where('Organization_ID', '==', organizationId)
+        );
+        const woItemsSnap = await getDocs(woItemsQ);
+        const activeItem = woItemsSnap.docs.find(d => d.data().Status !== 'Završeno');
+        if (activeItem) {
+            const woId = activeItem.data().Work_Order_ID;
+            return {
+                success: false,
+                message: `Proizvod je u aktivnom radnom nalogu (${woId}). Završite radni nalog prije brisanja proizvoda.`
+            };
+        }
+
+        // Cascade delete via original database functions (using exported helpers)
+        const dbModule = await import('../../database');
+        const cascadeDeleteOrderItemsForProduct = dbModule.cascadeDeleteOrderItemsForProduct;
+        const deleteProductMaterials = dbModule.deleteProductMaterials;
+        await cascadeDeleteOrderItemsForProduct(productId, organizationId);
+        await deleteProductMaterials(productId, organizationId);
+
+        // Delete the product itself
+        const ref = await findRef(COLLECTIONS.PRODUCTS, 'Product_ID', productId, organizationId);
+        if (ref) {
+            await deleteDoc(ref);
+        }
+
+        eventBus.emit('product:deleted', { productId, projectId: '', organizationId });
+
+        return { success: true, message: 'Proizvod obrisan sa povezanim narudžbama' };
+    } catch (error) {
+        console.error('deleteProduct error:', error);
+        return { success: false, message: 'Greška pri brisanju proizvoda' };
+    }
+}
+
+export async function updateProductStatus(
+    productId: string,
+    status: string,
+    organizationId: string
+): Promise<{ success: boolean; message: string }> {
+    if (!organizationId) {
+        return { success: false, message: 'Organization ID is required' };
+    }
+
+    try {
+        const { updateByIdAndOrg } = await import('../shared/firestoreClient');
+        await updateByIdAndOrg(COLLECTIONS.PRODUCTS, 'Product_ID', productId, organizationId, { Status: status });
+
+        eventBus.emit('product:statusChanged', { productId, newStatus: status, organizationId });
+
+        return { success: true, message: 'Status ažuriran' };
+    } catch (error) {
+        console.error('updateProductStatus error:', error);
+        return { success: false, message: 'Greška pri ažuriranju statusa' };
+    }
+}
+
+export async function recalculateProductCost(productId: string, organizationId: string): Promise<number> {
+    if (!organizationId) return 0;
+
+    const { getProductMaterials } = await import('../../database');
+    const materials = await getProductMaterials(productId, organizationId);
+    const totalCost = materials.reduce((sum: number, m: ProductMaterial) => sum + (m.Total_Price || 0), 0);
+
+    const { updateByIdAndOrg } = await import('../shared/firestoreClient');
+    await updateByIdAndOrg(COLLECTIONS.PRODUCTS, 'Product_ID', productId, organizationId, { Material_Cost: totalCost });
+
+    // Propagate cost change to work orders
+    try {
+        const db = getDb();
+        const woItemsQ = query(
+            collection(db, COLLECTIONS.WORK_ORDER_ITEMS),
+            where('Product_ID', '==', productId),
+            where('Organization_ID', '==', organizationId)
+        );
+        const woItemsSnap = await getDocs(woItemsQ);
+        const woIds = new Set<string>();
+        woItemsSnap.docs.forEach(d => {
+            const woId = d.data().Work_Order_ID;
+            if (woId) woIds.add(woId);
+        });
+
+        if (woIds.size > 0) {
+            const { recalculateWorkOrder } = await import('../../attendance');
+            for (const woId of Array.from(woIds)) {
+                await recalculateWorkOrder(woId);
+            }
+        }
+    } catch (err) {
+        console.warn('recalculateProductCost: WO sync failed (non-critical):', err);
+    }
+
+    eventBus.emit('product:costRecalculated', { productId, newCost: totalCost, organizationId });
+
+    return totalCost;
+}

@@ -851,7 +851,7 @@ export async function deleteProductMaterial(materialId: string, organizationId: 
 // G5: Cascade-delete order items for a specific product
 // When a product is deleted, remove all order items that reference its materials.
 // If an order becomes empty after deletion, delete the order itself.
-async function cascadeDeleteOrderItemsForProduct(productId: string, organizationId: string): Promise<void> {
+export async function cascadeDeleteOrderItemsForProduct(productId: string, organizationId: string): Promise<void> {
     if (!organizationId) return;
 
     try {

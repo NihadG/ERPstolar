@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useMemo } from 'react';
 import type { Material } from '@/lib/types';
-import { saveMaterial, deleteMaterial, deleteDuplicateMaterials } from '@/lib/database';
+import { saveMaterial, deleteMaterial, deleteDuplicateMaterials } from '@/lib/services';
 import { useData } from '@/context/DataContext';
 import Modal from '@/components/ui/Modal';
 import { SearchableSelect } from '@/components/ui/SearchableSelect';

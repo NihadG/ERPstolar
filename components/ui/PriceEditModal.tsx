@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { db } from '@/lib/firebase';
 import { collection, query, where, getDocs, updateDoc } from 'firebase/firestore';
-import { recalculateWorkOrder } from '@/lib/attendance';
+import { recalculateWorkOrder } from '@/lib/services';
 import type { WorkOrder, WorkOrderItem } from '@/lib/types';
 
 interface PriceEditModalProps {

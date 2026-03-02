@@ -4,8 +4,8 @@ import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { createPortal } from 'react-dom';
 import { Bell, Check, Info, AlertTriangle, CheckCircle, AlertOctagon, ClipboardList, Calendar, FileText, ShoppingCart, ChevronRight, Package, DollarSign, Users, UserX, Wrench } from 'lucide-react';
 import { Notification } from '@/lib/types';
-import { subscribeToNotifications, markNotificationAsRead, checkZeroMaterialCostProducts, setManualMaterialCost, checkUnassignedMontazaItems, checkZeroRateAssignedWorkers, checkProcessesWithoutWorkers, checkMissingCostFields } from '@/lib/database';
-import { checkMissingAttendanceForActiveOrders } from '@/lib/attendance';
+import { subscribeToNotifications, markNotificationAsRead, checkZeroMaterialCostProducts, setManualMaterialCost, checkUnassignedMontazaItems, checkZeroRateAssignedWorkers, checkProcessesWithoutWorkers, checkMissingCostFields } from '@/lib/services';
+import { checkMissingAttendanceForActiveOrders } from '@/lib/services';
 import { useAuth } from '@/context/AuthContext';
 import { useData } from '@/context/DataContext';
 import './NotificationCenter.css';
@@ -312,7 +312,7 @@ export default function NotificationCenter() {
                 if (attendanceResult.missingCount > 0) {
                     const notifId = `attendance-gap-${today}`;
                     if (!readIds.has(notifId)) {
-                        const workerNames = Array.from(new Set(attendanceResult.warnings.map(w => w.Worker_Name))).slice(0, 3);
+                        const workerNames = Array.from(new Set(attendanceResult.warnings.map((w: any) => w.Worker_Name))).slice(0, 3);
                         dataGapNotifications.push({
                             id: notifId,
                             title: `⚠️ Nedostaje sihtarica za ${attendanceResult.missingCount} radnik${attendanceResult.missingCount === 1 ? 'a' : 'a'}`,

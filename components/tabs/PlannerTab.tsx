@@ -4,7 +4,7 @@ import { useState, useMemo, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { DragDropContext, Droppable, Draggable, DropResult } from '@hello-pangea/dnd';
 import type { WorkOrder, Worker, WorkOrderItem, WorkerConflict } from '@/lib/types';
-import { scheduleWorkOrder, unscheduleWorkOrder, startWorkOrder, checkWorkerConflicts, rescheduleWorkOrder, updateDueDate } from '@/lib/database';
+import { scheduleWorkOrder, unscheduleWorkOrder, startWorkOrder, checkWorkerConflicts, rescheduleWorkOrder, updateDueDate } from '@/lib/services';
 import { useAuth } from '@/context/AuthContext';
 import {
     ChevronLeft,
