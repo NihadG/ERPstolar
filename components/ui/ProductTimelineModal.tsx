@@ -2,11 +2,12 @@
 
 import { useState, useMemo, useCallback } from 'react';
 import Modal from './Modal';
-import type { WorkLog, WorkerAttendance, ProductMaterial, WorkOrderItem } from '@/lib/types';
+import type { WorkLog, WorkerAttendance, ProductMaterial, WorkOrderItem, Worker } from '@/lib/types';
 import {
     Calendar, Clock, Pause, Play, Package, User, Coffee, Sun,
     Stethoscope, Palmtree, AlertCircle, ChevronDown, ChevronUp,
-    TrendingUp, TrendingDown, Minus, DollarSign, Edit3, Check, X
+    TrendingUp, TrendingDown, Minus, DollarSign, Edit3, Check, X,
+    Plus, Trash2, Save
 } from 'lucide-react';
 
 // ============================================
@@ -53,6 +54,15 @@ interface ProductTimelineModalProps {
         Transport_Share?: number;
         Notes?: string;
     }) => Promise<void>;
+    // Timeline editing
+    onOverrideWorkLogs?: (entries: Array<{
+        Worker_ID: string;
+        Worker_Name: string;
+        Date: string;
+        Daily_Rate: number;
+        Process_Name?: string;
+    }>) => Promise<{ success: boolean; message: string }>;
+    workers?: Worker[];
 }
 
 type DayType = 'working' | 'paused' | 'weekend' | 'holiday' | 'no_work' | 'future';
@@ -132,7 +142,9 @@ export default function ProductTimelineModal({
     originalExtras,
     originalTransport,
     hasOverrides,
-    onSaveOverrides
+    onSaveOverrides,
+    onOverrideWorkLogs,
+    workers = []
 }: ProductTimelineModalProps) {
     const [expandedDays, setExpandedDays] = useState<Set<string>>(new Set());
     const [editingEntry, setEditingEntry] = useState<{ date: string; workerId: string } | null>(null);
@@ -145,6 +157,113 @@ export default function ProductTimelineModal({
     const [editTransport, setEditTransport] = useState<number>(0);
     const [editNotes, setEditNotes] = useState<string>('');
     const [savingOverrides, setSavingOverrides] = useState(false);
+
+    // === TIMELINE EDITING STATE ===
+    interface EditedLogEntry {
+        id: string;
+        Worker_ID: string;
+        Worker_Name: string;
+        Date: string;
+        Daily_Rate: number;
+        Process_Name?: string;
+    }
+    const [isEditingTimeline, setIsEditingTimeline] = useState(false);
+    const [editedLogs, setEditedLogs] = useState<EditedLogEntry[]>([]);
+    const [savingTimeline, setSavingTimeline] = useState(false);
+    const [addingWorkerDay, setAddingWorkerDay] = useState<string | null>(null);
+    const [newDayDate, setNewDayDate] = useState('');
+
+    const startTimelineEdit = () => {
+        // Clone work logs into editable state
+        const logs: EditedLogEntry[] = workLogs.map((wl, i) => ({
+            id: `log-${i}`,
+            Worker_ID: wl.Worker_ID,
+            Worker_Name: wl.Worker_Name,
+            Date: wl.Date,
+            Daily_Rate: wl.Daily_Rate || 0,
+            Process_Name: wl.Process_Name
+        }));
+        setEditedLogs(logs);
+        setIsEditingTimeline(true);
+        // Expand all days for editing
+        const allDates = new Set(logs.map(l => l.Date));
+        setExpandedDays(allDates);
+    };
+
+    const cancelTimelineEdit = () => {
+        setIsEditingTimeline(false);
+        setEditedLogs([]);
+        setAddingWorkerDay(null);
+        setNewDayDate('');
+    };
+
+    const handleSaveTimeline = async () => {
+        if (!onOverrideWorkLogs) return;
+        setSavingTimeline(true);
+        try {
+            const result = await onOverrideWorkLogs(editedLogs.map(l => ({
+                Worker_ID: l.Worker_ID,
+                Worker_Name: l.Worker_Name,
+                Date: l.Date,
+                Daily_Rate: l.Daily_Rate,
+                Process_Name: l.Process_Name
+            })));
+            if (result.success) {
+                setIsEditingTimeline(false);
+                setEditedLogs([]);
+            }
+        } catch (err) {
+            console.error('Error saving timeline:', err);
+        } finally {
+            setSavingTimeline(false);
+        }
+    };
+
+    const updateLogRate = (logId: string, newRate: number) => {
+        setEditedLogs(prev => prev.map(l => l.id === logId ? { ...l, Daily_Rate: newRate } : l));
+    };
+
+    const removeLog = (logId: string) => {
+        setEditedLogs(prev => prev.filter(l => l.id !== logId));
+    };
+
+    const addWorkerToDay = (date: string, worker: Worker) => {
+        const newLog: EditedLogEntry = {
+            id: `new-${Date.now()}-${Math.random()}`,
+            Worker_ID: worker.Worker_ID,
+            Worker_Name: worker.Name,
+            Date: date,
+            Daily_Rate: worker.Daily_Rate || 0,
+        };
+        setEditedLogs(prev => [...prev, newLog]);
+        setAddingWorkerDay(null);
+    };
+
+    const addNewDay = () => {
+        if (!newDayDate) return;
+        // Just expand the day — user adds workers via the add button
+        setExpandedDays(prev => { const next = new Set(Array.from(prev)); next.add(newDayDate); return next; });
+        setNewDayDate('');
+    };
+
+    const removeDay = (date: string) => {
+        setEditedLogs(prev => prev.filter(l => l.Date !== date));
+    };
+
+    // Group edited logs by date for the editing view
+    const editedLogsByDate = useMemo(() => {
+        const map = new Map<string, EditedLogEntry[]>();
+        editedLogs.forEach(l => {
+            const existing = map.get(l.Date) || [];
+            existing.push(l);
+            map.set(l.Date, existing);
+        });
+        return map;
+    }, [editedLogs]);
+
+    const editedTotalCost = useMemo(() => {
+        return editedLogs.reduce((sum, l) => sum + l.Daily_Rate, 0);
+    }, [editedLogs]);
 
     // Initialize edit fields when modal opens or override state changes
     const startEditing = () => {
@@ -277,7 +396,8 @@ export default function ProductTimelineModal({
         today.setHours(0, 0, 0, 0);
 
         while (current <= endDate) {
-            const dateStr = current.toISOString().split('T')[0];
+            // Use local time for dateStr to avoid UTC timezone shift (midnight CET = 23:00 UTC prev day)
+            const dateStr = `${current.getFullYear()}-${String(current.getMonth() + 1).padStart(2, '0')}-${String(current.getDate()).padStart(2, '0')}`;
             const dow = current.getDay();
             const isWeekend = dow === 0 || dow === 6;
             const isHoliday = holidays.has(dateStr);
@@ -672,18 +792,54 @@ export default function ProductTimelineModal({
                         </div>
                     ))}
                     <div style={{ marginLeft: 'auto', display: 'flex', gap: '6px' }}>
-                        <button onClick={expandAll} style={{
-                            padding: '6px 12px', borderRadius: '8px', border: '1px solid #e2e8f0',
-                            background: 'white', cursor: 'pointer', fontSize: '12px', color: '#64748b'
-                        }}>
-                            <ChevronDown size={14} style={{ verticalAlign: 'middle' }} /> Sve
-                        </button>
-                        <button onClick={collapseAll} style={{
-                            padding: '6px 12px', borderRadius: '8px', border: '1px solid #e2e8f0',
-                            background: 'white', cursor: 'pointer', fontSize: '12px', color: '#64748b'
-                        }}>
-                            <ChevronUp size={14} style={{ verticalAlign: 'middle' }} /> Skupi
-                        </button>
+                        {onOverrideWorkLogs && !isEditingTimeline && (
+                            <button onClick={startTimelineEdit} style={{
+                                padding: '6px 12px', borderRadius: '8px', border: '1px solid #6366f1',
+                                background: 'rgba(99,102,241,0.1)', cursor: 'pointer', fontSize: '12px',
+                                color: '#6366f1', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '4px'
+                            }}>
+                                <Edit3 size={13} /> Uredi Timeline
+                            </button>
+                        )}
+                        {isEditingTimeline && (
+                            <>
+                                <span style={{ fontSize: '12px', color: '#6366f1', fontWeight: 600, padding: '6px 0', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                    Ukupno: {editedTotalCost.toLocaleString('hr-HR')} KM
+                                </span>
+                                <button onClick={cancelTimelineEdit} disabled={savingTimeline} style={{
+                                    padding: '6px 12px', borderRadius: '8px', border: '1px solid #e2e8f0',
+                                    background: 'white', cursor: 'pointer', fontSize: '12px', color: '#64748b',
+                                    display: 'flex', alignItems: 'center', gap: '4px'
+                                }}>
+                                    <X size={13} /> Odustani
+                                </button>
+                                <button onClick={handleSaveTimeline} disabled={savingTimeline} style={{
+                                    padding: '6px 12px', borderRadius: '8px', border: 'none',
+                                    background: '#6366f1', cursor: savingTimeline ? 'wait' : 'pointer',
+                                    fontSize: '12px', color: 'white', fontWeight: 600,
+                                    display: 'flex', alignItems: 'center', gap: '4px',
+                                    opacity: savingTimeline ? 0.7 : 1
+                                }}>
+                                    <Save size={13} /> {savingTimeline ? 'Spremam...' : 'Sačuvaj'}
+                                </button>
+                            </>
+                        )}
+                        {!isEditingTimeline && (
+                            <>
+                                <button onClick={expandAll} style={{
+                                    padding: '6px 12px', borderRadius: '8px', border: '1px solid #e2e8f0',
+                                    background: 'white', cursor: 'pointer', fontSize: '12px', color: '#64748b'
+                                }}>
+                                    <ChevronDown size={14} style={{ verticalAlign: 'middle' }} /> Sve
+                                </button>
+                                <button onClick={collapseAll} style={{
+                                    padding: '6px 12px', borderRadius: '8px', border: '1px solid #e2e8f0',
+                                    background: 'white', cursor: 'pointer', fontSize: '12px', color: '#64748b'
+                                }}>
+                                    <ChevronUp size={14} style={{ verticalAlign: 'middle' }} /> Skupi
+                                </button>
+                            </>
+                        )}
                     </div>
                 </div>
 
@@ -803,8 +959,110 @@ export default function ProductTimelineModal({
                                         </div>
                                     </div>
 
-                                    {/* Expanded entries */}
-                                    {isExpanded && hasEntries && (
+                                    {/* Expanded entries — EDITING MODE */}
+                                    {isExpanded && isEditingTimeline && (() => {
+                                        const dayLogs = editedLogsByDate.get(day.date) || [];
+                                        const availableWorkers = workers.filter(w =>
+                                            (w.Status === 'Aktivan' || w.Status === 'Dostupan') &&
+                                            !dayLogs.some(l => l.Worker_ID === w.Worker_ID)
+                                        );
+                                        return (
+                                            <div style={{
+                                                padding: '8px 14px 12px',
+                                                borderTop: `1px solid ${cfg.border}`,
+                                                background: 'rgba(255,255,255,0.8)',
+                                                display: 'flex', flexDirection: 'column', gap: '6px'
+                                            }}>
+                                                {dayLogs.map(log => (
+                                                    <div key={log.id} style={{
+                                                        display: 'flex', alignItems: 'center', gap: '10px',
+                                                        padding: '8px 12px', background: '#dcfce7',
+                                                        borderRadius: '8px', border: '1px solid #86efac'
+                                                    }}>
+                                                        <User size={16} style={{ color: '#166534', flexShrink: 0 }} />
+                                                        <span style={{ fontWeight: 600, fontSize: '13px', color: '#0f172a', flex: 1 }}>
+                                                            {log.Worker_Name}
+                                                        </span>
+                                                        <input
+                                                            type="number"
+                                                            value={log.Daily_Rate}
+                                                            onChange={(e) => updateLogRate(log.id, parseFloat(e.target.value) || 0)}
+                                                            onClick={(e) => e.stopPropagation()}
+                                                            style={{
+                                                                width: '80px', padding: '4px 8px', borderRadius: '6px',
+                                                                border: '2px solid #6366f1', fontSize: '13px',
+                                                                fontWeight: 700, textAlign: 'right', outline: 'none'
+                                                            }}
+                                                        />
+                                                        <span style={{ fontSize: '12px', color: '#6b7280' }}>KM</span>
+                                                        <button
+                                                            onClick={(e) => { e.stopPropagation(); removeLog(log.id); }}
+                                                            style={{
+                                                                padding: '4px', borderRadius: '6px', border: '1px solid #fca5a5',
+                                                                background: '#fee2e2', cursor: 'pointer', display: 'flex'
+                                                            }}
+                                                        >
+                                                            <Trash2 size={12} style={{ color: '#dc2626' }} />
+                                                        </button>
+                                                    </div>
+                                                ))}
+
+                                                {/* Add worker button */}
+                                                {addingWorkerDay === day.date ? (
+                                                    <div style={{
+                                                        display: 'flex', gap: '6px', flexWrap: 'wrap',
+                                                        padding: '8px', background: '#f0f9ff', borderRadius: '8px'
+                                                    }} onClick={e => e.stopPropagation()}>
+                                                        {availableWorkers.length > 0 ? availableWorkers.map(w => (
+                                                            <button key={w.Worker_ID} onClick={() => addWorkerToDay(day.date, w)} style={{
+                                                                padding: '4px 10px', fontSize: '12px', borderRadius: '6px',
+                                                                border: '1px solid #93c5fd', background: 'white',
+                                                                cursor: 'pointer', fontWeight: 500, color: '#1e40af'
+                                                            }}>
+                                                                {w.Name} ({w.Daily_Rate || 0} KM)
+                                                            </button>
+                                                        )) : (
+                                                            <span style={{ fontSize: '12px', color: '#6b7280' }}>Svi radnici su već dodani</span>
+                                                        )}
+                                                        <button onClick={() => setAddingWorkerDay(null)} style={{
+                                                            padding: '4px 6px', borderRadius: '6px', border: '1px solid #e2e8f0',
+                                                            background: 'white', cursor: 'pointer', display: 'flex'
+                                                        }}>
+                                                            <X size={12} />
+                                                        </button>
+                                                    </div>
+                                                ) : (
+                                                    <div style={{ display: 'flex', gap: '6px' }}>
+                                                        <button
+                                                            onClick={(e) => { e.stopPropagation(); setAddingWorkerDay(day.date); }}
+                                                            style={{
+                                                                display: 'flex', alignItems: 'center', gap: '4px',
+                                                                padding: '6px 12px', borderRadius: '6px',
+                                                                border: '1px dashed #93c5fd', background: '#f0f9ff',
+                                                                cursor: 'pointer', fontSize: '12px', color: '#2563eb', fontWeight: 500
+                                                            }}
+                                                        >
+                                                            <Plus size={12} /> Dodaj radnika
+                                                        </button>
+                                                        <button
+                                                            onClick={(e) => { e.stopPropagation(); removeDay(day.date); }}
+                                                            style={{
+                                                                display: 'flex', alignItems: 'center', gap: '4px',
+                                                                padding: '6px 12px', borderRadius: '6px',
+                                                                border: '1px dashed #fca5a5', background: '#fef2f2',
+                                                                cursor: 'pointer', fontSize: '12px', color: '#dc2626', fontWeight: 500
+                                                            }}
+                                                        >
+                                                            <Trash2 size={12} /> Obriši dan
+                                                        </button>
+                                                    </div>
+                                                )}
+                                            </div>
+                                        );
+                                    })()}
+
+                                    {/* Expanded entries — READ MODE */}
+                                    {isExpanded && !isEditingTimeline && hasEntries && (
                                         <div style={{
                                             padding: '8px 14px 12px',
                                             borderTop: `1px solid ${cfg.border}`,
@@ -835,7 +1093,6 @@ export default function ProductTimelineModal({
                                                             <span style={{ fontSize: '13px', fontWeight: 600, color: '#166534' }}>
                                                                 {entry.dailyRate?.toLocaleString('hr-HR')} KM
                                                             </span>
-                                                            {/* Edit button */}
                                                             {onAttendanceChange && entry.workerId && (
                                                                 <button
                                                                     onClick={(e) => { e.stopPropagation(); setEditingEntry({ date: day.date, workerId: entry.workerId! }); }}
@@ -854,7 +1111,7 @@ export default function ProductTimelineModal({
                                                     {/* Absent worker */}
                                                     {entry.type === 'absent_worker' && (() => {
                                                         const sc = getStatusConfig(entry.attendanceStatus || '');
-                                                        const isEditing = editingEntry?.date === day.date && editingEntry?.workerId === entry.workerId;
+                                                        const isEditingAtt = editingEntry?.date === day.date && editingEntry?.workerId === entry.workerId;
                                                         return (
                                                             <div style={{
                                                                 display: 'flex', alignItems: 'center', gap: '10px',
@@ -873,7 +1130,7 @@ export default function ProductTimelineModal({
                                                                     }}>{sc.label}</span>
                                                                 </div>
 
-                                                                {isEditing ? (
+                                                                {isEditingAtt ? (
                                                                     <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }} onClick={e => e.stopPropagation()}>
                                                                         {ATTENDANCE_OPTIONS.map(opt => (
                                                                             <button
@@ -960,6 +1217,50 @@ export default function ProductTimelineModal({
                                 </div>
                             );
                         })
+                    )}
+
+                    {/* Add new day — only in editing mode */}
+                    {isEditingTimeline && (
+                        <div style={{
+                            display: 'flex', alignItems: 'center', gap: '8px',
+                            padding: '10px 14px', marginTop: '4px',
+                            background: '#f0f9ff', borderRadius: '10px',
+                            border: '1px dashed #93c5fd'
+                        }}>
+                            <Plus size={14} style={{ color: '#2563eb' }} />
+                            <span style={{ fontSize: '13px', color: '#1e40af', fontWeight: 500 }}>
+                                Dodaj novi dan:
+                            </span>
+                            <input
+                                type="date"
+                                value={newDayDate}
+                                onChange={(e) => setNewDayDate(e.target.value)}
+                                onClick={(e) => e.stopPropagation()}
+                                style={{
+                                    padding: '4px 8px', borderRadius: '6px',
+                                    border: '1px solid #93c5fd', fontSize: '13px',
+                                    outline: 'none'
+                                }}
+                            />
+                            <button
+                                onClick={() => {
+                                    if (!newDayDate) return;
+                                    setExpandedDays(prev => { const next = new Set(Array.from(prev)); next.add(newDayDate); return next; });
+                                    setAddingWorkerDay(newDayDate);
+                                    setNewDayDate('');
+                                }}
+                                disabled={!newDayDate}
+                                style={{
+                                    padding: '4px 12px', borderRadius: '6px',
+                                    border: 'none', background: newDayDate ? '#2563eb' : '#94a3b8',
+                                    color: 'white', fontSize: '12px', fontWeight: 600,
+                                    cursor: newDayDate ? 'pointer' : 'not-allowed',
+                                    display: 'flex', alignItems: 'center', gap: '4px'
+                                }}
+                            >
+                                <Plus size={12} /> Dodaj
+                            </button>
+                        </div>
                     )}
                 </div>
 

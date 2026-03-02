@@ -58,6 +58,7 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
     const [notes, setNotes] = useState('');
     const [offerCurrency, setOfferCurrency] = useState<'KM' | 'EUR'>('KM');
     const [offerLanguage, setOfferLanguage] = useState<'bs' | 'en'>('bs');
+    const [isSaving, setIsSaving] = useState(false); // Double-save guard
 
     // Extras Modal State
     const [extrasModal, setExtrasModal] = useState(false);
@@ -196,8 +197,16 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
             p => !productIdsInAcceptedOffers.has(p.Product_ID)
         );
 
+        // DEDUP FIX: Remove duplicate products by Product_ID
+        const seenIds = new Set<string>();
+        const uniqueProducts = availableProducts.filter(p => {
+            if (seenIds.has(p.Product_ID)) return false;
+            seenIds.add(p.Product_ID);
+            return true;
+        });
+
         // Initialize products with offer-specific fields
-        const products: OfferProductState[] = availableProducts.map(p => ({
+        const products: OfferProductState[] = uniqueProducts.map(p => ({
             Product_ID: p.Product_ID,
             Product_Name: p.Name,
             Quantity: p.Quantity || 1,
@@ -335,6 +344,9 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
     // ============================================
 
     async function handleSaveOffer() {
+        // DOUBLE-SAVE GUARD: Prevent duplicate offer creation from rapid clicks
+        if (isSaving) return;
+
         if (!selectedProjectId) {
             showToast('Odaberite projekat', 'error');
             return;
@@ -345,6 +357,8 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
             showToast('Označite barem jedan proizvod', 'error');
             return;
         }
+
+        setIsSaving(true);
 
         const offerData = {
             Project_ID: selectedProjectId,
@@ -413,6 +427,8 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
                 showToast(result.message, 'error');
             }
         }
+
+        setIsSaving(false);
     }
 
     // ============================================
@@ -540,8 +556,13 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
         const project = projects.find(pr => pr.Project_ID === fullOffer.Project_ID);
         const projectProducts = project?.products || [];
 
-        // Load products from the offer
-        const products: OfferProductState[] = (fullOffer.products || []).map(p => {
+        // Load products from the offer — DEDUP by Product_ID
+        const seenProductIds = new Set<string>();
+        const products: OfferProductState[] = (fullOffer.products || []).filter(p => {
+            if (seenProductIds.has(p.Product_ID)) return false;
+            seenProductIds.add(p.Product_ID);
+            return true;
+        }).map(p => {
             // Fall back to fresh product Material_Cost when offer value is 0
             const freshProduct = projectProducts.find(pp => pp.Product_ID === p.Product_ID);
             const materialCost = p.Material_Cost || freshProduct?.Material_Cost || 0;
@@ -1389,9 +1410,9 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
                         <button
                             className="glass-btn glass-btn-primary"
                             onClick={handleSaveOffer}
-                            disabled={!selectedProjectId || offerProducts.filter(p => p.included).length === 0}
+                            disabled={isSaving || !selectedProjectId || offerProducts.filter(p => p.included).length === 0}
                         >
-                            {isEditMode ? 'Ažuriraj Ponudu' : 'Sačuvaj Ponudu'}
+                            {isSaving ? 'Spremanje...' : (isEditMode ? 'Ažuriraj Ponudu' : 'Sačuvaj Ponudu')}
                         </button>
                     </>
                 }

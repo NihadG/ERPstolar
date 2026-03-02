@@ -47,6 +47,14 @@ import type {
 } from './types';
 import { ALLOWED_ORDER_TRANSITIONS } from './types';
 
+// Shared service modules (architecture upgrade)
+import { assembleProjectGraph, assembleOrders, assembleWorkOrders, groupBy } from './services/shared/dataAssembler';
+import {
+    generateOfferNumber as _generateOfferNumber,
+    generateOrderNumber as _generateOrderNumber,
+    generateWorkOrderNumber as _generateWorkOrderNumber,
+} from './services/shared/idGenerator';
+
 // ============================================
 // HELPER: GET FIRESTORE WITH NULL CHECK
 // ============================================
@@ -94,22 +102,14 @@ export function generateUUID(): string {
     return uuidv4();
 }
 
+// Collision-safe ID generators — delegated to shared/idGenerator.ts
+// Uses timestamp+random instead of random-only (was limited to 1000 values/day)
 export function generateOfferNumber(): string {
-    const now = new Date();
-    const year = now.getFullYear();
-    const month = String(now.getMonth() + 1).padStart(2, '0');
-    const day = String(now.getDate()).padStart(2, '0');
-    const random = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
-    return `P-${year}${month}${day}-${random}`;
+    return _generateOfferNumber();
 }
 
 export function generateOrderNumber(): string {
-    const now = new Date();
-    const year = now.getFullYear();
-    const month = String(now.getMonth() + 1).padStart(2, '0');
-    const day = String(now.getDate()).padStart(2, '0');
-    const random = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
-    return `N-${year}${month}${day}-${random}`;
+    return _generateOrderNumber();
 }
 
 // ============================================
@@ -201,125 +201,22 @@ export async function getAllData(organizationId: string): Promise<AppState> {
         const taskProfiles = taskProfilesSnap.docs.map(doc => ({ ...doc.data() } as TaskProfile));
 
         // ============================================
-        // OPTIMIZATION: Build Maps for O(1) lookups instead of O(n²) filters
+        // SHARED ASSEMBLY PIPELINE (replaces 130 lines of duplicated code)
+        // Single source of truth: lib/services/shared/dataAssembler.ts
         // ============================================
 
-        // Group glass items by Product_Material_ID
-        const glassItemsByMaterial = new Map<string, GlassItem[]>();
-        glassItems.forEach(gi => {
-            const key = gi.Product_Material_ID;
-            if (!glassItemsByMaterial.has(key)) glassItemsByMaterial.set(key, []);
-            glassItemsByMaterial.get(key)!.push(gi);
+        // Assemble project graph (products → materials → glass/alu, offers → products → extras)
+        assembleProjectGraph({
+            projects, products, productMaterials,
+            glassItems, aluDoorItems,
+            offers, offerProducts, offerExtras
         });
 
-        // Group alu door items by Product_Material_ID
-        const aluDoorItemsByMaterial = new Map<string, AluDoorItem[]>();
-        aluDoorItems.forEach(adi => {
-            const key = adi.Product_Material_ID;
-            if (!aluDoorItemsByMaterial.has(key)) aluDoorItemsByMaterial.set(key, []);
-            aluDoorItemsByMaterial.get(key)!.push(adi);
-        });
+        // Assemble orders with items
+        assembleOrders(orders, orderItems);
 
-        // Group product materials by Product_ID
-        const materialsByProduct = new Map<string, ProductMaterial[]>();
-        productMaterials.forEach(pm => {
-            // Attach glass/alu items using pre-built maps (O(1) lookup)
-            pm.glassItems = glassItemsByMaterial.get(pm.ID) || [];
-            pm.aluDoorItems = aluDoorItemsByMaterial.get(pm.ID) || [];
-
-            const key = pm.Product_ID;
-            if (!materialsByProduct.has(key)) materialsByProduct.set(key, []);
-            materialsByProduct.get(key)!.push(pm);
-        });
-
-        // Group products by Project_ID
-        const productsByProject = new Map<string, Product[]>();
-        products.forEach(p => {
-            // Attach materials using pre-built map (O(1) lookup)
-            p.materials = materialsByProduct.get(p.Product_ID) || [];
-
-            const key = p.Project_ID;
-            if (!productsByProject.has(key)) productsByProject.set(key, []);
-            productsByProject.get(key)!.push(p);
-        });
-
-        // Group offers by Project_ID
-        const offersByProject = new Map<string, Offer[]>();
-        offers.forEach(o => {
-            const key = o.Project_ID;
-            if (!offersByProject.has(key)) offersByProject.set(key, []);
-            offersByProject.get(key)!.push(o);
-        });
-
-        // Group offer products by Offer_ID
-        const offerProductsByOffer = new Map<string, OfferProduct[]>();
-        offerProducts.forEach(op => {
-            const key = op.Offer_ID;
-            if (!offerProductsByOffer.has(key)) offerProductsByOffer.set(key, []);
-            offerProductsByOffer.get(key)!.push(op);
-        });
-
-        // Group offer extras by Offer_Product_ID
-        const extrasByOfferProduct = new Map<string, OfferExtra[]>();
-        offerExtras.forEach(e => {
-            const key = e.Offer_Product_ID;
-            if (!extrasByOfferProduct.has(key)) extrasByOfferProduct.set(key, []);
-            extrasByOfferProduct.get(key)!.push(e);
-        });
-
-        // Group order items by Order_ID
-        const itemsByOrder = new Map<string, OrderItem[]>();
-        orderItems.forEach(item => {
-            const key = item.Order_ID;
-            if (!itemsByOrder.has(key)) itemsByOrder.set(key, []);
-            itemsByOrder.get(key)!.push(item);
-        });
-
-        // Group work order items by Work_Order_ID
-        const itemsByWorkOrder = new Map<string, WorkOrderItem[]>();
-        workOrderItems.forEach(item => {
-            const key = item.Work_Order_ID;
-            if (!itemsByWorkOrder.has(key)) itemsByWorkOrder.set(key, []);
-            itemsByWorkOrder.get(key)!.push(item);
-        });
-
-        // Build projects map for quick lookup
-        const projectsMap = new Map<string, Project>();
-        projects.forEach(p => projectsMap.set(p.Project_ID, p));
-
-        // ============================================
-        // Attach related data using O(1) Map lookups
-        // ============================================
-
-        // Attach products and offers to projects
-        projects.forEach(project => {
-            project.products = productsByProject.get(project.Project_ID) || [];
-            project.offers = offersByProject.get(project.Project_ID) || [];
-        });
-
-        // Add client info and products to offers
-        offers.forEach(offer => {
-            const project = projectsMap.get(offer.Project_ID);
-            if (project) {
-                offer.Client_Name = project.Client_Name;
-            }
-            // Attach offer products with their extras
-            const prods = offerProductsByOffer.get(offer.Offer_ID) || [];
-            prods.forEach(prod => {
-                (prod as any).extras = extrasByOfferProduct.get(prod.ID) || [];
-            });
-            (offer as any).products = prods;
-        });
-
-        // Attach items to orders
-        orders.forEach(order => {
-            order.items = itemsByOrder.get(order.Order_ID) || [];
-        });
-
-        // Attach items to work orders
-        workOrders.forEach(wo => {
-            wo.items = itemsByWorkOrder.get(wo.Work_Order_ID) || [];
-        });
+        // Assemble work orders with items
+        assembleWorkOrders(workOrders, workOrderItems);
 
         return {
             projects,
@@ -390,73 +287,12 @@ export async function getProjects(organizationId: string): Promise<Project[]> {
     const offerProducts = offerProductsSnap.docs.map(doc => ({ ...doc.data() } as OfferProduct));
     const offerExtras = offerExtrasSnap.docs.map(doc => ({ ...doc.data() } as OfferExtra));
 
-    // Build maps for O(1) lookups (same logic as getAllData)
-    const glassItemsByMaterial = new Map<string, GlassItem[]>();
-    glassItems.forEach(gi => {
-        const key = gi.Product_Material_ID;
-        if (!glassItemsByMaterial.has(key)) glassItemsByMaterial.set(key, []);
-        glassItemsByMaterial.get(key)!.push(gi);
-    });
-
-    const aluDoorItemsByMaterial = new Map<string, AluDoorItem[]>();
-    aluDoorItems.forEach(adi => {
-        const key = adi.Product_Material_ID;
-        if (!aluDoorItemsByMaterial.has(key)) aluDoorItemsByMaterial.set(key, []);
-        aluDoorItemsByMaterial.get(key)!.push(adi);
-    });
-
-    const materialsByProduct = new Map<string, ProductMaterial[]>();
-    productMaterials.forEach(pm => {
-        pm.glassItems = glassItemsByMaterial.get(pm.ID) || [];
-        pm.aluDoorItems = aluDoorItemsByMaterial.get(pm.ID) || [];
-        const key = pm.Product_ID;
-        if (!materialsByProduct.has(key)) materialsByProduct.set(key, []);
-        materialsByProduct.get(key)!.push(pm);
-    });
-
-    const productsByProject = new Map<string, Product[]>();
-    products.forEach(p => {
-        p.materials = materialsByProduct.get(p.Product_ID) || [];
-        const key = p.Project_ID;
-        if (!productsByProject.has(key)) productsByProject.set(key, []);
-        productsByProject.get(key)!.push(p);
-    });
-
-    const offersByProject = new Map<string, Offer[]>();
-    offers.forEach(o => {
-        const key = o.Project_ID;
-        if (!offersByProject.has(key)) offersByProject.set(key, []);
-        offersByProject.get(key)!.push(o);
-    });
-
-    // Build offer product and extras maps (mirrors getAllData logic)
-    const offerProductsByOffer = new Map<string, OfferProduct[]>();
-    offerProducts.forEach(op => {
-        const key = op.Offer_ID;
-        if (!offerProductsByOffer.has(key)) offerProductsByOffer.set(key, []);
-        offerProductsByOffer.get(key)!.push(op);
-    });
-
-    const extrasByOfferProduct = new Map<string, OfferExtra[]>();
-    offerExtras.forEach(e => {
-        const key = e.Offer_Product_ID;
-        if (!extrasByOfferProduct.has(key)) extrasByOfferProduct.set(key, []);
-        extrasByOfferProduct.get(key)!.push(e);
-    });
-
-    // Attach offer products (with extras) to offers
-    offers.forEach(offer => {
-        const prods = offerProductsByOffer.get(offer.Offer_ID) || [];
-        prods.forEach(prod => {
-            (prod as any).extras = extrasByOfferProduct.get(prod.ID) || [];
-        });
-        (offer as any).products = prods;
-    });
-
-    // Attach assembled products and offers to projects
-    projects.forEach(project => {
-        project.products = productsByProject.get(project.Project_ID) || [];
-        project.offers = offersByProject.get(project.Project_ID) || [];
+    // SHARED ASSEMBLY PIPELINE (replaces 80 lines of duplicated code)
+    // Single source of truth: lib/services/shared/dataAssembler.ts
+    assembleProjectGraph({
+        projects, products, productMaterials,
+        glassItems, aluDoorItems,
+        offers, offerProducts, offerExtras
     });
 
     return projects;
@@ -554,7 +390,11 @@ export async function deleteProject(projectId: string, organizationId: string): 
             await deleteProductMaterials(product.Product_ID, organizationId);
         }
 
-        // Delete products
+        // ATOMIC: Collect all product + project doc refs, then delete in a single batch
+        // This prevents orphaned products if the project delete fails mid-loop
+        const deleteBatch = writeBatch(db);
+
+        // Queue product deletions
         for (const product of products) {
             const pq = query(
                 collection(db, COLLECTIONS.PRODUCTS),
@@ -563,11 +403,11 @@ export async function deleteProject(projectId: string, organizationId: string): 
             );
             const pSnap = await getDocs(pq);
             if (!pSnap.empty) {
-                await deleteDoc(pSnap.docs[0].ref);
+                deleteBatch.delete(pSnap.docs[0].ref);
             }
         }
 
-        // Delete project
+        // Queue project deletion
         const q = query(
             collection(db, COLLECTIONS.PROJECTS),
             where('Project_ID', '==', projectId),
@@ -575,8 +415,11 @@ export async function deleteProject(projectId: string, organizationId: string): 
         );
         const snapshot = await getDocs(q);
         if (!snapshot.empty) {
-            await deleteDoc(snapshot.docs[0].ref);
+            deleteBatch.delete(snapshot.docs[0].ref);
         }
+
+        // Commit all deletes atomically
+        await deleteBatch.commit();
 
         return { success: true, message: 'Projekat obrisan sa svim povezanim narudžbama' };
     } catch (error) {
@@ -1113,12 +956,128 @@ export async function saveMaterial(data: Partial<Material>, organizationId: stri
                 const { Organization_ID, ...updateData } = data;
                 await updateDoc(snapshot.docs[0].ref, updateData as Record<string, unknown>);
             }
+
+            // REACTIVE: Propagate price/name/supplier changes to ALL ProductMaterial records
+            // This ensures editing a material in Resources immediately updates all products using it
+            try {
+                await propagateMaterialPriceChange(data.Material_ID!, data, organizationId);
+            } catch (propErr) {
+                console.warn('Material propagation warning (non-critical):', propErr);
+            }
         }
 
         return { success: true, data: { Material_ID: data.Material_ID! }, message: isNew ? 'Materijal kreiran' : 'Materijal ažuriran' };
     } catch (error) {
         console.error('saveMaterial error:', error);
         return { success: false, message: 'Greška pri spremanju materijala' };
+    }
+}
+
+/**
+ * REACTIVE PROPAGATION: When a material's master data changes (price, name, supplier),
+ * cascade the update to ALL ProductMaterial records that reference it.
+ * 
+ * Rules:
+ * - Materials with Status 'Primljeno' (received) are FROZEN — price locked at receipt time
+ * - All other materials get the new Unit_Price, Material_Name, and Supplier
+ * - Total_Price is recalculated as Quantity × new Unit_Price
+ * - Affected products have their Material_Cost recalculated
+ * - Active work orders containing those products are recalculated
+ */
+async function propagateMaterialPriceChange(
+    materialId: string,
+    updatedData: Partial<Material>,
+    organizationId: string
+): Promise<void> {
+    const firestore = getDb();
+
+    // 1. Find ALL ProductMaterial records referencing this material
+    const pmQuery = query(
+        collection(firestore, COLLECTIONS.PRODUCT_MATERIALS),
+        where('Material_ID', '==', materialId),
+        where('Organization_ID', '==', organizationId)
+    );
+    const pmSnap = await getDocs(pmQuery);
+
+    if (pmSnap.empty) return; // No products use this material
+
+    const affectedProductIds = new Set<string>();
+    let updatedCount = 0;
+
+    for (const pmDoc of pmSnap.docs) {
+        const pm = pmDoc.data();
+
+        // SKIP frozen materials (already received — price locked at receipt)
+        if (pm.Status === 'Primljeno') continue;
+
+        // Build update payload — only update fields that changed
+        const pmUpdate: Record<string, unknown> = {};
+
+        if (updatedData.Default_Unit_Price !== undefined && pm.Unit_Price !== updatedData.Default_Unit_Price) {
+            pmUpdate.Unit_Price = updatedData.Default_Unit_Price;
+            // Recalculate Total_Price = Quantity × new Unit_Price
+            pmUpdate.Total_Price = (pm.Quantity || 0) * updatedData.Default_Unit_Price;
+        }
+
+        if (updatedData.Name !== undefined && pm.Material_Name !== updatedData.Name) {
+            pmUpdate.Material_Name = updatedData.Name;
+        }
+
+        if (updatedData.Default_Supplier !== undefined && pm.Supplier !== updatedData.Default_Supplier) {
+            pmUpdate.Supplier = updatedData.Default_Supplier;
+        }
+
+        // Only write if something actually changed
+        if (Object.keys(pmUpdate).length > 0) {
+            await updateDoc(pmDoc.ref, pmUpdate);
+            updatedCount++;
+            if (pm.Product_ID) {
+                affectedProductIds.add(pm.Product_ID);
+            }
+        }
+    }
+
+    if (updatedCount === 0) return; // Nothing changed
+
+    console.log(`[MATERIAL PROPAGATION] Updated ${updatedCount} ProductMaterial records for Material ${materialId}`);
+
+    // 2. Recalculate Material_Cost for each affected product
+    const affectedWoIds = new Set<string>();
+    for (const productId of Array.from(affectedProductIds)) {
+        // Recalculate product cost (this updates the Product document)
+        const materials = await getProductMaterials(productId, organizationId);
+        const totalCost = materials.reduce((sum, m) => sum + (m.Total_Price || 0), 0);
+
+        const productQuery = query(
+            collection(firestore, COLLECTIONS.PRODUCTS),
+            where('Product_ID', '==', productId),
+            where('Organization_ID', '==', organizationId)
+        );
+        const productSnap = await getDocs(productQuery);
+        if (!productSnap.empty) {
+            await updateDoc(productSnap.docs[0].ref, { Material_Cost: totalCost });
+        }
+
+        // Find work orders containing this product
+        const woItemsQ = query(
+            collection(firestore, COLLECTIONS.WORK_ORDER_ITEMS),
+            where('Product_ID', '==', productId),
+            where('Organization_ID', '==', organizationId)
+        );
+        const woItemsSnap = await getDocs(woItemsQ);
+        woItemsSnap.docs.forEach(d => {
+            const woId = d.data().Work_Order_ID;
+            if (woId) affectedWoIds.add(woId);
+        });
+    }
+
+    // 3. Recalculate ALL affected work orders (profit, margin, etc.)
+    if (affectedWoIds.size > 0) {
+        const { recalculateWorkOrder } = await import('./attendance');
+        for (const woId of Array.from(affectedWoIds)) {
+            await recalculateWorkOrder(woId);
+        }
+        console.log(`[MATERIAL PROPAGATION] Recalculated ${affectedWoIds.size} work orders`);
     }
 }
 
@@ -1314,6 +1273,35 @@ export async function saveWorker(data: Partial<Worker>, organizationId: string):
 
                 const { Organization_ID, ...updateData } = data;
                 await updateDoc(snapshot.docs[0].ref, updateData as Record<string, unknown>);
+
+                // BUG-4 FIX: Auto-propagate Daily_Rate change to TODAY's work logs
+                if (rateChanged && data.Worker_ID) {
+                    try {
+                        const { resplitWorkerDailyRate, formatLocalDateISO, recalculateWorkOrder } = await import('./attendance');
+                        const today = formatLocalDateISO();
+                        await resplitWorkerDailyRate(data.Worker_ID, today, organizationId);
+
+                        // Find and recalculate all affected work orders
+                        const logsQ = query(
+                            collection(db, 'work_logs'),
+                            where('Worker_ID', '==', data.Worker_ID),
+                            where('Date', '==', today),
+                            where('Organization_ID', '==', organizationId)
+                        );
+                        const logsSnap = await getDocs(logsQ);
+                        const affectedWoIds = new Set<string>();
+                        logsSnap.docs.forEach(d => {
+                            const woId = d.data().Work_Order_ID;
+                            if (woId) affectedWoIds.add(woId);
+                        });
+                        for (const woId of Array.from(affectedWoIds)) {
+                            await recalculateWorkOrder(woId);
+                        }
+                        console.log(`[RATE PROPAGATION] Worker ${data.Worker_ID}: ${oldRate}→${newRate} KM, updated ${logsSnap.size} work logs, recalculated ${affectedWoIds.size} WOs`);
+                    } catch (propErr) {
+                        console.warn('Daily_Rate propagation warning (non-critical):', propErr);
+                    }
+                }
             }
         }
 
@@ -1576,7 +1564,11 @@ export async function createOfferWithProducts(offerData: any, organizationId: st
             Language: offerData.Language || 'bs',
         };
 
-        await addDoc(collection(db, COLLECTIONS.OFFERS), offer);
+        // ATOMIC: Write offer + all products + all extras in a single batch
+        const batch = writeBatch(db);
+
+        const offerRef = doc(collection(db, COLLECTIONS.OFFERS));
+        batch.set(offerRef, offer);
 
         // Add products and their extras
         for (const product of products) {
@@ -1616,11 +1608,12 @@ export async function createOfferWithProducts(offerData: any, organizationId: st
                 Labor_Daily_Rate: parseFloat(product.Labor_Daily_Rate) || 0,
             };
 
-            await addDoc(collection(db, COLLECTIONS.OFFER_PRODUCTS), offerProduct);
+            const prodRef = doc(collection(db, COLLECTIONS.OFFER_PRODUCTS));
+            batch.set(prodRef, offerProduct);
 
             // Add extras for this product
             for (const extra of product.Extras || []) {
-                const extraDoc: OfferExtra & { Organization_ID: string } = {
+                const extraData: OfferExtra & { Organization_ID: string } = {
                     ID: generateUUID(),
                     Organization_ID: organizationId,
                     Offer_Product_ID: productId,
@@ -1631,9 +1624,12 @@ export async function createOfferWithProducts(offerData: any, organizationId: st
                     Total: parseFloat(extra.total) || 0,
                 };
 
-                await addDoc(collection(db, COLLECTIONS.OFFER_EXTRAS), extraDoc);
+                const extraRef = doc(collection(db, COLLECTIONS.OFFER_EXTRAS));
+                batch.set(extraRef, extraData);
             }
         }
+
+        await batch.commit();
 
         return { success: true, data: { Offer_ID: offerId, Offer_Number: offerNumber }, message: 'Ponuda kreirana' };
     } catch (error) {
@@ -1714,8 +1710,12 @@ export async function updateOfferWithProducts(offerData: any, organizationId: st
             validUntil = new Date(validUntil).toISOString();
         }
 
-        // Update offer document
-        await updateDoc(offerSnap.docs[0].ref, {
+        // ATOMIC: Delete old products/extras + create new ones in a single batch
+        // Prevents data loss if a write fails mid-update
+        const batch = writeBatch(db);
+
+        // Step 1: Update offer document
+        batch.update(offerSnap.docs[0].ref, {
             Name: offerData.Name || '',
             Transport_Cost: transportCost,
             Onsite_Assembly: offerData.Onsite_Assembly || false,
@@ -1730,7 +1730,7 @@ export async function updateOfferWithProducts(offerData: any, organizationId: st
             Language: offerData.Language || 'bs',
         });
 
-        // Delete existing offer products and their extras
+        // Step 2: Queue deletion of existing offer products and their extras
         const productsQ = query(
             collection(db, COLLECTIONS.OFFER_PRODUCTS),
             where('Offer_ID', '==', offerId),
@@ -1740,7 +1740,7 @@ export async function updateOfferWithProducts(offerData: any, organizationId: st
 
         for (const productDoc of productsSnap.docs) {
             const productData = productDoc.data();
-            // Delete extras for this product
+            // Queue deletion of extras for this product
             const extrasQ = query(
                 collection(db, COLLECTIONS.OFFER_EXTRAS),
                 where('Offer_Product_ID', '==', productData.ID),
@@ -1748,13 +1748,13 @@ export async function updateOfferWithProducts(offerData: any, organizationId: st
             );
             const extrasSnap = await getDocs(extrasQ);
             for (const extraDoc of extrasSnap.docs) {
-                await deleteDoc(extraDoc.ref);
+                batch.delete(extraDoc.ref);
             }
-            // Delete the product
-            await deleteDoc(productDoc.ref);
+            // Queue deletion of the product
+            batch.delete(productDoc.ref);
         }
 
-        // Re-create products with new calculations
+        // Step 3: Queue creation of new products with calculations
         for (const product of products) {
             const productId = generateUUID();
             const materialCost = parseFloat(product.Material_Cost) || 0;
@@ -1792,11 +1792,12 @@ export async function updateOfferWithProducts(offerData: any, organizationId: st
                 Labor_Daily_Rate: parseFloat(product.Labor_Daily_Rate) || 0,
             };
 
-            await addDoc(collection(db, COLLECTIONS.OFFER_PRODUCTS), offerProduct);
+            const prodRef = doc(collection(db, COLLECTIONS.OFFER_PRODUCTS));
+            batch.set(prodRef, offerProduct);
 
-            // Add extras for this product
+            // Queue creation of extras for this product
             for (const extra of product.Extras || []) {
-                const extraDoc: OfferExtra & { Organization_ID: string } = {
+                const extraData: OfferExtra & { Organization_ID: string } = {
                     ID: generateUUID(),
                     Organization_ID: organizationId,
                     Offer_Product_ID: productId,
@@ -1807,9 +1808,13 @@ export async function updateOfferWithProducts(offerData: any, organizationId: st
                     Total: parseFloat(extra.total) || 0,
                 };
 
-                await addDoc(collection(db, COLLECTIONS.OFFER_EXTRAS), extraDoc);
+                const extraRef = doc(collection(db, COLLECTIONS.OFFER_EXTRAS));
+                batch.set(extraRef, extraData);
             }
         }
+
+        // Commit all changes atomically
+        await batch.commit();
 
         // SYNC: If offer is accepted, propagate updated prices to WO items
         const currentOfferStatus = offerSnap.docs[0].data().Status || offerData.Status;
@@ -2068,10 +2073,12 @@ export async function createOrder(
             Notes: data.Notes || '',
         };
 
-        await addDoc(collection(db, COLLECTIONS.ORDERS), order);
-
-        // Add items — material statuses stay 'Nije naručeno' until markOrderSent
+        // ATOMIC: Write order + all items in a single batch
         const itemsBatch = writeBatch(db);
+
+        // Add order document to the batch (was previously a separate addDoc)
+        const orderRef = doc(collection(db, COLLECTIONS.ORDERS));
+        itemsBatch.set(orderRef, order);
 
         for (const item of data.items || []) {
             const allMaterialIdsForItem = extractMaterialIds(item as OrderItem);
@@ -3198,14 +3205,9 @@ export async function deleteAluDoorItemsByMaterial(productMaterialId: string): P
 // WORK ORDERS CRUD (Multi-tenancy enabled)
 // ============================================
 
+// Collision-safe work order number — delegated to shared/idGenerator.ts
 export function generateWorkOrderNumber(type?: 'Proizvodnja' | 'Montaža'): string {
-    const now = new Date();
-    const year = now.getFullYear();
-    const month = String(now.getMonth() + 1).padStart(2, '0');
-    const day = String(now.getDate()).padStart(2, '0');
-    const random = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
-    const prefix = type === 'Montaža' ? 'MN' : 'RN';
-    return `${prefix}-${year}${month}${day}-${random}`;
+    return _generateWorkOrderNumber(type);
 }
 
 export async function getWorkOrders(organizationId: string): Promise<WorkOrder[]> {
@@ -3313,7 +3315,13 @@ export async function createWorkOrder(data: {
             ...(data.Profit_Margin && { Profit_Margin: data.Profit_Margin }),
         };
 
-        await addDoc(collection(db, COLLECTIONS.WORK_ORDERS), workOrder);
+        // ATOMIC: Write work order + all items in a single batch
+        // Prevents orphaned items if a write fails mid-operation
+        const batch = writeBatch(db);
+
+        // Add work order document
+        const woRef = doc(collection(db, COLLECTIONS.WORK_ORDERS));
+        batch.set(woRef, workOrder);
 
         // Add items with process assignments
         for (const item of data.items) {
@@ -3355,8 +3363,11 @@ export async function createWorkOrder(data: {
                 Planned_Labor_Cost: item.Planned_Labor_Cost ?? 0,
                 ...(item.Source_Work_Order_ID && { Source_Work_Order_ID: item.Source_Work_Order_ID }),
             };
-            await addDoc(collection(db, COLLECTIONS.WORK_ORDER_ITEMS), workOrderItem);
+            const itemRef = doc(collection(db, COLLECTIONS.WORK_ORDER_ITEMS));
+            batch.set(itemRef, workOrderItem);
         }
+
+        await batch.commit();
 
         return { success: true, data: { Work_Order_ID: workOrderId, Work_Order_Number: workOrderNumber }, message: 'Radni nalog kreiran' };
     } catch (error) {
@@ -3772,13 +3783,20 @@ export async function startWorkOrder(workOrderId: string, organizationId: string
 
         // All validations passed - start the work order
         const now = new Date();
+        // PRESERVE original Started_At — don't reset it on re-start
+        // This ensures the timeline is accurate even after worker changes or pauses
+        const effectiveStartedAt = workOrderData.Started_At || now.toISOString();
+        const effectiveStartDate = workOrderData.Started_At
+            ? new Date(workOrderData.Started_At).toISOString().split('T')[0]
+            : now.toISOString().split('T')[0];
+
         await updateDoc(snapshot.docs[0].ref, {
             Status: 'U toku',
-            Started_At: now.toISOString(),
+            Started_At: effectiveStartedAt,
             // Auto-schedule in Planer if not already scheduled
             ...(!workOrderData.Is_Scheduled && {
                 Is_Scheduled: true,
-                Planned_Start_Date: now.toISOString().split('T')[0],
+                Planned_Start_Date: effectiveStartDate,
                 Planned_End_Date: workOrderData.Due_Date || new Date(now.getTime() + 7 * 86400000).toISOString().split('T')[0],
                 Scheduled_At: now.toISOString(),
             }),

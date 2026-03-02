@@ -219,13 +219,22 @@ export default function PlannerTab({ workOrders, workers, onRefresh, showToast }
         return map;
     }, [scheduled, allWorkers]);
 
-    const getBarPosition = (wo: WorkOrder): { left: number; width: number } | null => {
+    const getBarPosition = (wo: WorkOrder): { left: number; width: number; plannedWidth?: number; isOverdue?: boolean } | null => {
         if (!wo.Planned_Start_Date) return null;
 
         const oStart = new Date(wo.Planned_Start_Date);
-        const oEnd = wo.Planned_End_Date ? new Date(wo.Planned_End_Date) : oStart;
+        let oEnd = wo.Planned_End_Date ? new Date(wo.Planned_End_Date) : oStart;
         oStart.setHours(0, 0, 0, 0);
         oEnd.setHours(0, 0, 0, 0);
+
+        // ADAPTIVE: For active orders past deadline, extend bar to today
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const isOverdue = wo.Status === 'U toku' && today > oEnd;
+        const plannedEnd = new Date(oEnd);
+        if (isOverdue) {
+            oEnd = today;
+        }
 
         const vStart = visibleDates[0];
         const vEnd = visibleDates[visibleDates.length - 1];
@@ -234,12 +243,14 @@ export default function PlannerTab({ workOrders, workers, onRefresh, showToast }
 
         const startDayOffset = Math.max(0, (oStart.getTime() - vStart.getTime()) / 86400000);
         const endDayOffset = Math.min(days, (oEnd.getTime() - vStart.getTime()) / 86400000 + 1);
+        const plannedEndOffset = Math.min(days, (plannedEnd.getTime() - vStart.getTime()) / 86400000 + 1);
 
         const left = startDayOffset * cellWidth;
         const width = (endDayOffset - startDayOffset) * cellWidth;
+        const plannedWidth = isOverdue ? (plannedEndOffset - startDayOffset) * cellWidth : undefined;
 
         if (width <= 0) return null;
-        return { left, width };
+        return { left, width, plannedWidth, isOverdue };
     };
 
     // Navigation
@@ -341,10 +352,16 @@ export default function PlannerTab({ workOrders, workers, onRefresh, showToast }
         setConflictModal({ open: false, conflicts: [], pendingSchedule: null });
     };
 
-    // Detail Panel functions
+    // Detail Panel functions — always read fresh data from workOrders prop
     const openDetailPanel = (wo: WorkOrder) => {
         setDetailPanel({ open: true, wo });
     };
+
+    // Keep detail panel data fresh when workOrders prop changes
+    const detailWoId = detailPanel.wo?.Work_Order_ID;
+    const detailWo = detailWoId
+        ? workOrders.find(w => w.Work_Order_ID === detailWoId) || detailPanel.wo
+        : null;
 
     const closeDetailPanel = () => setDetailPanel({ open: false, wo: null });
 
@@ -565,15 +582,40 @@ export default function PlannerTab({ workOrders, workers, onRefresh, showToast }
                                                 return (
                                                     <div
                                                         key={wo.Work_Order_ID}
-                                                        className={`gantt-bar ${deadlineStatus !== 'ok' ? `deadline-${deadlineStatus}` : ''}`}
+                                                        className={`gantt-bar ${deadlineStatus !== 'ok' ? `deadline-${deadlineStatus}` : ''} ${pos.isOverdue ? 'overdue-bar' : ''}`}
                                                         style={{
                                                             left: pos.left + 2,
                                                             width: pos.width - 4,
-                                                            backgroundColor: color
+                                                            backgroundColor: pos.isOverdue ? 'transparent' : color
                                                         }}
                                                         title={`${getProjectName(wo)} (${wo.Work_Order_Number})${deadlineStatus === 'overdue' ? ' ⚠️ ROK PREKORAČEN!' : deadlineStatus === 'approaching' ? ' ⏰ Rok se približava' : ''}`}
                                                         onClick={() => openDetailPanel(wo)}
                                                     >
+                                                        {/* Overdue bar: show planned (green) + overdue (striped red) portions */}
+                                                        {pos.isOverdue && pos.plannedWidth ? (
+                                                            <>
+                                                                <div style={{
+                                                                    position: 'absolute',
+                                                                    left: 0,
+                                                                    top: 0,
+                                                                    bottom: 0,
+                                                                    width: Math.max(0, pos.plannedWidth - 4),
+                                                                    backgroundColor: color,
+                                                                    borderRadius: '6px 0 0 6px',
+                                                                    zIndex: 0
+                                                                }} />
+                                                                <div style={{
+                                                                    position: 'absolute',
+                                                                    left: Math.max(0, pos.plannedWidth - 4),
+                                                                    top: 0,
+                                                                    bottom: 0,
+                                                                    right: 0,
+                                                                    background: `repeating-linear-gradient(135deg, ${color}, ${color} 3px, rgba(239,68,68,0.6) 3px, rgba(239,68,68,0.6) 6px)`,
+                                                                    borderRadius: '0 6px 6px 0',
+                                                                    zIndex: 0
+                                                                }} />
+                                                            </>
+                                                        ) : null}
                                                         <div className="bar-content">
                                                             <span className="bar-project">
                                                                 {deadlineStatus === 'overdue' && <AlertTriangle size={10} style={{ marginRight: 3, color: '#fff' }} />}
@@ -664,21 +706,21 @@ export default function PlannerTab({ workOrders, workers, onRefresh, showToast }
             )}
 
             {/* Detail Panel */}
-            {detailPanel.open && detailPanel.wo && typeof document !== 'undefined' && createPortal(
+            {detailPanel.open && detailWo && typeof document !== 'undefined' && createPortal(
                 <div className="planner-modal-overlay" onClick={closeDetailPanel}>
                     <div className="planner-modal detail-modal" onClick={e => e.stopPropagation()}>
                         <div className="modal-header">
                             <div className="header-info">
-                                <h3>{getProjectName(detailPanel.wo)}</h3>
-                                <span className="order-num">{detailPanel.wo.Work_Order_Number}</span>
+                                <h3>{getProjectName(detailWo)}</h3>
+                                <span className="order-num">{detailWo.Work_Order_Number}</span>
                             </div>
                             <button className="close-btn" onClick={closeDetailPanel}><X size={20} /></button>
                         </div>
                         <div className="modal-body">
                             {/* Status */}
-                            <div className="status-badge" style={{ backgroundColor: getStatusColor(detailPanel.wo) }}>
+                            <div className="status-badge" style={{ backgroundColor: getStatusColor(detailWo) }}>
                                 {(() => {
-                                    const info = getStatusLabel(detailPanel.wo);
+                                    const info = getStatusLabel(detailWo);
                                     const Icon = info.icon;
                                     return <><Icon size={14} /> {info.text}</>;
                                 })()}
@@ -688,32 +730,32 @@ export default function PlannerTab({ workOrders, workers, onRefresh, showToast }
                             <div className="dates-grid">
                                 <div className="date-item">
                                     <span className="date-label">Kreiran</span>
-                                    <span className="date-value">{detailPanel.wo.Created_Date?.split('T')[0] || '—'}</span>
+                                    <span className="date-value">{detailWo.Created_Date?.split('T')[0] || '—'}</span>
                                 </div>
                                 <div className="date-item">
                                     <span className="date-label">Početak</span>
-                                    <span className="date-value">{detailPanel.wo.Started_At?.split('T')[0] || detailPanel.wo.Planned_Start_Date || '—'}</span>
+                                    <span className="date-value">{detailWo.Started_At?.split('T')[0] || detailWo.Planned_Start_Date || '—'}</span>
                                 </div>
                                 <div className="date-item">
                                     <span className="date-label">Završeno</span>
-                                    <span className="date-value">{detailPanel.wo.Completed_At?.split('T')[0] || '—'}</span>
+                                    <span className="date-value">{detailWo.Completed_At?.split('T')[0] || '—'}</span>
                                 </div>
                                 <div className="date-item editable" style={{ cursor: 'pointer', position: 'relative' }}
                                     onClick={() => {
-                                        const input = document.getElementById(`planer-due-date-${detailPanel.wo!.Work_Order_ID}`) as HTMLInputElement;
+                                        const input = document.getElementById(`planer-due-date-${detailWo!.Work_Order_ID}`) as HTMLInputElement;
                                         if (input) input.showPicker();
                                     }}
                                 >
                                     <span className="date-label">Rok <Edit2 size={9} style={{ marginLeft: 2, opacity: 0.5 }} /></span>
-                                    <span className="date-value deadline">{detailPanel.wo.Due_Date?.split('T')[0] || '—'}</span>
+                                    <span className="date-value deadline">{detailWo.Due_Date?.split('T')[0] || '—'}</span>
                                     <input
-                                        id={`planer-due-date-${detailPanel.wo.Work_Order_ID}`}
+                                        id={`planer-due-date-${detailWo.Work_Order_ID}`}
                                         type="date"
-                                        value={detailPanel.wo.Due_Date?.split('T')[0] || ''}
+                                        value={detailWo.Due_Date?.split('T')[0] || ''}
                                         onChange={async (e) => {
                                             const val = e.target.value;
                                             if (!val || !orgId) return;
-                                            const res = await updateDueDate(detailPanel.wo!.Work_Order_ID, val, orgId);
+                                            const res = await updateDueDate(detailWo!.Work_Order_ID, val, orgId);
                                             if (res.success) {
                                                 showToast('Rok ažuriran', 'success');
                                                 closeDetailPanel();
@@ -730,9 +772,9 @@ export default function PlannerTab({ workOrders, workers, onRefresh, showToast }
 
                             {/* Products */}
                             <div className="detail-section">
-                                <h4><Box size={16} /> Proizvodi ({detailPanel.wo.items?.length || 0})</h4>
+                                <h4><Box size={16} /> Proizvodi ({detailWo.items?.length || 0})</h4>
                                 <div className="products-list">
-                                    {detailPanel.wo.items?.map((item, idx) => {
+                                    {detailWo.items?.map((item, idx) => {
                                         const hasSubTasks = item.SubTasks && item.SubTasks.length > 0;
 
                                         // For items with SubTasks, show SubTask-level detail
@@ -784,7 +826,7 @@ export default function PlannerTab({ workOrders, workers, onRefresh, showToast }
                                 <h4><User size={16} /> Radnici</h4>
                                 <div className="workers-list">
                                     {(() => {
-                                        const wids = getWorkerIds(detailPanel.wo);
+                                        const wids = getWorkerIds(detailWo);
                                         if (wids.length === 0) return <p className="empty-msg">Nema dodijeljenih radnika</p>;
                                         return wids.map(wid => {
                                             const w = workers.find(x => x.Worker_ID === wid);
@@ -805,25 +847,25 @@ export default function PlannerTab({ workOrders, workers, onRefresh, showToast }
 
                             {/* Quick Actions */}
                             <div className="quick-actions">
-                                {detailPanel.wo.Status === 'Na čekanju' && (() => {
+                                {detailWo.Status === 'Na čekanju' && (() => {
                                     const today = new Date();
                                     today.setHours(0, 0, 0, 0);
-                                    const plannedStart = detailPanel.wo.Planned_Start_Date ? new Date(detailPanel.wo.Planned_Start_Date) : today;
+                                    const plannedStart = detailWo.Planned_Start_Date ? new Date(detailWo.Planned_Start_Date) : today;
                                     plannedStart.setHours(0, 0, 0, 0);
                                     const canStart = plannedStart <= today;
                                     if (!canStart) {
                                         return (
-                                            <p className="cannot-start-msg">⏳ Nalog zakazan za {detailPanel.wo.Planned_Start_Date}</p>
+                                            <p className="cannot-start-msg">⏳ Nalog zakazan za {detailWo.Planned_Start_Date}</p>
                                         );
                                     }
                                     return (
-                                        <button className="action-btn start" onClick={() => { startOrder(detailPanel.wo!); closeDetailPanel(); }}>
+                                        <button className="action-btn start" onClick={() => { startOrder(detailWo!); closeDetailPanel(); }}>
                                             <Play size={16} /> Pokreni proizvodnju
                                         </button>
                                     );
                                 })()}
-                                {detailPanel.wo.Status !== 'U toku' ? (
-                                    <button className="action-btn remove" onClick={() => { unschedule(detailPanel.wo!); closeDetailPanel(); }}>
+                                {detailWo.Status !== 'U toku' ? (
+                                    <button className="action-btn remove" onClick={() => { unschedule(detailWo!); closeDetailPanel(); }}>
                                         <X size={16} /> Ukloni iz planera
                                     </button>
                                 ) : (

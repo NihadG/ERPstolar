@@ -25,7 +25,7 @@ import { SearchableSelect } from '@/components/ui/SearchableSelect';
 import ProductTimelineModal from '@/components/ui/ProductTimelineModal';
 import ProjectMaterialsModal from '@/components/ui/ProjectMaterialsModal';
 import { useData } from '@/context/DataContext';
-import { syncAllProjectData } from '@/lib/attendance';
+import { syncAllProjectData, overrideWorkLogs } from '@/lib/attendance';
 import { PROJECT_STATUSES, PRODUCTION_STEPS, MATERIAL_CATEGORIES } from '@/lib/types';
 import { useIsMobile } from '@/hooks/useIsMobile';
 import MobileProjectsView from './mobile/MobileProjectsView';
@@ -47,7 +47,8 @@ interface ProjectsTabProps {
 }
 
 export default function ProjectsTab({ projects, materials, workOrders = [], offers = [], workLogs = [], onRefresh, showToast, onNavigateToTasks }: ProjectsTabProps) {
-    const { organizationId } = useData();
+    const { organizationId, appState } = useData();
+    const allWorkers = appState.workers || [];
     const [searchTerm, setSearchTerm] = useState('');
     const [statusFilter, setStatusFilter] = useState('');
     const [expandedProjectId, setExpandedProjectId] = useState<string | null>(null);
@@ -1070,6 +1071,22 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                     laborCost={timelineProduct?.laborCost}
                     profit={timelineProduct?.profit}
                     profitMargin={timelineProduct?.profitMargin}
+                    workers={allWorkers}
+                    onOverrideWorkLogs={async (entries) => {
+                        const woItem = timelineProduct?.workOrderItem;
+                        if (!woItem?.Work_Order_ID || !woItem?.ID || !organizationId) {
+                            return { success: false, message: 'Nedostaju podaci' };
+                        }
+                        const result = await overrideWorkLogs(woItem.Work_Order_ID, woItem.ID, entries, organizationId, timelineProduct?.product.Product_ID);
+                        if (result.success) {
+                            showToast('Timeline ažuriran', 'success');
+                            onRefresh('workOrders');
+                            setTimelineProduct(null);
+                        } else {
+                            showToast(result.message, 'error');
+                        }
+                        return result;
+                    }}
                 />
             </>
         );
@@ -2231,6 +2248,22 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                     } else {
                         showToast(result.message || 'Greška pri spremanju', 'error');
                     }
+                }}
+                workers={allWorkers}
+                onOverrideWorkLogs={async (entries) => {
+                    const woItem = timelineProduct?.workOrderItem;
+                    if (!woItem?.Work_Order_ID || !woItem?.ID || !organizationId) {
+                        return { success: false, message: 'Nedostaju podaci' };
+                    }
+                    const result = await overrideWorkLogs(woItem.Work_Order_ID, woItem.ID, entries, organizationId, timelineProduct?.product.Product_ID);
+                    if (result.success) {
+                        showToast('Timeline ažuriran', 'success');
+                        onRefresh('workOrders');
+                        setTimelineProduct(null);
+                    } else {
+                        showToast(result.message, 'error');
+                    }
+                    return result;
                 }}
             />
 

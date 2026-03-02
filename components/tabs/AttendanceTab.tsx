@@ -78,7 +78,16 @@ export default function AttendanceTab({ workers, onRefresh, showToast }: Attenda
         setLoadedMonths(initialMonths);
         initialMonths.forEach(m => loadMonth(m.year, m.month));
 
-        // Scroll to today after data load (handled by another effect)
+        // Auto-scroll to today after data loads
+        setTimeout(() => scrollToDate(formatLocalDateISO(today)), 500);
+
+        // Auto-populate Sundays for loaded months
+        if (organizationId) {
+            initialMonths.forEach(m => {
+                autoPopulateWeekends(workers, m.year, m.month, organizationId)
+                    .catch(err => console.warn('Auto Sunday fill error:', err));
+            });
+        }
     }, []);
 
     async function loadMonth(year: number, month: number) {
@@ -129,36 +138,7 @@ export default function AttendanceTab({ workers, onRefresh, showToast }: Attenda
         return activeWorkers.filter(w => w.Name.toLowerCase().includes(search));
     }, [activeWorkers, searchTerm]);
 
-    // Auto-scroll to today when viewing current month (Removed, handled by table layout logic if needed)
-    // useEffect(() => {
-    // }, [isCurrentMonth, attendanceData]);
 
-    // Calculate statistics for ALL loaded months
-    const stats = useMemo(() => {
-        let prisutan = 0;
-        let teren = 0;
-        let odsutan = 0;
-        let bolovanje = 0;
-        let odmor = 0;
-        let vikend = 0;
-
-        // Iterate over cache to get stats
-        Object.values(attendanceCache).forEach(monthData => {
-            monthData.forEach(a => {
-                if (a.Status === 'Prisutan') prisutan++;
-                else if (a.Status === 'Teren') teren++;
-                else if (a.Status === 'Odsutan') odsutan++;
-                else if (a.Status === 'Bolovanje') bolovanje++;
-                else if (a.Status === 'Odmor') odmor++;
-                else if (a.Status === 'Vikend') vikend++;
-            });
-        });
-
-        const total = prisutan + teren;
-        const workDays = activeWorkers.length * flattenedDays.filter(d => d.dayOfWeek !== 0 && d.dayOfWeek !== 6).length;
-        const attendanceRate = workDays > 0 ? Math.round((total / workDays) * 100) : 0;
-        return { prisutan, teren, odsutan, bolovanje, odmor, vikend, total, attendanceRate };
-    }, [attendanceCache, activeWorkers, flattenedDays]);
 
     // Scroll to a specific date
     function scrollToDate(dateStr: string) {
@@ -441,7 +421,7 @@ export default function AttendanceTab({ workers, onRefresh, showToast }: Attenda
             if (totalChanges > 0 && organizationId) {
                 try {
                     const { recalculateAllActiveWorkOrders } = await import('@/lib/attendance');
-                    await recalculateAllActiveWorkOrders(organizationId);
+                    await recalculateAllActiveWorkOrders(organizationId, { includeCompleted: true });
                 } catch (recalcError) {
                     console.error('Batch recalculation failed:', recalcError);
                 }
@@ -498,19 +478,6 @@ export default function AttendanceTab({ workers, onRefresh, showToast }: Attenda
                             }}
                         />
                     </div>
-                    {/* Bulk Danas button removed as it is specific to one day, can use header click instead */}
-                    <button className="glass-btn" onClick={() => {
-                        const todayInfo = flattenedDays.find(d => d.dateStr === todayStr);
-                        if (todayInfo) openBulkEditModal(todayInfo);
-                    }} style={{ padding: '8px 14px', fontWeight: 600 }}>
-                        <Users size={16} />
-                        Bulk Danas
-                    </button>
-
-                    <button className="glass-btn glass-btn-primary" onClick={handleAutoPopulateWeekends} disabled={loading} style={{ padding: '8px 14px' }}>
-                        <Coffee size={16} />
-                        Vikendi (Učitani)
-                    </button>
 
                     <button
                         className="glass-btn"
@@ -522,41 +489,6 @@ export default function AttendanceTab({ workers, onRefresh, showToast }: Attenda
                         <Database size={16} />
                         Sync Work Logs
                     </button>
-                </div>
-            </div>
-
-            {/* Stats Bar */}
-            <div style={{
-                display: 'flex',
-                gap: '12px',
-                marginBottom: '16px',
-                flexWrap: 'wrap'
-            }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 16px', background: '#dcfce7', borderRadius: '10px', border: '1px solid #86efac' }}>
-                    <CheckCircle2 size={18} style={{ color: '#166534' }} />
-                    <span style={{ fontWeight: 600, color: '#166534' }}>{stats.prisutan}</span>
-                    <span style={{ fontSize: '12px', color: '#166534' }}>Prisutni</span>
-                </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 16px', background: '#dbeafe', borderRadius: '10px', border: '1px solid #93c5fd' }}>
-                    <Car size={18} style={{ color: '#1e40af' }} />
-                    <span style={{ fontWeight: 600, color: '#1e40af' }}>{stats.teren}</span>
-                    <span style={{ fontSize: '12px', color: '#1e40af' }}>Teren</span>
-                </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 16px', background: '#fee2e2', borderRadius: '10px', border: '1px solid #fca5a5' }}>
-                    <XCircle size={18} style={{ color: '#991b1b' }} />
-                    <span style={{ fontWeight: 600, color: '#991b1b' }}>{stats.odsutan}</span>
-                    <span style={{ fontSize: '12px', color: '#991b1b' }}>Odsutni</span>
-                </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 16px', background: '#e0e7ff', borderRadius: '10px', border: '1px solid #a5b4fc' }}>
-                    <Coffee size={18} style={{ color: '#4338ca' }} />
-                    <span style={{ fontWeight: 600, color: '#4338ca' }}>{stats.vikend}</span>
-                    <span style={{ fontSize: '12px', color: '#4338ca' }}>Vikend</span>
-                </div>
-                <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 16px', background: 'linear-gradient(135deg, #f0f9ff, #e0f2fe)', borderRadius: '10px', border: '1px solid #7dd3fc' }}>
-                    <span style={{ fontSize: '13px', color: '#0369a1' }}>Prisustvo:</span>
-                    <span style={{ fontWeight: 700, fontSize: '16px', color: stats.attendanceRate >= 80 ? '#166534' : stats.attendanceRate >= 50 ? '#ca8a04' : '#991b1b' }}>
-                        {stats.attendanceRate}%
-                    </span>
                 </div>
             </div>
 

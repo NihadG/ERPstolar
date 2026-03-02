@@ -501,86 +501,75 @@ export async function markAttendanceAndRecalculate(
 
         const firestore = getDb();
 
-        // 2. If worker is present (Prisutan or Teren), create work logs for all active items
+        // ═══════════════════════════════════════════════════════════════
+        // REACTIVE PATTERN: DELETE-BEFORE-CREATE
+        // 
+        // ALWAYS delete existing work logs first, then create fresh ones.
+        // This handles ALL status transition scenarios:
+        //   Prisutan → Teren:  old production logs deleted, montaža logs created
+        //   Teren → Prisutan:  old montaža logs deleted, production logs created
+        //   Prisutan → Odsutan: all logs deleted
+        //   Odsutan → Prisutan: fresh production logs created
+        //
+        // This is the standard ERP reconciliation pattern — idempotent
+        // and always produces correct results regardless of previous state.
+        // ═══════════════════════════════════════════════════════════════
+
+        // STEP 1: Find which WOs had logs BEFORE deletion (for recalculation later)
+        try {
+            const existingLogsQ = query(
+                collection(firestore, 'work_logs'),
+                where('Worker_ID', '==', attendance.Worker_ID),
+                where('Date', '==', attendance.Date),
+                where('Organization_ID', '==', attendance.Organization_ID)
+            );
+            const existingLogsSnap = await getDocs(existingLogsQ);
+            existingLogsSnap.docs.forEach(d => {
+                const woId = d.data().Work_Order_ID;
+                if (woId) affectedWorkOrderIds.add(woId);
+            });
+        } catch (err) {
+            console.warn('Pre-deletion WO lookup failed:', err);
+        }
+
+        // STEP 2: DELETE all existing work logs for this worker+date (clean slate)
+        try {
+            const cleanupResult = await deleteWorkLogsForWorkerOnDate(
+                attendance.Worker_ID,
+                attendance.Date,
+                attendance.Organization_ID
+            );
+            workLogsDeleted = cleanupResult.deleted;
+            if (workLogsDeleted > 0) {
+                console.log(`[ATTENDANCE] Cleaned ${workLogsDeleted} old work logs for ${attendance.Worker_Name} on ${attendance.Date}`);
+            }
+        } catch (deleteError) {
+            console.error('Work log cleanup during attendance change failed:', deleteError);
+        }
+
+        // STEP 3: CREATE fresh work logs based on current status
         if (attendance.Status === 'Prisutan' || attendance.Status === 'Teren') {
-            // Get worker's daily rate
             const workers = await getWorkers(attendance.Organization_ID);
             const worker = workers.find(w => w.Worker_ID === attendance.Worker_ID);
             const dailyRate = worker?.Daily_Rate || 0;
             const workerName = attendance.Worker_Name || worker?.Name || 'Unknown';
 
-            // Create work logs for all active work order items where worker is assigned
-            // NOW HANDLES BACKDATED ATTENDANCE (Checks Start/End dates instead of just Status)
+            // CREATE work logs with WO type filter:
+            //   Prisutan → ONLY on Proizvodnja orders (factory work)
+            //   Teren    → ONLY on Montaža orders (field work)
             const result = await createWorkLogsForAttendance(
                 attendance.Worker_ID,
                 workerName,
                 dailyRate,
                 attendance.Date,
-                attendance.Organization_ID
+                attendance.Organization_ID,
+                attendance.Status // Pass status to filter by WO type
             );
 
             workLogsCreated = result.created;
             result.affectedWorkOrderIds.forEach(id => affectedWorkOrderIds.add(id));
 
-            console.log(`Attendance marked: ${workerName} - ${attendance.Status} on ${attendance.Date}. Work logs created: ${result.created}, skipped: ${result.skipped}`);
-        } else {
-            // 3. NON-WORKING STATUS: Delete any existing work logs for this worker/date
-            // This handles retroactive corrections (e.g., changing Prisutan → Odsutan)
-            try {
-                // BEFORE deleting, find which WOs might be affected so we can recalculate them
-                // We need to find WOs active on this date where this worker IS assigned
-                // Same logic as createWorkLogsForAttendance
-                if (!options?.skipRecalculation) {
-                    const targetDate = new Date(attendance.Date);
-                    targetDate.setHours(0, 0, 0, 0);
-
-                    // Find WOs active on this date
-                    const woQuery = query(
-                        collection(firestore, COLLECTIONS.WORK_ORDERS),
-                        where('Organization_ID', '==', attendance.Organization_ID),
-                        where('Status', 'in', ['U toku', 'Završeno'])
-                    );
-                    const woSnap = await getDocs(woQuery);
-
-                    for (const doc of woSnap.docs) {
-                        const wo = doc.data() as WorkOrder;
-                        // Date check
-                        if (!wo.Started_At) continue;
-                        const start = new Date(wo.Started_At); start.setHours(0, 0, 0, 0);
-                        if (start > targetDate) continue;
-                        if (wo.Status === 'Završeno' && wo.Completed_At) {
-                            const end = new Date(wo.Completed_At); end.setHours(23, 59, 59, 999);
-                            if (end < targetDate) continue;
-                        }
-
-                        // Check items for assignment
-                        const itemsQuery = query(
-                            collection(firestore, COLLECTIONS.WORK_ORDER_ITEMS),
-                            where('Work_Order_ID', '==', wo.Work_Order_ID),
-                            where('Organization_ID', '==', attendance.Organization_ID)
-                        );
-                        const itemsSnap = await getDocs(itemsQuery);
-                        const isAssigned = itemsSnap.docs.some(d => isWorkerAssignedToItem(d.data() as WorkOrderItem, attendance.Worker_ID!));
-
-                        if (isAssigned) {
-                            affectedWorkOrderIds.add(wo.Work_Order_ID);
-                        }
-                    }
-                }
-
-                const cleanupResult = await deleteWorkLogsForWorkerOnDate(
-                    attendance.Worker_ID,
-                    attendance.Date,
-                    attendance.Organization_ID
-                );
-                workLogsDeleted = cleanupResult.deleted;
-                if (workLogsDeleted > 0) {
-                    console.log(`Attendance cleanup: Deleted ${workLogsDeleted} stale work logs for worker ${attendance.Worker_ID} on ${attendance.Date} (status: ${attendance.Status})`);
-                }
-            } catch (deleteError) {
-                console.error('Failed to delete work logs during attendance cleanup:', deleteError);
-                // Continue — attendance was already saved, best effort cleanup
-            }
+            console.log(`[ATTENDANCE] ${workerName}: ${attendance.Status} on ${attendance.Date}. Created: ${result.created}, Skipped: ${result.skipped}`);
         }
 
         // 4. RECALCULATE affected work orders so profit/labor cost stays fresh
@@ -646,7 +635,8 @@ export async function createWorkLogsForAttendance(
     workerName: string,
     dailyRate: number,
     date: string,
-    organizationId: string
+    organizationId: string,
+    attendanceStatus?: string // 'Prisutan' | 'Teren' — controls which WO types get logs
 ): Promise<{ created: number; skipped: number; affectedWorkOrderIds: string[] }> {
     if (!organizationId) {
         console.error('createWorkLogsForAttendance: organizationId is required');
@@ -698,6 +688,12 @@ export async function createWorkLogsForAttendance(
 
                 if (endDate < targetDate) continue; // Finished before this attendance date
             }
+
+            // FILTER BY WO TYPE based on attendance status:
+            //   Prisutan → Only Proizvodnja orders (factory work)
+            //   Teren    → Only Montaža orders (field work)
+            if (attendanceStatus === 'Teren' && wo.Work_Order_Type !== 'Montaža') continue;
+            if (attendanceStatus === 'Prisutan' && wo.Work_Order_Type === 'Montaža') continue;
 
             validWorkOrderIds.push(wo.Work_Order_ID);
         }
@@ -1322,21 +1318,61 @@ export async function backfillWorkLogsFromAttendance(
 
 
 /**
- * Assign workers to a Work Order Item
+ * Assign workers to a Work Order Item — WITH REACTIVE RECONCILIATION
+ * 
+ * When workers change, this function:
+ * 1. Diffs old vs new assignments to find added/removed workers
+ * 2. Deletes TODAY's work logs for removed workers (on this item only)
+ * 3. Re-splits daily rates for ALL affected workers (because split factor changed)
+ * 4. Creates work logs for newly added workers (if they have attendance today)
+ * 5. Recalculates the work order
+ * 
+ * CRITICAL: The item status is NEVER changed by this function.
+ * Workers can be changed while the order is "U toku" without stopping it.
  */
 export async function assignWorkersToItem(
     workOrderId: string,
     itemId: string,
-    workers: { Worker_ID: string; Worker_Name: string; Daily_Rate: number }[]
+    workers: { Worker_ID: string; Worker_Name: string; Daily_Rate: number }[],
+    organizationId?: string
 ): Promise<void> {
     try {
         const itemRef = await getItemRef(itemId);
+        const itemSnap = await getDoc(itemRef);
 
+        if (!itemSnap.exists()) {
+            throw new Error('Item ne postoji');
+        }
+
+        const itemData = itemSnap.data() as WorkOrderItem;
+        const orgId = organizationId || (itemData as any).Organization_ID || '';
+        const oldWorkers = itemData.Assigned_Workers || [];
+
+        // Write new workers FIRST (so recalculation uses the latest data)
         await updateDoc(itemRef, {
             Assigned_Workers: workers
         });
 
-        // Recalculate Work Order aggregates
+        // Compute diff: who was removed, who was added
+        const oldWorkerIds = new Set(oldWorkers.map(w => w.Worker_ID));
+        const newWorkerIds = new Set(workers.map(w => w.Worker_ID));
+
+        const removedWorkerIds = Array.from(oldWorkerIds).filter(id => !newWorkerIds.has(id));
+        const addedWorkerIds = Array.from(newWorkerIds).filter(id => !oldWorkerIds.has(id));
+
+        // REACTIVE: Reconcile work logs when workers change
+        if (orgId && (removedWorkerIds.length > 0 || addedWorkerIds.length > 0)) {
+            await reconcileWorkLogsAfterWorkerChange(
+                workOrderId,
+                itemId,
+                removedWorkerIds,
+                addedWorkerIds,
+                [...Array.from(newWorkerIds)],
+                orgId
+            );
+        }
+
+        // Recalculate Work Order aggregates (profit, labor cost, etc.)
         await recalculateWorkOrder(workOrderId);
     } catch (error) {
         console.error('Error assigning workers:', error);
@@ -1345,18 +1381,196 @@ export async function assignWorkersToItem(
 }
 
 /**
+ * REACTIVE RECONCILIATION: Clean up and regenerate work logs when worker assignments change.
+ * 
+ * This ensures that:
+ * - Removed workers' TODAY work logs for this item are deleted
+ * - All workers' daily rate splits are recalculated for today
+ * - Newly added workers get work logs created if they have attendance today
+ * 
+ * IMPORTANT: Historical work logs (past days) are NEVER touched.
+ * If Worker A worked Mon-Tue and was removed on Wed, Mon/Tue logs remain.
+ */
+async function reconcileWorkLogsAfterWorkerChange(
+    workOrderId: string,
+    itemId: string,
+    removedWorkerIds: string[],
+    addedWorkerIds: string[],
+    allNewWorkerIds: string[],
+    organizationId: string
+): Promise<void> {
+    const firestore = getDb();
+    const today = formatLocalDateISO();
+
+    console.log(`[WORKER RECONCILIATION] WO:${workOrderId} Item:${itemId} removed:${removedWorkerIds.length} added:${addedWorkerIds.length}`);
+
+    // 1. DELETE today's work logs for REMOVED workers (on this item ONLY)
+    for (const workerId of removedWorkerIds) {
+        await deleteWorkLogsForWorkerOnItem(workerId, itemId, today, organizationId);
+    }
+
+    // 2. RE-SPLIT daily rates for ALL affected workers
+    // When assignment count changes, the split factor changes for all workers.
+    // Must recalculate for: removed workers (they may still be on other items)
+    // and remaining + new workers (their split count changed)
+    const allAffectedWorkerIds = Array.from(new Set([...removedWorkerIds, ...allNewWorkerIds]));
+    for (const workerId of allAffectedWorkerIds) {
+        await resplitWorkerDailyRate(workerId, today, organizationId);
+    }
+
+    // 3. CREATE work logs for ADDED workers (if they have attendance today)
+    for (const workerId of addedWorkerIds) {
+        try {
+            // Check if worker has attendance today
+            const attendanceQ = query(
+                collection(firestore, COLLECTIONS.WORKER_ATTENDANCE),
+                where('Worker_ID', '==', workerId),
+                where('Date', '==', today),
+                where('Organization_ID', '==', organizationId)
+            );
+            const attendanceSnap = await getDocs(attendanceQ);
+            if (!attendanceSnap.empty) {
+                const att = attendanceSnap.docs[0].data();
+                const attStatus = att.Status;
+                // Only create if they're a working status
+                if (attStatus === 'Prisutan' || attStatus === 'Teren') {
+                    const allWorkers = await getWorkers(organizationId);
+                    const worker = allWorkers.find(w => w.Worker_ID === workerId);
+                    if (worker) {
+                        await createWorkLogsForAttendance(
+                            workerId,
+                            worker.Name || att.Worker_Name || 'Unknown',
+                            worker.Daily_Rate || 0,
+                            today,
+                            organizationId,
+                            attStatus
+                        );
+                    }
+                }
+            }
+        } catch (err) {
+            console.warn(`Work log creation for added worker ${workerId} failed (non-critical):`, err);
+        }
+    }
+}
+
+/**
+ * Delete work logs for a specific worker on a specific item on a specific date.
+ * More targeted than deleteWorkLogsForWorkerOnDate — doesn't affect other items.
+ */
+async function deleteWorkLogsForWorkerOnItem(
+    workerId: string,
+    workOrderItemId: string,
+    date: string,
+    organizationId: string
+): Promise<{ deleted: number }> {
+    try {
+        const firestore = getDb();
+        const q = query(
+            collection(firestore, 'work_logs'),
+            where('Worker_ID', '==', workerId),
+            where('Work_Order_Item_ID', '==', workOrderItemId),
+            where('Date', '==', date),
+            where('Organization_ID', '==', organizationId)
+        );
+        const snapshot = await getDocs(q);
+
+        if (snapshot.empty) return { deleted: 0 };
+
+        const batch = writeBatch(firestore);
+        snapshot.docs.forEach(d => batch.delete(d.ref));
+        await batch.commit();
+
+        console.log(`[WORKER RECONCILIATION] Deleted ${snapshot.size} work logs for worker ${workerId} on item ${workOrderItemId} on ${date}`);
+        return { deleted: snapshot.size };
+    } catch (error) {
+        console.error('deleteWorkLogsForWorkerOnItem error:', error);
+        return { deleted: 0 };
+    }
+}
+
+/**
+ * Re-split a worker's daily rate across ALL their active item assignments.
+ * 
+ * When a worker is added to or removed from an item, the split factor changes for ALL of their items.
+ * E.g., if Worker A (80 KM/day) was on 2 items (40 KM each) and gets added to a 3rd,
+ * ALL 3 items now get 80/3 = 26.67 KM.
+ * 
+ * This function:
+ * 1. Counts how many active items the worker is assigned to
+ * 2. Gets the worker's full Daily_Rate from the workers collection
+ * 3. Updates ALL work logs for this worker+date with the correct split
+ */
+export async function resplitWorkerDailyRate(
+    workerId: string,
+    date: string,
+    organizationId: string
+): Promise<void> {
+    try {
+        const firestore = getDb();
+
+        // Get worker's full daily rate
+        const allWorkers = await getWorkers(organizationId);
+        const worker = allWorkers.find(w => w.Worker_ID === workerId);
+        if (!worker || !worker.Daily_Rate) return;
+
+        const fullRate = worker.Daily_Rate;
+
+        // Find ALL work logs for this worker on this date
+        const logsQuery = query(
+            collection(firestore, 'work_logs'),
+            where('Worker_ID', '==', workerId),
+            where('Date', '==', date),
+            where('Organization_ID', '==', organizationId)
+        );
+        const logsSnap = await getDocs(logsQuery);
+
+        if (logsSnap.empty) return;
+
+        // Count total active assignments (= number of work logs for this date)
+        const totalAssignments = logsSnap.size;
+        const splitRate = Math.round((fullRate / totalAssignments) * 100) / 100;
+
+        // Update each log with new split rate
+        const batch = writeBatch(firestore);
+        logsSnap.docs.forEach(logDoc => {
+            batch.update(logDoc.ref, {
+                Daily_Rate: splitRate,
+                Original_Daily_Rate: fullRate,
+                Split_Factor: totalAssignments
+            });
+        });
+        await batch.commit();
+
+        console.log(`[RATE RESPLIT] Worker ${workerId} on ${date}: ${fullRate} KM ÷ ${totalAssignments} items = ${splitRate} KM each`);
+    } catch (error) {
+        console.error('resplitWorkerDailyRate error:', error);
+    }
+}
+
+/**
  * Start a Work Order Item
+ * PRESERVES existing Started_At — only sets it on first activation
+ * Accepts optional customDate for retroactive start setting
  */
 export async function startWorkOrderItem(
     workOrderId: string,
-    itemId: string
+    itemId: string,
+    options?: { customDate?: string }
 ): Promise<void> {
     try {
         const itemRef = await getItemRef(itemId);
+        const itemSnap = await getDoc(itemRef);
+        const existingStartedAt = itemSnap.exists() ? itemSnap.data()?.Started_At : undefined;
+
+        // Use customDate if provided, otherwise preserve existing or use now
+        const startDate = options?.customDate
+            ? new Date(options.customDate).toISOString()
+            : (existingStartedAt || new Date().toISOString());
 
         await updateDoc(itemRef, {
             Status: 'U toku',
-            Started_At: new Date().toISOString()
+            Started_At: startDate
         });
 
         await recalculateWorkOrder(workOrderId);
@@ -1368,11 +1582,12 @@ export async function startWorkOrderItem(
 
 /**
  * Complete a Work Order Item and calculate actual labor cost
- * FIX-3: Also freezes labor cost so backdated attendance won't retroactively change profit
+ * Accepts optional customDate for retroactive completion
  */
 export async function completeWorkOrderItem(
     workOrderId: string,
-    itemId: string
+    itemId: string,
+    options?: { customDate?: string }
 ): Promise<void> {
     try {
         const itemRef = await getItemRef(itemId);
@@ -1387,17 +1602,235 @@ export async function completeWorkOrderItem(
         // Calculate actual labor cost — pass Organization_ID for tenant isolation
         const actualLaborCost = await calculateActualLaborCost(item, item.Organization_ID);
 
+        const completionDate = options?.customDate
+            ? new Date(options.customDate).toISOString()
+            : new Date().toISOString();
+
         await updateDoc(itemRef, {
             Status: 'Završeno',
-            Completed_At: new Date().toISOString(),
+            Completed_At: completionDate,
             Actual_Labor_Cost: actualLaborCost,
-            Labor_Cost_Frozen: true  // FIX-3: Freeze labor cost on completion
+            Labor_Cost_Frozen: true
         });
 
         await recalculateWorkOrder(workOrderId);
     } catch (error) {
         console.error('Error completing item:', error);
         throw error;
+    }
+}
+
+/**
+ * Override work logs for a specific work order item.
+ * Replaces ALL existing work logs for the item with manually-edited entries.
+ * Used when the user edits the timeline to correct profit calculations.
+ *
+ * Pipeline:
+ * 1. Delete all existing work logs for this item
+ * 2. Write new work logs from manual entries
+ * 3. Recalculate work order (labor cost + profit)
+ */
+export async function overrideWorkLogs(
+    workOrderId: string,
+    itemId: string,
+    entries: Array<{
+        Worker_ID: string;
+        Worker_Name: string;
+        Date: string;
+        Daily_Rate: number;
+        Process_Name?: string;
+    }>,
+    organizationId: string,
+    productId?: string
+): Promise<{ success: boolean; message: string }> {
+    if (!organizationId) {
+        return { success: false, message: 'Organization ID is required' };
+    }
+
+    try {
+        const firestore = getDb();
+
+        // Resolve Product_ID from the work order item if not provided
+        let resolvedProductId = productId || '';
+        if (!resolvedProductId) {
+            try {
+                const itemDoc = await getDoc(doc(firestore, COLLECTIONS.WORK_ORDER_ITEMS, itemId));
+                if (itemDoc.exists()) {
+                    resolvedProductId = itemDoc.data().Product_ID || '';
+                }
+            } catch { /* continue without it */ }
+        }
+
+        // 1. Delete all existing work logs for this item
+        //    FIELD: Work_Order_Item_ID — matches how createWorkLog stores them
+        const existingQuery = query(
+            collection(firestore, 'work_logs'),
+            where('Work_Order_ID', '==', workOrderId),
+            where('Work_Order_Item_ID', '==', itemId),
+            where('Organization_ID', '==', organizationId)
+        );
+        const existingSnap = await getDocs(existingQuery);
+
+        // Delete in batches
+        const CHUNK_SIZE = 450;
+        const docsToDelete = existingSnap.docs;
+        for (let i = 0; i < docsToDelete.length; i += CHUNK_SIZE) {
+            const chunk = docsToDelete.slice(i, i + CHUNK_SIZE);
+            const batch = writeBatch(firestore);
+            chunk.forEach(d => batch.delete(d.ref));
+            await batch.commit();
+        }
+
+        // 2. Write new work logs with ALL required fields
+        //    Must match the schema used by createWorkLog / calculateActualLaborCost
+        const newLogs = entries.map(entry => ({
+            Work_Log_ID: generateUUID(),
+            Organization_ID: organizationId,
+            Work_Order_ID: workOrderId,
+            Work_Order_Item_ID: itemId,          // ← correct field name
+            Product_ID: resolvedProductId,        // ← required for timeline display
+            Worker_ID: entry.Worker_ID,
+            Worker_Name: entry.Worker_Name,
+            Date: entry.Date,
+            Daily_Rate: entry.Daily_Rate,
+            Original_Daily_Rate: entry.Daily_Rate,
+            Split_Factor: 1,
+            Hours_Worked: 8,                      // ← required field
+            Process_Name: entry.Process_Name || '',
+            Is_From_Attendance: false,            // ← manual override, not from attendance
+            Source: 'manual_override' as const,
+            Created_At: new Date().toISOString(),
+        }));
+
+        for (let i = 0; i < newLogs.length; i += CHUNK_SIZE) {
+            const chunk = newLogs.slice(i, i + CHUNK_SIZE);
+            const batch = writeBatch(firestore);
+            chunk.forEach(log => {
+                const ref = doc(collection(firestore, 'work_logs'));
+                batch.set(ref, log);
+            });
+            await batch.commit();
+        }
+
+        // 3. Mark item as having manual labor cost override
+        //    Use direct doc reference by ID (standard pattern in this codebase)
+        try {
+            const totalLaborCost = entries.reduce((sum, e) => sum + e.Daily_Rate, 0);
+            const itemRef = doc(firestore, COLLECTIONS.WORK_ORDER_ITEMS, itemId);
+            await updateDoc(itemRef, {
+                Labor_Cost_Frozen: true,
+                Actual_Labor_Cost: totalLaborCost,
+                Labor_Cost_Updated_At: new Date().toISOString(),
+                Labor_Cost_Source: 'manual_override',
+            });
+        } catch (itemErr) {
+            console.warn(`[overrideWorkLogs] Failed to update item ${itemId}:`, itemErr);
+        }
+
+        // 4. Recalculate work order
+        await recalculateWorkOrder(workOrderId);
+
+        console.log(`[overrideWorkLogs] WO ${workOrderId} item ${itemId}: ${docsToDelete.length} deleted, ${newLogs.length} created`);
+        return { success: true, message: `${newLogs.length} zapisa ažurirano` };
+    } catch (error) {
+        console.error('overrideWorkLogs error:', error);
+        return { success: false, message: 'Greška pri ažuriranju work logova' };
+    }
+}
+
+/**
+ * Retroactively adjust work order dates (Started_At, Completed_At).
+ * Used when the user was away and needs to correct WO timeline.
+ *
+ * Cascade pipeline:
+ * 1. Update WO-level dates in Firestore
+ * 2. Update item-level dates proportionally
+ * 3. Recalculate work order (labor cost, profit, status)
+ * 4. Sync product/project statuses
+ */
+export async function adjustWorkOrderDates(
+    workOrderId: string,
+    updates: { Started_At?: string; Completed_At?: string },
+    organizationId: string
+): Promise<{ success: boolean; message: string }> {
+    if (!organizationId) {
+        return { success: false, message: 'Organization ID is required' };
+    }
+
+    try {
+        const firestore = getDb();
+
+        // 1. Find the WO document
+        const woQuery = query(
+            collection(firestore, COLLECTIONS.WORK_ORDERS),
+            where('Work_Order_ID', '==', workOrderId),
+            where('Organization_ID', '==', organizationId)
+        );
+        const woSnap = await getDocs(woQuery);
+        if (woSnap.empty) {
+            return { success: false, message: 'Work order not found' };
+        }
+
+        const woDoc = woSnap.docs[0];
+        const woData = woDoc.data();
+
+        // 2. Build WO-level update payload
+        const woUpdate: Record<string, any> = {};
+        if (updates.Started_At) {
+            woUpdate.Started_At = new Date(updates.Started_At).toISOString();
+        }
+        if (updates.Completed_At) {
+            woUpdate.Completed_At = new Date(updates.Completed_At).toISOString();
+        }
+
+        if (Object.keys(woUpdate).length > 0) {
+            await updateDoc(woDoc.ref, woUpdate);
+        }
+
+        // 3. Update item-level dates
+        //    - If Started_At changed: update items that don't have their own Started_At,
+        //      or items whose Started_At matches the old WO start (inherited)
+        //    - If Completed_At changed: update items whose Completed_At matches old WO end
+        const itemsQuery = query(
+            collection(firestore, COLLECTIONS.WORK_ORDER_ITEMS),
+            where('Work_Order_ID', '==', workOrderId),
+            where('Organization_ID', '==', organizationId)
+        );
+        const itemsSnap = await getDocs(itemsQuery);
+
+        for (const itemDoc of itemsSnap.docs) {
+            const item = itemDoc.data();
+            const itemUpdate: Record<string, any> = {};
+
+            // Sync Started_At: update if item has no start or inherited WO start
+            if (updates.Started_At) {
+                const oldWoStart = woData.Started_At;
+                if (!item.Started_At || item.Started_At === oldWoStart) {
+                    itemUpdate.Started_At = new Date(updates.Started_At).toISOString();
+                }
+            }
+
+            // Sync Completed_At: update if item inherited WO completion
+            if (updates.Completed_At && item.Status === 'Završeno') {
+                const oldWoEnd = woData.Completed_At;
+                if (item.Completed_At === oldWoEnd) {
+                    itemUpdate.Completed_At = new Date(updates.Completed_At).toISOString();
+                }
+            }
+
+            if (Object.keys(itemUpdate).length > 0) {
+                await updateDoc(itemDoc.ref, itemUpdate);
+            }
+        }
+
+        // 4. Full cascade recalculation (profit, labor cost, status sync)
+        await recalculateWorkOrder(workOrderId);
+
+        console.log(`[adjustWorkOrderDates] WO ${workOrderId} dates adjusted:`, updates);
+        return { success: true, message: 'Datumi ažurirani' };
+    } catch (error) {
+        console.error('adjustWorkOrderDates error:', error);
+        return { success: false, message: 'Greška pri ažuriranju datuma' };
     }
 }
 
@@ -1642,23 +2075,28 @@ export async function recalculateWorkOrder(workOrderId: string): Promise<void> {
 
             plannedLaborCost += item.Planned_Labor_Cost || 0;
 
-            // CRITICAL FIX: Calculate FRESH labor cost instead of using stale stored value
-            // FIX-3: For COMPLETED items with frozen labor, use stored value (consistent with material freeze)
+            // RETROACTIVE ATTENDANCE FIX: ALWAYS calculate fresh labor cost from work logs
+            // Work logs are the single source of truth — even for frozen/completed items.
+            // This ensures that retroactively filled attendance properly updates profit.
+            // The Labor_Cost_Frozen flag is kept as metadata (UI indicator) but does NOT
+            // block recalculation — otherwise backdated attendance would never propagate.
             let freshItemLaborCost: number;
-            if (item.Status === 'Završeno' && (item as any).Labor_Cost_Frozen === true && (item.Actual_Labor_Cost || 0) > 0) {
-                freshItemLaborCost = item.Actual_Labor_Cost || 0;
-            } else {
-                freshItemLaborCost = await calculateActualLaborCost(item, workOrder.Organization_ID);
-            }
+            freshItemLaborCost = await calculateActualLaborCost(item, workOrder.Organization_ID);
             actualLaborCost += freshItemLaborCost;
 
             // SYNC: Update item-level Material_Cost and Actual_Labor_Cost for consistency
+            // Also re-freeze if item was previously frozen (keeps snapshot up-to-date)
             try {
                 const itemRef = doc(firestore, COLLECTIONS.WORK_ORDER_ITEMS, item.ID);
-                await updateDoc(itemRef, {
+                const updatePayload: Record<string, any> = {
                     Material_Cost: itemMaterialCost,
                     Actual_Labor_Cost: freshItemLaborCost
-                });
+                };
+                // Re-freeze with updated value + timestamp so we know when it was last recalculated
+                if ((item as any).Labor_Cost_Frozen === true) {
+                    updatePayload.Labor_Cost_Updated_At = new Date().toISOString();
+                }
+                await updateDoc(itemRef, updatePayload);
             } catch (syncErr) {
                 console.warn(`Failed to sync costs on item ${item.ID}:`, syncErr);
             }
@@ -1739,7 +2177,8 @@ export async function recalculateWorkOrder(workOrderId: string): Promise<void> {
             if (item.Project_ID) projectIds.add(item.Project_ID);
         }
         for (const projectId of Array.from(projectIds)) {
-            await syncProjectStatus(projectId);
+            // GAP-4 FIX: Pass organizationId for proper multi-tenancy isolation
+            await syncProjectStatus(projectId, workOrder.Organization_ID);
         }
     } catch (error) {
         console.error('Error recalculating work order:', error);
@@ -1748,29 +2187,69 @@ export async function recalculateWorkOrder(workOrderId: string): Promise<void> {
 }
 
 /**
- * Recalculate ALL active work orders for an organization.
+ * Recalculate work orders for an organization.
  * Used after bulk attendance updates to avoid per-worker recalculation overhead.
+ * 
+ * GAP-2 FIX: Now also recalculates recently completed WOs (last 30 days)
+ * so that retroactive attendance changes propagate to finished work orders.
+ * 
+ * @param includeCompleted - If true, also recalculates recently completed WOs
  */
-export async function recalculateAllActiveWorkOrders(organizationId: string): Promise<void> {
+export async function recalculateAllActiveWorkOrders(
+    organizationId: string,
+    options?: { includeCompleted?: boolean }
+): Promise<void> {
     try {
         const firestore = getDb();
-        const woQuery = query(
+
+        // Always recalculate active WOs
+        const activeWoQuery = query(
             collection(firestore, COLLECTIONS.WORK_ORDERS),
             where('Status', '==', 'U toku'),
             where('Organization_ID', '==', organizationId)
         );
-        const woSnap = await getDocs(woQuery);
+        const activeSnap = await getDocs(activeWoQuery);
 
-        // Recalculate each active WO (sequential to avoid Firestore contention)
-        for (const woDoc of woSnap.docs) {
+        let totalRecalculated = 0;
+
+        for (const woDoc of activeSnap.docs) {
             const woId = woDoc.data().Work_Order_ID;
             try {
                 await recalculateWorkOrder(woId);
+                totalRecalculated++;
             } catch (err) {
-                console.warn(`Failed to recalculate WO ${woId}:`, err);
+                console.warn(`Failed to recalculate active WO ${woId}:`, err);
             }
         }
-        console.log(`Batch recalculation: ${woSnap.size} active work orders recalculated`);
+
+        // GAP-2 FIX: Also recalculate recently completed WOs when called from attendance context
+        if (options?.includeCompleted) {
+            const thirtyDaysAgo = new Date();
+            thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+            const cutoffISO = thirtyDaysAgo.toISOString();
+
+            const completedWoQuery = query(
+                collection(firestore, COLLECTIONS.WORK_ORDERS),
+                where('Status', '==', 'Završeno'),
+                where('Organization_ID', '==', organizationId)
+            );
+            const completedSnap = await getDocs(completedWoQuery);
+
+            for (const woDoc of completedSnap.docs) {
+                const woData = woDoc.data();
+                // Only recalculate if completed within the last 30 days
+                if (woData.Completed_At && woData.Completed_At >= cutoffISO) {
+                    try {
+                        await recalculateWorkOrder(woData.Work_Order_ID);
+                        totalRecalculated++;
+                    } catch (err) {
+                        console.warn(`Failed to recalculate completed WO ${woData.Work_Order_ID}:`, err);
+                    }
+                }
+            }
+        }
+
+        console.log(`Batch recalculation: ${totalRecalculated} work orders recalculated (includeCompleted: ${!!options?.includeCompleted})`);
     } catch (error) {
         console.error('Error in batch recalculation:', error);
     }
@@ -1780,36 +2259,41 @@ export async function recalculateAllActiveWorkOrders(organizationId: string): Pr
  * Sync product statuses in projects based on work order item statuses
  */
 async function syncProductStatuses(items: any[]): Promise<void> {
-    console.log('=== syncProductStatuses START ===');
-    console.log('Items received:', items.length);
-
-    // Status hierarchy — higher index = more advanced in lifecycle
-    // CRITICAL: syncProductStatuses must NEVER regress a product to a lower status
-    const STATUS_HIERARCHY = [
+    // BUG-3 FIX: Dynamic status hierarchy — supports custom production steps
+    // Known lifecycle statuses in order. Custom processes get rank based on position
+    // between 'Materijali spremni' and 'Spremno' (i.e., they are production steps).
+    const KNOWN_STATUS_HIERARCHY = [
         'Na čekanju', 'Materijali naručeni', 'Materijali spremni',
         'Rezanje', 'Kantiranje', 'Bušenje', 'Sklapanje', 'Spremno',
         'Transport', 'Montaža', 'Čišćenje', 'Primopredaja', 'Instalirano'
     ];
 
-    // Map: last completed process → final product status
+    // BUG-3: Helper to get rank — unknown processes (custom steps) get a rank
+    // between 'Materijali spremni' (2) and 'Spremno' (7), defaulting to 5
+    // so they're treated as active production statuses
+    function getStatusRank(status: string): number {
+        const idx = KNOWN_STATUS_HIERARCHY.indexOf(status);
+        if (idx >= 0) return idx;
+        // Unknown/custom process → treat as mid-production (rank 5)
+        return 5;
+    }
+
+    // BUG-8 FIX: Expanded map — last completed process → final product status
     const FINAL_STATUS_MAP: Record<string, string> = {
         'Sklapanje': 'Spremno',
         'Primopredaja': 'Instalirano',
+        'Čišćenje': 'Instalirano',
+        'Montaža': 'Instalirano',
     };
 
     try {
         const firestore = getDb();
 
         // Group items by project
-        const projectUpdates = new Map<string, Map<string, string>>();
+        const projectUpdates = new Map<string, Map<string, { status: string; itemStatus: string }>>();
 
         for (const item of items) {
-            console.log(`Item: ${item.Product_Name || 'unknown'}, Project_ID: ${item.Project_ID}, Product_ID: ${item.Product_ID}, Status: ${item.Status}`);
-
-            if (!item.Project_ID || !item.Product_ID) {
-                console.warn('  -> SKIPPED: Missing Project_ID or Product_ID');
-                continue;
-            }
+            if (!item.Project_ID || !item.Product_ID) continue;
 
             if (!projectUpdates.has(item.Project_ID)) {
                 projectUpdates.set(item.Project_ID, new Map());
@@ -1818,81 +2302,59 @@ async function syncProductStatuses(items: any[]): Promise<void> {
             // Determine product status based on work order item processes
             let productStatus = 'Na čekanju';
             if (item.Status === 'Završeno') {
-                // Check the LAST process name to determine final product status
                 const lastProcess = item.Processes?.[item.Processes.length - 1];
                 const lastProcessName = lastProcess?.Process_Name || '';
                 productStatus = FINAL_STATUS_MAP[lastProcessName] || 'Spremno';
             } else if (item.Status === 'U toku') {
-                // Find the active (U toku) process for intermediate status
                 const activeProcess = item.Processes?.find((p: any) => p.Status === 'U toku');
                 if (activeProcess) {
                     productStatus = activeProcess.Process_Name;
                 } else {
-                    // All prior completed, find first waiting process
-                    const nextWaiting = item.Processes?.find((p: any) => p.Status === 'Na čekanju');
-                    if (nextWaiting) {
-                        // Product is at the last completed process stage
-                        const lastCompleted = [...(item.Processes || [])].reverse().find((p: any) => p.Status === 'Završeno');
-                        productStatus = lastCompleted?.Process_Name || 'Sklapanje';
-                    } else {
-                        productStatus = 'Sklapanje';
-                    }
+                    const lastCompleted = [...(item.Processes || [])].reverse().find((p: any) => p.Status === 'Završeno');
+                    productStatus = lastCompleted?.Process_Name || 'Sklapanje';
                 }
             }
 
-            console.log(`  -> Mapped status: "${item.Status}" => "${productStatus}"`);
-            projectUpdates.get(item.Project_ID)!.set(item.Product_ID, productStatus);
+            // BUG-5 FIX: Store item status to allow regression when WO item moves backward
+            projectUpdates.get(item.Project_ID)!.set(item.Product_ID, {
+                status: productStatus,
+                itemStatus: item.Status || 'Na čekanju'
+            });
         }
 
-        console.log('Projects to update:', projectUpdates.size);
-
-        // Update products in separate 'products' collection (NOT embedded in project)
+        // Update products in separate 'products' collection
         const entries = Array.from(projectUpdates.entries());
         for (const [projectId, productStatuses] of entries) {
-            console.log(`\nProcessing Project: ${projectId}`);
-
-            // Products are in a SEPARATE collection - query them directly!
             const productsQuery = query(
                 collection(firestore, 'products'),
                 where('Project_ID', '==', projectId)
             );
             const productsSnap = await getDocs(productsQuery);
+            if (productsSnap.empty) continue;
 
-            console.log(`  -> Products in 'products' collection for this project: ${productsSnap.docs.length}`);
-
-            if (productsSnap.empty) {
-                console.warn(`  -> No products found in products collection for project ${projectId}`);
-                continue;
-            }
-
-            // Update each product document — NEVER REGRESS status
-            let updatedCount = 0;
             for (const productDoc of productsSnap.docs) {
                 const productData = productDoc.data();
-                const newStatus = productStatuses.get(productData.Product_ID);
+                const update = productStatuses.get(productData.Product_ID);
+                if (!update) continue;
 
-                if (!newStatus) continue;
+                const currentRank = getStatusRank(productData.Status || '');
+                const newRank = getStatusRank(update.status);
 
-                const currentRank = STATUS_HIERARCHY.indexOf(productData.Status || '');
-                const newRank = STATUS_HIERARCHY.indexOf(newStatus);
+                // BUG-5 FIX: Allow regression in two cases:
+                //   1. WO item is 'Na čekanju' (reset/reopened) → always sync
+                //   2. WO item is 'U toku' but product is at a higher stage → regress to current step
+                // Still prevent progression noise (only advance when new rank > current)
+                const shouldUpdate = newRank > currentRank
+                    || (update.itemStatus === 'Na čekanju' && update.status !== productData.Status)
+                    || (update.itemStatus === 'U toku' && newRank < currentRank && currentRank < getStatusRank('Spremno'));
 
-                // Only update if new status is HIGHER in hierarchy (never regress)
-                if (newRank > currentRank) {
-                    console.log(`    -> Updating product "${productData.Name || productData.Product_ID}": "${productData.Status}" => "${newStatus}"`);
-                    await updateDoc(productDoc.ref, { Status: newStatus });
-                    updatedCount++;
-                } else if (newStatus !== productData.Status) {
-                    console.log(`    -> SKIPPED regression for "${productData.Name || productData.Product_ID}": "${productData.Status}" => "${newStatus}" (would be regression)`);
+                if (shouldUpdate) {
+                    await updateDoc(productDoc.ref, { Status: update.status });
                 }
             }
-
-            console.log(`  -> Products updated: ${updatedCount}`);
         }
-
-        console.log('=== syncProductStatuses END ===');
     } catch (error) {
         console.error('Error syncing product statuses:', error);
-        // Don't throw - this is a secondary operation
     }
 }
 
@@ -1949,15 +2411,21 @@ export async function syncProjectStatus(projectId: string, organizationId?: stri
         // This prevents premature "Završeno" when products are Spremno but montaža is pending
         let montazaProductIds = new Set<string>();
         try {
+            // BUG-2 FIX: Filter by Organization_ID to prevent cross-tenant data leak
+            const montazaConstraints = [
+                where('Work_Order_Type', '==', 'Montaža'),
+                where('Status', 'in', ['Na čekanju', 'U toku']),
+            ];
+            if (organizationId) {
+                montazaConstraints.push(where('Organization_ID', '==', organizationId));
+            }
             const montazaWoQuery = query(
                 collection(firestore, COLLECTIONS.WORK_ORDERS),
-                where('Work_Order_Type', '==', 'Montaža'),
-                where('Status', 'in', ['Na čekanju', 'U toku'])
+                ...montazaConstraints
             );
             const montazaSnap = await getDocs(montazaWoQuery);
             for (const mDoc of montazaSnap.docs) {
                 const mData = mDoc.data();
-                // Query work order items for this montaža WO
                 const itemsQuery = query(
                     collection(firestore, COLLECTIONS.WORK_ORDER_ITEMS),
                     where('Work_Order_ID', '==', mData.Work_Order_ID),
@@ -1988,12 +2456,13 @@ export async function syncProjectStatus(projectId: string, organizationId?: stri
             return status === 'Spremno' || status === 'Instalirano';
         });
 
-        // Any product actively in production or montaža?
+        // BUG-1 FIX: Any product actively in production or montaža?
+        // Added parentheses to fix operator precedence (|| binds after &&)
         const anyInProduction = products.some(p => {
             const status = p.Status || '';
-            return !waitingStatuses.includes(status)
+            return (!waitingStatuses.includes(status)
                 && status !== 'Spremno'
-                && status !== 'Instalirano'
+                && status !== 'Instalirano')
                 || montazaActiveStatuses.includes(status);
         });
 
@@ -2158,7 +2627,9 @@ import type { ItemProcessStatus } from './types';
 
 /**
  * Update ALL processes for a work order item in a single write (FAST)
- * Used for drag-and-drop stage changes
+ * Used for drag-and-drop stage changes AND worker assignment changes
+ * 
+ * REACTIVE: Detects worker changes in Processes and triggers work log reconciliation
  */
 export async function updateAllItemProcesses(
     workOrderId: string,
@@ -2167,6 +2638,11 @@ export async function updateAllItemProcesses(
 ): Promise<void> {
     try {
         const itemRef = await getItemRef(itemId);
+        const itemSnap = await getDoc(itemRef);
+
+        // Read old processes to detect worker changes
+        const oldProcesses: ItemProcessStatus[] = itemSnap.exists() ? (itemSnap.data().Processes || []) : [];
+        const orgId = itemSnap.exists() ? (itemSnap.data() as any).Organization_ID || '' : '';
 
         // Sanitize all processes - remove undefined fields
         const sanitizedProcesses = newProcesses.map(p => {
@@ -2180,6 +2656,26 @@ export async function updateAllItemProcesses(
         // Single write for all processes
         await updateDoc(itemRef, { Processes: sanitizedProcesses });
 
+        // REACTIVE: Detect worker changes and reconcile work logs
+        if (orgId) {
+            const oldWorkerIds = extractWorkerIdsFromProcesses(oldProcesses);
+            const newWorkerIds = extractWorkerIdsFromProcesses(sanitizedProcesses);
+
+            const removedWorkerIds = Array.from(oldWorkerIds).filter(id => !newWorkerIds.has(id));
+            const addedWorkerIds = Array.from(newWorkerIds).filter(id => !oldWorkerIds.has(id));
+
+            if (removedWorkerIds.length > 0 || addedWorkerIds.length > 0) {
+                await reconcileWorkLogsAfterWorkerChange(
+                    workOrderId,
+                    itemId,
+                    removedWorkerIds,
+                    addedWorkerIds,
+                    Array.from(newWorkerIds),
+                    orgId
+                );
+            }
+        }
+
         // Recalculate item and work order status
         await recalculateItemStatus(workOrderId, itemId, sanitizedProcesses);
         await recalculateWorkOrder(workOrderId);
@@ -2187,6 +2683,22 @@ export async function updateAllItemProcesses(
         console.error('Error updating all item processes:', error);
         throw error;
     }
+}
+
+/**
+ * Extract all worker IDs from a Processes array (main workers + helpers)
+ */
+function extractWorkerIdsFromProcesses(processes: ItemProcessStatus[]): Set<string> {
+    const ids = new Set<string>();
+    for (const proc of processes) {
+        if (proc.Worker_ID) ids.add(proc.Worker_ID);
+        if (proc.Helpers && Array.isArray(proc.Helpers)) {
+            for (const h of proc.Helpers) {
+                if (h.Worker_ID) ids.add(h.Worker_ID);
+            }
+        }
+    }
+    return ids;
 }
 
 /**

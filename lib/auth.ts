@@ -9,7 +9,7 @@ import {
     onAuthStateChanged,
     User as FirebaseUser,
 } from 'firebase/auth';
-import { doc, setDoc, getDoc, serverTimestamp } from 'firebase/firestore';
+import { doc, setDoc, getDoc, serverTimestamp, writeBatch } from 'firebase/firestore';
 import type { User, Organization, ModuleAccess } from './types';
 
 // ============================================
@@ -68,9 +68,12 @@ export async function signUp(
             Is_Active: true,
         };
 
-        // Save to Firestore
-        await setDoc(doc(db, 'organizations', orgId), organization);
-        await setDoc(doc(db, 'users', firebaseUser.uid), user);
+        // Save to Firestore — ATOMIC: both docs in a single batch
+        // Prevents orphaned org docs if the user write fails
+        const batch = writeBatch(db);
+        batch.set(doc(db, 'organizations', orgId), organization);
+        batch.set(doc(db, 'users', firebaseUser.uid), user);
+        await batch.commit();
 
         return { success: true };
     } catch (error: any) {
@@ -132,8 +135,11 @@ export async function signInWithGoogle(): Promise<{ success: boolean; error?: st
                 Is_Active: true,
             };
 
-            await setDoc(doc(db, 'organizations', orgId), organization);
-            await setDoc(doc(db, 'users', firebaseUser.uid), user);
+            // ATOMIC: both docs in a single batch
+            const batch = writeBatch(db);
+            batch.set(doc(db, 'organizations', orgId), organization);
+            batch.set(doc(db, 'users', firebaseUser.uid), user);
+            await batch.commit();
 
             return { success: true, isNewUser: true };
         }

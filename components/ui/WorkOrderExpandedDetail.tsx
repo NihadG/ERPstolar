@@ -363,15 +363,95 @@ export default function WorkOrderExpandedDetail({
                         <span>Kreiran</span>
                         <strong>{formatDate(workOrder.Created_Date)}</strong>
                     </div>
-                    <div className="date-chip">
+                    <div className="date-chip" style={{ cursor: workOrder.Started_At ? 'pointer' : 'default', position: 'relative' }}
+                        onClick={() => {
+                            if (!workOrder.Started_At) return;
+                            const input = document.getElementById(`start-date-${workOrder.Work_Order_ID}`) as HTMLInputElement;
+                            if (input) input.showPicker();
+                        }}
+                    >
                         <Play size={14} />
                         <span>Početak</span>
                         <strong>{formatDate(workOrder.Started_At)}</strong>
+                        {workOrder.Started_At && <Edit2 size={10} style={{ color: '#86868b', marginLeft: 4 }} />}
+                        <input
+                            id={`start-date-${workOrder.Work_Order_ID}`}
+                            type="date"
+                            value={workOrder.Started_At?.split('T')[0] || ''}
+                            onChange={async (e) => {
+                                const newDate = e.target.value;
+                                if (!newDate) return;
+                                try {
+                                    const { adjustWorkOrderDates } = await import('@/lib/attendance');
+                                    const orgId = workOrder.Organization_ID;
+                                    const res = await adjustWorkOrderDates(workOrder.Work_Order_ID, { Started_At: newDate }, orgId);
+                                    if (res.success) {
+                                        showToast?.('Datum početka ažuriran', 'success');
+                                        onRefresh?.('workOrders', 'projects');
+                                    } else {
+                                        showToast?.(res.message, 'error');
+                                    }
+                                } catch (err) {
+                                    showToast?.('Greška pri ažuriranju datuma', 'error');
+                                }
+                            }}
+                            onClick={(e) => e.stopPropagation()}
+                            style={{
+                                position: 'absolute',
+                                bottom: 0,
+                                left: 0,
+                                width: 0,
+                                height: 0,
+                                opacity: 0,
+                                overflow: 'hidden',
+                                pointerEvents: 'none',
+                            }}
+                        />
                     </div>
-                    <div className="date-chip">
+                    <div className="date-chip" style={{ cursor: workOrder.Completed_At ? 'pointer' : 'default', position: 'relative' }}
+                        onClick={() => {
+                            if (!workOrder.Completed_At) return;
+                            const input = document.getElementById(`complete-date-${workOrder.Work_Order_ID}`) as HTMLInputElement;
+                            if (input) input.showPicker();
+                        }}
+                    >
                         <CheckCircle size={14} />
                         <span>Završeno</span>
                         <strong>{formatDate(workOrder.Completed_At)}</strong>
+                        {workOrder.Completed_At && <Edit2 size={10} style={{ color: '#86868b', marginLeft: 4 }} />}
+                        <input
+                            id={`complete-date-${workOrder.Work_Order_ID}`}
+                            type="date"
+                            value={workOrder.Completed_At?.split('T')[0] || ''}
+                            onChange={async (e) => {
+                                const newDate = e.target.value;
+                                if (!newDate) return;
+                                try {
+                                    const { adjustWorkOrderDates } = await import('@/lib/attendance');
+                                    const orgId = workOrder.Organization_ID;
+                                    const res = await adjustWorkOrderDates(workOrder.Work_Order_ID, { Completed_At: newDate }, orgId);
+                                    if (res.success) {
+                                        showToast?.('Datum završetka ažuriran', 'success');
+                                        onRefresh?.('workOrders', 'projects');
+                                    } else {
+                                        showToast?.(res.message, 'error');
+                                    }
+                                } catch (err) {
+                                    showToast?.('Greška pri ažuriranju datuma', 'error');
+                                }
+                            }}
+                            onClick={(e) => e.stopPropagation()}
+                            style={{
+                                position: 'absolute',
+                                bottom: 0,
+                                left: 0,
+                                width: 0,
+                                height: 0,
+                                opacity: 0,
+                                overflow: 'hidden',
+                                pointerEvents: 'none',
+                            }}
+                        />
                     </div>
                     <div className="date-chip deadline" style={{ cursor: 'pointer', position: 'relative' }}
                         onClick={() => {
