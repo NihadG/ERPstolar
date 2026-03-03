@@ -240,8 +240,8 @@ export async function calculateProductProfitability(
             ? (laborVariance / plannedLaborCost) * 100
             : 0;
 
-        // Calculate profits
-        const grossProfit = sellingPrice - materialCost - transportShare - servicesTotal;
+        // Calculate profits (services/extras are NOT deducted — they're estimates baked into selling price)
+        const grossProfit = sellingPrice - materialCost - transportShare;
         const netProfit = grossProfit - actualLaborCost;
         const profitMargin = sellingPrice > 0 ? (netProfit / sellingPrice) * 100 : 0;
 
@@ -341,7 +341,8 @@ export async function calculateWorkOrderProfitability(
             ? (laborVariance / plannedLaborCost) * 100
             : 0;
 
-        const grossProfit = totalValue - materialCost - transportCost - servicesCost;
+        // Services/extras are NOT deducted — they're estimates baked into selling price
+        const grossProfit = totalValue - materialCost - transportCost;
         const netProfit = grossProfit - actualLaborCost;
         const profitMargin = totalValue > 0 ? (netProfit / totalValue) * 100 : 0;
 

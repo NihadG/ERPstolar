@@ -37,15 +37,28 @@ export async function getOffers(organizationId: string): Promise<Offer[]> {
     const db = getDb();
     const orgFilter = where('Organization_ID', '==', organizationId);
 
-    const [offersSnap, offerProductsSnap, offerExtrasSnap] = await Promise.all([
+    const [offersSnap, offerProductsSnap, offerExtrasSnap, projectsSnap] = await Promise.all([
         getDocs(query(collection(db, COLLECTIONS.OFFERS), orgFilter)),
         getDocs(query(collection(db, COLLECTIONS.OFFER_PRODUCTS), orgFilter)),
         getDocs(query(collection(db, COLLECTIONS.OFFER_EXTRAS), orgFilter)),
+        getDocs(query(collection(db, COLLECTIONS.PROJECTS), orgFilter)),
     ]);
 
     const offers = offersSnap.docs.map(d => ({ ...d.data() } as Offer));
     const offerProducts = offerProductsSnap.docs.map(d => ({ ...d.data() } as OfferProduct));
     const offerExtras = offerExtrasSnap.docs.map(d => ({ ...d.data() } as OfferExtra));
+
+    // Build project lookup for Client_Name enrichment
+    const projectsMap = new Map<string, { Client_Name: string; Client_Phone?: string; Client_Email?: string; Address?: string }>();
+    projectsSnap.docs.forEach(d => {
+        const p = d.data();
+        projectsMap.set(p.Project_ID, {
+            Client_Name: p.Client_Name || '',
+            Client_Phone: p.Client_Phone,
+            Client_Email: p.Client_Email,
+            Address: p.Address,
+        });
+    });
 
     // Group products by offer
     const productsByOffer = new Map<string, OfferProduct[]>();
@@ -61,8 +74,17 @@ export async function getOffers(organizationId: string): Promise<Offer[]> {
         extrasByProduct.get(oe.Offer_Product_ID)!.push(oe);
     });
 
-    // Assemble
+    // Assemble: enrich offers with Client_Name and attach products/extras
     offers.forEach(offer => {
+        // Enrich with project data
+        const proj = projectsMap.get(offer.Project_ID);
+        if (proj) {
+            offer.Client_Name = proj.Client_Name;
+            (offer as any).Client_Phone = proj.Client_Phone || '';
+            (offer as any).Client_Email = proj.Client_Email || '';
+            (offer as any).Client_Address = proj.Address || '';
+        }
+
         const products = productsByOffer.get(offer.Offer_ID) || [];
         products.forEach(p => {
             (p as any).extras = extrasByProduct.get(p.ID) || [];

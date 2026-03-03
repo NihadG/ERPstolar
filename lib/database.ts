@@ -6063,9 +6063,9 @@ export async function createProductionSnapshot(
             sum + (i.Extras?.reduce((s, e) => s + (e.Total || 0), 0) || 0), 0);
 
         // STANDARDIZED PROFIT FORMULA (consistent with calculateProductProfitability)
-        // Gross Profit = Selling - Material - Transport - Services
+        // Gross Profit = Selling - Material - Transport (services/extras are estimates baked into selling price)
         // Net Profit = Gross - Labor
-        const grossProfit = totalSellingPrice - totalMaterialCost - totalTransportCost - totalServicesCost;
+        const grossProfit = totalSellingPrice - totalMaterialCost - totalTransportCost;
         const netProfit = grossProfit - freshLaborCost;
         const profitMargin = totalSellingPrice > 0 ? (netProfit / totalSellingPrice) * 100 : 0;
 

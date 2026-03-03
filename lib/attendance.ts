@@ -2120,9 +2120,9 @@ export async function recalculateWorkOrder(workOrderId: string): Promise<void> {
         }
 
         // STANDARDIZED PROFIT FORMULA (consistent with calculateProductProfitability)
-        // Gross Profit = Selling - Material - Transport - Services
+        // Gross Profit = Selling - Material - Transport (services/extras are estimates baked into selling price)
         // Net Profit = Gross - Labor
-        const grossProfit = totalValue - materialCost - transportCost - servicesCost;
+        const grossProfit = totalValue - materialCost - transportCost;
         const profit = grossProfit - actualLaborCost; // This is Net Profit
         const profitMargin = totalValue > 0 ? (profit / totalValue) * 100 : 0;
         const laborCostVariance = plannedLaborCost - actualLaborCost;

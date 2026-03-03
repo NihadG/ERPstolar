@@ -47,6 +47,8 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
     const { organizationId } = useData();
     const [searchTerm, setSearchTerm] = useState('');
     const [statusFilter, setStatusFilter] = useState('');
+    const [sortBy, setSortBy] = useState<'date-desc' | 'date-asc' | 'amount-desc' | 'amount-asc' | 'client-asc' | 'client-desc'>('date-desc');
+    const [groupBy, setGroupBy] = useState<'none' | 'status' | 'project'>('none');
     // Create Offer Modal State
     const [createModal, setCreateModal] = useState(false);
     const [selectedProjectId, setSelectedProjectId] = useState('');
@@ -113,6 +115,48 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
         const matchesStatus = !statusFilter || offer.Status === statusFilter;
         return matchesSearch && matchesStatus;
     });
+
+    // Sort filtered offers
+    const sortedOffers = [...filteredOffers].sort((a, b) => {
+        switch (sortBy) {
+            case 'date-desc': return new Date(b.Created_Date || 0).getTime() - new Date(a.Created_Date || 0).getTime();
+            case 'date-asc': return new Date(a.Created_Date || 0).getTime() - new Date(b.Created_Date || 0).getTime();
+            case 'amount-desc': return (b.Total || 0) - (a.Total || 0);
+            case 'amount-asc': return (a.Total || 0) - (b.Total || 0);
+            case 'client-asc': return (a.Client_Name || '').localeCompare(b.Client_Name || '', 'hr');
+            case 'client-desc': return (b.Client_Name || '').localeCompare(a.Client_Name || '', 'hr');
+            default: return 0;
+        }
+    });
+
+    // Group sorted offers
+    const groupedOffers: { label: string; offers: Offer[] }[] = (() => {
+        if (groupBy === 'none') return [{ label: '', offers: sortedOffers }];
+
+        const groups = new Map<string, Offer[]>();
+        const ORDER = groupBy === 'status'
+            ? ['Nacrt', 'Poslano', 'Prihva\u0107eno', 'Odbijeno', 'Isteklo']
+            : [];
+
+        sortedOffers.forEach(offer => {
+            const key = groupBy === 'status'
+                ? (offer.Status || 'Nacrt')
+                : (offer.Client_Name || 'Nepoznat klijent');
+            if (!groups.has(key)) groups.set(key, []);
+            groups.get(key)!.push(offer);
+        });
+
+        // Sort group keys
+        const keys = Array.from(groups.keys()).sort((a, b) => {
+            if (groupBy === 'status') {
+                const ia = ORDER.indexOf(a), ib = ORDER.indexOf(b);
+                return (ia === -1 ? 999 : ia) - (ib === -1 ? 999 : ib);
+            }
+            return a.localeCompare(b, 'hr');
+        });
+
+        return keys.map(k => ({ label: k, offers: groups.get(k)! }));
+    })();
 
     const EUR_RATE = 1.95583;
     const toEUR = (km: number) => km / EUR_RATE;
@@ -236,6 +280,28 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
         const updated = [...offerProducts];
         updated[index].margin = margin;
         setOfferProducts(updated);
+    }
+
+    // Refresh material cost from latest project product data
+    function refreshMaterialCost(index: number) {
+        const product = offerProducts[index];
+        if (!product || !selectedProjectId) return;
+
+        const project = projects.find(p => p.Project_ID === selectedProjectId);
+        if (!project) return;
+
+        const projectProduct = (project.products || []).find(p => p.Product_ID === product.Product_ID);
+        if (!projectProduct) {
+            showToast('Proizvod nije pronađen u projektu', 'error');
+            return;
+        }
+
+        // Calculate fresh material cost from product materials
+        const freshCost = (projectProduct.materials || []).reduce((sum, m) => sum + (m.Total_Price || 0), 0);
+        const updated = [...offerProducts];
+        updated[index].Material_Cost = freshCost;
+        setOfferProducts(updated);
+        showToast(`Cijena materijala ažurirana: ${freshCost.toFixed(2)} KM`, 'success');
     }
 
     function calculateProductTotal(product: OfferProductState): number {
@@ -1296,6 +1362,29 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
                         <option key={status} value={status}>{status}</option>
                     ))}
                 </select>
+                <select
+                    className="glass-select-standalone"
+                    value={sortBy}
+                    onChange={(e) => setSortBy(e.target.value as any)}
+                    title="Sortiranje"
+                >
+                    <option value="date-desc">Najnovije prvo</option>
+                    <option value="date-asc">Najstarije prvo</option>
+                    <option value="amount-desc">Najveći iznos</option>
+                    <option value="amount-asc">Najmanji iznos</option>
+                    <option value="client-asc">Klijent A-Ž</option>
+                    <option value="client-desc">Klijent Ž-A</option>
+                </select>
+                <select
+                    className="glass-select-standalone"
+                    value={groupBy}
+                    onChange={(e) => setGroupBy(e.target.value as any)}
+                    title="Grupisanje"
+                >
+                    <option value="none">Bez grupisanja</option>
+                    <option value="status">Po statusu</option>
+                    <option value="project">Po klijentu/projektu</option>
+                </select>
                 <div style={{ marginLeft: 'auto' }}>
                     <button className="glass-btn glass-btn-primary" onClick={openCreateModal}>
                         <span className="material-icons-round">add</span>
@@ -1305,87 +1394,120 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
             </div>
 
             <div className="offers-list">
-                {filteredOffers.length === 0 ? (
+                {sortedOffers.length === 0 ? (
                     <div className="empty-state">
                         <span className="material-icons-round">request_quote</span>
                         <h3>Nema ponuda</h3>
                         <p>Kreirajte prvu ponudu klikom na "Nova Ponuda"</p>
                     </div>
                 ) : (
-                    filteredOffers.map(offer => (
-                        <div key={offer.Offer_ID} className="offer-row" onClick={() => openViewModal(offer.Offer_ID)} style={{ cursor: 'pointer' }}>
-                            {/* Left: main info */}
-                            <div className="offer-row-info">
-                                <div className="offer-row-title">{offer.Name || offer.Offer_Number}</div>
-                                <div className="offer-row-meta">
-                                    <span>{offer.Client_Name || 'Nepoznat klijent'}</span>
-                                    <span className="offer-row-dot">·</span>
-                                    <span>{formatDate(offer.Created_Date)}</span>
-                                    {offer.Name && (
-                                        <>
+                    groupedOffers.map(group => (
+                        <div key={group.label || '__all__'}>
+                            {group.label && (
+                                <div style={{
+                                    padding: '12px 16px',
+                                    fontWeight: 600,
+                                    fontSize: '13px',
+                                    color: 'var(--text-secondary)',
+                                    textTransform: 'uppercase',
+                                    letterSpacing: '0.05em',
+                                    borderBottom: '1px solid var(--border-color)',
+                                    background: 'var(--bg-secondary)',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '8px',
+                                }}>
+                                    <span className="material-icons-round" style={{ fontSize: '16px' }}>
+                                        {groupBy === 'status' ? 'label' : 'person'}
+                                    </span>
+                                    {group.label}
+                                    <span style={{
+                                        background: 'var(--accent)',
+                                        color: '#fff',
+                                        borderRadius: '10px',
+                                        padding: '1px 8px',
+                                        fontSize: '11px',
+                                        fontWeight: 700,
+                                        marginLeft: '4px'
+                                    }}>{group.offers.length}</span>
+                                </div>
+                            )}
+                            {group.offers.map(offer => (
+                                <div key={offer.Offer_ID} className="offer-row" onClick={() => openViewModal(offer.Offer_ID)} style={{ cursor: 'pointer' }}>
+                                    {/* Left: main info */}
+                                    <div className="offer-row-info">
+                                        <div className="offer-row-title">{offer.Name || offer.Offer_Number}</div>
+                                        <div className="offer-row-meta">
+                                            <span>{offer.Client_Name || 'Nepoznat klijent'}</span>
                                             <span className="offer-row-dot">·</span>
-                                            <span className="offer-row-num">#{offer.Offer_Number}</span>
-                                        </>
-                                    )}
-                                </div>
-                            </div>
-
-                            {/* Right: amount + status pill + actions */}
-                            <div className="offer-row-right">
-                                <span className="offer-row-amount">{formatCurrency(offer.Total || 0)}</span>
-
-                                {/* Custom status badge with dropdown */}
-                                <div className="offer-status-wrapper" ref={activeStatusDropdown === offer.Offer_ID ? statusDropdownRef : undefined}>
-                                    <button
-                                        className={`offer-status-badge ${getStatusClass(offer.Status)}`}
-                                        onClick={(e) => { e.stopPropagation(); setActiveStatusDropdown(activeStatusDropdown === offer.Offer_ID ? null : offer.Offer_ID); setActiveDropdown(null); }}
-                                    >
-                                        <span className="status-dot" />
-                                        {offer.Status || 'Nacrt'}
-                                    </button>
-                                    {activeStatusDropdown === offer.Offer_ID && (
-                                        <div className="status-dropdown-menu">
-                                            {OFFER_STATUSES.map(status => (
-                                                <button
-                                                    key={status}
-                                                    className={`status-option ${status === (offer.Status || 'Nacrt') ? 'active' : ''} ${getStatusClass(status)}`}
-                                                    onClick={(e) => { e.stopPropagation(); setActiveStatusDropdown(null); handleUpdateStatus(offer.Offer_ID, status); }}
-                                                >
-                                                    <span className={`status-dot ${getStatusClass(status)}`} />
-                                                    {status}
-                                                    {status === (offer.Status || 'Nacrt') && <span className="material-icons-round" style={{ fontSize: 14, marginLeft: 'auto' }}>check</span>}
-                                                </button>
-                                            ))}
+                                            <span>{formatDate(offer.Created_Date)}</span>
+                                            {offer.Name && (
+                                                <>
+                                                    <span className="offer-row-dot">·</span>
+                                                    <span className="offer-row-num">#{offer.Offer_Number}</span>
+                                                </>
+                                            )}
                                         </div>
-                                    )}
+                                    </div>
+
+                                    {/* Right: amount + status pill + actions */}
+                                    <div className="offer-row-right">
+                                        <span className="offer-row-amount">{formatCurrency(offer.Total || 0)}</span>
+
+                                        {/* Custom status badge with dropdown */}
+                                        <div className="offer-status-wrapper" ref={activeStatusDropdown === offer.Offer_ID ? statusDropdownRef : undefined}>
+                                            <button
+                                                className={`offer-status-badge ${getStatusClass(offer.Status)}`}
+                                                onClick={(e) => { e.stopPropagation(); setActiveStatusDropdown(activeStatusDropdown === offer.Offer_ID ? null : offer.Offer_ID); setActiveDropdown(null); }}
+                                            >
+                                                <span className="status-dot" />
+                                                {offer.Status || 'Nacrt'}
+                                            </button>
+                                            {activeStatusDropdown === offer.Offer_ID && (
+                                                <div className="status-dropdown-menu">
+                                                    {OFFER_STATUSES.map(status => (
+                                                        <button
+                                                            key={status}
+                                                            className={`status-option ${status === (offer.Status || 'Nacrt') ? 'active' : ''} ${getStatusClass(status)}`}
+                                                            onClick={(e) => { e.stopPropagation(); setActiveStatusDropdown(null); handleUpdateStatus(offer.Offer_ID, status); }}
+                                                        >
+                                                            <span className={`status-dot ${getStatusClass(status)}`} />
+                                                            {status}
+                                                            {status === (offer.Status || 'Nacrt') && <span className="material-icons-round" style={{ fontSize: 14, marginLeft: 'auto' }}>check</span>}
+                                                        </button>
+                                                    ))}
+                                                </div>
+                                            )}
+                                        </div>
+                                        <div className="offer-actions-inline" style={{ display: 'flex', gap: '8px', marginLeft: '12px' }}>
+                                            <button
+                                                className="action-icon-btn"
+                                                onClick={(e) => { e.stopPropagation(); openEditModal(offer); }}
+                                                title="Uredi"
+                                                style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)', padding: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '4px', transition: 'all 0.2s' }}
+                                            >
+                                                <span className="material-icons-round" style={{ fontSize: '20px' }}>edit</span>
+                                            </button>
+                                            <button
+                                                className="action-icon-btn"
+                                                onClick={(e) => { e.stopPropagation(); handlePrintOffer(offer); }}
+                                                title="Printaj"
+                                                style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)', padding: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '4px', transition: 'all 0.2s' }}
+                                            >
+                                                <span className="material-icons-round" style={{ fontSize: '20px' }}>print</span>
+                                            </button>
+                                            <button
+                                                className="action-icon-btn danger"
+                                                onClick={(e) => { e.stopPropagation(); handleDeleteOffer(offer.Offer_ID); }}
+                                                title="Obriši"
+                                                style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#ef4444', padding: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '4px', transition: 'all 0.2s' }}
+                                            >
+                                                <span className="material-icons-round" style={{ fontSize: '20px' }}>delete</span>
+                                            </button>
+                                        </div>
+                                    </div>
                                 </div>
-                                <div className="offer-actions-inline" style={{ display: 'flex', gap: '8px', marginLeft: '12px' }}>
-                                    <button
-                                        className="action-icon-btn"
-                                        onClick={(e) => { e.stopPropagation(); openEditModal(offer); }}
-                                        title="Uredi"
-                                        style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)', padding: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '4px', transition: 'all 0.2s' }}
-                                    >
-                                        <span className="material-icons-round" style={{ fontSize: '20px' }}>edit</span>
-                                    </button>
-                                    <button
-                                        className="action-icon-btn"
-                                        onClick={(e) => { e.stopPropagation(); handlePrintOffer(offer); }}
-                                        title="Printaj"
-                                        style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)', padding: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '4px', transition: 'all 0.2s' }}
-                                    >
-                                        <span className="material-icons-round" style={{ fontSize: '20px' }}>print</span>
-                                    </button>
-                                    <button
-                                        className="action-icon-btn danger"
-                                        onClick={(e) => { e.stopPropagation(); handleDeleteOffer(offer.Offer_ID); }}
-                                        title="Obriši"
-                                        style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#ef4444', padding: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '4px', transition: 'all 0.2s' }}
-                                    >
-                                        <span className="material-icons-round" style={{ fontSize: '20px' }}>delete</span>
-                                    </button>
-                                </div>
-                            </div>
+                            ))}
                         </div>
                     ))
                 )}
@@ -1494,7 +1616,29 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
                                                 </div>
                                                 <div className="offer-product-cost">
                                                     <div className="label">Materijal</div>
-                                                    <div className="value">{formatCurrency(product.Material_Cost)}</div>
+                                                    <div className="value" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                                        {formatCurrency(product.Material_Cost)}
+                                                        {isEditMode && (
+                                                            <button
+                                                                type="button"
+                                                                onClick={(e) => { e.stopPropagation(); refreshMaterialCost(index); }}
+                                                                title="Osviježi cijenu materijala iz projekta"
+                                                                style={{
+                                                                    background: 'none',
+                                                                    border: '1px solid var(--border-color)',
+                                                                    borderRadius: '4px',
+                                                                    cursor: 'pointer',
+                                                                    padding: '2px 4px',
+                                                                    display: 'inline-flex',
+                                                                    alignItems: 'center',
+                                                                    color: 'var(--accent)',
+                                                                    transition: 'all 0.2s'
+                                                                }}
+                                                            >
+                                                                <span className="material-icons-round" style={{ fontSize: '14px' }}>refresh</span>
+                                                            </button>
+                                                        )}
+                                                    </div>
                                                 </div>
                                             </div>
 

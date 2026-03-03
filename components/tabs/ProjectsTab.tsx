@@ -1179,20 +1179,18 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                                                     let hasAnyProfit = false;
 
                                                     (project.products || []).forEach(product => {
+                                                        // Only include products that have started production
+                                                        const productStatus = getProductStatus(product);
+                                                        if (productStatus === 'Na čekanju') return;
+
                                                         // Find offer values
                                                         let sellingPrice: number | undefined;
-                                                        let originalExtras = 0;
                                                         let originalTransport = 0;
                                                         const acceptedOffers = offers.filter(o => o.Status === 'Prihvaćeno');
                                                         for (const offer of acceptedOffers) {
                                                             const offerProduct = (offer.products || []).find(op => op.Product_ID === product.Product_ID);
                                                             if (offerProduct) {
                                                                 sellingPrice = offerProduct.Selling_Price || offerProduct.Total_Price;
-                                                                const ledCost = offerProduct.LED_Total || 0;
-                                                                const groutingCost = offerProduct.Grouting ? (offerProduct.Grouting_Price || 0) : 0;
-                                                                const sinkCost = offerProduct.Sink_Faucet ? (offerProduct.Sink_Faucet_Price || 0) : 0;
-                                                                const extrasCost = ((offerProduct as any).extras || []).reduce((sum: number, e: any) => sum + (e.Total || e.total || 0), 0);
-                                                                originalExtras = ledCost + groutingCost + sinkCost + extrasCost;
                                                                 if (offer && sellingPrice) {
                                                                     const offerSubtotal = offer.Subtotal || 0;
                                                                     if (offerSubtotal > 0) {
@@ -1212,12 +1210,12 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
 
                                                         // Use overrides if available
                                                         const finalSellingPrice = woItem?.Profit_Overrides?.Selling_Price ?? sellingPrice;
-                                                        const extrasTotal = woItem?.Profit_Overrides?.Extras_Total ?? originalExtras;
                                                         const transportShare = woItem?.Profit_Overrides?.Transport_Share ?? originalTransport;
 
                                                         if (!finalSellingPrice || finalSellingPrice <= 0) return;
 
-                                                        const actualMaterialCost = (product.materials || []).reduce((sum, m) => sum + (m.Total_Price || 0), 0) + extrasTotal;
+                                                        // Actual material cost from real project materials only (extras are NOT deducted — they're estimates baked into selling price)
+                                                        const actualMaterialCost = (product.materials || []).reduce((sum, m) => sum + (m.Total_Price || 0), 0);
                                                         const productLogs = workLogs.filter(wl => wl.Product_ID === product.Product_ID);
                                                         const laborCost = productLogs.reduce((sum, wl) => sum + (wl.Daily_Rate || 0), 0);
 
@@ -1392,11 +1390,10 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                                                     // === Product IS in a work order — show profit ===
                                                     const hasOverrides = !!woItem?.Profit_Overrides;
                                                     const sellingPrice = woItem?.Profit_Overrides?.Selling_Price ?? originalSellingPrice;
-                                                    const extrasTotal = woItem?.Profit_Overrides?.Extras_Total ?? originalExtras;
                                                     const transportShare = woItem?.Profit_Overrides?.Transport_Share ?? originalTransport;
 
-                                                    // Total costs = actual materials + extras (from offer or override)
-                                                    const materialCost = actualMaterialCost + extrasTotal;
+                                                    // Actual material cost only — extras are NOT deducted (they're estimates baked into selling price)
+                                                    const materialCost = actualMaterialCost;
 
                                                     // Labor cost from ACTUAL work logs
                                                     const productWorkLogs = workLogs.filter(wl => wl.Product_ID === product.Product_ID);
