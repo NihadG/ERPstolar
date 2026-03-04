@@ -69,17 +69,16 @@ const CSV_CONFIGS: Record<EntityType, EntityConfig> = {
         icon: '🪑',
         description: 'Gotovi proizvodi za projekte',
         columns: [
-            { key: 'Name', label: 'Naziv', required: true },
-            { key: 'Description', label: 'Opis', required: false },
-            { key: 'Product_Value', label: 'Cijena', required: false },
-            { key: 'Width', label: 'Širina (cm)', required: false },
+            { key: 'Name', label: 'Naziv proizvoda', required: true },
             { key: 'Height', label: 'Visina (cm)', required: false },
+            { key: 'Width', label: 'Širina (cm)', required: false },
             { key: 'Depth', label: 'Dubina (cm)', required: false },
+            { key: 'Quantity', label: 'Količina', required: false },
         ],
         exampleData: [
-            ['Kuhinjski ormar gornji', 'Gornji element sa staklom', '350.00', '60', '72', '35'],
-            ['Radna ploča', 'Radna ploča 4cm granit', '180.00', '300', '4', '60'],
-            ['Pult', 'Kuhinjski pult sa ladicama', '520.00', '80', '85', '60'],
+            ['Kuhinjski ormar gornji', '72', '60', '35', '2'],
+            ['Radna ploča', '4', '300', '60', '1'],
+            ['Pult', '85', '80', '60', '3'],
         ]
     },
     workers: {
@@ -294,7 +293,7 @@ export default function CSVImportWizard({
                     const index = columnMap[col.key];
                     if (index !== undefined && row[index]) {
                         // Handle numeric fields
-                        if (['Default_Unit_Price', 'Stock_Quantity', 'Daily_Rate', 'Product_Value', 'Width', 'Height', 'Depth'].includes(col.key)) {
+                        if (['Default_Unit_Price', 'Stock_Quantity', 'Daily_Rate', 'Product_Value', 'Width', 'Height', 'Depth', 'Quantity'].includes(col.key)) {
                             const numVal = parseFloat(row[index].replace(',', '.'));
                             item[col.key] = isNaN(numVal) ? 0 : numVal;
                         } else {
@@ -383,6 +382,7 @@ export default function CSVImportWizard({
                     case 'products':
                         // Let DB generate ID
                         item.Status = 'U pripremi';
+                        if (!item.Quantity) item.Quantity = 1;
                         saveResult = await saveProduct(item as Partial<Product>, organizationId);
                         break;
                     case 'workers':

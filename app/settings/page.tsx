@@ -4,7 +4,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/context/AuthContext';
 import { useData } from '@/context/DataContext';
-import { saveOrgSettings, getOrgSettings } from '@/lib/database';
+import { saveOrgSettings, getOrgSettings } from '@/lib/services';
 import Link from 'next/link';
 
 const PLAN_NAMES: Record<string, { name: string; color: string; icon: string }> = {

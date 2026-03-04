@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo, useCallback } from 'react';
+import { useState, useMemo, useCallback, useEffect } from 'react';
 import Modal from './Modal';
 import type { WorkLog, WorkerAttendance, ProductMaterial, WorkOrderItem, Worker } from '@/lib/types';
 import {
@@ -241,12 +241,14 @@ export default function ProductTimelineModal({
         setAddingWorkerDay(null);
     };
 
-    const addNewDay = () => {
-        if (!newDayDate) return;
-        // Just expand the day — user adds workers via the add button
-        setExpandedDays(prev => { const next = new Set(Array.from(prev)); next.add(newDayDate); return next; });
-        setNewDayDate('');
-    };
+    // Auto-enter editing mode when timeline is empty and manual editing is available
+    // This makes the "add day" UI immediately accessible instead of requiring a separate click
+    useEffect(() => {
+        if (isOpen && workLogs.length === 0 && onOverrideWorkLogs && !isEditingTimeline) {
+            startTimelineEdit();
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [isOpen, workLogs.length]);
 
     const removeDay = (date: string) => {
         setEditedLogs(prev => prev.filter(l => l.Date !== date));
@@ -757,7 +759,9 @@ export default function ProductTimelineModal({
                             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '12px' }}>
                                 {(() => {
                                     const displayLaborCost = stats.totalLaborCost;
-                                    const displayProfit = profit ?? (sellingPrice - (materialCost || 0) - displayLaborCost);
+                                    const transportShareVal = costBreakdown?.transportShare || workOrderItem?.Transport_Share || 0;
+                                    const servicesTotalVal = (workOrderItem as any)?.Services_Total || 0;
+                                    const displayProfit = profit ?? (sellingPrice - (materialCost || 0) - displayLaborCost - transportShareVal - servicesTotalVal);
                                     const displayMargin = profitMargin ?? (sellingPrice > 0 ? (displayProfit / sellingPrice) * 100 : 0);
                                     return [
                                         { label: 'Prodajna', value: sellingPrice, icon: DollarSign, color: '#0f172a' },
@@ -888,7 +892,12 @@ export default function ProductTimelineModal({
                             padding: '48px', background: '#f9fafb', borderRadius: '12px', color: '#9ca3af'
                         }}>
                             <Clock size={48} style={{ marginBottom: '8px' }} />
-                            <p style={{ margin: 0, fontSize: '15px' }}>Nema zabilježenog rada na ovom proizvodu</p>
+                            <p style={{ margin: 0, fontSize: '15px', fontWeight: 600 }}>Nema zabilježenog rada na ovom proizvodu</p>
+                            <p style={{ margin: '8px 0 0', fontSize: '13px', textAlign: 'center', lineHeight: '1.5' }}>
+                                {onOverrideWorkLogs
+                                    ? 'Koristite "Dodaj novi dan" ispod da ručno unesete radne dane, ili evidentirajte prisustvo u Sihtarici.'
+                                    : 'Evidentirajte prisustvo radnika u Sihtarici da bi se radni dani automatski zabilježili.'}
+                            </p>
                         </div>
                     ) : (
                         timeline.map(day => {
@@ -1230,8 +1239,8 @@ export default function ProductTimelineModal({
                         })
                     )}
 
-                    {/* Add new day — only in editing mode */}
-                    {isEditingTimeline && (
+                    {/* Add new day — always visible when editing is available */}
+                    {(isEditingTimeline || onOverrideWorkLogs) && (
                         <div style={{
                             display: 'flex', alignItems: 'center', gap: '8px',
                             padding: '10px 14px', marginTop: '4px',
@@ -1256,6 +1265,10 @@ export default function ProductTimelineModal({
                             <button
                                 onClick={() => {
                                     if (!newDayDate) return;
+                                    // Auto-enter editing mode if not already
+                                    if (!isEditingTimeline) {
+                                        startTimelineEdit();
+                                    }
                                     setExtraDates(prev => { const next = new Set(prev); next.add(newDayDate); return next; });
                                     setExpandedDays(prev => { const next = new Set(Array.from(prev)); next.add(newDayDate); return next; });
                                     setAddingWorkerDay(newDayDate);

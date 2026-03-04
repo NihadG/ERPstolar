@@ -13,7 +13,7 @@ import {
     getTasks,
 } from '@/lib/services';
 import { initSyncPipeline } from '@/lib/services';
-import { getOrgSettings, getAllData } from '@/lib/database';
+import { getOrgSettings, getAllData } from '@/lib/services';
 import { useAuth } from './AuthContext';
 
 // ============================================

@@ -10,7 +10,7 @@ import {
     TASK_CATEGORIES
 } from '@/lib/types';
 import { saveTask, deleteTask, updateTaskStatus, toggleTaskChecklistItem, saveTaskProfile, deleteTaskProfile } from '@/lib/services';
-import { generateUUID } from '@/lib/database';
+import { generateUUID } from '@/lib/services';
 import {
     Plus,
     Search,

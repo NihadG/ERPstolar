@@ -2,8 +2,7 @@
 
 import { useState, useMemo, useRef, useEffect } from 'react';
 import type { Offer, Project, OfferProduct, Product } from '@/lib/types';
-import { createOfferWithProducts, deleteOffer, updateOfferStatus, saveOffer, updateOfferWithProducts } from '@/lib/services';
-import { getOffer } from '@/lib/database';
+import { createOfferWithProducts, deleteOffer, updateOfferStatus, saveOffer, updateOfferWithProducts, getOffer } from '@/lib/services';
 import { useData } from '@/context/DataContext';
 import { generateOfferPDF, type OfferPDFData } from '@/lib/pdfGenerator';
 import Modal from '@/components/ui/Modal';
@@ -567,7 +566,7 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
                     setOfferCurrency((fullOffer as any).Currency || 'KM');
                     setOfferLanguage((fullOffer as any).Language || 'bs');
 
-                    const products: OfferProductState[] = (fullOffer.products || []).map(p => ({
+                    const products: OfferProductState[] = (fullOffer.products || []).map((p: OfferProduct) => ({
                         Product_ID: p.Product_ID,
                         Product_Name: p.Product_Name,
                         Quantity: p.Quantity || 1,
@@ -625,11 +624,11 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
 
         // Load products from the offer — DEDUP by Product_ID
         const seenProductIds = new Set<string>();
-        const products: OfferProductState[] = (fullOffer.products || []).filter(p => {
+        const products: OfferProductState[] = (fullOffer.products || []).filter((p: OfferProduct) => {
             if (seenProductIds.has(p.Product_ID)) return false;
             seenProductIds.add(p.Product_ID);
             return true;
-        }).map(p => {
+        }).map((p: OfferProduct) => {
             // Fall back to fresh product Material_Cost when offer value is 0
             const freshProduct = projectProducts.find(pp => pp.Product_ID === p.Product_ID);
             const materialCost = p.Material_Cost || freshProduct?.Material_Cost || 0;

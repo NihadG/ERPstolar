@@ -620,7 +620,7 @@ export default function WorkOrderExpandedDetail({
                         border: '1px solid #e5e7eb', marginTop: '8px'
                     }}>
                         {localItems.map(item => {
-                            const itemLogs = workLogs.filter(wl => wl.Product_ID === item.Product_ID);
+                            const itemLogs = workLogs.filter(wl => wl.Work_Order_Item_ID === item.ID);
                             const laborCost = itemLogs.reduce((sum, wl) => sum + (wl.Daily_Rate || 0), 0);
                             const workerCount = new Set(itemLogs.map(wl => wl.Worker_ID)).size;
                             return (

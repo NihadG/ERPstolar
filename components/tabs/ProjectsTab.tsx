@@ -16,7 +16,7 @@ import {
     addAluDoorMaterialToProduct,
     updateAluDoorMaterial,
     saveProfitOverrides
-} from '@/lib/database';
+} from '@/lib/services';
 import Modal from '@/components/ui/Modal';
 import GlassModal, { type GlassModalData } from '@/components/ui/GlassModal';
 import AluDoorModal, { type AluDoorModalData } from '@/components/ui/AluDoorModal';
@@ -1065,7 +1065,7 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                     productId={timelineProduct?.product.Product_ID || ''}
                     productName={timelineProduct?.product.Name || ''}
                     workOrderItem={timelineProduct?.workOrderItem}
-                    workLogs={workLogs.filter(wl => wl.Product_ID === timelineProduct?.product.Product_ID)}
+                    workLogs={workLogs.filter(wl => wl.Work_Order_Item_ID === timelineProduct?.workOrderItem?.ID)}
                     sellingPrice={timelineProduct?.sellingPrice}
                     materialCost={timelineProduct?.materialCost}
                     laborCost={timelineProduct?.laborCost}
@@ -1201,25 +1201,38 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                                                             }
                                                         }
 
-                                                        // Find work order item
+                                                        // Find work order item — prefer active over completed
                                                         let woItem: any;
+                                                        let woItemFallback: any;
                                                         for (const wo of workOrders) {
                                                             const item = (wo.items || []).find(i => i.Product_ID === product.Product_ID);
-                                                            if (item) { woItem = item; break; }
+                                                            if (item) {
+                                                                if (item.Status !== 'Završeno') {
+                                                                    woItem = item;
+                                                                    break;
+                                                                } else if (!woItemFallback) {
+                                                                    woItemFallback = item;
+                                                                }
+                                                            }
                                                         }
+                                                        if (!woItem) woItem = woItemFallback;
 
                                                         // Use overrides if available
-                                                        const finalSellingPrice = woItem?.Profit_Overrides?.Selling_Price ?? sellingPrice;
+                                                        const woSellingPrice = woItem?.Product_Value || 0;
+                                                        const finalSellingPrice = woItem?.Profit_Overrides?.Selling_Price ?? (woSellingPrice > 0 ? woSellingPrice : sellingPrice);
                                                         const transportShare = woItem?.Profit_Overrides?.Transport_Share ?? originalTransport;
+                                                        const servicesTotal = woItem?.Services_Total || 0;
 
                                                         if (!finalSellingPrice || finalSellingPrice <= 0) return;
 
-                                                        // Actual material cost from real project materials only (extras are NOT deducted — they're estimates baked into selling price)
+                                                        // Material cost from project materials
                                                         const actualMaterialCost = (product.materials || []).reduce((sum, m) => sum + (m.Total_Price || 0), 0);
-                                                        const productLogs = workLogs.filter(wl => wl.Product_ID === product.Product_ID);
+                                                        // Filter work logs by Work_Order_Item_ID (not Product_ID)
+                                                        const productLogs = woItem ? workLogs.filter(wl => wl.Work_Order_Item_ID === woItem.ID) : [];
                                                         const laborCost = productLogs.reduce((sum, wl) => sum + (wl.Daily_Rate || 0), 0);
 
-                                                        projectProfit += finalSellingPrice - actualMaterialCost - laborCost - transportShare;
+                                                        // UNIFIED PROFIT FORMULA
+                                                        projectProfit += finalSellingPrice - actualMaterialCost - laborCost - transportShare - servicesTotal;
                                                         projectSellingTotal += finalSellingPrice;
                                                         hasAnyProfit = true;
                                                     });
@@ -1345,15 +1358,21 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                                                         }
                                                     }
 
-                                                    // === STEP 2: Find matching WorkOrderItem for overrides ===
+                                                    // === STEP 2: Find matching WorkOrderItem — PREFER active over completed ===
                                                     let woItem: WorkOrderItem | undefined;
+                                                    let woItemFallback: WorkOrderItem | undefined;
                                                     for (const wo of workOrders) {
                                                         const item = (wo.items || []).find(i => i.Product_ID === product.Product_ID);
                                                         if (item) {
-                                                            woItem = item;
-                                                            break;
+                                                            if (item.Status !== 'Završeno') {
+                                                                woItem = item;
+                                                                break; // Active item wins
+                                                            } else if (!woItemFallback) {
+                                                                woItemFallback = item; // Keep first completed as fallback
+                                                            }
                                                         }
                                                     }
+                                                    if (!woItem) woItem = woItemFallback;
 
                                                     // === STEP 3: Material cost from ACTUAL project materials ===
                                                     const actualMaterials = product.materials || [];
@@ -1389,19 +1408,23 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
 
                                                     // === Product IS in a work order — show profit ===
                                                     const hasOverrides = !!woItem?.Profit_Overrides;
-                                                    const sellingPrice = woItem?.Profit_Overrides?.Selling_Price ?? originalSellingPrice;
+                                                    // FIX #3: Use Product_Value (includes Quantity) to match recalculateWorkOrder
+                                                    // Fall back to originalSellingPrice only if Product_Value is 0
+                                                    const woSellingPrice = woItem?.Product_Value || 0;
+                                                    const sellingPrice = woItem?.Profit_Overrides?.Selling_Price ?? (woSellingPrice > 0 ? woSellingPrice : originalSellingPrice);
                                                     const transportShare = woItem?.Profit_Overrides?.Transport_Share ?? originalTransport;
+                                                    const servicesTotal = woItem?.Services_Total || 0;
 
-                                                    // Actual material cost only — extras are NOT deducted (they're estimates baked into selling price)
+                                                    // Actual material cost only
                                                     const materialCost = actualMaterialCost;
 
-                                                    // Labor cost from ACTUAL work logs
-                                                    const productWorkLogs = workLogs.filter(wl => wl.Product_ID === product.Product_ID);
+                                                    // Labor cost from ACTUAL work logs — filter by WO item, not product
+                                                    const productWorkLogs = workLogs.filter(wl => wl.Work_Order_Item_ID === woItem?.ID);
                                                     const laborCost = productWorkLogs.reduce((sum, wl) => sum + (wl.Daily_Rate || 0), 0);
 
-                                                    // Calculate profit
+                                                    // UNIFIED PROFIT FORMULA (matches recalculateWorkOrder)
                                                     if (sellingPrice && sellingPrice > 0) {
-                                                        const profit = sellingPrice - materialCost - laborCost - transportShare;
+                                                        const profit = sellingPrice - materialCost - laborCost - transportShare - servicesTotal;
                                                         const profitMargin = sellingPrice > 0 ? (profit / sellingPrice) * 100 : 0;
 
                                                         return (
@@ -1963,22 +1986,34 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                                                                 }
 
                                                                 let woItem: any;
+                                                                let woItemFallback: any;
                                                                 for (const wo of workOrders) {
                                                                     const item = (wo.items || []).find(i => i.Product_ID === product.Product_ID);
-                                                                    if (item) { woItem = item; break; }
+                                                                    if (item) {
+                                                                        if (item.Status !== 'Završeno') {
+                                                                            woItem = item;
+                                                                            break;
+                                                                        } else if (!woItemFallback) {
+                                                                            woItemFallback = item;
+                                                                        }
+                                                                    }
                                                                 }
+                                                                if (!woItem) woItem = woItemFallback;
 
-                                                                const finalSellingPrice = woItem?.Profit_Overrides?.Selling_Price ?? sellingPrice;
-                                                                const extrasTotal = woItem?.Profit_Overrides?.Extras_Total ?? originalExtras;
+                                                                const woSellingPrice = woItem?.Product_Value || 0;
+                                                                const finalSellingPrice = woItem?.Profit_Overrides?.Selling_Price ?? (woSellingPrice > 0 ? woSellingPrice : sellingPrice);
                                                                 const transportShare = woItem?.Profit_Overrides?.Transport_Share ?? originalTransport;
+                                                                const servicesTotal = woItem?.Services_Total || 0;
 
                                                                 if (!finalSellingPrice || finalSellingPrice <= 0) return;
 
-                                                                const actualMaterialCost = (product.materials || []).reduce((sum, m) => sum + (m.Total_Price || 0), 0) + extrasTotal;
-                                                                const productLogs = workLogs.filter(wl => wl.Product_ID === product.Product_ID);
+                                                                const actualMaterialCost = (product.materials || []).reduce((sum, m) => sum + (m.Total_Price || 0), 0);
+                                                                // Filter work logs by Work_Order_Item_ID (not Product_ID)
+                                                                const productLogs = woItem ? workLogs.filter(wl => wl.Work_Order_Item_ID === woItem.ID) : [];
                                                                 const laborCost = productLogs.reduce((sum, wl) => sum + (wl.Daily_Rate || 0), 0);
 
-                                                                projectProfit += finalSellingPrice - actualMaterialCost - laborCost - transportShare;
+                                                                // UNIFIED PROFIT FORMULA
+                                                                projectProfit += finalSellingPrice - actualMaterialCost - laborCost - transportShare - servicesTotal;
                                                                 projectSellingTotal += finalSellingPrice;
                                                                 hasAnyProfit = true;
                                                             });
@@ -2363,7 +2398,7 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                 productId={timelineProduct?.product.Product_ID || ''}
                 productName={timelineProduct?.product.Name || ''}
                 workOrderItem={timelineProduct?.workOrderItem}
-                workLogs={workLogs.filter(wl => wl.Product_ID === timelineProduct?.product.Product_ID)}
+                workLogs={workLogs.filter(wl => wl.Work_Order_Item_ID === timelineProduct?.workOrderItem?.ID)}
                 sellingPrice={timelineProduct?.sellingPrice}
                 materialCost={timelineProduct?.materialCost}
                 laborCost={timelineProduct?.laborCost}

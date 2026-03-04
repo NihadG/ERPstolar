@@ -3645,14 +3645,24 @@ export async function deleteWorkOrder(
         }
 
         // S3.1: Flag orphaned work logs (preserve for cost history)
+        // FIX #16: Also collect affected workers to resplit their rates on remaining WOs
         const workLogsQ = query(
             collection(db, COLLECTIONS.WORK_LOGS),
             where('Work_Order_ID', '==', workOrderId),
             where('Organization_ID', '==', organizationId)
         );
         const workLogsSnap = await getDocs(workLogsQ);
+        const affectedWorkerDates = new Map<string, Set<string>>(); // Worker_ID -> Set<Date>
         for (const wlDoc of workLogsSnap.docs) {
+            const wlData = wlDoc.data();
             await updateDoc(wlDoc.ref, { Work_Order_Deleted: true });
+            // Track unique worker+date pairs for resplit
+            if (wlData.Worker_ID && wlData.Date) {
+                if (!affectedWorkerDates.has(wlData.Worker_ID)) {
+                    affectedWorkerDates.set(wlData.Worker_ID, new Set());
+                }
+                affectedWorkerDates.get(wlData.Worker_ID)!.add(wlData.Date);
+            }
         }
 
         // Delete items
@@ -3671,6 +3681,43 @@ export async function deleteWorkOrder(
         }
 
         await batch.commit();
+
+        // FIX #16: Resplit daily rates for affected workers on remaining WOs
+        // When a WO is deleted, workers' split rates on other WOs become stale
+        // (e.g., was 80/3=26.67, after deleting one WO should be 80/2=40)
+        if (affectedWorkerDates.size > 0) {
+            try {
+                const { resplitWorkerDailyRate, recalculateWorkOrder: recalcWO } = await import('./attendance');
+                const recalcWoIds = new Set<string>();
+
+                for (const [workerId, dates] of Array.from(affectedWorkerDates.entries())) {
+                    for (const date of Array.from(dates)) {
+                        await resplitWorkerDailyRate(workerId, date, organizationId);
+
+                        // Find remaining WOs that have work logs for this worker+date
+                        const remainingLogsQ = query(
+                            collection(db, COLLECTIONS.WORK_LOGS),
+                            where('Worker_ID', '==', workerId),
+                            where('Date', '==', date),
+                            where('Organization_ID', '==', organizationId)
+                        );
+                        const remainingSnap = await getDocs(remainingLogsQ);
+                        remainingSnap.docs.forEach(d => {
+                            const woId = d.data().Work_Order_ID;
+                            if (woId && woId !== workOrderId) recalcWoIds.add(woId);
+                        });
+                    }
+                }
+
+                // Recalculate all remaining affected WOs
+                for (const woId of Array.from(recalcWoIds)) {
+                    await recalcWO(woId);
+                }
+                console.log(`[DELETE WO RESPLIT] Resplit ${affectedWorkerDates.size} workers, recalculated ${recalcWoIds.size} remaining WOs`);
+            } catch (resplitErr) {
+                console.warn('Post-delete resplit warning (non-critical):', resplitErr);
+            }
+        }
 
         // Sync project status via centralized function
         for (const projectId of Array.from(projectUpdates.keys())) {

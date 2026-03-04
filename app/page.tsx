@@ -3,8 +3,8 @@
 import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { ChevronRight, ChevronLeft } from 'lucide-react';
-import { getProjects, getMaterialsCatalog, getSuppliers, getWorkers, getOffers, getOrders, getWorkOrders, getTasks } from '@/lib/services';
-import { getAllData, getWorkLogs, getTaskProfiles } from '@/lib/database';
+import { getProjects, getMaterialsCatalog, getSuppliers, getWorkers, getOffers, getOrders, getWorkOrders, getTasks, getWorkLogs, getTaskProfiles } from '@/lib/services';
+
 import { signOut } from '@/lib/auth';
 import { useAuth } from '@/context/AuthContext';
 import type { AppState, Project, Product, Material, Offer, Order, Supplier, Worker } from '@/lib/types';
@@ -221,8 +221,24 @@ export default function Home() {
         if (collections.length === 0) {
             setLoading(true);
             try {
-                const data = await getAllData(organization.Organization_ID);
-                setAppState(data);
+                const orgId = organization.Organization_ID;
+                const [projects, materials, suppliers, workers, offers, orders, workOrders, workLogs, tasks, taskProfiles] = await Promise.all([
+                    getProjects(orgId),
+                    getMaterialsCatalog(orgId),
+                    getSuppliers(orgId),
+                    getWorkers(orgId),
+                    getOffers(orgId),
+                    getOrders(orgId),
+                    getWorkOrders(orgId),
+                    getWorkLogs(orgId),
+                    getTasks(orgId),
+                    getTaskProfiles(orgId),
+                ]);
+                setAppState({
+                    projects, materials, suppliers, workers, offers, orders,
+                    workOrders, workLogs, tasks, taskProfiles,
+                    products: [], productMaterials: [], glassItems: [], aluDoorItems: [],
+                });
             } catch (error) {
                 console.error('Error loading all data:', error);
                 showToast('Greška pri učitavanju podataka', 'error');

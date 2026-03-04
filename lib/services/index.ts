@@ -79,6 +79,7 @@ export { getProjects, getProject, saveProject, deleteProject, updateProjectStatu
 
 // Product
 export { getProductsByProject, getProduct, saveProduct, deleteProduct, updateProductStatus, recalculateProductCost } from './product/productService';
+export { addMaterialToProduct, deleteProductMaterial, updateProductMaterial, addGlassMaterialToProduct, updateGlassMaterial, addAluDoorMaterialToProduct, updateAluDoorMaterial, generateUUID } from '../database';
 
 // Worker
 export { getWorkers, saveWorker, deleteWorker } from './resource/workerService';
@@ -91,6 +92,7 @@ export { getMaterialsCatalog, saveMaterial, deleteMaterial, deleteDuplicateMater
 
 // Offer
 export { getOffers, createOfferWithProducts, saveOffer, updateOfferWithProducts, deleteOffer, updateOfferStatus, updateOfferProduct } from './offer/offerService';
+export { getOffer } from '../database';
 
 // Order
 export { getOrders, getOrder, getOrderItems, createOrder, saveOrder, deleteOrder, updateOrderStatus, markOrderSent, markMaterialsReceived, deleteOrderItemsByIds, updateOrderItem, recalculateOrderTotal, batchUpdateMaterialStatuses } from './order/orderService';
@@ -148,3 +150,9 @@ export {
     getTodaysTasks, getOverdueTasks,
     getTaskProfiles, saveTaskProfile, deleteTaskProfile,
 } from './task/taskService';
+
+// Settings
+export { getOrgSettings, saveOrgSettings } from '../database';
+
+// Data Loading
+export { getAllData } from '../database';

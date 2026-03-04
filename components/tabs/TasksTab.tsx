@@ -11,7 +11,7 @@ import {
 } from '@/lib/types';
 import { DragDropContext, Droppable, Draggable, DropResult } from '@hello-pangea/dnd';
 import { saveTask, deleteTask, updateTaskStatus, toggleTaskChecklistItem, saveTaskProfile, deleteTaskProfile } from '@/lib/services';
-import { generateUUID } from '@/lib/database';
+import { generateUUID } from '@/lib/services';
 import './TasksTab.css';
 import {
     Plus,

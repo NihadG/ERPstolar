@@ -242,7 +242,7 @@ export default function AttendanceTab({ workers, onRefresh, showToast }: Attenda
         setEditModalOpen(false);
 
         try {
-            await markAttendanceAndRecalculate({
+            const result = await markAttendanceAndRecalculate({
                 Worker_ID: selectedCell.workerId,
                 Worker_Name: selectedCell.workerName,
                 Date: selectedCell.date,
@@ -250,6 +250,13 @@ export default function AttendanceTab({ workers, onRefresh, showToast }: Attenda
                 Notes: finalNotes,
                 Organization_ID: organizationId || undefined
             });
+
+            // Bug 4 FIX: Show feedback about work log creation
+            if (result.workLogsCreated > 0) {
+                showToast(`Kreirano ${result.workLogsCreated} radnih zapisa za ${result.affectedWorkOrders.length} nalog(a)`, 'success');
+            } else if (finalStatus === 'Prisutan' || finalStatus === 'Teren') {
+                showToast('Prisustvo sačuvano — nema aktivnih naloga za ovog radnika', 'info');
+            }
 
             // Reload just this month to confirm
             loadMonth(date.getFullYear(), date.getMonth() + 1);
@@ -427,7 +434,16 @@ export default function AttendanceTab({ workers, onRefresh, showToast }: Attenda
                 }
             }
 
-            showToast(`Prisustvo sačuvano za ${workersToUpdate.length} radnika`, 'success');
+            // Bug 6 FIX: Show aggregate feedback about work log creation
+            const totalCreated = results.reduce((sum, r) => sum + r.workLogsCreated, 0);
+            const totalDeleted = results.reduce((sum, r) => sum + r.workLogsDeleted, 0);
+            const totalAffectedWOs = new Set(results.flatMap(r => r.affectedWorkOrders)).size;
+
+            if (totalCreated > 0) {
+                showToast(`Prisustvo sačuvano za ${workersToUpdate.length} radnika — ${totalCreated} radnih zapisa za ${totalAffectedWOs} nalog(a)`, 'success');
+            } else {
+                showToast(`Prisustvo sačuvano za ${workersToUpdate.length} radnika`, 'success');
+            }
             loadMonth(date.getFullYear(), date.getMonth() + 1);
             onRefresh('workers', 'workOrders');
         } catch (error) {

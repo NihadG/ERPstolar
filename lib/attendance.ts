@@ -837,6 +837,12 @@ export async function createWorkLogsForAttendance(
  * Helper: Check if a worker is assigned to a work order item
  * Checks Assigned_Workers array, Processes, and SubTasks
  * NOTE: Returns false if the item is paused (Is_Paused = true)
+ * 
+ * FIX: Previously only checked processes with Status === 'U toku'.
+ * This caused workers who finished a process (Završeno) to lose their
+ * assignment check, resulting in 0 work logs for subsequent days.
+ * Now checks ALL process statuses — if a worker was ever assigned
+ * to the item, they get work logs as long as the item itself is active.
  */
 function isWorkerAssignedToItem(item: WorkOrderItem, workerId: string): boolean {
     // Skip paused items - they don't accrue daily rates
@@ -849,22 +855,19 @@ function isWorkerAssignedToItem(item: WorkOrderItem, workerId: string): boolean 
         return true;
     }
 
-    // Check Processes - main worker OR helper
+    // Check Processes - main worker OR helper (ANY status — not just 'U toku')
+    // A worker who finished 'Rezanje' is still working on the item if the item itself is active
     if (item.Processes?.some(p =>
-        p.Status === 'U toku' && (
-            p.Worker_ID === workerId ||
-            p.Helpers?.some(h => h.Worker_ID === workerId)
-        )
+        p.Worker_ID === workerId ||
+        p.Helpers?.some(h => h.Worker_ID === workerId)
     )) {
         return true;
     }
 
-    // Check SubTasks - main worker OR helper
+    // Check SubTasks - main worker OR helper (ANY status)
     if (item.SubTasks?.some(st =>
-        st.Status === 'U toku' && (
-            st.Worker_ID === workerId ||
-            st.Helpers?.some(h => h.Worker_ID === workerId)
-        )
+        st.Worker_ID === workerId ||
+        st.Helpers?.some(h => h.Worker_ID === workerId)
     )) {
         return true;
     }
@@ -2045,6 +2048,13 @@ export async function recalculateWorkOrder(workOrderId: string): Promise<void> {
                     console.warn('Product_Value backfill failed (non-critical):', backfillErr);
                 }
             }
+
+            // FIX #1: Apply Profit_Overrides — user can override selling price per item
+            // This ensures recalculateWorkOrder matches the profit modal badge
+            const overrides = (item as any).Profit_Overrides;
+            if (overrides?.Selling_Price != null && overrides.Selling_Price > 0) {
+                itemValue = overrides.Selling_Price;
+            }
             totalValue += itemValue;
 
             // PROFIT-09 FIX: For completed items, use FROZEN material cost (don't re-fetch)
@@ -2069,30 +2079,40 @@ export async function recalculateWorkOrder(workOrderId: string): Promise<void> {
             }
             materialCost += itemMaterialCost;
 
-            // Include Transport and Services in profit calculation (best practice)
-            transportCost += item.Transport_Share || 0;
+            // Include Transport and Services in profit calculation
+            // FIX #1: Apply Profit_Overrides for Transport_Share if present
+            const itemTransport = overrides?.Transport_Share != null ? overrides.Transport_Share : (item.Transport_Share || 0);
+            transportCost += itemTransport;
             servicesCost += item.Services_Total || 0;
 
             plannedLaborCost += item.Planned_Labor_Cost || 0;
 
-            // RETROACTIVE ATTENDANCE FIX: ALWAYS calculate fresh labor cost from work logs
-            // Work logs are the single source of truth — even for frozen/completed items.
-            // This ensures that retroactively filled attendance properly updates profit.
-            // The Labor_Cost_Frozen flag is kept as metadata (UI indicator) but does NOT
-            // block recalculation — otherwise backdated attendance would never propagate.
+            // Calculate labor cost from work logs
+            // FIX #5: If labor cost was manually overridden (manual_override source),
+            // preserve the user's value — don't overwrite with auto-calculated cost.
+            // Auto-attendance logs still recalculate normally.
             let freshItemLaborCost: number;
-            freshItemLaborCost = await calculateActualLaborCost(item, workOrder.Organization_ID);
+            const isManualOverride = (item as any).Labor_Cost_Source === 'manual_override';
+            if (isManualOverride && (item.Actual_Labor_Cost || 0) > 0) {
+                // Manual override: use the stored value (set by overrideWorkLogs)
+                // Still recalculate from work_logs to stay in sync with manual entries
+                freshItemLaborCost = await calculateActualLaborCost(item, workOrder.Organization_ID);
+                // If work_logs exist, use them; otherwise fall back to stored value
+                if (freshItemLaborCost === 0) {
+                    freshItemLaborCost = item.Actual_Labor_Cost || 0;
+                }
+            } else {
+                freshItemLaborCost = await calculateActualLaborCost(item, workOrder.Organization_ID);
+            }
             actualLaborCost += freshItemLaborCost;
 
             // SYNC: Update item-level Material_Cost and Actual_Labor_Cost for consistency
-            // Also re-freeze if item was previously frozen (keeps snapshot up-to-date)
             try {
                 const itemRef = doc(firestore, COLLECTIONS.WORK_ORDER_ITEMS, item.ID);
                 const updatePayload: Record<string, any> = {
                     Material_Cost: itemMaterialCost,
                     Actual_Labor_Cost: freshItemLaborCost
                 };
-                // Re-freeze with updated value + timestamp so we know when it was last recalculated
                 if ((item as any).Labor_Cost_Frozen === true) {
                     updatePayload.Labor_Cost_Updated_At = new Date().toISOString();
                 }
@@ -2119,10 +2139,10 @@ export async function recalculateWorkOrder(workOrderId: string): Promise<void> {
             totalValue = workOrder.Total_Value || 0;
         }
 
-        // STANDARDIZED PROFIT FORMULA (consistent with calculateProductProfitability)
-        // Gross Profit = Selling - Material - Transport (services/extras are estimates baked into selling price)
+        // UNIFIED PROFIT FORMULA (FIX #17: now includes servicesCost)
+        // Gross Profit = Selling - Material - Transport - Services
         // Net Profit = Gross - Labor
-        const grossProfit = totalValue - materialCost - transportCost;
+        const grossProfit = totalValue - materialCost - transportCost - servicesCost;
         const profit = grossProfit - actualLaborCost; // This is Net Profit
         const profitMargin = totalValue > 0 ? (profit / totalValue) * 100 : 0;
         const laborCostVariance = plannedLaborCost - actualLaborCost;

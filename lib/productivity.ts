@@ -216,8 +216,14 @@ export async function calculateProductProfitability(
         }));
 
         // Get values from item
-        const sellingPrice = item.Product_Value || 0;
+        let sellingPrice = item.Product_Value || 0;
         const quantity = item.Quantity || 1;
+
+        // FIX #1: Apply Profit_Overrides — matches recalculateWorkOrder
+        const overrides = (item as any).Profit_Overrides;
+        if (overrides?.Selling_Price != null && overrides.Selling_Price > 0) {
+            sellingPrice = overrides.Selling_Price;
+        }
 
         // PROFIT-09 FIX: For completed items, use frozen material cost
         // For active items, fetch fresh prices so profit is accurate during production
@@ -229,7 +235,8 @@ export async function calculateProductProfitability(
             materialCost = materials.reduce((sum, m) => sum + (m.Total_Price || 0), 0);
         }
 
-        const transportShare = item.Transport_Share || 0;
+        // FIX #1: Apply Profit_Overrides for Transport_Share if present
+        const transportShare = overrides?.Transport_Share != null ? overrides.Transport_Share : (item.Transport_Share || 0);
         const servicesTotal = item.Services_Total || 0;
         const plannedLaborCost = item.Planned_Labor_Cost || 0;
         const actualLaborCost = workLogs.reduce((sum, log) => sum + (log.Daily_Rate || 0), 0);
@@ -240,8 +247,10 @@ export async function calculateProductProfitability(
             ? (laborVariance / plannedLaborCost) * 100
             : 0;
 
-        // Calculate profits (services/extras are NOT deducted — they're estimates baked into selling price)
-        const grossProfit = sellingPrice - materialCost - transportShare;
+        // UNIFIED PROFIT FORMULA (FIX #17: matches recalculateWorkOrder)
+        // Gross Profit = Selling - Material - Transport - Services
+        // Net Profit = Gross - Labor
+        const grossProfit = sellingPrice - materialCost - transportShare - servicesTotal;
         const netProfit = grossProfit - actualLaborCost;
         const profitMargin = sellingPrice > 0 ? (netProfit / sellingPrice) * 100 : 0;
 
