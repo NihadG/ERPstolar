@@ -75,6 +75,20 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
     const { companyInfo } = useData();
 
 
+    // Derive flat productMaterials from projects' nested structure
+    // (appState.productMaterials is always [] because getProjects() nests them inside projects)
+    const allProductMaterials = useMemo(() => {
+        const materials: ProductMaterial[] = [];
+        for (const project of projects) {
+            for (const product of (project.products || [])) {
+                for (const material of (product.materials || [])) {
+                    materials.push(material);
+                }
+            }
+        }
+        return materials;
+    }, [projects]);
+
     // Handle pending order materials from Overview tab
     useEffect(() => {
         if (pendingOrderMaterials && pendingOrderMaterials.materialIds.length > 0) {
@@ -86,7 +100,7 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
 
                 // Find projects and products for these materials
                 const materialIdsSet = new Set(pendingOrderMaterials.materialIds);
-                const relevantMaterials = productMaterials.filter(m => materialIdsSet.has(m.ID));
+                const relevantMaterials = allProductMaterials.filter(m => materialIdsSet.has(m.ID));
 
                 // Get unique project IDs from materials
                 const projectIds = new Set<string>();
@@ -116,7 +130,7 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
                 onClearPendingOrder();
             }
         }
-    }, [pendingOrderMaterials, suppliers, productMaterials, projects, onClearPendingOrder]);
+    }, [pendingOrderMaterials, suppliers, allProductMaterials, projects, onClearPendingOrder]);
 
     // Grouping options
     const groupingOptions = [
@@ -290,8 +304,8 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
 
     // Get unordered materials (status = "Nije naručeno" or empty)
     const unorderedMaterials = useMemo(() => {
-        return productMaterials.filter(m => m.Status === MATERIAL_STATUSES[0] || !m.Status);
-    }, [productMaterials]);
+        return allProductMaterials.filter(m => m.Status === MATERIAL_STATUSES[0] || !m.Status);
+    }, [allProductMaterials]);
 
     // Get products from selected projects
     const availableProducts = useMemo(() => {

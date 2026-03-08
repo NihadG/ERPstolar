@@ -40,9 +40,13 @@ interface OffersTabProps {
     projects: Project[];
     onRefresh: (...collections: string[]) => void;
     showToast: (message: string, type: 'success' | 'error' | 'info') => void;
+    onNavigateToProject?: (projectId: string, productId: string, offerId?: string) => void;
+    autoEditOfferId?: string | null;
+    autoScrollProductId?: string | null;
+    onClearAutoEdit?: () => void;
 }
 
-export default function OffersTab({ offers, projects, onRefresh, showToast }: OffersTabProps) {
+export default function OffersTab({ offers, projects, onRefresh, showToast, onNavigateToProject, autoEditOfferId, autoScrollProductId, onClearAutoEdit }: OffersTabProps) {
     const { organizationId } = useData();
     const [searchTerm, setSearchTerm] = useState('');
     const [statusFilter, setStatusFilter] = useState('');
@@ -101,6 +105,35 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
         if (activeDropdown || activeStatusDropdown) document.addEventListener('mousedown', handleClickOutside);
         return () => document.removeEventListener('mousedown', handleClickOutside);
     }, [activeDropdown, activeStatusDropdown]);
+
+    // Auto-open offer edit modal when returning from project materials
+    useEffect(() => {
+        if (autoEditOfferId && offers.length > 0) {
+            const offer = offers.find(o => o.Offer_ID === autoEditOfferId);
+            if (offer) {
+                // Open the edit modal for this offer
+                openEditModal(offer).then(() => {
+                    // After modal loads, scroll to the product if provided
+                    if (autoScrollProductId) {
+                        setTimeout(() => {
+                            const el = document.getElementById(`offer-product-${autoScrollProductId}`);
+                            if (el) {
+                                el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                                // Brief highlight animation
+                                el.style.transition = 'box-shadow 0.3s ease';
+                                el.style.boxShadow = '0 0 0 3px rgba(59, 130, 246, 0.5)';
+                                setTimeout(() => {
+                                    el.style.boxShadow = '';
+                                }, 2000);
+                            }
+                        }, 500); // Wait for modal and products to render
+                    }
+                });
+            }
+            // Clear the auto-edit state so it doesn't re-trigger
+            if (onClearAutoEdit) onClearAutoEdit();
+        }
+    }, [autoEditOfferId, offers.length]);
 
     // Company Info & App Settings (centralized in DataContext)
     const { companyInfo, appSettings } = useData();
@@ -655,6 +688,46 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
                 laborDailyRate: (p as any).Labor_Daily_Rate || (p as any).laborDailyRate || 0
             };
         });
+
+        // --- AUTO-MERGE: Append new project products not yet in this offer ---
+        // Collect IDs of products already in ACCEPTED offers for this project
+        const productIdsInAcceptedOffers = new Set<string>();
+        offers
+            .filter(o => o.Project_ID === fullOffer.Project_ID && o.Status === 'Prihvaćeno')
+            .forEach(o => {
+                (o.products || []).forEach(op => {
+                    if (op.Included !== false) {
+                        productIdsInAcceptedOffers.add(op.Product_ID);
+                    }
+                });
+            });
+
+        // Find project products that are NOT in the offer yet and NOT in accepted offers
+        const newProjectProducts = projectProducts.filter(pp =>
+            !seenProductIds.has(pp.Product_ID) &&
+            !productIdsInAcceptedOffers.has(pp.Product_ID)
+        );
+
+        // Add them as unselected (included: false) entries
+        for (const pp of newProjectProducts) {
+            if (seenProductIds.has(pp.Product_ID)) continue; // extra safety dedup
+            seenProductIds.add(pp.Product_ID);
+            products.push({
+                Product_ID: pp.Product_ID,
+                Product_Name: pp.Name,
+                Quantity: pp.Quantity || 1,
+                Height: pp.Height || 0,
+                Width: pp.Width || 0,
+                Depth: pp.Depth || 0,
+                Material_Cost: pp.Material_Cost || 0,
+                included: false,
+                margin: 0,
+                extras: [],
+                laborWorkers: 0,
+                laborDays: 0,
+                laborDailyRate: 0
+            });
+        }
 
         setOfferProducts(sortProductsByName(products, p => p.Product_Name));
         setOfferName(fullOffer.Name || '');
@@ -1520,7 +1593,39 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
                     setIsEditMode(false);
                     setCurrentOffer(null);
                 }}
-                title={isEditMode ? `Uredi Ponudu: ${currentOffer?.Offer_Number || ''}` : 'Nova Ponuda'}
+                title={isEditMode ? (
+                    <span style={{ display: 'flex', alignItems: 'center', gap: '16px', flexWrap: 'wrap' }}>
+                        <span>Uredi Ponudu: {currentOffer?.Offer_Number || ''}</span>
+                        {offerProducts.length > 0 && (() => {
+                            const totals = calculateOfferTotals();
+                            const profit = offerProducts
+                                .filter(p => p.included)
+                                .reduce((sum, p) => sum + (p.margin || 0) * (p.Quantity || 1), 0);
+                            return (
+                                <>
+                                    <span style={{
+                                        display: 'inline-flex', alignItems: 'center', gap: '4px',
+                                        background: 'var(--bg-secondary, #f0f4f8)', borderRadius: '8px',
+                                        padding: '4px 10px', fontSize: '13px', fontWeight: 500,
+                                        color: 'var(--text-secondary, #555)'
+                                    }}>
+                                        <span className="material-icons-round" style={{ fontSize: '16px', color: 'var(--accent, #0066cc)' }}>receipt_long</span>
+                                        {totals.subtotal.toLocaleString('bs-BA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} KM
+                                    </span>
+                                    <span style={{
+                                        display: 'inline-flex', alignItems: 'center', gap: '4px',
+                                        background: profit >= 0 ? 'rgba(52,199,89,0.1)' : 'rgba(255,59,48,0.1)',
+                                        borderRadius: '8px', padding: '4px 10px', fontSize: '13px', fontWeight: 500,
+                                        color: profit >= 0 ? '#34c759' : '#ff3b30'
+                                    }}>
+                                        <span className="material-icons-round" style={{ fontSize: '16px' }}>trending_up</span>
+                                        {profit.toLocaleString('bs-BA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} KM
+                                    </span>
+                                </>
+                            );
+                        })()}
+                    </span>
+                ) : 'Nova Ponuda'}
                 size="xl"
                 footer={
                     <>
@@ -1601,6 +1706,7 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
                                     {offerProducts.map((product, index) => (
                                         <div
                                             key={product.Product_ID}
+                                            id={`offer-product-${product.Product_ID}`}
                                             className={`offer-product-card ${product.included ? 'included' : ''}`}
                                         >
                                             <div className="offer-product-card-header">
@@ -1610,7 +1716,36 @@ export default function OffersTab({ offers, projects, onRefresh, showToast }: Of
                                                     onChange={(e) => toggleProductIncluded(index, e.target.checked)}
                                                 />
                                                 <div className="offer-product-info">
-                                                    <div className="offer-product-name">{product.Product_Name}</div>
+                                                    <div className="offer-product-name" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                                        {product.Product_Name}
+                                                        {onNavigateToProject && selectedProjectId && (
+                                                            <button
+                                                                type="button"
+                                                                onClick={(e) => {
+                                                                    e.stopPropagation();
+                                                                    onNavigateToProject(selectedProjectId, product.Product_ID, currentOffer?.Offer_ID);
+                                                                }}
+                                                                title="Otvori u projektu"
+                                                                style={{
+                                                                    background: 'none',
+                                                                    border: '1px solid var(--border-color, #e0e0e0)',
+                                                                    borderRadius: '6px',
+                                                                    cursor: 'pointer',
+                                                                    padding: '2px 6px',
+                                                                    display: 'inline-flex',
+                                                                    alignItems: 'center',
+                                                                    gap: '3px',
+                                                                    color: 'var(--accent, #0071e3)',
+                                                                    fontSize: '11px',
+                                                                    fontWeight: 600,
+                                                                    transition: 'all 0.2s',
+                                                                    flexShrink: 0,
+                                                                }}
+                                                            >
+                                                                <span className="material-icons-round" style={{ fontSize: '14px' }}>open_in_new</span>
+                                                            </button>
+                                                        )}
+                                                    </div>
                                                     <div className="offer-product-meta">Količina: {product.Quantity}</div>
                                                 </div>
                                                 <div className="offer-product-cost">

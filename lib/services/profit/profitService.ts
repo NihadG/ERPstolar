@@ -116,3 +116,17 @@ export async function checkMissingCostFields(organizationId: string): Promise<an
     const { checkMissingCostFields: _check } = await import('../../database');
     return _check(organizationId);
 }
+
+// ============================================
+// DAILY PROFIT (Manual Entries)
+// ============================================
+
+export {
+    saveDailyProfitEntry,
+    getDailyProfitEntries,
+    getDailyProfitSummary,
+    deleteDailyProfitEntry,
+    getTodaysMissingEntries,
+} from './dailyProfitService';
+
+export type { ProfitSummary } from './dailyProfitService';

@@ -5,7 +5,7 @@ import './CommandPalette.css';
 
 export interface CommandPaletteItem {
     id: string;
-    type: 'project' | 'material' | 'order' | 'action';
+    type: 'project' | 'product' | 'material' | 'order' | 'action';
     title: string;
     subtitle?: string;
     shortcut?: string;
@@ -114,6 +114,7 @@ export default function CommandPalette({ isOpen, onClose, items, onSelect }: Com
     function getGroupLabel(type: string): string {
         switch (type) {
             case 'project': return 'Projekti';
+            case 'product': return 'Proizvodi';
             case 'material': return 'Materijali';
             case 'order': return 'Narudžbe';
             case 'action': return 'Akcije';
@@ -124,6 +125,7 @@ export default function CommandPalette({ isOpen, onClose, items, onSelect }: Com
     function getItemIcon(type: string): string {
         switch (type) {
             case 'project': return 'folder';
+            case 'product': return 'category';
             case 'material': return 'inventory_2';
             case 'order': return 'local_shipping';
             case 'action': return 'bolt';
@@ -145,7 +147,7 @@ export default function CommandPalette({ isOpen, onClose, items, onSelect }: Com
                         ref={inputRef}
                         type="text"
                         className="command-palette-input"
-                        placeholder="Pretraži projekte, materijale, narudžbe..."
+                        placeholder="Pretraži projekte, proizvode, narudžbe..."
                         value={query}
                         onChange={e => {
                             setQuery(e.target.value);

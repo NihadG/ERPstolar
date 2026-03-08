@@ -165,12 +165,15 @@ export default function ProductTimelineModal({
         Worker_Name: string;
         Date: string;
         Daily_Rate: number;
+        Original_Rate: number;
+        Is_Half_Day: boolean;
         Process_Name?: string;
     }
     const [isEditingTimeline, setIsEditingTimeline] = useState(false);
     const [editedLogs, setEditedLogs] = useState<EditedLogEntry[]>([]);
     const [savingTimeline, setSavingTimeline] = useState(false);
     const [addingWorkerDay, setAddingWorkerDay] = useState<string | null>(null);
+    const [workerSearch, setWorkerSearch] = useState('');
     const [newDayDate, setNewDayDate] = useState('');
     const [extraDates, setExtraDates] = useState<Set<string>>(new Set());
 
@@ -182,6 +185,8 @@ export default function ProductTimelineModal({
             Worker_Name: wl.Worker_Name,
             Date: wl.Date,
             Daily_Rate: wl.Daily_Rate || 0,
+            Original_Rate: wl.Daily_Rate || 0,
+            Is_Half_Day: false,
             Process_Name: wl.Process_Name
         }));
         setEditedLogs(logs);
@@ -222,7 +227,15 @@ export default function ProductTimelineModal({
     };
 
     const updateLogRate = (logId: string, newRate: number) => {
-        setEditedLogs(prev => prev.map(l => l.id === logId ? { ...l, Daily_Rate: newRate } : l));
+        setEditedLogs(prev => prev.map(l => l.id === logId ? { ...l, Daily_Rate: newRate, Original_Rate: newRate, Is_Half_Day: false } : l));
+    };
+
+    const toggleHalfDay = (logId: string) => {
+        setEditedLogs(prev => prev.map(l => {
+            if (l.id !== logId) return l;
+            const newHalf = !l.Is_Half_Day;
+            return { ...l, Is_Half_Day: newHalf, Daily_Rate: newHalf ? l.Original_Rate * 0.5 : l.Original_Rate };
+        }));
     };
 
     const removeLog = (logId: string) => {
@@ -236,9 +249,60 @@ export default function ProductTimelineModal({
             Worker_Name: worker.Name,
             Date: date,
             Daily_Rate: worker.Daily_Rate || 0,
+            Original_Rate: worker.Daily_Rate || 0,
+            Is_Half_Day: false,
         };
         setEditedLogs(prev => [...prev, newLog]);
         setAddingWorkerDay(null);
+    };
+
+    // Auto-populate all assigned workers for a given date
+    const addAllWorkersToDay = (date: string) => {
+        // Get assigned workers from WO item
+        const assignedList = workOrderItem?.Assigned_Workers || [];
+        const existingOnDate = editedLogs.filter(l => l.Date === date);
+        const existingIds = new Set(existingOnDate.map(l => l.Worker_ID));
+
+        const newLogs: EditedLogEntry[] = [];
+        assignedList.forEach(aw => {
+            if (existingIds.has(aw.Worker_ID)) return; // skip if already added
+            // Find full worker data for Daily_Rate
+            const workerData = workers.find(w => w.Worker_ID === aw.Worker_ID);
+            const rate = workerData?.Daily_Rate || 0;
+            newLogs.push({
+                id: `new-${Date.now()}-${Math.random()}-${aw.Worker_ID}`,
+                Worker_ID: aw.Worker_ID,
+                Worker_Name: aw.Worker_Name || workerData?.Name || 'Radnik',
+                Date: date,
+                Daily_Rate: rate,
+                Original_Rate: rate,
+                Is_Half_Day: false,
+            });
+        });
+
+        // If no assigned workers found, fall back to workers from existing logs
+        if (newLogs.length === 0 && assignedList.length === 0) {
+            const logWorkerIds = new Set(workLogs.map(wl => wl.Worker_ID));
+            logWorkerIds.forEach(wid => {
+                if (existingIds.has(wid)) return;
+                const workerData = workers.find(w => w.Worker_ID === wid);
+                const wl = workLogs.find(l => l.Worker_ID === wid);
+                const rate = workerData?.Daily_Rate || wl?.Daily_Rate || 0;
+                newLogs.push({
+                    id: `new-${Date.now()}-${Math.random()}-${wid}`,
+                    Worker_ID: wid,
+                    Worker_Name: workerData?.Name || wl?.Worker_Name || 'Radnik',
+                    Date: date,
+                    Daily_Rate: rate,
+                    Original_Rate: rate,
+                    Is_Half_Day: false,
+                });
+            });
+        }
+
+        if (newLogs.length > 0) {
+            setEditedLogs(prev => [...prev, ...newLogs]);
+        }
     };
 
     // Auto-enter editing mode when timeline is empty and manual editing is available
@@ -379,10 +443,18 @@ export default function ProductTimelineModal({
             ? new Date(workOrderItem.Started_At)
             : woCreatedDate;
 
-        // If still no start date, use earliest work log — but clamp to WO creation
-        if (!startDate && workLogs.length > 0) {
-            const earliest = new Date([...workLogs].sort((a, b) => a.Date.localeCompare(b.Date))[0].Date);
-            startDate = woCreatedDate && woCreatedDate > earliest ? woCreatedDate : earliest;
+        // Always extend startDate backward to include earliest work log
+        if (workLogs.length > 0) {
+            const earliest = new Date([...workLogs].sort((a, b) => a.Date.localeCompare(b.Date))[0].Date + 'T12:00:00');
+            if (!startDate || earliest < startDate) {
+                startDate = earliest;
+            }
+        }
+
+        // If still no startDate, try using the earliest extra date
+        if (!startDate && extraDates.size > 0) {
+            const extraDatesArr = Array.from(extraDates).sort();
+            startDate = new Date(extraDatesArr[0] + 'T12:00:00');
         }
 
         if (!startDate) return [];
@@ -392,7 +464,7 @@ export default function ProductTimelineModal({
             : new Date();
 
         // Extend range to include any extra dates added during editing
-        if (extraDates.size > 0 && startDate) {
+        if (extraDates.size > 0) {
             extraDates.forEach(d => {
                 const extraDate = new Date(d + 'T12:00:00');
                 if (extraDate < startDate!) startDate = new Date(extraDate);
@@ -719,7 +791,7 @@ export default function ProductTimelineModal({
                                                     fontSize: '14px', fontWeight: 700,
                                                     color: previewMargin >= 15 ? '#10b981' : '#ef4444'
                                                 }}>
-                                                    Procjena: {previewProfit.toLocaleString('hr-HR')} KM ({previewMargin.toFixed(1)}%)
+                                                    Procjena: {Math.round(previewProfit).toLocaleString('hr-HR')} KM ({previewMargin.toFixed(0)}%)
                                                 </span>
                                             </div>
                                             <div style={{ display: 'flex', gap: '8px' }}>
@@ -995,21 +1067,37 @@ export default function ProductTimelineModal({
                                             }}>
                                                 {dayLogs.map(log => (
                                                     <div key={log.id} style={{
-                                                        display: 'flex', alignItems: 'center', gap: '10px',
-                                                        padding: '8px 12px', background: '#dcfce7',
-                                                        borderRadius: '8px', border: '1px solid #86efac'
+                                                        display: 'flex', alignItems: 'center', gap: '8px',
+                                                        padding: '8px 12px',
+                                                        background: log.Is_Half_Day ? '#fef3c7' : '#dcfce7',
+                                                        borderRadius: '8px',
+                                                        border: `1px solid ${log.Is_Half_Day ? '#fbbf24' : '#86efac'}`
                                                     }}>
-                                                        <User size={16} style={{ color: '#166534', flexShrink: 0 }} />
+                                                        <User size={16} style={{ color: log.Is_Half_Day ? '#92400e' : '#166534', flexShrink: 0 }} />
                                                         <span style={{ fontWeight: 600, fontSize: '13px', color: '#0f172a', flex: 1 }}>
                                                             {log.Worker_Name}
                                                         </span>
+                                                        {/* Half-day toggle */}
+                                                        <button
+                                                            onClick={(e) => { e.stopPropagation(); toggleHalfDay(log.id); }}
+                                                            title={log.Is_Half_Day ? 'Pola dana — klikni za cijeli dan' : 'Cijeli dan — klikni za pola dana'}
+                                                            style={{
+                                                                padding: '3px 8px', borderRadius: '6px', fontSize: '12px',
+                                                                fontWeight: 700, cursor: 'pointer', minWidth: '28px',
+                                                                border: log.Is_Half_Day ? '2px solid #f59e0b' : '2px solid #86efac',
+                                                                background: log.Is_Half_Day ? '#fef3c7' : '#dcfce7',
+                                                                color: log.Is_Half_Day ? '#92400e' : '#166534',
+                                                            }}
+                                                        >
+                                                            {log.Is_Half_Day ? '½' : '1'}
+                                                        </button>
                                                         <input
                                                             type="number"
                                                             value={log.Daily_Rate}
                                                             onChange={(e) => updateLogRate(log.id, parseFloat(e.target.value) || 0)}
                                                             onClick={(e) => e.stopPropagation()}
                                                             style={{
-                                                                width: '80px', padding: '4px 8px', borderRadius: '6px',
+                                                                width: '72px', padding: '4px 8px', borderRadius: '6px',
                                                                 border: '2px solid #6366f1', fontSize: '13px',
                                                                 fontWeight: 700, textAlign: 'right', outline: 'none'
                                                             }}
@@ -1028,30 +1116,76 @@ export default function ProductTimelineModal({
                                                 ))}
 
                                                 {/* Add worker button */}
-                                                {addingWorkerDay === day.date ? (
-                                                    <div style={{
-                                                        display: 'flex', gap: '6px', flexWrap: 'wrap',
-                                                        padding: '8px', background: '#f0f9ff', borderRadius: '8px'
-                                                    }} onClick={e => e.stopPropagation()}>
-                                                        {availableWorkers.length > 0 ? availableWorkers.map(w => (
-                                                            <button key={w.Worker_ID} onClick={() => addWorkerToDay(day.date, w)} style={{
-                                                                padding: '4px 10px', fontSize: '12px', borderRadius: '6px',
-                                                                border: '1px solid #93c5fd', background: 'white',
-                                                                cursor: 'pointer', fontWeight: 500, color: '#1e40af'
+                                                {addingWorkerDay === day.date ? (() => {
+                                                    const assignedIds = new Set((workOrderItem?.Assigned_Workers || []).map(aw => aw.Worker_ID));
+                                                    // Sort: assigned workers first, then by name
+                                                    const sortedWorkers = [...availableWorkers].sort((a, b) => {
+                                                        const aAssigned = assignedIds.has(a.Worker_ID) ? 0 : 1;
+                                                        const bAssigned = assignedIds.has(b.Worker_ID) ? 0 : 1;
+                                                        if (aAssigned !== bAssigned) return aAssigned - bAssigned;
+                                                        return a.Name.localeCompare(b.Name);
+                                                    });
+                                                    const filtered = workerSearch
+                                                        ? sortedWorkers.filter(w => w.Name.toLowerCase().includes(workerSearch.toLowerCase()))
+                                                        : sortedWorkers;
+                                                    return (
+                                                        <div style={{
+                                                            padding: '8px', background: '#f0f9ff', borderRadius: '8px',
+                                                            display: 'flex', flexDirection: 'column', gap: '6px'
+                                                        }} onClick={e => e.stopPropagation()}>
+                                                            <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                                                                <input
+                                                                    type="text"
+                                                                    placeholder="Traži radnika..."
+                                                                    value={workerSearch}
+                                                                    onChange={(e) => setWorkerSearch(e.target.value)}
+                                                                    autoFocus
+                                                                    style={{
+                                                                        flex: 1, padding: '6px 10px', borderRadius: '6px',
+                                                                        border: '1px solid #93c5fd', fontSize: '13px',
+                                                                        outline: 'none', background: 'white'
+                                                                    }}
+                                                                />
+                                                                <button onClick={() => { setAddingWorkerDay(null); setWorkerSearch(''); }} style={{
+                                                                    padding: '6px', borderRadius: '6px', border: '1px solid #e2e8f0',
+                                                                    background: 'white', cursor: 'pointer', display: 'flex'
+                                                                }}>
+                                                                    <X size={14} />
+                                                                </button>
+                                                            </div>
+                                                            <div style={{
+                                                                maxHeight: '160px', overflowY: 'auto',
+                                                                display: 'flex', flexDirection: 'column', gap: '2px'
                                                             }}>
-                                                                {w.Name} ({w.Daily_Rate || 0} KM)
-                                                            </button>
-                                                        )) : (
-                                                            <span style={{ fontSize: '12px', color: '#6b7280' }}>Svi radnici su već dodani</span>
-                                                        )}
-                                                        <button onClick={() => setAddingWorkerDay(null)} style={{
-                                                            padding: '4px 6px', borderRadius: '6px', border: '1px solid #e2e8f0',
-                                                            background: 'white', cursor: 'pointer', display: 'flex'
-                                                        }}>
-                                                            <X size={12} />
-                                                        </button>
-                                                    </div>
-                                                ) : (
+                                                                {filtered.length > 0 ? filtered.map(w => (
+                                                                    <button
+                                                                        key={w.Worker_ID}
+                                                                        onClick={() => { addWorkerToDay(day.date, w); setWorkerSearch(''); }}
+                                                                        style={{
+                                                                            display: 'flex', alignItems: 'center', gap: '8px',
+                                                                            padding: '6px 10px', fontSize: '13px', borderRadius: '6px',
+                                                                            border: assignedIds.has(w.Worker_ID) ? '1px solid #6366f1' : '1px solid #e2e8f0',
+                                                                            background: assignedIds.has(w.Worker_ID) ? 'rgba(99,102,241,0.06)' : 'white',
+                                                                            cursor: 'pointer', fontWeight: 500, color: '#0f172a',
+                                                                            textAlign: 'left', width: '100%'
+                                                                        }}
+                                                                    >
+                                                                        <User size={14} style={{ color: assignedIds.has(w.Worker_ID) ? '#6366f1' : '#94a3b8', flexShrink: 0 }} />
+                                                                        <span style={{ flex: 1 }}>{w.Name}</span>
+                                                                        <span style={{ fontSize: '12px', color: '#6b7280' }}>{w.Daily_Rate || 0} KM</span>
+                                                                        {assignedIds.has(w.Worker_ID) && (
+                                                                            <span style={{ fontSize: '10px', color: '#6366f1', fontWeight: 600 }}>NALOG</span>
+                                                                        )}
+                                                                    </button>
+                                                                )) : (
+                                                                    <span style={{ fontSize: '12px', color: '#6b7280', padding: '8px', textAlign: 'center' }}>
+                                                                        {availableWorkers.length === 0 ? 'Svi radnici su već dodani' : 'Nema rezultata'}
+                                                                    </span>
+                                                                )}
+                                                            </div>
+                                                        </div>
+                                                    );
+                                                })() : (
                                                     <div style={{ display: 'flex', gap: '6px' }}>
                                                         <button
                                                             onClick={(e) => { e.stopPropagation(); setAddingWorkerDay(day.date); }}
@@ -1265,13 +1399,58 @@ export default function ProductTimelineModal({
                             <button
                                 onClick={() => {
                                     if (!newDayDate) return;
+                                    const dateToAdd = newDayDate;
                                     // Auto-enter editing mode if not already
                                     if (!isEditingTimeline) {
                                         startTimelineEdit();
                                     }
-                                    setExtraDates(prev => { const next = new Set(prev); next.add(newDayDate); return next; });
-                                    setExpandedDays(prev => { const next = new Set(Array.from(prev)); next.add(newDayDate); return next; });
-                                    setAddingWorkerDay(newDayDate);
+                                    setExtraDates(prev => { const next = new Set(prev); next.add(dateToAdd); return next; });
+                                    setExpandedDays(prev => { const next = new Set(Array.from(prev)); next.add(dateToAdd); return next; });
+                                    // Auto-populate assigned workers for this day
+                                    // Use functional update to ensure we have latest editedLogs
+                                    const assignedList = workOrderItem?.Assigned_Workers || [];
+                                    const newWorkerLogs: EditedLogEntry[] = [];
+                                    if (assignedList.length > 0) {
+                                        assignedList.forEach(aw => {
+                                            const workerData = workers.find(w => w.Worker_ID === aw.Worker_ID);
+                                            const rate = workerData?.Daily_Rate || 0;
+                                            newWorkerLogs.push({
+                                                id: `new-${Date.now()}-${Math.random()}-${aw.Worker_ID}`,
+                                                Worker_ID: aw.Worker_ID,
+                                                Worker_Name: aw.Worker_Name || workerData?.Name || 'Radnik',
+                                                Date: dateToAdd,
+                                                Daily_Rate: rate,
+                                                Original_Rate: rate,
+                                                Is_Half_Day: false,
+                                            });
+                                        });
+                                    } else {
+                                        // Fall back to workers from existing work logs
+                                        const seenWorkers = new Set<string>();
+                                        workLogs.forEach(wl => {
+                                            if (seenWorkers.has(wl.Worker_ID)) return;
+                                            seenWorkers.add(wl.Worker_ID);
+                                            const workerData = workers.find(w => w.Worker_ID === wl.Worker_ID);
+                                            const rate = workerData?.Daily_Rate || wl.Daily_Rate || 0;
+                                            newWorkerLogs.push({
+                                                id: `new-${Date.now()}-${Math.random()}-${wl.Worker_ID}`,
+                                                Worker_ID: wl.Worker_ID,
+                                                Worker_Name: workerData?.Name || wl.Worker_Name || 'Radnik',
+                                                Date: dateToAdd,
+                                                Daily_Rate: rate,
+                                                Original_Rate: rate,
+                                                Is_Half_Day: false,
+                                            });
+                                        });
+                                    }
+                                    if (newWorkerLogs.length > 0) {
+                                        setEditedLogs(prev => {
+                                            // Filter out any that already exist on this date
+                                            const existingIds = new Set(prev.filter(l => l.Date === dateToAdd).map(l => l.Worker_ID));
+                                            const toAdd = newWorkerLogs.filter(l => !existingIds.has(l.Worker_ID));
+                                            return [...prev, ...toAdd];
+                                        });
+                                    }
                                     setNewDayDate('');
                                 }}
                                 disabled={!newDayDate}

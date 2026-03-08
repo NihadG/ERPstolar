@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import type { Project, Material, Product, ProductMaterial, WorkOrder, WorkOrderItem, Offer, OfferProduct, WorkLog } from '@/lib/types';
 import { ALLOWED_MATERIAL_TRANSITIONS } from '@/lib/types';
 import {
@@ -23,6 +23,7 @@ import AluDoorModal, { type AluDoorModalData } from '@/components/ui/AluDoorModa
 import { SearchableSelect } from '@/components/ui/SearchableSelect';
 
 import ProductTimelineModal from '@/components/ui/ProductTimelineModal';
+
 import ProjectMaterialsModal from '@/components/ui/ProjectMaterialsModal';
 import { useData } from '@/context/DataContext';
 import { syncAllProjectData, overrideWorkLogs } from '@/lib/services';
@@ -43,10 +44,15 @@ interface ProjectsTabProps {
     workLogs?: WorkLog[];
     onRefresh: (...collections: string[]) => void;
     showToast: (message: string, type: 'success' | 'error' | 'info') => void;
-    onNavigateToTasks?: (projectId: string) => void;  // Navigate to tasks filtered by project
+    onNavigateToTasks?: (projectId: string) => void;
+    autoExpandProjectId?: string | null;
+    autoExpandProductId?: string | null;
+    returnToOfferId?: string | null;
+    onReturnToOffer?: (offerId: string) => void;
+    onClearAutoExpand?: () => void;
 }
 
-export default function ProjectsTab({ projects, materials, workOrders = [], offers = [], workLogs = [], onRefresh, showToast, onNavigateToTasks }: ProjectsTabProps) {
+export default function ProjectsTab({ projects, materials, workOrders = [], offers = [], workLogs = [], onRefresh, showToast, onNavigateToTasks, autoExpandProjectId, autoExpandProductId, returnToOfferId, onReturnToOffer, onClearAutoExpand }: ProjectsTabProps) {
     const { organizationId, appState } = useData();
     const allWorkers = appState.workers || [];
     const [searchTerm, setSearchTerm] = useState('');
@@ -57,6 +63,20 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
     const [showMaterialsSummary, setShowMaterialsSummary] = useState<Set<string>>(new Set());
     const [materialsOverviewProject, setMaterialsOverviewProject] = useState<Project | null>(null);
     const [syncing, setSyncing] = useState(false);
+
+    // Auto-expand project/product when navigating from OffersTab
+    useEffect(() => {
+        if (autoExpandProjectId) {
+            setExpandedProjectId(autoExpandProjectId);
+            if (autoExpandProductId) {
+                setExpandedProducts(prev => new Set(prev).add(autoExpandProductId));
+            }
+            // Clear after applying
+            if (onClearAutoExpand) {
+                setTimeout(() => onClearAutoExpand(), 100);
+            }
+        }
+    }, [autoExpandProjectId, autoExpandProductId]);
 
     function toggleStatusGroup(status: string) {
         const newExpanded = new Set(expandedStatusGroups);
@@ -124,11 +144,17 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
         hasOverrides?: boolean;
     } | null>(null);
 
+
     // Filter projects
     const filteredProjects = projects.filter(project => {
-        const matchesSearch = project.Client_Name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-            project.Name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-            project.Address?.toLowerCase().includes(searchTerm.toLowerCase());
+        const term = searchTerm.toLowerCase();
+        const matchesSearch = project.Client_Name.toLowerCase().includes(term) ||
+            project.Name?.toLowerCase().includes(term) ||
+            project.Address?.toLowerCase().includes(term) ||
+            // Also search product names within the project
+            (project.products || []).some(prod =>
+                prod.Name?.toLowerCase().includes(term)
+            );
         const matchesStatus = !statusFilter || project.Status === statusFilter;
         return matchesSearch && matchesStatus;
     });
@@ -1058,36 +1084,7 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                     />
                 )}
 
-                {/* Product Timeline Modal */}
-                <ProductTimelineModal
-                    isOpen={timelineProduct !== null}
-                    onClose={() => setTimelineProduct(null)}
-                    productId={timelineProduct?.product.Product_ID || ''}
-                    productName={timelineProduct?.product.Name || ''}
-                    workOrderItem={timelineProduct?.workOrderItem}
-                    workLogs={workLogs.filter(wl => wl.Work_Order_Item_ID === timelineProduct?.workOrderItem?.ID)}
-                    sellingPrice={timelineProduct?.sellingPrice}
-                    materialCost={timelineProduct?.materialCost}
-                    laborCost={timelineProduct?.laborCost}
-                    profit={timelineProduct?.profit}
-                    profitMargin={timelineProduct?.profitMargin}
-                    workers={allWorkers}
-                    onOverrideWorkLogs={async (entries) => {
-                        const woItem = timelineProduct?.workOrderItem;
-                        if (!woItem?.Work_Order_ID || !woItem?.ID || !organizationId) {
-                            return { success: false, message: 'Nedostaju podaci' };
-                        }
-                        const result = await overrideWorkLogs(woItem.Work_Order_ID, woItem.ID, entries, organizationId, timelineProduct?.product.Product_ID);
-                        if (result.success) {
-                            showToast('Timeline ažuriran', 'success');
-                            onRefresh('workOrders');
-                            setTimelineProduct(null);
-                        } else {
-                            showToast(result.message, 'error');
-                        }
-                        return result;
-                    }}
-                />
+
             </>
         );
     }
@@ -1141,6 +1138,31 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                     {syncing ? 'Sinkronizacija...' : 'Sinkroniziraj'}
                 </button>
             </div>
+
+            {/* Back to Offer Banner */}
+            {returnToOfferId && onReturnToOffer && (
+                <div style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '12px',
+                    padding: '10px 16px',
+                    marginBottom: '12px',
+                    background: 'linear-gradient(135deg, #e8f4fd 0%, #dbeafe 100%)',
+                    border: '1px solid #93c5fd',
+                    borderRadius: '10px',
+                    cursor: 'pointer',
+                    transition: 'all 0.2s ease',
+                    boxShadow: '0 1px 3px rgba(59, 130, 246, 0.1)',
+                }}
+                    onClick={() => onReturnToOffer(returnToOfferId)}
+                    onMouseEnter={(e) => { (e.currentTarget as HTMLDivElement).style.boxShadow = '0 2px 8px rgba(59, 130, 246, 0.2)'; }}
+                    onMouseLeave={(e) => { (e.currentTarget as HTMLDivElement).style.boxShadow = '0 1px 3px rgba(59, 130, 246, 0.1)'; }}
+                >
+                    <span className="material-icons-round" style={{ fontSize: '20px', color: '#2563eb' }}>arrow_back</span>
+                    <span style={{ fontSize: '13px', fontWeight: 600, color: '#1e40af' }}>Vrati se na ponudu</span>
+                    <span style={{ fontSize: '12px', color: '#3b82f6', marginLeft: 'auto' }}>Klikni za povratak</span>
+                </div>
+            )}
 
             <div className="projects-list">
                 {filteredProjects.length === 0 ? (
@@ -1223,13 +1245,15 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                                                         const transportShare = woItem?.Profit_Overrides?.Transport_Share ?? originalTransport;
                                                         const servicesTotal = woItem?.Services_Total || 0;
 
-                                                        if (!finalSellingPrice || finalSellingPrice <= 0) return;
+                                                        if (!woItem || !finalSellingPrice || finalSellingPrice <= 0) return;
+                                                        // Only 'U toku' or 'Završeno' contribute to profit
+                                                        if (woItem.Status !== 'U toku' && woItem.Status !== 'Završeno') return;
 
                                                         // Material cost from project materials
                                                         const actualMaterialCost = (product.materials || []).reduce((sum, m) => sum + (m.Total_Price || 0), 0);
-                                                        // Filter work logs by Work_Order_Item_ID (not Product_ID)
-                                                        const productLogs = woItem ? workLogs.filter(wl => wl.Work_Order_Item_ID === woItem.ID) : [];
-                                                        const laborCost = productLogs.reduce((sum, wl) => sum + (wl.Daily_Rate || 0), 0);
+                                                        // Labor cost — Daily_Rate values are pre-split by recalculateWOLaborSplit
+                                                        const productLogs = workLogs.filter(wl => wl.Work_Order_Item_ID === woItem.ID);
+                                                        const laborCost = Math.round(productLogs.reduce((sum, wl) => sum + (wl.Daily_Rate || 0), 0));
 
                                                         // UNIFIED PROFIT FORMULA
                                                         projectProfit += finalSellingPrice - actualMaterialCost - laborCost - transportShare - servicesTotal;
@@ -1238,7 +1262,8 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                                                     });
 
                                                     if (!hasAnyProfit) return null;
-                                                    const projectMargin = projectSellingTotal > 0 ? (projectProfit / projectSellingTotal) * 100 : 0;
+                                                    projectProfit = Math.round(projectProfit);
+                                                    const projectMargin = Math.round(projectSellingTotal > 0 ? (projectProfit / projectSellingTotal) * 100 : 0);
                                                     return (
                                                         <span
                                                             className="summary-item"
@@ -1266,6 +1291,7 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                                                 {project.Status}
                                             </span>
                                         </div>
+
 
                                         <div className="project-actions" onClick={(e) => e.stopPropagation()}>
                                             <button className="icon-btn" onClick={() => setMaterialsOverviewProject(project)} title="Pregled materijala">
@@ -1378,8 +1404,9 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                                                     const actualMaterials = product.materials || [];
                                                     const actualMaterialCost = actualMaterials.reduce((sum, m) => sum + (m.Total_Price || 0), 0);
 
-                                                    // === If product is NOT in a work order, show material cost ===
-                                                    if (!woItem) {
+                                                    // === If product NOT in active/completed WO, show material or status ===
+                                                    const woActive = woItem && (woItem.Status === 'U toku' || woItem.Status === 'Završeno');
+                                                    if (!woActive) {
                                                         if (actualMaterialCost > 0) {
                                                             return (
                                                                 <span
@@ -1403,7 +1430,26 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                                                                 </span>
                                                             );
                                                         }
-                                                        return null;
+                                                        return (
+                                                            <span
+                                                                style={{
+                                                                    display: 'inline-flex',
+                                                                    alignItems: 'center',
+                                                                    gap: '4px',
+                                                                    padding: '4px 10px',
+                                                                    borderRadius: '6px',
+                                                                    background: 'rgba(148, 163, 184, 0.1)',
+                                                                    color: '#64748b',
+                                                                    fontWeight: 600,
+                                                                    fontSize: '12px',
+                                                                    marginLeft: '8px',
+                                                                }}
+                                                                title="Nema naloga — materijal nije definisan"
+                                                            >
+                                                                <span className="material-icons-round" style={{ fontSize: '14px' }}>info_outline</span>
+                                                                {product.Status || 'Bez naloga'}
+                                                            </span>
+                                                        );
                                                     }
 
                                                     // === Product IS in a work order — show profit ===
@@ -1418,14 +1464,13 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                                                     // Actual material cost only
                                                     const materialCost = actualMaterialCost;
 
-                                                    // Labor cost from ACTUAL work logs — filter by WO item, not product
+                                                    // Labor cost from ACTUAL work logs
+                                                    // Daily_Rate values are already proportionally split by recalculateWOLaborSplit
                                                     const productWorkLogs = workLogs.filter(wl => wl.Work_Order_Item_ID === woItem?.ID);
-                                                    const laborCost = productWorkLogs.reduce((sum, wl) => sum + (wl.Daily_Rate || 0), 0);
-
-                                                    // UNIFIED PROFIT FORMULA (matches recalculateWorkOrder)
+                                                    let laborCost = Math.round(productWorkLogs.reduce((sum, wl) => sum + (wl.Daily_Rate || 0), 0));
                                                     if (sellingPrice && sellingPrice > 0) {
-                                                        const profit = sellingPrice - materialCost - laborCost - transportShare - servicesTotal;
-                                                        const profitMargin = sellingPrice > 0 ? (profit / sellingPrice) * 100 : 0;
+                                                        const profit = Math.round(sellingPrice - materialCost - laborCost - transportShare - servicesTotal);
+                                                        const profitMargin = Math.round(sellingPrice > 0 ? (profit / sellingPrice) * 100 : 0);
 
                                                         return (
                                                             <span
@@ -1814,93 +1859,95 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                                 </div>
 
                                 {/* Grouped Materials Summary */}
-                                {(() => {
-                                    const materialMap = new Map<string, { name: string; unit: string; totalQty: number; onStockQty: number; orderedQty: number; receivedQty: number }>();
-                                    (project.products || []).forEach(product => {
-                                        (product.materials || []).forEach(mat => {
-                                            const key = `${mat.Material_Name}||${mat.Unit}`;
-                                            const qty = mat.Quantity || 0;
+                                {
+                                    (() => {
+                                        const materialMap = new Map<string, { name: string; unit: string; totalQty: number; onStockQty: number; orderedQty: number; receivedQty: number }>();
+                                        (project.products || []).forEach(product => {
+                                            (product.materials || []).forEach(mat => {
+                                                const key = `${mat.Material_Name}||${mat.Unit}`;
+                                                const qty = mat.Quantity || 0;
 
-                                            // Use real quantity fields with Status-based fallback for backward compat
-                                            const onStock = mat.On_Stock || 0;
-                                            const ordered = mat.Ordered_Quantity || (mat.Status === 'Naručeno' ? qty : 0);
-                                            const received = mat.Received_Quantity || (mat.Status === 'Primljeno' ? qty : (mat.Status === 'Na stanju' ? onStock : 0));
+                                                // Use real quantity fields with Status-based fallback for backward compat
+                                                const onStock = mat.On_Stock || 0;
+                                                const ordered = mat.Ordered_Quantity || (mat.Status === 'Naručeno' ? qty : 0);
+                                                const received = mat.Received_Quantity || (mat.Status === 'Primljeno' ? qty : (mat.Status === 'Na stanju' ? onStock : 0));
 
-                                            if (materialMap.has(key)) {
-                                                const existing = materialMap.get(key)!;
-                                                existing.totalQty += qty;
-                                                existing.onStockQty += onStock;
-                                                existing.orderedQty += ordered;
-                                                existing.receivedQty += received;
-                                            } else {
-                                                materialMap.set(key, {
-                                                    name: mat.Material_Name, unit: mat.Unit, totalQty: qty,
-                                                    onStockQty: onStock, orderedQty: ordered, receivedQty: received,
-                                                });
-                                            }
+                                                if (materialMap.has(key)) {
+                                                    const existing = materialMap.get(key)!;
+                                                    existing.totalQty += qty;
+                                                    existing.onStockQty += onStock;
+                                                    existing.orderedQty += ordered;
+                                                    existing.receivedQty += received;
+                                                } else {
+                                                    materialMap.set(key, {
+                                                        name: mat.Material_Name, unit: mat.Unit, totalQty: qty,
+                                                        onStockQty: onStock, orderedQty: ordered, receivedQty: received,
+                                                    });
+                                                }
+                                            });
                                         });
-                                    });
-                                    if (materialMap.size === 0) return null;
-                                    const groupedMats = Array.from(materialMap.values()).sort((a, b) => a.name.localeCompare(b.name, 'hr'));
-                                    const isOpen = showMaterialsSummary.has(project.Project_ID);
-                                    return (
-                                        <div className="mat-summary-wrapper">
-                                            <div
-                                                className="mat-summary-toggle"
-                                                onClick={() => {
-                                                    const next = new Set(showMaterialsSummary);
-                                                    if (next.has(project.Project_ID)) next.delete(project.Project_ID); else next.add(project.Project_ID);
-                                                    setShowMaterialsSummary(next);
-                                                }}
-                                            >
-                                                <span className="material-icons-round mat-summary-chevron" style={{ transform: isOpen ? 'rotate(90deg)' : 'rotate(0deg)' }}>chevron_right</span>
-                                                <span className="mat-summary-label">Pregled materijala</span>
-                                                <span className="mat-summary-count">({groupedMats.length})</span>
+                                        if (materialMap.size === 0) return null;
+                                        const groupedMats = Array.from(materialMap.values()).sort((a, b) => a.name.localeCompare(b.name, 'hr'));
+                                        const isOpen = showMaterialsSummary.has(project.Project_ID);
+                                        return (
+                                            <div className="mat-summary-wrapper">
+                                                <div
+                                                    className="mat-summary-toggle"
+                                                    onClick={() => {
+                                                        const next = new Set(showMaterialsSummary);
+                                                        if (next.has(project.Project_ID)) next.delete(project.Project_ID); else next.add(project.Project_ID);
+                                                        setShowMaterialsSummary(next);
+                                                    }}
+                                                >
+                                                    <span className="material-icons-round mat-summary-chevron" style={{ transform: isOpen ? 'rotate(90deg)' : 'rotate(0deg)' }}>chevron_right</span>
+                                                    <span className="mat-summary-label">Pregled materijala</span>
+                                                    <span className="mat-summary-count">({groupedMats.length})</span>
+                                                </div>
+                                                {isOpen && (
+                                                    <table className="mat-summary-table">
+                                                        <thead>
+                                                            <tr>
+                                                                <th className="mat-summary-th left">Materijal</th>
+                                                                <th className="mat-summary-th">Potrebno</th>
+                                                                <th className="mat-summary-th">Na stanju</th>
+                                                                <th className="mat-summary-th">Naručeno</th>
+                                                                <th className="mat-summary-th">Primljeno</th>
+                                                                <th className="mat-summary-th">Preostalo</th>
+                                                                <th className="mat-summary-th">Status</th>
+                                                            </tr>
+                                                        </thead>
+                                                        <tbody>
+                                                            {groupedMats.map((mat, i) => {
+                                                                const covered = mat.onStockQty + mat.orderedQty + mat.receivedQty;
+                                                                const remaining = Math.max(0, mat.totalQty - covered);
+                                                                let statusLabel: string, statusColor: string, statusBg: string;
+                                                                if (mat.receivedQty >= mat.totalQty) { statusLabel = 'Primljeno'; statusColor = '#10b981'; statusBg = '#ecfdf5'; }
+                                                                else if (mat.receivedQty > 0) { statusLabel = 'Djelomično primljeno'; statusColor = '#06b6d4'; statusBg = '#ecfeff'; }
+                                                                else if (covered >= mat.totalQty) { statusLabel = 'Naručeno'; statusColor = '#3b82f6'; statusBg = '#eff6ff'; }
+                                                                else if (mat.orderedQty > 0) { statusLabel = 'Djelomično naručeno'; statusColor = '#8b5cf6'; statusBg = '#f5f3ff'; }
+                                                                else if (mat.onStockQty > 0) { statusLabel = 'Na stanju'; statusColor = '#10b981'; statusBg = '#ecfdf5'; }
+                                                                else { statusLabel = 'Nije naručeno'; statusColor = '#f59e0b'; statusBg = '#fffbeb'; }
+                                                                return (
+                                                                    <tr key={i} className="mat-summary-row">
+                                                                        <td className="mat-summary-td mat-summary-name">{mat.name}</td>
+                                                                        <td className="mat-summary-td mat-summary-num">{mat.totalQty} {mat.unit}</td>
+                                                                        <td className="mat-summary-td mat-summary-num" style={{ color: mat.onStockQty > 0 ? '#10b981' : '#aeaeb2' }}>{mat.onStockQty} {mat.unit}</td>
+                                                                        <td className="mat-summary-td mat-summary-num" style={{ color: mat.orderedQty > 0 ? '#3b82f6' : '#aeaeb2' }}>{mat.orderedQty} {mat.unit}</td>
+                                                                        <td className="mat-summary-td mat-summary-num" style={{ color: mat.receivedQty > 0 ? '#10b981' : '#aeaeb2' }}>{mat.receivedQty} {mat.unit}</td>
+                                                                        <td className="mat-summary-td mat-summary-num" style={{ color: remaining > 0 ? '#ef4444' : '#10b981' }}>{remaining > 0 ? remaining : '✓'} {remaining > 0 ? mat.unit : ''}</td>
+                                                                        <td className="mat-summary-td" style={{ textAlign: 'right' }}>
+                                                                            <span className="mat-summary-status" style={{ background: statusBg, color: statusColor }}>{statusLabel}</span>
+                                                                        </td>
+                                                                    </tr>
+                                                                );
+                                                            })}
+                                                        </tbody>
+                                                    </table>
+                                                )}
                                             </div>
-                                            {isOpen && (
-                                                <table className="mat-summary-table">
-                                                    <thead>
-                                                        <tr>
-                                                            <th className="mat-summary-th left">Materijal</th>
-                                                            <th className="mat-summary-th">Potrebno</th>
-                                                            <th className="mat-summary-th">Na stanju</th>
-                                                            <th className="mat-summary-th">Naručeno</th>
-                                                            <th className="mat-summary-th">Primljeno</th>
-                                                            <th className="mat-summary-th">Preostalo</th>
-                                                            <th className="mat-summary-th">Status</th>
-                                                        </tr>
-                                                    </thead>
-                                                    <tbody>
-                                                        {groupedMats.map((mat, i) => {
-                                                            const covered = mat.onStockQty + mat.orderedQty + mat.receivedQty;
-                                                            const remaining = Math.max(0, mat.totalQty - covered);
-                                                            let statusLabel: string, statusColor: string, statusBg: string;
-                                                            if (mat.receivedQty >= mat.totalQty) { statusLabel = 'Primljeno'; statusColor = '#10b981'; statusBg = '#ecfdf5'; }
-                                                            else if (mat.receivedQty > 0) { statusLabel = 'Djelomično primljeno'; statusColor = '#06b6d4'; statusBg = '#ecfeff'; }
-                                                            else if (covered >= mat.totalQty) { statusLabel = 'Naručeno'; statusColor = '#3b82f6'; statusBg = '#eff6ff'; }
-                                                            else if (mat.orderedQty > 0) { statusLabel = 'Djelomično naručeno'; statusColor = '#8b5cf6'; statusBg = '#f5f3ff'; }
-                                                            else if (mat.onStockQty > 0) { statusLabel = 'Na stanju'; statusColor = '#10b981'; statusBg = '#ecfdf5'; }
-                                                            else { statusLabel = 'Nije naručeno'; statusColor = '#f59e0b'; statusBg = '#fffbeb'; }
-                                                            return (
-                                                                <tr key={i} className="mat-summary-row">
-                                                                    <td className="mat-summary-td mat-summary-name">{mat.name}</td>
-                                                                    <td className="mat-summary-td mat-summary-num">{mat.totalQty} {mat.unit}</td>
-                                                                    <td className="mat-summary-td mat-summary-num" style={{ color: mat.onStockQty > 0 ? '#10b981' : '#aeaeb2' }}>{mat.onStockQty} {mat.unit}</td>
-                                                                    <td className="mat-summary-td mat-summary-num" style={{ color: mat.orderedQty > 0 ? '#3b82f6' : '#aeaeb2' }}>{mat.orderedQty} {mat.unit}</td>
-                                                                    <td className="mat-summary-td mat-summary-num" style={{ color: mat.receivedQty > 0 ? '#10b981' : '#aeaeb2' }}>{mat.receivedQty} {mat.unit}</td>
-                                                                    <td className="mat-summary-td mat-summary-num" style={{ color: remaining > 0 ? '#ef4444' : '#10b981' }}>{remaining > 0 ? remaining : '✓'} {remaining > 0 ? mat.unit : ''}</td>
-                                                                    <td className="mat-summary-td" style={{ textAlign: 'right' }}>
-                                                                        <span className="mat-summary-status" style={{ background: statusBg, color: statusColor }}>{statusLabel}</span>
-                                                                    </td>
-                                                                </tr>
-                                                            );
-                                                        })}
-                                                    </tbody>
-                                                </table>
-                                            )}
-                                        </div>
-                                    );
-                                })()}
+                                        );
+                                    })()
+                                }
                             </div>
                         );
                     })
@@ -2005,12 +2052,13 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                                                                 const transportShare = woItem?.Profit_Overrides?.Transport_Share ?? originalTransport;
                                                                 const servicesTotal = woItem?.Services_Total || 0;
 
-                                                                if (!finalSellingPrice || finalSellingPrice <= 0) return;
+                                                                if (!woItem || !finalSellingPrice || finalSellingPrice <= 0) return;
+                                                                if (woItem.Status !== 'U toku' && woItem.Status !== 'Završeno') return;
 
                                                                 const actualMaterialCost = (product.materials || []).reduce((sum, m) => sum + (m.Total_Price || 0), 0);
-                                                                // Filter work logs by Work_Order_Item_ID (not Product_ID)
-                                                                const productLogs = woItem ? workLogs.filter(wl => wl.Work_Order_Item_ID === woItem.ID) : [];
-                                                                const laborCost = productLogs.reduce((sum, wl) => sum + (wl.Daily_Rate || 0), 0);
+                                                                // Labor cost — Daily_Rate values are pre-split by recalculateWOLaborSplit
+                                                                const productLogs = workLogs.filter(wl => wl.Work_Order_Item_ID === woItem.ID);
+                                                                const laborCost = Math.round(productLogs.reduce((sum, wl) => sum + (wl.Daily_Rate || 0), 0));
 
                                                                 // UNIFIED PROFIT FORMULA
                                                                 projectProfit += finalSellingPrice - actualMaterialCost - laborCost - transportShare - servicesTotal;
@@ -2019,7 +2067,8 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                                                             });
 
                                                             if (!hasAnyProfit) return null;
-                                                            const projectMargin = projectSellingTotal > 0 ? (projectProfit / projectSellingTotal) * 100 : 0;
+                                                            projectProfit = Math.round(projectProfit);
+                                                            const projectMargin = Math.round(projectSellingTotal > 0 ? (projectProfit / projectSellingTotal) * 100 : 0);
                                                             return (
                                                                 <span
                                                                     className="summary-item"
@@ -2040,6 +2089,7 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                                                     </div>
                                                 </div>
                                             </div>
+
 
                                             <div className="project-actions" onClick={(e) => e.stopPropagation()}>
                                                 <button className="icon-btn" onClick={() => setMaterialsOverviewProject(project)} title="Pregled materijala">
@@ -2063,17 +2113,20 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                             })}
                         </div>
                     ))
-                )}
-            </div>
+                )
+                }
+            </div >
 
             {/* Project Materials Overview Modal */}
-            {materialsOverviewProject && (
-                <ProjectMaterialsModal
-                    isOpen={!!materialsOverviewProject}
-                    onClose={() => setMaterialsOverviewProject(null)}
-                    project={materialsOverviewProject}
-                />
-            )}
+            {
+                materialsOverviewProject && (
+                    <ProjectMaterialsModal
+                        isOpen={!!materialsOverviewProject}
+                        onClose={() => setMaterialsOverviewProject(null)}
+                        project={materialsOverviewProject}
+                    />
+                )
+            }
 
             {/* Project Modal */}
             <Modal
@@ -2442,6 +2495,8 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                 }}
             />
 
+
+
             <style jsx>{`
                 .edit-modal-content {
                     display: flex;
@@ -2745,6 +2800,6 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                     -moz-appearance: textfield;
                 }
             `}</style>
-        </div>
+        </div >
     );
 }

@@ -104,8 +104,8 @@ export function generateUUID(): string {
 
 // Collision-safe ID generators — delegated to shared/idGenerator.ts
 // Uses timestamp+random instead of random-only (was limited to 1000 values/day)
-export function generateOfferNumber(): string {
-    return _generateOfferNumber();
+export function generateOfferNumber(existingOfferNumbers?: string[]): string {
+    return _generateOfferNumber(existingOfferNumbers);
 }
 
 export function generateOrderNumber(): string {
@@ -2397,6 +2397,7 @@ export async function saveGlassItems(productMaterialId: string, items: Partial<G
                 Qty: item.Qty || 1,
                 Width: item.Width || 0,
                 Height: item.Height || 0,
+                Thickness: item.Thickness || 0,
                 Area_M2: item.Area_M2 || 0,
                 Edge_Processing: item.Edge_Processing || false,
                 Note: item.Note || '',
@@ -2753,6 +2754,7 @@ export interface AddGlassMaterialData {
         Qty: number;
         Width: number;
         Height: number;
+        Thickness: number;
         Edge_Processing: boolean;
         Note: string;
     }>;
@@ -2818,6 +2820,7 @@ export async function addGlassMaterialToProduct(data: AddGlassMaterialData, orga
                 Qty: qty,
                 Width: width,
                 Height: height,
+                Thickness: item.Thickness || 0,
                 Area_M2: Math.round(area * qty * 10000) / 10000,
                 Edge_Processing: hasEdge,
                 Note: item.Note || '',
@@ -2855,6 +2858,7 @@ export interface UpdateGlassMaterialData {
         Qty: number;
         Width: number;
         Height: number;
+        Thickness?: number;
         Edge_Processing: boolean;
         Note: string;
     }>;
@@ -2895,6 +2899,7 @@ export async function updateGlassMaterial(data: UpdateGlassMaterialData, organiz
                     Qty: qty,
                     Width: width,
                     Height: height,
+                    Thickness: item.Thickness || 0,
                     Area_M2: Math.round(area * qty * 10000) / 10000,
                     Edge_Processing: hasEdge,
                     Note: item.Note || '',
@@ -4089,6 +4094,56 @@ export async function updateDueDate(
     } catch (error) {
         console.error('updateDueDate error:', error);
         return { success: false, message: 'Greška pri ažuriranju roka' };
+    }
+}
+
+/**
+ * Update Planned_Start_Date and shift Planned_End_Date proportionally (preserve duration).
+ * Used when the user manually edits the planned start date.
+ */
+export async function updatePlannedStartDate(
+    workOrderId: string,
+    newStartDate: string,
+    organizationId: string
+): Promise<{ success: boolean; message: string }> {
+    if (!organizationId) return { success: false, message: 'Organization ID is required' };
+
+    try {
+        const firestore = getDb();
+        const q = query(
+            collection(firestore, COLLECTIONS.WORK_ORDERS),
+            where('Work_Order_ID', '==', workOrderId),
+            where('Organization_ID', '==', organizationId)
+        );
+        const snapshot = await getDocs(q);
+
+        if (snapshot.empty) {
+            return { success: false, message: 'Radni nalog nije pronađen' };
+        }
+
+        const wo = snapshot.docs[0].data() as WorkOrder;
+
+        // Calculate the original duration in days
+        const oldStart = wo.Planned_Start_Date ? new Date(wo.Planned_Start_Date) : new Date(newStartDate);
+        const oldEnd = wo.Planned_End_Date ? new Date(wo.Planned_End_Date) : oldStart;
+        const durationMs = oldEnd.getTime() - oldStart.getTime();
+        const durationDays = Math.max(0, Math.round(durationMs / 86400000));
+
+        // Calculate new end date preserving duration
+        const newStart = new Date(newStartDate);
+        const newEnd = new Date(newStart);
+        newEnd.setDate(newEnd.getDate() + durationDays);
+        const newEndDate = newEnd.toISOString().split('T')[0];
+
+        await updateDoc(snapshot.docs[0].ref, {
+            Planned_Start_Date: newStartDate,
+            Planned_End_Date: newEndDate,
+        });
+
+        return { success: true, message: 'Planirani datum ažuriran' };
+    } catch (error) {
+        console.error('updatePlannedStartDate error:', error);
+        return { success: false, message: 'Greška pri ažuriranju planiranog datuma' };
     }
 }
 

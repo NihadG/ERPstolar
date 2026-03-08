@@ -109,7 +109,14 @@ export async function createOfferWithProducts(
 
     try {
         const offerId = uuidv4();
-        const offerNumber = _generateOfferNumber();
+
+        // Query existing offer numbers for sequential numbering
+        const db = getDb();
+        const existingOffersSnap = await getDocs(
+            query(collection(db, COLLECTIONS.OFFERS), where('Organization_ID', '==', organizationId))
+        );
+        const existingNumbers = existingOffersSnap.docs.map(d => d.data().Offer_Number as string).filter(Boolean);
+        const offerNumber = _generateOfferNumber(existingNumbers);
 
         const products = offerData.products || [];
         const includedProducts = products.filter((p: any) => p.Included);
@@ -159,7 +166,6 @@ export async function createOfferWithProducts(
             Language: offerData.Language || 'bs',
         };
 
-        const db = getDb();
         const batch = writeBatch(db);
 
         const offerRef = doc(collection(db, COLLECTIONS.OFFERS));

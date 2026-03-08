@@ -30,6 +30,7 @@ export const COLLECTIONS = {
     HOLIDAYS: 'holidays',
     ORG_SETTINGS: 'org_settings',
     SERVICE_DEFINITIONS: 'service_definitions',
+    DAILY_PROFIT_ENTRIES: 'daily_profit_entries',
 } as const;
 
 export type CollectionKey = keyof typeof COLLECTIONS;

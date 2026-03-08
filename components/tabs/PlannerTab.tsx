@@ -4,7 +4,7 @@ import { useState, useMemo, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { DragDropContext, Droppable, Draggable, DropResult } from '@hello-pangea/dnd';
 import type { WorkOrder, Worker, WorkOrderItem, WorkerConflict } from '@/lib/types';
-import { scheduleWorkOrder, unscheduleWorkOrder, startWorkOrder, checkWorkerConflicts, rescheduleWorkOrder, updateDueDate } from '@/lib/services';
+import { scheduleWorkOrder, unscheduleWorkOrder, startWorkOrder, checkWorkerConflicts, rescheduleWorkOrder, updateDueDate, updatePlannedStartDate } from '@/lib/services';
 import { useAuth } from '@/context/AuthContext';
 import {
     ChevronLeft,
@@ -177,13 +177,39 @@ export default function PlannerTab({ workOrders, workers, onRefresh, showToast }
         pendingSchedule: { wo: WorkOrder; start: string; end: string } | null;
     }>({ open: false, conflicts: [], pendingSchedule: null });
 
-    const allWorkers = useMemo(() => workers, [workers]);
     const visibleDates = useMemo(() => getDateRange(viewStart, days), [viewStart, days]);
 
-    const scheduled = useMemo(() =>
-        workOrders.filter(wo => wo.Is_Scheduled && wo.Planned_Start_Date),
-        [workOrders]
-    );
+    // Auto-forward: For 'Na čekanju' orders whose planned start is in the past,
+    // shift both start and end dates forward so the bar starts from today.
+    const scheduled = useMemo(() => {
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const todayStr = formatDateKey(today);
+
+        return workOrders
+            .filter(wo => wo.Is_Scheduled && wo.Planned_Start_Date)
+            .map(wo => {
+                // Only auto-forward waiting orders with past start dates
+                if (wo.Status !== 'Na čekanju' || !wo.Planned_Start_Date) return wo;
+
+                const plannedStart = new Date(wo.Planned_Start_Date);
+                plannedStart.setHours(0, 0, 0, 0);
+
+                if (plannedStart >= today) return wo; // Not expired
+
+                // Calculate shift in days
+                const shiftDays = Math.round((today.getTime() - plannedStart.getTime()) / 86400000);
+                const oldEnd = wo.Planned_End_Date ? new Date(wo.Planned_End_Date) : plannedStart;
+                const newEnd = new Date(oldEnd);
+                newEnd.setDate(newEnd.getDate() + shiftDays);
+
+                return {
+                    ...wo,
+                    Planned_Start_Date: todayStr,
+                    Planned_End_Date: formatDateKey(newEnd),
+                };
+            });
+    }, [workOrders]);
 
     const backlog = useMemo(() =>
         workOrders.filter(wo => !wo.Is_Scheduled && wo.Status !== 'Završeno' && wo.Status !== 'Otkazano'),
@@ -203,7 +229,7 @@ export default function PlannerTab({ workOrders, workers, onRefresh, showToast }
 
     const workerOrders = useMemo(() => {
         const map = new Map<string, WorkOrder[]>();
-        allWorkers.forEach(w => map.set(w.Worker_ID, []));
+        workers.forEach(w => map.set(w.Worker_ID, []));
 
         scheduled.forEach(wo => {
             const wids = getWorkerIds(wo);
@@ -212,12 +238,33 @@ export default function PlannerTab({ workOrders, workers, onRefresh, showToast }
                     if (map.has(wid)) map.get(wid)!.push(wo);
                 });
             } else {
-                allWorkers.forEach(w => map.get(w.Worker_ID)!.push(wo));
+                workers.forEach(w => map.get(w.Worker_ID)!.push(wo));
             }
         });
 
         return map;
-    }, [scheduled, allWorkers]);
+    }, [scheduled, workers]);
+
+    // Sort workers: active orders first, then scheduled, then alphabetically
+    const allWorkers = useMemo(() => {
+        return [...workers].sort((a, b) => {
+            const aOrders = workerOrders.get(a.Worker_ID) || [];
+            const bOrders = workerOrders.get(b.Worker_ID) || [];
+
+            const hasActive = (orders: WorkOrder[]) => orders.some(wo => wo.Status === 'U toku');
+            const hasScheduled = (orders: WorkOrder[]) => orders.some(wo => wo.Status === 'Na čekanju' && wo.Is_Scheduled);
+
+            const aActive = hasActive(aOrders);
+            const bActive = hasActive(bOrders);
+            if (aActive !== bActive) return aActive ? -1 : 1;
+
+            const aScheduled = hasScheduled(aOrders);
+            const bScheduled = hasScheduled(bOrders);
+            if (aScheduled !== bScheduled) return aScheduled ? -1 : 1;
+
+            return (a.Name || '').localeCompare(b.Name || '', 'hr');
+        });
+    }, [workers, workerOrders]);
 
     const getBarPosition = (wo: WorkOrder): { left: number; width: number; plannedWidth?: number; isOverdue?: boolean } | null => {
         if (!wo.Planned_Start_Date) return null;
@@ -732,10 +779,42 @@ export default function PlannerTab({ workOrders, workers, onRefresh, showToast }
                                     <span className="date-label">Kreiran</span>
                                     <span className="date-value">{detailWo.Created_Date?.split('T')[0] || '—'}</span>
                                 </div>
-                                <div className="date-item">
-                                    <span className="date-label">Početak</span>
-                                    <span className="date-value">{detailWo.Started_At?.split('T')[0] || detailWo.Planned_Start_Date || '—'}</span>
-                                </div>
+                                {/* Editable Planned Start Date */}
+                                {detailWo.Status === 'Na čekanju' && detailWo.Is_Scheduled ? (
+                                    <div className="date-item editable" style={{ cursor: 'pointer', position: 'relative' }}
+                                        onClick={() => {
+                                            const input = document.getElementById(`planer-start-date-${detailWo!.Work_Order_ID}`) as HTMLInputElement;
+                                            if (input) input.showPicker();
+                                        }}
+                                    >
+                                        <span className="date-label">Planirani početak <Edit2 size={9} style={{ marginLeft: 2, opacity: 0.5 }} /></span>
+                                        <span className="date-value" style={{ color: '#0071e3' }}>{detailWo.Planned_Start_Date || '—'}</span>
+                                        <input
+                                            id={`planer-start-date-${detailWo.Work_Order_ID}`}
+                                            type="date"
+                                            value={detailWo.Planned_Start_Date || ''}
+                                            onChange={async (e) => {
+                                                const val = e.target.value;
+                                                if (!val || !orgId) return;
+                                                const res = await updatePlannedStartDate(detailWo!.Work_Order_ID, val, orgId);
+                                                if (res.success) {
+                                                    showToast('Planirani datum ažuriran', 'success');
+                                                    closeDetailPanel();
+                                                    onRefresh('workOrders');
+                                                } else {
+                                                    showToast(res.message, 'error');
+                                                }
+                                            }}
+                                            onClick={(e) => e.stopPropagation()}
+                                            style={{ position: 'absolute', bottom: 0, left: 0, width: 0, height: 0, opacity: 0, overflow: 'hidden', pointerEvents: 'none' }}
+                                        />
+                                    </div>
+                                ) : (
+                                    <div className="date-item">
+                                        <span className="date-label">Početak</span>
+                                        <span className="date-value">{detailWo.Started_At?.split('T')[0] || detailWo.Planned_Start_Date || '—'}</span>
+                                    </div>
+                                )}
                                 <div className="date-item">
                                     <span className="date-label">Završeno</span>
                                     <span className="date-value">{detailWo.Completed_At?.split('T')[0] || '—'}</span>

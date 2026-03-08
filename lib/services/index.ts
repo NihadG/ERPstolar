@@ -103,7 +103,7 @@ export {
     updateWorkOrderStatus, updateWorkOrderItemStatus, assignWorkerToItem,
     startWorkOrder, deleteWorkOrder,
     scheduleWorkOrder, rescheduleWorkOrder, unscheduleWorkOrder, getScheduledWorkOrders,
-    updateDueDate, checkWorkerConflicts, autoCreateOrdersForWorkOrder,
+    updateDueDate, updatePlannedStartDate, checkWorkerConflicts, autoCreateOrdersForWorkOrder,
     getWorkLogs, getWorkLogsForItem, getWorkLogsForWorkOrder, createWorkLog,
 } from './workOrder/workOrderService';
 
@@ -137,6 +137,8 @@ export {
     checkZeroMaterialCostProducts, setManualMaterialCost,
     checkUnassignedMontazaItems, checkZeroRateAssignedWorkers,
     checkProcessesWithoutWorkers, checkMissingCostFields,
+    saveDailyProfitEntry, getDailyProfitEntries, getDailyProfitSummary,
+    deleteDailyProfitEntry, getTodaysMissingEntries,
 } from './profit/profitService';
 
 // Notification

@@ -64,10 +64,41 @@ export default function Home() {
     // Tasks filter state for cross-tab navigation
     const [tasksProjectFilter, setTasksProjectFilter] = useState<string | null>(null);
 
+    // Quote-to-Project navigation state
+    const [autoExpandProjectId, setAutoExpandProjectId] = useState<string | null>(null);
+    const [autoExpandProductId, setAutoExpandProductId] = useState<string | null>(null);
+    const [returnToOfferId, setReturnToOfferId] = useState<string | null>(null);
+
+    // Return-to-offer state: auto-open offer edit modal when returning from projects
+    const [autoEditOfferId, setAutoEditOfferId] = useState<string | null>(null);
+    const [autoScrollProductId, setAutoScrollProductId] = useState<string | null>(null);
+
     // Handler to navigate to tasks filtered by project
     const handleNavigateToTasks = (projectId: string) => {
         setTasksProjectFilter(projectId);
         setActiveTab('tasks');
+    };
+
+    // Handler to navigate from offer to project
+    const handleNavigateToProject = (projectId: string, productId: string, offerId?: string) => {
+        setAutoExpandProjectId(projectId);
+        setAutoExpandProductId(productId);
+        setReturnToOfferId(offerId || null);
+        // Store the product ID the user navigated from, for scrolling back
+        if (offerId) {
+            setAutoScrollProductId(productId);
+        }
+        setActiveTab('projects');
+    };
+
+    // Handler to return from project to offer
+    const handleReturnToOffer = (offerId: string) => {
+        setAutoExpandProjectId(null);
+        setAutoExpandProductId(null);
+        setReturnToOfferId(null);
+        // Set autoEditOfferId so OffersTab re-opens the edit modal
+        setAutoEditOfferId(offerId);
+        setActiveTab('offers');
     };
 
     // Clear filter when manually switching to tasks tab
@@ -381,6 +412,11 @@ export default function Home() {
                             onRefresh={refreshCollections}
                             showToast={showToast}
                             onNavigateToTasks={handleNavigateToTasks}
+                            autoExpandProjectId={autoExpandProjectId}
+                            autoExpandProductId={autoExpandProductId}
+                            returnToOfferId={returnToOfferId}
+                            onReturnToOffer={handleReturnToOffer}
+                            onClearAutoExpand={() => { setAutoExpandProjectId(null); setAutoExpandProductId(null); }}
                         />
                     )}
 
@@ -392,6 +428,10 @@ export default function Home() {
                                 projects={appState.projects}
                                 onRefresh={refreshCollections}
                                 showToast={showToast}
+                                onNavigateToProject={handleNavigateToProject}
+                                autoEditOfferId={autoEditOfferId}
+                                autoScrollProductId={autoScrollProductId}
+                                onClearAutoEdit={() => { setAutoEditOfferId(null); setAutoScrollProductId(null); }}
                             />
                         </ModuleGuard>
                     )}
@@ -593,6 +633,20 @@ export default function Home() {
                         subtitle: `${p.Address || 'Bez adrese'} • ${p.Status}`,
                         action: () => { setActiveTab('projects'); showToast(`Projekat: ${p.Client_Name}`, 'info'); }
                     })),
+                    // Products (flattened from all projects)
+                    ...appState.projects.flatMap(p =>
+                        (p.products || []).map(prod => ({
+                            id: `product-${prod.Product_ID}`,
+                            type: 'product' as const,
+                            title: prod.Name || 'Bez naziva',
+                            subtitle: `${p.Client_Name} • ${[prod.Height && `V:${prod.Height}`, prod.Width && `Š:${prod.Width}`, prod.Depth && `D:${prod.Depth}`].filter(Boolean).join(' ') || ''} ${prod.Quantity ? `× ${prod.Quantity}` : ''}`.trim(),
+                            action: () => {
+                                setAutoExpandProjectId(p.Project_ID);
+                                setAutoExpandProductId(prod.Product_ID);
+                                setActiveTab('projects');
+                            }
+                        }))
+                    ),
                     // Orders
                     ...appState.orders.map(o => ({
                         id: `order-${o.Order_ID}`,

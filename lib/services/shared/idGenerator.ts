@@ -13,22 +13,32 @@
  */
 
 /**
- * Generate a collision-safe offer number.
- * Format: P-YYYYMMDD-HHMMSS-RRR
- * 
- * The timestamp portion ensures uniqueness across concurrent users.
- * The random suffix handles the (extremely unlikely) same-second scenario.
+ * Generate a sequential offer number.
+ * Format: P-YYYY/NN (e.g. P-2026/01, P-2026/02, ...)
+ *
+ * Accepts an array of existing offer numbers to determine the next sequential
+ * number for the current year. Falls back to timestamp-based if no existing
+ * numbers are provided.
  */
-export function generateOfferNumber(): string {
+export function generateOfferNumber(existingOfferNumbers?: string[]): string {
     const now = new Date();
     const year = now.getFullYear();
-    const month = String(now.getMonth() + 1).padStart(2, '0');
-    const day = String(now.getDate()).padStart(2, '0');
-    const hours = String(now.getHours()).padStart(2, '0');
-    const minutes = String(now.getMinutes()).padStart(2, '0');
-    const seconds = String(now.getSeconds()).padStart(2, '0');
-    const random = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
-    return `P-${year}${month}${day}-${hours}${minutes}${seconds}-${random}`;
+    const prefix = `P-${year}/`;
+
+    let maxSeq = 0;
+    if (existingOfferNumbers && existingOfferNumbers.length > 0) {
+        for (const num of existingOfferNumbers) {
+            if (num.startsWith(prefix)) {
+                const seqPart = parseInt(num.substring(prefix.length), 10);
+                if (!isNaN(seqPart) && seqPart > maxSeq) {
+                    maxSeq = seqPart;
+                }
+            }
+        }
+    }
+
+    const nextSeq = String(maxSeq + 1).padStart(2, '0');
+    return `${prefix}${nextSeq}`;
 }
 
 /**

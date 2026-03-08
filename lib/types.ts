@@ -75,6 +75,7 @@ export interface GlassItem {
     Qty: number;
     Width: number;
     Height: number;
+    Thickness: number;
     Area_M2: number;
     Edge_Processing: boolean;
     Note: string;
@@ -229,13 +230,40 @@ export interface Notification {
     organizationId: string;
     title: string;
     message: string;
-    type: 'info' | 'success' | 'warning' | 'error' | 'material-warning';
+    type: 'info' | 'success' | 'warning' | 'error' | 'material-warning' | 'profit-reminder';
     createdAt: string;
     read: boolean;
     relatedId?: string;
     link?: string;
     targetTab?: string;
     metadata?: Record<string, unknown>;
+}
+
+// ============================================
+// DAILY PROFIT ENTRIES — Ručno praćenje profita
+// ============================================
+
+export interface DailyProfitEntry {
+    ID: string;
+    Organization_ID: string;
+    Work_Order_ID: string;
+    Work_Order_Number: string;
+    Work_Order_Item_ID?: string;     // Opciono — za unos po stavci naloga
+    Product_Name?: string;           // Naziv proizvoda (ako je per-item entry)
+    Date: string;                    // YYYY-MM-DD
+
+    // Korisnik unosi:
+    Revenue_Today: number;           // Prihod/naplata
+    Material_Cost_Today: number;     // Trošak materijala
+    Labor_Cost_Today: number;        // Trošak rada
+    Other_Costs_Today: number;       // Ostali troškovi (transport, itd)
+    Notes: string;                   // Šta se desilo danas
+
+    // Automatski izračunato:
+    Daily_Profit: number;            // Revenue - Material - Labor - Other
+
+    Created_At: string;
+    Updated_At: string;
 }
 
 // ============================================

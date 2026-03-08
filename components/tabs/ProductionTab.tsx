@@ -2,7 +2,7 @@
 
 import { useState, useMemo, useEffect } from 'react';
 import type { WorkOrder, Project, Worker } from '@/lib/types';
-import { createWorkOrder, deleteWorkOrder, startWorkOrder, getWorkOrder, updateWorkOrder } from '@/lib/services';
+import { createWorkOrder, deleteWorkOrder, startWorkOrder, getWorkOrder, updateWorkOrder, updatePlannedStartDate } from '@/lib/services';
 import { validateWorkOrderProfitData, checkMissingAttendanceForActiveOrders, recalculateWorkOrder, assignWorkersToItem, syncProjectStatus } from '@/lib/services';
 import { repairAllProductStatuses, startWorkOrderItem, completeWorkOrderItem } from '@/lib/services';
 import { useData } from '@/context/DataContext';
@@ -1059,6 +1059,59 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                                     <span className="material-icons-round">calendar_today</span>
                                     {wo.Due_Date ? formatDate(wo.Due_Date) : '-'}
                                 </span>
+                                {/* Planned Start Date badge for scheduled waiting orders */}
+                                {wo.Is_Scheduled && wo.Status === 'Na čekanju' && (() => {
+                                    // Auto-forward: show today if planned start is in the past
+                                    const today = new Date();
+                                    today.setHours(0, 0, 0, 0);
+                                    const plannedStart = wo.Planned_Start_Date ? new Date(wo.Planned_Start_Date) : null;
+                                    let effectiveDate = wo.Planned_Start_Date || '';
+                                    if (plannedStart) {
+                                        plannedStart.setHours(0, 0, 0, 0);
+                                        if (plannedStart < today) {
+                                            effectiveDate = today.toISOString().split('T')[0];
+                                        }
+                                    }
+                                    const dateId = `prod-start-date-${wo.Work_Order_ID}`;
+                                    return (
+                                        <span
+                                            className="summary-item"
+                                            style={{
+                                                color: '#0071e3',
+                                                cursor: 'pointer',
+                                                position: 'relative',
+                                                fontWeight: 600,
+                                            }}
+                                            title="Planirani početak — kliknite za izmjenu"
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                const input = document.getElementById(dateId) as HTMLInputElement;
+                                                if (input) input.showPicker();
+                                            }}
+                                        >
+                                            <span className="material-icons-round" style={{ fontSize: '16px' }}>event</span>
+                                            {effectiveDate ? new Date(effectiveDate + 'T00:00:00').toLocaleDateString('hr-HR', { day: 'numeric', month: 'short' }) : '-'}
+                                            <input
+                                                id={dateId}
+                                                type="date"
+                                                value={effectiveDate}
+                                                onChange={async (e) => {
+                                                    const val = e.target.value;
+                                                    if (!val || !organizationId) return;
+                                                    const res = await updatePlannedStartDate(wo.Work_Order_ID, val, organizationId);
+                                                    if (res.success) {
+                                                        showToast('Planirani datum ažuriran', 'success');
+                                                        onRefresh('workOrders');
+                                                    } else {
+                                                        showToast(res.message, 'error');
+                                                    }
+                                                }}
+                                                onClick={(e) => e.stopPropagation()}
+                                                style={{ position: 'absolute', bottom: 0, left: 0, width: 0, height: 0, opacity: 0, overflow: 'hidden', pointerEvents: 'none' }}
+                                            />
+                                        </span>
+                                    );
+                                })()}
                                 {mainWorkers.length > 0 && (
                                     <span className="summary-item" style={{ color: 'var(--primary-color)' }}>
                                         <span className="material-icons-round">person</span>

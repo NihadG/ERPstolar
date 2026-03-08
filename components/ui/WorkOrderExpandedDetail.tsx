@@ -613,6 +613,7 @@ export default function WorkOrderExpandedDetail({
                     )}
                 </button>
 
+
                 {showTimeline && localItems.length > 0 && (
                     <div style={{
                         display: 'flex', flexDirection: 'column', gap: '6px',
@@ -705,6 +706,7 @@ export default function WorkOrderExpandedDetail({
                     }}
                 />
             )}
+
 
             <style jsx>{`
                 .wo-detail-v2 {

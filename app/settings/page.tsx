@@ -39,6 +39,8 @@ interface AppSettings {
     offerValidityDays: number;
     defaultOfferNote: string;
     offerTerms: string;
+    profitNotificationsEnabled: boolean;
+    profitNotificationTime: string;
 }
 
 const DEFAULT_COMPANY: CompanyInfo = {
@@ -59,7 +61,9 @@ const DEFAULT_SETTINGS: AppSettings = {
     pdvRate: 17,
     offerValidityDays: 14,
     defaultOfferNote: 'Hvala na povjerenju!',
-    offerTerms: 'Plaćanje: Avansno ili po dogovoru\nRok isporuke: Po dogovoru nakon potvrde'
+    offerTerms: 'Plaćanje: Avansno ili po dogovoru\nRok isporuke: Po dogovoru nakon potvrde',
+    profitNotificationsEnabled: true,
+    profitNotificationTime: '17:00',
 };
 
 export default function SettingsPage() {
@@ -318,6 +322,13 @@ export default function SettingsPage() {
                         <span className="material-icons-round">description</span>
                         Dokumenti
                     </button>
+                    <button
+                        className={`sidebar-item ${activeSection === 'profit' ? 'active' : ''}`}
+                        onClick={() => setActiveSection('profit')}
+                    >
+                        <span className="material-icons-round">trending_up</span>
+                        Profit
+                    </button>
 
                     <div className="sidebar-divider"></div>
 
@@ -572,6 +583,53 @@ export default function SettingsPage() {
                                     />
                                     <span className="form-hint">Ovi uslovi će se prikazati na svakoj ponudi ispod tabele cijena.</span>
                                 </div>
+                            </div>
+                        </section>
+                    )}
+
+                    {activeSection === 'profit' && (
+                        <section className="settings-section">
+                            <div className="section-header">
+                                <h2>Postavke profita</h2>
+                                <p>Konfiguriši notifikacije za dnevno praćenje profita po nalozima.</p>
+                            </div>
+
+                            <div className="form-grid">
+                                <div className="form-group full-width">
+                                    <label className="toggle-label" style={{ display: 'flex', alignItems: 'center', gap: '12px', cursor: 'pointer' }}>
+                                        <input
+                                            type="checkbox"
+                                            checked={appSettings.profitNotificationsEnabled}
+                                            onChange={(e) => setAppSettings({ ...appSettings, profitNotificationsEnabled: e.target.checked })}
+                                            style={{ width: '20px', height: '20px' }}
+                                        />
+                                        <span>Uključi dnevne profit notifikacije</span>
+                                    </label>
+                                    <span className="form-hint">Primaš obavijest u notifikacijski centar u definirano vrijeme da uneseš profit za otvorene naloge.</span>
+                                </div>
+
+                                <div className="form-group">
+                                    <label>Vrijeme notifikacije</label>
+                                    <input
+                                        type="time"
+                                        value={appSettings.profitNotificationTime}
+                                        onChange={(e) => setAppSettings({ ...appSettings, profitNotificationTime: e.target.value })}
+                                        disabled={!appSettings.profitNotificationsEnabled}
+                                    />
+                                    <span className="form-hint">Svaki dan u ovo vrijeme dobijaš podsjetnik.</span>
+                                </div>
+                            </div>
+
+                            <div style={{ marginTop: '24px', padding: '16px', background: 'rgba(102, 126, 234, 0.06)', borderRadius: '12px', border: '1px solid rgba(102, 126, 234, 0.12)' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
+                                    <span className="material-icons-round" style={{ fontSize: '18px', color: 'var(--accent)' }}>info</span>
+                                    <strong style={{ fontSize: '14px' }}>Kako funkcioniše</strong>
+                                </div>
+                                <p style={{ fontSize: '13px', color: 'var(--text-secondary)', margin: 0, lineHeight: 1.5 }}>
+                                    Profit se sada unosi ručno za svaki nalog. Otvori profit modal iz Projekata ili Naloga,
+                                    unesi dnevne troškove i prihode, i sistem će pratiti kumulativni profit.
+                                    Notifikacija te podsjeća da to uradiš svaki dan.
+                                </p>
                             </div>
                         </section>
                     )}

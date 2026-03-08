@@ -1624,6 +1624,106 @@ export async function completeWorkOrderItem(
 }
 
 /**
+ * Proportionally split labor costs across WO items when same worker works
+ * on multiple products on the same day.
+ *
+ * For each (Worker_ID, Date) combination that appears in work logs of
+ * multiple items, split the Original_Daily_Rate proportionally by material cost.
+ *
+ * Example: Worker (100 KM/day) works on Product A (material: 1900 KM) and
+ * Product B (material: 300 KM) on the same day:
+ *   A gets: 100 × 1900/(1900+300) = 86 KM
+ *   B gets: 100 ×  300/(1900+300) = 14 KM
+ */
+async function recalculateWOLaborSplit(
+    workOrderId: string,
+    organizationId: string
+): Promise<void> {
+    const firestore = getDb();
+
+    // 1. Get ALL work logs for this WO
+    const logsQuery = query(
+        collection(firestore, 'work_logs'),
+        where('Work_Order_ID', '==', workOrderId),
+        where('Organization_ID', '==', organizationId)
+    );
+    const logsSnap = await getDocs(logsQuery);
+    if (logsSnap.empty) return;
+
+    // 2. Get all WO items to find material costs
+    const itemsQuery = query(
+        collection(firestore, COLLECTIONS.WORK_ORDER_ITEMS),
+        where('Work_Order_ID', '==', workOrderId)
+    );
+    const itemsSnap = await getDocs(itemsQuery);
+    const itemMaterialCosts = new Map<string, number>(); // itemID -> materialCost
+    itemsSnap.docs.forEach(d => {
+        const data = d.data();
+        itemMaterialCosts.set(data.ID, data.Material_Cost || data.Product_Value || 1);
+    });
+
+    // 3. Group logs by (Worker_ID, Date) → list of { docRef, itemId, originalRate }
+    type LogInfo = { ref: any; itemId: string; originalRate: number; docId: string };
+    const workerDateMap = new Map<string, LogInfo[]>();
+
+    logsSnap.docs.forEach(d => {
+        const data = d.data();
+        const key = `${data.Worker_ID}__${data.Date}`;
+        const entry: LogInfo = {
+            ref: d.ref,
+            itemId: data.Work_Order_Item_ID,
+            originalRate: data.Original_Daily_Rate || data.Daily_Rate || 0,
+            docId: d.id,
+        };
+        const existing = workerDateMap.get(key) || [];
+        existing.push(entry);
+        workerDateMap.set(key, existing);
+    });
+
+    // 4. For each worker-date group, check if logs span multiple items
+    const CHUNK_SIZE = 450;
+    const updates: Array<{ ref: any; newRate: number }> = [];
+
+    for (const entry of Array.from(workerDateMap.entries())) {
+        const logs = entry[1];
+        // Get unique item IDs for this worker-date
+        const uniqueItemIds = Array.from(new Set(logs.map((l: LogInfo) => l.itemId)));
+
+        if (uniqueItemIds.length <= 1) {
+            // Only one item — ensure full rate (no split needed)
+            for (const log of logs) {
+                if (Math.round(log.originalRate) !== Math.round(log.originalRate)) continue; // skip if fine
+                updates.push({ ref: log.ref, newRate: Math.round(log.originalRate) });
+            }
+            continue;
+        }
+
+        // Multiple items — split proportionally by material cost
+        const totalMaterial = uniqueItemIds.reduce(
+            (sum, id) => sum + (itemMaterialCosts.get(id) || 1), 0
+        );
+
+        for (const log of logs) {
+            const itemMaterial = itemMaterialCosts.get(log.itemId) || 1;
+            const ratio = itemMaterial / totalMaterial;
+            const splitRate = Math.round(log.originalRate * ratio);
+            updates.push({ ref: log.ref, newRate: splitRate });
+        }
+    }
+
+    // 5. Batch update all adjusted rates
+    if (updates.length > 0) {
+        for (let i = 0; i < updates.length; i += CHUNK_SIZE) {
+            const chunk = updates.slice(i, i + CHUNK_SIZE);
+            const batch = writeBatch(firestore);
+            chunk.forEach(u => batch.update(u.ref, { Daily_Rate: u.newRate }));
+            await batch.commit();
+        }
+        console.log(`[recalculateWOLaborSplit] WO ${workOrderId}: ${updates.length} logs adjusted across ${itemMaterialCosts.size} items`);
+    }
+}
+
+/**
  * Override work logs for a specific work order item.
  * Replaces ALL existing work logs for the item with manually-edited entries.
  * Used when the user edits the timeline to correct profit calculations.
@@ -1716,21 +1816,33 @@ export async function overrideWorkLogs(
         }
 
         // 3. Mark item as having manual labor cost override
-        //    Use direct doc reference by ID (standard pattern in this codebase)
+        //    Query by ID field since Firestore doc ID may differ from item.ID
         try {
             const totalLaborCost = entries.reduce((sum, e) => sum + e.Daily_Rate, 0);
-            const itemRef = doc(firestore, COLLECTIONS.WORK_ORDER_ITEMS, itemId);
-            await updateDoc(itemRef, {
-                Labor_Cost_Frozen: true,
-                Actual_Labor_Cost: totalLaborCost,
-                Labor_Cost_Updated_At: new Date().toISOString(),
-                Labor_Cost_Source: 'manual_override',
-            });
+            const itemQuery = query(
+                collection(firestore, COLLECTIONS.WORK_ORDER_ITEMS),
+                where('ID', '==', itemId)
+            );
+            const itemSnap = await getDocs(itemQuery);
+            if (!itemSnap.empty) {
+                const itemRef = itemSnap.docs[0].ref;
+                await updateDoc(itemRef, {
+                    Labor_Cost_Frozen: true,
+                    Actual_Labor_Cost: totalLaborCost,
+                    Labor_Cost_Updated_At: new Date().toISOString(),
+                    Labor_Cost_Source: 'manual_override',
+                });
+            } else {
+                console.warn(`[overrideWorkLogs] Item ${itemId} not found in collection — skipping metadata update`);
+            }
         } catch (itemErr) {
             console.warn(`[overrideWorkLogs] Failed to update item ${itemId}:`, itemErr);
         }
 
-        // 4. Recalculate work order
+        // 4. Proportionally split labor costs across sibling items
+        await recalculateWOLaborSplit(workOrderId, organizationId);
+
+        // 5. Recalculate work order totals
         await recalculateWorkOrder(workOrderId);
 
         console.log(`[overrideWorkLogs] WO ${workOrderId} item ${itemId}: ${docsToDelete.length} deleted, ${newLogs.length} created`);
@@ -2139,13 +2251,8 @@ export async function recalculateWorkOrder(workOrderId: string): Promise<void> {
             totalValue = workOrder.Total_Value || 0;
         }
 
-        // UNIFIED PROFIT FORMULA (FIX #17: now includes servicesCost)
-        // Gross Profit = Selling - Material - Transport - Services
-        // Net Profit = Gross - Labor
-        const grossProfit = totalValue - materialCost - transportCost - servicesCost;
-        const profit = grossProfit - actualLaborCost; // This is Net Profit
-        const profitMargin = totalValue > 0 ? (profit / totalValue) * 100 : 0;
-        const laborCostVariance = plannedLaborCost - actualLaborCost;
+        // NOTE: Profit calculation REMOVED — now handled by manual daily_profit_entries
+        // Cost fields are still aggregated here for reference.
 
         // Determine overall status
         let status: 'Na čekanju' | 'U toku' | 'Završeno' = 'Na čekanju';
@@ -2171,9 +2278,6 @@ export async function recalculateWorkOrder(workOrderId: string): Promise<void> {
             Planned_Labor_Cost: plannedLaborCost,
             Actual_Labor_Cost: actualLaborCost,
             Labor_Cost: actualLaborCost, // Legacy field
-            Profit: profit,
-            Profit_Margin: profitMargin,
-            Labor_Cost_Variance: laborCostVariance
         });
 
         // AI TRAINING: Create production snapshot when work order is completed

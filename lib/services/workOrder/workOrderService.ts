@@ -199,6 +199,15 @@ export async function updateDueDate(
     return _update(workOrderId, newDueDate, organizationId);
 }
 
+export async function updatePlannedStartDate(
+    workOrderId: string,
+    newStartDate: string,
+    organizationId: string
+): Promise<{ success: boolean; message: string }> {
+    const { updatePlannedStartDate: _update } = await import('../../database');
+    return _update(workOrderId, newStartDate, organizationId);
+}
+
 // ============================================
 // CONFLICT DETECTION
 // ============================================
