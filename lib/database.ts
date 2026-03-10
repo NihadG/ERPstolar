@@ -2358,7 +2358,7 @@ export async function updateOrderStatus(orderId: string, status: string, organiz
             }
         }
 
-        // Note: Potvrđeno, Isporučeno, Djelomično don't change material statuses
+
         // Materials are updated individually via markMaterialsReceived
 
         return { success: true, message: 'Status narudžbe ažuriran' };
@@ -2558,20 +2558,8 @@ export async function markMaterialsReceived(orderItemIds: string[], organization
                     await updateDoc(orderSnap.docs[0].ref, { Status: 'Primljeno' });
                 }
             } else if (receivedItems > 0) {
-                // Some items received → order is Djelomično
-                const orderQ = query(
-                    collection(db, COLLECTIONS.ORDERS),
-                    where('Order_ID', '==', oId),
-                    where('Organization_ID', '==', organizationId)
-                );
-                const orderSnap = await getDocs(orderQ);
-                if (!orderSnap.empty) {
-                    const currentStatus = (orderSnap.docs[0].data() as Order).Status;
-                    // Only set Djelomično if not already Primljeno
-                    if (currentStatus !== 'Primljeno') {
-                        await updateDoc(orderSnap.docs[0].ref, { Status: 'Djelomično' });
-                    }
-                }
+                // Some items received — order stays at Poslano
+                // (item-level tracking handles partial receipt)
             }
         }
 

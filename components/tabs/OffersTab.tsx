@@ -769,6 +769,7 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
             client: isEN ? 'Client' : 'Kupac',
             products: isEN ? 'Products' : 'Proizvodi',
             name: isEN ? 'Description' : 'Naziv',
+            dims: isEN ? '(HxWxD)' : '(VxŠxD)',
             qty: isEN ? 'Qty' : 'Količina',
             price: isEN ? 'Unit Price' : 'Cijena',
             total: isEN ? 'Total' : 'Ukupno',
@@ -812,6 +813,154 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
         const offerIncludePDV = (offer as any).Include_PDV ?? false;
         const offerPdvRate = (offer as any).PDV_Rate ?? 17;
 
+        // === Manual pagination: split products into pages ===
+        const ROWS_FIRST_PAGE = 12;  // fewer rows on first page (has "PROIZVODI" title)
+        const ROWS_PER_PAGE = 14;    // more rows on subsequent pages
+
+        // Split products into page chunks
+        const pages: (typeof products[number])[][] = [];
+        let remaining = [...products];
+        // First page
+        pages.push(remaining.splice(0, ROWS_FIRST_PAGE));
+        // Subsequent pages
+        while (remaining.length > 0) {
+            pages.push(remaining.splice(0, ROWS_PER_PAGE));
+        }
+
+        // Reusable header HTML
+        const headerHTML = `
+            <div class="header">
+                <div class="company-info">
+                    ${companyInfo.logoBase64 ? `<img class="company-logo" src="${companyInfo.logoBase64}" alt="${companyInfo.name}" />` : ''}
+                    ${(!companyInfo.logoBase64 || !companyInfo.hideNameWhenLogo) ? `<h1 class="company-name">${companyInfo.name}</h1>` : ''}
+                    <div class="company-details">
+                        <p>${companyInfo.address}</p>
+                        <p>${[companyInfo.phone, companyInfo.email].filter(Boolean).join(' · ')}</p>
+                        ${companyInfo.idNumber || companyInfo.pdvNumber ? `<p style="margin-top: 2px; font-size: 9px; color: #aaa;">${[companyInfo.idNumber ? 'ID: ' + companyInfo.idNumber : '', companyInfo.pdvNumber ? (isEN ? 'VAT: ' : 'PDV: ') + companyInfo.pdvNumber : ''].filter(Boolean).join(' | ')}</p>` : ''}
+                    </div>
+                </div>
+                <div class="bank-accounts">
+                    ${(companyInfo.bankAccounts || []).length > 0 ? `
+                        <div class="bank-title">${t.bankAccounts}</div>
+                        ${(companyInfo.bankAccounts || []).map(acc => `
+                            <div class="bank-item"><strong>${acc.bankName}:</strong> ${acc.accountNumber}</div>
+                        `).join('')}
+                    ` : ''}
+                </div>
+            </div>
+            <div class="client-section">
+                <div class="client-details">
+                    <div class="client-label">${t.client}</div>
+                    <div class="client-name">${offer.Client_Name || '-'}</div>
+                    ${(offer as any).Client_Address ? `<div class="client-contact">${(offer as any).Client_Address}</div>` : ''}
+                    ${(offer as any).Client_Phone ? `<div class="client-contact">${isEN ? 'Phone' : 'Tel'}: ${(offer as any).Client_Phone}</div>` : ''}
+                    ${(offer as any).Client_Email ? `<div class="client-contact">Email: ${(offer as any).Client_Email}</div>` : ''}
+                </div>
+                <div class="doc-info">
+                    <div class="doc-type">${t.offer}</div>
+                    <div class="doc-number">${offer.Offer_Number}</div>
+                    <div class="doc-date">${formatDate(offer.Created_Date)}</div>
+                </div>
+            </div>
+        `;
+
+        // Build product row HTML helper
+        const productRowHTML = (p: typeof products[0], globalIndex: number) => `
+            <tr>
+                <td class="col-num">${globalIndex + 1}</td>
+                <td>
+                    <div class="product-name">${p.Product_Name}${(() => { const d = dimLookup[p.Product_ID]; return d && d.Width && d.Height && d.Depth ? `, <span class="product-dims">${d.Height} × ${d.Width} × ${d.Depth} mm</span>` : ''; })()}</div>
+                </td>
+                <td class="col-qty">${p.Quantity}</td>
+                <td class="col-price">${fmtCurr(p.Selling_Price)}</td>
+                <td class="col-total">${fmtCurr(p.Total_Price)}</td>
+            </tr>
+        `;
+
+        // Bottom section (notes + totals + signatures) — only on last page
+        const bottomHTML = `
+            <div class="bottom-section">
+                <div class="notes-box">
+                    <div class="notes-title">${t.notes}</div>
+                    <p>${t.validUntil}: <strong>${formatDate(offer.Valid_Until)}</strong></p>
+                    ${offer.Notes ? offer.Notes.split('\n').map((line: string) => `<p>${line}</p>`).join('') : ''}
+                </div>
+                <div class="totals-box">
+                    <div class="totals-line">
+                        <span class="t-label">${t.subtotal}</span>
+                        <span class="t-value">${fmtCurr(subtotal)}</span>
+                    </div>
+                    ${transport > 0 ? `
+                        <div class="totals-line">
+                            <span class="t-label">${t.transport}</span>
+                            <span class="t-value">${fmtCurr(transport)}</span>
+                        </div>
+                    ` : ''}
+                    ${discount > 0 ? `
+                        <div class="totals-line discount">
+                            <span class="t-label">${t.discount}</span>
+                            <span class="t-value">-${fmtCurr(discount)}</span>
+                        </div>
+                    ` : ''}
+                    ${offerIncludePDV ? `
+                        <div class="totals-line">
+                            <span class="t-label">${t.vat} (${offerPdvRate}%)</span>
+                            <span class="t-value">${fmtCurr(total * offerPdvRate / 100)}</span>
+                        </div>
+                    ` : ''}
+                    <div class="totals-line grand-total">
+                        <span class="t-label">${offerIncludePDV ? t.grandTotalVat : t.grandTotal}</span>
+                        <span class="t-value">${fmtCurr(offerIncludePDV ? total * (1 + offerPdvRate / 100) : total)}</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="signatures">
+                <div class="sig-block">
+                    <div class="sig-line"></div>
+                    <div class="sig-label">${t.supplier}</div>
+                </div>
+                <div class="sig-block">
+                    <div class="sig-line"></div>
+                    <div class="sig-label">${t.buyer}</div>
+                </div>
+            </div>
+        `;
+
+        // Build all pages
+        let globalIdx = 0;
+        const pagesHTML = pages.map((pageProducts, pageIndex) => {
+            const isLastPage = pageIndex === pages.length - 1;
+            const isFirstPage = pageIndex === 0;
+            const rowsHTML = pageProducts.map(p => {
+                const html = productRowHTML(p, globalIdx);
+                globalIdx++;
+                return html;
+            }).join('');
+
+            return `
+                <div class="page${!isLastPage ? ' page-break' : ''}">
+                    ${headerHTML}
+                    ${isFirstPage ? `<div class="products-title">${t.products}</div>` : ''}
+                    <table class="products-table">
+                        <thead>
+                            <tr>
+                                <th class="col-num">#</th>
+                                <th class="col-name">${t.name} <span style="font-weight:400;color:#bbb;font-size:9px;">${t.dims}</span></th>
+                                <th class="col-qty">${t.qty}</th>
+                                <th class="col-price">${t.price}</th>
+                                <th class="col-total">${t.total}</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${rowsHTML}
+                        </tbody>
+                    </table>
+                    ${isLastPage ? bottomHTML : ''}
+                </div>
+            `;
+        }).join('');
+
         const printContent = `
             <!DOCTYPE html>
             <html>
@@ -831,6 +980,9 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
                         background: #f8f8f8;
                         -webkit-print-color-adjust: exact;
                         print-color-adjust: exact;
+                        zoom: 1;
+                        -webkit-text-size-adjust: 100%;
+                        text-rendering: optimizeLegibility;
                     }
                     
                     .page {
@@ -839,6 +991,10 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
                         background: white;
                         padding: 48px 44px;
                         box-shadow: 0 1px 8px rgba(0,0,0,0.08);
+                    }
+                    
+                    .page-break {
+                        page-break-after: always;
                     }
                     
                     /* Header */
@@ -989,6 +1145,10 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
                     .col-price { width: 110px; text-align: right; }
                     .col-total { width: 120px; text-align: right; font-weight: 500; }
                     
+                    thead th.col-price,
+                    thead th.col-total { text-align: right; }
+                    thead th.col-qty { text-align: center; }
+                    
                     .product-name { font-weight: 500; color: #333; }
                     .product-dims { color: #999; font-size: 11px; }
                     
@@ -1095,16 +1255,6 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
                         letter-spacing: 0.8px;
                     }
                     
-                    /* Footer (hidden) */
-                    .footer {
-                        display: none;
-                    }
-                    
-                    .footer p {
-                        font-size: 11px;
-                        color: #999;
-                    }
-                    
                     .bank-accounts {
                         text-align: right;
                     }
@@ -1128,23 +1278,23 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
                     @media print {
                         body {
                             background: white !important;
+                            -webkit-print-color-adjust: exact !important;
+                            print-color-adjust: exact !important;
                         }
                         
-                        .print-layout {
+                        .page {
                             box-shadow: none;
-                        }
-                        
-                        .print-layout > thead {
-                            display: table-header-group;
-                        }
-                        
-                        .print-layout > thead td,
-                        .print-layout > tbody > tr > td {
                             padding: 0;
+                            margin: 0;
+                            max-width: none;
+                        }
+                        
+                        .page-break {
+                            page-break-after: always !important;
                         }
                         
                         @page {
-                            margin: 14mm 12mm;
+                            margin: 10mm 12mm 14mm 12mm;
                             size: A4;
                         }
                         
@@ -1159,159 +1309,22 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
                         .signatures {
                             page-break-inside: avoid;
                         }
-                        
-                        .footer {
-                            page-break-inside: avoid;
+
+                        /* Fix PDF resolution */
+                        * {
+                            -webkit-font-smoothing: antialiased;
+                            -moz-osx-font-smoothing: grayscale;
                         }
-                    }
-                    
-                    /* Print table layout for repeating header */
-                    .print-layout {
-                        width: 100%;
-                        border-collapse: collapse;
-                        max-width: 780px;
-                        margin: 0 auto;
-                    }
-                    
-                    .print-layout > thead td {
-                        padding: 0;
-                        vertical-align: top;
-                    }
-                    
-                    .print-layout > tbody > tr > td {
-                        padding: 0;
-                        vertical-align: top;
-                    }
-                    
-                    .header-spacer {
-                        height: 8px;
+
+                        img {
+                            image-rendering: -webkit-optimize-contrast;
+                            image-rendering: crisp-edges;
+                        }
                     }
                 </style>
             </head>
             <body>
-                <table class="print-layout">
-                    <thead>
-                        <tr>
-                            <td>
-                                <div class="header">
-                                    <div class="company-info">
-                                        ${companyInfo.logoBase64 ? `<img class="company-logo" src="${companyInfo.logoBase64}" alt="${companyInfo.name}" />` : ''}
-                                        ${(!companyInfo.logoBase64 || !companyInfo.hideNameWhenLogo) ? `<h1 class="company-name">${companyInfo.name}</h1>` : ''}
-                                        <div class="company-details">
-                                            <p>${companyInfo.address}</p>
-                                            <p>${[companyInfo.phone, companyInfo.email].filter(Boolean).join(' · ')}</p>
-                                            ${companyInfo.idNumber || companyInfo.pdvNumber ? `<p style="margin-top: 2px; font-size: 9px; color: #aaa;">${[companyInfo.idNumber ? 'ID: ' + companyInfo.idNumber : '', companyInfo.pdvNumber ? (isEN ? 'VAT: ' : 'PDV: ') + companyInfo.pdvNumber : ''].filter(Boolean).join(' | ')}</p>` : ''}
-                                        </div>
-                                    </div>
-                                    <div class="bank-accounts">
-                                        ${(companyInfo.bankAccounts || []).length > 0 ? `
-                                            <div class="bank-title">${t.bankAccounts}</div>
-                                            ${(companyInfo.bankAccounts || []).map(acc => `
-                                                <div class="bank-item"><strong>${acc.bankName}:</strong> ${acc.accountNumber}</div>
-                                            `).join('')}
-                                        ` : ''}
-                                    </div>
-                                </div>
-                                <div class="header-spacer"></div>
-                            </td>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        <tr>
-                            <td>
-                                <div class="client-section">
-                                    <div class="client-details">
-                                        <div class="client-label">${t.client}</div>
-                                        <div class="client-name">${offer.Client_Name || '-'}</div>
-                                        ${(offer as any).Client_Address ? `<div class="client-contact">${(offer as any).Client_Address}</div>` : ''}
-                                        ${(offer as any).Client_Phone ? `<div class="client-contact">${isEN ? 'Phone' : 'Tel'}: ${(offer as any).Client_Phone}</div>` : ''}
-                                        ${(offer as any).Client_Email ? `<div class="client-contact">Email: ${(offer as any).Client_Email}</div>` : ''}
-                                    </div>
-                                    <div class="doc-info">
-                                        <div class="doc-type">${t.offer}</div>
-                                        <div class="doc-number">${offer.Offer_Number}</div>
-                                        <div class="doc-date">${formatDate(offer.Created_Date)}</div>
-                                    </div>
-                                </div>
-
-                                <div class="products-title">${t.products}</div>
-                                <table class="products-table">
-                                    <thead>
-                                        <tr>
-                                            <th class="col-num">#</th>
-                                            <th class="col-name">${t.name}</th>
-                                            <th class="col-qty">${t.qty}</th>
-                                            <th class="col-price">${t.price}</th>
-                                            <th class="col-total">${t.total}</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        ${products.map((p, i) => `
-                                            <tr>
-                                                <td class="col-num">${i + 1}</td>
-                                                <td>
-                                                    <div class="product-name">${p.Product_Name}${(() => { const d = dimLookup[p.Product_ID]; return d && d.Width && d.Height && d.Depth ? `, <span class="product-dims">${d.Width} × ${d.Height} × ${d.Depth} mm</span>` : ''; })()}</div>
-                                                </td>
-                                                <td class="col-qty">${p.Quantity}</td>
-                                                <td class="col-price">${fmtCurr(p.Selling_Price)}</td>
-                                                <td class="col-total">${fmtCurr(p.Total_Price)}</td>
-                                            </tr>
-                                        `).join('')}
-                                    </tbody>
-                                </table>
-
-                                <div class="bottom-section">
-                                    <div class="notes-box">
-                                        <div class="notes-title">${t.notes}</div>
-                                        <p>${t.validUntil}: <strong>${formatDate(offer.Valid_Until)}</strong></p>
-                                        ${offer.Notes ? offer.Notes.split('\n').map((line: string) => `<p>${line}</p>`).join('') : ''}
-                                    </div>
-                                    <div class="totals-box">
-                                        <div class="totals-line">
-                                            <span class="t-label">${t.subtotal}</span>
-                                            <span class="t-value">${fmtCurr(subtotal)}</span>
-                                        </div>
-                                        ${transport > 0 ? `
-                                            <div class="totals-line">
-                                                <span class="t-label">${t.transport}</span>
-                                                <span class="t-value">${fmtCurr(transport)}</span>
-                                            </div>
-                                        ` : ''}
-                                        ${discount > 0 ? `
-                                            <div class="totals-line discount">
-                                                <span class="t-label">${t.discount}</span>
-                                                <span class="t-value">-${fmtCurr(discount)}</span>
-                                            </div>
-                                        ` : ''}
-                                        ${offerIncludePDV ? `
-                                            <div class="totals-line">
-                                                <span class="t-label">${t.vat} (${offerPdvRate}%)</span>
-                                                <span class="t-value">${fmtCurr(total * offerPdvRate / 100)}</span>
-                                            </div>
-                                        ` : ''}
-                                        <div class="totals-line grand-total">
-                                            <span class="t-label">${offerIncludePDV ? t.grandTotalVat : t.grandTotal}</span>
-                                            <span class="t-value">${fmtCurr(offerIncludePDV ? total * (1 + offerPdvRate / 100) : total)}</span>
-                                        </div>
-                                    </div>
-                                </div>
-
-                                <div class="signatures">
-                                    <div class="sig-block">
-                                        <div class="sig-line"></div>
-                                        <div class="sig-label">${t.supplier}</div>
-                                    </div>
-                                    <div class="sig-block">
-                                        <div class="sig-line"></div>
-                                        <div class="sig-label">${t.buyer}</div>
-                                    </div>
-                                </div>
-
-                                <div class="footer"></div>
-                            </td>
-                        </tr>
-                    </tbody>
-                </table>
+                ${pagesHTML}
             </body>
             </html>
         `;
@@ -1718,6 +1731,11 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
                                                 <div className="offer-product-info">
                                                     <div className="offer-product-name" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                                                         {product.Product_Name}
+                                                        {product.Width && product.Height && product.Depth && (
+                                                            <span style={{ color: 'var(--text-secondary)', fontSize: '12px', fontWeight: 400 }}>
+                                                                , {product.Width} × {product.Height} × {product.Depth} mm
+                                                            </span>
+                                                        )}
                                                         {onNavigateToProject && selectedProjectId && (
                                                             <button
                                                                 type="button"
@@ -1884,9 +1902,29 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
                                                     </div>
 
                                                     {/* FOOTER: TOTAL */}
-                                                    <div className="card-footer">
-                                                        <span className="total-label">Ukupna cijena</span>
-                                                        <span className="total-amount">{formatCurrency(calculateProductTotal(product))}</span>
+                                                    <div className="card-footer" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                                                        {(product.Quantity || 1) > 1 ? (() => {
+                                                            const unitPrice = (product.Material_Cost || 0) + (product.margin || 0)
+                                                                + (product.extras || []).reduce((sum, e) => sum + (e.total || 0), 0)
+                                                                + (product.laborWorkers || 0) * (product.laborDays || 0) * (product.laborDailyRate || 0);
+                                                            return (
+                                                                <>
+                                                                    <div style={{ display: 'flex', alignItems: 'baseline', gap: '6px', opacity: 0.65 }}>
+                                                                        <span className="total-label" style={{ fontSize: '12px' }}>Cijena/kom</span>
+                                                                        <span className="total-amount" style={{ fontSize: '13px' }}>{formatCurrency(unitPrice)}</span>
+                                                                    </div>
+                                                                    <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px' }}>
+                                                                        <span className="total-label">Ukupno ({product.Quantity} kom)</span>
+                                                                        <span className="total-amount">{formatCurrency(calculateProductTotal(product))}</span>
+                                                                    </div>
+                                                                </>
+                                                            );
+                                                        })() : (
+                                                            <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px', marginLeft: 'auto' }}>
+                                                                <span className="total-label">Ukupna cijena</span>
+                                                                <span className="total-amount">{formatCurrency(calculateProductTotal(product))}</span>
+                                                            </div>
+                                                        )}
                                                     </div>
                                                 </div>
                                             )}
@@ -2216,8 +2254,11 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
                                     <tr style={{ background: 'var(--surface)', borderBottom: '2px solid var(--border)' }}>
                                         <th style={{ padding: '12px', textAlign: 'left' }}>Proizvod</th>
                                         <th style={{ padding: '12px', textAlign: 'right' }}>Količina</th>
-                                        <th style={{ padding: '12px', textAlign: 'right' }}>Cijena materijala</th>
+                                        <th style={{ padding: '12px', textAlign: 'right' }}>Materijal</th>
                                         <th style={{ padding: '12px', textAlign: 'right' }}>Marža</th>
+                                        <th style={{ padding: '12px', textAlign: 'right' }}>Rad</th>
+                                        <th style={{ padding: '12px', textAlign: 'right' }}>Usluge</th>
+                                        <th style={{ padding: '12px', textAlign: 'right' }}>Cijena/kom</th>
                                         <th style={{ padding: '12px', textAlign: 'right' }}>Ukupno</th>
                                     </tr>
                                 </thead>
@@ -2227,6 +2268,9 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
                                         const pp = proj?.products?.find(pp => pp.Product_ID === product.Product_ID);
                                         const dims = pp && pp.Width && pp.Height && pp.Depth
                                             ? `${pp.Width} × ${pp.Height} × ${pp.Depth} mm` : null;
+                                        const laborTotal = ((product as any).Labor_Workers || 0) * ((product as any).Labor_Days || 0) * ((product as any).Labor_Daily_Rate || 0);
+                                        const extrasTotal = ((product as any).Extras || (product as any).extras || []).reduce((sum: number, e: any) => sum + (e.total || e.Total || 0), 0);
+                                        const unitPrice = (product.Material_Cost || 0) + (product.Margin || 0) + laborTotal + extrasTotal;
                                         return (
                                             <tr key={product.ID} style={{ borderBottom: '1px solid var(--border-light)' }}>
                                                 <td style={{ padding: '12px' }}>
@@ -2236,6 +2280,9 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
                                                 <td style={{ padding: '12px', textAlign: 'right' }}>{product.Quantity}</td>
                                                 <td style={{ padding: '12px', textAlign: 'right' }}>{formatCurrency(product.Material_Cost)}</td>
                                                 <td style={{ padding: '12px', textAlign: 'right' }}>{formatCurrency(product.Margin)}</td>
+                                                <td style={{ padding: '12px', textAlign: 'right' }}>{laborTotal > 0 ? formatCurrency(laborTotal) : '-'}</td>
+                                                <td style={{ padding: '12px', textAlign: 'right' }}>{extrasTotal > 0 ? formatCurrency(extrasTotal) : '-'}</td>
+                                                <td style={{ padding: '12px', textAlign: 'right', fontWeight: 500 }}>{formatCurrency(unitPrice)}</td>
                                                 <td style={{ padding: '12px', textAlign: 'right', fontWeight: 600 }}>{formatCurrency(product.Total_Price)}</td>
                                             </tr>
                                         );

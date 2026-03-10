@@ -145,7 +145,6 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
     const statusOptions = [
         { value: '', label: 'Sve' },
         ...ORDER_STATUSES
-            .filter(s => s !== 'Potvrđeno' && s !== 'Isporučeno')
             .map(s => ({ value: s, label: s }))
     ];
 
@@ -568,7 +567,7 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
 
     async function handleOrderStatusChange(orderId: string, newStatus: string, currentStatus: string) {
         // Confirmation for reverting to Nacrt (resets materials)
-        if (newStatus === 'Nacrt' && (currentStatus === 'Poslano' || currentStatus === 'Potvrđeno')) {
+        if (newStatus === 'Nacrt' && currentStatus === 'Poslano') {
             if (!confirm('Vraćanje na "Nacrt" će resetirati statuse materijala na "Nije naručeno". Nastaviti?')) {
                 return;
             }
@@ -1359,7 +1358,7 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
                                                                         </span>
                                                                         {statusDropdownOrderId === order.Order_ID && (
                                                                             <div className="status-dropdown-menu" onClick={(e) => e.stopPropagation()} style={{ position: 'absolute', top: '100%', right: 0, zIndex: 50, background: 'var(--bg-card)', borderRadius: 8, boxShadow: '0 4px 16px rgba(0,0,0,0.15)', padding: '4px', minWidth: 160, marginTop: 4 }}>
-                                                                                {allowed.filter(s => s !== 'Djelomično').map(targetStatus => (
+                                                                                {allowed.map(targetStatus => (
                                                                                     <button
                                                                                         key={targetStatus}
                                                                                         className="status-dropdown-item"

@@ -534,7 +534,7 @@ export const PROJECT_STATUSES = ['Nacrt', 'Ponuđeno', 'Odobreno', 'U proizvodnj
 export const PRODUCT_STATUSES = ['Na čekanju', 'Materijali naručeni', 'Materijali spremni', 'Rezanje', 'Kantiranje', 'Bušenje', 'Sklapanje', 'Spremno', 'Transport', 'Montaža', 'Čišćenje', 'Primopredaja', 'Instalirano'];
 export const MATERIAL_STATUSES = ['Nije naručeno', 'Na stanju', 'Naručeno', 'Primljeno'];
 export const OFFER_STATUSES = ['Nacrt', 'Poslano', 'Prihvaćeno', 'Odbijeno', 'Isteklo', 'Revidirano'];
-export const ORDER_STATUSES = ['Nacrt', 'Poslano', 'Potvrđeno', 'Isporučeno', 'Primljeno', 'Djelomično'];
+export const ORDER_STATUSES = ['Nacrt', 'Poslano', 'Primljeno'];
 export const MATERIAL_CATEGORIES = ['Ploče i trake', 'Okovi', 'Staklo', 'Alu vrata', 'Ostalo'];
 export const WORKER_ROLES = ['Rezač', 'Kantiranje', 'Bušenje', 'Montaža', 'Instalacija', 'Opći'];
 export const WORKER_TYPES = ['Glavni', 'Pomoćnik'] as const;
@@ -557,10 +557,7 @@ export const ALLOWED_MATERIAL_TRANSITIONS: Record<string, string[]> = {
 // Dopuštene tranzicije statusa narudžbe (source → allowed targets)
 export const ALLOWED_ORDER_TRANSITIONS: Record<string, string[]> = {
     'Nacrt': ['Poslano'],
-    'Poslano': ['Nacrt', 'Potvrđeno'],
-    'Potvrđeno': ['Nacrt', 'Isporučeno', 'Djelomično'],
-    'Isporučeno': ['Primljeno', 'Djelomično'],
-    'Djelomično': ['Primljeno', 'Isporučeno'],
+    'Poslano': ['Nacrt', 'Primljeno'],
     'Primljeno': [],
 };
 

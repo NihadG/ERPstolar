@@ -146,13 +146,30 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
         { value: 'worker', label: 'Po radniku' }
     ];
 
-    // Filter Logic
-    const filteredWorkOrders = workOrders.filter(wo => {
-        const matchesSearch = wo.Work_Order_Number?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-            wo.Name?.toLowerCase().includes(searchTerm.toLowerCase());
-        const matchesStatus = !statusFilter || wo.Status === statusFilter;
-        return matchesSearch && matchesStatus;
-    });
+    const filteredWorkOrders = useMemo(() => {
+        const filtered = workOrders.filter(wo => {
+            const matchesSearch = wo.Work_Order_Number?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                wo.Name?.toLowerCase().includes(searchTerm.toLowerCase());
+            const matchesStatus = !statusFilter || wo.Status === statusFilter;
+            return matchesSearch && matchesStatus;
+        });
+
+        // Default sort: U toku → Na čekanju → Završeno → Otkazano, then by date desc
+        const statusPriority: Record<string, number> = {
+            'U toku': 0,
+            'Na čekanju': 1,
+            'Završeno': 2,
+            'Otkazano': 3,
+        };
+
+        return filtered.sort((a, b) => {
+            const priorityA = statusPriority[a.Status] ?? 99;
+            const priorityB = statusPriority[b.Status] ?? 99;
+            if (priorityA !== priorityB) return priorityA - priorityB;
+            // Within same status, newest first
+            return new Date(b.Created_Date).getTime() - new Date(a.Created_Date).getTime();
+        });
+    }, [workOrders, searchTerm, statusFilter]);
 
     // Grouping Logic
     const groupedWorkOrders = useMemo(() => {
