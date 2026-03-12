@@ -791,20 +791,27 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
     async function confirmDeleteWorkOrder(productAction: 'completed' | 'waiting') {
         if (!deleteConfirmModal.workOrderId) return;
 
-        const res = await deleteWorkOrder(
-            deleteConfirmModal.workOrderId,
-            organizationId || '',
-            productAction
-        );
+        const workOrderId = deleteConfirmModal.workOrderId;
 
+        // Optimistic: close modal immediately
         setDeleteConfirmModal({ isOpen: false, workOrderId: null, workOrderNumber: '' });
-
-        if (res.success) {
-            showToast(res.message, 'success');
-            onRefresh('workOrders', 'projects');
-        } else {
-            showToast(res.message, 'error');
+        if (expandedOrderId === workOrderId) {
+            setExpandedOrderId(null);
         }
+        showToast('Brisanje naloga...', 'info');
+
+        // Run delete in background
+        try {
+            const res = await deleteWorkOrder(workOrderId, organizationId || '', productAction);
+            if (res.success) {
+                showToast(res.message, 'success');
+            } else {
+                showToast(res.message, 'error');
+            }
+        } catch {
+            showToast('Greška pri brisanju naloga', 'error');
+        }
+        onRefresh('workOrders', 'projects');
     }
 
     async function handleStartWorkOrder(workOrderId: string) {
@@ -846,35 +853,36 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
 
         // VALIDATION 2: Check ALL workers (all processes + helpers) are present today
         const { canWorkerStartProcess } = await import('@/lib/services');
-        const workerIssues: string[] = [];
+        const workerChecks: { workerId: string; label: string }[] = [];
         const checkedWorkers = new Set<string>(); // Avoid duplicate checks
 
         for (const item of wo.items || []) {
-            // Check all process workers and their helpers
             for (const process of item.Processes || []) {
-                // Check main worker
                 if (process.Worker_ID && !checkedWorkers.has(process.Worker_ID)) {
                     checkedWorkers.add(process.Worker_ID);
-                    const availability = await canWorkerStartProcess(process.Worker_ID);
-                    if (!availability.allowed) {
-                        workerIssues.push(`${process.Worker_Name} (${process.Process_Name}) - ${availability.reason}`);
-                    }
+                    workerChecks.push({ workerId: process.Worker_ID, label: `${process.Worker_Name} (${process.Process_Name})` });
                 }
-
-                // Check helpers for this process
                 if (process.Helpers && process.Helpers.length > 0) {
                     for (const helper of process.Helpers) {
                         if (helper.Worker_ID && !checkedWorkers.has(helper.Worker_ID)) {
                             checkedWorkers.add(helper.Worker_ID);
-                            const availability = await canWorkerStartProcess(helper.Worker_ID);
-                            if (!availability.allowed) {
-                                workerIssues.push(`${helper.Worker_Name} (pomoćnik za ${process.Process_Name}) - ${availability.reason}`);
-                            }
+                            workerChecks.push({ workerId: helper.Worker_ID, label: `${helper.Worker_Name} (pomoćnik za ${process.Process_Name})` });
                         }
                     }
                 }
             }
         }
+
+        // Parallel availability check instead of serial
+        const availabilityResults = await Promise.all(
+            workerChecks.map(async ({ workerId, label }) => {
+                const availability = await canWorkerStartProcess(workerId);
+                return { label, availability };
+            })
+        );
+        const workerIssues = availabilityResults
+            .filter(r => !r.availability.allowed)
+            .map(r => `${r.label} - ${r.availability.reason}`);
 
         if (workerIssues.length > 0) {
             showToast(`Radnici nisu prisutni: ${workerIssues.join(', ')}`, 'error');
@@ -882,6 +890,7 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
         }
 
         // All validations passed, start the work order
+        showToast('Pokretanje naloga...', 'info');
         const res = await startWorkOrder(workOrderId, organizationId || '');
         if (res.success) {
             showToast('Nalog pokrenut', 'success');

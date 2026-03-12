@@ -2098,7 +2098,7 @@ export async function createOrder(
                 Actual_Price: 0,
                 Received_Quantity: 0,
                 Status: 'Na čekanju',
-                Product_Material_IDs: allMaterialIdsForItem.length > 1 ? allMaterialIdsForItem : undefined,
+                ...(allMaterialIdsForItem.length > 1 ? { Product_Material_IDs: allMaterialIdsForItem } : {}),
             };
 
             const newDocRef = doc(collection(db, COLLECTIONS.ORDER_ITEMS));

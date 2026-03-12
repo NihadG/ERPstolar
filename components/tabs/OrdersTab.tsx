@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import { useState, useMemo, useEffect } from 'react';
 import type { Order, Supplier, Project, ProductMaterial, OrderItem } from '@/lib/types';
@@ -601,15 +601,32 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
     async function confirmDeleteOrder() {
         if (!deleteOrderId) return;
 
-        const result = await deleteOrder(deleteOrderId, organizationId!, deleteMaterialAction);
-        if (result.success) {
-            showToast(result.message, 'success');
-            setDeleteOrderModal(false);
-            setDeleteOrderId(null);
-            onRefresh('orders', 'projects');
-        } else {
-            showToast(result.message, 'error');
+        const orderId = deleteOrderId;
+        const materialAction = deleteMaterialAction;
+
+        // Optimistic: close modal and clear expanded state immediately
+        setDeleteOrderModal(false);
+        setDeleteOrderId(null);
+        if (expandedOrderId === orderId) {
+            setExpandedOrderId(null);
+            setEditMode(false);
+            setSelectedItemIds(new Set());
         }
+        showToast('Brisanje narudžbe...', 'info');
+
+        // Run delete in background — don't block UI
+        try {
+            const result = await deleteOrder(orderId, organizationId!, materialAction);
+            if (result.success) {
+                showToast(result.message, 'success');
+            } else {
+                showToast(result.message, 'error');
+            }
+        } catch {
+            showToast('Greška pri brisanju narudžbe', 'error');
+        }
+        // Always refresh to sync state
+        onRefresh('orders', 'projects');
     }
 
     async function handleSendOrder(orderId: string) {
