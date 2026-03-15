@@ -1,523 +1,445 @@
 /* ============================================
-   SKETCHUP IMPORT MODAL STYLES
+   SKETCHUP IMPORT MODAL — POLISHED LAYOUT
    ============================================ */
 
 .sketchup-import-wizard {
   display: flex;
   flex-direction: column;
-  gap: 20px;
+  gap: 16px;
   min-height: 400px;
 }
+
+/* ---- UTILITY ---- */
+.muted { color: var(--text-secondary, #94a3b8); font-size: 12px; }
+.spin { animation: su-spin 1s linear infinite; }
+@keyframes su-spin { from { transform: rotate(0) } to { transform: rotate(360deg) } }
+
+/* ---- BADGES ---- */
+.badge {
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 10px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.5px; padding: 2px 8px; border-radius: 99px;
+  white-space: nowrap;
+}
+.badge-iveral { background: rgba(234,179,8,0.12); color: #a16207; }
+.badge-mdf { background: rgba(168,85,247,0.12); color: #7c3aed; }
+.badge-furnir { background: rgba(234,88,12,0.12); color: #c2410c; }
+.badge-hpl { background: rgba(14,165,233,0.12); color: #0369a1; }
+.badge-unknown { background: rgba(100,116,139,0.1); color: #64748b; }
 
 /* ---- STEPS INDICATOR ---- */
 .sketchup-steps {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 0 8px;
+  gap: 0;
+  padding: 0 4px;
+}
+
+.sketchup-step-wrapper {
+  display: flex;
+  align-items: center;
+  flex: 1;
 }
 
 .sketchup-step {
   display: flex;
   align-items: center;
   gap: 6px;
-  flex: 1;
+  white-space: nowrap;
 }
 
 .sketchup-step .step-num {
-  width: 28px;
-  height: 28px;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 12px;
-  font-weight: 600;
-  background: var(--bg-tertiary, #f1f5f9);
-  color: var(--text-secondary, #94a3b8);
+  width: 26px; height: 26px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 12px; font-weight: 600;
+  background: var(--bg-tertiary, #f1f5f9); color: var(--text-secondary, #94a3b8);
   border: 2px solid var(--border-color, #e2e8f0);
-  transition: all 0.3s;
-  flex-shrink: 0;
+  transition: all 0.3s; flex-shrink: 0;
 }
 
 .sketchup-step.active .step-num {
-  background: #3b82f6;
-  color: #fff;
-  border-color: #3b82f6;
-  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15);
+  background: #3b82f6; color: #fff; border-color: #3b82f6;
+  box-shadow: 0 0 0 3px rgba(59,130,246,0.15);
 }
+.sketchup-step.completed .step-num { background: #10b981; color: #fff; border-color: #10b981; }
 
-.sketchup-step.completed .step-num {
-  background: #10b981;
-  color: #fff;
-  border-color: #10b981;
-}
-
-.sketchup-step .step-label {
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--text-secondary, #94a3b8);
-  white-space: nowrap;
-}
-
-.sketchup-step.active .step-label {
-  color: var(--text-primary, #1e293b);
-  font-weight: 600;
-}
-
-.sketchup-step.completed .step-label {
-  color: #10b981;
-}
+.sketchup-step .step-label { font-size: 12px; font-weight: 500; color: var(--text-secondary); }
+.sketchup-step.active .step-label { color: var(--text-primary, #1e293b); font-weight: 600; }
+.sketchup-step.completed .step-label { color: #10b981; }
 
 .sketchup-step-line {
-  flex: 1;
-  height: 2px;
-  background: var(--border-color, #e2e8f0);
-  margin: 0 4px;
+  flex: 1; height: 2px; min-width: 12px;
+  background: var(--border-color, #e2e8f0); margin: 0 8px;
+}
+.sketchup-step-line.completed { background: #10b981; }
+
+/* ---- STEP CONTENT ---- */
+.sketchup-step-content {
+  display: flex; flex-direction: column; gap: 16px;
+}
+.sketchup-center {
+  align-items: center; justify-content: center; text-align: center; padding: 32px 0;
 }
 
-.sketchup-step-line.completed {
-  background: #10b981;
-}
-
-/* ---- UPLOAD ZONE ---- */
+/* ---- DROPZONE ---- */
 .sketchup-dropzone {
-  border: 2px dashed var(--border-color, #d1d5db);
-  border-radius: 16px;
-  padding: 40px 24px;
-  text-align: center;
-  cursor: pointer;
-  transition: all 0.2s;
-  background: var(--bg-secondary, #f8fafc);
+  border: 2px dashed var(--border-color, #d1d5db); border-radius: 14px;
+  padding: 36px 24px; text-align: center; cursor: pointer;
+  transition: all 0.2s; background: var(--bg-secondary, #f8fafc);
+  display: flex; flex-direction: column; align-items: center;
 }
+.sketchup-dropzone:hover { border-color: #3b82f6; background: rgba(59,130,246,0.03); }
+.sketchup-dropzone.has-file { border-color: #10b981; background: rgba(16,185,129,0.03); border-style: solid; }
 
-.sketchup-dropzone:hover {
-  border-color: #3b82f6;
-  background: rgba(59, 130, 246, 0.04);
-}
-
-.sketchup-dropzone.has-file {
-  border-color: #10b981;
-  background: rgba(16, 185, 129, 0.04);
-  border-style: solid;
-}
-
-.sketchup-dropzone .icon-container {
-  margin-bottom: 12px;
-}
-
-.sketchup-dropzone .icon-container .material-icons-round {
-  font-size: 48px;
-  color: var(--text-secondary, #94a3b8);
-}
-
-.sketchup-dropzone.has-file .icon-container .material-icons-round {
-  color: #10b981;
-}
-
-.sketchup-dropzone h3 {
-  font-size: 15px;
-  font-weight: 600;
-  color: var(--text-primary, #1e293b);
-  margin: 0 0 4px;
-}
-
-.sketchup-dropzone p {
-  font-size: 13px;
-  color: var(--text-secondary, #94a3b8);
-  margin: 0;
-}
-
-/* ---- COMPONENT TABLE ---- */
-.sketchup-table-wrapper {
-  overflow-x: auto;
-  border-radius: 12px;
-  border: 1px solid var(--border-color, #e2e8f0);
-}
-
-.sketchup-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 13px;
-}
-
-.sketchup-table th {
-  padding: 10px 12px;
-  text-align: left;
-  font-weight: 600;
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  color: var(--text-secondary, #64748b);
-  background: var(--bg-tertiary, #f8fafc);
-  border-bottom: 1px solid var(--border-color, #e2e8f0);
-  white-space: nowrap;
-}
-
-.sketchup-table td {
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--border-color, #f1f5f9);
-  vertical-align: middle;
-}
-
-.sketchup-table tr:hover {
-  background: var(--bg-hover, rgba(59, 130, 246, 0.03));
-}
-
-.sketchup-table input[type="number"],
-.sketchup-table input[type="text"] {
-  width: 100%;
-  padding: 4px 8px;
-  border: 1px solid var(--border-color, #e2e8f0);
-  border-radius: 6px;
-  font-size: 13px;
-  background: var(--bg-primary, #fff);
-  color: var(--text-primary, #1e293b);
-  min-width: 60px;
-}
-
-.sketchup-table input:focus {
-  outline: none;
-  border-color: #3b82f6;
-  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.15);
-}
-
-.sketchup-table select {
-  padding: 4px 8px;
-  border: 1px solid var(--border-color, #e2e8f0);
-  border-radius: 6px;
-  font-size: 13px;
-  background: var(--bg-primary, #fff);
-  color: var(--text-primary, #1e293b);
-  cursor: pointer;
-}
-
-/* ---- CHECKBOX ---- */
-.sketchup-checkbox {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  cursor: pointer;
-  font-size: 12px;
-  color: var(--text-secondary, #64748b);
-}
-
-.sketchup-checkbox input[type="checkbox"] {
-  width: 16px;
-  height: 16px;
-  cursor: pointer;
-  accent-color: #3b82f6;
-}
-
-/* ---- RESULTS ---- */
-.sketchup-results-group {
-  border: 1px solid var(--border-color, #e2e8f0);
-  border-radius: 12px;
-  overflow: hidden;
-  margin-bottom: 12px;
-}
-
-.sketchup-results-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 12px 16px;
-  background: var(--bg-tertiary, #f8fafc);
-  border-bottom: 1px solid var(--border-color, #e2e8f0);
-}
-
-.sketchup-results-header h4 {
-  margin: 0;
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--text-primary, #1e293b);
-}
-
-.sketchup-results-header .material-type-badge {
-  font-size: 11px;
-  font-weight: 600;
-  text-transform: uppercase;
-  padding: 3px 10px;
-  border-radius: 99px;
-  letter-spacing: 0.5px;
-}
-
-.sketchup-results-header .badge-iveral {
-  background: rgba(234, 179, 8, 0.1);
-  color: #ca8a04;
-}
-
-.sketchup-results-header .badge-mdf {
-  background: rgba(168, 85, 247, 0.1);
-  color: #9333ea;
-}
-
-.sketchup-results-header .badge-furnir {
-  background: rgba(234, 88, 12, 0.1);
-  color: #ea580c;
-}
-
-.sketchup-results-header .badge-hpl {
-  background: rgba(14, 165, 233, 0.1);
-  color: #0284c7;
-}
-
-.sketchup-results-header .badge-unknown {
-  background: rgba(100, 116, 139, 0.1);
-  color: #64748b;
-}
-
-.sketchup-result-item {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 10px 16px;
-  border-bottom: 1px solid var(--border-color, #f1f5f9);
-  gap: 12px;
-}
-
-.sketchup-result-item:last-child {
-  border-bottom: none;
-}
-
-.sketchup-result-label {
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--text-primary, #1e293b);
-  flex: 1;
-}
-
-.sketchup-result-label.is-kk {
-  color: var(--text-secondary, #94a3b8);
-  font-style: italic;
-}
-
-.sketchup-result-qty {
-  font-size: 13px;
-  font-weight: 600;
-  color: #3b82f6;
-  text-align: right;
-  min-width: 80px;
-}
-
-.sketchup-result-match {
-  min-width: 200px;
-}
-
-.sketchup-result-match select {
-  width: 100%;
-  padding: 6px 10px;
-  border: 1px solid var(--border-color, #e2e8f0);
-  border-radius: 8px;
-  font-size: 12px;
-  background: var(--bg-primary, #fff);
-  color: var(--text-primary, #1e293b);
-  cursor: pointer;
-}
-
-.sketchup-result-match select.matched {
-  border-color: #10b981;
-  background: rgba(16, 185, 129, 0.04);
-}
-
-.sketchup-result-match select.unmatched {
-  border-color: #f59e0b;
-  background: rgba(245, 158, 11, 0.04);
-}
-
-/* ---- LAYER EDITOR ---- */
-.sketchup-layer-editor {
-  background: var(--bg-secondary, #f8fafc);
-  border: 1px solid var(--border-color, #e2e8f0);
-  border-radius: 12px;
-  padding: 16px;
-  margin: 8px 0;
-}
-
-.sketchup-layer-editor h5 {
-  margin: 0 0 12px;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text-primary, #1e293b);
-}
-
-.sketchup-layer-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 0;
-  border-bottom: 1px dashed var(--border-color, #e2e8f0);
-}
-
-.sketchup-layer-row:last-child {
-  border-bottom: none;
-}
-
-.sketchup-layer-type {
-  font-size: 11px;
-  font-weight: 600;
-  text-transform: uppercase;
-  color: var(--text-secondary, #94a3b8);
-  min-width: 60px;
-}
-
-.sketchup-layer-input {
-  flex: 1;
-}
-
-.sketchup-layer-thickness {
-  width: 60px;
-}
-
-/* ---- ACTIONS BAR ---- */
-.sketchup-actions {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding-top: 8px;
-}
-
-.sketchup-actions .left {
-  display: flex;
-  gap: 8px;
-}
-
-.sketchup-actions .right {
-  display: flex;
-  gap: 8px;
-}
+.dropzone-title { font-size: 15px; font-weight: 600; color: var(--text-primary); margin: 0; }
+.dropzone-hint { font-size: 13px; color: var(--text-secondary); margin: 4px 0 0; }
 
 /* ---- WARNINGS ---- */
 .sketchup-warnings {
-  background: rgba(245, 158, 11, 0.08);
-  border: 1px solid rgba(245, 158, 11, 0.2);
-  border-radius: 10px;
-  padding: 12px 16px;
+  background: rgba(245,158,11,0.06); border: 1px solid rgba(245,158,11,0.2);
+  border-radius: 10px; padding: 10px 14px; font-size: 12px;
+}
+.warning-header {
+  display: flex; align-items: center; gap: 6px;
+  font-weight: 600; color: #b45309; margin-bottom: 4px;
+}
+.sketchup-warnings ul { margin: 0; padding-left: 20px; color: #92400e; }
+.sketchup-warnings li { margin-bottom: 2px; }
+
+/* ---- SECTIONS ---- */
+.sketchup-section {
+  border: 1px solid var(--border-color, #e2e8f0); border-radius: 12px; overflow: hidden;
+}
+.sketchup-section-header {
+  display: flex; align-items: center; gap: 8px;
+  padding: 10px 14px; font-size: 13px; font-weight: 600;
+  background: var(--bg-tertiary, #f8fafc); color: var(--text-primary);
+  border-bottom: 1px solid var(--border-color, #e2e8f0);
 }
 
-.sketchup-warnings h5 {
-  margin: 0 0 8px;
-  font-size: 13px;
-  font-weight: 600;
-  color: #d97706;
-  display: flex;
-  align-items: center;
-  gap: 6px;
+/* ---- FORMAT GRID ---- */
+.sketchup-format-grid {
+  padding: 12px;
+  display: flex; flex-direction: column; gap: 8px;
 }
 
-.sketchup-warnings ul {
-  margin: 0;
-  padding-left: 20px;
-  font-size: 12px;
-  color: #92400e;
+.sketchup-format-card {
+  display: flex; align-items: center; justify-content: flex-start;
+  gap: 24px; padding: 8px 16px;
+  background: var(--bg-primary, #fff);
+  border: 1px solid var(--border-color, #f1f5f9); border-radius: 8px;
+  flex-wrap: wrap;
 }
 
-.sketchup-warnings li {
-  margin-bottom: 4px;
+.format-card-label {
+  display: flex; align-items: center; gap: 8px;
+  /* Removed min-width so the inputs stay close to the text */
+}
+.format-card-name {
+  font-size: 13px; font-weight: 500; color: var(--text-primary);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 200px;
 }
 
-/* ---- PROGRESS ---- */
-.sketchup-progress {
-  text-align: center;
-  padding: 40px 24px;
+.format-card-inputs {
+  display: flex; align-items: center; gap: 6px;
 }
-
-.sketchup-progress-bar {
-  width: 100%;
-  height: 6px;
-  background: var(--bg-tertiary, #e2e8f0);
-  border-radius: 99px;
-  overflow: hidden;
-  margin: 16px 0 8px;
+.format-card-inputs input {
+  width: 70px; padding: 4px 6px; border: 1px solid var(--border-color, #e2e8f0);
+  border-radius: 6px; font-size: 13px; text-align: center;
+  background: var(--bg-primary, #fff); color: var(--text-primary);
 }
+.format-card-inputs input:focus { outline: none; border-color: #3b82f6; }
+.format-x { font-weight: 600; color: var(--text-secondary); font-size: 13px; }
+.format-unit { font-size: 11px; color: var(--text-secondary); }
+.format-area { font-size: 11px; color: var(--text-secondary); white-space: nowrap; }
 
-.sketchup-progress-fill {
-  height: 100%;
-  background: linear-gradient(90deg, #3b82f6, #10b981);
-  border-radius: 99px;
-  transition: width 0.3s;
+/* ---- TABLE ---- */
+.sketchup-table-wrapper { overflow-x: auto; }
+
+.sketchup-table {
+  width: 100%; border-collapse: collapse; font-size: 13px;
 }
-
-.sketchup-progress p {
-  font-size: 13px;
-  color: var(--text-secondary, #64748b);
-  margin: 0;
-}
-
-/* ---- AI MATCHING INDICATOR ---- */
-.sketchup-ai-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 11px;
-  font-weight: 600;
-  padding: 2px 8px;
-  border-radius: 99px;
-  background: rgba(168, 85, 247, 0.1);
-  color: #7c3aed;
-}
-
-/* ---- FORMAT CONFIG ---- */
-.sketchup-format-config {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 12px 16px;
-  background: var(--bg-secondary, #f8fafc);
-  border: 1px solid var(--border-color, #e2e8f0);
-  border-radius: 10px;
-  font-size: 13px;
-}
-
-.sketchup-format-config label {
-  font-weight: 600;
-  font-size: 12px;
-  color: var(--text-secondary, #64748b);
+.sketchup-table th {
+  padding: 8px 10px; text-align: left; font-weight: 600; font-size: 11px;
+  text-transform: uppercase; letter-spacing: 0.4px;
+  color: var(--text-secondary); background: var(--bg-tertiary, #f8fafc);
+  border-bottom: 1px solid var(--border-color, #e2e8f0);
   white-space: nowrap;
 }
+.sketchup-table td {
+  padding: 6px 10px; border-bottom: 1px solid var(--border-color, #f1f5f9);
+  vertical-align: middle;
+}
+.sketchup-table tr:hover td { background: rgba(59,130,246,0.02); }
 
-.sketchup-format-config input {
-  width: 80px;
-  padding: 4px 8px;
-  border: 1px solid var(--border-color, #e2e8f0);
-  border-radius: 6px;
-  font-size: 13px;
-  text-align: center;
+.sketchup-table input[type="number"],
+.sketchup-table input[type="text"] {
+  width: 100%; padding: 4px 6px;
+  border: 1px solid var(--border-color, #e2e8f0); border-radius: 6px;
+  font-size: 13px; background: var(--bg-primary, #fff); color: var(--text-primary);
+}
+.sketchup-table input:focus {
+  outline: none; border-color: #3b82f6;
+  box-shadow: 0 0 0 2px rgba(59,130,246,0.1);
 }
 
-.sketchup-format-config .format-x {
-  font-weight: 600;
-  color: var(--text-secondary, #94a3b8);
+.col-num { width: 75px; }
+.col-sm { width: 80px; }
+.col-opts { width: 140px; }
+.col-xs { width: 36px; }
+
+.col-num input { text-align: center; }
+
+/* ---- OPTIONS ROW ---- */
+.opts-row {
+  display: flex; align-items: center; gap: 6px; flex-wrap: nowrap;
 }
 
-.sketchup-format-config .format-area {
-  font-size: 12px;
-  color: var(--text-secondary, #94a3b8);
-  margin-left: 4px;
+.mini-check {
+  display: inline-flex; align-items: center; gap: 3px;
+  font-size: 11px; color: var(--text-secondary); cursor: pointer;
+  white-space: nowrap;
+}
+.mini-check input[type="checkbox"] {
+  width: 14px; height: 14px; cursor: pointer; accent-color: #3b82f6;
+  margin: 0;
+}
+
+.icon-btn-sm {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 26px; height: 26px; border: none; border-radius: 6px;
+  background: transparent; color: var(--text-secondary); cursor: pointer;
+  transition: all 0.15s; flex-shrink: 0;
+}
+.icon-btn-sm:hover { background: rgba(59,130,246,0.08); color: #3b82f6; }
+.icon-btn-sm.danger:hover { background: rgba(239,68,68,0.08); color: #ef4444; }
+
+/* ---- LAYER EDITOR ---- */
+.layer-editor-row td { padding: 0 !important; }
+
+.sketchup-layer-editor {
+  background: var(--bg-secondary, #f8fafc); padding: 12px 14px;
+  border-top: 1px solid var(--border-color, #e2e8f0);
+}
+.layer-editor-title {
+  font-size: 12px; font-weight: 600; color: var(--text-primary); margin-bottom: 8px;
+}
+
+.layer-row {
+  display: flex; align-items: center; gap: 12px;
+  padding: 6px 0; border-bottom: 1px dashed var(--border-color, #f1f5f9);
+}
+.layer-row:last-of-type { border-bottom: none; }
+
+.layer-type-select {
+  width: 100px; padding: 4px 8px; border: 1px solid var(--border-color, #e2e8f0);
+  border-radius: 6px; font-size: 13px; background: var(--bg-primary); color: var(--text-primary);
+}
+.layer-name-input {
+  flex: 1; min-width: 120px; padding: 4px 8px;
+  border: 1px solid var(--border-color, #e2e8f0); border-radius: 6px;
+  font-size: 13px; background: var(--bg-primary); color: var(--text-primary);
+}
+.layer-thickness-group {
+  display: flex; align-items: center; gap: 6px;
+}
+.layer-thickness-input {
+  width: 60px; padding: 4px 8px; text-align: center;
+  border: 1px solid var(--border-color, #e2e8f0); border-radius: 6px;
+  font-size: 13px; background: var(--bg-primary); color: var(--text-primary);
+}
+
+.btn-add-layer {
+  display: inline-flex; align-items: center; gap: 4px;
+  margin-top: 6px; padding: 4px 10px; border: 1px dashed var(--border-color, #d1d5db);
+  border-radius: 6px; background: transparent; color: var(--text-secondary);
+  font-size: 12px; cursor: pointer; transition: all 0.15s;
+}
+.btn-add-layer:hover { border-color: #3b82f6; color: #3b82f6; }
+
+/* ---- RESULTS ---- */
+.sketchup-ai-bar {
+  display: flex; align-items: center; gap: 8px; justify-content: center;
+  padding: 10px 16px; background: rgba(168,85,247,0.06);
+  border: 1px solid rgba(168,85,247,0.15); border-radius: 10px;
+  font-size: 13px; font-weight: 500; color: #7c3aed;
+}
+
+.sketchup-results-list {
+  display: flex; flex-direction: column; gap: 8px;
+}
+
+.result-group {
+  border: 1px solid var(--border-color, #e2e8f0); border-radius: 10px;
+  overflow: hidden;
+}
+
+.result-group-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 14px; cursor: pointer; user-select: none;
+  background: var(--bg-tertiary, #f8fafc);
+  border-bottom: 1px solid transparent;
+  transition: background 0.15s;
+}
+.result-group-header:hover { background: var(--bg-secondary, #f1f5f9); }
+
+.result-group-left {
+  display: flex; align-items: center; gap: 8px;
+  min-width: 0;
+}
+.result-group-name {
+  font-size: 14px; font-weight: 600; color: var(--text-primary);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+.result-group-right {
+  display: flex; align-items: center; gap: 12px; flex-shrink: 0;
+}
+.result-group-count {
+  font-size: 12px; font-weight: 600; color: #10b981;
+  background: rgba(16,185,129,0.08); padding: 2px 8px; border-radius: 99px;
+}
+.result-group-components {
+  font-size: 11px; color: var(--text-secondary);
+}
+
+.result-group-body {
+  border-top: 1px solid var(--border-color, #e2e8f0);
+}
+
+.result-row {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--border-color, #f1f5f9);
+}
+.result-row:last-child { border-bottom: none; }
+.result-row.unmatched { background: rgba(245,158,11,0.03); }
+
+.result-row-info {
+  display: flex; align-items: center; gap: 6px;
+  min-width: 0;
+}
+.result-row-icon { color: var(--text-secondary); flex-shrink: 0; }
+
+.result-row-label {
+  font-size: 13px; font-weight: 500; color: var(--text-primary);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.result-row-label.is-kk { color: var(--text-secondary); font-style: italic; }
+
+.result-row-qty {
+  display: flex; align-items: baseline; gap: 4px;
+  font-size: 13px; white-space: nowrap;
+}
+.result-row-qty strong { color: #3b82f6; }
+
+.result-row-match {
+  display: flex; align-items: center; gap: 6px;
+  justify-content: flex-end;
+  min-width: 0;
+}
+.result-row-match select {
+  flex: 1; min-width: 0; max-width: 260px;
+  padding: 5px 8px; border: 1px solid var(--border-color, #e2e8f0);
+  border-radius: 7px; font-size: 12px;
+  background: var(--bg-primary, #fff); color: var(--text-primary);
+  cursor: pointer;
+}
+.result-row-match select.matched { border-color: #10b981; }
+.result-row-match select.unmatched { border-color: #f59e0b; }
+
+.btn-create-mat {
+  display: inline-flex; align-items: center; gap: 2px;
+  padding: 4px 8px; border: 1px solid var(--border-color, #e2e8f0);
+  border-radius: 6px; background: var(--bg-primary, #fff);
+  color: #3b82f6; font-size: 11px; font-weight: 600;
+  cursor: pointer; transition: all 0.15s; white-space: nowrap; flex-shrink: 0;
+}
+.btn-create-mat:hover { background: rgba(59,130,246,0.06); border-color: #3b82f6; }
+
+/* ---- ACTIONS BAR ---- */
+.sketchup-actions {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; padding-top: 4px;
+}
+.actions-right {
+  display: flex; align-items: center; gap: 10px;
+}
+.match-counter {
+  font-size: 12px; color: var(--text-secondary); white-space: nowrap;
+}
+
+/* ---- PROGRESS BAR ---- */
+.sketchup-progress-bar {
+  width: 100%; max-width: 320px; height: 6px;
+  background: var(--bg-tertiary, #e2e8f0); border-radius: 99px;
+  overflow: hidden; margin: 14px 0 8px;
+}
+.sketchup-progress-fill {
+  height: 100%; background: linear-gradient(90deg, #3b82f6, #10b981);
+  border-radius: 99px; transition: width 0.3s;
+}
+
+/* ---- SUB-MODAL (New Material) ---- */
+.sketchup-sub-modal-overlay {
+  position: fixed; inset: 0; z-index: 9999;
+  background: rgba(0,0,0,0.4); backdrop-filter: blur(2px);
+  display: flex; align-items: center; justify-content: center;
+  padding: 20px;
+}
+.sketchup-sub-modal {
+  background: var(--bg-primary, #fff); border-radius: 14px;
+  width: 100%; max-width: 440px;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.2);
+  overflow: hidden;
+}
+.sub-modal-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 14px 18px; border-bottom: 1px solid var(--border-color, #e2e8f0);
+}
+.sub-modal-header h3 { margin: 0; font-size: 16px; font-weight: 600; }
+.sub-modal-body { padding: 16px 18px; display: flex; flex-direction: column; gap: 12px; }
+.sub-modal-footer {
+  display: flex; justify-content: flex-end; gap: 8px;
+  padding: 12px 18px; border-top: 1px solid var(--border-color, #e2e8f0);
+  background: var(--bg-tertiary, #f8fafc);
+}
+
+.sub-modal-body .form-group { display: flex; flex-direction: column; gap: 4px; }
+.sub-modal-body .form-group label {
+  font-size: 12px; font-weight: 600; color: var(--text-secondary);
+}
+.sub-modal-body .form-group input,
+.sub-modal-body .form-group select {
+  padding: 7px 10px; border: 1px solid var(--border-color, #e2e8f0);
+  border-radius: 8px; font-size: 13px; background: var(--bg-primary); color: var(--text-primary);
+}
+.sub-modal-body .form-group input:focus,
+.sub-modal-body .form-group select:focus {
+  outline: none; border-color: #3b82f6; box-shadow: 0 0 0 2px rgba(59,130,246,0.1);
+}
+
+.form-row-2 {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 12px;
 }
 
 /* ---- RESPONSIVE ---- */
 @media (max-width: 768px) {
-  .sketchup-steps {
-    flex-wrap: wrap;
-    gap: 4px;
-  }
+  .sketchup-step .step-label { display: none; }
+  .sketchup-step-line { min-width: 8px; margin: 0 4px; }
 
-  .sketchup-step-line {
-    display: none;
+  .result-row {
+    grid-template-columns: 1fr;
+    gap: 6px;
   }
+  .result-row-match { justify-content: flex-start; }
+  .result-row-match select { max-width: 100%; }
 
-  .sketchup-result-item {
-    flex-wrap: wrap;
-  }
+  .format-card-label { min-width: unset; }
+  .format-card-inputs { flex-wrap: wrap; }
 
-  .sketchup-result-match {
-    width: 100%;
-    min-width: unset;
-  }
-
-  .sketchup-format-config {
-    flex-wrap: wrap;
-  }
+  .opts-row { flex-wrap: wrap; }
 }

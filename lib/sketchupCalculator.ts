@@ -141,15 +141,24 @@ export function getDefaultLayers(materialType: MaterialType, thickness: number, 
     }
 
     case 'hpl': {
-      // 20mm = 1mm HPL + 18mm MDF + 1mm HPL
       const hplName = materialName.replace(/hpl\s*\/?\s*/i, '').trim() || 'HPL';
       const hplLabel = `HPL / ${hplName}`;
       const hplKKLabel = `HPL KK / ${hplName}`;
       const coreThickness = thickness - 2;
 
+      const coreLayers: LayerDefinition[] = [];
+      if (coreThickness >= 36) {
+        // Thick core → split into 2× MDF (e.g. 36mm → 2×MDF 18)
+        const halfCore = Math.round(coreThickness / 2);
+        coreLayers.push({ type: 'ploca', materialLabel: `MDF ${halfCore}`, thicknessMm: halfCore });
+        coreLayers.push({ type: 'ploca', materialLabel: `MDF ${halfCore}`, thicknessMm: halfCore });
+      } else {
+        coreLayers.push({ type: 'ploca', materialLabel: `MDF ${coreThickness}`, thicknessMm: coreThickness });
+      }
+
       return [
         { type: 'hpl', materialLabel: hplLabel, thicknessMm: 1 },
-        { type: 'ploca', materialLabel: `MDF ${coreThickness}`, thicknessMm: coreThickness },
+        ...coreLayers,
         { type: 'hpl', materialLabel: hplKKLabel, thicknessMm: 1, isKK: true },
       ];
     }

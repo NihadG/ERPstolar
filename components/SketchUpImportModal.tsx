@@ -1,10 +1,10 @@
 'use client';
 
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useMemo } from 'react';
 import Modal from './ui/Modal';
 import type { Material, ProductMaterial } from '@/lib/types';
-import { addMaterialToProduct } from '@/lib/services';
-import { getGeminiClient } from '@/lib/gemini';
+import { MATERIAL_CATEGORIES } from '@/lib/types';
+import { addMaterialToProduct, saveMaterial } from '@/lib/services';
 import {
   parseSketchUpCSV,
   calculateAll,
@@ -17,113 +17,198 @@ import {
   type LayerDefinition,
   type CalculationResult,
   type OutputItem,
+  type MaterialType,
 } from '@/lib/sketchupCalculator';
 import './SketchUpImportModal.css';
 
-// ---- AI MATCHING HELPERS ----
+// ---- DEFAULT PANEL FORMATS PER TYPE ----
+const DEFAULT_FORMATS: Record<string, PanelFormat> = {
+  iveral: { width: 2800, height: 2070 },
+  mdf:    { width: 2800, height: 2070 },
+  furnir: { width: 2800, height: 2070 },
+  hpl:    { width: 2800, height: 1310 },
+  unknown:{ width: 2800, height: 2070 },
+};
 
-// Fallback: simple string matching if AI unavailable
-function findBestMaterialMatchLocal(label: string, category: string, dbMaterials: Material[]): Material | null {
+// ---- AI MATCHING ----
+// Extract key codes from material name, e.g. "Iveral / U732" → ["u732"], "HPL / U999" → ["u999"]
+function extractMaterialCodes(name: string): string[] {
+  const lower = name.toLowerCase();
+  // Split on separators, filter out generic words
+  const skip = new Set(['iveral', 'mdf', 'hpl', 'furnir', 'pal', 'dtd', 'farbani', 'lakirani', 'kant', 'traka', 'kk', 'široka']);
+  return lower.split(/[\s\/\-_,]+/)
+    .map(w => w.trim())
+    .filter(w => w.length >= 2 && !skip.has(w));
+}
+
+function findBestMaterialMatchLocal(
+  label: string,
+  category: string,
+  materialGroup: string,
+  dbMaterials: Material[]
+): Material | null {
   if (!dbMaterials.length) return null;
+
   const lower = label.toLowerCase();
+  const groupCodes = extractMaterialCodes(materialGroup);
+  const labelCodes = extractMaterialCodes(label);
+  const allCodes = Array.from(new Set([...groupCodes, ...labelCodes]));
 
-  const exact = dbMaterials.find(m => m.Name.toLowerCase() === lower);
-  if (exact) return exact;
+  // --- KANT TRAKA: must be kant + match parent material code ---
+  if (category === 'kant' || category === 'kant_siroka') {
+    const kantCandidates = dbMaterials.filter(m => {
+      const n = m.Name.toLowerCase();
+      return n.includes('kant') || n.includes('traka') || n.includes('abs');
+    });
 
-  const contains = dbMaterials.find(m => {
-    const mLower = m.Name.toLowerCase();
-    return mLower.includes(lower) || lower.includes(mLower);
-  });
-  if (contains) return contains;
+    // Try matching kant + material code (e.g. "Kant U732")
+    for (const code of allCodes) {
+      const match = kantCandidates.find(m => m.Name.toLowerCase().includes(code));
+      if (match) return match;
+    }
 
+    // No code match → leave unmatched so user picks manually
+    return null;
+  }
+
+  // --- PLOČA (MDF, Iveral): match by type keyword + thickness number ---
+  if (category === 'ploca') {
+    // Extract thickness from label, e.g. "MDF 18" → 18
+    const thickMatch = label.match(/(\d+)/);
+    const thickness = thickMatch ? thickMatch[1] : '';
+
+    // Determine type keyword from label
+    let typeKw = '';
+    if (lower.includes('mdf')) typeKw = 'mdf';
+    else if (lower.includes('iveral') || lower.includes('pal') || lower.includes('dtd')) typeKw = 'iveral';
+
+    if (typeKw) {
+      // Best: type + thickness + material code
+      for (const code of allCodes) {
+        const match = dbMaterials.find(m => {
+          const n = m.Name.toLowerCase();
+          return n.includes(typeKw) && (thickness ? n.includes(thickness) : true) && n.includes(code);
+        });
+        if (match) return match;
+      }
+
+      // Good: type + thickness
+      if (thickness) {
+        const match = dbMaterials.find(m => {
+          const n = m.Name.toLowerCase();
+          return n.includes(typeKw) && n.includes(thickness);
+        });
+        if (match) return match;
+      }
+
+      // OK: just type
+      const match = dbMaterials.find(m => m.Name.toLowerCase().includes(typeKw));
+      if (match) return match;
+    }
+
+    // Fallback: exact or contains
+    const exact = dbMaterials.find(m => m.Name.toLowerCase() === lower);
+    if (exact) return exact;
+    const contains = dbMaterials.find(m => {
+      const n = m.Name.toLowerCase();
+      return n.includes(lower) || lower.includes(n);
+    });
+    return contains || null;
+  }
+
+  // --- FURNIR / HPL: match by type keyword + material code ---
+  if (category === 'furnir' || category === 'hpl') {
+    const typeKw = category;
+    for (const code of allCodes) {
+      const match = dbMaterials.find(m => {
+        const n = m.Name.toLowerCase();
+        return n.includes(typeKw) && n.includes(code);
+      });
+      if (match) return match;
+    }
+    // Just type
+    const match = dbMaterials.find(m => m.Name.toLowerCase().includes(typeKw));
+    return match || null;
+  }
+
+  // --- FARBANJE / LAKIRANJE ---
+  if (category === 'farbanje') {
+    const match = dbMaterials.find(m => {
+      const n = m.Name.toLowerCase();
+      return n.includes('farb') || n.includes('lak') || n.includes('bojenje');
+    });
+    return match || null;
+  }
+
+  // --- FALLBACK: word scoring ---
   const words = lower.split(/[\s\/\-_]+/).filter(w => w.length > 2);
   let bestMatch: Material | null = null;
   let bestScore = 0;
-
   for (const mat of dbMaterials) {
     const matLower = mat.Name.toLowerCase();
     let score = 0;
     for (const word of words) {
       if (matLower.includes(word)) score++;
     }
-    if (category === 'kant' || category === 'kant_siroka') {
-      if (matLower.includes('kant') || matLower.includes('traka')) score += 2;
-    }
-    if (category === 'furnir' && matLower.includes('furnir')) score++;
-    if (category === 'hpl' && matLower.includes('hpl')) score++;
-    if (category === 'farbanje' && (matLower.includes('farb') || matLower.includes('lak'))) score++;
-    if (category === 'ploca' && (matLower.includes('mdf') || matLower.includes('iveral') || matLower.includes('pal'))) score++;
-
     if (score > bestScore) {
       bestScore = score;
       bestMatch = mat;
     }
   }
-
   return bestScore >= 1 ? bestMatch : null;
 }
 
-// Gemini AI matching: send output labels + DB material names → get best matches
 async function matchWithGeminiAI(
   outputItems: { label: string; category: string; unit: string }[],
   dbMaterials: Material[]
 ): Promise<Record<string, string>> {
   try {
-    const client = getGeminiClient();
-    const model = client.getGenerativeModel({ model: 'gemini-2.5-flash' });
-
-    const materialList = dbMaterials.map(m => `- ID:"${m.Material_ID}" Naziv:"${m.Name}" Kategorija:"${m.Category}" Jedinica:"${m.Unit}"`).join('\n');
-    const itemList = outputItems.map((oi, i) => `${i}. "${oi.label}" (${oi.category}, ${oi.unit})`).join('\n');
-
-    const prompt = `Ti si AI za stolarsku ERP aplikaciju. Moraš povezati kalkulirane stavke sa materijalima iz baze.
-
-KALKULIRANE STAVKE (iz SketchUp importa):
-${itemList}
-
-MATERIJALI U BAZI:
-${materialList}
-
-PRAVILA:
-1. Za svaku stavku pronađi NAJBOLJI match iz baze na osnovu naziva
-2. "MDF 18" treba matchati na MDF ploču debljine 18mm
-3. "Furnir / Hrast" treba matchati na furnir hrast materijal
-4. "Kant traka" treba matchati na kant traku
-5. "Lakiranje" ili "Farbanje" treba matchati na uslugu farbanja/lakiranja
-6. "HPL / H3395" treba matchati na HPL materijal
-7. Ako nema dobrog matcha, koristi prazan string
-
-Vrati SAMO JSON objekat gdje je ključ INDEKS stavke (string), a vrijednost Material_ID iz baze:
-{"0": "material-id-123", "1": "", "2": "material-id-456"}`;
-
-    const result = await model.generateContent(prompt);
-    const text = result.response.text();
-    const jsonMatch = text.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) return {};
-
-    return JSON.parse(jsonMatch[0]) as Record<string, string>;
+    const res = await fetch('/api/sketchup-match', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        outputItems,
+        dbMaterials: dbMaterials.map(m => ({
+          Material_ID: m.Material_ID,
+          Name: m.Name,
+          Category: m.Category,
+          Unit: m.Unit,
+        })),
+      }),
+    });
+    const data = await res.json();
+    if (data.success && data.matches) return data.matches;
+    console.warn('AI matching returned no matches:', data.error);
+    return {};
   } catch (err) {
-    console.warn('Gemini AI matching failed, using fallback:', err);
+    console.warn('AI matching failed:', err);
     return {};
   }
 }
 
-// ---- PROPS & STATE ----
-
+// ---- PROPS & TYPES ----
 interface SketchUpImportModalProps {
   isOpen: boolean;
   onClose: () => void;
   productId: string;
   organizationId: string;
-  materials: Material[];  // database materials catalog for matching
+  materials: Material[];
   onImportComplete: () => void;
   showToast: (message: string, type: 'success' | 'error' | 'info') => void;
 }
 
 interface MaterialMatchState {
   outputItem: OutputItem;
-  materialGroup: string;   // parent material name
-  matchedMaterialId: string;  // Material_ID from DB or empty
+  materialGroup: string;
+  matchedMaterialId: string;
   matchedMaterial: Material | null;
+}
+
+// Per-material-group format config
+interface MaterialFormatConfig {
+  materialName: string;
+  materialType: MaterialType;
+  format: PanelFormat;
 }
 
 export default function SketchUpImportModal({
@@ -135,7 +220,7 @@ export default function SketchUpImportModal({
   onImportComplete,
   showToast,
 }: SketchUpImportModalProps) {
-  // Wizard state
+  // Step state
   const [step, setStep] = useState(1);
 
   // Step 1: Upload
@@ -145,18 +230,31 @@ export default function SketchUpImportModal({
 
   // Step 2: Components review
   const [components, setComponents] = useState<SketchUpComponent[]>([]);
-  const [panelFormat, setPanelFormat] = useState<PanelFormat>({ ...DEFAULT_PANEL_FORMAT });
+  const [materialFormats, setMaterialFormats] = useState<MaterialFormatConfig[]>([]);
   const [editingLayersIdx, setEditingLayersIdx] = useState<number | null>(null);
 
   // Step 3: Results & matching
   const [calcResults, setCalcResults] = useState<CalculationResult[]>([]);
   const [matchStates, setMatchStates] = useState<MaterialMatchState[]>([]);
   const [isAiMatching, setIsAiMatching] = useState(false);
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
+
+  // "Add new material" sub-modal
+  const [newMaterialModal, setNewMaterialModal] = useState(false);
+  const [newMaterial, setNewMaterial] = useState<Partial<Material>>({ Category: 'Ploča', Unit: 'kom' });
+  const [addingForMatchIdx, setAddingForMatchIdx] = useState<number | null>(null);
+  const [currentDbMaterials, setCurrentDbMaterials] = useState<Material[]>([]);
 
   // Step 4: Import
   const [isImporting, setIsImporting] = useState(false);
   const [importProgress, setImportProgress] = useState({ current: 0, total: 0 });
   const [importResults, setImportResults] = useState<{ success: number; failed: number; errors: string[] } | null>(null);
+
+  // Track live DB materials (initial + newly added)
+  const liveMaterials = useMemo(() => {
+    const combined = [...dbMaterials, ...currentDbMaterials.filter(m => !dbMaterials.find(d => d.Material_ID === m.Material_ID))];
+    return combined;
+  }, [dbMaterials, currentDbMaterials]);
 
   // ---- RESET ----
   const resetWizard = useCallback(() => {
@@ -164,18 +262,17 @@ export default function SketchUpImportModal({
     setFile(null);
     setParseWarnings([]);
     setComponents([]);
-    setPanelFormat({ ...DEFAULT_PANEL_FORMAT });
+    setMaterialFormats([]);
     setEditingLayersIdx(null);
     setCalcResults([]);
     setMatchStates([]);
+    setExpandedGroups(new Set());
     setImportResults(null);
     setImportProgress({ current: 0, total: 0 });
+    setCurrentDbMaterials([]);
   }, []);
 
-  const handleClose = () => {
-    resetWizard();
-    onClose();
-  };
+  const handleClose = () => { resetWizard(); onClose(); };
 
   // ---- STEP 1: FILE UPLOAD ----
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -189,12 +286,9 @@ export default function SketchUpImportModal({
       const content = await selectedFile.text();
       const { components: parsed, warnings } = parseSketchUpCSV(content);
       setParseWarnings(warnings);
+      if (parsed.length === 0) return;
 
-      if (parsed.length === 0) {
-        return;
-      }
-
-      // Auto-detect layers for each component
+      // Enrich with default layers
       const enriched = parsed.map(comp => {
         const materialType = recognizeMaterialType(comp.material);
         return {
@@ -204,8 +298,26 @@ export default function SketchUpImportModal({
       });
 
       setComponents(enriched);
+
+      // Build per-material format configs
+      const matMap = new Map<string, MaterialType>();
+      for (const comp of enriched) {
+        const mType = recognizeMaterialType(comp.material);
+        if (!matMap.has(comp.material)) {
+          matMap.set(comp.material, mType);
+        }
+      }
+      const formats: MaterialFormatConfig[] = [];
+      matMap.forEach((mType, matName) => {
+        formats.push({
+          materialName: matName,
+          materialType: mType,
+          format: { ...(DEFAULT_FORMATS[mType] || DEFAULT_FORMATS.unknown) },
+        });
+      });
+      setMaterialFormats(formats);
       setStep(2);
-    } catch (err) {
+    } catch {
       setParseWarnings(['Greška pri čitanju CSV datoteke']);
     }
   };
@@ -216,18 +328,12 @@ export default function SketchUpImportModal({
       const updated = [...prev];
       updated[idx] = { ...updated[idx], [field]: value };
 
-      // Re-detect layers when material changes
-      if (field === 'material') {
-        const type = recognizeMaterialType(value as string);
-        updated[idx].layers = getDefaultLayers(type, updated[idx].thickness, value as string, updated[idx].hasDoubleVeneer);
-      }
-      if (field === 'thickness') {
-        const type = recognizeMaterialType(updated[idx].material);
-        updated[idx].layers = getDefaultLayers(type, value as number, updated[idx].material, updated[idx].hasDoubleVeneer);
-      }
-      if (field === 'hasDoubleVeneer') {
-        const type = recognizeMaterialType(updated[idx].material);
-        updated[idx].layers = getDefaultLayers(type, updated[idx].thickness, updated[idx].material, value as boolean);
+      if (field === 'material' || field === 'thickness' || field === 'hasDoubleVeneer') {
+        const mat = field === 'material' ? value as string : updated[idx].material;
+        const thk = field === 'thickness' ? value as number : updated[idx].thickness;
+        const dv = field === 'hasDoubleVeneer' ? value as boolean : updated[idx].hasDoubleVeneer;
+        const type = recognizeMaterialType(mat);
+        updated[idx].layers = getDefaultLayers(type, thk, mat, dv);
       }
 
       return updated;
@@ -267,58 +373,97 @@ export default function SketchUpImportModal({
     setComponents(prev => prev.filter((_, i) => i !== idx));
   };
 
+  const updateMaterialFormat = (matName: string, axis: 'width' | 'height', val: number) => {
+    setMaterialFormats(prev => prev.map(mf =>
+      mf.materialName === matName ? { ...mf, format: { ...mf.format, [axis]: val } } : mf
+    ));
+  };
+
   // ---- STEP 2 → 3: CALCULATE + AI MATCH ----
   const handleCalculate = async () => {
-    const results = calculateAll(components, panelFormat);
+    // Apply per-material format to components
+    const withFormats = components.map(comp => {
+      const mf = materialFormats.find(f => f.materialName === comp.material);
+      return { ...comp, panelFormat: mf?.format || DEFAULT_PANEL_FORMAT };
+    });
+
+    const results = calculateAll(withFormats, DEFAULT_PANEL_FORMAT);
     setCalcResults(results);
     setStep(3);
     setIsAiMatching(true);
+    // Expand all by default
+    setExpandedGroups(new Set(results.map(r => r.materialName)));
 
     // Collect all output items for AI matching
-    const allItems: { label: string; category: string; unit: string; rIdx: number; oIdx: number }[] = [];
-    results.forEach((result, rIdx) => {
-      result.outputItems.forEach((item, oIdx) => {
-        allItems.push({ label: item.label, category: item.category, unit: item.unit, rIdx, oIdx });
+    const allItems: { label: string; category: string; unit: string }[] = [];
+    results.forEach(result => {
+      result.outputItems.forEach(item => {
+        allItems.push({ label: item.label, category: item.category, unit: item.unit });
       });
     });
 
-    // Try Gemini AI matching first
+    // Try AI matching
     let aiMatches: Record<string, string> = {};
     try {
-      aiMatches = await matchWithGeminiAI(
-        allItems.map(ai => ({ label: ai.label, category: ai.category, unit: ai.unit })),
-        dbMaterials
-      );
-    } catch (err) {
-      console.warn('AI matching failed:', err);
-    }
+      aiMatches = await matchWithGeminiAI(allItems, liveMaterials);
+    } catch { /* fallback */ }
 
-    // Build match states: use AI result, fallback to local matching
+    // Build match states — Pass 1: match everything
     const matches: MaterialMatchState[] = [];
-    let itemIdx = 0;
+    let idx = 0;
     for (const result of results) {
       for (const item of result.outputItems) {
-        const aiMatchId = aiMatches[String(itemIdx)];
-        let matchedMaterial: Material | null = null;
-
-        if (aiMatchId) {
-          matchedMaterial = dbMaterials.find(m => m.Material_ID === aiMatchId) || null;
-        }
-
-        // Fallback to local string matching if AI didn't match
-        if (!matchedMaterial) {
-          matchedMaterial = findBestMaterialMatchLocal(item.label, item.category, dbMaterials);
-        }
-
+        const aiMatchId = aiMatches[String(idx)];
+        let matched = aiMatchId ? liveMaterials.find(m => m.Material_ID === aiMatchId) || null : null;
+        if (!matched) matched = findBestMaterialMatchLocal(item.label, item.category, result.materialName, liveMaterials);
         matches.push({
           outputItem: item,
           materialGroup: result.materialName,
-          matchedMaterialId: matchedMaterial?.Material_ID || '',
-          matchedMaterial,
+          matchedMaterialId: matched?.Material_ID || '',
+          matchedMaterial: matched,
         });
-        itemIdx++;
+        idx++;
       }
     }
+
+    // Pass 2: for unmatched kant traka, use the matched panel's code from same group
+    for (let i = 0; i < matches.length; i++) {
+      const ms = matches[i];
+      if (ms.matchedMaterial) continue;
+      const cat = ms.outputItem.category;
+      if (cat !== 'kant' && cat !== 'kant_siroka') continue;
+
+      // Find a matched panel in the same material group
+      const groupPanel = matches.find(m =>
+        m.materialGroup === ms.materialGroup &&
+        m.outputItem.category === 'ploca' &&
+        m.matchedMaterial
+      );
+
+      if (groupPanel?.matchedMaterial) {
+        // Extract codes from the MATCHED panel material name (from DB)
+        const panelCodes = extractMaterialCodes(groupPanel.matchedMaterial.Name);
+
+        // Search kant candidates using matched panel's codes
+        const kantCandidates = liveMaterials.filter(m => {
+          const n = m.Name.toLowerCase();
+          return n.includes('kant') || n.includes('traka') || n.includes('abs');
+        });
+
+        for (const code of panelCodes) {
+          const kantMatch = kantCandidates.find(m => m.Name.toLowerCase().includes(code));
+          if (kantMatch) {
+            matches[i] = {
+              ...ms,
+              matchedMaterialId: kantMatch.Material_ID,
+              matchedMaterial: kantMatch,
+            };
+            break;
+          }
+        }
+      }
+    }
+
     setMatchStates(matches);
     setIsAiMatching(false);
   };
@@ -327,22 +472,74 @@ export default function SketchUpImportModal({
   const updateMatch = (idx: number, materialId: string) => {
     setMatchStates(prev => {
       const updated = [...prev];
-      const mat = dbMaterials.find(m => m.Material_ID === materialId) || null;
-      updated[idx] = {
-        ...updated[idx],
-        matchedMaterialId: materialId,
-        matchedMaterial: mat,
-      };
+      const mat = liveMaterials.find(m => m.Material_ID === materialId) || null;
+      updated[idx] = { ...updated[idx], matchedMaterialId: materialId, matchedMaterial: mat };
       return updated;
     });
   };
 
+  const toggleGroup = (name: string) => {
+    setExpandedGroups(prev => {
+      const next = new Set(prev);
+      next.has(name) ? next.delete(name) : next.add(name);
+      return next;
+    });
+  };
+
+  // ---- ADD NEW MATERIAL ----
+  const openNewMaterialModal = (matchIdx: number, suggestedName: string) => {
+    setAddingForMatchIdx(matchIdx);
+    setNewMaterial({
+      Name: suggestedName,
+      Category: 'Ploča',
+      Unit: matchStates[matchIdx]?.outputItem.unit === 'm' ? 'm' : matchStates[matchIdx]?.outputItem.unit === 'm2' ? 'm²' : 'kom',
+    });
+    setNewMaterialModal(true);
+  };
+
+  const handleSaveNewMaterial = async () => {
+    if (!newMaterial.Name) { showToast('Unesite naziv materijala', 'error'); return; }
+    if (!organizationId) return;
+
+    const result = await saveMaterial(newMaterial, organizationId);
+    if (result.success && result.data) {
+      const created: Material = {
+        Material_ID: result.data.Material_ID,
+        Name: newMaterial.Name || '',
+        Category: newMaterial.Category || 'Ploča',
+        Unit: newMaterial.Unit || 'kom',
+        Default_Unit_Price: newMaterial.Default_Unit_Price || 0,
+        Default_Supplier: newMaterial.Default_Supplier || '',
+        Description: newMaterial.Description || '',
+        Organization_ID: organizationId,
+      };
+      setCurrentDbMaterials(prev => [...prev, created]);
+
+      // Auto-assign to the match that triggered this
+      if (addingForMatchIdx !== null) {
+        setMatchStates(prev => {
+          const updated = [...prev];
+          updated[addingForMatchIdx] = {
+            ...updated[addingForMatchIdx],
+            matchedMaterialId: created.Material_ID,
+            matchedMaterial: created,
+          };
+          return updated;
+        });
+      }
+
+      showToast(`Materijal "${created.Name}" kreiran`, 'success');
+      setNewMaterialModal(false);
+    } else {
+      showToast(result.message, 'error');
+    }
+  };
+
   // ---- STEP 3 → 4: IMPORT ----
   const handleImport = async () => {
-    // Only import items that have a matched material
     const toImport = matchStates.filter(ms => ms.matchedMaterial);
     if (toImport.length === 0) {
-      showToast('Nema materijala za import — povežite barem jedan materijal iz baze', 'error');
+      showToast('Povežite barem jedan materijal iz baze', 'error');
       return;
     }
 
@@ -370,12 +567,8 @@ export default function SketchUpImportModal({
 
       try {
         const result = await addMaterialToProduct(productMaterial, organizationId);
-        if (result.success) {
-          results.success++;
-        } else {
-          results.failed++;
-          results.errors.push(`${oi.label}: ${result.message}`);
-        }
+        if (result.success) { results.success++; }
+        else { results.failed++; results.errors.push(`${oi.label}: ${result.message}`); }
       } catch (err) {
         results.failed++;
         results.errors.push(`${oi.label}: ${err instanceof Error ? err.message : 'Greška'}`);
@@ -389,476 +582,379 @@ export default function SketchUpImportModal({
     onImportComplete();
   };
 
+  // ---- HELPERS ----
+  const getStepClass = (s: number) => step > s ? 'completed' : step === s ? 'active' : '';
+  const matchedCount = matchStates.filter(m => m.matchedMaterial).length;
+  const unmatchedCount = matchStates.filter(m => !m.matchedMaterial).length;
+
   // ---- RENDER ----
-  const getStepState = (s: number) => {
-    if (step > s) return 'completed';
-    if (step === s) return 'active';
-    return '';
-  };
-
-  const formatArea = panelFormatAreaM2(panelFormat);
-
   return (
-    <Modal
-      isOpen={isOpen}
-      onClose={handleClose}
-      title={
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <span className="material-icons-round">upload_file</span>
-          <span>SketchUp Import</span>
-        </div>
-      }
+    <Modal isOpen={isOpen} onClose={handleClose}
+      title={<div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}><span className="material-icons-round">upload_file</span><span>SketchUp Import</span></div>}
       size="xl"
     >
       <div className="sketchup-import-wizard">
         {/* Step Indicator */}
         <div className="sketchup-steps">
-          {['Upload', 'Komponente', 'Rezultati', 'Import'].map((label, idx) => (
-            <div key={idx}>
-              <div className={`sketchup-step ${getStepState(idx + 1)}`}>
-                <div className="step-num">
-                  {getStepState(idx + 1) === 'completed' ? (
-                    <span className="material-icons-round" style={{ fontSize: '16px' }}>check</span>
-                  ) : idx + 1}
-                </div>
+          {['Upload', 'Komponente', 'Rezultati', 'Import'].map((label, i) => (
+            <div key={i} className="sketchup-step-wrapper">
+              <div className={`sketchup-step ${getStepClass(i + 1)}`}>
+                <div className="step-num">{getStepClass(i + 1) === 'completed' ? <span className="material-icons-round" style={{ fontSize: 14 }}>check</span> : i + 1}</div>
                 <span className="step-label">{label}</span>
               </div>
-              {idx < 3 && <div className={`sketchup-step-line ${step > idx + 1 ? 'completed' : ''}`} />}
+              {i < 3 && <div className={`sketchup-step-line ${step > i + 1 ? 'completed' : ''}`} />}
             </div>
           ))}
         </div>
 
-        {/* Step 1: Upload CSV */}
+        {/* ==================== STEP 1: UPLOAD ==================== */}
         {step === 1 && (
-          <>
-            <div
-              className={`sketchup-dropzone ${file ? 'has-file' : ''}`}
-              onClick={() => fileInputRef.current?.click()}
-            >
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept=".csv"
-                onChange={handleFileSelect}
-                hidden
-              />
+          <div className="sketchup-step-content">
+            <div className={`sketchup-dropzone ${file ? 'has-file' : ''}`} onClick={() => fileInputRef.current?.click()}>
+              <input ref={fileInputRef} type="file" accept=".csv" onChange={handleFileSelect} hidden />
+              <span className="material-icons-round" style={{ fontSize: 48, color: file ? '#10b981' : 'var(--text-secondary)', marginBottom: 8 }}>
+                {file ? 'check_circle' : 'cloud_upload'}
+              </span>
               {file ? (
-                <>
-                  <div className="icon-container">
-                    <span className="material-icons-round">check_circle</span>
-                  </div>
-                  <h3>{file.name}</h3>
-                  <p>{(file.size / 1024).toFixed(1)} KB</p>
-                </>
+                <><h3 className="dropzone-title">{file.name}</h3><p className="dropzone-hint">{(file.size / 1024).toFixed(1)} KB</p></>
               ) : (
-                <>
-                  <div className="icon-container">
-                    <span className="material-icons-round">cloud_upload</span>
-                  </div>
-                  <h3>Kliknite za upload CSV iz SketchUp-a</h3>
-                  <p>Format: Naziv;Visina;Sirina;Debljina;Kolicina;Materijal</p>
-                </>
+                <><h3 className="dropzone-title">Kliknite za upload CSV iz SketchUp-a</h3><p className="dropzone-hint">Naziv;Visina;Sirina;Debljina;Kolicina;Materijal</p></>
               )}
             </div>
-
             {parseWarnings.length > 0 && (
               <div className="sketchup-warnings">
-                <h5>
-                  <span className="material-icons-round" style={{ fontSize: '18px' }}>warning</span>
-                  Upozorenja
-                </h5>
-                <ul>
-                  {parseWarnings.map((w, i) => <li key={i}>{w}</li>)}
-                </ul>
+                <div className="warning-header"><span className="material-icons-round" style={{ fontSize: 16 }}>warning</span> Upozorenja</div>
+                <ul>{parseWarnings.map((w, i) => <li key={i}>{w}</li>)}</ul>
               </div>
             )}
-          </>
+          </div>
         )}
 
-        {/* Step 2: Component Review */}
+        {/* ==================== STEP 2: COMPONENTS ==================== */}
         {step === 2 && (
-          <>
-            {/* Panel Format Config */}
-            <div className="sketchup-format-config">
-              <label>Format ploče:</label>
-              <input
-                type="number"
-                value={panelFormat.width}
-                onChange={e => setPanelFormat(p => ({ ...p, width: parseFloat(e.target.value) || 0 }))}
-              />
-              <span className="format-x">×</span>
-              <input
-                type="number"
-                value={panelFormat.height}
-                onChange={e => setPanelFormat(p => ({ ...p, height: parseFloat(e.target.value) || 0 }))}
-              />
-              <span className="format-area">mm ({formatArea.toFixed(3)} m²)</span>
+          <div className="sketchup-step-content">
+            {/* Per-material panel formats */}
+            <div className="sketchup-section">
+              <div className="sketchup-section-header">
+                <span className="material-icons-round" style={{ fontSize: 18 }}>straighten</span>
+                <span>Format ploče po materijalu</span>
+              </div>
+              <div className="sketchup-format-grid">
+                {materialFormats.map(mf => (
+                  <div key={mf.materialName} className="sketchup-format-card">
+                    <div className="format-card-label">
+                      <span className={`badge badge-${mf.materialType}`}>{mf.materialType}</span>
+                      <span className="format-card-name">{mf.materialName}</span>
+                    </div>
+                    <div className="format-card-inputs">
+                      <input type="number" value={mf.format.width}
+                        onChange={e => updateMaterialFormat(mf.materialName, 'width', parseFloat(e.target.value) || 0)} />
+                      <span className="format-x">×</span>
+                      <input type="number" value={mf.format.height}
+                        onChange={e => updateMaterialFormat(mf.materialName, 'height', parseFloat(e.target.value) || 0)} />
+                      <span className="format-unit">mm</span>
+                      <span className="format-area">({panelFormatAreaM2(mf.format).toFixed(3)} m²)</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
 
-            {/* Components Table */}
-            <div className="sketchup-table-wrapper">
-              <table className="sketchup-table">
-                <thead>
-                  <tr>
-                    <th>Naziv</th>
-                    <th style={{ width: 80 }}>Visina</th>
-                    <th style={{ width: 80 }}>Širina</th>
-                    <th style={{ width: 70 }}>Debljina</th>
-                    <th style={{ width: 60 }}>Kol.</th>
-                    <th>Materijal</th>
-                    <th style={{ width: 90 }}>Tip</th>
-                    <th style={{ width: 100 }}>Opcije</th>
-                    <th style={{ width: 40 }}></th>
-                  </tr>
-                </thead>
-                <tbody>
+            {/* Components table */}
+            <div className="sketchup-section">
+              <div className="sketchup-section-header">
+                <span className="material-icons-round" style={{ fontSize: 18 }}>view_list</span>
+                <span>Komponente ({components.length})</span>
+              </div>
+              <div className="sketchup-table-wrapper">
+                <table className="sketchup-table">
+                  <thead>
+                    <tr>
+                      <th>Naziv</th>
+                      <th className="col-num">Visina</th>
+                      <th className="col-num">Širina</th>
+                      <th className="col-num">Deblj.</th>
+                      <th className="col-num">Kol.</th>
+                      <th>Materijal</th>
+                      <th className="col-sm">Tip</th>
+                      <th className="col-opts">Opcije</th>
+                      <th className="col-xs"></th>
+                    </tr>
+                  </thead>
                   {components.map((comp, idx) => {
                     const mType = recognizeMaterialType(comp.material);
                     const isFurnir = mType === 'furnir';
                     const isMdf = mType === 'mdf';
 
                     return (
-                      <>
-                        <tr key={idx}>
-                          <td>
-                            <input
-                              type="text"
-                              value={comp.name}
-                              onChange={e => updateComponent(idx, 'name', e.target.value)}
-                            />
-                          </td>
-                          <td>
-                            <input
-                              type="number"
-                              value={comp.height}
-                              onChange={e => updateComponent(idx, 'height', parseFloat(e.target.value) || 0)}
-                            />
-                          </td>
-                          <td>
-                            <input
-                              type="number"
-                              value={comp.width}
-                              onChange={e => updateComponent(idx, 'width', parseFloat(e.target.value) || 0)}
-                            />
-                          </td>
-                          <td>
-                            <input
-                              type="number"
-                              value={comp.thickness}
-                              onChange={e => updateComponent(idx, 'thickness', parseFloat(e.target.value) || 0)}
-                            />
-                          </td>
-                          <td>
-                            <input
-                              type="number"
-                              value={comp.quantity}
-                              min={1}
-                              onChange={e => updateComponent(idx, 'quantity', parseInt(e.target.value) || 1)}
-                            />
-                          </td>
-                          <td>
-                            <input
-                              type="text"
-                              value={comp.material}
-                              onChange={e => updateComponent(idx, 'material', e.target.value)}
-                            />
-                          </td>
-                          <td>
-                            <span className={`material-type-badge badge-${mType}`}
-                              style={{ fontSize: '10px', fontWeight: 600, textTransform: 'uppercase' }}
-                            >
-                              {mType}
-                            </span>
-                          </td>
-                          <td>
-                            <div style={{ display: 'flex', gap: '4px', alignItems: 'center', flexWrap: 'wrap' }}>
+                      <tbody key={idx}>
+                        <tr>
+                          <td><input type="text" value={comp.name} onChange={e => updateComponent(idx, 'name', e.target.value)} /></td>
+                          <td className="col-num"><input type="number" value={comp.height} onChange={e => updateComponent(idx, 'height', parseFloat(e.target.value) || 0)} /></td>
+                          <td className="col-num"><input type="number" value={comp.width} onChange={e => updateComponent(idx, 'width', parseFloat(e.target.value) || 0)} /></td>
+                          <td className="col-num"><input type="number" value={comp.thickness} onChange={e => updateComponent(idx, 'thickness', parseFloat(e.target.value) || 0)} /></td>
+                          <td className="col-num"><input type="number" value={comp.quantity} min={1} onChange={e => updateComponent(idx, 'quantity', parseInt(e.target.value) || 1)} /></td>
+                          <td><input type="text" value={comp.material} onChange={e => updateComponent(idx, 'material', e.target.value)} /></td>
+                          <td className="col-sm"><span className={`badge badge-${mType}`}>{mType}</span></td>
+                          <td className="col-opts">
+                            <div className="opts-row">
                               {isFurnir && (
-                                <label className="sketchup-checkbox" title="Obje strane skupi furnir (obostrani)">
-                                  <input
-                                    type="checkbox"
-                                    checked={comp.hasDoubleVeneer || false}
-                                    onChange={e => updateComponent(idx, 'hasDoubleVeneer', e.target.checked)}
-                                  />
-                                  <span style={{ fontSize: '11px' }}>Obostrani</span>
+                                <label className="mini-check" title="Obje strane skupi furnir">
+                                  <input type="checkbox" checked={comp.hasDoubleVeneer || false} onChange={e => updateComponent(idx, 'hasDoubleVeneer', e.target.checked)} />
+                                  <span>Obostrani</span>
                                 </label>
                               )}
                               {isMdf && (
-                                <label className="sketchup-checkbox" title="Obje strane vidljive (default: Da)">
-                                  <input
-                                    type="checkbox"
-                                    checked={comp.hasBothSidesVisible !== false}
-                                    onChange={e => updateComponent(idx, 'hasBothSidesVisible', e.target.checked)}
-                                  />
-                                  <span style={{ fontSize: '11px' }}>2 strane</span>
+                                <label className="mini-check" title="Obje strane vidljive">
+                                  <input type="checkbox" checked={comp.hasBothSidesVisible !== false} onChange={e => updateComponent(idx, 'hasBothSidesVisible', e.target.checked)} />
+                                  <span>2 strane</span>
                                 </label>
                               )}
-                              <button
-                                className="icon-btn"
-                                onClick={() => setEditingLayersIdx(editingLayersIdx === idx ? null : idx)}
-                                title="Uredi slojeve"
-                                style={{ padding: '2px 4px' }}
-                              >
-                                <span className="material-icons-round" style={{ fontSize: '16px' }}>layers</span>
+                              <button className="icon-btn-sm" onClick={() => setEditingLayersIdx(editingLayersIdx === idx ? null : idx)} title="Slojevi">
+                                <span className="material-icons-round" style={{ fontSize: 16 }}>layers</span>
                               </button>
                             </div>
                           </td>
-                          <td>
-                            <button className="icon-btn danger" onClick={() => removeComponent(idx)}>
-                              <span className="material-icons-round" style={{ fontSize: '16px' }}>close</span>
+                          <td className="col-xs">
+                            <button className="icon-btn-sm danger" onClick={() => removeComponent(idx)}>
+                              <span className="material-icons-round" style={{ fontSize: 16 }}>close</span>
                             </button>
                           </td>
                         </tr>
 
-                        {/* Layer Editor (inline) */}
                         {editingLayersIdx === idx && (
-                          <tr key={`layer-${idx}`}>
+                          <tr className="layer-editor-row">
                             <td colSpan={9}>
                               <div className="sketchup-layer-editor">
-                                <h5>
-                                  Slojevi za: {comp.name}
-                                  <span style={{ fontWeight: 400, color: 'var(--text-secondary)', marginLeft: '8px' }}>
-                                    ({comp.layers?.length || 0} slojeva)
-                                  </span>
-                                </h5>
+                                <div className="layer-editor-title">Slojevi: {comp.name} <span className="muted">({comp.layers?.length || 0})</span></div>
                                 {(comp.layers || []).map((layer, lIdx) => (
-                                  <div className="sketchup-layer-row" key={lIdx}>
-                                    <select
-                                      value={layer.type}
-                                      onChange={e => updateLayer(idx, lIdx, 'type', e.target.value)}
-                                      style={{ width: '90px', fontSize: '12px' }}
-                                    >
+                                  <div className="layer-row" key={lIdx}>
+                                    <select value={layer.type} onChange={e => updateLayer(idx, lIdx, 'type', e.target.value)} className="layer-type-select">
                                       <option value="ploca">Ploča</option>
                                       <option value="furnir">Furnir</option>
                                       <option value="hpl">HPL</option>
                                       <option value="farbanje">Farbanje</option>
                                     </select>
-
-                                    <input
-                                      type="text"
-                                      value={layer.materialLabel}
-                                      onChange={e => updateLayer(idx, lIdx, 'materialLabel', e.target.value)}
-                                      className="sketchup-layer-input"
-                                      placeholder="Naziv materijala"
-                                      style={{ fontSize: '12px' }}
-                                    />
-
-                                    <input
-                                      type="number"
-                                      value={layer.thicknessMm}
-                                      onChange={e => updateLayer(idx, lIdx, 'thicknessMm', parseFloat(e.target.value) || 0)}
-                                      className="sketchup-layer-thickness"
-                                      style={{ fontSize: '12px' }}
-                                      title="Debljina (mm)"
-                                    />
-                                    <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>mm</span>
-
+                                    <input type="text" value={layer.materialLabel} onChange={e => updateLayer(idx, lIdx, 'materialLabel', e.target.value)} className="layer-name-input" placeholder="Naziv" />
+                                    <div className="layer-thickness-group">
+                                      <input type="number" value={layer.thicknessMm} onChange={e => updateLayer(idx, lIdx, 'thicknessMm', parseFloat(e.target.value) || 0)} className="layer-thickness-input" />
+                                      <span className="muted">mm</span>
+                                    </div>
                                     {(layer.type === 'furnir' || layer.type === 'hpl') && (
-                                      <label className="sketchup-checkbox">
-                                        <input
-                                          type="checkbox"
-                                          checked={layer.isKK || false}
-                                          onChange={e => updateLayer(idx, lIdx, 'isKK', e.target.checked)}
-                                        />
+                                      <label className="mini-check">
+                                        <input type="checkbox" checked={layer.isKK || false} onChange={e => updateLayer(idx, lIdx, 'isKK', e.target.checked)} />
                                         <span>KK</span>
                                       </label>
                                     )}
-
-                                    <button
-                                      className="icon-btn danger"
-                                      onClick={() => removeLayer(idx, lIdx)}
-                                      style={{ padding: '2px' }}
-                                    >
-                                      <span className="material-icons-round" style={{ fontSize: '14px' }}>remove</span>
-                                    </button>
+                                    <button className="icon-btn-sm danger" onClick={() => removeLayer(idx, lIdx)}><span className="material-icons-round" style={{ fontSize: 14 }}>remove</span></button>
                                   </div>
                                 ))}
-                                <button
-                                  className="btn btn-sm btn-outline"
-                                  onClick={() => addLayer(idx)}
-                                  style={{ marginTop: '8px', fontSize: '12px' }}
-                                >
-                                  <span className="material-icons-round" style={{ fontSize: '14px' }}>add</span>
-                                  Dodaj sloj
+                                <button className="btn-add-layer" onClick={() => addLayer(idx)}>
+                                  <span className="material-icons-round" style={{ fontSize: 14 }}>add</span> Dodaj sloj
                                 </button>
                               </div>
                             </td>
                           </tr>
                         )}
-                      </>
+                      </tbody>
                     );
                   })}
-                </tbody>
-              </table>
+                </table>
+              </div>
             </div>
 
             <div className="sketchup-actions">
-              <div className="left">
-                <button className="btn btn-secondary" onClick={() => { setStep(1); setFile(null); setComponents([]); }}>
-                  <span className="material-icons-round">arrow_back</span>
-                  Nazad
-                </button>
-              </div>
-              <div className="right">
-                <button
-                  className="btn btn-primary"
-                  onClick={handleCalculate}
-                  disabled={components.length === 0}
-                >
-                  <span className="material-icons-round">calculate</span>
-                  Izračunaj materijale
-                </button>
-              </div>
+              <button className="btn btn-secondary" onClick={() => { setStep(1); setFile(null); setComponents([]); }}>
+                <span className="material-icons-round">arrow_back</span> Nazad
+              </button>
+              <button className="btn btn-primary" onClick={handleCalculate} disabled={components.length === 0}>
+                <span className="material-icons-round">calculate</span> Izračunaj
+              </button>
             </div>
-          </>
+          </div>
         )}
 
-        {/* Step 3: Results & Matching */}
+        {/* ==================== STEP 3: RESULTS ==================== */}
         {step === 3 && (
-          <>
-            {calcResults.map((result, rIdx) => (
-              <div className="sketchup-results-group" key={rIdx}>
-                <div className="sketchup-results-header">
-                  <h4>{result.materialName || 'Nepoznat'}</h4>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    {isAiMatching && <span className="sketchup-ai-badge">🤖 AI analizira...</span>}
-                    <span className={`material-type-badge badge-${result.materialType}`}>
-                      {result.materialType}
-                    </span>
-                  </div>
-                </div>
-
-                {matchStates
-                  .filter(ms => ms.materialGroup === result.materialName)
-                  .map((ms, msIdx) => {
-                    // Find the actual index in matchStates
-                    const globalIdx = matchStates.findIndex(
-                      m => m === ms
-                    );
-                    const oi = ms.outputItem;
-
-                    return (
-                      <div className="sketchup-result-item" key={msIdx}>
-                        <span className={`sketchup-result-label ${oi.isKK ? 'is-kk' : ''}`}>
-                          {oi.label}
-                          {oi.isKK && <span style={{ marginLeft: '4px', fontSize: '10px' }}>(KK)</span>}
-                        </span>
-
-                        <span className="sketchup-result-qty">
-                          {oi.quantity.toFixed(oi.unit === 'kom' ? 2 : 2)} {oi.unit}
-                        </span>
-
-                        <div className="sketchup-result-match">
-                          <select
-                            value={ms.matchedMaterialId}
-                            onChange={e => updateMatch(globalIdx, e.target.value)}
-                            className={ms.matchedMaterial ? 'matched' : 'unmatched'}
-                          >
-                            <option value="">— Izaberi materijal —</option>
-                            {dbMaterials.map(m => (
-                              <option key={m.Material_ID} value={m.Material_ID}>
-                                {m.Name} ({m.Unit})
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-                      </div>
-                    );
-                  })}
-              </div>
-            ))}
-
-            {matchStates.length === 0 && (
-              <div style={{ textAlign: 'center', padding: '40px', color: 'var(--text-secondary)' }}>
-                <span className="material-icons-round" style={{ fontSize: '48px', marginBottom: '12px', display: 'block' }}>
-                  inventory_2
-                </span>
-                Nema rezultata kalkulacije
+          <div className="sketchup-step-content">
+            {isAiMatching && (
+              <div className="sketchup-ai-bar">
+                <span className="material-icons-round spin">sync</span>
+                <span>AI analizira i matchira materijale...</span>
               </div>
             )}
 
-            <div className="sketchup-actions">
-              <div className="left">
-                <button className="btn btn-secondary" onClick={() => setStep(2)}>
-                  <span className="material-icons-round">arrow_back</span>
-                  Nazad
-                </button>
+            {unmatchedCount > 0 && !isAiMatching && (
+              <div className="sketchup-warnings" style={{ marginBottom: 12 }}>
+                <div className="warning-header"><span className="material-icons-round" style={{ fontSize: 16 }}>info</span> {unmatchedCount} stavki nema match u bazi — kliknite <strong>+ Kreiraj</strong> da dodate materijal</div>
               </div>
-              <div className="right">
-                <span style={{ fontSize: '12px', color: 'var(--text-secondary)', alignSelf: 'center' }}>
-                  {matchStates.filter(m => m.matchedMaterial).length} / {matchStates.length} povezano
-                </span>
-                <button
-                  className="btn btn-success"
-                  onClick={handleImport}
-                  disabled={matchStates.filter(m => m.matchedMaterial).length === 0}
-                >
-                  <span className="material-icons-round">save</span>
-                  Dodaj {matchStates.filter(m => m.matchedMaterial).length} materijala
+            )}
+
+            <div className="sketchup-results-list">
+              {calcResults.map((result, rIdx) => {
+                const groupItems = matchStates.filter(ms => ms.materialGroup === result.materialName);
+                const expanded = expandedGroups.has(result.materialName);
+                const groupMatched = groupItems.filter(m => m.matchedMaterial).length;
+
+                return (
+                  <div className="result-group" key={rIdx}>
+                    <div className="result-group-header" onClick={() => toggleGroup(result.materialName)}>
+                      <div className="result-group-left">
+                        <span className="material-icons-round" style={{ fontSize: 18, transition: 'transform 0.2s', transform: expanded ? 'rotate(90deg)' : 'rotate(0)' }}>
+                          chevron_right
+                        </span>
+                        <span className="result-group-name">{result.materialName || 'Nepoznat'}</span>
+                        <span className={`badge badge-${result.materialType}`}>{result.materialType}</span>
+                      </div>
+                      <div className="result-group-right">
+                        <span className="result-group-count">{groupMatched}/{groupItems.length}</span>
+                        <span className="result-group-components">{result.components.length} komp.</span>
+                      </div>
+                    </div>
+
+                    {expanded && (
+                      <div className="result-group-body">
+                        {groupItems.map((ms, msIdx) => {
+                          const globalIdx = matchStates.indexOf(ms);
+                          const oi = ms.outputItem;
+                          const catIcon = oi.category === 'ploca' ? 'inventory_2' :
+                            oi.category === 'furnir' ? 'texture' :
+                            oi.category === 'hpl' ? 'layers' :
+                            oi.category === 'farbanje' ? 'format_paint' :
+                            oi.category === 'kant' || oi.category === 'kant_siroka' ? 'border_style' : 'category';
+
+                          return (
+                            <div className={`result-row ${!ms.matchedMaterial ? 'unmatched' : ''}`} key={msIdx}>
+                              <div className="result-row-info">
+                                <span className="material-icons-round result-row-icon" style={{ fontSize: 16 }}>{catIcon}</span>
+                                <span className={`result-row-label ${oi.isKK ? 'is-kk' : ''}`}>
+                                  {oi.label}{oi.isKK ? ' (KK)' : ''}
+                                </span>
+                              </div>
+                              <div className="result-row-qty">
+                                <strong>{oi.quantity % 1 === 0 ? oi.quantity : oi.quantity.toFixed(2)}</strong>
+                                <span className="muted">{oi.unit}</span>
+                              </div>
+                              <div className="result-row-match">
+                                <select value={ms.matchedMaterialId} onChange={e => updateMatch(globalIdx, e.target.value)}
+                                  className={ms.matchedMaterial ? 'matched' : 'unmatched'}>
+                                  <option value="">— Odaberi —</option>
+                                  {liveMaterials.map(m => (
+                                    <option key={m.Material_ID} value={m.Material_ID}>{m.Name} ({m.Unit})</option>
+                                  ))}
+                                </select>
+                                {!ms.matchedMaterial && (
+                                  <button className="btn-create-mat" onClick={() => openNewMaterialModal(globalIdx, oi.label)} title="Kreiraj novi materijal">
+                                    <span className="material-icons-round" style={{ fontSize: 14 }}>add</span> Kreiraj
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="sketchup-actions">
+              <button className="btn btn-secondary" onClick={() => setStep(2)}>
+                <span className="material-icons-round">arrow_back</span> Nazad
+              </button>
+              <div className="actions-right">
+                <span className="match-counter">{matchedCount}/{matchStates.length} povezano</span>
+                <button className="btn btn-success" onClick={handleImport} disabled={matchedCount === 0 || isAiMatching}>
+                  <span className="material-icons-round">save</span> Dodaj {matchedCount} materijala
                 </button>
               </div>
             </div>
-          </>
+          </div>
         )}
 
-        {/* Step 4: Import Progress / Results */}
+        {/* ==================== STEP 4: IMPORT ==================== */}
         {step === 4 && (
-          <div className="sketchup-progress">
+          <div className="sketchup-step-content sketchup-center">
             {isImporting ? (
               <>
-                <span className="material-icons-round" style={{ fontSize: '48px', color: '#3b82f6', animation: 'spin 1s linear infinite' }}>
-                  sync
-                </span>
-                <div className="sketchup-progress-bar">
-                  <div
-                    className="sketchup-progress-fill"
-                    style={{ width: `${importProgress.total > 0 ? (importProgress.current / importProgress.total) * 100 : 0}%` }}
-                  />
-                </div>
-                <p>
-                  Dodajem materijale... {importProgress.current} / {importProgress.total}
-                </p>
+                <span className="material-icons-round spin" style={{ fontSize: 48, color: '#3b82f6' }}>sync</span>
+                <div className="sketchup-progress-bar"><div className="sketchup-progress-fill" style={{ width: `${importProgress.total > 0 ? (importProgress.current / importProgress.total) * 100 : 0}%` }} /></div>
+                <p className="muted">Dodajem materijale... {importProgress.current}/{importProgress.total}</p>
               </>
             ) : importResults && (
               <>
-                <span className="material-icons-round" style={{ fontSize: '48px', color: importResults.failed > 0 ? '#f59e0b' : '#10b981', marginBottom: '12px', display: 'block' }}>
+                <span className="material-icons-round" style={{ fontSize: 48, color: importResults.failed > 0 ? '#f59e0b' : '#10b981' }}>
                   {importResults.failed > 0 ? 'warning' : 'check_circle'}
                 </span>
-
-                <h3 style={{ margin: '0 0 8px', fontSize: '18px' }}>Import završen</h3>
-                <p style={{ margin: '0 0 16px' }}>
+                <h3 style={{ margin: '12px 0 4px', fontSize: 18 }}>Import završen</h3>
+                <p className="muted" style={{ marginBottom: 16 }}>
                   <strong style={{ color: '#10b981' }}>{importResults.success}</strong> uspješno
-                  {importResults.failed > 0 && (
-                    <>, <strong style={{ color: '#ef4444' }}>{importResults.failed}</strong> neuspješno</>
-                  )}
+                  {importResults.failed > 0 && <>, <strong style={{ color: '#ef4444' }}>{importResults.failed}</strong> neuspješno</>}
                 </p>
 
                 {importResults.errors.length > 0 && (
-                  <div className="sketchup-warnings" style={{ textAlign: 'left', marginBottom: '16px' }}>
-                    <h5>
-                      <span className="material-icons-round" style={{ fontSize: '16px' }}>error</span>
-                      Greške
-                    </h5>
-                    <ul>
-                      {importResults.errors.map((err, i) => <li key={i}>{err}</li>)}
-                    </ul>
+                  <div className="sketchup-warnings" style={{ textAlign: 'left', marginBottom: 16, width: '100%' }}>
+                    <div className="warning-header"><span className="material-icons-round" style={{ fontSize: 16 }}>error</span> Greške</div>
+                    <ul>{importResults.errors.map((err, i) => <li key={i}>{err}</li>)}</ul>
                   </div>
                 )}
 
-                <div style={{ display: 'flex', gap: '8px', justifyContent: 'center' }}>
-                  <button className="btn btn-secondary" onClick={resetWizard}>
-                    <span className="material-icons-round">refresh</span>
-                    Novi import
-                  </button>
-                  <button className="btn btn-primary" onClick={handleClose}>
-                    <span className="material-icons-round">check</span>
-                    Zatvori
-                  </button>
+                <div style={{ display: 'flex', gap: 8, justifyContent: 'center' }}>
+                  <button className="btn btn-secondary" onClick={resetWizard}><span className="material-icons-round">refresh</span> Novi import</button>
+                  <button className="btn btn-primary" onClick={handleClose}><span className="material-icons-round">check</span> Zatvori</button>
                 </div>
               </>
             )}
           </div>
         )}
       </div>
+
+      {/* ==================== NEW MATERIAL SUB-MODAL ==================== */}
+      {newMaterialModal && (
+        <div className="sketchup-sub-modal-overlay" onClick={() => setNewMaterialModal(false)}>
+          <div className="sketchup-sub-modal" onClick={e => e.stopPropagation()}>
+            <div className="sub-modal-header">
+              <h3>Novi Materijal</h3>
+              <button className="icon-btn-sm" onClick={() => setNewMaterialModal(false)}>
+                <span className="material-icons-round" style={{ fontSize: 18 }}>close</span>
+              </button>
+            </div>
+            <div className="sub-modal-body">
+              <div className="form-group">
+                <label>Naziv *</label>
+                <input type="text" value={newMaterial.Name || ''} onChange={e => setNewMaterial(prev => ({ ...prev, Name: e.target.value }))} />
+              </div>
+              <div className="form-row-2">
+                <div className="form-group">
+                  <label>Kategorija</label>
+                  <select value={newMaterial.Category || 'Ploča'} onChange={e => setNewMaterial(prev => ({ ...prev, Category: e.target.value }))}>
+                    {MATERIAL_CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+                  </select>
+                </div>
+                <div className="form-group">
+                  <label>Jedinica</label>
+                  <select value={newMaterial.Unit || 'kom'} onChange={e => setNewMaterial(prev => ({ ...prev, Unit: e.target.value }))}>
+                    <option value="kom">kom</option><option value="m">m</option><option value="m²">m²</option><option value="set">set</option><option value="kg">kg</option>
+                  </select>
+                </div>
+              </div>
+              <div className="form-group">
+                <label>Cijena (KM)</label>
+                <input type="number" step="0.01" min="0" value={newMaterial.Default_Unit_Price || ''} onChange={e => setNewMaterial(prev => ({ ...prev, Default_Unit_Price: parseFloat(e.target.value) || 0 }))} />
+              </div>
+              <div className="form-group">
+                <label>Dobavljač</label>
+                <input type="text" value={newMaterial.Default_Supplier || ''} onChange={e => setNewMaterial(prev => ({ ...prev, Default_Supplier: e.target.value }))} placeholder="Opcionalno" />
+              </div>
+            </div>
+            <div className="sub-modal-footer">
+              <button className="btn btn-secondary" onClick={() => setNewMaterialModal(false)}>Otkaži</button>
+              <button className="btn btn-primary" onClick={handleSaveNewMaterial}>Sačuvaj</button>
+            </div>
+          </div>
+        </div>
+      )}
     </Modal>
   );
 }
