@@ -34,6 +34,7 @@ import MobileMaterialEditModal from './mobile/MobileMaterialEditModal';
 import MobileProjectModal from './mobile/MobileProjectModal';
 import MobileProductModal from './mobile/MobileProductModal';
 import MobileMaterialAddModal from './mobile/MobileMaterialAddModal';
+import SketchUpImportModal from '@/components/SketchUpImportModal';
 import './ProjectsTab.css';
 
 interface ProjectsTabProps {
@@ -59,7 +60,7 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
     const [statusFilter, setStatusFilter] = useState('');
     const [expandedProjectId, setExpandedProjectId] = useState<string | null>(null);
     const [expandedProducts, setExpandedProducts] = useState<Set<string>>(new Set());
-    const [expandedStatusGroups, setExpandedStatusGroups] = useState<Set<string>>(new Set());
+    const [expandedStatusGroups, setExpandedStatusGroups] = useState<Set<string>>(new Set(['Nacrt', 'Ponuđeno', 'Odobreno', 'U proizvodnji', 'Završeno', 'Otkazano']));
     const [showMaterialsSummary, setShowMaterialsSummary] = useState<Set<string>>(new Set());
     const [materialsOverviewProject, setMaterialsOverviewProject] = useState<Project | null>(null);
     const [syncing, setSyncing] = useState(false);
@@ -94,6 +95,7 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
     const [materialModal, setMaterialModal] = useState(false);
     const [glassModal, setGlassModal] = useState(false);
     const [aluDoorModal, setAluDoorModal] = useState(false);
+    const [sketchUpImportProductId, setSketchUpImportProductId] = useState<string | null>(null);
 
 
     // Form states
@@ -673,6 +675,16 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
 
     function getStatusClass(status: string): string {
         return 'status-' + status.toLowerCase()
+            .replace(/\s+/g, '-')
+            .replace(/č/g, 'c')
+            .replace(/ć/g, 'c')
+            .replace(/š/g, 's')
+            .replace(/ž/g, 'z')
+            .replace(/đ/g, 'd');
+    }
+
+    function getBorderClass(status: string): string {
+        return 'border-' + status.toLowerCase()
             .replace(/\s+/g, '-')
             .replace(/č/g, 'c')
             .replace(/ć/g, 'c')
@@ -1609,6 +1621,10 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                                                                         </span>
                                                                     </button>
                                                                 )}
+                                                                <button className="btn-add-item" onClick={() => setSketchUpImportProductId(product.Product_ID)} title="Importuj materijale iz SketchUp CSV">
+                                                                    <span className="material-icons-round">upload_file</span>
+                                                                    SketchUp CSV
+                                                                </button>
                                                                 <button className="btn-add-item" onClick={() => openMaterialModal(product.Product_ID)}>
                                                                     <span className="material-icons-round">add</span>
                                                                     Dodaj materijal
@@ -1983,10 +1999,68 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                             </div>
                             {expandedStatusGroups.has(group.status) && group.projects.map(project => {
                                 const totalProducts = project.products?.length || 0;
-                                const totalCost = project.products?.reduce((sum, p) => sum + (p.Material_Cost || 0), 0) || 0;
+                                const totalMaterialCost = (project.products || []).reduce((sum, p) => {
+                                    return sum + (p.materials || []).reduce((ms, m) => ms + (m.Total_Price || 0), 0);
+                                }, 0);
+                                const sortedProducts = [...(project.products || [])].sort((a, b) => {
+                                    const extractPoz = (name: string): number => {
+                                        const match = name?.match(/^Poz\s*(\d+(?:\.\d+)?)/i);
+                                        return match ? parseFloat(match[1]) : Infinity;
+                                    };
+                                    return extractPoz(a.Name || '') - extractPoz(b.Name || '');
+                                });
+                                const previewProducts = sortedProducts.slice(0, 3);
+                                const moreCount = totalProducts - previewProducts.length;
+
+                                // Calculate project profit
+                                let projectProfit = 0;
+                                let projectSellingTotal = 0;
+                                let hasAnyProfit = false;
+                                (project.products || []).forEach(product => {
+                                    let sellingPrice: number | undefined;
+                                    let originalTransport = 0;
+                                    const acceptedOffers = offers.filter(o => o.Status === 'Prihvaćeno');
+                                    for (const offer of acceptedOffers) {
+                                        const offerProduct = (offer.products || []).find(op => op.Product_ID === product.Product_ID);
+                                        if (offerProduct) {
+                                            sellingPrice = offerProduct.Selling_Price || offerProduct.Total_Price;
+                                            if (offer && sellingPrice) {
+                                                const offerSubtotal = offer.Subtotal || 0;
+                                                if (offerSubtotal > 0) {
+                                                    originalTransport = (offer.Transport_Cost || 0) * (sellingPrice / offerSubtotal);
+                                                }
+                                            }
+                                            break;
+                                        }
+                                    }
+                                    let woItem: any;
+                                    let woItemFallback: any;
+                                    for (const wo of workOrders) {
+                                        const item = (wo.items || []).find(i => i.Product_ID === product.Product_ID);
+                                        if (item) {
+                                            if (item.Status !== 'Završeno') { woItem = item; break; }
+                                            else if (!woItemFallback) { woItemFallback = item; }
+                                        }
+                                    }
+                                    if (!woItem) woItem = woItemFallback;
+                                    const woSellingPrice = woItem?.Product_Value || 0;
+                                    const finalSellingPrice = woItem?.Profit_Overrides?.Selling_Price ?? (woSellingPrice > 0 ? woSellingPrice : sellingPrice);
+                                    const transportShare = woItem?.Profit_Overrides?.Transport_Share ?? originalTransport;
+                                    const servicesTotal = woItem?.Services_Total || 0;
+                                    if (!woItem || !finalSellingPrice || finalSellingPrice <= 0) return;
+                                    if (woItem.Status !== 'U toku' && woItem.Status !== 'Završeno') return;
+                                    const actualMaterialCost = (product.materials || []).reduce((sum, m) => sum + (m.Total_Price || 0), 0);
+                                    const productLogs = workLogs.filter(wl => wl.Work_Order_Item_ID === woItem.ID);
+                                    const laborCost = Math.round(productLogs.reduce((sum, wl) => sum + (wl.Daily_Rate || 0), 0));
+                                    projectProfit += finalSellingPrice - actualMaterialCost - laborCost - transportShare - servicesTotal;
+                                    projectSellingTotal += finalSellingPrice;
+                                    hasAnyProfit = true;
+                                });
+                                projectProfit = Math.round(projectProfit);
+                                const projectMargin = Math.round(projectSellingTotal > 0 ? (projectProfit / projectSellingTotal) * 100 : 0);
 
                                 return (
-                                    <div key={project.Project_ID} className="project-card">
+                                    <div key={project.Project_ID} className={`project-card ${getBorderClass(project.Status)}`}>
                                         <div className="project-header" onClick={() => toggleProject(project.Project_ID)}>
                                             <button className={`expand-btn ${expandedProjectId === project.Project_ID ? 'expanded' : ''}`}>
                                                 <span className="material-icons-round">chevron_right</span>
@@ -1995,117 +2069,75 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                                             <div className="project-main-info">
                                                 <div className="project-name">{project.Name || project.Client_Name}</div>
                                                 {project.Name && <div className="project-client-subtitle">{project.Client_Name}</div>}
+
+                                                {/* Info Chips */}
                                                 <div className="project-details">
-                                                    {project.Address && <div className="project-client">{project.Address}</div>}
-                                                    <div className="project-summary">
-                                                        <span className="summary-item">
-                                                            <span className="material-icons-round">inventory_2</span>
-                                                            {totalProducts} {totalProducts === 1 ? 'proizvod' : 'proizvoda'}
+                                                    {project.Address && (
+                                                        <span className="info-chip">
+                                                            <span className="material-icons-round">location_on</span>
+                                                            {project.Address}
                                                         </span>
-                                                        {/* Project-level profit sum */}
-                                                        {(() => {
-                                                            let projectProfit = 0;
-                                                            let projectSellingTotal = 0;
-                                                            let hasAnyProfit = false;
-
-                                                            (project.products || []).forEach(product => {
-                                                                let sellingPrice: number | undefined;
-                                                                let originalExtras = 0;
-                                                                let originalTransport = 0;
-                                                                const acceptedOffers = offers.filter(o => o.Status === 'Prihvaćeno');
-                                                                for (const offer of acceptedOffers) {
-                                                                    const offerProduct = (offer.products || []).find(op => op.Product_ID === product.Product_ID);
-                                                                    if (offerProduct) {
-                                                                        sellingPrice = offerProduct.Selling_Price || offerProduct.Total_Price;
-                                                                        const ledCost = offerProduct.LED_Total || 0;
-                                                                        const groutingCost = offerProduct.Grouting ? (offerProduct.Grouting_Price || 0) : 0;
-                                                                        const sinkCost = offerProduct.Sink_Faucet ? (offerProduct.Sink_Faucet_Price || 0) : 0;
-                                                                        const extrasCost = ((offerProduct as any).extras || []).reduce((sum: number, e: any) => sum + (e.Total || e.total || 0), 0);
-                                                                        originalExtras = ledCost + groutingCost + sinkCost + extrasCost;
-                                                                        if (offer && sellingPrice) {
-                                                                            const offerSubtotal = offer.Subtotal || 0;
-                                                                            if (offerSubtotal > 0) {
-                                                                                originalTransport = (offer.Transport_Cost || 0) * (sellingPrice / offerSubtotal);
-                                                                            }
-                                                                        }
-                                                                        break;
-                                                                    }
-                                                                }
-
-                                                                let woItem: any;
-                                                                let woItemFallback: any;
-                                                                for (const wo of workOrders) {
-                                                                    const item = (wo.items || []).find(i => i.Product_ID === product.Product_ID);
-                                                                    if (item) {
-                                                                        if (item.Status !== 'Završeno') {
-                                                                            woItem = item;
-                                                                            break;
-                                                                        } else if (!woItemFallback) {
-                                                                            woItemFallback = item;
-                                                                        }
-                                                                    }
-                                                                }
-                                                                if (!woItem) woItem = woItemFallback;
-
-                                                                const woSellingPrice = woItem?.Product_Value || 0;
-                                                                const finalSellingPrice = woItem?.Profit_Overrides?.Selling_Price ?? (woSellingPrice > 0 ? woSellingPrice : sellingPrice);
-                                                                const transportShare = woItem?.Profit_Overrides?.Transport_Share ?? originalTransport;
-                                                                const servicesTotal = woItem?.Services_Total || 0;
-
-                                                                if (!woItem || !finalSellingPrice || finalSellingPrice <= 0) return;
-                                                                if (woItem.Status !== 'U toku' && woItem.Status !== 'Završeno') return;
-
-                                                                const actualMaterialCost = (product.materials || []).reduce((sum, m) => sum + (m.Total_Price || 0), 0);
-                                                                // Labor cost — Daily_Rate values are pre-split by recalculateWOLaborSplit
-                                                                const productLogs = workLogs.filter(wl => wl.Work_Order_Item_ID === woItem.ID);
-                                                                const laborCost = Math.round(productLogs.reduce((sum, wl) => sum + (wl.Daily_Rate || 0), 0));
-
-                                                                // UNIFIED PROFIT FORMULA
-                                                                projectProfit += finalSellingPrice - actualMaterialCost - laborCost - transportShare - servicesTotal;
-                                                                projectSellingTotal += finalSellingPrice;
-                                                                hasAnyProfit = true;
-                                                            });
-
-                                                            if (!hasAnyProfit) return null;
-                                                            projectProfit = Math.round(projectProfit);
-                                                            const projectMargin = Math.round(projectSellingTotal > 0 ? (projectProfit / projectSellingTotal) * 100 : 0);
-                                                            return (
-                                                                <span
-                                                                    className="summary-item"
-                                                                    style={{
-                                                                        fontWeight: 600,
-                                                                        fontSize: '12px',
-                                                                        color: projectMargin >= 30 ? '#10b981' : projectMargin >= 15 ? '#f59e0b' : '#ef4444',
-                                                                    }}
-                                                                    title={`Ukupni profit projekta: ${projectProfit.toLocaleString('hr-HR')} KM (${projectMargin.toFixed(0)}%)`}
-                                                                >
-                                                                    <span className="material-icons-round" style={{ fontSize: '16px' }}>
-                                                                        {projectMargin >= 30 ? 'trending_up' : projectMargin >= 15 ? 'trending_flat' : 'trending_down'}
-                                                                    </span>
-                                                                    {projectProfit.toLocaleString('hr-HR')} KM ({projectMargin.toFixed(0)}%)
-                                                                </span>
-                                                            );
-                                                        })()}
-                                                    </div>
+                                                    )}
+                                                    <span className="info-chip">
+                                                        <span className="material-icons-round">inventory_2</span>
+                                                        {totalProducts} {totalProducts === 1 ? 'proizvod' : 'proizvoda'}
+                                                    </span>
+                                                    {totalMaterialCost > 0 && (
+                                                        <span className="info-chip chip-cost">
+                                                            <span className="material-icons-round">payments</span>
+                                                            {totalMaterialCost.toLocaleString('hr-HR')} KM
+                                                        </span>
+                                                    )}
+                                                    {hasAnyProfit && (
+                                                        <span className={`info-chip ${
+                                                            projectMargin >= 30 ? 'chip-profit-good' :
+                                                            projectMargin >= 15 ? 'chip-profit-mid' : 'chip-profit-bad'
+                                                        }`}
+                                                            title={`Profit: ${projectProfit.toLocaleString('hr-HR')} KM (${projectMargin}%)`}
+                                                        >
+                                                            <span className="material-icons-round">
+                                                                {projectMargin >= 30 ? 'trending_up' : projectMargin >= 15 ? 'trending_flat' : 'trending_down'}
+                                                            </span>
+                                                            {projectProfit.toLocaleString('hr-HR')} KM ({projectMargin}%)
+                                                        </span>
+                                                    )}
                                                 </div>
+
+                                                {/* Product Preview Strip */}
+                                                {totalProducts > 0 && (
+                                                    <div className="product-preview-strip">
+                                                        {previewProducts.map(p => (
+                                                            <span key={p.Product_ID} className="product-preview-tag">
+                                                                {p.Name || 'Bez naziva'}
+                                                            </span>
+                                                        ))}
+                                                        {moreCount > 0 && (
+                                                            <span className="product-preview-more">+{moreCount}</span>
+                                                        )}
+                                                    </div>
+                                                )}
                                             </div>
 
-
-                                            <div className="project-actions" onClick={(e) => e.stopPropagation()}>
-                                                <button className="icon-btn" onClick={() => setMaterialsOverviewProject(project)} title="Pregled materijala">
-                                                    <span className="material-icons-round">inventory</span>
-                                                </button>
-                                                {onNavigateToTasks && (
-                                                    <button className="icon-btn" onClick={() => onNavigateToTasks(project.Project_ID)} title="Zadaci">
-                                                        <span className="material-icons-round">task_alt</span>
+                                            <div className="project-right-section">
+                                                <span className={`status-badge ${getStatusClass(project.Status)}`}>
+                                                    {project.Status}
+                                                </span>
+                                                <div className="project-actions" onClick={(e) => e.stopPropagation()}>
+                                                    <button className="icon-btn" onClick={() => setMaterialsOverviewProject(project)} title="Pregled materijala">
+                                                        <span className="material-icons-round">inventory</span>
                                                     </button>
-                                                )}
-                                                <button className="icon-btn" onClick={() => openProjectModal(project)} title="Uredi projekat">
-                                                    <span className="material-icons-round">edit</span>
-                                                </button>
-                                                <button className="icon-btn danger" onClick={() => handleDeleteProject(project.Project_ID)} title="Obriši projekat">
-                                                    <span className="material-icons-round">delete</span>
-                                                </button>
+                                                    {onNavigateToTasks && (
+                                                        <button className="icon-btn" onClick={() => onNavigateToTasks(project.Project_ID)} title="Zadaci">
+                                                            <span className="material-icons-round">task_alt</span>
+                                                        </button>
+                                                    )}
+                                                    <button className="icon-btn" onClick={() => openProjectModal(project)} title="Uredi projekat">
+                                                        <span className="material-icons-round">edit</span>
+                                                    </button>
+                                                    <button className="icon-btn danger" onClick={() => handleDeleteProject(project.Project_ID)} title="Obriši projekat">
+                                                        <span className="material-icons-round">delete</span>
+                                                    </button>
+                                                </div>
                                             </div>
                                         </div>
                                     </div>
@@ -2800,6 +2832,17 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                     -moz-appearance: textfield;
                 }
             `}</style>
+
+            {/* SketchUp Import Modal */}
+            <SketchUpImportModal
+                isOpen={!!sketchUpImportProductId}
+                onClose={() => setSketchUpImportProductId(null)}
+                productId={sketchUpImportProductId || ''}
+                organizationId={organizationId || ''}
+                materials={materials}
+                onImportComplete={() => onRefresh('projects')}
+                showToast={showToast}
+            />
         </div >
     );
 }

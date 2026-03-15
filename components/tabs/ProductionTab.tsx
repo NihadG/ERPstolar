@@ -9,6 +9,7 @@ import { useData } from '@/context/DataContext';
 import Modal from '@/components/ui/Modal';
 import WorkOrderExpandedDetail from '@/components/ui/WorkOrderExpandedDetail';
 import WorkOrderPrintTemplate from '@/components/ui/WorkOrderPrintTemplate';
+import ProfitDashboardModal from '@/components/ui/ProfitDashboardModal';
 
 import PriceEditModal from '@/components/ui/PriceEditModal';
 import AttendanceFixModal from '@/components/ui/AttendanceFixModal';
@@ -55,6 +56,7 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
     const [attendanceBannerDismissed, setAttendanceBannerDismissed] = useState(false);
     const [priceEditWorkOrder, setPriceEditWorkOrder] = useState<WorkOrder | null>(null);
     const [attendanceFixWorkOrder, setAttendanceFixWorkOrder] = useState<WorkOrder | null>(null);
+    const [profitDashboardOpen, setProfitDashboardOpen] = useState(false);
 
     // Check attendance on mount and when workOrders change
     useEffect(() => {
@@ -1290,6 +1292,22 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
 
                 {/* Action Buttons */}
                 <div style={{ display: 'flex', gap: '8px', flexShrink: 0 }}>
+                    <button
+                        className="glass-btn"
+                        onClick={() => setProfitDashboardOpen(true)}
+                        style={{
+                            background: 'linear-gradient(135deg, #22c55e 0%, #16a34a 100%)',
+                            color: 'white',
+                            border: 'none',
+                            fontWeight: 600,
+                            padding: '8px 14px',
+                            whiteSpace: 'nowrap',
+                        }}
+                        title="Pregled profita svih aktivnih proizvoda"
+                    >
+                        <span className="material-icons-round" style={{ fontSize: '18px' }}>insights</span>
+                        Profiti
+                    </button>
                     <button
                         className="glass-btn"
                         onClick={async () => {
@@ -3082,6 +3100,12 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                     warnings={attendanceWarnings?.warnings}
                     onClose={() => setAttendanceFixWorkOrder(null)}
                     onSaved={() => onRefresh('workOrders')}
+                    showToast={showToast}
+                />
+            )}
+            {profitDashboardOpen && (
+                <ProfitDashboardModal
+                    onClose={() => setProfitDashboardOpen(false)}
                     showToast={showToast}
                 />
             )}

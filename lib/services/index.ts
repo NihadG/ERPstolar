@@ -141,6 +141,11 @@ export {
     deleteDailyProfitEntry, getTodaysMissingEntries,
 } from './profit/profitService';
 
+// Profit Dashboard
+export {
+    getActiveProfitDashboard,
+} from './profit/profitDashboardService';
+
 // Notification
 export { createNotification, getUnreadNotifications, markNotificationAsRead, subscribeToNotifications } from './notification/notificationService';
 
