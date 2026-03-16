@@ -11885,3 +11885,43 @@ input[type=number] {
     padding-bottom: env(safe-area-inset-bottom);
   }
 }
+
+/* ============================================
+   GLOBAL PRINT STYLES
+   ============================================ */
+
+.print-document {
+  display: none;
+}
+@media print {
+  /* Hide everything in body by default */
+  body * {
+    visibility: hidden;
+  }
+
+  /* Make print document and all its children visible */
+  .print-document,
+  .print-document * {
+    visibility: visible;
+  }
+
+  /* Position the print document at the top left of the page */
+  .print-document {
+    position: absolute !important;
+    left: 0 !important;
+    top: 0 !important;
+    width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    background: white !important;
+  }
+
+  /* Setup page properties */
+  @page {
+    margin: 1cm;
+  }
+
+  body {
+    background: transparent !important;
+  }
+}

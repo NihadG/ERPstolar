@@ -111,13 +111,16 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
     const [aluDoorProductId, setAluDoorProductId] = useState('');
     const [editingGlassMaterial, setEditingGlassMaterial] = useState<ProductMaterial | null>(null);
     const [editingAluDoorMaterial, setEditingAluDoorMaterial] = useState<ProductMaterial | null>(null);
-
     // Edit regular material modal
     const [editMaterialModal, setEditMaterialModal] = useState(false);
     const [editingMaterial, setEditingMaterial] = useState<ProductMaterial | null>(null);
     const [editMaterialQty, setEditMaterialQty] = useState(0);
     const [editMaterialPrice, setEditMaterialPrice] = useState(0);
     const [editMaterialIsEssential, setEditMaterialIsEssential] = useState(false);
+    const [editMaterialNewId, setEditMaterialNewId] = useState<string>(''); // For swapping material
+    const [editMaterialNewName, setEditMaterialNewName] = useState<string>('');
+    const [editMaterialNewUnit, setEditMaterialNewUnit] = useState<string>('');
+    const [editMaterialNewSupplier, setEditMaterialNewSupplier] = useState<string>('');
 
     // Material status dropdown
     const [statusDropdownMaterialId, setStatusDropdownMaterialId] = useState<string | null>(null);
@@ -128,7 +131,7 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
 
     // Quick edit mode for materials
     const [quickEditMode, setQuickEditMode] = useState<string | null>(null); // Product_ID in quick edit mode
-    const [editingMaterialValues, setEditingMaterialValues] = useState<Record<string, { qty: number; price: number }>>({});
+    const [editingMaterialValues, setEditingMaterialValues] = useState<Record<string, { qty: number; price: number; materialId?: string; materialName?: string; unit?: string; supplier?: string }>>({});
 
     // Product Timeline Modal
     const [timelineProduct, setTimelineProduct] = useState<{
@@ -315,13 +318,23 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
             return;
         }
 
-        const result = await deleteProduct(productId, organizationId);
-        if (result.success) {
-            showToast(result.message, 'success');
-            onRefresh('projects');
-        } else {
-            showToast(result.message, 'error');
-        }
+        // Show immediate feedback
+        showToast('Brisanje proizvoda...', 'info');
+
+        // Run the actual delete — don't block the UI
+        deleteProduct(productId, organizationId).then(async result => {
+            if (result.success) {
+                showToast(result.message, 'success');
+                // Small delay to let Firestore settle after cascade deletes
+                await new Promise(resolve => setTimeout(resolve, 500));
+                onRefresh('projects');
+            } else {
+                showToast(result.message, 'error');
+            }
+        }).catch(err => {
+            console.error('Delete product error:', err);
+            showToast('Greška pri brisanju proizvoda', 'error');
+        });
     }
 
     // Check if material is glass or alu door type
@@ -492,6 +505,10 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
         setEditMaterialQty(material.Quantity);
         setEditMaterialPrice(material.Unit_Price);
         setEditMaterialIsEssential(material.Is_Essential || false);
+        setEditMaterialNewId(material.Material_ID);
+        setEditMaterialNewName(material.Material_Name);
+        setEditMaterialNewUnit(material.Unit || '');
+        setEditMaterialNewSupplier(material.Supplier || '');
         setEditMaterialModal(true);
     }
 
@@ -521,12 +538,22 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
             return;
         }
 
-        const result = await updateProductMaterial(editingMaterial.ID, {
+        const updatePayload: Record<string, unknown> = {
             Quantity: editMaterialQty,
             Unit_Price: editMaterialPrice,
             Total_Price: editMaterialQty * editMaterialPrice,
             Is_Essential: editMaterialIsEssential
-        }, organizationId);
+        };
+
+        // If the material was changed, include Material_ID, Material_Name, Unit, Supplier
+        if (editMaterialNewId && editMaterialNewId !== editingMaterial.Material_ID) {
+            updatePayload.Material_ID = editMaterialNewId;
+            updatePayload.Material_Name = editMaterialNewName;
+            updatePayload.Unit = editMaterialNewUnit;
+            updatePayload.Supplier = editMaterialNewSupplier;
+        }
+
+        const result = await updateProductMaterial(editingMaterial.ID, updatePayload as any, organizationId);
 
         if (result.success) {
             showToast('Materijal uspješno ažuriran', 'success');
@@ -596,11 +623,15 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
             // Initialize values for all materials in this product
             const product = projects.flatMap(p => p.products || []).find(prod => prod.Product_ID === productId);
             if (product?.materials) {
-                const initialValues: Record<string, { qty: number; price: number }> = {};
+                const initialValues: Record<string, { qty: number; price: number; materialId?: string; materialName?: string; unit?: string; supplier?: string }> = {};
                 product.materials.forEach(mat => {
                     initialValues[mat.ID] = {
                         qty: mat.Quantity,
-                        price: mat.Unit_Price
+                        price: mat.Unit_Price,
+                        materialId: mat.Material_ID,
+                        materialName: mat.Material_Name,
+                        unit: mat.Unit,
+                        supplier: mat.Supplier
                     };
                 });
                 setEditingMaterialValues(initialValues);
@@ -619,6 +650,41 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
         }));
     }
 
+    function handleQuickEditMaterialChange(materialId: string, newMaterialCatalogId: string) {
+        const catalogMat = materials.find(m => m.Material_ID === newMaterialCatalogId);
+        if (!catalogMat || !organizationId) return;
+        const currentValues = editingMaterialValues[materialId];
+        const newValues = {
+            ...currentValues,
+            price: catalogMat.Default_Unit_Price,
+            materialId: catalogMat.Material_ID,
+            materialName: catalogMat.Name,
+            unit: catalogMat.Unit,
+            supplier: catalogMat.Default_Supplier || ''
+        };
+        setEditingMaterialValues(prev => ({
+            ...prev,
+            [materialId]: newValues
+        }));
+        // Auto-save immediately since SearchableSelect has no blur event
+        updateProductMaterial(materialId, {
+            Material_ID: catalogMat.Material_ID,
+            Material_Name: catalogMat.Name,
+            Unit: catalogMat.Unit,
+            Supplier: catalogMat.Default_Supplier || '',
+            Unit_Price: catalogMat.Default_Unit_Price,
+            Quantity: currentValues?.qty || 0,
+            Total_Price: (currentValues?.qty || 0) * catalogMat.Default_Unit_Price
+        } as any, organizationId).then(result => {
+            if (result.success) {
+                showToast('Materijal ažuriran', 'success');
+                onRefresh('projects');
+            } else {
+                showToast(result.message, 'error');
+            }
+        });
+    }
+
     async function saveQuickEdit(materialId: string) {
         const values = editingMaterialValues[materialId];
         if (!values || !organizationId) return;
@@ -631,16 +697,28 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
 
         if (!material) return;
 
+        const materialChanged = values.materialId && values.materialId !== material.Material_ID;
+
         // Only save if changed
-        if (values.qty === material.Quantity && values.price === material.Unit_Price) {
+        if (values.qty === material.Quantity && values.price === material.Unit_Price && !materialChanged) {
             return;
         }
 
-        const result = await updateProductMaterial(materialId, {
+        const updatePayload: Record<string, unknown> = {
             Quantity: values.qty,
             Unit_Price: values.price,
             Total_Price: values.qty * values.price
-        }, organizationId);
+        };
+
+        // If the material was swapped, include the new material fields
+        if (materialChanged) {
+            updatePayload.Material_ID = values.materialId;
+            updatePayload.Material_Name = values.materialName;
+            updatePayload.Unit = values.unit;
+            updatePayload.Supplier = values.supplier;
+        }
+
+        const result = await updateProductMaterial(materialId, updatePayload as any, organizationId);
 
         if (result.success) {
             showToast('Materijal ažuriran', 'success');
@@ -1000,6 +1078,7 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                         isOpen={editMaterialModal}
                         onClose={() => setEditMaterialModal(false)}
                         material={editingMaterial}
+                        materials={materials}
                         onSave={handleSaveEditMaterial}
                     />
                 ) : (
@@ -1016,12 +1095,27 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                     >
                         {editingMaterial && (
                             <div className="edit-modal-content">
-                                <div className="modal-header-info">
-                                    <div className="header-icon">📦</div>
-                                    <div className="header-details">
-                                        <div className="header-title">{editingMaterial.Material_Name}</div>
-                                        <div className="header-subtitle">Uređivanje detalja materijala</div>
-                                    </div>
+                                <div className="form-field" style={{ marginBottom: '16px' }}>
+                                    <label>Materijal</label>
+                                    <SearchableSelect
+                                        value={editMaterialNewId}
+                                        onChange={(value) => {
+                                            const mat = materials.find(m => m.Material_ID === value);
+                                            if (mat) {
+                                                setEditMaterialNewId(mat.Material_ID);
+                                                setEditMaterialNewName(mat.Name);
+                                                setEditMaterialNewUnit(mat.Unit);
+                                                setEditMaterialNewSupplier(mat.Default_Supplier || '');
+                                                setEditMaterialPrice(mat.Default_Unit_Price);
+                                            }
+                                        }}
+                                        options={materials.map(mat => ({
+                                            value: mat.Material_ID,
+                                            label: mat.Name,
+                                            subLabel: `${mat.Category} • ${mat.Unit}`
+                                        }))}
+                                        placeholder="Pretraži materijale..."
+                                    />
                                 </div>
 
                                 <div className="modal-form-grid">
@@ -1036,7 +1130,7 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                                                 onChange={(e) => setEditMaterialQty(parseFloat(e.target.value) || 0)}
                                                 placeholder="0"
                                             />
-                                            <span className="unit-badge">{editingMaterial.Unit || 'kom'}</span>
+                                            <span className="unit-badge">{editMaterialNewUnit || editingMaterial.Unit || 'kom'}</span>
                                         </div>
                                     </div>
 
@@ -1675,10 +1769,25 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                                                                             return (
                                                                                 <div key={material.ID} className={`material-row ${isInQuickEdit ? 'editing' : ''}`}>
                                                                                     <div className="mat-col-name">
-                                                                                        <span className="material-name-text">{material.Material_Name}</span>
-                                                                                        {material.Is_Essential && <span className="material-indicator essential" title="Esencijalni materijal">⚠️</span>}
-                                                                                        {isGlass && <span className="material-indicator glass">🪟 {glassCount} kom</span>}
-                                                                                        {isAluDoor && <span className="material-indicator alu-door">🚪 {aluDoorCount} kom</span>}
+                                                                                        {isInQuickEdit && !isGlass && !isAluDoor ? (
+                                                                                            <SearchableSelect
+                                                                                                value={editValues.materialId || material.Material_ID}
+                                                                                                onChange={(value) => handleQuickEditMaterialChange(material.ID, value)}
+                                                                                                options={materials.map(mat => ({
+                                                                                                    value: mat.Material_ID,
+                                                                                                    label: mat.Name,
+                                                                                                    subLabel: `${mat.Category} • ${mat.Unit}`
+                                                                                                }))}
+                                                                                                placeholder="Pretraži..."
+                                                                                            />
+                                                                                        ) : (
+                                                                                            <>
+                                                                                                <span className="material-name-text">{material.Material_Name}</span>
+                                                                                                {material.Is_Essential && <span className="material-indicator essential" title="Esencijalni materijal">⚠️</span>}
+                                                                                                {isGlass && <span className="material-indicator glass">🪟 {glassCount} kom</span>}
+                                                                                                {isAluDoor && <span className="material-indicator alu-door">🚪 {aluDoorCount} kom</span>}
+                                                                                            </>
+                                                                                        )}
                                                                                     </div>
                                                                                     <div className="mat-col-qty">
                                                                                         <span className="mobile-label">Kol:</span>

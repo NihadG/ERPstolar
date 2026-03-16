@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef, useCallback, useMemo } from 'react';
+import { useState, useRef, useCallback, useMemo, useEffect } from 'react';
 import Modal from './ui/Modal';
 import type { Material, ProductMaterial } from '@/lib/types';
 import { MATERIAL_CATEGORIES } from '@/lib/types';
@@ -32,13 +32,35 @@ const DEFAULT_FORMATS: Record<string, PanelFormat> = {
 
 // ---- AI MATCHING ----
 // Extract key codes from material name, e.g. "Iveral / U732" → ["u732"], "HPL / U999" → ["u999"]
+// Also catches codes like "H3309", "ST9", "W1000", "F501"
 function extractMaterialCodes(name: string): string[] {
   const lower = name.toLowerCase();
-  // Split on separators, filter out generic words
-  const skip = new Set(['iveral', 'mdf', 'hpl', 'furnir', 'pal', 'dtd', 'farbani', 'lakirani', 'kant', 'traka', 'kk', 'široka']);
-  return lower.split(/[\s\/\-_,]+/)
-    .map(w => w.trim())
-    .filter(w => w.length >= 2 && !skip.has(w));
+  // Match alphanumeric codes: letter(s) + digits, or just digits 3+
+  const codePattern = /\b([a-z]{1,3}\d{2,5})\b/g;
+  const codes: string[] = [];
+  let m;
+  while ((m = codePattern.exec(lower)) !== null) {
+    const code = m[1];
+    // Skip generic words that look like codes
+    const skip = new Set(['mdf', 'hpl', 'dtd', 'pal', 'abs', 'kk']);
+    if (!skip.has(code)) codes.push(code);
+  }
+  // Also extract standalone number codes (e.g. "18", "732")
+  const numPattern = /\b(\d{3,5})\b/g;
+  while ((m = numPattern.exec(lower)) !== null) {
+    if (!codes.includes(m[1])) codes.push(m[1]);
+  }
+  return codes;
+}
+
+// Extract thickness from label, e.g. "MDF 18" → 18, "Iveral 18mm" → 18
+function extractThickness(label: string): number | null {
+  const m = label.match(/\b(\d{1,2})\s*mm\b/i) || label.match(/\b(\d{1,2})\b/);
+  if (m) {
+    const t = parseInt(m[1]);
+    if (t >= 1 && t <= 50) return t; // Reasonable panel thickness range
+  }
+  return null;
 }
 
 function findBestMaterialMatchLocal(
@@ -53,82 +75,88 @@ function findBestMaterialMatchLocal(
   const groupCodes = extractMaterialCodes(materialGroup);
   const labelCodes = extractMaterialCodes(label);
   const allCodes = Array.from(new Set([...groupCodes, ...labelCodes]));
+  const thickness = extractThickness(label);
 
   // --- KANT TRAKA: must be kant + match parent material code ---
   if (category === 'kant' || category === 'kant_siroka') {
+    const isWide = category === 'kant_siroka' || lower.includes('široka') || lower.includes('siroka');
     const kantCandidates = dbMaterials.filter(m => {
       const n = m.Name.toLowerCase();
       return n.includes('kant') || n.includes('traka') || n.includes('abs');
     });
 
-    // Try matching kant + material code (e.g. "Kant U732")
-    for (const code of allCodes) {
-      const match = kantCandidates.find(m => m.Name.toLowerCase().includes(code));
-      if (match) return match;
+    // Score each kant candidate
+    let bestMatch: Material | null = null;
+    let bestScore = 0;
+    for (const candidate of kantCandidates) {
+      const n = candidate.Name.toLowerCase();
+      let score = 0;
+      // Code match is most important
+      for (const code of allCodes) {
+        if (n.includes(code)) { score += 10; break; }
+      }
+      // Width match
+      if (isWide && (n.includes('široka') || n.includes('siroka') || n.includes('43') || n.includes('45'))) score += 3;
+      if (!isWide && !n.includes('široka') && !n.includes('siroka')) score += 1;
+      if (score > bestScore) { bestScore = score; bestMatch = candidate; }
     }
-
-    // No code match → leave unmatched so user picks manually
-    return null;
+    return bestScore >= 10 ? bestMatch : null; // Require code match
   }
 
-  // --- PLOČA (MDF, Iveral): match by type keyword + thickness number ---
+  // --- PLOČA (MDF, Iveral, DTD): match by type keyword + thickness + code ---
   if (category === 'ploca') {
-    // Extract thickness from label, e.g. "MDF 18" → 18
-    const thickMatch = label.match(/(\d+)/);
-    const thickness = thickMatch ? thickMatch[1] : '';
-
-    // Determine type keyword from label
     let typeKw = '';
     if (lower.includes('mdf')) typeKw = 'mdf';
     else if (lower.includes('iveral') || lower.includes('pal') || lower.includes('dtd')) typeKw = 'iveral';
 
-    if (typeKw) {
-      // Best: type + thickness + material code
-      for (const code of allCodes) {
-        const match = dbMaterials.find(m => {
-          const n = m.Name.toLowerCase();
-          return n.includes(typeKw) && (thickness ? n.includes(thickness) : true) && n.includes(code);
-        });
-        if (match) return match;
-      }
+    // Score-based matching
+    let bestMatch: Material | null = null;
+    let bestScore = 0;
+    for (const mat of dbMaterials) {
+      const n = mat.Name.toLowerCase();
+      let score = 0;
 
-      // Good: type + thickness
+      // Type keyword match
+      if (typeKw && n.includes(typeKw)) score += 3;
+      else if (typeKw === 'iveral' && (n.includes('pal') || n.includes('dtd') || n.includes('iveral'))) score += 3;
+
+      // Thickness match
       if (thickness) {
-        const match = dbMaterials.find(m => {
-          const n = m.Name.toLowerCase();
-          return n.includes(typeKw) && n.includes(thickness);
-        });
-        if (match) return match;
+        const matThickness = extractThickness(mat.Name);
+        if (matThickness === thickness) score += 4;
       }
 
-      // OK: just type
-      const match = dbMaterials.find(m => m.Name.toLowerCase().includes(typeKw));
-      if (match) return match;
-    }
+      // Material code match (strongest signal)
+      for (const code of allCodes) {
+        if (n.includes(code)) { score += 10; break; }
+      }
 
-    // Fallback: exact or contains
-    const exact = dbMaterials.find(m => m.Name.toLowerCase() === lower);
-    if (exact) return exact;
-    const contains = dbMaterials.find(m => {
-      const n = m.Name.toLowerCase();
-      return n.includes(lower) || lower.includes(n);
-    });
-    return contains || null;
+      if (score > bestScore) { bestScore = score; bestMatch = mat; }
+    }
+    // Require at least type + something else
+    return bestScore >= 7 ? bestMatch : null;
   }
 
   // --- FURNIR / HPL: match by type keyword + material code ---
   if (category === 'furnir' || category === 'hpl') {
     const typeKw = category;
-    for (const code of allCodes) {
-      const match = dbMaterials.find(m => {
-        const n = m.Name.toLowerCase();
-        return n.includes(typeKw) && n.includes(code);
-      });
-      if (match) return match;
+    let bestMatch: Material | null = null;
+    let bestScore = 0;
+    for (const mat of dbMaterials) {
+      const n = mat.Name.toLowerCase();
+      let score = 0;
+      if (n.includes(typeKw)) score += 3;
+      for (const code of allCodes) {
+        if (n.includes(code)) { score += 10; break; }
+      }
+      // Word overlap from group name
+      const groupWords = materialGroup.toLowerCase().split(/[\s\/\-_]+/).filter(w => w.length > 2);
+      for (const w of groupWords) {
+        if (n.includes(w) && !['furnir', 'hpl', 'mdf', 'iveral'].includes(w)) score += 2;
+      }
+      if (score > bestScore) { bestScore = score; bestMatch = mat; }
     }
-    // Just type
-    const match = dbMaterials.find(m => m.Name.toLowerCase().includes(typeKw));
-    return match || null;
+    return bestScore >= 5 ? bestMatch : null;
   }
 
   // --- FARBANJE / LAKIRANJE ---
@@ -150,12 +178,15 @@ function findBestMaterialMatchLocal(
     for (const word of words) {
       if (matLower.includes(word)) score++;
     }
+    for (const code of allCodes) {
+      if (matLower.includes(code)) score += 5;
+    }
     if (score > bestScore) {
       bestScore = score;
       bestMatch = mat;
     }
   }
-  return bestScore >= 1 ? bestMatch : null;
+  return bestScore >= 2 ? bestMatch : null;
 }
 
 async function matchWithGeminiAI(
@@ -239,6 +270,11 @@ export default function SketchUpImportModal({
   const [isAiMatching, setIsAiMatching] = useState(false);
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
 
+  // Searchable dropdown state
+  const [openDropdownIdx, setOpenDropdownIdx] = useState<number | null>(null);
+  const [dropdownSearch, setDropdownSearch] = useState('');
+  const dropdownRef = useRef<HTMLDivElement>(null);
+
   // "Add new material" sub-modal
   const [newMaterialModal, setNewMaterialModal] = useState(false);
   const [newMaterial, setNewMaterial] = useState<Partial<Material>>({ Category: 'Ploča', Unit: 'kom' });
@@ -256,6 +292,42 @@ export default function SketchUpImportModal({
     return combined;
   }, [dbMaterials, currentDbMaterials]);
 
+  // Group materials by category, "Ploče i trake" first, then alphabetical categories, materials sorted A-Z within each
+  const groupedMaterials = useMemo(() => {
+    const categoryOrder = ['Ploče i trake', ...MATERIAL_CATEGORIES.filter(c => c !== 'Ploče i trake')];
+    const groups: { category: string; materials: Material[] }[] = [];
+
+    for (const cat of categoryOrder) {
+      const mats = liveMaterials
+        .filter(m => m.Category === cat)
+        .sort((a, b) => a.Name.localeCompare(b.Name, 'bs'));
+      if (mats.length > 0) groups.push({ category: cat, materials: mats });
+    }
+
+    // Also add materials with categories not in MATERIAL_CATEGORIES
+    const knownCats = new Set(categoryOrder);
+    const uncategorized = liveMaterials
+      .filter(m => !knownCats.has(m.Category))
+      .sort((a, b) => a.Name.localeCompare(b.Name, 'bs'));
+    if (uncategorized.length > 0) groups.push({ category: 'Ostalo', materials: uncategorized });
+
+    return groups;
+  }, [liveMaterials]);
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+        setOpenDropdownIdx(null);
+        setDropdownSearch('');
+      }
+    };
+    if (openDropdownIdx !== null) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [openDropdownIdx]);
+
   // ---- RESET ----
   const resetWizard = useCallback(() => {
     setStep(1);
@@ -267,6 +339,8 @@ export default function SketchUpImportModal({
     setCalcResults([]);
     setMatchStates([]);
     setExpandedGroups(new Set());
+    setOpenDropdownIdx(null);
+    setDropdownSearch('');
     setImportResults(null);
     setImportProgress({ current: 0, total: 0 });
     setCurrentDbMaterials([]);
@@ -402,10 +476,11 @@ export default function SketchUpImportModal({
       });
     });
 
-    // Try AI matching
+    // Try AI matching — filter to only "Ploče i trake" materials to speed up search
+    const ploceMaterials = liveMaterials.filter(m => m.Category === 'Ploče i trake');
     let aiMatches: Record<string, string> = {};
     try {
-      aiMatches = await matchWithGeminiAI(allItems, liveMaterials);
+      aiMatches = await matchWithGeminiAI(allItems, ploceMaterials);
     } catch { /* fallback */ }
 
     // Build match states — Pass 1: match everything
@@ -476,6 +551,11 @@ export default function SketchUpImportModal({
       updated[idx] = { ...updated[idx], matchedMaterialId: materialId, matchedMaterial: mat };
       return updated;
     });
+  };
+
+  // Remove a material row from results
+  const removeMatchItem = (idx: number) => {
+    setMatchStates(prev => prev.filter((_, i) => i !== idx));
   };
 
   const toggleGroup = (name: string) => {
@@ -836,19 +916,79 @@ export default function SketchUpImportModal({
                                 <span className="muted">{oi.unit}</span>
                               </div>
                               <div className="result-row-match">
-                                <select value={ms.matchedMaterialId} onChange={e => updateMatch(globalIdx, e.target.value)}
-                                  className={ms.matchedMaterial ? 'matched' : 'unmatched'}>
-                                  <option value="">— Odaberi —</option>
-                                  {liveMaterials.map(m => (
-                                    <option key={m.Material_ID} value={m.Material_ID}>{m.Name} ({m.Unit})</option>
-                                  ))}
-                                </select>
+                                <div className="searchable-dropdown" ref={openDropdownIdx === globalIdx ? dropdownRef : undefined}>
+                                  <button
+                                    type="button"
+                                    className={`searchable-dropdown-trigger ${ms.matchedMaterial ? 'matched' : 'unmatched'}`}
+                                    onClick={() => {
+                                      setOpenDropdownIdx(openDropdownIdx === globalIdx ? null : globalIdx);
+                                      setDropdownSearch('');
+                                    }}
+                                  >
+                                    <span className="dropdown-trigger-text">
+                                      {ms.matchedMaterial ? `${ms.matchedMaterial.Name} (${ms.matchedMaterial.Unit})` : '— Odaberi —'}
+                                    </span>
+                                    <span className="material-icons-round" style={{ fontSize: 14 }}>expand_more</span>
+                                  </button>
+                                  {openDropdownIdx === globalIdx && (
+                                    <div className="searchable-dropdown-menu">
+                                      <div className="dropdown-search-wrap">
+                                        <span className="material-icons-round" style={{ fontSize: 15, color: 'var(--text-secondary)' }}>search</span>
+                                        <input
+                                          type="text"
+                                          className="dropdown-search-input"
+                                          placeholder="Traži materijal..."
+                                          value={dropdownSearch}
+                                          onChange={e => setDropdownSearch(e.target.value)}
+                                          autoFocus
+                                          onClick={e => e.stopPropagation()}
+                                        />
+                                      </div>
+                                      <div className="dropdown-options-list">
+                                        <div
+                                          className={`dropdown-option ${!ms.matchedMaterialId ? 'selected' : ''}`}
+                                          onClick={() => { updateMatch(globalIdx, ''); setOpenDropdownIdx(null); setDropdownSearch(''); }}
+                                        >
+                                          — Odaberi —
+                                        </div>
+                                        {groupedMaterials.map(group => {
+                                          const searchLower = dropdownSearch.toLowerCase();
+                                          const filteredMats = group.materials.filter(m =>
+                                            m.Name.toLowerCase().includes(searchLower)
+                                          );
+                                          if (filteredMats.length === 0) return null;
+                                          return (
+                                            <div key={group.category} className="dropdown-category-group">
+                                              <div className="dropdown-category-label">{group.category}</div>
+                                              {filteredMats.map(m => (
+                                                <div
+                                                  key={m.Material_ID}
+                                                  className={`dropdown-option ${ms.matchedMaterialId === m.Material_ID ? 'selected' : ''}`}
+                                                  onClick={() => { updateMatch(globalIdx, m.Material_ID); setOpenDropdownIdx(null); setDropdownSearch(''); }}
+                                                >
+                                                  {m.Name} <span className="muted">({m.Unit})</span>
+                                                </div>
+                                              ))}
+                                            </div>
+                                          );
+                                        })}
+                                      </div>
+                                    </div>
+                                  )}
+                                </div>
                                 {!ms.matchedMaterial && (
                                   <button className="btn-create-mat" onClick={() => openNewMaterialModal(globalIdx, oi.label)} title="Kreiraj novi materijal">
                                     <span className="material-icons-round" style={{ fontSize: 14 }}>add</span> Kreiraj
                                   </button>
                                 )}
                               </div>
+                              <button
+                                className="icon-btn-sm danger result-row-delete"
+                                onClick={() => removeMatchItem(globalIdx)}
+                                title="Ukloni stavku"
+                              >
+                                <span className="material-icons-round" style={{ fontSize: 14 }}>close</span>
+                              </button>
                             </div>
                           );
                         })}

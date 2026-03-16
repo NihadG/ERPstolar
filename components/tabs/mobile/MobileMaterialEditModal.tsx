@@ -2,16 +2,18 @@
 
 import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import type { ProductMaterial } from '@/lib/types';
+import type { ProductMaterial, Material } from '@/lib/types';
+import { SearchableSelect } from '@/components/ui/SearchableSelect';
 
 interface MobileMaterialEditModalProps {
     isOpen: boolean;
     onClose: () => void;
     material: ProductMaterial | null;
-    onSave: (id: string, updates: { Quantity: number; Unit_Price: number; Total_Price: number; Is_Essential: boolean }) => void;
+    materials?: Material[];
+    onSave: (id: string, updates: { Quantity: number; Unit_Price: number; Total_Price: number; Is_Essential: boolean; Material_ID?: string; Material_Name?: string; Unit?: string; Supplier?: string }) => void;
 }
 
-export default function MobileMaterialEditModal({ isOpen, onClose, material, onSave }: MobileMaterialEditModalProps) {
+export default function MobileMaterialEditModal({ isOpen, onClose, material, materials: materialsCatalog, onSave }: MobileMaterialEditModalProps) {
     const [shouldRender, setShouldRender] = useState(isOpen);
     const [animationClass, setAnimationClass] = useState('');
 
@@ -19,12 +21,20 @@ export default function MobileMaterialEditModal({ isOpen, onClose, material, onS
     const [quantity, setQuantity] = useState(0);
     const [price, setPrice] = useState(0);
     const [isEssential, setIsEssential] = useState(false);
+    const [selectedMaterialId, setSelectedMaterialId] = useState('');
+    const [selectedMaterialName, setSelectedMaterialName] = useState('');
+    const [selectedUnit, setSelectedUnit] = useState('');
+    const [selectedSupplier, setSelectedSupplier] = useState('');
 
     useEffect(() => {
         if (isOpen && material) {
             setQuantity(material.Quantity || 0);
             setPrice(material.Unit_Price || 0);
             setIsEssential(material.Is_Essential || false);
+            setSelectedMaterialId(material.Material_ID || '');
+            setSelectedMaterialName(material.Material_Name || '');
+            setSelectedUnit(material.Unit || '');
+            setSelectedSupplier(material.Supplier || '');
 
             setShouldRender(true);
             requestAnimationFrame(() => {
@@ -46,12 +56,20 @@ export default function MobileMaterialEditModal({ isOpen, onClose, material, onS
     if (!shouldRender || !material) return null;
 
     const handleSave = () => {
-        onSave(material.ID, {
+        const updates: any = {
             Quantity: quantity,
             Unit_Price: price,
             Total_Price: quantity * price,
             Is_Essential: isEssential
-        });
+        };
+        // If material was changed, include material fields
+        if (selectedMaterialId && selectedMaterialId !== material!.Material_ID) {
+            updates.Material_ID = selectedMaterialId;
+            updates.Material_Name = selectedMaterialName;
+            updates.Unit = selectedUnit;
+            updates.Supplier = selectedSupplier;
+        }
+        onSave(material!.ID, updates);
     };
 
     const handleIncrement = (amount: number) => {
@@ -78,7 +96,7 @@ export default function MobileMaterialEditModal({ isOpen, onClose, material, onS
                     </div>
                     <div className="header-text">
                         <h3>Uredi Materijal</h3>
-                        <p>{material.Material_Name}</p>
+                        <p>{selectedMaterialName || material.Material_Name}</p>
                     </div>
                     <button className="close-btn" onClick={onClose}>
                         <span className="material-icons-round">close</span>
@@ -87,9 +105,37 @@ export default function MobileMaterialEditModal({ isOpen, onClose, material, onS
 
                 {/* Content */}
                 <div className="sheet-content">
+                    {/* Material Selector */}
+                    {materialsCatalog && materialsCatalog.length > 0 && (
+                        <div className="control-section">
+                            <label className="section-label">Materijal</label>
+                            <SearchableSelect
+                                value={selectedMaterialId}
+                                onChange={(value) => {
+                                    const mat = materialsCatalog.find(m => m.Material_ID === value);
+                                    if (mat) {
+                                        setSelectedMaterialId(mat.Material_ID);
+                                        setSelectedMaterialName(mat.Name);
+                                        setSelectedUnit(mat.Unit);
+                                        setSelectedSupplier(mat.Default_Supplier || '');
+                                        setPrice(mat.Default_Unit_Price);
+                                    }
+                                }}
+                                options={materialsCatalog.map(mat => ({
+                                    value: mat.Material_ID,
+                                    label: mat.Name,
+                                    subLabel: `${mat.Category} • ${mat.Unit}`
+                                }))}
+                                placeholder="Pretraži materijale..."
+                            />
+                        </div>
+                    )}
+
+                    <div className="divider" />
+
                     {/* Quantity Section */}
                     <div className="control-section">
-                        <label className="section-label">Količina ({material.Unit})</label>
+                        <label className="section-label">Količina ({selectedUnit || material.Unit})</label>
                         <div className="quantity-control-large">
                             <button
                                 className="qty-btn"

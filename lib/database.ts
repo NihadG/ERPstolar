@@ -696,8 +696,11 @@ export async function addMaterialToProduct(data: Partial<ProductMaterial>, organ
 
         await addDoc(collection(db, COLLECTIONS.PRODUCT_MATERIALS), data);
 
+        // Fire-and-forget: recalculate in background to avoid 2-3s delay
         if (data.Product_ID) {
-            await recalculateProductCost(data.Product_ID, organizationId);
+            recalculateProductCost(data.Product_ID, organizationId).catch(err =>
+                console.warn('Background recalculateProductCost error (non-critical):', err)
+            );
         }
 
         return { success: true, data: { ID: data.ID }, message: 'Materijal dodan' };
@@ -808,8 +811,11 @@ export async function updateProductMaterial(materialId: string, data: Partial<Pr
         const { Organization_ID, ...updateData } = merged;
         await updateDoc(snapshot.docs[0].ref, updateData as Record<string, unknown>);
 
+        // Fire-and-forget: recalculate in background for faster UI response
         if (merged.Product_ID) {
-            await recalculateProductCost(merged.Product_ID, organizationId);
+            recalculateProductCost(merged.Product_ID, organizationId).catch(err =>
+                console.warn('Background recalculateProductCost error (non-critical):', err)
+            );
         }
 
         return { success: true, message: 'Materijal ažuriran' };

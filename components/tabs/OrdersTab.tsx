@@ -827,7 +827,7 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
         const glassItems: { item: OrderItem; pieces: any[] }[] = [];
         const aluDoorItems: { item: OrderItem; doors: any[] }[] = [];
 
-        (currentOrder.items || []).forEach(item => {
+        (currentOrder.items || []).sort((a, b) => (a.Material_Name || '').localeCompare(b.Material_Name || '', 'hr')).forEach(item => {
             let foundGlass = false;
             let foundAluDoor = false;
 
@@ -1061,7 +1061,7 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
             const glassItems: { item: OrderItem; pieces: any[] }[] = [];
             const aluDoorItems: { item: OrderItem; doors: any[] }[] = [];
 
-            (order.items || []).forEach(item => {
+            (order.items || []).sort((a, b) => (a.Material_Name || '').localeCompare(b.Material_Name || '', 'hr')).forEach(item => {
                 let foundGlass = false;
                 let foundAluDoor = false;
 

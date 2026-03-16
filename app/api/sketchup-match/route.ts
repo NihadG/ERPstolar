@@ -23,7 +23,7 @@ export async function POST(request: NextRequest) {
         `${i}. "${oi.label}" (${oi.category}, ${oi.unit})`)
       .join('\n');
 
-    const prompt = `Ti si AI za stolarsku ERP aplikaciju. Moraš povezati kalkulirane stavke sa materijalima iz baze.
+    const prompt = `Ti si AI asistent za stolarsku ERP aplikaciju. Tvoj zadatak je da povežeš kalkulirane stavke materijala sa materijalima iz baze podataka.
 
 KALKULIRANE STAVKE (iz SketchUp importa):
 ${itemList}
@@ -31,16 +31,15 @@ ${itemList}
 MATERIJALI U BAZI:
 ${materialList}
 
-PRAVILA:
-1. Za svaku stavku pronađi NAJBOLJI match iz baze na osnovu naziva i koda materijala (npr. U732, U999, Hrast)
-2. "MDF 18" treba matchati na MDF ploču debljine 18mm
-3. "Furnir / Hrast" treba matchati na furnir hrast materijal
-4. "Kant traka" treba matchati na kant traku SA ISTIM KODOM kao i ploča (npr. ako je ploča U732, kant traka je Kant U732)
-5. "Lakiranje" ili "Farbanje" treba matchati na uslugu farbanja/lakiranja
-6. "HPL / U999" treba matchati na HPL materijal sa kodom U999
-7. Ako nema dobrog matcha, koristi prazan string ""
+PRAVILA MATCHIRANJA (po prioritetu):
+1. KODOVI MATERIJALA su najvažniji signal za matching. Kodovi su alfanumerički (npr. U732, H3309, W1000, ST9, F501). Ako stavka i materijal iz baze dijele ISTI KOD, to je gotovo siguran match.
+2. Za PLO ČE: matchaj po tipu (MDF/Iveral/DTD/PAL) + debljina (npr. 18mm) + kodu materijala. Primjer: "MDF 18 / U732" → materijal koji sadrži "MDF", "18" i "U732".
+3. Za KANT TRAKE: matchaj kant traku koja ima ISTI KOD kao pripadajuća ploča u istoj grupi. Primjer: ako je ploča "Iveral U732", kant traka je "Kant U732" ili "ABS traka U732".
+4. Za FURNIR/HPL: matchaj po tipu + kodu. Primjer: "Furnir / Hrast" → materijal sa "furnir" i "hrast".
+5. Za FARBANJE/LAKIRANJE: matchaj na materijal sa riječima "farbanje", "lakiranje" ili "bojenje".
+6. Ako nema pouzdanog matcha, koristi prazan string "". NIKADA ne dodijeli pogrešan materijal — bolje je ostaviti prazno.
 
-Vrati SAMO JSON objekat gdje je ključ INDEKS stavke (string), a vrijednost Material_ID iz baze:
+Vrati SAMO JSON objekat (bez objašnjenja) gdje je ključ INDEKS stavke (string), a vrijednost Material_ID iz baze:
 {"0": "material-id-123", "1": "", "2": "material-id-456"}`;
 
     const result = await Promise.race([
