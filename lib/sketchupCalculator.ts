@@ -230,13 +230,20 @@ export function calculateComponent(comp: SketchUpComponent, defaultFormat: Panel
     }
 
     // Lakiranje furnira:
-    // - Obje strane skupi furnir (hasDoubleExpensive) → m² × 2
-    // - Lice + naličje KK (default) → m² × 1.3 (KK strana treba malo laka)
-    const lacquerCoeff = hasDoubleExpensive ? 2 : 1.3;
+    // Base = actual furnir m² per side (panelQty * formatM2 * 1.4)
+    const furnirSideM2 = panelQty * formatM2 * 1.4;
+    let lacquerQty: number;
+    if (hasDoubleExpensive) {
+      // Obostrano furnir: total furnir m² (obje strane) × 1.1
+      lacquerQty = furnirSideM2 * 2 * 1.1;
+    } else {
+      // Lice + KK: m² furnira (jedne strane) × 1.2
+      lacquerQty = furnirSideM2 * 1.2;
+    }
     items.push({
       label: 'Lakiranje',
       unit: 'm2',
-      quantity: parseFloat((panelQty * formatM2 * lacquerCoeff).toFixed(2)),
+      quantity: parseFloat(lacquerQty.toFixed(2)),
       category: 'farbanje',
     });
   }
@@ -272,16 +279,19 @@ export function calculateComponent(comp: SketchUpComponent, defaultFormat: Panel
     }
   }
 
-  // 6. Edge banding (kant traka)
-  const edgePerimeter = ((comp.height + comp.width) * 2 * comp.quantity) / 1000; // mm → m
-  const isThick = comp.thickness >= 36;
+  // 6. Edge banding (kant traka) — only for iveral and HPL
+  // MDF edges are painted, furnir edges are lacquered — no tape needed
+  if (materialType !== 'mdf' && materialType !== 'furnir') {
+    const edgePerimeter = ((comp.height + comp.width) * 2 * comp.quantity) / 1000 * 1.2; // mm → m, ×1.2 waste
+    const isThick = comp.thickness >= 36;
 
-  items.push({
-    label: isThick ? 'Široka kant traka' : 'Kant traka',
-    unit: 'm',
-    quantity: parseFloat(edgePerimeter.toFixed(2)),
-    category: isThick ? 'kant_siroka' : 'kant',
-  });
+    items.push({
+      label: isThick ? 'Široka kant traka' : 'Kant traka',
+      unit: 'm',
+      quantity: parseFloat(edgePerimeter.toFixed(2)),
+      category: isThick ? 'kant_siroka' : 'kant',
+    });
+  }
 
   return items;
 }

@@ -70,6 +70,7 @@ interface OrderWizardModalProps {
     formatCurrency: (value: number) => string;
     handleCreateOrder: () => void;
     isSubmitting?: boolean;
+    isEditing?: boolean;
     orderQuantities: Record<string, number>;
     onStockQuantities: Record<string, number>;
     setOrderQuantity: (materialId: string, quantity: number) => void;
@@ -383,7 +384,8 @@ export function OrderWizardModal({
     orderQuantities,
     onStockQuantities,
     setOrderQuantity,
-    setOnStockQuantity
+    setOnStockQuantity,
+    isEditing
 }: OrderWizardModalProps) {
     const canGoNext =
         (wizardStep === 1 && selectedProjectIds.size > 0) ||
@@ -443,7 +445,7 @@ export function OrderWizardModal({
                                     <span className="material-icons-round" style={{ animation: 'spin 1s linear infinite' }}>sync</span>
                                 ) : (
                                     <>
-                                        <span className="wizard-btn-text">Kreiraj</span>
+                                        <span className="wizard-btn-text">{isEditing ? 'Spremi' : 'Kreiraj'}</span>
                                         <span className="material-icons-round">check</span>
                                     </>
                                 )}

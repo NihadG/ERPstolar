@@ -38,6 +38,7 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
     const [projectFilter, setProjectFilter] = useState('');
     const [dateFromFilter, setDateFromFilter] = useState('');
     const [dateToFilter, setDateToFilter] = useState('');
+    const [showReceived, setShowReceived] = useState(false);
 
     // Create Order Wizard
     const [wizardModal, setWizardModal] = useState(false);
@@ -65,6 +66,9 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
     const [deleteOrderId, setDeleteOrderId] = useState<string | null>(null);
     const [deleteOrderStatus, setDeleteOrderStatus] = useState('');
     const [deleteMaterialAction, setDeleteMaterialAction] = useState<'received' | 'reset'>('reset');
+
+    // Editing order state
+    const [editingOrderId, setEditingOrderId] = useState<string | null>(null);
 
     // Current order derived from expanded ID
     const currentOrder = useMemo(() =>
@@ -168,9 +172,17 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
         return projects.filter(p => projectIds.has(p.Project_ID));
     }, [orders, projects]);
 
+    // Count received orders for badge
+    const receivedOrderCount = useMemo(() => {
+        return orders.filter(o => o.Status === 'Primljeno').length;
+    }, [orders]);
+
     // Enhanced filtering
     const filteredOrders = useMemo(() => {
         return orders.filter(order => {
+            // Hide received orders unless toggled on (or status filter explicitly selects them)
+            if (!showReceived && !statusFilter && order.Status === 'Primljeno') return false;
+
             // Search filter
             const matchesSearch = !searchTerm.trim() ||
                 order.Order_Number?.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -203,7 +215,7 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
 
             return matchesSearch && matchesStatus && matchesSupplier && matchesProject && matchesDateFrom && matchesDateTo;
         });
-    }, [orders, searchTerm, statusFilter, supplierFilter, projectFilter, dateFromFilter, dateToFilter]);
+    }, [orders, searchTerm, statusFilter, supplierFilter, projectFilter, dateFromFilter, dateToFilter, showReceived]);
 
     // Sorting
     const sortedOrders = useMemo(() => {
@@ -367,6 +379,7 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
         setSelectedMaterialIds(new Set());
         setOrderQuantities({});
         setOnStockQuantities({});
+        setEditingOrderId(null);
         setWizardModal(true);
     }
 
@@ -505,21 +518,36 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
                 }
             }
 
-            const result = await createOrder({
-                Supplier_ID: selectedSupplierId,
-                Supplier_Name: supplier.Name,
-                Total_Amount: totalAmount,
-                items: items as any,
-                onStockData,
-            }, organizationId!);
-
-            if (result.success) {
-                showToast(result.message, 'success');
-                setWizardModal(false);
-                onRefresh('orders', 'projects');
+            // Optimistic: close wizard and show success immediately
+            setWizardModal(false);
+            const isEditing = editingOrderId;
+            if (isEditing) {
+                showToast('Narudžba ažurirana', 'success');
             } else {
-                showToast(result.message, 'error');
+                showToast('Narudžba kreirana', 'success');
             }
+
+            // Background: if editing, delete old order first, then create new one
+            const createAndRefresh = async () => {
+                try {
+                    if (isEditing) {
+                        await deleteOrder(isEditing, organizationId!, 'reset');
+                    }
+                    const result = await createOrder({
+                        Supplier_ID: selectedSupplierId,
+                        Supplier_Name: supplier.Name,
+                        Total_Amount: totalAmount,
+                        items: items as any,
+                        onStockData,
+                    }, organizationId!);
+                    if (!result.success) showToast(result.message, 'error');
+                } catch {
+                    showToast('Greška pri spremanju narudžbe', 'error');
+                }
+                onRefresh('orders', 'projects');
+            };
+            createAndRefresh();
+            setEditingOrderId(null);
         } finally {
             setIsSubmitting(false);
         }
@@ -560,6 +588,56 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
             setDeleteMaterialAction('reset');
         }
         setDeleteOrderModal(true);
+    }
+
+    // Edit existing order: pre-fill wizard from order data and open at step 2
+    function handleEditOrder(order: Order) {
+        // Find supplier
+        const supplier = suppliers.find(s => s.Supplier_ID === order.Supplier_ID || s.Name === order.Supplier_Name);
+
+        // Collect project/product/material IDs from order items
+        const projectIds = new Set<string>();
+        const productIds = new Set<string>();
+        const materialIds = new Set<string>();
+        const quantities: Record<string, number> = {};
+
+        (order.items || []).forEach(item => {
+            if (item.Project_ID) projectIds.add(item.Project_ID);
+            if (item.Product_ID) productIds.add(item.Product_ID);
+            // Expand grouped material references
+            const matIds = item.Product_Material_IDs || (item.Product_Material_ID ? [item.Product_Material_ID] : []);
+            matIds.forEach(id => {
+                materialIds.add(id);
+                // Distribute order quantity across member materials
+                if (matIds.length > 0) {
+                    quantities[id] = item.Quantity / matIds.length;
+                }
+            });
+        });
+
+        // If no project IDs from items, try to find them from products
+        if (projectIds.size === 0 && productIds.size > 0) {
+            projects.forEach(p => {
+                if (p.products?.some(prod => productIds.has(prod.Product_ID))) {
+                    projectIds.add(p.Project_ID);
+                }
+            });
+        }
+
+        // Set wizard state
+        setSelectedProjectIds(projectIds);
+        setSelectedProductIds(productIds);
+        setSelectedSupplierId(supplier?.Supplier_ID || '');
+        setSelectedMaterialIds(materialIds);
+        setOrderQuantities(quantities);
+        setOnStockQuantities({});
+
+        // Store the order being edited so we can delete it on re-creation
+        setEditingOrderId(order.Order_ID);
+
+        // Open wizard at step 2 (products) so user can change selections
+        setWizardStep(2);
+        setWizardModal(true);
     }
 
     // ── Order status change with confirmation ──
@@ -604,7 +682,7 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
         const orderId = deleteOrderId;
         const materialAction = deleteMaterialAction;
 
-        // Optimistic: close modal and clear expanded state immediately
+        // Optimistic: close modal, clear state, show success immediately
         setDeleteOrderModal(false);
         setDeleteOrderId(null);
         if (expandedOrderId === orderId) {
@@ -612,21 +690,16 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
             setEditMode(false);
             setSelectedItemIds(new Set());
         }
-        showToast('Brisanje narudžbe...', 'info');
+        showToast('Narudžba obrisana', 'success');
 
-        // Run delete in background — don't block UI
-        try {
-            const result = await deleteOrder(orderId, organizationId!, materialAction);
-            if (result.success) {
-                showToast(result.message, 'success');
-            } else {
-                showToast(result.message, 'error');
-            }
-        } catch {
+        // Background: delete and refresh
+        deleteOrder(orderId, organizationId!, materialAction).then(result => {
+            if (!result.success) showToast(result.message, 'error');
+            onRefresh('orders', 'projects');
+        }).catch(() => {
             showToast('Greška pri brisanju narudžbe', 'error');
-        }
-        // Always refresh to sync state
-        onRefresh('orders', 'projects');
+            onRefresh('orders', 'projects');
+        });
     }
 
     async function handleSendOrder(orderId: string) {
@@ -1251,7 +1324,7 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
 
             {/* Grouped Content */}
             <div className="orders-content">
-                {groupedOrders.length === 0 ? (
+                {groupedOrders.length === 0 && receivedOrderCount === 0 ? (
                     <div className="empty-state">
                         <span className="material-icons-round">local_shipping</span>
                         <h3>Nema narudžbi</h3>
@@ -1413,6 +1486,11 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
                                                                 <span className="material-icons-round">more_vert</span>
                                                             </button>
                                                         }>
+                                                            <div className="dropdown-item" onClick={() => handleEditOrder(order)}>
+                                                                <span className="material-icons-round" style={{ fontSize: 18 }}>edit</span>
+                                                                Uredi
+                                                            </div>
+
                                                             <div className="dropdown-item" onClick={() => downloadOrderPDF(order)}>
                                                                 <span className="material-icons-round" style={{ fontSize: 18 }}>picture_as_pdf</span>
                                                                 Preuzmi PDF
@@ -1512,6 +1590,45 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
                         </div>
                     ))
                 )}
+
+                {/* Toggle for received orders */}
+                {receivedOrderCount > 0 && !statusFilter && (
+                    <div style={{
+                        display: 'flex',
+                        justifyContent: 'center',
+                        padding: '16px 0',
+                    }}>
+                        <button
+                            className="btn btn-secondary"
+                            onClick={() => setShowReceived(!showReceived)}
+                            style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '8px',
+                                padding: '10px 20px',
+                                borderRadius: '10px',
+                                fontSize: '13px',
+                            }}
+                        >
+                            <span className="material-icons-round" style={{ fontSize: 18 }}>
+                                {showReceived ? 'visibility_off' : 'visibility'}
+                            </span>
+                            {showReceived ? 'Sakrij primljene' : 'Prikaži primljene'}
+                            {!showReceived && (
+                                <span style={{
+                                    background: 'var(--success)',
+                                    color: 'white',
+                                    borderRadius: '10px',
+                                    padding: '1px 8px',
+                                    fontSize: '12px',
+                                    fontWeight: 600,
+                                }}>
+                                    {receivedOrderCount}
+                                </span>
+                            )}
+                        </button>
+                    </div>
+                )}
             </div>
 
             {/* Order Creation Wizard */}
@@ -1539,6 +1656,7 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
                 formatCurrency={formatCurrency}
                 handleCreateOrder={handleCreateOrder}
                 isSubmitting={isSubmitting}
+                isEditing={!!editingOrderId}
                 orderQuantities={orderQuantities}
                 onStockQuantities={onStockQuantities}
                 setOrderQuantity={(id, qty) => setOrderQuantities(prev => ({ ...prev, [id]: qty }))}
@@ -1557,70 +1675,58 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
                     </>
                 }
             >
-                {/* C1: Smart delete options based on order status */}
-                {deleteOrderStatus === 'Primljeno' ? (
-                    <p style={{ marginBottom: '16px', color: 'var(--text-secondary)' }}>
-                        Svi materijali iz ove narudžbe su već primljeni. Brisanje narudžbe neće utjecati na status materijala.
-                    </p>
-                ) : deleteOrderStatus === 'Nacrt' ? (
-                    <p style={{ marginBottom: '16px', color: 'var(--text-secondary)' }}>
-                        Narudžba još nije poslana. Materijali će biti vraćeni na "Nije naručeno".
-                    </p>
-                ) : (
-                    <>
-                        <p style={{ marginBottom: '16px', color: 'var(--text-secondary)' }}>
-                            Šta želite učiniti s materijalima iz ove narudžbe?
-                        </p>
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                            <label style={{
-                                display: 'flex',
-                                alignItems: 'flex-start',
-                                gap: '12px',
-                                padding: '14px 16px',
-                                borderRadius: '10px',
-                                border: deleteMaterialAction === 'reset' ? '2px solid #2563eb' : '2px solid #e2e8f0',
-                                background: deleteMaterialAction === 'reset' ? '#eff6ff' : 'white',
-                                cursor: 'pointer',
-                                transition: 'all 0.2s'
-                            }}>
-                                <input
-                                    type="radio"
-                                    name="deleteAction"
-                                    checked={deleteMaterialAction === 'reset'}
-                                    onChange={() => setDeleteMaterialAction('reset')}
-                                    style={{ marginTop: '2px' }}
-                                />
-                                <div>
-                                    <div style={{ fontWeight: 600, color: '#1e293b', marginBottom: '2px' }}>Vrati na "Nije naručeno"</div>
-                                    <div style={{ fontSize: '13px', color: '#64748b' }}>Neprimljeni materijali će biti vraćeni u status čekanja. Već primljeni ostaju primljeni.</div>
-                                </div>
-                            </label>
-                            <label style={{
-                                display: 'flex',
-                                alignItems: 'flex-start',
-                                gap: '12px',
-                                padding: '14px 16px',
-                                borderRadius: '10px',
-                                border: deleteMaterialAction === 'received' ? '2px solid #10b981' : '2px solid #e2e8f0',
-                                background: deleteMaterialAction === 'received' ? '#ecfdf5' : 'white',
-                                cursor: 'pointer',
-                                transition: 'all 0.2s'
-                            }}>
-                                <input
-                                    type="radio"
-                                    name="deleteAction"
-                                    checked={deleteMaterialAction === 'received'}
-                                    onChange={() => setDeleteMaterialAction('received')}
-                                    style={{ marginTop: '2px' }}
-                                />
-                                <div>
-                                    <div style={{ fontWeight: 600, color: '#1e293b', marginBottom: '2px' }}>Označi kao primljene</div>
-                                    <div style={{ fontSize: '13px', color: '#64748b' }}>Materijali će biti označeni kao primljeni, npr. ako ste ih nabavili direktno.</div>
-                                </div>
-                            </label>
+                {/* Delete options: always show reset/keep choice */}
+                <p style={{ marginBottom: '16px', color: 'var(--text-secondary)' }}>
+                    Šta želite učiniti s materijalima iz ove narudžbe?
+                </p>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                    <label style={{
+                        display: 'flex',
+                        alignItems: 'flex-start',
+                        gap: '12px',
+                        padding: '14px 16px',
+                        borderRadius: '10px',
+                        border: deleteMaterialAction === 'reset' ? '2px solid #2563eb' : '2px solid #e2e8f0',
+                        background: deleteMaterialAction === 'reset' ? '#eff6ff' : 'white',
+                        cursor: 'pointer',
+                        transition: 'all 0.2s'
+                    }}>
+                        <input
+                            type="radio"
+                            name="deleteAction"
+                            checked={deleteMaterialAction === 'reset'}
+                            onChange={() => setDeleteMaterialAction('reset')}
+                            style={{ marginTop: '2px' }}
+                        />
+                        <div>
+                            <div style={{ fontWeight: 600, color: '#1e293b', marginBottom: '2px' }}>Vrati na "Nije naručeno"</div>
+                            <div style={{ fontSize: '13px', color: '#64748b' }}>Svi materijali će biti vraćeni na početni status čekanja.</div>
                         </div>
-                    </>
-                )}
+                    </label>
+                    <label style={{
+                        display: 'flex',
+                        alignItems: 'flex-start',
+                        gap: '12px',
+                        padding: '14px 16px',
+                        borderRadius: '10px',
+                        border: deleteMaterialAction === 'received' ? '2px solid #10b981' : '2px solid #e2e8f0',
+                        background: deleteMaterialAction === 'received' ? '#ecfdf5' : 'white',
+                        cursor: 'pointer',
+                        transition: 'all 0.2s'
+                    }}>
+                        <input
+                            type="radio"
+                            name="deleteAction"
+                            checked={deleteMaterialAction === 'received'}
+                            onChange={() => setDeleteMaterialAction('received')}
+                            style={{ marginTop: '2px' }}
+                        />
+                        <div>
+                            <div style={{ fontWeight: 600, color: '#1e293b', marginBottom: '2px' }}>Zadrži trenutan status</div>
+                            <div style={{ fontSize: '13px', color: '#64748b' }}>Materijali zadržavaju svoj trenutan status (naručeno, primljeno, itd.).</div>
+                        </div>
+                    </label>
+                </div>
             </Modal>
         </div>
     );

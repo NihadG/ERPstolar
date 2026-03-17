@@ -82,7 +82,7 @@ function findBestMaterialMatchLocal(
     const isWide = category === 'kant_siroka' || lower.includes('široka') || lower.includes('siroka');
     const kantCandidates = dbMaterials.filter(m => {
       const n = m.Name.toLowerCase();
-      return n.includes('kant') || n.includes('traka') || n.includes('abs');
+      return n.includes('kant') || n.includes('traka') || n.includes('abs') || n.startsWith('kt ') || n.startsWith('kt/');
     });
 
     // Score each kant candidate
@@ -114,11 +114,14 @@ function findBestMaterialMatchLocal(
     let bestScore = 0;
     for (const mat of dbMaterials) {
       const n = mat.Name.toLowerCase();
+      // Skip edge banding materials — they must not match panels
+      if (n.includes('kant') || n.startsWith('kt ') || n.startsWith('kt/') || n.includes('traka')) continue;
       let score = 0;
 
-      // Type keyword match
-      if (typeKw && n.includes(typeKw)) score += 3;
+      // Type keyword match — REQUIRED
+      if (typeKw === 'mdf' && n.includes('mdf')) score += 3;
       else if (typeKw === 'iveral' && (n.includes('pal') || n.includes('dtd') || n.includes('iveral'))) score += 3;
+      else if (typeKw) continue; // type keyword required but not found — skip
 
       // Thickness match
       if (thickness) {
@@ -131,6 +134,13 @@ function findBestMaterialMatchLocal(
         if (n.includes(code)) { score += 10; break; }
       }
 
+      // Prefer shorter/exact name — "MDF 18" over "MDF 18 Negorivi"
+      // Bonus for name that closely matches the label
+      const labelNorm = lower.replace(/[^a-z0-9]/g, '');
+      const matNorm = n.replace(/[^a-z0-9]/g, '');
+      if (matNorm === labelNorm) score += 5; // exact match
+      else if (n.includes(lower) || lower.includes(n.replace(/\s*\(.*\)/, '').trim())) score += 3; // substring match
+
       if (score > bestScore) { bestScore = score; bestMatch = mat; }
     }
     // Require at least type + something else
@@ -138,22 +148,40 @@ function findBestMaterialMatchLocal(
   }
 
   // --- FURNIR / HPL: match by type keyword + material code ---
+  // IMPORTANT: exclude KT (kant traka / edge banding) from candidates
+  // IMPORTANT: REQUIRE the type keyword in the material name
   if (category === 'furnir' || category === 'hpl') {
     const typeKw = category;
     let bestMatch: Material | null = null;
     let bestScore = 0;
     for (const mat of dbMaterials) {
       const n = mat.Name.toLowerCase();
-      let score = 0;
-      if (n.includes(typeKw)) score += 3;
+      // Skip edge banding materials — they must not match panels
+      if (n.includes('kant') || n.startsWith('kt ') || n.startsWith('kt/') || n.includes('traka')) continue;
+      // REQUIRE type keyword — material MUST contain 'hpl' or 'furnir' in its name
+      if (!n.includes(typeKw)) continue;
+      let score = 3; // base score for having the type keyword
       for (const code of allCodes) {
         if (n.includes(code)) { score += 10; break; }
       }
-      // Word overlap from group name
+      // Word overlap from group name — but penalize extra words
       const groupWords = materialGroup.toLowerCase().split(/[\s\/\-_]+/).filter(w => w.length > 2);
-      for (const w of groupWords) {
-        if (n.includes(w) && !['furnir', 'hpl', 'mdf', 'iveral'].includes(w)) score += 2;
+      const matWords = n.split(/[\s\/\-_()]+/).filter(w => w.length > 2);
+      const skipWords = new Set(['furnir', 'hpl', 'mdf', 'iveral', 'kom', 'kk']);
+      const meaningfulGroupWords = groupWords.filter(w => !skipWords.has(w));
+      const meaningfulMatWords = matWords.filter(w => !skipWords.has(w));
+      
+      let wordMatches = 0;
+      for (const w of meaningfulGroupWords) {
+        if (n.includes(w)) wordMatches++;
       }
+      score += wordMatches * 2;
+
+      // Penalize extra words in material name that aren't in the label
+      // "Furnir / Hrast" should beat "Furnir / Dimljeni Hrast" for label "Furnir / Hrast"
+      const extraWords = meaningfulMatWords.filter(w => !meaningfulGroupWords.some(gw => w.includes(gw) || gw.includes(w)));
+      if (extraWords.length > 0) score -= extraWords.length;
+
       if (score > bestScore) { bestScore = score; bestMatch = mat; }
     }
     return bestScore >= 5 ? bestMatch : null;
@@ -161,9 +189,18 @@ function findBestMaterialMatchLocal(
 
   // --- FARBANJE / LAKIRANJE ---
   if (category === 'farbanje') {
+    // First: try exact name match "Lakiranje"
+    const exactMatch = dbMaterials.find(m => m.Name.toLowerCase().trim() === 'lakiranje');
+    if (exactMatch) return exactMatch;
+
+    // Then: search for painting/lacquering materials, excluding unrelated items
     const match = dbMaterials.find(m => {
       const n = m.Name.toLowerCase();
-      return n.includes('farb') || n.includes('lak') || n.includes('bojenje');
+      // Exclude hardware, glass, and other unrelated items
+      if (n.includes('vodili') || n.includes('blum') || n.includes('okov') || 
+          n.includes('šarka') || n.includes('izvlak') || n.includes('ručic') ||
+          n.includes('staklo') || n.includes('lakobel')) return false;
+      return n.includes('farb') || n.includes('lakir') || n.includes('bojenje');
     });
     return match || null;
   }
@@ -174,6 +211,10 @@ function findBestMaterialMatchLocal(
   let bestScore = 0;
   for (const mat of dbMaterials) {
     const matLower = mat.Name.toLowerCase();
+    // Don't let fallback match hardware for non-hardware categories
+    if ((category === 'farbanje' || category === 'furnir' || category === 'hpl') &&
+        (matLower.includes('vodili') || matLower.includes('blum') || matLower.includes('okov') ||
+         matLower.includes('šarka') || matLower.includes('izvlak'))) continue;
     let score = 0;
     for (const word of words) {
       if (matLower.includes(word)) score++;
@@ -453,8 +494,8 @@ export default function SketchUpImportModal({
     ));
   };
 
-  // ---- STEP 2 → 3: CALCULATE + AI MATCH ----
-  const handleCalculate = async () => {
+  // ---- STEP 2 → 3: CALCULATE + LOCAL MATCH ----
+  const handleCalculate = () => {
     // Apply per-material format to components
     const withFormats = components.map(comp => {
       const mf = materialFormats.find(f => f.materialName === comp.material);
@@ -464,40 +505,20 @@ export default function SketchUpImportModal({
     const results = calculateAll(withFormats, DEFAULT_PANEL_FORMAT);
     setCalcResults(results);
     setStep(3);
-    setIsAiMatching(true);
     // Expand all by default
     setExpandedGroups(new Set(results.map(r => r.materialName)));
 
-    // Collect all output items for AI matching
-    const allItems: { label: string; category: string; unit: string }[] = [];
-    results.forEach(result => {
-      result.outputItems.forEach(item => {
-        allItems.push({ label: item.label, category: item.category, unit: item.unit });
-      });
-    });
-
-    // Try AI matching — filter to only "Ploče i trake" materials to speed up search
-    const ploceMaterials = liveMaterials.filter(m => m.Category === 'Ploče i trake');
-    let aiMatches: Record<string, string> = {};
-    try {
-      aiMatches = await matchWithGeminiAI(allItems, ploceMaterials);
-    } catch { /* fallback */ }
-
-    // Build match states — Pass 1: match everything
+    // Build match states — LOCAL matching only (instant)
     const matches: MaterialMatchState[] = [];
-    let idx = 0;
     for (const result of results) {
       for (const item of result.outputItems) {
-        const aiMatchId = aiMatches[String(idx)];
-        let matched = aiMatchId ? liveMaterials.find(m => m.Material_ID === aiMatchId) || null : null;
-        if (!matched) matched = findBestMaterialMatchLocal(item.label, item.category, result.materialName, liveMaterials);
+        const matched = findBestMaterialMatchLocal(item.label, item.category, result.materialName, liveMaterials);
         matches.push({
           outputItem: item,
           materialGroup: result.materialName,
           matchedMaterialId: matched?.Material_ID || '',
           matchedMaterial: matched,
         });
-        idx++;
       }
     }
 
@@ -522,7 +543,7 @@ export default function SketchUpImportModal({
         // Search kant candidates using matched panel's codes
         const kantCandidates = liveMaterials.filter(m => {
           const n = m.Name.toLowerCase();
-          return n.includes('kant') || n.includes('traka') || n.includes('abs');
+          return n.includes('kant') || n.includes('traka') || n.includes('abs') || n.startsWith('kt ') || n.startsWith('kt/');
         });
 
         for (const code of panelCodes) {
@@ -540,6 +561,51 @@ export default function SketchUpImportModal({
     }
 
     setMatchStates(matches);
+  };
+
+  // ---- OPTIONAL AI IMPROVE (user-triggered) ----
+  const handleAiImprove = async () => {
+    setIsAiMatching(true);
+
+    // Collect all output items
+    const allItems: { label: string; category: string; unit: string }[] = [];
+    calcResults.forEach(result => {
+      result.outputItems.forEach(item => {
+        allItems.push({ label: item.label, category: item.category, unit: item.unit });
+      });
+    });
+
+    // Call AI matching
+    const ploceMaterials = liveMaterials.filter(m => m.Category === 'Ploče i trake');
+    let aiMatches: Record<string, string> = {};
+    try {
+      aiMatches = await matchWithGeminiAI(allItems, ploceMaterials);
+    } catch { /* fallback */ }
+
+    // Only overwrite UNMATCHED items with AI results
+    setMatchStates(prev => {
+      const updated = [...prev];
+      let idx = 0;
+      for (const result of calcResults) {
+        for (const item of result.outputItems) {
+          const aiMatchId = aiMatches[String(idx)];
+          // Only apply AI match if current item is unmatched
+          if (!updated[idx]?.matchedMaterial && aiMatchId) {
+            const aiMat = liveMaterials.find(m => m.Material_ID === aiMatchId) || null;
+            if (aiMat) {
+              updated[idx] = {
+                ...updated[idx],
+                matchedMaterialId: aiMat.Material_ID,
+                matchedMaterial: aiMat,
+              };
+            }
+          }
+          idx++;
+        }
+      }
+      return updated;
+    });
+
     setIsAiMatching(false);
   };
 
@@ -860,13 +926,21 @@ export default function SketchUpImportModal({
             {isAiMatching && (
               <div className="sketchup-ai-bar">
                 <span className="material-icons-round spin">sync</span>
-                <span>AI analizira i matchira materijale...</span>
+                <span>AI analizira i pokušava popuniti prazne materijale...</span>
               </div>
             )}
 
             {unmatchedCount > 0 && !isAiMatching && (
-              <div className="sketchup-warnings" style={{ marginBottom: 12 }}>
-                <div className="warning-header"><span className="material-icons-round" style={{ fontSize: 16 }}>info</span> {unmatchedCount} stavki nema match u bazi — kliknite <strong>+ Kreiraj</strong> da dodate materijal</div>
+              <div className="sketchup-warnings" style={{ marginBottom: 12, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+                <div className="warning-header" style={{ flex: 1 }}><span className="material-icons-round" style={{ fontSize: 16 }}>info</span> {unmatchedCount} stavki nema match — koristite <strong>+ Kreiraj</strong> ili probajte AI</div>
+                <button
+                  className="btn btn-secondary"
+                  onClick={handleAiImprove}
+                  style={{ whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: 6, padding: '6px 14px', fontSize: '12px' }}
+                >
+                  <span className="material-icons-round" style={{ fontSize: 16 }}>auto_fix_high</span>
+                  AI Unaprijedi
+                </button>
               </div>
             )}
 
@@ -951,14 +1025,14 @@ export default function SketchUpImportModal({
                                         >
                                           — Odaberi —
                                         </div>
-                                        {groupedMaterials.map(group => {
+                                        {groupedMaterials.map((group, gIdx) => {
                                           const searchLower = dropdownSearch.toLowerCase();
                                           const filteredMats = group.materials.filter(m =>
                                             m.Name.toLowerCase().includes(searchLower)
                                           );
                                           if (filteredMats.length === 0) return null;
                                           return (
-                                            <div key={group.category} className="dropdown-category-group">
+                                            <div key={`cat-${gIdx}`} className="dropdown-category-group">
                                               <div className="dropdown-category-label">{group.category}</div>
                                               {filteredMats.map(m => (
                                                 <div

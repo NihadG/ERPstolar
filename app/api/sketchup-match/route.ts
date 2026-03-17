@@ -31,13 +31,18 @@ ${itemList}
 MATERIJALI U BAZI:
 ${materialList}
 
-PRAVILA MATCHIRANJA (po prioritetu):
-1. KODOVI MATERIJALA su najvažniji signal za matching. Kodovi su alfanumerički (npr. U732, H3309, W1000, ST9, F501). Ako stavka i materijal iz baze dijele ISTI KOD, to je gotovo siguran match.
-2. Za PLO ČE: matchaj po tipu (MDF/Iveral/DTD/PAL) + debljina (npr. 18mm) + kodu materijala. Primjer: "MDF 18 / U732" → materijal koji sadrži "MDF", "18" i "U732".
-3. Za KANT TRAKE: matchaj kant traku koja ima ISTI KOD kao pripadajuća ploča u istoj grupi. Primjer: ako je ploča "Iveral U732", kant traka je "Kant U732" ili "ABS traka U732".
-4. Za FURNIR/HPL: matchaj po tipu + kodu. Primjer: "Furnir / Hrast" → materijal sa "furnir" i "hrast".
-5. Za FARBANJE/LAKIRANJE: matchaj na materijal sa riječima "farbanje", "lakiranje" ili "bojenje".
-6. Ako nema pouzdanog matcha, koristi prazan string "". NIKADA ne dodijeli pogrešan materijal — bolje je ostaviti prazno.
+STRIKTNA PRAVILA MATCHIRANJA:
+1. MATERIJAL U BAZI MORA SADRŽAVATI KLJUČNU RIJEČ TIPA u svom nazivu:
+   - Za HPL stavke → materijal MORA imati "HPL" u nazivu (ne radna ploča, ne laminat bez "HPL")
+   - Za furnir stavke → materijal MORA imati "furnir" u nazivu
+   - Za iveral/ploče → materijal MORA imati "iveral", "MDF", "DTD" ili "PAL" u nazivu
+   - Za kant trake → materijal MORA imati "kant", "KT" ili "traka" u nazivu
+   - Za lakiranje → traži materijal koji se zove "Lakiranje" ili sadrži "farbanje"/"bojenje"
+   - "KT" na početku naziva UVIJEK znači kant traku (edge banding), NIKADA ploču
+2. KODOVI materijala (U732, H3309, W1000) su sekundarni signal — koristi ih samo AKO je tip materijala već ispravno matchiran.
+3. AKO materijal sa ispravnim tipom I kodom NE POSTOJI u bazi — vrati PRAZAN STRING "". NIKADA ne dodijeli materijal pogrešnog tipa.
+4. Radna ploča NIJE HPL. Staklo/lakobel NIJE lakiranje. Vodilice/okovi NISU farbanje.
+5. Bolje je ostaviti prazno nego dodijeliti pogrešan materijal.
 
 Vrati SAMO JSON objekat (bez objašnjenja) gdje je ključ INDEKS stavke (string), a vrijednost Material_ID iz baze:
 {"0": "material-id-123", "1": "", "2": "material-id-456"}`;

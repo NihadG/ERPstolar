@@ -302,12 +302,17 @@ export default function Home() {
                     const updates: any = {};
                     results.forEach(({ name, data }) => { updates[name] = data; });
 
-                    // Guard: don't replace valid projects with empty array 
+                    // Guard: don't replace valid collections with empty array 
                     // (Firestore eventual consistency after cascade deletes)
                     if (updates.projects && updates.projects.length === 0 && prev.projects.length > 0) {
                         console.warn('refreshCollections: projects came back empty, retrying...');
                         setTimeout(() => refreshCollections('projects'), 1000);
                         delete updates.projects;
+                    }
+                    if (updates.orders && updates.orders.length === 0 && prev.orders.length > 0) {
+                        console.warn('refreshCollections: orders came back empty, retrying...');
+                        setTimeout(() => refreshCollections('orders'), 1000);
+                        delete updates.orders;
                     }
 
                     return Object.keys(updates).length > 0 ? { ...prev, ...updates } : prev;
