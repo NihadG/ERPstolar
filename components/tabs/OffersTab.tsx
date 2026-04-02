@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo, useRef, useEffect } from 'react';
+import { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import type { Offer, Project, OfferProduct, Product } from '@/lib/types';
 import { createOfferWithProducts, deleteOffer, updateOfferStatus, saveOffer, updateOfferWithProducts, getOffer } from '@/lib/services';
 import { useData } from '@/context/DataContext';
@@ -87,6 +87,10 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
     const [includePDV, setIncludePDV] = useState(true);
     const [pdvRate, setPdvRate] = useState(17);
 
+    // Unsaved changes confirmation dialog
+    const [confirmCloseModal, setConfirmCloseModal] = useState(false);
+    const [pendingNavigate, setPendingNavigate] = useState<{ projectId: string; productId: string; offerId?: string } | null>(null);
+
     // Dropdown per-card (actions + status)
     const [activeDropdown, setActiveDropdown] = useState<string | null>(null);
     const [activeStatusDropdown, setActiveStatusDropdown] = useState<string | null>(null);
@@ -137,6 +141,65 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
 
     // Company Info & App Settings (centralized in DataContext)
     const { companyInfo, appSettings } = useData();
+
+    // ============================================
+    // UNSAVED CHANGES CONFIRMATION
+    // ============================================
+
+    /** Close modal with unsaved-changes prompt */
+    function handleCloseOfferModal() {
+        // If there are products loaded (user has been editing), ask to save
+        if (offerProducts.length > 0 && selectedProjectId) {
+            setPendingNavigate(null);
+            setConfirmCloseModal(true);
+        } else {
+            // Nothing to save, just close
+            doCloseOfferModal();
+        }
+    }
+
+    /** Actually close the modal without saving */
+    function doCloseOfferModal() {
+        setCreateModal(false);
+        setIsEditMode(false);
+        setCurrentOffer(null);
+        setConfirmCloseModal(false);
+        setPendingNavigate(null);
+    }
+
+    /** Save and then close (or navigate) */
+    async function handleSaveAndClose() {
+        setConfirmCloseModal(false);
+        await handleSaveOffer();
+        // If there's a pending navigation, do it after save
+        if (pendingNavigate && onNavigateToProject) {
+            onNavigateToProject(pendingNavigate.projectId, pendingNavigate.productId, pendingNavigate.offerId);
+        }
+        setPendingNavigate(null);
+    }
+
+    /** Don't save, just close (or navigate) */
+    function handleDiscardAndClose() {
+        const nav = pendingNavigate;
+        doCloseOfferModal();
+        // If there's a pending navigation, do it
+        if (nav && onNavigateToProject) {
+            onNavigateToProject(nav.projectId, nav.productId, nav.offerId);
+        }
+    }
+
+    /** "Otvori u projektu" button handler — prompt to save first */
+    function handleNavigateToProjectFromOffer(projectId: string, productId: string, offerId?: string) {
+        if (offerProducts.length > 0 && selectedProjectId) {
+            setPendingNavigate({ projectId, productId, offerId });
+            setConfirmCloseModal(true);
+        } else {
+            // Nothing to save, navigate directly
+            if (onNavigateToProject) {
+                onNavigateToProject(projectId, productId, offerId);
+            }
+        }
+    }
 
 
     const filteredOffers = offers.filter(offer => {
@@ -192,6 +255,8 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
 
     const EUR_RATE = 1.95583;
     const toEUR = (km: number) => km / EUR_RATE;
+    const toKM = (eur: number) => eur * EUR_RATE;
+    /** Format an amount (always stored in KM) for display in the given currency */
     const formatPrice = (amount: number, currency: 'KM' | 'EUR' = 'KM') => {
         if (currency === 'EUR') return toEUR(amount).toFixed(2) + ' €';
         return formatCurrency(amount);
@@ -459,12 +524,13 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
 
         setIsSaving(true);
 
+        // ALWAYS save all monetary values in KM — Currency is only a display flag
         const offerData = {
             Project_ID: selectedProjectId,
             Name: offerName || '',
-            Transport_Cost: offerCurrency === 'EUR' ? toEUR(transportCost) : transportCost,
+            Transport_Cost: transportCost,
             Onsite_Assembly: onsiteAssembly,
-            Onsite_Discount: offerCurrency === 'EUR' ? toEUR(onsiteDiscount) : onsiteDiscount,
+            Onsite_Discount: onsiteDiscount,
             Valid_Until: validUntil,
             Notes: notes,
             Include_PDV: includePDV,
@@ -472,25 +538,21 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
             Currency: offerCurrency,
             Language: offerLanguage,
             products: offerProducts.map(p => {
-                const convMargin = offerCurrency === 'EUR' ? toEUR(p.margin) : p.margin;
                 return {
                     Product_ID: p.Product_ID,
                     Product_Name: p.Product_Name,
                     Quantity: p.Quantity,
                     Included: p.included,
-                    Material_Cost: offerCurrency === 'EUR' ? toEUR(p.Material_Cost) : p.Material_Cost,
-                    Margin: convMargin,
-                    Extras: p.extras.map(e => {
-                        const convPrice = offerCurrency === 'EUR' ? toEUR(e.price) : e.price;
-                        return {
-                            ...e,
-                            price: convPrice,
-                            total: e.qty * convPrice
-                        };
-                    }),
+                    Material_Cost: p.Material_Cost,
+                    Margin: p.margin,
+                    Extras: p.extras.map(e => ({
+                        ...e,
+                        price: e.price,
+                        total: e.qty * e.price
+                    })),
                     Labor_Workers: p.laborWorkers,
                     Labor_Days: p.laborDays,
-                    Labor_Daily_Rate: offerCurrency === 'EUR' ? toEUR(p.laborDailyRate) : p.laborDailyRate
+                    Labor_Daily_Rate: p.laborDailyRate
                 };
             })
         };
@@ -585,13 +647,16 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
                 // Open edit modal, then after loading, de-select conflicting products
                 const fullOffer = await getOffer(offerId, organizationId!);
                 if (fullOffer) {
+                    // LEGACY MIGRATION: If offer was saved with Currency=EUR, convert values back to KM
+                    const isLegacyEUR = ((fullOffer as any).Currency || 'KM') === 'EUR';
+
                     setCurrentOffer(fullOffer);
                     setIsEditMode(true);
                     setSelectedProjectId(fullOffer.Project_ID);
                     setOfferName(fullOffer.Name || '');
-                    setTransportCost(fullOffer.Transport_Cost || 0);
+                    setTransportCost(isLegacyEUR ? toKM(fullOffer.Transport_Cost || 0) : (fullOffer.Transport_Cost || 0));
                     setOnsiteAssembly(fullOffer.Onsite_Assembly || false);
-                    setOnsiteDiscount(fullOffer.Onsite_Discount || 0);
+                    setOnsiteDiscount(isLegacyEUR ? toKM(fullOffer.Onsite_Discount || 0) : (fullOffer.Onsite_Discount || 0));
                     setValidUntil(fullOffer.Valid_Until ? fullOffer.Valid_Until.split('T')[0] : getDefaultValidDate());
                     setNotes(fullOffer.Notes || '');
                     setIncludePDV((fullOffer as any).Include_PDV ?? true);
@@ -599,27 +664,42 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
                     setOfferCurrency((fullOffer as any).Currency || 'KM');
                     setOfferLanguage((fullOffer as any).Language || 'bs');
 
-                    const products: OfferProductState[] = (fullOffer.products || []).map((p: OfferProduct) => ({
-                        Product_ID: p.Product_ID,
-                        Product_Name: p.Product_Name,
-                        Quantity: p.Quantity || 1,
-                        Height: 0, Width: 0, Depth: 0,
-                        Material_Cost: p.Material_Cost || 0,
-                        // De-select conflicting products
-                        included: p.Included !== false && !conflictIds.has(p.Product_ID),
-                        margin: p.Margin || 0,
-                        extras: ((p as any).Extras || (p as any).extras || []).map((e: any) => ({
-                            name: e.name || e.Name || '',
-                            qty: e.qty || e.Qty || e.Quantity || 1,
-                            unit: e.unit || e.Unit || 'kom',
-                            price: e.price || e.Price || e.Unit_Price || 0,
-                            total: e.total || e.Total || 0,
-                            note: e.note || e.Note || ''
-                        })),
-                        laborWorkers: (p as any).Labor_Workers || (p as any).laborWorkers || 0,
-                        laborDays: (p as any).Labor_Days || (p as any).laborDays || 0,
-                        laborDailyRate: (p as any).Labor_Daily_Rate || (p as any).laborDailyRate || 0
-                    }));
+                    const products: OfferProductState[] = (fullOffer.products || []).map((p: OfferProduct) => {
+                        let materialCost = p.Material_Cost || 0;
+                        let margin = p.Margin || 0;
+                        let laborDailyRate = (p as any).Labor_Daily_Rate || (p as any).laborDailyRate || 0;
+                        if (isLegacyEUR) {
+                            materialCost = toKM(materialCost);
+                            margin = toKM(margin);
+                            laborDailyRate = toKM(laborDailyRate);
+                        }
+                        return {
+                            Product_ID: p.Product_ID,
+                            Product_Name: p.Product_Name,
+                            Quantity: p.Quantity || 1,
+                            Height: 0, Width: 0, Depth: 0,
+                            Material_Cost: materialCost,
+                            // De-select conflicting products
+                            included: p.Included !== false && !conflictIds.has(p.Product_ID),
+                            margin: margin,
+                            extras: ((p as any).Extras || (p as any).extras || []).map((e: any) => {
+                                let price = e.price || e.Price || e.Unit_Price || 0;
+                                if (isLegacyEUR) price = toKM(price);
+                                const qty = e.qty || e.Qty || e.Quantity || 1;
+                                return {
+                                    name: e.name || e.Name || '',
+                                    qty: qty,
+                                    unit: e.unit || e.Unit || 'kom',
+                                    price: price,
+                                    total: qty * price,
+                                    note: e.note || e.Note || ''
+                                };
+                            }),
+                            laborWorkers: (p as any).Labor_Workers || (p as any).laborWorkers || 0,
+                            laborDays: (p as any).Labor_Days || (p as any).laborDays || 0,
+                            laborDailyRate: laborDailyRate
+                        };
+                    });
 
                     setOfferProducts(sortProductsByName(products, p => p.Product_Name));
                     setCreateModal(true);
@@ -651,6 +731,11 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
         // Set the project
         setSelectedProjectId(fullOffer.Project_ID);
 
+        // LEGACY MIGRATION: If offer was saved with Currency=EUR and converted values,
+        // convert them back to KM so the editor always works in KM.
+        const savedCurrency = (fullOffer as any).Currency || 'KM';
+        const isLegacyEUR = savedCurrency === 'EUR';
+
         // Get fresh product data from project for material cost fallback
         const project = projects.find(pr => pr.Project_ID === fullOffer.Project_ID);
         const projectProducts = project?.products || [];
@@ -664,7 +749,17 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
         }).map((p: OfferProduct) => {
             // Fall back to fresh product Material_Cost when offer value is 0
             const freshProduct = projectProducts.find(pp => pp.Product_ID === p.Product_ID);
-            const materialCost = p.Material_Cost || freshProduct?.Material_Cost || 0;
+            let materialCost = p.Material_Cost || freshProduct?.Material_Cost || 0;
+            let margin = p.Margin || 0;
+            let laborDailyRate = (p as any).Labor_Daily_Rate || (p as any).laborDailyRate || 0;
+
+            // Legacy migration: convert EUR values back to KM
+            if (isLegacyEUR) {
+                materialCost = toKM(materialCost);
+                margin = toKM(margin);
+                laborDailyRate = toKM(laborDailyRate);
+            }
+
             return {
                 Product_ID: p.Product_ID,
                 Product_Name: p.Product_Name,
@@ -674,18 +769,23 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
                 Depth: freshProduct?.Depth || 0,
                 Material_Cost: materialCost,
                 included: p.Included !== false,
-                margin: p.Margin || 0,
-                extras: ((p as any).Extras || (p as any).extras || []).map((e: any) => ({
-                    name: e.name || e.Name || '',
-                    qty: e.qty || e.Qty || e.Quantity || 1,
-                    unit: e.unit || e.Unit || 'kom',
-                    price: e.price || e.Price || e.Unit_Price || 0,
-                    total: e.total || e.Total || 0,
-                    note: e.note || e.Note || ''
-                })),
+                margin: margin,
+                extras: ((p as any).Extras || (p as any).extras || []).map((e: any) => {
+                    let price = e.price || e.Price || e.Unit_Price || 0;
+                    if (isLegacyEUR) price = toKM(price);
+                    const qty = e.qty || e.Qty || e.Quantity || 1;
+                    return {
+                        name: e.name || e.Name || '',
+                        qty: qty,
+                        unit: e.unit || e.Unit || 'kom',
+                        price: price,
+                        total: qty * price,
+                        note: e.note || e.Note || ''
+                    };
+                }),
                 laborWorkers: (p as any).Labor_Workers || (p as any).laborWorkers || 0,
                 laborDays: (p as any).Labor_Days || (p as any).laborDays || 0,
-                laborDailyRate: (p as any).Labor_Daily_Rate || (p as any).laborDailyRate || 0
+                laborDailyRate: laborDailyRate
             };
         });
 
@@ -731,9 +831,10 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
 
         setOfferProducts(sortProductsByName(products, p => p.Product_Name));
         setOfferName(fullOffer.Name || '');
-        setTransportCost(fullOffer.Transport_Cost || 0);
+        // Legacy migration: convert transport/discount back to KM
+        setTransportCost(isLegacyEUR ? toKM(fullOffer.Transport_Cost || 0) : (fullOffer.Transport_Cost || 0));
         setOnsiteAssembly(fullOffer.Onsite_Assembly || false);
-        setOnsiteDiscount(fullOffer.Onsite_Discount || 0);
+        setOnsiteDiscount(isLegacyEUR ? toKM(fullOffer.Onsite_Discount || 0) : (fullOffer.Onsite_Discount || 0));
         setValidUntil(fullOffer.Valid_Until ? fullOffer.Valid_Until.split('T')[0] : getDefaultValidDate());
         setNotes(fullOffer.Notes || '');
         setIncludePDV((fullOffer as any).Include_PDV ?? true);
@@ -786,9 +887,9 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
             bankAccounts: isEN ? 'Bank accounts' : 'Bankovni računi',
         };
 
-        // Currency formatter
+        // Currency formatter — values are always stored in KM, convert for display
         const fmtCurr = (val: number) => {
-            if (isEUR) return val.toFixed(2) + ' \u20ac';
+            if (isEUR) return toEUR(val).toFixed(2) + ' \u20ac';
             return val.toLocaleString('bs-BA', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' KM';
         };
 
@@ -1537,7 +1638,7 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
 
                                     {/* Right: amount + status pill + actions */}
                                     <div className="offer-row-right">
-                                        <span className="offer-row-amount">{formatCurrency(offer.Total || 0)}</span>
+                                        <span className="offer-row-amount">{formatPrice(offer.Total || 0, ((offer as any).Currency || 'KM') as 'KM' | 'EUR')}</span>
 
                                         {/* Custom status badge with dropdown */}
                                         <div className="offer-status-wrapper" ref={activeStatusDropdown === offer.Offer_ID ? statusDropdownRef : undefined}>
@@ -1601,11 +1702,7 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
             {/* Create/Edit Offer Modal */}
             <Modal
                 isOpen={createModal}
-                onClose={() => {
-                    setCreateModal(false);
-                    setIsEditMode(false);
-                    setCurrentOffer(null);
-                }}
+                onClose={handleCloseOfferModal}
                 title={isEditMode ? (
                     <span style={{ display: 'flex', alignItems: 'center', gap: '16px', flexWrap: 'wrap' }}>
                         <span>Uredi Ponudu: {currentOffer?.Offer_Number || ''}</span>
@@ -1642,11 +1739,7 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
                 size="xl"
                 footer={
                     <>
-                        <button className="btn btn-secondary" onClick={() => {
-                            setCreateModal(false);
-                            setIsEditMode(false);
-                            setCurrentOffer(null);
-                        }}>Otkaži</button>
+                        <button className="btn btn-secondary" onClick={handleCloseOfferModal}>Otkaži</button>
                         <button
                             className="glass-btn glass-btn-primary"
                             onClick={handleSaveOffer}
@@ -1716,229 +1809,173 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
                                         <span className="count">{offerProducts.filter(p => p.included).length} od {offerProducts.length}</span>
                                     </div>
 
-                                    {offerProducts.map((product, index) => (
-                                        <div
-                                            key={product.Product_ID}
-                                            id={`offer-product-${product.Product_ID}`}
-                                            className={`offer-product-card ${product.included ? 'included' : ''}`}
-                                        >
-                                            <div className="offer-product-card-header">
-                                                <input
-                                                    type="checkbox"
-                                                    checked={product.included}
-                                                    onChange={(e) => toggleProductIncluded(index, e.target.checked)}
-                                                />
-                                                <div className="offer-product-info">
-                                                    <div className="offer-product-name" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                                                        {product.Product_Name}
-                                                        {product.Width && product.Height && product.Depth && (
-                                                            <span style={{ color: 'var(--text-secondary)', fontSize: '12px', fontWeight: 400 }}>
-                                                                , {product.Width} × {product.Height} × {product.Depth} mm
-                                                            </span>
-                                                        )}
-                                                        {onNavigateToProject && selectedProjectId && (
-                                                            <button
-                                                                type="button"
-                                                                onClick={(e) => {
-                                                                    e.stopPropagation();
-                                                                    onNavigateToProject(selectedProjectId, product.Product_ID, currentOffer?.Offer_ID);
-                                                                }}
-                                                                title="Otvori u projektu"
-                                                                style={{
-                                                                    background: 'none',
-                                                                    border: '1px solid var(--border-color, #e0e0e0)',
-                                                                    borderRadius: '6px',
-                                                                    cursor: 'pointer',
-                                                                    padding: '2px 6px',
-                                                                    display: 'inline-flex',
-                                                                    alignItems: 'center',
-                                                                    gap: '3px',
-                                                                    color: 'var(--accent, #0071e3)',
-                                                                    fontSize: '11px',
-                                                                    fontWeight: 600,
-                                                                    transition: 'all 0.2s',
-                                                                    flexShrink: 0,
-                                                                }}
-                                                            >
-                                                                <span className="material-icons-round" style={{ fontSize: '14px' }}>open_in_new</span>
-                                                            </button>
-                                                        )}
-                                                    </div>
-                                                    <div className="offer-product-meta">Količina: {product.Quantity}</div>
-                                                </div>
-                                                <div className="offer-product-cost">
-                                                    <div className="label">Materijal</div>
-                                                    <div className="value" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                                                        {formatCurrency(product.Material_Cost)}
-                                                        {isEditMode && (
-                                                            <button
-                                                                type="button"
-                                                                onClick={(e) => { e.stopPropagation(); refreshMaterialCost(index); }}
-                                                                title="Osviježi cijenu materijala iz projekta"
-                                                                style={{
-                                                                    background: 'none',
-                                                                    border: '1px solid var(--border-color)',
-                                                                    borderRadius: '4px',
-                                                                    cursor: 'pointer',
-                                                                    padding: '2px 4px',
-                                                                    display: 'inline-flex',
-                                                                    alignItems: 'center',
-                                                                    color: 'var(--accent)',
-                                                                    transition: 'all 0.2s'
-                                                                }}
-                                                            >
-                                                                <span className="material-icons-round" style={{ fontSize: '14px' }}>refresh</span>
-                                                            </button>
-                                                        )}
-                                                    </div>
-                                                </div>
-                                            </div>
-
-                                            {product.included && (
-                                                <div className="product-details-card">
-                                                    <div className="card-body">
-                                                        {/* ROW 1: MARŽA + TROŠKOVI RADA */}
-                                                        <div className="top-grid">
-                                                            {/* COLUMN 1: MARGIN */}
-                                                            <div className="margin-box data-container">
-                                                                <span className="section-label">Marža</span>
-                                                                <div className="margin-input-wrapper">
+                                    <div className="table-responsive" style={{ overflowX: 'auto', border: '1px solid var(--border-light)', borderRadius: '8px' }}>
+                                        <table className="offer-spreadsheet">
+                                            <thead>
+                                                <tr>
+                                                    <th style={{ width: '40px', textAlign: 'center' }}>Uklj.</th>
+                                                    <th>Naziv proizvoda</th>
+                                                    <th style={{ width: '100px' }}>Materijal</th>
+                                                    <th style={{ width: '100px' }}>Radn.</th>
+                                                    <th style={{ width: '100px' }}>Dani</th>
+                                                    <th style={{ width: '100px' }}>Dnevn.</th>
+                                                    <th style={{ width: '110px' }}>Usluge</th>
+                                                    <th style={{ width: '100px' }}>Marža</th>
+                                                    <th style={{ width: '100px' }}>Cijena/kom</th>
+                                                    <th style={{ width: '100px' }}>Ukupno</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {offerProducts.map((product, index) => {
+                                                    const laborTotal = (product.laborWorkers || 0) * (product.laborDays || 0) * (product.laborDailyRate || 0);
+                                                    const extrasTotal = (product.extras || []).reduce((sum, e) => sum + (e.total || 0), 0);
+                                                    const unitPrice = (product.Material_Cost || 0) + (product.margin || 0) + extrasTotal + laborTotal;
+                                                    
+                                                    return (
+                                                        <tr key={product.Product_ID} className={product.included ? 'included' : 'excluded'}>
+                                                            <td className="text-center" style={{ textAlign: 'center' }}>
+                                                                <input
+                                                                    type="checkbox"
+                                                                    checked={product.included}
+                                                                    onChange={(e) => toggleProductIncluded(index, e.target.checked)}
+                                                                    className="modern-checkbox"
+                                                                />
+                                                            </td>
+                                                            <td>
+                                                                <div className="product-name-cell">
+                                                                    <div className="p-title-row">
+                                                                        <span className="p-name">{product.Product_Name}</span>
+                                                                        {onNavigateToProject && selectedProjectId && (
+                                                                            <button
+                                                                                type="button"
+                                                                                className="p-link-btn"
+                                                                                onClick={(e) => {
+                                                                                    e.stopPropagation();
+                                                                                    handleNavigateToProjectFromOffer(selectedProjectId, product.Product_ID, currentOffer?.Offer_ID);
+                                                                                }}
+                                                                                title="Otvori u projektu"
+                                                                            >
+                                                                                <span className="material-icons-round">open_in_new</span>
+                                                                            </button>
+                                                                        )}
+                                                                    </div>
+                                                                    <div className="p-meta">
+                                                                        {product.Width && product.Height && product.Depth ? `${product.Width}×${product.Height}×${product.Depth}mm • ` : ''}
+                                                                        Kol: <strong>{product.Quantity}</strong>
+                                                                    </div>
+                                                                </div>
+                                                            </td>
+                                                            <td className="readonly-cell">
+                                                                <div className="val-flex">
+                                                                    <span>{formatCurrency(product.Material_Cost)}</span>
+                                                                    {isEditMode && (
+                                                                        <button type="button" onClick={(e) => { e.stopPropagation(); refreshMaterialCost(index); }} title="Osviježi cijenu iz projekta" className="refresh-btn">
+                                                                            <span className="material-icons-round">refresh</span>
+                                                                        </button>
+                                                                    )}
+                                                                </div>
+                                                            </td>
+                                                            <td className="input-cell" style={{ background: 'rgba(0, 113, 227, 0.02)' }}>
+                                                                <input
+                                                                    type="number"
+                                                                    className="sheet-input text-center"
+                                                                    style={{ fontWeight: 600, fontSize: '13px', color: 'var(--text-primary)' }}
+                                                                    value={product.laborWorkers === 0 ? '' : (product.laborWorkers || '')}
+                                                                    onChange={(e) => {
+                                                                        const updated = [...offerProducts];
+                                                                        updated[index].laborWorkers = e.target.value === '' ? 0 : parseInt(e.target.value);
+                                                                        setOfferProducts(updated);
+                                                                    }}
+                                                                    min="0"
+                                                                    disabled={!product.included}
+                                                                    placeholder="0"
+                                                                />
+                                                            </td>
+                                                            <td className="input-cell" style={{ background: 'rgba(0, 113, 227, 0.02)' }}>
+                                                                <input
+                                                                    type="number"
+                                                                    className="sheet-input text-center"
+                                                                    style={{ fontWeight: 600, fontSize: '13px', color: 'var(--text-primary)' }}
+                                                                    value={product.laborDays === 0 ? '' : (product.laborDays || '')}
+                                                                    onChange={(e) => {
+                                                                        const updated = [...offerProducts];
+                                                                        updated[index].laborDays = e.target.value === '' ? 0 : parseInt(e.target.value);
+                                                                        setOfferProducts(updated);
+                                                                    }}
+                                                                    min="0"
+                                                                    disabled={!product.included}
+                                                                    placeholder="0"
+                                                                />
+                                                            </td>
+                                                            <td className="input-cell" style={{ background: 'rgba(0, 113, 227, 0.02)' }}>
+                                                                <input
+                                                                    type="number"
+                                                                    className="sheet-input text-right"
+                                                                    style={{ fontWeight: 600, fontSize: '13px', color: 'var(--text-primary)' }}
+                                                                    value={product.laborDailyRate === 0 ? '' : (product.laborDailyRate || '')}
+                                                                    onChange={(e) => {
+                                                                        const updated = [...offerProducts];
+                                                                        updated[index].laborDailyRate = e.target.value === '' ? 0 : parseFloat(e.target.value);
+                                                                        setOfferProducts(updated);
+                                                                    }}
+                                                                    min="0" step="10"
+                                                                    disabled={!product.included}
+                                                                    placeholder="0"
+                                                                />
+                                                            </td>
+                                                            <td className="btn-cell">
+                                                                <button 
+                                                                    type="button" 
+                                                                    className="sheet-btn"
+                                                                    onClick={() => openExtrasModal(index)}
+                                                                    disabled={!product.included}
+                                                                >
+                                                                    {product.extras && product.extras.length > 0 ? (
+                                                                        <>
+                                                                            <span className="count-badge">{product.extras.length}</span>
+                                                                            <span className="val">{formatPrice(extrasTotal, offerCurrency)}</span>
+                                                                        </>
+                                                                    ) : (
+                                                                        <span className="empty-text">Dodaj</span>
+                                                                    )}
+                                                                </button>
+                                                            </td>
+                                                            <td className="input-cell with-suffix" style={{ background: 'rgba(0, 113, 227, 0.02)' }}>
+                                                                <div className="input-wrapper">
                                                                     <input
                                                                         type="number"
-                                                                        className="clean-input"
+                                                                        className="sheet-input text-right"
+                                                                        style={{ fontWeight: 600, fontSize: '13px', color: 'var(--text-primary)' }}
                                                                         value={product.margin || ''}
                                                                         onChange={(e) => updateProductMargin(index, parseFloat(e.target.value) || 0)}
-                                                                        min="0"
-                                                                        step="10"
+                                                                        min="0" step="10"
+                                                                        disabled={!product.included}
                                                                         placeholder="0"
                                                                     />
-                                                                    <span className="margin-suffix">KM</span>
+                                                                    <span className="suffix">KM</span>
                                                                 </div>
-                                                            </div>
-
-                                                            {/* COLUMN 2: LABOR */}
-                                                            <div className="labor-box data-container">
-                                                                <span className="section-label">Troškovi Rada</span>
-                                                                <div className="labor-grid">
-                                                                    <div className="labor-col">
-                                                                        <input
-                                                                            type="number"
-                                                                            className="clean-input"
-                                                                            value={product.laborWorkers || ''}
-                                                                            onChange={(e) => {
-                                                                                const updated = [...offerProducts];
-                                                                                updated[index].laborWorkers = e.target.value === '' ? 0 : parseInt(e.target.value);
-                                                                                setOfferProducts(updated);
-                                                                            }}
-                                                                            min="0"
-                                                                            placeholder="0"
-                                                                        />
-                                                                        <span>Radnika</span>
-                                                                    </div>
-                                                                    <div className="labor-col">
-                                                                        <input
-                                                                            type="number"
-                                                                            className="clean-input"
-                                                                            value={product.laborDays || ''}
-                                                                            onChange={(e) => {
-                                                                                const updated = [...offerProducts];
-                                                                                updated[index].laborDays = e.target.value === '' ? 0 : parseInt(e.target.value);
-                                                                                setOfferProducts(updated);
-                                                                            }}
-                                                                            min="0"
-                                                                            placeholder="0"
-                                                                        />
-                                                                        <span>Dana</span>
-                                                                    </div>
-                                                                    <div className="labor-col">
-                                                                        <input
-                                                                            type="number"
-                                                                            className="clean-input"
-                                                                            value={product.laborDailyRate || ''}
-                                                                            onChange={(e) => {
-                                                                                const updated = [...offerProducts];
-                                                                                updated[index].laborDailyRate = e.target.value === '' ? 0 : parseFloat(e.target.value);
-                                                                                setOfferProducts(updated);
-                                                                            }}
-                                                                            min="0"
-                                                                            step="10"
-                                                                            placeholder="0"
-                                                                        />
-                                                                        <span>Dnevnica</span>
-                                                                    </div>
-                                                                    <div className="labor-result">
-                                                                        <span className="labor-result-val">
-                                                                            {formatCurrency((product.laborWorkers || 0) * (product.laborDays || 0) * (product.laborDailyRate || 0))}
-                                                                        </span>
-                                                                        <span className="labor-result-label">Ukupno rad</span>
-                                                                    </div>
-                                                                </div>
-                                                            </div>
-                                                        </div>
-
-                                                        {/* ROW 2: EXTRAS */}
-                                                        <div className="extras-section-v2">
-                                                            <span className="section-label">Dodatne Usluge</span>
-                                                            <div className="extras-wrapper">
-                                                                {product.extras.map((extra, ei) => (
-                                                                    <div key={ei} className="chip" style={{ cursor: 'pointer' }} onClick={() => openExtrasModal(index, ei)} title="Klikni za uređivanje">
-                                                                        <span>{extra.name}</span>
-                                                                        <span className="chip-price">{formatCurrency(extra.total)}</span>
-                                                                        <button className="chip-remove" type="button" onClick={(e) => { e.stopPropagation(); removeExtra(index, ei); }}>
-                                                                            <span className="material-icons-round">close</span>
-                                                                        </button>
-                                                                    </div>
-                                                                ))}
-                                                                <button
-                                                                    type="button"
-                                                                    className="btn-add-extra"
-                                                                    onClick={() => openExtrasModal(index)}
-                                                                >
-                                                                    <span className="material-icons-round">add</span>
-                                                                    Dodaj uslugu
-                                                                </button>
-                                                            </div>
-                                                        </div>
-                                                    </div>
-
-                                                    {/* FOOTER: TOTAL */}
-                                                    <div className="card-footer" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                                                        {(product.Quantity || 1) > 1 ? (() => {
-                                                            const unitPrice = (product.Material_Cost || 0) + (product.margin || 0)
-                                                                + (product.extras || []).reduce((sum, e) => sum + (e.total || 0), 0)
-                                                                + (product.laborWorkers || 0) * (product.laborDays || 0) * (product.laborDailyRate || 0);
-                                                            return (
-                                                                <>
-                                                                    <div style={{ display: 'flex', alignItems: 'baseline', gap: '6px', opacity: 0.65 }}>
-                                                                        <span className="total-label" style={{ fontSize: '12px' }}>Cijena/kom</span>
-                                                                        <span className="total-amount" style={{ fontSize: '13px' }}>{formatCurrency(unitPrice)}</span>
-                                                                    </div>
-                                                                    <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px' }}>
-                                                                        <span className="total-label">Ukupno ({product.Quantity} kom)</span>
-                                                                        <span className="total-amount">{formatCurrency(calculateProductTotal(product))}</span>
-                                                                    </div>
-                                                                </>
-                                                            );
-                                                        })() : (
-                                                            <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px', marginLeft: 'auto' }}>
-                                                                <span className="total-label">Ukupna cijena</span>
-                                                                <span className="total-amount">{formatCurrency(calculateProductTotal(product))}</span>
-                                                            </div>
-                                                        )}
-                                                    </div>
-                                                </div>
-                                            )}
-                                        </div>
-                                    ))}
+                                                            </td>
+                                                            <td className="readonly-cell unit-price">
+                                                                {formatPrice(unitPrice, offerCurrency)}
+                                                            </td>
+                                                            <td className="readonly-cell unit-price">
+                                                                {formatPrice(calculateProductTotal(product), offerCurrency)}
+                                                            </td>
+                                                        </tr>
+                                                    );
+                                                })}
+                                            </tbody>
+                                        </table>
+                                    </div>
                                 </div>
                             )}
                         </div>
 
                         {/* Right Column - Settings & Summary */}
                         {offerProducts.length > 0 && (
-                            <div className="offer-form-right" style={{ display: 'flex', flexDirection: 'row', gap: '24px', alignItems: 'flex-start', flexWrap: 'wrap' }}>
+                            <div className="offer-form-right">
                                 {/* Settings - Compact */}
-                                <div className="offer-settings-compact" style={{ flex: 1, minWidth: '300px' }}>
+                                <div className="offer-settings-compact">
                                     <h4>Postavke</h4>
 
                                     {/* Row 1: Transport + Vrijedi do */}
@@ -2263,49 +2300,55 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    {(currentOffer.products || []).filter(p => p.Included).map((product) => {
-                                        const proj = projects.find(p => p.Project_ID === currentOffer.Project_ID);
-                                        const pp = proj?.products?.find(pp => pp.Product_ID === product.Product_ID);
-                                        const dims = pp && pp.Width && pp.Height && pp.Depth
-                                            ? `${pp.Width} × ${pp.Height} × ${pp.Depth} mm` : null;
-                                        const laborTotal = ((product as any).Labor_Workers || 0) * ((product as any).Labor_Days || 0) * ((product as any).Labor_Daily_Rate || 0);
-                                        const extrasTotal = ((product as any).Extras || (product as any).extras || []).reduce((sum: number, e: any) => sum + (e.total || e.Total || 0), 0);
-                                        const unitPrice = (product.Material_Cost || 0) + (product.Margin || 0) + laborTotal + extrasTotal;
-                                        return (
-                                            <tr key={product.ID} style={{ borderBottom: '1px solid var(--border-light)' }}>
-                                                <td style={{ padding: '12px' }}>
-                                                    {product.Product_Name}
-                                                    {dims && <span style={{ color: 'var(--text-secondary)' }}>, {dims}</span>}
-                                                </td>
-                                                <td style={{ padding: '12px', textAlign: 'right' }}>{product.Quantity}</td>
-                                                <td style={{ padding: '12px', textAlign: 'right' }}>{formatCurrency(product.Material_Cost)}</td>
-                                                <td style={{ padding: '12px', textAlign: 'right' }}>{formatCurrency(product.Margin)}</td>
-                                                <td style={{ padding: '12px', textAlign: 'right' }}>{laborTotal > 0 ? formatCurrency(laborTotal) : '-'}</td>
-                                                <td style={{ padding: '12px', textAlign: 'right' }}>{extrasTotal > 0 ? formatCurrency(extrasTotal) : '-'}</td>
-                                                <td style={{ padding: '12px', textAlign: 'right', fontWeight: 500 }}>{formatCurrency(unitPrice)}</td>
-                                                <td style={{ padding: '12px', textAlign: 'right', fontWeight: 600 }}>{formatCurrency(product.Total_Price)}</td>
-                                            </tr>
-                                        );
-                                    })}
+                                    {(() => {
+                                        const viewCurrency = ((currentOffer as any).Currency || 'KM') as 'KM' | 'EUR';
+                                        return (currentOffer.products || []).filter(p => p.Included).map((product) => {
+                                            const proj = projects.find(p => p.Project_ID === currentOffer.Project_ID);
+                                            const pp = proj?.products?.find(pp => pp.Product_ID === product.Product_ID);
+                                            const dims = pp && pp.Width && pp.Height && pp.Depth
+                                                ? `${pp.Width} × ${pp.Height} × ${pp.Depth} mm` : null;
+                                            const laborTotal = ((product as any).Labor_Workers || 0) * ((product as any).Labor_Days || 0) * ((product as any).Labor_Daily_Rate || 0);
+                                            const extrasTotal = ((product as any).Extras || (product as any).extras || []).reduce((sum: number, e: any) => sum + (e.total || e.Total || 0), 0);
+                                            const unitPrice = (product.Material_Cost || 0) + (product.Margin || 0) + laborTotal + extrasTotal;
+                                            return (
+                                                <tr key={product.ID} style={{ borderBottom: '1px solid var(--border-light)' }}>
+                                                    <td style={{ padding: '12px' }}>
+                                                        {product.Product_Name}
+                                                        {dims && <span style={{ color: 'var(--text-secondary)' }}>, {dims}</span>}
+                                                    </td>
+                                                    <td style={{ padding: '12px', textAlign: 'right' }}>{product.Quantity}</td>
+                                                    <td style={{ padding: '12px', textAlign: 'right' }}>{formatPrice(product.Material_Cost, viewCurrency)}</td>
+                                                    <td style={{ padding: '12px', textAlign: 'right' }}>{formatPrice(product.Margin, viewCurrency)}</td>
+                                                    <td style={{ padding: '12px', textAlign: 'right' }}>{laborTotal > 0 ? formatPrice(laborTotal, viewCurrency) : '-'}</td>
+                                                    <td style={{ padding: '12px', textAlign: 'right' }}>{extrasTotal > 0 ? formatPrice(extrasTotal, viewCurrency) : '-'}</td>
+                                                    <td style={{ padding: '12px', textAlign: 'right', fontWeight: 500 }}>{formatPrice(unitPrice, viewCurrency)}</td>
+                                                    <td style={{ padding: '12px', textAlign: 'right', fontWeight: 600 }}>{formatPrice(product.Total_Price, viewCurrency)}</td>
+                                                </tr>
+                                            );
+                                        });
+                                    })()}
                                 </tbody>
                             </table>
                         </div>
 
                         {/* Totals */}
+                        {(() => {
+                            const viewCurrency = ((currentOffer as any).Currency || 'KM') as 'KM' | 'EUR';
+                            return (
                         <div style={{ background: 'var(--accent-light)', padding: '20px', borderRadius: '12px' }}>
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxWidth: '400px', marginLeft: 'auto' }}>
                                 <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                                     <span>Suma:</span>
-                                    <span>{formatCurrency(currentOffer.Subtotal)}</span>
+                                    <span>{formatPrice(currentOffer.Subtotal, viewCurrency)}</span>
                                 </div>
                                 <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                                     <span>Transport:</span>
-                                    <span>{formatCurrency(currentOffer.Transport_Cost)}</span>
+                                    <span>{formatPrice(currentOffer.Transport_Cost, viewCurrency)}</span>
                                 </div>
                                 {currentOffer.Onsite_Assembly && (currentOffer.Onsite_Discount || 0) > 0 && (
                                     <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--success)' }}>
                                         <span>Popust:</span>
-                                        <span>-{formatCurrency(currentOffer.Onsite_Discount)}</span>
+                                        <span>-{formatPrice(currentOffer.Onsite_Discount, viewCurrency)}</span>
                                     </div>
                                 )}
                                 {(currentOffer as any).Include_PDV && (() => {
@@ -2314,22 +2357,24 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
                                     return (
                                         <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                                             <span>PDV ({rate}%):</span>
-                                            <span>{formatCurrency(baseTotal * rate / 100)}</span>
+                                            <span>{formatPrice(baseTotal * rate / 100, viewCurrency)}</span>
                                         </div>
                                     );
                                 })()}
                                 <hr style={{ border: 'none', borderTop: '1px solid var(--border)' }} />
                                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '20px', fontWeight: 700 }}>
                                     <span>UKUPNO{(currentOffer as any).Include_PDV ? ' (sa PDV)' : ''}:</span>
-                                    <span style={{ color: 'var(--accent)' }}>{formatCurrency(
+                                    <span style={{ color: 'var(--accent)' }}>{formatPrice(
                                         (() => {
                                             const baseTotal = (currentOffer.Subtotal || 0) + (currentOffer.Transport_Cost || 0) - (currentOffer.Onsite_Assembly ? (currentOffer.Onsite_Discount || 0) : 0);
                                             return (currentOffer as any).Include_PDV ? baseTotal * (1 + ((currentOffer as any).PDV_Rate || 17) / 100) : baseTotal;
-                                        })()
+                                        })(), viewCurrency
                                     )}</span>
                                 </div>
                             </div>
                         </div>
+                            );
+                        })()}
 
                         {/* Notes */}
                         {currentOffer.Notes && (
@@ -2341,6 +2386,131 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
                     </div>
                 )}
             </Modal>
+            {/* Unsaved Changes Confirmation Dialog */}
+            {confirmCloseModal && (
+                <div
+                    style={{
+                        position: 'fixed',
+                        top: 0,
+                        left: 0,
+                        right: 0,
+                        bottom: 0,
+                        background: 'rgba(0,0,0,0.5)',
+                        backdropFilter: 'blur(4px)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        zIndex: 10000,
+                        animation: 'fadeIn 0.2s ease'
+                    }}
+                    onClick={() => setConfirmCloseModal(false)}
+                >
+                    <div
+                        style={{
+                            background: 'var(--surface, #fff)',
+                            borderRadius: '16px',
+                            padding: '28px 32px',
+                            maxWidth: '420px',
+                            width: '90%',
+                            boxShadow: '0 20px 60px rgba(0,0,0,0.3)',
+                            animation: 'slideUp 0.25s cubic-bezier(0.34, 1.56, 0.64, 1)',
+                            textAlign: 'center',
+                        }}
+                        onClick={(e) => e.stopPropagation()}
+                    >
+                        <div style={{
+                            width: '48px',
+                            height: '48px',
+                            borderRadius: '50%',
+                            background: 'rgba(255, 149, 0, 0.12)',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            margin: '0 auto 16px',
+                        }}>
+                            <span className="material-icons-round" style={{ fontSize: '28px', color: '#ff9500' }}>save</span>
+                        </div>
+                        <h3 style={{
+                            margin: '0 0 8px',
+                            fontSize: '18px',
+                            fontWeight: 700,
+                            color: 'var(--text-primary, #1d1d1f)',
+                        }}>
+                            {pendingNavigate ? 'Sačuvaj ponudu prije otvaranja?' : 'Želite li sačuvati ponudu?'}
+                        </h3>
+                        <p style={{
+                            margin: '0 0 24px',
+                            fontSize: '14px',
+                            color: 'var(--text-secondary, #666)',
+                            lineHeight: 1.5,
+                        }}>
+                            {pendingNavigate
+                                ? 'Imate nesačuvane izmjene u ponudi. Želite li ih sačuvati prije nego što otvorite proizvod u projektu?'
+                                : 'Imate nesačuvane izmjene u ponudi. Želite li ih sačuvati prije zatvaranja?'
+                            }
+                        </p>
+                        <div style={{
+                            display: 'flex',
+                            gap: '10px',
+                            justifyContent: 'center',
+                            flexWrap: 'wrap',
+                        }}>
+                            <button
+                                onClick={() => setConfirmCloseModal(false)}
+                                style={{
+                                    padding: '10px 20px',
+                                    borderRadius: '10px',
+                                    border: '1px solid var(--border-color, #e0e0e0)',
+                                    background: 'var(--bg-secondary, #f5f5f7)',
+                                    color: 'var(--text-secondary, #666)',
+                                    fontSize: '14px',
+                                    fontWeight: 600,
+                                    cursor: 'pointer',
+                                    transition: 'all 0.2s',
+                                    minWidth: '100px',
+                                }}
+                            >
+                                Otkaži
+                            </button>
+                            <button
+                                onClick={handleDiscardAndClose}
+                                style={{
+                                    padding: '10px 20px',
+                                    borderRadius: '10px',
+                                    border: '1px solid var(--border-color, #e0e0e0)',
+                                    background: 'var(--bg-secondary, #f5f5f7)',
+                                    color: '#ff3b30',
+                                    fontSize: '14px',
+                                    fontWeight: 600,
+                                    cursor: 'pointer',
+                                    transition: 'all 0.2s',
+                                    minWidth: '100px',
+                                }}
+                            >
+                                Ne sačuvaj
+                            </button>
+                            <button
+                                onClick={handleSaveAndClose}
+                                style={{
+                                    padding: '10px 20px',
+                                    borderRadius: '10px',
+                                    border: 'none',
+                                    background: 'var(--accent, #0071e3)',
+                                    color: '#fff',
+                                    fontSize: '14px',
+                                    fontWeight: 600,
+                                    cursor: 'pointer',
+                                    transition: 'all 0.2s',
+                                    minWidth: '100px',
+                                    boxShadow: '0 2px 8px rgba(0, 113, 227, 0.3)',
+                                }}
+                            >
+                                Sačuvaj
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div >
     );
 }

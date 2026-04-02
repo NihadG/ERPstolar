@@ -167,7 +167,7 @@ function GroupedMaterialsStep({
         let totalOrderQty = 0;
         group.members.forEach(m => {
             const onStock = onStockQuantities[m.ID] ?? (m.On_Stock || 0);
-            const orderQty = orderQuantities[m.ID] ?? Math.max(0, m.Quantity - onStock);
+            const orderQty = Math.ceil(orderQuantities[m.ID] ?? Math.max(0, m.Quantity - onStock));
             totalOnStock += onStock;
             totalOrderQty += orderQty;
         });
@@ -181,7 +181,7 @@ function GroupedMaterialsStep({
             const proportion = totalNeeded > 0 ? m.Quantity / totalNeeded : 1 / group.members.length;
             const memberStock = Math.min(m.Quantity, Math.round(newTotalOnStock * proportion * 100) / 100);
             setOnStockQuantity(m.ID, memberStock);
-            const newOrderQty = Math.max(0, m.Quantity - memberStock);
+            const newOrderQty = Math.ceil(Math.max(0, m.Quantity - memberStock));
             setOrderQuantity(m.ID, newOrderQty);
         });
     }
@@ -191,8 +191,8 @@ function GroupedMaterialsStep({
         const totalNeeded = group.totalQuantity;
         group.members.forEach(m => {
             const proportion = totalNeeded > 0 ? m.Quantity / totalNeeded : 1 / group.members.length;
-            const memberOrderQty = Math.round(newTotalOrderQty * proportion * 100) / 100;
-            setOrderQuantity(m.ID, Math.max(0, memberOrderQty));
+            const memberOrderQty = Math.ceil(Math.max(0, newTotalOrderQty * proportion));
+            setOrderQuantity(m.ID, memberOrderQty);
         });
     }
 

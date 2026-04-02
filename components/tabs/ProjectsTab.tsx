@@ -21,6 +21,7 @@ import Modal from '@/components/ui/Modal';
 import GlassModal, { type GlassModalData } from '@/components/ui/GlassModal';
 import AluDoorModal, { type AluDoorModalData } from '@/components/ui/AluDoorModal';
 import { SearchableSelect } from '@/components/ui/SearchableSelect';
+import MaterialSelectModal, { type SelectedMaterial } from '@/components/ui/MaterialSelectModal';
 
 import ProductTimelineModal from '@/components/ui/ProductTimelineModal';
 
@@ -197,15 +198,15 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
     }
 
     function toggleProduct(productId: string) {
-        const newExpanded = new Set<string>();
-        // If the clicked product is NOT currently expanded, add it (focus mode).
-        // If it IS expanded, we don't add it to newExpanded, effectively clearing it (collapsing all, showing list).
-        if (!expandedProducts.has(productId)) {
-            newExpanded.add(productId);
-        }
-
-        // This enforces single-product focus
-        setExpandedProducts(newExpanded);
+        setExpandedProducts(prev => {
+            const next = new Set(prev);
+            if (next.has(productId)) {
+                next.delete(productId);
+            } else {
+                next.add(productId);
+            }
+            return next;
+        });
     }
 
     function openProjectModal(project?: Project) {
@@ -346,14 +347,52 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
         return mat.Is_Alu_Door === true || mat.Category === 'Alu vrata';
     }
 
+    // Batch add materials from the new multi-select modal
+    async function handleAddMaterials(items: SelectedMaterial[]) {
+        const targetProductId = addingMaterial?.productId;
+        if (!targetProductId || !organizationId) {
+            showToast('Greška: nedostaje ID proizvoda', 'error');
+            return;
+        }
+
+        let successCount = 0;
+        let errorCount = 0;
+
+        for (const item of items) {
+            const result = await addMaterialToProduct({
+                Product_ID: targetProductId,
+                Material_ID: item.materialId,
+                Material_Name: item.materialName,
+                Quantity: item.quantity,
+                Unit: item.unit,
+                Unit_Price: item.price,
+                Supplier: item.supplier,
+            }, organizationId);
+
+            if (result.success) {
+                successCount++;
+            } else {
+                errorCount++;
+            }
+        }
+
+        if (successCount > 0) {
+            showToast(`Dodano ${successCount} materijal${successCount === 1 ? '' : 'a'}`, 'success');
+            setMaterialModal(false);
+            onRefresh('projects');
+        }
+        if (errorCount > 0) {
+            showToast(`Greška pri dodavanju ${errorCount} materijala`, 'error');
+        }
+    }
+
+    // Legacy single-add for mobile flow
     async function handleAddMaterial(data?: { materialId: string, quantity: number, price: number }) {
-        // Prepare data from args or state
         const targetMaterialId = data?.materialId || selectedMaterial?.Material_ID;
         const targetQuantity = data?.quantity ?? materialQty;
         const targetPrice = data?.price ?? materialPrice;
         const targetProductId = addingMaterial?.productId;
 
-        // If generic checks fail, try checking selectedMaterial object (desktop flow)
         const targetMaterialObj = data
             ? materials.find(m => m.Material_ID === data.materialId)
             : selectedMaterial;
@@ -363,10 +402,6 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
             return;
         }
 
-        // Check if this is a glass material - redirect to glass modal
-        // Note: Glass/Alu redirect logic is tricky with the new mobile direct-add flow. 
-        // For now, if mobile adds it directly, we assume standard material add unless we add specific logic there.
-        // But let's keep it safe:
         if (isGlassMaterial(targetMaterialObj)) {
             setMaterialModal(false);
             setGlassProductId(targetProductId);
@@ -375,7 +410,6 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
             return;
         }
 
-        // Check if this is an alu door material - redirect to alu door modal
         if (isAluDoorMaterial(targetMaterialObj)) {
             setMaterialModal(false);
             setAluDoorProductId(targetProductId);
@@ -401,6 +435,23 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
         } else {
             showToast(result.message, 'error');
         }
+    }
+
+    // Glass/Alu redirect helpers — called from MaterialSelectModal
+    function handleGlassRedirect(pId: string, materialId: string) {
+        const mat = materials.find(m => m.Material_ID === materialId);
+        setSelectedMaterial(mat || null);
+        setGlassProductId(pId);
+        setEditingGlassMaterial(null);
+        setGlassModal(true);
+    }
+
+    function handleAluDoorRedirect(pId: string, materialId: string) {
+        const mat = materials.find(m => m.Material_ID === materialId);
+        setSelectedMaterial(mat || null);
+        setAluDoorProductId(pId);
+        setEditingAluDoorMaterial(null);
+        setAluDoorModal(true);
     }
 
     // Handle glass modal save
@@ -977,7 +1028,7 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                     </Modal>
                 )}
 
-                {/* Add Material Modal */}
+                {/* Add Material Modal — Multi-select */}
                 {isMobile ? (
                     <MobileMaterialAddModal
                         isOpen={materialModal}
@@ -986,70 +1037,18 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                         onAdd={handleAddMaterial}
                     />
                 ) : (
-                    <Modal
+                    <MaterialSelectModal
                         isOpen={materialModal}
                         onClose={() => setMaterialModal(false)}
-                        title="Dodaj Materijal"
-                        footer={
-                            <>
-                                <button className="btn btn-secondary" onClick={() => setMaterialModal(false)}>Otkaži</button>
-                                <button className="btn btn-primary" onClick={() => handleAddMaterial()}>Dodaj</button>
-                            </>
-                        }
-                    >
-                        <div className="form-group">
-                            <label>Materijal *</label>
-                            <SearchableSelect
-                                value={selectedMaterial?.Material_ID || ''}
-                                onChange={(value) => {
-                                    const mat = materials.find(m => m.Material_ID === value);
-                                    setSelectedMaterial(mat || null);
-                                    if (mat) {
-                                        setMaterialPrice(mat.Default_Unit_Price);
-                                    }
-                                }}
-                                options={materials.map(mat => ({
-                                    value: mat.Material_ID,
-                                    label: mat.Name,
-                                    subLabel: `${mat.Category} • ${mat.Unit}`
-                                }))}
-                                placeholder="Pretraži materijale..."
-                            />
-                        </div>
-                        <div className="form-row">
-                            <div className="form-group">
-                                <label>Količina *</label>
-                                <input
-                                    type="number"
-                                    step="0.01"
-                                    min="0"
-                                    value={materialQty}
-                                    onChange={(e) => setMaterialQty(parseFloat(e.target.value) || 0)}
-                                />
-                            </div>
-                            <div className="form-group">
-                                <label>Jedinica</label>
-                                <input
-                                    type="text"
-                                    readOnly
-                                    value={selectedMaterial?.Unit || ''}
-                                />
-                            </div>
-                        </div>
-                        <div className="form-group">
-                            <label>Cijena po jedinici (KM)</label>
-                            <input
-                                type="number"
-                                step="0.01"
-                                min="0"
-                                value={materialPrice}
-                                onChange={(e) => setMaterialPrice(parseFloat(e.target.value) || 0)}
-                            />
-                        </div>
-                        <div className="form-group">
-                            <label>Ukupno: <strong>{formatCurrency(materialQty * materialPrice)}</strong></label>
-                        </div>
-                    </Modal>
+                        materials={materials}
+                        productId={addingMaterial?.productId || ''}
+                        organizationId={organizationId || ''}
+                        onAddMaterials={handleAddMaterials}
+                        onGlassRedirect={handleGlassRedirect}
+                        onAluDoorRedirect={handleAluDoorRedirect}
+                        onRefresh={onRefresh}
+                        showToast={showToast}
+                    />
                 )}
 
                 {/* Glass Modal */}
@@ -1277,807 +1276,8 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                         <h3>Nema projekata</h3>
                         <p>Kreirajte prvi projekat klikom na "Novi Projekat"</p>
                     </div>
-                ) : expandedProjectId ? (
-                    // When a project is expanded, only show that project for cleaner view
-                    filteredProjects.filter(p => p.Project_ID === expandedProjectId).map(project => {
-                        const totalProducts = project.products?.length || 0;
-                        const totalCost = project.products?.reduce((sum, p) => sum + (p.Material_Cost || 0), 0) || 0;
-
-                        return (
-                            <div key={project.Project_ID} className="project-card">
-                                <div className="project-header" onClick={() => toggleProject(project.Project_ID)}>
-                                    <button className={`expand-btn ${expandedProjectId === project.Project_ID ? 'expanded' : ''}`}>
-                                        <span className="material-icons-round">chevron_right</span>
-                                    </button>
-
-                                    <div className="project-main-info">
-                                        <div className="project-name">{project.Name || project.Client_Name}</div>
-                                        {project.Name && <div className="project-client-subtitle">{project.Client_Name}</div>}
-                                        <div className="project-details">
-                                            {project.Address && <div className="project-client">{project.Address}</div>}
-                                            <div className="project-summary">
-                                                <span className="summary-item">
-                                                    <span className="material-icons-round">inventory_2</span>
-                                                    {totalProducts} {totalProducts === 1 ? 'proizvod' : 'proizvoda'}
-                                                </span>
-                                                {/* Project-level profit sum */}
-                                                {(() => {
-                                                    let projectProfit = 0;
-                                                    let projectSellingTotal = 0;
-                                                    let hasAnyProfit = false;
-
-                                                    (project.products || []).forEach(product => {
-                                                        // Only include products that have started production
-                                                        const productStatus = getProductStatus(product);
-                                                        if (productStatus === 'Na čekanju') return;
-
-                                                        // Find offer values
-                                                        let sellingPrice: number | undefined;
-                                                        let originalTransport = 0;
-                                                        const acceptedOffers = offers.filter(o => o.Status === 'Prihvaćeno');
-                                                        for (const offer of acceptedOffers) {
-                                                            const offerProduct = (offer.products || []).find(op => op.Product_ID === product.Product_ID);
-                                                            if (offerProduct) {
-                                                                sellingPrice = offerProduct.Selling_Price || offerProduct.Total_Price;
-                                                                if (offer && sellingPrice) {
-                                                                    const offerSubtotal = offer.Subtotal || 0;
-                                                                    if (offerSubtotal > 0) {
-                                                                        originalTransport = (offer.Transport_Cost || 0) * (sellingPrice / offerSubtotal);
-                                                                    }
-                                                                }
-                                                                break;
-                                                            }
-                                                        }
-
-                                                        // Find work order item — prefer active over completed
-                                                        let woItem: any;
-                                                        let woItemFallback: any;
-                                                        for (const wo of workOrders) {
-                                                            const item = (wo.items || []).find(i => i.Product_ID === product.Product_ID);
-                                                            if (item) {
-                                                                if (item.Status !== 'Završeno') {
-                                                                    woItem = item;
-                                                                    break;
-                                                                } else if (!woItemFallback) {
-                                                                    woItemFallback = item;
-                                                                }
-                                                            }
-                                                        }
-                                                        if (!woItem) woItem = woItemFallback;
-
-                                                        // Use overrides if available
-                                                        const woSellingPrice = woItem?.Product_Value || 0;
-                                                        const finalSellingPrice = woItem?.Profit_Overrides?.Selling_Price ?? (woSellingPrice > 0 ? woSellingPrice : sellingPrice);
-                                                        const transportShare = woItem?.Profit_Overrides?.Transport_Share ?? originalTransport;
-                                                        const servicesTotal = woItem?.Services_Total || 0;
-
-                                                        if (!woItem || !finalSellingPrice || finalSellingPrice <= 0) return;
-                                                        // Only 'U toku' or 'Završeno' contribute to profit
-                                                        if (woItem.Status !== 'U toku' && woItem.Status !== 'Završeno') return;
-
-                                                        // Material cost from project materials
-                                                        const actualMaterialCost = (product.materials || []).reduce((sum, m) => sum + (m.Total_Price || 0), 0);
-                                                        // Labor cost — Daily_Rate values are pre-split by recalculateWOLaborSplit
-                                                        const productLogs = workLogs.filter(wl => wl.Work_Order_Item_ID === woItem.ID);
-                                                        const laborCost = Math.round(productLogs.reduce((sum, wl) => sum + (wl.Daily_Rate || 0), 0));
-
-                                                        // UNIFIED PROFIT FORMULA
-                                                        projectProfit += finalSellingPrice - actualMaterialCost - laborCost - transportShare - servicesTotal;
-                                                        projectSellingTotal += finalSellingPrice;
-                                                        hasAnyProfit = true;
-                                                    });
-
-                                                    if (!hasAnyProfit) return null;
-                                                    projectProfit = Math.round(projectProfit);
-                                                    const projectMargin = Math.round(projectSellingTotal > 0 ? (projectProfit / projectSellingTotal) * 100 : 0);
-                                                    return (
-                                                        <span
-                                                            className="summary-item"
-                                                            style={{
-                                                                fontWeight: 600,
-                                                                fontSize: '12px',
-                                                                color: projectMargin >= 30 ? '#10b981' : projectMargin >= 15 ? '#f59e0b' : '#ef4444',
-                                                            }}
-                                                            title={`Ukupni profit projekta: ${projectProfit.toLocaleString('hr-HR')} KM (${projectMargin.toFixed(0)}%)`}
-                                                        >
-                                                            <span className="material-icons-round" style={{ fontSize: '16px' }}>
-                                                                {projectMargin >= 30 ? 'trending_up' : projectMargin >= 15 ? 'trending_flat' : 'trending_down'}
-                                                            </span>
-                                                            {projectProfit.toLocaleString('hr-HR')} KM ({projectMargin.toFixed(0)}%)
-                                                        </span>
-                                                    );
-                                                })()}
-                                            </div>
-                                        </div>
-                                    </div>
-
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-                                        <div className="project-badges">
-                                            <span className={`status-badge ${getStatusClass(project.Status)}`}>
-                                                {project.Status}
-                                            </span>
-                                        </div>
-
-
-                                        <div className="project-actions" onClick={(e) => e.stopPropagation()}>
-                                            <button className="icon-btn" onClick={() => setMaterialsOverviewProject(project)} title="Pregled materijala">
-                                                <span className="material-icons-round">inventory</span>
-                                            </button>
-                                            {onNavigateToTasks && (
-                                                <button className="icon-btn" onClick={() => onNavigateToTasks(project.Project_ID)} title="Zadaci">
-                                                    <span className="material-icons-round">task_alt</span>
-                                                </button>
-                                            )}
-                                            <button className="icon-btn" onClick={() => openProjectModal(project)} title="Uredi projekat">
-                                                <span className="material-icons-round">edit</span>
-                                            </button>
-                                            <button className="icon-btn danger" onClick={() => handleDeleteProject(project.Project_ID)} title="Obriši projekat">
-                                                <span className="material-icons-round">delete</span>
-                                            </button>
-                                        </div>
-                                    </div>
-                                </div>
-
-                                {/* Products Section */}
-                                <div className={`project-products ${expandedProjectId === project.Project_ID ? 'expanded' : ''}`}>
-                                    <div className="products-header">
-                                        <h4>Proizvodi ({project.products?.length || 0})</h4>
-                                        <button className="btn-add-item" onClick={() => openProductModal(project.Project_ID)}>
-                                            <span className="material-icons-round">add</span>
-                                            Dodaj proizvod
-                                        </button>
-                                    </div>
-
-                                    {[...(project.products || [])].sort((a, b) => {
-                                        // Natural sort for "Poz X" product names (supports decimals: 1, 1.1, 1.2, 2, 10)
-                                        const extractPoz = (name: string): number => {
-                                            const match = name?.match(/^Poz\s*(\d+(?:\.\d+)?)/i);
-                                            return match ? parseFloat(match[1]) : Infinity;
-                                        };
-                                        const pozA = extractPoz(a.Name || '');
-                                        const pozB = extractPoz(b.Name || '');
-                                        if (pozA !== pozB) return pozA - pozB;
-                                        return (a.Name || '').localeCompare(b.Name || '', 'hr', { numeric: true });
-                                    }).filter(product => expandedProducts.size === 0 || expandedProducts.has(product.Product_ID)).map(product => (
-                                        <div key={product.Product_ID} className="product-card">
-                                            <div className="product-header" onClick={() => toggleProduct(product.Product_ID)}>
-                                                <button className={`expand-btn ${expandedProducts.has(product.Product_ID) ? 'expanded' : ''}`}>
-                                                    <span className="material-icons-round">chevron_right</span>
-                                                </button>
-                                                <div className="product-info">
-                                                    <div className="product-name">{product.Name}</div>
-                                                    <div className="product-dims">
-                                                        {product.Width && product.Height && product.Depth
-                                                            ? `${product.Width} × ${product.Height} × ${product.Depth} mm`
-                                                            : 'Dimenzije nisu unesene'}
-                                                        {product.Quantity > 1 && ` • ${product.Quantity} kom`}
-                                                    </div>
-                                                </div>
-                                                <span className={`status-badge ${getStatusClass(getProductStatus(product))}`}>
-                                                    {getProductStatus(product)}
-                                                </span>
-                                                {/* Profit Badge or Material Cost Badge */}
-                                                {(() => {
-                                                    // === STEP 1: Get ORIGINAL offer values (the contract baseline) ===
-                                                    let originalSellingPrice: number | undefined;
-                                                    let originalExtras = 0;
-                                                    let originalTransport = 0;
-                                                    let offerRef: Offer | undefined;
-                                                    const acceptedOffers = offers.filter(o => o.Status === 'Prihvaćeno');
-                                                    for (const offer of acceptedOffers) {
-                                                        const offerProduct = (offer.products || []).find(op => op.Product_ID === product.Product_ID);
-                                                        if (offerProduct) {
-                                                            offerRef = offer;
-                                                            originalSellingPrice = offerProduct.Selling_Price || offerProduct.Total_Price;
-
-                                                            // Extras from offer
-                                                            const ledCost = offerProduct.LED_Total || 0;
-                                                            const groutingCost = offerProduct.Grouting ? (offerProduct.Grouting_Price || 0) : 0;
-                                                            const sinkCost = offerProduct.Sink_Faucet ? (offerProduct.Sink_Faucet_Price || 0) : 0;
-                                                            const extrasCost = ((offerProduct as any).extras || []).reduce((sum: number, e: any) =>
-                                                                sum + (e.Total || e.total || 0), 0);
-                                                            originalExtras = ledCost + groutingCost + sinkCost + extrasCost;
-
-                                                            // Transport share from offer
-                                                            if (offerRef && originalSellingPrice) {
-                                                                const offerSubtotal = offerRef.Subtotal || 0;
-                                                                if (offerSubtotal > 0) {
-                                                                    const productRatio = originalSellingPrice / offerSubtotal;
-                                                                    originalTransport = (offerRef.Transport_Cost || 0) * productRatio;
-                                                                }
-                                                            }
-                                                            break;
-                                                        }
-                                                    }
-
-                                                    // === STEP 2: Find matching WorkOrderItem — PREFER active over completed ===
-                                                    let woItem: WorkOrderItem | undefined;
-                                                    let woItemFallback: WorkOrderItem | undefined;
-                                                    for (const wo of workOrders) {
-                                                        const item = (wo.items || []).find(i => i.Product_ID === product.Product_ID);
-                                                        if (item) {
-                                                            if (item.Status !== 'Završeno') {
-                                                                woItem = item;
-                                                                break; // Active item wins
-                                                            } else if (!woItemFallback) {
-                                                                woItemFallback = item; // Keep first completed as fallback
-                                                            }
-                                                        }
-                                                    }
-                                                    if (!woItem) woItem = woItemFallback;
-
-                                                    // === STEP 3: Material cost from ACTUAL project materials ===
-                                                    const actualMaterials = product.materials || [];
-                                                    const actualMaterialCost = actualMaterials.reduce((sum, m) => sum + (m.Total_Price || 0), 0);
-
-                                                    // === If product NOT in active/completed WO, show material or status ===
-                                                    const woActive = woItem && (woItem.Status === 'U toku' || woItem.Status === 'Završeno');
-                                                    if (!woActive) {
-                                                        if (actualMaterialCost > 0) {
-                                                            return (
-                                                                <span
-                                                                    className="profit-badge"
-                                                                    style={{
-                                                                        display: 'inline-flex',
-                                                                        alignItems: 'center',
-                                                                        gap: '4px',
-                                                                        padding: '4px 10px',
-                                                                        borderRadius: '6px',
-                                                                        background: 'rgba(59, 130, 246, 0.1)',
-                                                                        color: '#3b82f6',
-                                                                        fontWeight: 600,
-                                                                        fontSize: '12px',
-                                                                        marginLeft: '8px',
-                                                                    }}
-                                                                    title="Cijena materijala — proizvod nije dodat u naloge"
-                                                                >
-                                                                    <span className="material-icons-round" style={{ fontSize: '14px' }}>inventory_2</span>
-                                                                    {actualMaterialCost.toLocaleString('hr-HR')} KM
-                                                                </span>
-                                                            );
-                                                        }
-                                                        return (
-                                                            <span
-                                                                style={{
-                                                                    display: 'inline-flex',
-                                                                    alignItems: 'center',
-                                                                    gap: '4px',
-                                                                    padding: '4px 10px',
-                                                                    borderRadius: '6px',
-                                                                    background: 'rgba(148, 163, 184, 0.1)',
-                                                                    color: '#64748b',
-                                                                    fontWeight: 600,
-                                                                    fontSize: '12px',
-                                                                    marginLeft: '8px',
-                                                                }}
-                                                                title="Nema naloga — materijal nije definisan"
-                                                            >
-                                                                <span className="material-icons-round" style={{ fontSize: '14px' }}>info_outline</span>
-                                                                {product.Status || 'Bez naloga'}
-                                                            </span>
-                                                        );
-                                                    }
-
-                                                    // === Product IS in a work order — show profit ===
-                                                    const hasOverrides = !!woItem?.Profit_Overrides;
-                                                    // FIX #3: Use Product_Value (includes Quantity) to match recalculateWorkOrder
-                                                    // Fall back to originalSellingPrice only if Product_Value is 0
-                                                    const woSellingPrice = woItem?.Product_Value || 0;
-                                                    const sellingPrice = woItem?.Profit_Overrides?.Selling_Price ?? (woSellingPrice > 0 ? woSellingPrice : originalSellingPrice);
-                                                    const transportShare = woItem?.Profit_Overrides?.Transport_Share ?? originalTransport;
-                                                    const servicesTotal = woItem?.Services_Total || 0;
-
-                                                    // Actual material cost only
-                                                    const materialCost = actualMaterialCost;
-
-                                                    // Labor cost from ACTUAL work logs
-                                                    // Daily_Rate values are already proportionally split by recalculateWOLaborSplit
-                                                    const productWorkLogs = workLogs.filter(wl => wl.Work_Order_Item_ID === woItem?.ID);
-                                                    let laborCost = Math.round(productWorkLogs.reduce((sum, wl) => sum + (wl.Daily_Rate || 0), 0));
-                                                    if (sellingPrice && sellingPrice > 0) {
-                                                        const profit = Math.round(sellingPrice - materialCost - laborCost - transportShare - servicesTotal);
-                                                        const profitMargin = Math.round(sellingPrice > 0 ? (profit / sellingPrice) * 100 : 0);
-
-                                                        return (
-                                                            <span
-                                                                className="profit-badge"
-                                                                style={{
-                                                                    display: 'inline-flex',
-                                                                    alignItems: 'center',
-                                                                    gap: '4px',
-                                                                    padding: '4px 10px',
-                                                                    borderRadius: '6px',
-                                                                    background: profitMargin >= 30 ? 'rgba(16, 185, 129, 0.1)' :
-                                                                        profitMargin >= 15 ? 'rgba(245, 158, 11, 0.1)' : 'rgba(239, 68, 68, 0.1)',
-                                                                    color: profitMargin >= 30 ? '#10b981' :
-                                                                        profitMargin >= 15 ? '#f59e0b' : '#ef4444',
-                                                                    fontWeight: 600,
-                                                                    fontSize: '12px',
-                                                                    marginLeft: '8px',
-                                                                    cursor: 'pointer',
-                                                                    position: 'relative'
-                                                                }}
-                                                                title={hasOverrides ? 'Prilagođeni profit — klikni za uređivanje' : 'Klikni za detaljan izvještaj'}
-                                                                onClick={(e) => {
-                                                                    e.stopPropagation();
-                                                                    setTimelineProduct({
-                                                                        product,
-                                                                        sellingPrice,
-                                                                        materialCost,
-                                                                        laborCost,
-                                                                        profit,
-                                                                        profitMargin,
-                                                                        workOrderItemId: woItem?.ID,
-                                                                        workOrderItem: woItem,
-                                                                        originalSellingPrice,
-                                                                        originalExtras,
-                                                                        originalTransport,
-                                                                        hasOverrides
-                                                                    });
-                                                                }}
-                                                            >
-                                                                {hasOverrides && (
-                                                                    <span className="material-icons-round" style={{ fontSize: '12px', marginRight: '2px' }}>tune</span>
-                                                                )}
-                                                                <span className="material-icons-round" style={{ fontSize: '14px' }}>
-                                                                    {profitMargin >= 30 ? 'trending_up' : profitMargin >= 15 ? 'trending_flat' : 'trending_down'}
-                                                                </span>
-                                                                {profit.toLocaleString('hr-HR')} KM ({profitMargin.toFixed(0)}%)
-                                                            </span>
-                                                        );
-                                                    }
-
-                                                    // Product is in WO but no selling price — show material cost as fallback
-                                                    if (actualMaterialCost > 0) {
-                                                        return (
-                                                            <span
-                                                                className="profit-badge"
-                                                                style={{
-                                                                    display: 'inline-flex',
-                                                                    alignItems: 'center',
-                                                                    gap: '4px',
-                                                                    padding: '4px 10px',
-                                                                    borderRadius: '6px',
-                                                                    background: 'rgba(59, 130, 246, 0.1)',
-                                                                    color: '#3b82f6',
-                                                                    fontWeight: 600,
-                                                                    fontSize: '12px',
-                                                                    marginLeft: '8px',
-                                                                }}
-                                                                title="Cijena materijala — nedostaje prodajna cijena za profit"
-                                                            >
-                                                                <span className="material-icons-round" style={{ fontSize: '14px' }}>inventory_2</span>
-                                                                {actualMaterialCost.toLocaleString('hr-HR')} KM
-                                                            </span>
-                                                        );
-                                                    }
-                                                    return null;
-                                                })()}
-                                                <div className="project-actions" onClick={(e) => e.stopPropagation()}>
-                                                    <button className="icon-btn" onClick={() => openProductModal(project.Project_ID, product)}>
-                                                        <span className="material-icons-round">edit</span>
-                                                    </button>
-                                                    <button className="icon-btn danger" onClick={() => handleDeleteProduct(product.Product_ID)}>
-                                                        <span className="material-icons-round">delete</span>
-                                                    </button>
-                                                </div>
-                                            </div>
-
-                                            {/* Materials Section */}
-                                            {(() => {
-                                                // Group materials logic
-                                                const groups: Record<string, { items: ProductMaterial[], total: number }> = {};
-                                                const productMaterials = product.materials || [];
-
-                                                productMaterials.forEach(pm => {
-                                                    let category = 'Ostalo';
-
-                                                    // Check specific types first
-                                                    if (pm.glassItems && pm.glassItems.length > 0) category = 'Staklo';
-                                                    else if (pm.aluDoorItems && pm.aluDoorItems.length > 0) category = 'Alu vrata';
-                                                    else {
-                                                        const matDef = materials.find(m => m.Material_ID === pm.Material_ID);
-                                                        if (matDef?.Category) category = matDef.Category;
-                                                    }
-
-                                                    if (!groups[category]) {
-                                                        groups[category] = { items: [], total: 0 };
-                                                    }
-
-                                                    groups[category].items.push(pm);
-                                                    groups[category].total += (pm.Total_Price || 0);
-                                                });
-
-                                                // Sort categories based on MATERIAL_CATEGORIES order
-                                                const sortedCategories = Object.keys(groups).sort((a, b) => {
-                                                    const idxA = MATERIAL_CATEGORIES.indexOf(a);
-                                                    const idxB = MATERIAL_CATEGORIES.indexOf(b);
-                                                    // If not found, put at end
-                                                    return (idxA === -1 ? 999 : idxA) - (idxB === -1 ? 999 : idxB);
-                                                });
-
-                                                // Fix for importing constant name if it differs from local variable name
-                                                // Using MATERIAL_CATEGORIES directly as it is imported.
-
-                                                return (
-                                                    <div className={`product-materials ${expandedProducts.has(product.Product_ID) ? 'expanded' : ''}`}>
-                                                        <div className="materials-header">
-                                                            <h5>Materijali ({productMaterials.length})</h5>
-                                                            <div style={{ display: 'flex', gap: '8px' }}>
-                                                                {productMaterials.length > 0 && (
-                                                                    <button
-                                                                        className={`btn-quick-edit ${quickEditMode === product.Product_ID ? 'active' : ''}`}
-                                                                        onClick={() => toggleQuickEdit(product.Product_ID)}
-                                                                        title={quickEditMode === product.Product_ID ? 'Zatvori Quick Edit' : 'Brzo uređivanje materijala'}
-                                                                    >
-                                                                        <span className="material-icons-round">
-                                                                            {quickEditMode === product.Product_ID ? 'check' : 'flash_on'}
-                                                                        </span>
-                                                                    </button>
-                                                                )}
-                                                                <button className="btn-add-item" onClick={() => setSketchUpImportProductId(product.Product_ID)} title="Importuj materijale iz SketchUp CSV">
-                                                                    <span className="material-icons-round">upload_file</span>
-                                                                    SketchUp CSV
-                                                                </button>
-                                                                <button className="btn-add-item" onClick={() => openMaterialModal(product.Product_ID)}>
-                                                                    <span className="material-icons-round">add</span>
-                                                                    Dodaj materijal
-                                                                </button>
-                                                            </div>
-                                                        </div>
-
-                                                        {productMaterials.length === 0 && (
-                                                            <div style={{ padding: '24px', textAlign: 'center', color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
-                                                                Nema dodanih materijala. Kliknite na "Dodaj materijal" za početak.
-                                                            </div>
-                                                        )}
-
-                                                        {sortedCategories.map(category => {
-                                                            const group = groups[category];
-                                                            return (
-                                                                <div key={category} className="material-category-section">
-                                                                    <div className="category-header">
-                                                                        <div className="cat-title">
-                                                                            <span className="cat-dot"></span>
-                                                                            {category}
-                                                                            <span className="cat-count-badge">{group.items.length}</span>
-                                                                        </div>
-                                                                        <div className="cat-total">
-                                                                            {formatCurrency(group.total)}
-                                                                        </div>
-                                                                    </div>
-
-                                                                    <div className="category-items">
-                                                                        {/* Header for this category table - optional, maybe just for desktop */}
-                                                                        <div className="materials-table-header mini">
-                                                                            <div className="mat-col-name">Naziv</div>
-                                                                            <div className="mat-col-qty">Količina</div>
-                                                                            <div className="mat-col-price">Cijena</div>
-                                                                            <div className="mat-col-total">Ukupno</div>
-                                                                            <div className="mat-col-status">Status</div>
-                                                                            <div className="mat-col-actions"></div>
-                                                                        </div>
-
-                                                                        {group.items.map(material => {
-                                                                            const isGlass = material.glassItems && material.glassItems.length > 0;
-                                                                            const isAluDoor = material.aluDoorItems && material.aluDoorItems.length > 0;
-                                                                            const glassCount = isGlass ? material.glassItems!.reduce((sum, gi) => sum + (gi.Qty || 1), 0) : 0;
-                                                                            const aluDoorCount = isAluDoor ? material.aluDoorItems!.reduce((sum, ai) => sum + (ai.Qty || 1), 0) : 0;
-                                                                            const isInQuickEdit = quickEditMode === product.Product_ID;
-                                                                            const editValues = editingMaterialValues[material.ID] || { qty: material.Quantity, price: material.Unit_Price };
-
-                                                                            return (
-                                                                                <div key={material.ID} className={`material-row ${isInQuickEdit ? 'editing' : ''}`}>
-                                                                                    <div className="mat-col-name">
-                                                                                        {isInQuickEdit && !isGlass && !isAluDoor ? (
-                                                                                            <SearchableSelect
-                                                                                                value={editValues.materialId || material.Material_ID}
-                                                                                                onChange={(value) => handleQuickEditMaterialChange(material.ID, value)}
-                                                                                                options={materials.map(mat => ({
-                                                                                                    value: mat.Material_ID,
-                                                                                                    label: mat.Name,
-                                                                                                    subLabel: `${mat.Category} • ${mat.Unit}`
-                                                                                                }))}
-                                                                                                placeholder="Pretraži..."
-                                                                                            />
-                                                                                        ) : (
-                                                                                            <>
-                                                                                                <span className="material-name-text">{material.Material_Name}</span>
-                                                                                                {material.Is_Essential && <span className="material-indicator essential" title="Esencijalni materijal">⚠️</span>}
-                                                                                                {isGlass && <span className="material-indicator glass">🪟 {glassCount} kom</span>}
-                                                                                                {isAluDoor && <span className="material-indicator alu-door">🚪 {aluDoorCount} kom</span>}
-                                                                                            </>
-                                                                                        )}
-                                                                                    </div>
-                                                                                    <div className="mat-col-qty">
-                                                                                        <span className="mobile-label">Kol:</span>
-                                                                                        {isInQuickEdit && !isGlass && !isAluDoor ? (
-                                                                                            <input
-                                                                                                type="number"
-                                                                                                className="quick-edit-input"
-                                                                                                value={editValues.qty}
-                                                                                                onChange={(e) => handleQuickEditChange(material.ID, 'qty', e.target.value)}
-                                                                                                onBlur={() => saveQuickEdit(material.ID)}
-                                                                                                onKeyDown={(e) => handleQuickEditKeyDown(e, material.ID)}
-                                                                                                step="0.01"
-                                                                                                min="0"
-                                                                                                onClick={(e) => e.stopPropagation()}
-                                                                                            />
-                                                                                        ) : (
-                                                                                            <span>{material.Quantity} {material.Unit}</span>
-                                                                                        )}
-                                                                                    </div>
-                                                                                    <div className="mat-col-price">
-                                                                                        <span className="mobile-label">Cijena:</span>
-                                                                                        {isInQuickEdit && !isGlass && !isAluDoor ? (
-                                                                                            <input
-                                                                                                type="number"
-                                                                                                className="quick-edit-input"
-                                                                                                value={editValues.price}
-                                                                                                onChange={(e) => handleQuickEditChange(material.ID, 'price', e.target.value)}
-                                                                                                onBlur={() => saveQuickEdit(material.ID)}
-                                                                                                onKeyDown={(e) => handleQuickEditKeyDown(e, material.ID)}
-                                                                                                step="0.01"
-                                                                                                min="0"
-                                                                                                onClick={(e) => e.stopPropagation()}
-                                                                                            />
-                                                                                        ) : (
-                                                                                            formatCurrency(material.Unit_Price)
-                                                                                        )}
-                                                                                    </div>
-                                                                                    <div className="mat-col-total">
-                                                                                        <span className="mobile-label">Ukupno:</span>
-                                                                                        <strong>
-                                                                                            {isInQuickEdit && !isGlass && !isAluDoor
-                                                                                                ? formatCurrency(editValues.qty * editValues.price)
-                                                                                                : formatCurrency(material.Total_Price)
-                                                                                            }
-                                                                                        </strong>
-                                                                                    </div>
-                                                                                    <div className="mat-col-status">
-                                                                                        {(() => {
-                                                                                            const allowedTransitions = ALLOWED_MATERIAL_TRANSITIONS[material.Status] || [];
-                                                                                            const statusIcons: Record<string, string> = {
-                                                                                                'Nije naručeno': 'remove_shopping_cart',
-                                                                                                'Na stanju': 'inventory',
-                                                                                                'Naručeno': 'shopping_cart',
-                                                                                                'Primljeno': 'check_circle',
-                                                                                            };
-                                                                                            if (allowedTransitions.length > 0) {
-                                                                                                return (
-                                                                                                    <div className="status-dropdown-wrapper">
-                                                                                                        <span
-                                                                                                            className={`status-badge ${getStatusClass(material.Status)} clickable`}
-                                                                                                            onClick={(e) => {
-                                                                                                                e.stopPropagation();
-                                                                                                                setStatusDropdownMaterialId(
-                                                                                                                    statusDropdownMaterialId === material.ID ? null : material.ID
-                                                                                                                );
-                                                                                                            }}
-                                                                                                            title="Klikni za promjenu statusa"
-                                                                                                        >
-                                                                                                            {material.Status}
-                                                                                                            <span className="material-icons-round" style={{ fontSize: '14px', marginLeft: '4px' }}>expand_more</span>
-                                                                                                        </span>
-                                                                                                        {statusDropdownMaterialId === material.ID && (
-                                                                                                            <div className="status-dropdown-menu" onClick={(e) => e.stopPropagation()}>
-                                                                                                                {pendingStatusChange && pendingStatusChange.materialId === material.ID ? (
-                                                                                                                    /* Quantity prompt for Na stanju / Primljeno */
-                                                                                                                    <div style={{ padding: '8px 12px', display: 'flex', flexDirection: 'column', gap: '6px', minWidth: '180px' }}>
-                                                                                                                        <span style={{ fontSize: '12px', fontWeight: 600, color: '#334155' }}>
-                                                                                                                            {pendingStatusChange.status === 'Na stanju' ? 'Količina na stanju' : 'Primljena količina'}
-                                                                                                                        </span>
-                                                                                                                        <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
-                                                                                                                            <input
-                                                                                                                                type="number"
-                                                                                                                                step="0.01"
-                                                                                                                                min="0"
-                                                                                                                                value={statusQtyInput}
-                                                                                                                                onChange={(e) => setStatusQtyInput(parseFloat(e.target.value) || 0)}
-                                                                                                                                onKeyDown={(e) => {
-                                                                                                                                    if (e.key === 'Enter') {
-                                                                                                                                        handleMaterialStatusChange(pendingStatusChange.materialId, pendingStatusChange.status, statusQtyInput);
-                                                                                                                                    } else if (e.key === 'Escape') {
-                                                                                                                                        setPendingStatusChange(null);
-                                                                                                                                    }
-                                                                                                                                }}
-                                                                                                                                autoFocus
-                                                                                                                                style={{
-                                                                                                                                    width: '80px', padding: '4px 8px', borderRadius: '6px',
-                                                                                                                                    border: '1px solid #cbd5e1', fontSize: '13px', textAlign: 'center',
-                                                                                                                                    outline: 'none'
-                                                                                                                                }}
-                                                                                                                            />
-                                                                                                                            <button
-                                                                                                                                onClick={() => handleMaterialStatusChange(pendingStatusChange.materialId, pendingStatusChange.status, statusQtyInput)}
-                                                                                                                                style={{
-                                                                                                                                    padding: '4px 10px', borderRadius: '6px', border: 'none',
-                                                                                                                                    background: '#2563eb', color: '#fff', fontSize: '12px',
-                                                                                                                                    fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap'
-                                                                                                                                }}
-                                                                                                                            >
-                                                                                                                                OK
-                                                                                                                            </button>
-                                                                                                                            <button
-                                                                                                                                onClick={() => setPendingStatusChange(null)}
-                                                                                                                                style={{
-                                                                                                                                    padding: '4px 8px', borderRadius: '6px', border: '1px solid #e2e8f0',
-                                                                                                                                    background: '#f8fafc', color: '#64748b', fontSize: '12px',
-                                                                                                                                    cursor: 'pointer'
-                                                                                                                                }}
-                                                                                                                            >
-                                                                                                                                ✕
-                                                                                                                            </button>
-                                                                                                                        </div>
-                                                                                                                    </div>
-                                                                                                                ) : (
-                                                                                                                    /* Normal status options list */
-                                                                                                                    allowedTransitions.map(targetStatus => (
-                                                                                                                        <button
-                                                                                                                            key={targetStatus}
-                                                                                                                            className="status-dropdown-item"
-                                                                                                                            onClick={() => handleStatusClick(material, targetStatus)}
-                                                                                                                        >
-                                                                                                                            <span className="material-icons-round">{statusIcons[targetStatus] || 'swap_horiz'}</span>
-                                                                                                                            {targetStatus}
-                                                                                                                        </button>
-                                                                                                                    ))
-                                                                                                                )}
-                                                                                                            </div>
-                                                                                                        )}
-                                                                                                    </div>
-                                                                                                );
-                                                                                            }
-                                                                                            return (
-                                                                                                <span className={`status-badge ${getStatusClass(material.Status)}`}>
-                                                                                                    {material.Status}
-                                                                                                </span>
-                                                                                            );
-                                                                                        })()}
-                                                                                    </div>
-                                                                                    <div className="mat-col-actions">
-                                                                                        <div className="action-buttons">
-                                                                                            {isGlass && (
-                                                                                                <button
-                                                                                                    className="icon-btn"
-                                                                                                    onClick={() => openGlassModalForEdit(product.Product_ID, material)}
-                                                                                                    title="Uredi staklo"
-                                                                                                >
-                                                                                                    <span className="material-icons-round">edit</span>
-                                                                                                </button>
-                                                                                            )}
-                                                                                            {isAluDoor && (
-                                                                                                <button
-                                                                                                    className="icon-btn"
-                                                                                                    onClick={() => openAluDoorModalForEdit(product.Product_ID, material)}
-                                                                                                    title="Uredi alu vrata"
-                                                                                                >
-                                                                                                    <span className="material-icons-round">edit</span>
-                                                                                                </button>
-                                                                                            )}
-                                                                                            {!isGlass && !isAluDoor && (
-                                                                                                <button
-                                                                                                    className="icon-btn"
-                                                                                                    onClick={() => openEditMaterialModal(material)}
-                                                                                                    title="Uredi materijal"
-                                                                                                >
-                                                                                                    <span className="material-icons-round">edit</span>
-                                                                                                </button>
-                                                                                            )}
-                                                                                            <button className="icon-btn danger" onClick={() => handleDeleteMaterial(material.ID)}>
-                                                                                                <span className="material-icons-round">delete</span>
-                                                                                            </button>
-                                                                                        </div>
-                                                                                    </div>
-                                                                                </div>
-                                                                            );
-                                                                        })}
-                                                                    </div>
-                                                                </div>
-                                                            );
-                                                        })}
-                                                    </div>
-                                                );
-                                            })()}
-                                        </div>
-                                    ))}
-                                </div>
-
-                                {/* Grouped Materials Summary */}
-                                {
-                                    (() => {
-                                        const materialMap = new Map<string, { name: string; unit: string; totalQty: number; onStockQty: number; orderedQty: number; receivedQty: number }>();
-                                        (project.products || []).forEach(product => {
-                                            (product.materials || []).forEach(mat => {
-                                                const key = `${mat.Material_Name}||${mat.Unit}`;
-                                                const qty = mat.Quantity || 0;
-
-                                                // Use real quantity fields with Status-based fallback for backward compat
-                                                const onStock = mat.On_Stock || 0;
-                                                const ordered = mat.Ordered_Quantity || (mat.Status === 'Naručeno' ? qty : 0);
-                                                const received = mat.Received_Quantity || (mat.Status === 'Primljeno' ? qty : (mat.Status === 'Na stanju' ? onStock : 0));
-
-                                                if (materialMap.has(key)) {
-                                                    const existing = materialMap.get(key)!;
-                                                    existing.totalQty += qty;
-                                                    existing.onStockQty += onStock;
-                                                    existing.orderedQty += ordered;
-                                                    existing.receivedQty += received;
-                                                } else {
-                                                    materialMap.set(key, {
-                                                        name: mat.Material_Name, unit: mat.Unit, totalQty: qty,
-                                                        onStockQty: onStock, orderedQty: ordered, receivedQty: received,
-                                                    });
-                                                }
-                                            });
-                                        });
-                                        if (materialMap.size === 0) return null;
-                                        const groupedMats = Array.from(materialMap.values()).sort((a, b) => a.name.localeCompare(b.name, 'hr'));
-                                        const isOpen = showMaterialsSummary.has(project.Project_ID);
-                                        return (
-                                            <div className="mat-summary-wrapper">
-                                                <div
-                                                    className="mat-summary-toggle"
-                                                    onClick={() => {
-                                                        const next = new Set(showMaterialsSummary);
-                                                        if (next.has(project.Project_ID)) next.delete(project.Project_ID); else next.add(project.Project_ID);
-                                                        setShowMaterialsSummary(next);
-                                                    }}
-                                                >
-                                                    <span className="material-icons-round mat-summary-chevron" style={{ transform: isOpen ? 'rotate(90deg)' : 'rotate(0deg)' }}>chevron_right</span>
-                                                    <span className="mat-summary-label">Pregled materijala</span>
-                                                    <span className="mat-summary-count">({groupedMats.length})</span>
-                                                </div>
-                                                {isOpen && (
-                                                    <table className="mat-summary-table">
-                                                        <thead>
-                                                            <tr>
-                                                                <th className="mat-summary-th left">Materijal</th>
-                                                                <th className="mat-summary-th">Potrebno</th>
-                                                                <th className="mat-summary-th">Na stanju</th>
-                                                                <th className="mat-summary-th">Naručeno</th>
-                                                                <th className="mat-summary-th">Primljeno</th>
-                                                                <th className="mat-summary-th">Preostalo</th>
-                                                                <th className="mat-summary-th">Status</th>
-                                                            </tr>
-                                                        </thead>
-                                                        <tbody>
-                                                            {groupedMats.map((mat, i) => {
-                                                                const covered = mat.onStockQty + mat.orderedQty + mat.receivedQty;
-                                                                const remaining = Math.max(0, mat.totalQty - covered);
-                                                                let statusLabel: string, statusColor: string, statusBg: string;
-                                                                if (mat.receivedQty >= mat.totalQty) { statusLabel = 'Primljeno'; statusColor = '#10b981'; statusBg = '#ecfdf5'; }
-                                                                else if (mat.receivedQty > 0) { statusLabel = 'Djelomično primljeno'; statusColor = '#06b6d4'; statusBg = '#ecfeff'; }
-                                                                else if (covered >= mat.totalQty) { statusLabel = 'Naručeno'; statusColor = '#3b82f6'; statusBg = '#eff6ff'; }
-                                                                else if (mat.orderedQty > 0) { statusLabel = 'Djelomično naručeno'; statusColor = '#8b5cf6'; statusBg = '#f5f3ff'; }
-                                                                else if (mat.onStockQty > 0) { statusLabel = 'Na stanju'; statusColor = '#10b981'; statusBg = '#ecfdf5'; }
-                                                                else { statusLabel = 'Nije naručeno'; statusColor = '#f59e0b'; statusBg = '#fffbeb'; }
-                                                                return (
-                                                                    <tr key={i} className="mat-summary-row">
-                                                                        <td className="mat-summary-td mat-summary-name">{mat.name}</td>
-                                                                        <td className="mat-summary-td mat-summary-num">{mat.totalQty} {mat.unit}</td>
-                                                                        <td className="mat-summary-td mat-summary-num" style={{ color: mat.onStockQty > 0 ? '#10b981' : '#aeaeb2' }}>{mat.onStockQty} {mat.unit}</td>
-                                                                        <td className="mat-summary-td mat-summary-num" style={{ color: mat.orderedQty > 0 ? '#3b82f6' : '#aeaeb2' }}>{mat.orderedQty} {mat.unit}</td>
-                                                                        <td className="mat-summary-td mat-summary-num" style={{ color: mat.receivedQty > 0 ? '#10b981' : '#aeaeb2' }}>{mat.receivedQty} {mat.unit}</td>
-                                                                        <td className="mat-summary-td mat-summary-num" style={{ color: remaining > 0 ? '#ef4444' : '#10b981' }}>{remaining > 0 ? remaining : '✓'} {remaining > 0 ? mat.unit : ''}</td>
-                                                                        <td className="mat-summary-td" style={{ textAlign: 'right' }}>
-                                                                            <span className="mat-summary-status" style={{ background: statusBg, color: statusColor }}>{statusLabel}</span>
-                                                                        </td>
-                                                                    </tr>
-                                                                );
-                                                            })}
-                                                        </tbody>
-                                                    </table>
-                                                )}
-                                            </div>
-                                        );
-                                    })()
-                                }
-                            </div>
-                        );
-                    })
                 ) : (
-                    // Grouped view by status when no project is expanded
+                    // Unified view: always grouped by status, expanded projects show products inline
                     groupedProjects.map(group => (
                         <div key={group.status} className="status-group" style={{ marginBottom: '16px' }}>
                             <div
@@ -2107,6 +1307,7 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                                 </span>
                             </div>
                             {expandedStatusGroups.has(group.status) && group.projects.map(project => {
+                                const isExpanded = expandedProjectId === project.Project_ID;
                                 const totalProducts = project.products?.length || 0;
                                 const totalMaterialCost = (project.products || []).reduce((sum, p) => {
                                     return sum + (p.materials || []).reduce((ms, m) => ms + (m.Total_Price || 0), 0);
@@ -2171,7 +1372,7 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                                 return (
                                     <div key={project.Project_ID} className={`project-card ${getBorderClass(project.Status)}`}>
                                         <div className="project-header" onClick={() => toggleProject(project.Project_ID)}>
-                                            <button className={`expand-btn ${expandedProjectId === project.Project_ID ? 'expanded' : ''}`}>
+                                            <button className={`expand-btn ${isExpanded ? 'expanded' : ''}`}>
                                                 <span className="material-icons-round">chevron_right</span>
                                             </button>
 
@@ -2212,8 +1413,8 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                                                     )}
                                                 </div>
 
-                                                {/* Product Preview Strip */}
-                                                {totalProducts > 0 && (
+                                                {/* Product Preview Strip — only when collapsed */}
+                                                {!isExpanded && totalProducts > 0 && (
                                                     <div className="product-preview-strip">
                                                         {previewProducts.map(p => (
                                                             <span key={p.Product_ID} className="product-preview-tag">
@@ -2249,13 +1450,503 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                                                 </div>
                                             </div>
                                         </div>
+
+                                        {/* Expanded: Products Section */}
+                                        {isExpanded && (
+                                            <>
+                                                <div className={`project-products expanded`}>
+                                                    <div className="products-header">
+                                                        <h4>Proizvodi ({project.products?.length || 0})</h4>
+                                                        <button className="btn-add-item" onClick={() => openProductModal(project.Project_ID)}>
+                                                            <span className="material-icons-round">add</span>
+                                                            Dodaj proizvod
+                                                        </button>
+                                                    </div>
+
+                                                    {sortedProducts.map(product => (
+                                                        <div key={product.Product_ID} className="product-card">
+                                                            <div className="product-header" onClick={() => toggleProduct(product.Product_ID)}>
+                                                                <button className={`expand-btn ${expandedProducts.has(product.Product_ID) ? 'expanded' : ''}`}>
+                                                                    <span className="material-icons-round">chevron_right</span>
+                                                                </button>
+                                                                <div className="product-info">
+                                                                    <div className="product-name">{product.Name}</div>
+                                                                    <div className="product-dims">
+                                                                        {product.Width && product.Height && product.Depth
+                                                                            ? `${product.Width} × ${product.Height} × ${product.Depth} mm`
+                                                                            : 'Dimenzije nisu unesene'}
+                                                                        {product.Quantity > 1 && ` • ${product.Quantity} kom`}
+                                                                    </div>
+                                                                </div>
+                                                                <span className={`status-badge ${getStatusClass(getProductStatus(product))}`}>
+                                                                    {getProductStatus(product)}
+                                                                </span>
+                                                                {/* Profit Badge or Material Cost Badge */}
+                                                                {(() => {
+                                                                    // === STEP 1: Get ORIGINAL offer values ===
+                                                                    let originalSellingPrice: number | undefined;
+                                                                    let originalExtras = 0;
+                                                                    let originalTransport = 0;
+                                                                    let offerRef: Offer | undefined;
+                                                                    const acceptedOffers = offers.filter(o => o.Status === 'Prihvaćeno');
+                                                                    for (const offer of acceptedOffers) {
+                                                                        const offerProduct = (offer.products || []).find(op => op.Product_ID === product.Product_ID);
+                                                                        if (offerProduct) {
+                                                                            offerRef = offer;
+                                                                            originalSellingPrice = offerProduct.Selling_Price || offerProduct.Total_Price;
+                                                                            const ledCost = offerProduct.LED_Total || 0;
+                                                                            const groutingCost = offerProduct.Grouting ? (offerProduct.Grouting_Price || 0) : 0;
+                                                                            const sinkCost = offerProduct.Sink_Faucet ? (offerProduct.Sink_Faucet_Price || 0) : 0;
+                                                                            const extrasCost = ((offerProduct as any).extras || []).reduce((sum: number, e: any) =>
+                                                                                sum + (e.Total || e.total || 0), 0);
+                                                                            originalExtras = ledCost + groutingCost + sinkCost + extrasCost;
+                                                                            if (offerRef && originalSellingPrice) {
+                                                                                const offerSubtotal = offerRef.Subtotal || 0;
+                                                                                if (offerSubtotal > 0) {
+                                                                                    const productRatio = originalSellingPrice / offerSubtotal;
+                                                                                    originalTransport = (offerRef.Transport_Cost || 0) * productRatio;
+                                                                                }
+                                                                            }
+                                                                            break;
+                                                                        }
+                                                                    }
+
+                                                                    // === STEP 2: Find matching WorkOrderItem ===
+                                                                    let woItem: WorkOrderItem | undefined;
+                                                                    let woItemFallback: WorkOrderItem | undefined;
+                                                                    for (const wo of workOrders) {
+                                                                        const item = (wo.items || []).find(i => i.Product_ID === product.Product_ID);
+                                                                        if (item) {
+                                                                            if (item.Status !== 'Završeno') { woItem = item; break; }
+                                                                            else if (!woItemFallback) { woItemFallback = item; }
+                                                                        }
+                                                                    }
+                                                                    if (!woItem) woItem = woItemFallback;
+
+                                                                    // === STEP 3: Calculate profit ===
+                                                                    if (woItem) {
+                                                                        const woSellingPrice = woItem.Product_Value || 0;
+                                                                        const finalSellingPrice = woItem?.Profit_Overrides?.Selling_Price ?? (woSellingPrice > 0 ? woSellingPrice : originalSellingPrice);
+                                                                        const transportShare = woItem?.Profit_Overrides?.Transport_Share ?? originalTransport;
+                                                                        const servicesTotal = woItem?.Services_Total || 0;
+
+                                                                        if (finalSellingPrice && finalSellingPrice > 0 && (woItem.Status === 'U toku' || woItem.Status === 'Završeno')) {
+                                                                            const materialCost = (product.materials || []).reduce((sum, m) => sum + (m.Total_Price || 0), 0);
+                                                                            const productLogs = workLogs.filter(wl => wl.Work_Order_Item_ID === woItem!.ID);
+                                                                            const laborCost = Math.round(productLogs.reduce((sum, wl) => sum + (wl.Daily_Rate || 0), 0));
+                                                                            const profit = Math.round(finalSellingPrice - materialCost - laborCost - transportShare - servicesTotal);
+                                                                            const margin = Math.round((profit / finalSellingPrice) * 100);
+
+                                                                            return (
+                                                                                <span
+                                                                                    className="product-profit-badge"
+                                                                                    style={{
+                                                                                        cursor: 'pointer',
+                                                                                        color: margin >= 30 ? '#10b981' : margin >= 15 ? '#f59e0b' : '#ef4444',
+                                                                                    }}
+                                                                                    title={`Materijal: ${materialCost.toLocaleString('hr-HR')} KM | Rad: ${laborCost.toLocaleString('hr-HR')} KM | Transport: ${Math.round(transportShare).toLocaleString('hr-HR')} KM | Usluge: ${Math.round(servicesTotal).toLocaleString('hr-HR')} KM`}
+                                                                                    onClick={(e) => {
+                                                                                        e.stopPropagation();
+                                                                                        setTimelineProduct({
+                                                                                            product,
+                                                                                            sellingPrice: finalSellingPrice,
+                                                                                            materialCost,
+                                                                                            laborCost,
+                                                                                            profit,
+                                                                                            profitMargin: margin,
+                                                                                            workOrderItemId: woItem!.ID,
+                                                                                            workOrderItem: woItem,
+                                                                                            originalSellingPrice,
+                                                                                            originalExtras,
+                                                                                            originalTransport,
+                                                                                            hasOverrides: !!(woItem!.Profit_Overrides?.Selling_Price !== undefined || woItem!.Profit_Overrides?.Transport_Share !== undefined),
+                                                                                        });
+                                                                                    }}
+                                                                                >
+                                                                                    <span className="material-icons-round" style={{ fontSize: '16px' }}>
+                                                                                        {margin >= 30 ? 'trending_up' : margin >= 15 ? 'trending_flat' : 'trending_down'}
+                                                                                    </span>
+                                                                                    {profit.toLocaleString('hr-HR')} KM ({margin}%)
+                                                                                </span>
+                                                                            );
+                                                                        }
+                                                                    }
+
+                                                                    // No profit data — show material cost
+                                                                    const matCost = (product.materials || []).reduce((sum, m) => sum + (m.Total_Price || 0), 0);
+                                                                    if (matCost > 0) {
+                                                                        return (
+                                                                            <span className="product-cost-badge">
+                                                                                {formatCurrency(matCost)}
+                                                                            </span>
+                                                                        );
+                                                                    }
+                                                                    return null;
+                                                                })()}
+                                                                <div className="product-actions" onClick={(e) => e.stopPropagation()}>
+                                                                    <button className="icon-btn" onClick={() => openProductModal(project.Project_ID, product)} title="Uredi proizvod">
+                                                                        <span className="material-icons-round">edit</span>
+                                                                    </button>
+                                                                    <button className="icon-btn danger" onClick={() => handleDeleteProduct(product.Product_ID)} title="Obriši proizvod">
+                                                                        <span className="material-icons-round">delete</span>
+                                                                    </button>
+                                                                </div>
+                                                            </div>
+
+                                                            {/* Product Materials — shown when expanded */}
+                                                            {expandedProducts.has(product.Product_ID) && (() => {
+                                                                const productMats = product.materials || [];
+                                                                const totalMaterialsCost = productMats.reduce((sum, m) => sum + (m.Total_Price || 0), 0);
+
+                                                                return (
+                                                                    <div className="product-materials">
+                                                                        <div className="materials-header">
+                                                                            <div className="materials-header-left">
+                                                                                <h5>Materijali ({productMats.length})</h5>
+                                                                                <span className="materials-total">Ukupno: {formatCurrency(totalMaterialsCost)}</span>
+                                                                            </div>
+                                                                            <div className="materials-header-actions">
+                                                                                <button className="btn-add-item" onClick={() => {
+                                                                                    setSketchUpImportProductId(product.Product_ID);
+                                                                                }}>
+                                                                                    <span className="material-icons-round">upload_file</span>
+                                                                                    SketchUp
+                                                                                </button>
+                                                                                <button className="btn-add-item" onClick={() => openMaterialModal(product.Product_ID)}>
+                                                                                    <span className="material-icons-round">add</span>
+                                                                                    Dodaj materijal
+                                                                                </button>
+                                                                                <button
+                                                                                    className={`btn-add-item ${quickEditMode === product.Product_ID ? 'active' : ''}`}
+                                                                                    onClick={() => toggleQuickEdit(product.Product_ID)}
+                                                                                    title="Brzo uređivanje"
+                                                                                >
+                                                                                    <span className="material-icons-round">{quickEditMode === product.Product_ID ? 'check' : 'edit_note'}</span>
+                                                                                    {quickEditMode === product.Product_ID ? 'Gotovo' : 'Brzo uređivanje'}
+                                                                                </button>
+                                                                            </div>
+                                                                        </div>
+
+                                                                        <div className="materials-table">
+                                                                            <div className="mat-row mat-header">
+                                                                                <div className="mat-col-name">Materijal</div>
+                                                                                <div className="mat-col-qty">Količina</div>
+                                                                                <div className="mat-col-price">Cijena</div>
+                                                                                <div className="mat-col-total">Ukupno</div>
+                                                                                <div className="mat-col-status">Status</div>
+                                                                                <div className="mat-col-actions"></div>
+                                                                            </div>
+
+                                                                            {productMats.map(material => {
+                                                                                const isInQuickEdit = quickEditMode === product.Product_ID;
+                                                                                const editValues = editingMaterialValues[material.ID] || { qty: material.Quantity, price: material.Unit_Price };
+                                                                                const isGlass = (material as any).Category === 'Staklo' || (material as any).Is_Glass;
+                                                                                const isAluDoor = (material as any).Category === 'Alu vrata' || (material as any).Is_Alu_Door;
+
+                                                                                return (
+                                                                                    <div key={material.ID} className={`mat-row ${material.Is_Essential ? 'essential' : ''}`}>
+                                                                                        <div className="mat-col-name">
+                                                                                            <span className="mobile-label">Materijal:</span>
+                                                                                            {isInQuickEdit && !isGlass && !isAluDoor ? (
+                                                                                                <SearchableSelect
+                                                                                                    value={editValues.materialId || material.Material_ID}
+                                                                                                    onChange={(value) => handleQuickEditMaterialChange(material.ID, value)}
+                                                                                                    options={materials.map(m => ({
+                                                                                                        value: m.Material_ID,
+                                                                                                        label: m.Name,
+                                                                                                        subLabel: `${m.Category} • ${m.Unit}`
+                                                                                                    }))}
+                                                                                                    placeholder="Promijeni materijal..."
+                                                                                                />
+                                                                                            ) : (
+                                                                                                <>
+                                                                                                    <span className="mat-name">{material.Material_Name}</span>
+                                                                                                    {material.Supplier && <span className="mat-supplier">{material.Supplier}</span>}
+                                                                                                </>
+                                                                                            )}
+                                                                                        </div>
+                                                                                        <div className="mat-col-qty">
+                                                                                            <span className="mobile-label">Količina:</span>
+                                                                                            {isInQuickEdit && !isGlass && !isAluDoor ? (
+                                                                                                <input
+                                                                                                    type="number"
+                                                                                                    className="quick-edit-input"
+                                                                                                    value={editValues.qty}
+                                                                                                    onChange={(e) => handleQuickEditChange(material.ID, 'qty', e.target.value)}
+                                                                                                    onBlur={() => saveQuickEdit(material.ID)}
+                                                                                                    onKeyDown={(e) => handleQuickEditKeyDown(e, material.ID)}
+                                                                                                    step="0.01"
+                                                                                                    min="0"
+                                                                                                    onClick={(e) => e.stopPropagation()}
+                                                                                                />
+                                                                                            ) : (
+                                                                                                <span>{material.Quantity} {material.Unit}</span>
+                                                                                            )}
+                                                                                        </div>
+                                                                                        <div className="mat-col-price">
+                                                                                            <span className="mobile-label">Cijena:</span>
+                                                                                            {isInQuickEdit && !isGlass && !isAluDoor ? (
+                                                                                                <input
+                                                                                                    type="number"
+                                                                                                    className="quick-edit-input"
+                                                                                                    value={editValues.price}
+                                                                                                    onChange={(e) => handleQuickEditChange(material.ID, 'price', e.target.value)}
+                                                                                                    onBlur={() => saveQuickEdit(material.ID)}
+                                                                                                    onKeyDown={(e) => handleQuickEditKeyDown(e, material.ID)}
+                                                                                                    step="0.01"
+                                                                                                    min="0"
+                                                                                                    onClick={(e) => e.stopPropagation()}
+                                                                                                />
+                                                                                            ) : (
+                                                                                                formatCurrency(material.Unit_Price)
+                                                                                            )}
+                                                                                        </div>
+                                                                                        <div className="mat-col-total">
+                                                                                            <span className="mobile-label">Ukupno:</span>
+                                                                                            <strong>
+                                                                                                {isInQuickEdit && !isGlass && !isAluDoor
+                                                                                                    ? formatCurrency(editValues.qty * editValues.price)
+                                                                                                    : formatCurrency(material.Total_Price)
+                                                                                                }
+                                                                                            </strong>
+                                                                                        </div>
+                                                                                        <div className="mat-col-status">
+                                                                                            {(() => {
+                                                                                                const allowedTransitions = ALLOWED_MATERIAL_TRANSITIONS[material.Status] || [];
+                                                                                                const statusIcons: Record<string, string> = {
+                                                                                                    'Nije naručeno': 'remove_shopping_cart',
+                                                                                                    'Na stanju': 'inventory',
+                                                                                                    'Naručeno': 'shopping_cart',
+                                                                                                    'Primljeno': 'check_circle',
+                                                                                                };
+                                                                                                if (allowedTransitions.length > 0) {
+                                                                                                    return (
+                                                                                                        <div className="status-dropdown-wrapper">
+                                                                                                            <span
+                                                                                                                className={`status-badge ${getStatusClass(material.Status)} clickable`}
+                                                                                                                onClick={(e) => {
+                                                                                                                    e.stopPropagation();
+                                                                                                                    setStatusDropdownMaterialId(
+                                                                                                                        statusDropdownMaterialId === material.ID ? null : material.ID
+                                                                                                                    );
+                                                                                                                }}
+                                                                                                                title="Klikni za promjenu statusa"
+                                                                                                            >
+                                                                                                                {material.Status}
+                                                                                                                <span className="material-icons-round" style={{ fontSize: '14px', marginLeft: '4px' }}>expand_more</span>
+                                                                                                            </span>
+                                                                                                            {statusDropdownMaterialId === material.ID && (
+                                                                                                                <div className="status-dropdown-menu" onClick={(e) => e.stopPropagation()}>
+                                                                                                                    {pendingStatusChange && pendingStatusChange.materialId === material.ID ? (
+                                                                                                                        <div style={{ padding: '8px 12px', display: 'flex', flexDirection: 'column', gap: '6px', minWidth: '180px' }}>
+                                                                                                                            <span style={{ fontSize: '12px', fontWeight: 600, color: '#334155' }}>
+                                                                                                                                {pendingStatusChange.status === 'Na stanju' ? 'Količina na stanju' : 'Primljena količina'}
+                                                                                                                            </span>
+                                                                                                                            <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                                                                                                                                <input
+                                                                                                                                    type="number"
+                                                                                                                                    step="0.01"
+                                                                                                                                    min="0"
+                                                                                                                                    value={statusQtyInput}
+                                                                                                                                    onChange={(e) => setStatusQtyInput(parseFloat(e.target.value) || 0)}
+                                                                                                                                    onKeyDown={(e) => {
+                                                                                                                                        if (e.key === 'Enter') {
+                                                                                                                                            handleMaterialStatusChange(pendingStatusChange.materialId, pendingStatusChange.status, statusQtyInput);
+                                                                                                                                        } else if (e.key === 'Escape') {
+                                                                                                                                            setPendingStatusChange(null);
+                                                                                                                                        }
+                                                                                                                                    }}
+                                                                                                                                    autoFocus
+                                                                                                                                    style={{
+                                                                                                                                        width: '80px', padding: '4px 8px', borderRadius: '6px',
+                                                                                                                                        border: '1px solid #cbd5e1', fontSize: '13px', textAlign: 'center',
+                                                                                                                                        outline: 'none'
+                                                                                                                                    }}
+                                                                                                                                />
+                                                                                                                                <button
+                                                                                                                                    onClick={() => handleMaterialStatusChange(pendingStatusChange.materialId, pendingStatusChange.status, statusQtyInput)}
+                                                                                                                                    style={{
+                                                                                                                                        padding: '4px 10px', borderRadius: '6px', border: 'none',
+                                                                                                                                        background: '#2563eb', color: '#fff', fontSize: '12px',
+                                                                                                                                        fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap'
+                                                                                                                                    }}
+                                                                                                                                >
+                                                                                                                                    OK
+                                                                                                                                </button>
+                                                                                                                                <button
+                                                                                                                                    onClick={() => setPendingStatusChange(null)}
+                                                                                                                                    style={{
+                                                                                                                                        padding: '4px 8px', borderRadius: '6px', border: '1px solid #e2e8f0',
+                                                                                                                                        background: '#f8fafc', color: '#64748b', fontSize: '12px',
+                                                                                                                                        cursor: 'pointer'
+                                                                                                                                    }}
+                                                                                                                                >
+                                                                                                                                    ✕
+                                                                                                                                </button>
+                                                                                                                            </div>
+                                                                                                                        </div>
+                                                                                                                    ) : (
+                                                                                                                        allowedTransitions.map(targetStatus => (
+                                                                                                                            <button
+                                                                                                                                key={targetStatus}
+                                                                                                                                className="status-dropdown-item"
+                                                                                                                                onClick={() => handleStatusClick(material, targetStatus)}
+                                                                                                                            >
+                                                                                                                                <span className="material-icons-round">{statusIcons[targetStatus] || 'swap_horiz'}</span>
+                                                                                                                                {targetStatus}
+                                                                                                                            </button>
+                                                                                                                        ))
+                                                                                                                    )}
+                                                                                                                </div>
+                                                                                                            )}
+                                                                                                        </div>
+                                                                                                    );
+                                                                                                }
+                                                                                                return (
+                                                                                                    <span className={`status-badge ${getStatusClass(material.Status)}`}>
+                                                                                                        {material.Status}
+                                                                                                    </span>
+                                                                                                );
+                                                                                            })()}
+                                                                                        </div>
+                                                                                        <div className="mat-col-actions">
+                                                                                            <div className="action-buttons">
+                                                                                                {isGlass && (
+                                                                                                    <button
+                                                                                                        className="icon-btn"
+                                                                                                        onClick={() => openGlassModalForEdit(product.Product_ID, material)}
+                                                                                                        title="Uredi staklo"
+                                                                                                    >
+                                                                                                        <span className="material-icons-round">edit</span>
+                                                                                                    </button>
+                                                                                                )}
+                                                                                                {isAluDoor && (
+                                                                                                    <button
+                                                                                                        className="icon-btn"
+                                                                                                        onClick={() => openAluDoorModalForEdit(product.Product_ID, material)}
+                                                                                                        title="Uredi alu vrata"
+                                                                                                    >
+                                                                                                        <span className="material-icons-round">edit</span>
+                                                                                                    </button>
+                                                                                                )}
+                                                                                                {!isGlass && !isAluDoor && (
+                                                                                                    <button
+                                                                                                        className="icon-btn"
+                                                                                                        onClick={() => openEditMaterialModal(material)}
+                                                                                                        title="Uredi materijal"
+                                                                                                    >
+                                                                                                        <span className="material-icons-round">edit</span>
+                                                                                                    </button>
+                                                                                                )}
+                                                                                                <button className="icon-btn danger" onClick={() => handleDeleteMaterial(material.ID)}>
+                                                                                                    <span className="material-icons-round">delete</span>
+                                                                                                </button>
+                                                                                            </div>
+                                                                                        </div>
+                                                                                    </div>
+                                                                                );
+                                                                            })}
+                                                                        </div>
+                                                                    </div>
+                                                                );
+                                                            })()}
+                                                        </div>
+                                                    ))}
+                                                </div>
+
+                                                {/* Grouped Materials Summary */}
+                                                {(() => {
+                                                    const materialMap = new Map<string, { name: string; unit: string; totalQty: number; onStockQty: number; orderedQty: number; receivedQty: number }>();
+                                                    (project.products || []).forEach(product => {
+                                                        (product.materials || []).forEach(mat => {
+                                                            const key = `${mat.Material_Name}||${mat.Unit}`;
+                                                            const qty = mat.Quantity || 0;
+                                                            const onStock = mat.On_Stock || 0;
+                                                            const ordered = mat.Ordered_Quantity || (mat.Status === 'Naručeno' ? qty : 0);
+                                                            const received = mat.Received_Quantity || (mat.Status === 'Primljeno' ? qty : (mat.Status === 'Na stanju' ? onStock : 0));
+                                                            if (materialMap.has(key)) {
+                                                                const existing = materialMap.get(key)!;
+                                                                existing.totalQty += qty;
+                                                                existing.onStockQty += onStock;
+                                                                existing.orderedQty += ordered;
+                                                                existing.receivedQty += received;
+                                                            } else {
+                                                                materialMap.set(key, {
+                                                                    name: mat.Material_Name, unit: mat.Unit, totalQty: qty,
+                                                                    onStockQty: onStock, orderedQty: ordered, receivedQty: received,
+                                                                });
+                                                            }
+                                                        });
+                                                    });
+                                                    if (materialMap.size === 0) return null;
+                                                    const groupedMats = Array.from(materialMap.values()).sort((a, b) => a.name.localeCompare(b.name, 'hr'));
+                                                    const isOpen = showMaterialsSummary.has(project.Project_ID);
+                                                    return (
+                                                        <div className="mat-summary-wrapper">
+                                                            <div
+                                                                className="mat-summary-toggle"
+                                                                onClick={() => {
+                                                                    const next = new Set(showMaterialsSummary);
+                                                                    if (next.has(project.Project_ID)) next.delete(project.Project_ID); else next.add(project.Project_ID);
+                                                                    setShowMaterialsSummary(next);
+                                                                }}
+                                                            >
+                                                                <span className="material-icons-round mat-summary-chevron" style={{ transform: isOpen ? 'rotate(90deg)' : 'rotate(0deg)' }}>chevron_right</span>
+                                                                <span className="mat-summary-label">Pregled materijala</span>
+                                                                <span className="mat-summary-count">({groupedMats.length})</span>
+                                                            </div>
+                                                            {isOpen && (
+                                                                <table className="mat-summary-table">
+                                                                    <thead>
+                                                                        <tr>
+                                                                            <th className="mat-summary-th left">Materijal</th>
+                                                                            <th className="mat-summary-th">Potrebno</th>
+                                                                            <th className="mat-summary-th">Na stanju</th>
+                                                                            <th className="mat-summary-th">Naručeno</th>
+                                                                            <th className="mat-summary-th">Primljeno</th>
+                                                                            <th className="mat-summary-th">Preostalo</th>
+                                                                            <th className="mat-summary-th">Status</th>
+                                                                        </tr>
+                                                                    </thead>
+                                                                    <tbody>
+                                                                        {groupedMats.map((mat, i) => {
+                                                                            const covered = mat.onStockQty + mat.orderedQty + mat.receivedQty;
+                                                                            const remaining = Math.max(0, mat.totalQty - covered);
+                                                                            let statusLabel: string, statusColor: string, statusBg: string;
+                                                                            if (mat.receivedQty >= mat.totalQty) { statusLabel = 'Primljeno'; statusColor = '#10b981'; statusBg = '#ecfdf5'; }
+                                                                            else if (mat.receivedQty > 0) { statusLabel = 'Djelomično primljeno'; statusColor = '#06b6d4'; statusBg = '#ecfeff'; }
+                                                                            else if (covered >= mat.totalQty) { statusLabel = 'Naručeno'; statusColor = '#3b82f6'; statusBg = '#eff6ff'; }
+                                                                            else if (mat.orderedQty > 0) { statusLabel = 'Djelomično naručeno'; statusColor = '#8b5cf6'; statusBg = '#f5f3ff'; }
+                                                                            else if (mat.onStockQty > 0) { statusLabel = 'Na stanju'; statusColor = '#10b981'; statusBg = '#ecfdf5'; }
+                                                                            else { statusLabel = 'Nije naručeno'; statusColor = '#f59e0b'; statusBg = '#fffbeb'; }
+                                                                            return (
+                                                                                <tr key={i} className="mat-summary-row">
+                                                                                    <td className="mat-summary-td mat-summary-name">{mat.name}</td>
+                                                                                    <td className="mat-summary-td mat-summary-num">{mat.totalQty} {mat.unit}</td>
+                                                                                    <td className="mat-summary-td mat-summary-num" style={{ color: mat.onStockQty > 0 ? '#10b981' : '#aeaeb2' }}>{mat.onStockQty} {mat.unit}</td>
+                                                                                    <td className="mat-summary-td mat-summary-num" style={{ color: mat.orderedQty > 0 ? '#3b82f6' : '#aeaeb2' }}>{mat.orderedQty} {mat.unit}</td>
+                                                                                    <td className="mat-summary-td mat-summary-num" style={{ color: mat.receivedQty > 0 ? '#10b981' : '#aeaeb2' }}>{mat.receivedQty} {mat.unit}</td>
+                                                                                    <td className="mat-summary-td mat-summary-num" style={{ color: remaining > 0 ? '#ef4444' : '#10b981' }}>{remaining > 0 ? remaining : '✓'} {remaining > 0 ? mat.unit : ''}</td>
+                                                                                    <td className="mat-summary-td" style={{ textAlign: 'right' }}>
+                                                                                        <span className="mat-summary-status" style={{ background: statusBg, color: statusColor }}>{statusLabel}</span>
+                                                                                    </td>
+                                                                                </tr>
+                                                                            );
+                                                                        })}
+                                                                    </tbody>
+                                                                </table>
+                                                            )}
+                                                        </div>
+                                                    );
+                                                })()}
+                                            </>
+                                        )}
                                     </div>
                                 );
                             })}
                         </div>
                     ))
-                )
-                }
+                )}
             </div >
 
             {/* Project Materials Overview Modal */}
@@ -2414,71 +2105,19 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                 </div>
             </Modal>
 
-            {/* Add Material Modal */}
-            <Modal
+            {/* Add Material Modal — Multi-select */}
+            <MaterialSelectModal
                 isOpen={materialModal}
                 onClose={() => setMaterialModal(false)}
-                title="Dodaj Materijal"
-                footer={
-                    <>
-                        <button className="btn btn-secondary" onClick={() => setMaterialModal(false)}>Otkaži</button>
-                        <button className="btn btn-primary" onClick={() => handleAddMaterial()}>Dodaj</button>
-                    </>
-                }
-            >
-                <div className="form-group">
-                    <label>Materijal *</label>
-                    <SearchableSelect
-                        value={selectedMaterial?.Material_ID || ''}
-                        onChange={(value) => {
-                            const mat = materials.find(m => m.Material_ID === value);
-                            setSelectedMaterial(mat || null);
-                            if (mat) {
-                                setMaterialPrice(mat.Default_Unit_Price);
-                            }
-                        }}
-                        options={materials.map(mat => ({
-                            value: mat.Material_ID,
-                            label: mat.Name,
-                            subLabel: `${mat.Category} • ${mat.Unit}`
-                        }))}
-                        placeholder="Pretraži materijale..."
-                    />
-                </div>
-                <div className="form-row">
-                    <div className="form-group">
-                        <label>Količina *</label>
-                        <input
-                            type="number"
-                            step="0.01"
-                            min="0"
-                            value={materialQty}
-                            onChange={(e) => setMaterialQty(parseFloat(e.target.value) || 0)}
-                        />
-                    </div>
-                    <div className="form-group">
-                        <label>Jedinica</label>
-                        <input
-                            type="text"
-                            readOnly
-                            value={selectedMaterial?.Unit || ''}
-                        />
-                    </div>
-                </div>
-                <div className="form-group">
-                    <label>Cijena po jedinici (KM)</label>
-                    <input
-                        type="number"
-                        step="0.01"
-                        min="0"
-                        value={materialPrice}
-                        onChange={(e) => setMaterialPrice(parseFloat(e.target.value) || 0)}
-                    />
-                </div>
-                <div className="form-group">
-                    <label>Ukupno: <strong>{formatCurrency(materialQty * materialPrice)}</strong></label>
-                </div>
-            </Modal>
+                materials={materials}
+                productId={addingMaterial?.productId || ''}
+                organizationId={organizationId || ''}
+                onAddMaterials={handleAddMaterials}
+                onGlassRedirect={handleGlassRedirect}
+                onAluDoorRedirect={handleAluDoorRedirect}
+                onRefresh={onRefresh}
+                showToast={showToast}
+            />
 
             {/* Glass Modal */}
             <GlassModal

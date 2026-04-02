@@ -467,8 +467,9 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
                 const product = availableProducts.find(p => p.Product_ID === material?.Product_ID);
 
                 // Use custom order quantity if set, otherwise default to needed amount
+                // Always round UP to whole numbers — no decimals in orders
                 const onStock = onStockQuantities[materialId] ?? (material?.On_Stock || 0);
-                const orderQty = orderQuantities[materialId] ?? Math.max(0, (material?.Quantity || 0) - onStock);
+                const orderQty = Math.ceil(orderQuantities[materialId] ?? Math.max(0, (material?.Quantity || 0) - onStock));
                 const unitPrice = material?.Unit_Price || ((material?.Total_Price || 0) / (material?.Quantity || 1));
                 const orderPrice = orderQty * unitPrice;
 
@@ -500,8 +501,8 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
                 }
             });
 
-            // A3: Filter out zero-quantity items
-            const items = Array.from(grouped.values()).filter(item => item.Quantity > 0);
+            // A3: Filter out zero-quantity items; also Math.ceil grouped quantity
+            const items = Array.from(grouped.values()).map(item => ({ ...item, Quantity: Math.ceil(item.Quantity) })).filter(item => item.Quantity > 0);
             if (items.length === 0) {
                 showToast('Sve količine su 0 — nema materijala za naručiti', 'error');
                 return;
