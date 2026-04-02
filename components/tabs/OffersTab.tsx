@@ -1813,16 +1813,16 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
                                         <table className="offer-spreadsheet">
                                             <thead>
                                                 <tr>
-                                                    <th style={{ width: '40px', textAlign: 'center' }}>Uklj.</th>
+                                                    <th style={{ width: '50px', textAlign: 'center' }}>Uklj.</th>
                                                     <th>Naziv proizvoda</th>
-                                                    <th style={{ width: '100px' }}>Materijal</th>
-                                                    <th style={{ width: '100px' }}>Radn.</th>
-                                                    <th style={{ width: '100px' }}>Dani</th>
-                                                    <th style={{ width: '100px' }}>Dnevn.</th>
-                                                    <th style={{ width: '110px' }}>Usluge</th>
-                                                    <th style={{ width: '100px' }}>Marža</th>
-                                                    <th style={{ width: '100px' }}>Cijena/kom</th>
-                                                    <th style={{ width: '100px' }}>Ukupno</th>
+                                                    <th style={{ width: '110px' }}>Materijal</th>
+                                                    <th style={{ width: '100px', textAlign: 'center' }}>Radnici</th>
+                                                    <th style={{ width: '100px', textAlign: 'center' }}>Dani</th>
+                                                    <th style={{ width: '120px', textAlign: 'right' }}>Dnevnica</th>
+                                                    <th style={{ width: '120px', textAlign: 'right' }}>Usluge</th>
+                                                    <th style={{ width: '130px', textAlign: 'right' }}>Marža</th>
+                                                    <th style={{ width: '130px', textAlign: 'right' }}>Cijena/kom</th>
+                                                    <th style={{ width: '140px', textAlign: 'right' }}>Ukupno</th>
                                                 </tr>
                                             </thead>
                                             <tbody>
