@@ -112,6 +112,8 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
     const [aluDoorProductId, setAluDoorProductId] = useState('');
     const [editingGlassMaterial, setEditingGlassMaterial] = useState<ProductMaterial | null>(null);
     const [editingAluDoorMaterial, setEditingAluDoorMaterial] = useState<ProductMaterial | null>(null);
+    // Track whether to re-open MaterialSelectModal after glass/alu modal closes
+    const [reopenMaterialModalAfterSpecial, setReopenMaterialModalAfterSpecial] = useState(false);
     // Edit regular material modal
     const [editMaterialModal, setEditMaterialModal] = useState(false);
     const [editingMaterial, setEditingMaterial] = useState<ProductMaterial | null>(null);
@@ -443,6 +445,7 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
         setSelectedMaterial(mat || null);
         setGlassProductId(pId);
         setEditingGlassMaterial(null);
+        setReopenMaterialModalAfterSpecial(true);
         setGlassModal(true);
     }
 
@@ -451,6 +454,7 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
         setSelectedMaterial(mat || null);
         setAluDoorProductId(pId);
         setEditingAluDoorMaterial(null);
+        setReopenMaterialModalAfterSpecial(true);
         setAluDoorModal(true);
     }
 
@@ -481,6 +485,13 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
         if (result.success) {
             showToast(result.message, 'success');
             onRefresh('projects');
+            // Re-open MaterialSelectModal if this was triggered from it
+            if (reopenMaterialModalAfterSpecial) {
+                setReopenMaterialModalAfterSpecial(false);
+                setGlassModal(false);
+                setTimeout(() => setMaterialModal(true), 100);
+                return;
+            }
         } else {
             showToast(result.message, 'error');
         }
@@ -513,6 +524,13 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
         if (result.success) {
             showToast(result.message, 'success');
             onRefresh('projects');
+            // Re-open MaterialSelectModal if this was triggered from it
+            if (reopenMaterialModalAfterSpecial) {
+                setReopenMaterialModalAfterSpecial(false);
+                setAluDoorModal(false);
+                setTimeout(() => setMaterialModal(true), 100);
+                return;
+            }
         } else {
             showToast(result.message, 'error');
         }

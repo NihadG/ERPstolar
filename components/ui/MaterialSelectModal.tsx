@@ -141,14 +141,34 @@ export default function MaterialSelectModal({
         return mat.Is_Alu_Door === true || mat.Category === 'Alu vrata';
     }
 
-    function toggleMaterial(mat: Material) {
-        // Glass/Alu redirect — single item, redirect immediately
+    async function toggleMaterial(mat: Material) {
+        // Glass/Alu redirect — first save any pending selected materials, then redirect
         if (isGlass(mat) && onGlassRedirect) {
+            // Save any already-selected regular materials first
+            if (selected.size > 0) {
+                setSaving(true);
+                try {
+                    await onAddMaterials(Array.from(selected.values()));
+                } catch {
+                    // Continue to glass even if batch save fails
+                }
+                setSaving(false);
+            }
             onClose();
             onGlassRedirect(productId, mat.Material_ID);
             return;
         }
         if (isAluDoor(mat) && onAluDoorRedirect) {
+            // Save any already-selected regular materials first
+            if (selected.size > 0) {
+                setSaving(true);
+                try {
+                    await onAddMaterials(Array.from(selected.values()));
+                } catch {
+                    // Continue to alu even if batch save fails
+                }
+                setSaving(false);
+            }
             onClose();
             onAluDoorRedirect(productId, mat.Material_ID);
             return;

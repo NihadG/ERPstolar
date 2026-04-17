@@ -647,16 +647,14 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
                 // Open edit modal, then after loading, de-select conflicting products
                 const fullOffer = await getOffer(offerId, organizationId!);
                 if (fullOffer) {
-                    // LEGACY MIGRATION: If offer was saved with Currency=EUR, convert values back to KM
-                    const isLegacyEUR = ((fullOffer as any).Currency || 'KM') === 'EUR';
-
+                    // All monetary values are ALWAYS stored in KM — Currency is only a display flag
                     setCurrentOffer(fullOffer);
                     setIsEditMode(true);
                     setSelectedProjectId(fullOffer.Project_ID);
                     setOfferName(fullOffer.Name || '');
-                    setTransportCost(isLegacyEUR ? toKM(fullOffer.Transport_Cost || 0) : (fullOffer.Transport_Cost || 0));
+                    setTransportCost(fullOffer.Transport_Cost || 0);
                     setOnsiteAssembly(fullOffer.Onsite_Assembly || false);
-                    setOnsiteDiscount(isLegacyEUR ? toKM(fullOffer.Onsite_Discount || 0) : (fullOffer.Onsite_Discount || 0));
+                    setOnsiteDiscount(fullOffer.Onsite_Discount || 0);
                     setValidUntil(fullOffer.Valid_Until ? fullOffer.Valid_Until.split('T')[0] : getDefaultValidDate());
                     setNotes(fullOffer.Notes || '');
                     setIncludePDV((fullOffer as any).Include_PDV ?? true);
@@ -665,26 +663,17 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
                     setOfferLanguage((fullOffer as any).Language || 'bs');
 
                     const products: OfferProductState[] = (fullOffer.products || []).map((p: OfferProduct) => {
-                        let materialCost = p.Material_Cost || 0;
-                        let margin = p.Margin || 0;
-                        let laborDailyRate = (p as any).Labor_Daily_Rate || (p as any).laborDailyRate || 0;
-                        if (isLegacyEUR) {
-                            materialCost = toKM(materialCost);
-                            margin = toKM(margin);
-                            laborDailyRate = toKM(laborDailyRate);
-                        }
                         return {
                             Product_ID: p.Product_ID,
                             Product_Name: p.Product_Name,
                             Quantity: p.Quantity || 1,
                             Height: 0, Width: 0, Depth: 0,
-                            Material_Cost: materialCost,
+                            Material_Cost: p.Material_Cost || 0,
                             // De-select conflicting products
                             included: p.Included !== false && !conflictIds.has(p.Product_ID),
-                            margin: margin,
+                            margin: p.Margin || 0,
                             extras: ((p as any).Extras || (p as any).extras || []).map((e: any) => {
-                                let price = e.price || e.Price || e.Unit_Price || 0;
-                                if (isLegacyEUR) price = toKM(price);
+                                const price = e.price || e.Price || e.Unit_Price || 0;
                                 const qty = e.qty || e.Qty || e.Quantity || 1;
                                 return {
                                     name: e.name || e.Name || '',
@@ -697,7 +686,7 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
                             }),
                             laborWorkers: (p as any).Labor_Workers || (p as any).laborWorkers || 0,
                             laborDays: (p as any).Labor_Days || (p as any).laborDays || 0,
-                            laborDailyRate: laborDailyRate
+                            laborDailyRate: (p as any).Labor_Daily_Rate || (p as any).laborDailyRate || 0
                         };
                     });
 
@@ -731,10 +720,8 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
         // Set the project
         setSelectedProjectId(fullOffer.Project_ID);
 
-        // LEGACY MIGRATION: If offer was saved with Currency=EUR and converted values,
-        // convert them back to KM so the editor always works in KM.
-        const savedCurrency = (fullOffer as any).Currency || 'KM';
-        const isLegacyEUR = savedCurrency === 'EUR';
+        // All monetary values are ALWAYS stored in KM — Currency is only a display flag.
+        // No conversion needed when loading into editor.
 
         // Get fresh product data from project for material cost fallback
         const project = projects.find(pr => pr.Project_ID === fullOffer.Project_ID);
@@ -749,16 +736,9 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
         }).map((p: OfferProduct) => {
             // Fall back to fresh product Material_Cost when offer value is 0
             const freshProduct = projectProducts.find(pp => pp.Product_ID === p.Product_ID);
-            let materialCost = p.Material_Cost || freshProduct?.Material_Cost || 0;
-            let margin = p.Margin || 0;
-            let laborDailyRate = (p as any).Labor_Daily_Rate || (p as any).laborDailyRate || 0;
-
-            // Legacy migration: convert EUR values back to KM
-            if (isLegacyEUR) {
-                materialCost = toKM(materialCost);
-                margin = toKM(margin);
-                laborDailyRate = toKM(laborDailyRate);
-            }
+            const materialCost = p.Material_Cost || freshProduct?.Material_Cost || 0;
+            const margin = p.Margin || 0;
+            const laborDailyRate = (p as any).Labor_Daily_Rate || (p as any).laborDailyRate || 0;
 
             return {
                 Product_ID: p.Product_ID,
@@ -771,8 +751,7 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
                 included: p.Included !== false,
                 margin: margin,
                 extras: ((p as any).Extras || (p as any).extras || []).map((e: any) => {
-                    let price = e.price || e.Price || e.Unit_Price || 0;
-                    if (isLegacyEUR) price = toKM(price);
+                    const price = e.price || e.Price || e.Unit_Price || 0;
                     const qty = e.qty || e.Qty || e.Quantity || 1;
                     return {
                         name: e.name || e.Name || '',
@@ -831,10 +810,10 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
 
         setOfferProducts(sortProductsByName(products, p => p.Product_Name));
         setOfferName(fullOffer.Name || '');
-        // Legacy migration: convert transport/discount back to KM
-        setTransportCost(isLegacyEUR ? toKM(fullOffer.Transport_Cost || 0) : (fullOffer.Transport_Cost || 0));
+        // All monetary values already in KM — no conversion needed
+        setTransportCost(fullOffer.Transport_Cost || 0);
         setOnsiteAssembly(fullOffer.Onsite_Assembly || false);
-        setOnsiteDiscount(isLegacyEUR ? toKM(fullOffer.Onsite_Discount || 0) : (fullOffer.Onsite_Discount || 0));
+        setOnsiteDiscount(fullOffer.Onsite_Discount || 0);
         setValidUntil(fullOffer.Valid_Until ? fullOffer.Valid_Until.split('T')[0] : getDefaultValidDate());
         setNotes(fullOffer.Notes || '');
         setIncludePDV((fullOffer as any).Include_PDV ?? true);
