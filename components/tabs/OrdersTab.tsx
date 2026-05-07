@@ -45,7 +45,7 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
     const [wizardStep, setWizardStep] = useState(1);
     const [selectedProjectIds, setSelectedProjectIds] = useState<Set<string>>(new Set());
     const [selectedProductIds, setSelectedProductIds] = useState<Set<string>>(new Set());
-    const [selectedSupplierId, setSelectedSupplierId] = useState('');
+    const [selectedSupplierIds, setSelectedSupplierIds] = useState<Set<string>>(new Set());
     const [selectedMaterialIds, setSelectedMaterialIds] = useState<Set<string>>(new Set());
 
     // Custom quantity state for materials
@@ -69,6 +69,9 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
 
     // Editing order state
     const [editingOrderId, setEditingOrderId] = useState<string | null>(null);
+
+    // Order type modal (combined vs separate when multiple suppliers)
+    const [orderTypeModal, setOrderTypeModal] = useState(false);
 
     // Current order derived from expanded ID
     const currentOrder = useMemo(() =>
@@ -100,7 +103,7 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
             const supplier = suppliers.find(s => s.Name === pendingOrderMaterials.supplierName);
             if (supplier) {
                 // Set up wizard with pre-selected data
-                setSelectedSupplierId(supplier.Supplier_ID);
+                setSelectedSupplierIds(new Set([supplier.Supplier_ID]));
 
                 // Find projects and products for these materials
                 const materialIdsSet = new Set(pendingOrderMaterials.materialIds);
@@ -343,31 +346,65 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
     const availableSuppliers = useMemo(() => {
         if (selectedProductIds.size === 0) return [];
         const supplierNames = new Set<string>();
+        let hasNoSupplier = false;
         unorderedMaterials.forEach(m => {
-            if (selectedProductIds.has(m.Product_ID) && m.Supplier) {
-                supplierNames.add(m.Supplier);
+            if (selectedProductIds.has(m.Product_ID)) {
+                if (m.Supplier) {
+                    supplierNames.add(m.Supplier);
+                } else {
+                    hasNoSupplier = true;
+                }
             }
         });
-        return suppliers.filter(s => supplierNames.has(s.Name));
+        const result: Supplier[] = suppliers.filter(s => supplierNames.has(s.Name));
+        if (hasNoSupplier) {
+            result.push({
+                Supplier_ID: '__no_supplier__',
+                Organization_ID: '',
+                Name: 'Bez dobavljača',
+                Contact_Person: '',
+                Phone: '',
+                Email: '',
+                Address: '',
+                Categories: '',
+            } as Supplier);
+        }
+        return result;
     }, [selectedProductIds, unorderedMaterials, suppliers]);
 
-    // Get materials filtered by selected products and supplier
+    // Get materials filtered by selected products and suppliers (multi-select)
     const filteredMaterials = useMemo(() => {
-        if (selectedProductIds.size === 0 || !selectedSupplierId) return [];
-        const supplier = suppliers.find(s => s.Supplier_ID === selectedSupplierId);
-        if (!supplier) return [];
+        if (selectedProductIds.size === 0 || selectedSupplierIds.size === 0) return [];
 
-        return unorderedMaterials.filter(m =>
-            selectedProductIds.has(m.Product_ID) && m.Supplier === supplier.Name
-        ).map(m => {
+        // Build set of selected supplier names
+        const selectedSupplierNames = new Set<string>();
+        let includeNoSupplier = false;
+        selectedSupplierIds.forEach(id => {
+            if (id === '__no_supplier__') {
+                includeNoSupplier = true;
+            } else {
+                const s = suppliers.find(s => s.Supplier_ID === id);
+                if (s) selectedSupplierNames.add(s.Name);
+            }
+        });
+
+        return unorderedMaterials.filter(m => {
+            if (!selectedProductIds.has(m.Product_ID)) return false;
+            if (m.Supplier && selectedSupplierNames.has(m.Supplier)) return true;
+            if (!m.Supplier && includeNoSupplier) return true;
+            return false;
+        }).map(m => {
             const product = availableProducts.find(p => p.Product_ID === m.Product_ID);
+            const productQty = product?.Quantity || 1;
             return {
                 ...m,
+                Quantity: m.Quantity * productQty,
+                Total_Price: m.Total_Price * productQty,
                 Product_Name: product?.Name || '',
                 Project_Name: product?.Project_Name || '',
             };
         });
-    }, [selectedProductIds, selectedSupplierId, suppliers, unorderedMaterials, availableProducts]);
+    }, [selectedProductIds, selectedSupplierIds, suppliers, unorderedMaterials, availableProducts]);
 
     // Utility functions imported from lib/utils
 
@@ -375,7 +412,7 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
         setWizardStep(1);
         setSelectedProjectIds(new Set());
         setSelectedProductIds(new Set());
-        setSelectedSupplierId('');
+        setSelectedSupplierIds(new Set());
         setSelectedMaterialIds(new Set());
         setOrderQuantities({});
         setOnStockQuantities({});
@@ -393,7 +430,7 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
         setSelectedProjectIds(newSelected);
         // Reset downstream selections
         setSelectedProductIds(new Set());
-        setSelectedSupplierId('');
+        setSelectedSupplierIds(new Set());
         setSelectedMaterialIds(new Set());
     }
 
@@ -406,7 +443,7 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
         }
         setSelectedProductIds(newSelected);
         // Reset downstream selections
-        setSelectedSupplierId('');
+        setSelectedSupplierIds(new Set());
         setSelectedMaterialIds(new Set());
     }
 
@@ -424,6 +461,17 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
         setSelectedMaterialIds(new Set(filteredMaterials.map(m => m.ID)));
     }
 
+    function toggleSupplier(supplierId: string) {
+        const newSelected = new Set(selectedSupplierIds);
+        if (newSelected.has(supplierId)) {
+            newSelected.delete(supplierId);
+        } else {
+            newSelected.add(supplierId);
+        }
+        setSelectedSupplierIds(newSelected);
+        setSelectedMaterialIds(new Set());
+    }
+
     function nextStep() {
         if (wizardStep === 1 && selectedProjectIds.size === 0) {
             showToast('Odaberite barem jedan projekat', 'error');
@@ -433,8 +481,8 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
             showToast('Odaberite barem jedan proizvod', 'error');
             return;
         }
-        if (wizardStep === 3 && !selectedSupplierId) {
-            showToast('Odaberite dobavljača', 'error');
+        if (wizardStep === 3 && selectedSupplierIds.size === 0) {
+            showToast('Odaberite dobavljača', 'error');
             return;
         }
         setWizardStep(wizardStep + 1);
@@ -444,18 +492,31 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
         setWizardStep(wizardStep - 1);
     }
 
+    // Entry point from wizard "Kreiraj" button
     async function handleCreateOrder() {
         if (selectedMaterialIds.size === 0) {
             showToast('Odaberite barem jedan materijal', 'error');
             return;
         }
 
-        const supplier = suppliers.find(s => s.Supplier_ID === selectedSupplierId);
-        // A2: Toast for missing supplier
-        if (!supplier) {
+        if (selectedSupplierIds.size === 0) {
             showToast('Odaberite dobavljača', 'error');
             return;
         }
+
+        // Multiple suppliers → ask user for combined/separate
+        if (selectedSupplierIds.size > 1) {
+            setOrderTypeModal(true);
+            return;
+        }
+
+        // Single supplier → create directly
+        await doCreateOrders('separate');
+    }
+
+    // Actual order creation logic
+    async function doCreateOrders(mode: 'combined' | 'separate') {
+        setOrderTypeModal(false);
 
         // A8: Double-click protection
         if (isSubmitting) return;
@@ -479,36 +540,13 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
                     Product_Name: material?.Product_Name || '',
                     Project_ID: product?.Project_ID || '',
                     Material_Name: material?.Material_Name || '',
+                    Supplier: material?.Supplier || '',
                     Quantity: orderQty,
                     Total_Needed: material?.Quantity || 0,
                     Unit: material?.Unit || '',
                     Expected_Price: orderPrice,
                 };
             });
-
-            // Group materials by Material_Name + Unit to combine quantities
-            const grouped = new Map<string, typeof rawItems[0] & { Product_Material_IDs: string[] }>();
-            rawItems.forEach(item => {
-                const key = `${item.Material_Name}||${item.Unit}`;
-                if (grouped.has(key)) {
-                    const existing = grouped.get(key)!;
-                    existing.Quantity += item.Quantity;
-                    existing.Expected_Price += item.Expected_Price;
-                    existing.Total_Needed += item.Total_Needed;
-                    existing.Product_Material_IDs.push(item.Product_Material_ID);
-                } else {
-                    grouped.set(key, { ...item, Product_Material_IDs: [item.Product_Material_ID] });
-                }
-            });
-
-            // A3: Filter out zero-quantity items; also Math.ceil grouped quantity
-            const items = Array.from(grouped.values()).map(item => ({ ...item, Quantity: Math.ceil(item.Quantity) })).filter(item => item.Quantity > 0);
-            if (items.length === 0) {
-                showToast('Sve količine su 0 — nema materijala za naručiti', 'error');
-                return;
-            }
-
-            const totalAmount = items.reduce((sum, item) => sum + item.Expected_Price, 0);
 
             // Collect On_Stock values for selected materials
             const onStockData: Record<string, number> = {};
@@ -522,26 +560,115 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
             // Optimistic: close wizard and show success immediately
             setWizardModal(false);
             const isEditing = editingOrderId;
-            if (isEditing) {
-                showToast('Narudžba ažurirana', 'success');
-            } else {
-                showToast('Narudžba kreirana', 'success');
-            }
 
-            // Background: if editing, delete old order first, then create new one
+            // Helper: group raw items by Material_Name + Unit and create order
+            const groupAndCreateOrder = async (
+                orderItems: typeof rawItems,
+                supplierId: string,
+                supplierName: string,
+                stockData: Record<string, number>
+            ) => {
+                const grouped = new Map<string, typeof rawItems[0] & { Product_Material_IDs: string[] }>();
+                orderItems.forEach(item => {
+                    const key = `${item.Material_Name}||${item.Unit}`;
+                    if (grouped.has(key)) {
+                        const existing = grouped.get(key)!;
+                        existing.Quantity += item.Quantity;
+                        existing.Expected_Price += item.Expected_Price;
+                        existing.Total_Needed += item.Total_Needed;
+                        existing.Product_Material_IDs.push(item.Product_Material_ID);
+                    } else {
+                        grouped.set(key, { ...item, Product_Material_IDs: [item.Product_Material_ID] });
+                    }
+                });
+
+                const items = Array.from(grouped.values())
+                    .map(item => ({ ...item, Quantity: Math.ceil(item.Quantity) }))
+                    .filter(item => item.Quantity > 0);
+
+                if (items.length === 0) return;
+
+                const totalAmount = items.reduce((sum, item) => sum + item.Expected_Price, 0);
+
+                return createOrder({
+                    Supplier_ID: supplierId,
+                    Supplier_Name: supplierName,
+                    Total_Amount: totalAmount,
+                    items: items as any,
+                    onStockData: stockData,
+                }, organizationId!);
+            };
+
+            // Background: create orders
             const createAndRefresh = async () => {
                 try {
                     if (isEditing) {
                         await deleteOrder(isEditing, organizationId!, 'reset');
                     }
-                    const result = await createOrder({
-                        Supplier_ID: selectedSupplierId,
-                        Supplier_Name: supplier.Name,
-                        Total_Amount: totalAmount,
-                        items: items as any,
-                        onStockData,
-                    }, organizationId!);
-                    if (!result.success) showToast(result.message, 'error');
+
+                    if (mode === 'combined' || selectedSupplierIds.size === 1) {
+                        // Single order — either 1 supplier or combined multi-supplier
+                        const supplierNames: string[] = [];
+                        let supplierId = '';
+                        selectedSupplierIds.forEach(id => {
+                            if (id === '__no_supplier__') {
+                                supplierNames.push('Neodređen');
+                            } else {
+                                const s = suppliers.find(s => s.Supplier_ID === id);
+                                if (s) supplierNames.push(s.Name);
+                                if (selectedSupplierIds.size === 1) supplierId = id;
+                            }
+                        });
+
+                        const result = await groupAndCreateOrder(
+                            rawItems,
+                            supplierId,
+                            supplierNames.join(', '),
+                            onStockData
+                        );
+                        if (result && !result.success) showToast(result.message, 'error');
+
+                        if (isEditing) {
+                            showToast('Narudžba ažurirana', 'success');
+                        } else {
+                            showToast('Narudžba kreirana', 'success');
+                        }
+                    } else {
+                        // Separate orders per supplier
+                        const itemsBySupplier = new Map<string, typeof rawItems>();
+                        rawItems.forEach(item => {
+                            const supplierKey = item.Supplier || '__no_supplier__';
+                            if (!itemsBySupplier.has(supplierKey)) {
+                                itemsBySupplier.set(supplierKey, []);
+                            }
+                            itemsBySupplier.get(supplierKey)!.push(item);
+                        });
+
+                        let createdCount = 0;
+                        for (const [supplierName, supplierItems] of Array.from(itemsBySupplier)) {
+                            const supplier = suppliers.find(s => s.Name === supplierName);
+                            const supplierId = supplier?.Supplier_ID || '';
+                            const displayName = supplierName === '__no_supplier__' ? 'Neodređen' : supplierName;
+
+                            // Filter onStockData for this supplier's materials
+                            const supplierMaterialIds = new Set(supplierItems.map((i: typeof rawItems[0]) => i.Product_Material_ID));
+                            const supplierStockData: Record<string, number> = {};
+                            Object.entries(onStockData).forEach(([id, qty]) => {
+                                if (supplierMaterialIds.has(id)) supplierStockData[id] = qty;
+                            });
+
+                            const result = await groupAndCreateOrder(
+                                supplierItems,
+                                supplierId,
+                                displayName,
+                                supplierStockData
+                            );
+                            if (result && result.success) createdCount++;
+                            else if (result && !result.success) showToast(result.message, 'error');
+                        }
+
+                        showToast(`${createdCount} narudžbi kreirano`, 'success');
+                    }
                 } catch {
                     showToast('Greška pri spremanju narudžbe', 'error');
                 }
@@ -628,7 +755,7 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
         // Set wizard state
         setSelectedProjectIds(projectIds);
         setSelectedProductIds(productIds);
-        setSelectedSupplierId(supplier?.Supplier_ID || '');
+        setSelectedSupplierIds(supplier ? new Set([supplier.Supplier_ID]) : new Set());
         setSelectedMaterialIds(materialIds);
         setOrderQuantities(quantities);
         setOnStockQuantities({});
@@ -1646,8 +1773,8 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
                 toggleProduct={toggleProduct}
                 setSelectedProductIds={setSelectedProductIds}
                 availableSuppliers={availableSuppliers}
-                selectedSupplierId={selectedSupplierId}
-                setSelectedSupplierId={setSelectedSupplierId}
+                selectedSupplierIds={selectedSupplierIds}
+                toggleSupplier={toggleSupplier}
                 setSelectedMaterialIds={setSelectedMaterialIds}
                 filteredMaterials={filteredMaterials}
                 selectedMaterialIds={selectedMaterialIds}
@@ -1727,6 +1854,54 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
                             <div style={{ fontSize: '13px', color: '#64748b' }}>Materijali zadržavaju svoj trenutan status (naručeno, primljeno, itd.).</div>
                         </div>
                     </label>
+                </div>
+            </Modal>
+
+            {/* Order Type Modal (Combined vs Separate) */}
+            <Modal
+                isOpen={orderTypeModal}
+                onClose={() => setOrderTypeModal(false)}
+                title="Tip narudžbe"
+                footer={null}
+            >
+                <p style={{ marginBottom: '20px', color: 'var(--text-secondary)', fontSize: '14px' }}>
+                    Odabrali ste {selectedSupplierIds.size} dobavljača. Kako želite kreirati narudžbu?
+                </p>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                    <button
+                        className="glass-btn"
+                        style={{
+                            display: 'flex', alignItems: 'center', gap: '12px',
+                            padding: '16px 20px', textAlign: 'left', width: '100%',
+                            border: '2px solid var(--border-color)', borderRadius: '12px',
+                            background: 'var(--bg-secondary)', cursor: 'pointer',
+                            transition: 'all 0.2s'
+                        }}
+                        onClick={() => doCreateOrders('combined')}
+                    >
+                        <span className="material-icons-round" style={{ fontSize: '28px', color: 'var(--primary)' }}>description</span>
+                        <div>
+                            <div style={{ fontWeight: 600, fontSize: '15px', marginBottom: '2px' }}>Zajednička narudžba</div>
+                            <div style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>Svi materijali u jednom dokumentu</div>
+                        </div>
+                    </button>
+                    <button
+                        className="glass-btn"
+                        style={{
+                            display: 'flex', alignItems: 'center', gap: '12px',
+                            padding: '16px 20px', textAlign: 'left', width: '100%',
+                            border: '2px solid var(--border-color)', borderRadius: '12px',
+                            background: 'var(--bg-secondary)', cursor: 'pointer',
+                            transition: 'all 0.2s'
+                        }}
+                        onClick={() => doCreateOrders('separate')}
+                    >
+                        <span className="material-icons-round" style={{ fontSize: '28px', color: 'var(--accent)' }}>content_copy</span>
+                        <div>
+                            <div style={{ fontWeight: 600, fontSize: '15px', marginBottom: '2px' }}>Odvojene narudžbe</div>
+                            <div style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>Zasebna narudžba za svakog dobavljača ({selectedSupplierIds.size} narudžbi)</div>
+                        </div>
+                    </button>
                 </div>
             </Modal>
         </div>

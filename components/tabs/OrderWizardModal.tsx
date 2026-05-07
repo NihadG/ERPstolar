@@ -59,8 +59,8 @@ interface OrderWizardModalProps {
     toggleProduct: (id: string) => void;
     setSelectedProductIds: (ids: Set<string>) => void;
     availableSuppliers: Supplier[];
-    selectedSupplierId: string;
-    setSelectedSupplierId: (id: string) => void;
+    selectedSupplierIds: Set<string>;
+    toggleSupplier: (id: string) => void;
     setSelectedMaterialIds: (ids: Set<string>) => void;
     filteredMaterials: Material[];
     selectedMaterialIds: Set<string>;
@@ -370,8 +370,8 @@ export function OrderWizardModal({
     toggleProduct,
     setSelectedProductIds,
     availableSuppliers,
-    selectedSupplierId,
-    setSelectedSupplierId,
+    selectedSupplierIds,
+    toggleSupplier,
     setSelectedMaterialIds,
     filteredMaterials,
     selectedMaterialIds,
@@ -390,7 +390,7 @@ export function OrderWizardModal({
     const canGoNext =
         (wizardStep === 1 && selectedProjectIds.size > 0) ||
         (wizardStep === 2 && selectedProductIds.size > 0) ||
-        (wizardStep === 3 && !!selectedSupplierId);
+        (wizardStep === 3 && selectedSupplierIds.size > 0);
 
     return (
         <Modal isOpen={isOpen} onClose={onClose} title="" size="fullscreen" footer={null}>
@@ -520,7 +520,6 @@ export function OrderWizardModal({
                                             className="btn btn-secondary danger-text"
                                             onClick={() => {
                                                 setSelectedProductIds(new Set());
-                                                setSelectedSupplierId('');
                                                 setSelectedMaterialIds(new Set());
                                             }}
                                         >Poništi</button>
@@ -548,35 +547,59 @@ export function OrderWizardModal({
                         </div>
                     )}
 
-                    {/* STEP 3: SUPPLIER */}
+                    {/* STEP 3: SUPPLIERS (multi-select) */}
                     {wizardStep === 3 && (
                         <div className="wizard-step-container">
-                            <div className="step-header">
-                                <h3>Odaberite dobavljača</h3>
-                                <p>Od kojeg dobavljača naručujete materijale?</p>
+                            <div className="step-header-row">
+                                <div>
+                                    <h3>Odaberite dobavljače</h3>
+                                    <span>{selectedSupplierIds.size} od {availableSuppliers.length} odabrano</span>
+                                </div>
+                                <div className="step-actions">
+                                    {selectedSupplierIds.size < availableSuppliers.length && (
+                                        <button
+                                            className="btn btn-secondary"
+                                            onClick={() => {
+                                                const allIds = new Set(availableSuppliers.map(s => s.Supplier_ID));
+                                                allIds.forEach(id => {
+                                                    if (!selectedSupplierIds.has(id)) toggleSupplier(id);
+                                                });
+                                            }}
+                                        >Odaberi sve</button>
+                                    )}
+                                    {selectedSupplierIds.size > 0 && (
+                                        <button
+                                            className="btn btn-secondary danger-text"
+                                            onClick={() => {
+                                                selectedSupplierIds.forEach(id => toggleSupplier(id));
+                                            }}
+                                        >Poništi</button>
+                                    )}
+                                </div>
                             </div>
                             <div className="wizard-grid suppliers-grid">
-                                {availableSuppliers.map(supplier => (
-                                    <div
-                                        key={supplier.Supplier_ID}
-                                        onClick={() => {
-                                            setSelectedSupplierId(supplier.Supplier_ID);
-                                            setSelectedMaterialIds(new Set());
-                                        }}
-                                        className={`wizard-card supplier-card ${selectedSupplierId === supplier.Supplier_ID ? 'selected' : ''}`}
-                                    >
-                                        <div className="supplier-avatar">
-                                            <span className="material-icons-round">store</span>
+                                {availableSuppliers.map(supplier => {
+                                    const isSelected = selectedSupplierIds.has(supplier.Supplier_ID);
+                                    const isNoSupplier = supplier.Supplier_ID === '__no_supplier__';
+                                    return (
+                                        <div
+                                            key={supplier.Supplier_ID}
+                                            onClick={() => toggleSupplier(supplier.Supplier_ID)}
+                                            className={`wizard-card supplier-card ${isSelected ? 'selected' : ''}`}
+                                        >
+                                            <div className="supplier-avatar">
+                                                <span className="material-icons-round">{isNoSupplier ? 'help_outline' : 'store'}</span>
+                                            </div>
+                                            <div className="supplier-name">{supplier.Name}</div>
+                                            {supplier.Contact_Person && (
+                                                <div className="supplier-contact">{supplier.Contact_Person}</div>
+                                            )}
+                                            {isSelected && (
+                                                <span className="material-icons-round check-badge">check_circle</span>
+                                            )}
                                         </div>
-                                        <div className="supplier-name">{supplier.Name}</div>
-                                        {supplier.Contact_Person && (
-                                            <div className="supplier-contact">{supplier.Contact_Person}</div>
-                                        )}
-                                        {selectedSupplierId === supplier.Supplier_ID && (
-                                            <span className="material-icons-round check-badge">check_circle</span>
-                                        )}
-                                    </div>
-                                ))}
+                                    );
+                                })}
                             </div>
                             {availableSuppliers.length === 0 && (
                                 <div style={{ textAlign: 'center', padding: '60px 20px', color: 'var(--text-secondary)' }}>
