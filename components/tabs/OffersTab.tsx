@@ -2255,144 +2255,168 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
                     <div>
                         {/* Compact Offer Header */}
                         <div style={{
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: '24px',
+                            display: 'grid',
+                            gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))',
+                            gap: '16px',
                             marginBottom: '24px',
                             background: 'var(--surface)',
-                            padding: '12px 20px',
-                            borderRadius: '10px',
+                            padding: '16px',
+                            borderRadius: '12px',
                             border: '1px solid var(--border-light)',
-                            flexWrap: 'wrap'
                         }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                <span className="material-icons-round" style={{ fontSize: '18px', color: 'var(--accent)' }}>tag</span>
-                                <span style={{ fontSize: '14px', fontWeight: 600, color: 'var(--text-primary)' }}>{currentOffer.Offer_Number}</span>
-                            </div>
-                            <div style={{ width: '1px', height: '16px', background: 'var(--border)' }}></div>
-
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                <span className="material-icons-round" style={{ fontSize: '18px', color: 'var(--text-secondary)' }}>person</span>
-                                <span style={{ fontSize: '14px', color: 'var(--text-primary)' }}>{currentOffer.Client_Name || '-'}</span>
-                            </div>
-                            <div style={{ width: '1px', height: '16px', background: 'var(--border)' }}></div>
-
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                <span className="material-icons-round" style={{ fontSize: '18px', color: 'var(--text-secondary)' }}>calendar_today</span>
-                                <span style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
-                                    <span style={{ marginRight: '4px' }}>Kreirano:</span>
-                                    <span style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{formatDate(currentOffer.Created_Date)}</span>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                                <span style={{ fontSize: '11px', textTransform: 'uppercase', color: 'var(--text-secondary)', fontWeight: 600, letterSpacing: '0.5px' }}>Broj Ponude</span>
+                                <span style={{ fontSize: '15px', fontWeight: 700, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                    <span className="material-icons-round" style={{ fontSize: '16px', color: 'var(--accent)' }}>tag</span>
+                                    {currentOffer.Offer_Number}
                                 </span>
                             </div>
-                            <div style={{ width: '1px', height: '16px', background: 'var(--border)' }}></div>
-
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                <span className="material-icons-round" style={{ fontSize: '18px', color: 'var(--text-secondary)' }}>event_available</span>
-                                <span style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
-                                    <span style={{ marginRight: '4px' }}>Vrijedi do:</span>
-                                    <span style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{formatDate(currentOffer.Valid_Until)}</span>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                                <span style={{ fontSize: '11px', textTransform: 'uppercase', color: 'var(--text-secondary)', fontWeight: 600, letterSpacing: '0.5px' }}>Klijent</span>
+                                <span style={{ fontSize: '15px', fontWeight: 600, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                    <span className="material-icons-round" style={{ fontSize: '16px', color: 'var(--text-secondary)' }}>person</span>
+                                    {currentOffer.Client_Name || '-'}
+                                </span>
+                            </div>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                                <span style={{ fontSize: '11px', textTransform: 'uppercase', color: 'var(--text-secondary)', fontWeight: 600, letterSpacing: '0.5px' }}>Kreirano</span>
+                                <span style={{ fontSize: '14px', fontWeight: 500, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                    <span className="material-icons-round" style={{ fontSize: '16px', color: 'var(--text-secondary)' }}>calendar_today</span>
+                                    {formatDate(currentOffer.Created_Date)}
+                                </span>
+                            </div>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                                <span style={{ fontSize: '11px', textTransform: 'uppercase', color: 'var(--text-secondary)', fontWeight: 600, letterSpacing: '0.5px' }}>Vrijedi do</span>
+                                <span style={{ fontSize: '14px', fontWeight: 500, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                    <span className="material-icons-round" style={{ fontSize: '16px', color: 'var(--text-secondary)' }}>event_available</span>
+                                    {formatDate(currentOffer.Valid_Until)}
                                 </span>
                             </div>
                         </div>
 
-                        {/* Products */}
-                        <h4 style={{ marginBottom: '12px' }}>Proizvodi</h4>
-                        <div style={{ overflowX: 'auto', marginBottom: '24px' }}>
-                            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                                <thead>
-                                    <tr style={{ background: 'var(--surface)', borderBottom: '2px solid var(--border)' }}>
-                                        <th style={{ padding: '12px', textAlign: 'left' }}>Proizvod</th>
-                                        <th style={{ padding: '12px', textAlign: 'right' }}>Količina</th>
-                                        <th style={{ padding: '12px', textAlign: 'right' }}>Materijal</th>
-                                        <th style={{ padding: '12px', textAlign: 'right' }}>Marža</th>
-                                        <th style={{ padding: '12px', textAlign: 'right' }}>Rad</th>
-                                        <th style={{ padding: '12px', textAlign: 'right' }}>Usluge</th>
-                                        <th style={{ padding: '12px', textAlign: 'right' }}>Cijena/kom</th>
-                                        <th style={{ padding: '12px', textAlign: 'right' }}>Ukupno</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    {(() => {
-                                        const viewCurrency = ((currentOffer as any).Currency || 'KM') as 'KM' | 'EUR';
-                                        return (currentOffer.products || []).filter(p => p.Included).map((product) => {
-                                            const proj = projects.find(p => p.Project_ID === currentOffer.Project_ID);
-                                            const pp = proj?.products?.find(pp => pp.Product_ID === product.Product_ID);
-                                            const dims = pp && pp.Width && pp.Height && pp.Depth
-                                                ? `${pp.Width} × ${pp.Height} × ${pp.Depth} mm` : null;
-                                            const laborTotal = ((product as any).Labor_Workers || 0) * ((product as any).Labor_Days || 0) * ((product as any).Labor_Daily_Rate || 0);
-                                            const extrasTotal = ((product as any).Extras || (product as any).extras || []).reduce((sum: number, e: any) => sum + (e.total || e.Total || 0), 0);
-                                            const unitPrice = (product.Material_Cost || 0) + (product.Margin || 0) + laborTotal + extrasTotal;
-                                            return (
-                                                <tr key={product.ID} style={{ borderBottom: '1px solid var(--border-light)' }}>
-                                                    <td style={{ padding: '12px' }}>
-                                                        {product.Product_Name}
-                                                        {dims && <span style={{ color: 'var(--text-secondary)' }}>, {dims}</span>}
-                                                    </td>
-                                                    <td style={{ padding: '12px', textAlign: 'right' }}>{product.Quantity}</td>
-                                                    <td style={{ padding: '12px', textAlign: 'right' }}>{formatPrice(product.Material_Cost, viewCurrency)}</td>
-                                                    <td style={{ padding: '12px', textAlign: 'right' }}>{formatPrice(product.Margin, viewCurrency)}</td>
-                                                    <td style={{ padding: '12px', textAlign: 'right' }}>{laborTotal > 0 ? formatPrice(laborTotal, viewCurrency) : '-'}</td>
-                                                    <td style={{ padding: '12px', textAlign: 'right' }}>{extrasTotal > 0 ? formatPrice(extrasTotal, viewCurrency) : '-'}</td>
-                                                    <td style={{ padding: '12px', textAlign: 'right', fontWeight: 500 }}>{formatPrice(unitPrice, viewCurrency)}</td>
-                                                    <td style={{ padding: '12px', textAlign: 'right', fontWeight: 600 }}>{formatPrice(product.Total_Price, viewCurrency)}</td>
-                                                </tr>
-                                            );
-                                        });
-                                    })()}
-                                </tbody>
-                            </table>
+                        {/* Products Grid */}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px' }}>
+                            <span className="material-icons-round" style={{ color: 'var(--accent)' }}>inventory_2</span>
+                            <h4 style={{ margin: 0, fontSize: '16px', fontWeight: 600 }}>Stavke ponude</h4>
+                        </div>
+                        
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '16px', marginBottom: '32px' }}>
+                            {(() => {
+                                const viewCurrency = ((currentOffer as any).Currency || 'KM') as 'KM' | 'EUR';
+                                return (currentOffer.products || []).filter(p => p.Included).map((product) => {
+                                    const proj = projects.find(p => p.Project_ID === currentOffer.Project_ID);
+                                    const pp = proj?.products?.find(pp => pp.Product_ID === product.Product_ID);
+                                    const dims = pp && pp.Width && pp.Height && pp.Depth
+                                        ? `${pp.Width} × ${pp.Height} × ${pp.Depth} mm` : null;
+                                    const laborTotal = ((product as any).Labor_Workers || 0) * ((product as any).Labor_Days || 0) * ((product as any).Labor_Daily_Rate || 0);
+                                    const extrasTotal = ((product as any).Extras || (product as any).extras || []).reduce((sum: number, e: any) => sum + (e.total || e.Total || 0), 0);
+                                    const unitPrice = (product.Material_Cost || 0) + (product.Margin || 0) + laborTotal + extrasTotal;
+                                    
+                                    return (
+                                        <div key={product.ID} style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border-light)', borderRadius: '12px', padding: '16px', display: 'flex', flexDirection: 'column', gap: '12px', boxShadow: '0 2px 8px rgba(0,0,0,0.02)' }}>
+                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                                                <div>
+                                                    <div style={{ fontWeight: 600, color: 'var(--text-primary)', fontSize: '15px', lineHeight: 1.3 }}>{product.Product_Name}</div>
+                                                    {dims && <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '4px' }}>{dims}</div>}
+                                                </div>
+                                                <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: '8px', padding: '4px 8px', fontSize: '13px', fontWeight: 700, color: 'var(--text-primary)' }}>
+                                                    {product.Quantity} <span style={{ fontSize: '11px', fontWeight: 500, color: 'var(--text-secondary)' }}>kom</span>
+                                                </div>
+                                            </div>
+                                            
+                                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                                                <div style={{ fontSize: '12px', background: 'rgba(59,130,246,0.1)', color: '#2563eb', padding: '4px 8px', borderRadius: '6px', fontWeight: 600 }}>
+                                                    Mat: {formatPrice(product.Material_Cost, viewCurrency)}
+                                                </div>
+                                                <div style={{ fontSize: '12px', background: 'rgba(34,197,94,0.1)', color: '#16a34a', padding: '4px 8px', borderRadius: '6px', fontWeight: 600 }}>
+                                                    Marža: {formatPrice(product.Margin, viewCurrency)}
+                                                </div>
+                                                {laborTotal > 0 && (
+                                                    <div style={{ fontSize: '12px', background: 'rgba(168,85,247,0.1)', color: '#9333ea', padding: '4px 8px', borderRadius: '6px', fontWeight: 600 }}>
+                                                        Rad: {formatPrice(laborTotal, viewCurrency)}
+                                                    </div>
+                                                )}
+                                                {extrasTotal > 0 && (
+                                                    <div style={{ fontSize: '12px', background: 'rgba(245,158,11,0.1)', color: '#d97706', padding: '4px 8px', borderRadius: '6px', fontWeight: 600 }}>
+                                                        Usluge: {formatPrice(extrasTotal, viewCurrency)}
+                                                    </div>
+                                                )}
+                                            </div>
+
+                                            <div style={{ borderTop: '1px dashed var(--border)', paddingTop: '12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 'auto' }}>
+                                                <div style={{ fontSize: '12px', color: 'var(--text-secondary)', fontWeight: 500 }}>1 kom: {formatPrice(unitPrice, viewCurrency)}</div>
+                                                <div style={{ fontSize: '16px', fontWeight: 800, color: 'var(--text-primary)' }}>{formatPrice(product.Total_Price, viewCurrency)}</div>
+                                            </div>
+                                        </div>
+                                    );
+                                });
+                            })()}
                         </div>
 
                         {/* Totals */}
                         {(() => {
                             const viewCurrency = ((currentOffer as any).Currency || 'KM') as 'KM' | 'EUR';
                             return (
-                        <div style={{ background: 'var(--accent-light)', padding: '20px', borderRadius: '12px' }}>
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxWidth: '400px', marginLeft: 'auto' }}>
-                                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                                    <span>Suma:</span>
-                                    <span>{formatPrice(currentOffer.Subtotal, viewCurrency)}</span>
-                                </div>
-                                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                                    <span>Transport:</span>
-                                    <span>{formatPrice(currentOffer.Transport_Cost, viewCurrency)}</span>
-                                </div>
-                                {currentOffer.Onsite_Assembly && (currentOffer.Onsite_Discount || 0) > 0 && (
-                                    <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--success)' }}>
-                                        <span>Popust:</span>
-                                        <span>-{formatPrice(currentOffer.Onsite_Discount, viewCurrency)}</span>
-                                    </div>
-                                )}
-                                {(currentOffer as any).Include_PDV && (() => {
-                                    const baseTotal = (currentOffer.Subtotal || 0) + (currentOffer.Transport_Cost || 0) - (currentOffer.Onsite_Assembly ? (currentOffer.Onsite_Discount || 0) : 0);
-                                    const rate = (currentOffer as any).PDV_Rate || 17;
-                                    return (
-                                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                                            <span>PDV ({rate}%):</span>
-                                            <span>{formatPrice(baseTotal * rate / 100, viewCurrency)}</span>
+                                <div style={{ background: 'var(--surface)', padding: '24px', borderRadius: '16px', border: '1px solid var(--border)', boxShadow: '0 4px 15px rgba(0,0,0,0.03)' }}>
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', maxWidth: '400px', marginLeft: 'auto' }}>
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '14px', color: 'var(--text-secondary)', fontWeight: 500 }}>
+                                            <span>Ukupno materijal/rad:</span>
+                                            <span style={{ color: 'var(--text-primary)' }}>{formatPrice(currentOffer.Subtotal, viewCurrency)}</span>
                                         </div>
-                                    );
-                                })()}
-                                <hr style={{ border: 'none', borderTop: '1px solid var(--border)' }} />
-                                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '20px', fontWeight: 700 }}>
-                                    <span>UKUPNO{(currentOffer as any).Include_PDV ? ' (sa PDV)' : ''}:</span>
-                                    <span style={{ color: 'var(--accent)' }}>{formatPrice(
-                                        (() => {
+                                        
+                                        {(currentOffer.Transport_Cost || 0) > 0 && (
+                                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '14px', color: 'var(--text-secondary)', fontWeight: 500 }}>
+                                                <span>Troškovi transporta:</span>
+                                                <span style={{ color: 'var(--text-primary)' }}>{formatPrice(currentOffer.Transport_Cost, viewCurrency)}</span>
+                                            </div>
+                                        )}
+                                        
+                                        {currentOffer.Onsite_Assembly && (currentOffer.Onsite_Discount || 0) > 0 && (
+                                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '14px', color: 'var(--success)', fontWeight: 600 }}>
+                                                <span>Odobreni popust:</span>
+                                                <span>-{formatPrice(currentOffer.Onsite_Discount, viewCurrency)}</span>
+                                            </div>
+                                        )}
+                                        
+                                        {(currentOffer as any).Include_PDV && (() => {
                                             const baseTotal = (currentOffer.Subtotal || 0) + (currentOffer.Transport_Cost || 0) - (currentOffer.Onsite_Assembly ? (currentOffer.Onsite_Discount || 0) : 0);
-                                            return (currentOffer as any).Include_PDV ? baseTotal * (1 + ((currentOffer as any).PDV_Rate || 17) / 100) : baseTotal;
-                                        })(), viewCurrency
-                                    )}</span>
+                                            const rate = (currentOffer as any).PDV_Rate || 17;
+                                            return (
+                                                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '14px', color: 'var(--text-secondary)', fontWeight: 500 }}>
+                                                    <span>PDV ({rate}%):</span>
+                                                    <span style={{ color: 'var(--text-primary)' }}>{formatPrice(baseTotal * rate / 100, viewCurrency)}</span>
+                                                </div>
+                                            );
+                                        })()}
+                                        
+                                        <div style={{ height: '1px', background: 'var(--border)', margin: '4px 0' }}></div>
+                                        
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                            <span style={{ fontSize: '18px', fontWeight: 800, color: 'var(--text-primary)' }}>
+                                                ZA UPLATU {(currentOffer as any).Include_PDV ? '(sa PDV)' : ''}:
+                                            </span>
+                                            <span style={{ fontSize: '24px', fontWeight: 800, color: 'var(--accent)', letterSpacing: '-0.5px' }}>
+                                                {formatPrice(
+                                                    (() => {
+                                                        const baseTotal = (currentOffer.Subtotal || 0) + (currentOffer.Transport_Cost || 0) - (currentOffer.Onsite_Assembly ? (currentOffer.Onsite_Discount || 0) : 0);
+                                                        return (currentOffer as any).Include_PDV ? baseTotal * (1 + ((currentOffer as any).PDV_Rate || 17) / 100) : baseTotal;
+                                                    })(), viewCurrency
+                                                )}
+                                            </span>
+                                        </div>
+                                    </div>
                                 </div>
-                            </div>
-                        </div>
                             );
                         })()}
 
                         {/* Notes */}
                         {currentOffer.Notes && (
-                            <div style={{ marginTop: '24px', background: 'var(--surface)', padding: '16px', borderRadius: '12px' }}>
-                                <h4 style={{ marginBottom: '8px' }}>Napomene</h4>
-                                <p>{currentOffer.Notes}</p>
+                            <div style={{ marginTop: '24px', background: '#fffbeb', border: '1px solid #fde68a', padding: '16px', borderRadius: '12px', display: 'flex', gap: '12px' }}>
+                                <span className="material-icons-round" style={{ color: '#d97706', fontSize: '20px' }}>info</span>
+                                <div>
+                                    <h4 style={{ margin: '0 0 4px 0', fontSize: '13px', textTransform: 'uppercase', color: '#b45309', letterSpacing: '0.5px' }}>Napomena za klijenta</h4>
+                                    <p style={{ margin: 0, fontSize: '14px', color: '#92400e', lineHeight: 1.5, whiteSpace: 'pre-line' }}>{currentOffer.Notes}</p>
+                                </div>
                             </div>
                         )}
                     </div>
