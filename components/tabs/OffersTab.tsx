@@ -1413,9 +1413,21 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
         if (printWindow) {
             printWindow.document.write(printContent);
             printWindow.document.close();
-            printWindow.onload = () => {
-                printWindow.print();
+            // onload doesn't fire reliably after document.write() — the document
+            // is already "loaded" by the time the handler is attached.
+            // Instead, wait for fonts to load then print.
+            const triggerPrint = () => {
+                if (printWindow.document.fonts && printWindow.document.fonts.ready) {
+                    printWindow.document.fonts.ready.then(() => {
+                        setTimeout(() => printWindow.print(), 100);
+                    });
+                } else {
+                    // Fallback for browsers without document.fonts
+                    setTimeout(() => printWindow.print(), 500);
+                }
             };
+            // Small delay to let the document render
+            setTimeout(triggerPrint, 200);
         }
     }
 

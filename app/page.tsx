@@ -314,6 +314,11 @@ export default function Home() {
                         setTimeout(() => refreshCollections('orders'), 1000);
                         delete updates.orders;
                     }
+                    if (updates.offers && updates.offers.length === 0 && prev.offers.length > 0) {
+                        console.warn('refreshCollections: offers came back empty, retrying...');
+                        setTimeout(() => refreshCollections('offers'), 1000);
+                        delete updates.offers;
+                    }
 
                     return Object.keys(updates).length > 0 ? { ...prev, ...updates } : prev;
                 });

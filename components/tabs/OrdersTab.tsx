@@ -469,7 +469,38 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
             newSelected.add(supplierId);
         }
         setSelectedSupplierIds(newSelected);
-        setSelectedMaterialIds(new Set());
+
+        // When editing, preserve material selections that still match the new supplier set.
+        // Only clear materials whose supplier is no longer selected.
+        if (editingOrderId) {
+            // Build set of supplier names that are now selected
+            const selectedSupplierNames = new Set<string>();
+            let includeNoSupplier = false;
+            newSelected.forEach(id => {
+                if (id === '__no_supplier__') {
+                    includeNoSupplier = true;
+                } else {
+                    const s = suppliers.find(s => s.Supplier_ID === id);
+                    if (s) selectedSupplierNames.add(s.Name);
+                }
+            });
+
+            // Keep only materials that belong to a still-selected supplier
+            const filteredSelection = new Set<string>();
+            selectedMaterialIds.forEach(matId => {
+                const mat = allProductMaterials.find(m => m.ID === matId);
+                if (mat) {
+                    if (mat.Supplier && selectedSupplierNames.has(mat.Supplier)) {
+                        filteredSelection.add(matId);
+                    } else if (!mat.Supplier && includeNoSupplier) {
+                        filteredSelection.add(matId);
+                    }
+                }
+            });
+            setSelectedMaterialIds(filteredSelection);
+        } else {
+            setSelectedMaterialIds(new Set());
+        }
     }
 
     function nextStep() {
