@@ -10,6 +10,8 @@ import Modal from '@/components/ui/Modal';
 import { OrderWizardModal } from './OrderWizardModal';
 import { ORDER_STATUSES, MATERIAL_STATUSES, ALLOWED_ORDER_TRANSITIONS } from '@/lib/types';
 import { formatCurrency, formatDate, getStatusClass } from '@/lib/utils';
+import { useIsMobile } from '@/hooks/useIsMobile';
+import MobileOrdersView from './mobile/MobileOrdersView';
 import './OrdersTab.css';
 
 interface OrdersTabProps {
@@ -28,6 +30,7 @@ type SortBy = 'date-desc' | 'date-asc' | 'amount-desc' | 'amount-asc' | 'supplie
 
 export default function OrdersTab({ orders, suppliers, projects, productMaterials, onRefresh, showToast, pendingOrderMaterials, onClearPendingOrder }: OrdersTabProps) {
     const { organizationId } = useData();
+    const isMobile = useIsMobile();
     const [searchTerm, setSearchTerm] = useState('');
     const [statusFilter, setStatusFilter] = useState('');
     const [groupBy, setGroupBy] = useState<GroupBy>('supplier');
@@ -1358,7 +1361,25 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
     );
 
     return (
-        <div className="orders-page">
+        <>
+            {isMobile ? (
+                <MobileOrdersView
+                    orders={orders}
+                    suppliers={suppliers}
+                    projects={projects}
+                    onRefresh={onRefresh}
+                    showToast={showToast}
+                    onOpenWizard={openWizard}
+                    onEditOrder={handleEditOrder}
+                    onDeleteOrder={handleDeleteOrder}
+                    onDownloadPDF={downloadOrderPDF}
+                    onPrintOrder={(order) => {
+                        setExpandedOrderId(order.Order_ID);
+                        setTimeout(() => printOrderDocument(), 100);
+                    }}
+                />
+            ) : (
+                <div className="orders-page">
             {/* Page Header */}
             <div className="page-header">
                 <div className="header-content" style={{ padding: '0 24px' }}>
@@ -1789,6 +1810,8 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
                     </div>
                 )}
             </div>
+            </div>
+            )}
 
             {/* Order Creation Wizard */}
             <OrderWizardModal
@@ -1935,7 +1958,7 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
                     </button>
                 </div>
             </Modal>
-        </div>
+        </>
     );
 }
 
