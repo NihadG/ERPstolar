@@ -8,6 +8,8 @@ import { generateOfferPDF, type OfferPDFData } from '@/lib/pdfGenerator';
 import Modal from '@/components/ui/Modal';
 import { OFFER_STATUSES } from '@/lib/types';
 import { sortProductsByName } from '@/lib/sortProducts';
+import { useIsMobile } from '@/hooks/useIsMobile';
+import MobileOffersView from './mobile/MobileOffersView';
 
 interface Extra {
     name: string;
@@ -48,6 +50,7 @@ interface OffersTabProps {
 
 export default function OffersTab({ offers, projects, onRefresh, showToast, onNavigateToProject, autoEditOfferId, autoScrollProductId, onClearAutoEdit }: OffersTabProps) {
     const { organizationId } = useData();
+    const isMobile = useIsMobile();
     const [searchTerm, setSearchTerm] = useState('');
     const [statusFilter, setStatusFilter] = useState('');
     const [sortBy, setSortBy] = useState<'date-desc' | 'date-asc' | 'amount-desc' | 'amount-asc' | 'client-asc' | 'client-desc'>('date-desc');
@@ -1518,8 +1521,24 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
     ];
 
     return (
-        <div className="tab-content active" id="offers-content">
-            <div className="content-header" style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap', padding: '16px 24px' }}>
+        <>
+            {isMobile ? (
+                <MobileOffersView
+                    offers={offers}
+                    projects={projects}
+                    onRefresh={onRefresh}
+                    showToast={showToast}
+                    onOpenCreate={openCreateModal}
+                    onViewOffer={openViewModal}
+                    onEditOffer={openEditModal}
+                    onDeleteOffer={handleDeleteOffer}
+                    onUpdateStatus={handleUpdateStatus}
+                    onDownloadPDF={handleDownloadPDF}
+                    onPrintOffer={handlePrintOffer}
+                />
+            ) : (
+                <div className="tab-content active" id="offers-content">
+                    <div className="content-header" style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap', padding: '16px 24px' }}>
                 <div className="glass-search">
                     <span className="material-icons-round">search</span>
                     <input
@@ -1689,6 +1708,8 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
                     ))
                 )}
             </div>
+                </div>
+            )}
 
             {/* Create/Edit Offer Modal */}
             <Modal
@@ -2502,6 +2523,6 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
                     </div>
                 </div>
             )}
-        </div >
+        </>
     );
 }
