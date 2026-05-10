@@ -1442,12 +1442,21 @@
         border: 1px solid #e5e7eb;
         border-radius: 12px;
         box-shadow: 0 1px 3px rgba(0,0,0,0.05);
-        overflow: hidden;
+        overflow: visible; /* Changed from hidden so dropdowns can break out */
         margin-bottom: 0;
     }
     
     .order-item:hover {
         background: #ffffff;
+    }
+
+    /* Keep bottom corners rounded since overflow is now visible */
+    .order-actions-group {
+        border-radius: 0 0 12px 12px;
+    }
+    
+    .project-products {
+        border-radius: 0 0 12px 12px;
     }
 
     /* ORDER CARD HEADER */
