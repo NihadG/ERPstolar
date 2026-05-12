@@ -49,7 +49,7 @@ export async function getOffers(organizationId: string): Promise<Offer[]> {
     const offerExtras = offerExtrasSnap.docs.map(d => ({ ...d.data() } as OfferExtra));
 
     // Build project lookup for Client_Name enrichment
-    const projectsMap = new Map<string, { Client_Name: string; Client_Phone?: string; Client_Email?: string; Address?: string }>();
+    const projectsMap = new Map<string, { Client_Name: string; Client_Phone?: string; Client_Email?: string; Address?: string; Client_Type?: string; Client_ID_Number?: string; Client_PDV_Number?: string }>();
     projectsSnap.docs.forEach(d => {
         const p = d.data();
         projectsMap.set(p.Project_ID, {
@@ -57,6 +57,9 @@ export async function getOffers(organizationId: string): Promise<Offer[]> {
             Client_Phone: p.Client_Phone,
             Client_Email: p.Client_Email,
             Address: p.Address,
+            Client_Type: p.Client_Type,
+            Client_ID_Number: p.Client_ID_Number,
+            Client_PDV_Number: p.Client_PDV_Number,
         });
     });
 
@@ -76,13 +79,31 @@ export async function getOffers(organizationId: string): Promise<Offer[]> {
 
     // Assemble: enrich offers with Client_Name and attach products/extras
     offers.forEach(offer => {
-        // Enrich with project data
+        // Enrich with project data — but ONLY if the offer doesn't have its own override
         const proj = projectsMap.get(offer.Project_ID);
         if (proj) {
-            offer.Client_Name = proj.Client_Name;
-            (offer as any).Client_Phone = proj.Client_Phone || '';
-            (offer as any).Client_Email = proj.Client_Email || '';
-            (offer as any).Client_Address = proj.Address || '';
+            // If offer has no explicit client override, use project data
+            if (!offer.Client_Name) {
+                offer.Client_Name = proj.Client_Name;
+            }
+            if (!(offer as any).Client_Phone) {
+                (offer as any).Client_Phone = proj.Client_Phone || '';
+            }
+            if (!(offer as any).Client_Email) {
+                (offer as any).Client_Email = proj.Client_Email || '';
+            }
+            if (!(offer as any).Client_Address) {
+                (offer as any).Client_Address = proj.Address || '';
+            }
+            if (!(offer as any).Client_Type) {
+                (offer as any).Client_Type = proj.Client_Type || 'fizicko';
+            }
+            if (!(offer as any).Client_ID_Number) {
+                (offer as any).Client_ID_Number = proj.Client_ID_Number || '';
+            }
+            if (!(offer as any).Client_PDV_Number) {
+                (offer as any).Client_PDV_Number = proj.Client_PDV_Number || '';
+            }
         }
 
         const products = productsByOffer.get(offer.Offer_ID) || [];

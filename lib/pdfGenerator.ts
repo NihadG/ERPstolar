@@ -114,6 +114,9 @@ export interface OfferPDFData {
     clientAddress?: string;
     clientPhone?: string;
     clientEmail?: string;
+    clientType?: 'fizicko' | 'pravno';
+    clientIdNumber?: string;
+    clientPdvNumber?: string;
     createdDate: string;
     validUntil: string;
     products: Array<{
@@ -337,6 +340,8 @@ function createOfferHTML(data: OfferPDFData): string {
                         ${data.clientAddress ? `${data.clientAddress}<br>` : ''}
                         ${data.clientPhone || ''} ${data.clientEmail ? '• ' + data.clientEmail : ''}
                     </div>
+                    ${data.clientIdNumber ? `<div class="contact" style="margin-top: 4px; font-size: 12px; color: #9ca3af;">ID: ${data.clientIdNumber}</div>` : ''}
+                    ${data.clientPdvNumber ? `<div class="contact" style="font-size: 12px; color: #9ca3af;">PDV: ${data.clientPdvNumber}</div>` : ''}
                 </div>
                 <div class="offer-info">
                     <div class="offer-number">PONUDA ${data.offerNumber}</div>

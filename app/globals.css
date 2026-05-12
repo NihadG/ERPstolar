@@ -6240,6 +6240,86 @@ textarea::placeholder {
 }
 
 /* ============================================
+   ARCHIVE / HIDE TOGGLE BUTTON
+   ============================================ */
+.archive-toggle-btn {
+  background: #fffbeb;
+  border-color: #fde68a;
+  color: #92400e;
+}
+
+.archive-toggle-btn:hover {
+  background: #fef3c7;
+  border-color: #fbbf24;
+  color: #78350f;
+  box-shadow: 0 2px 8px rgba(245, 158, 11, 0.15);
+}
+
+.archive-toggle-btn .material-icons-round {
+  font-size: 18px;
+  color: #d97706;
+}
+
+.archive-toggle-btn.archive-active {
+  background: linear-gradient(135deg, #f59e0b, #d97706);
+  border-color: #b45309;
+  color: #ffffff;
+  box-shadow: 0 2px 8px rgba(245, 158, 11, 0.3);
+}
+
+.archive-toggle-btn.archive-active:hover {
+  background: linear-gradient(135deg, #d97706, #b45309);
+  border-color: #92400e;
+  color: #ffffff;
+  box-shadow: 0 4px 12px rgba(245, 158, 11, 0.35);
+}
+
+.archive-toggle-btn.archive-active .material-icons-round {
+  color: #ffffff;
+}
+
+.archive-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 10px;
+  background: #f59e0b;
+  color: #ffffff;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  margin-left: 2px;
+}
+
+/* Archive icon button on project cards */
+.icon-btn.archive-icon-btn {
+  color: #d97706;
+  opacity: 0.7;
+  transition: all 0.2s ease;
+}
+
+.icon-btn.archive-icon-btn:hover {
+  color: #b45309;
+  opacity: 1;
+  background: rgba(245, 158, 11, 0.1);
+  transform: scale(1.1);
+}
+
+.icon-btn.archive-icon-btn.is-hidden {
+  color: #059669;
+  opacity: 0.8;
+}
+
+.icon-btn.archive-icon-btn.is-hidden:hover {
+  color: #047857;
+  opacity: 1;
+  background: rgba(5, 150, 105, 0.1);
+}
+
+/* ============================================
    GLASS CONTROLS (Search, Dropdowns, Filters)
    ============================================ */
 

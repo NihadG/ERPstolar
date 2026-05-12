@@ -27,6 +27,7 @@ interface MobileProjectsViewProps {
     onEditGlass: (productId: string, material: ProductMaterial) => void;
     onEditAluDoor: (productId: string, material: ProductMaterial) => void;
     onUpdateMaterial: (materialId: string, updates: { Quantity: number; Unit_Price: number; Total_Price: number }) => Promise<void>;
+    onToggleHidden?: (project: Project) => void;
 }
 
 export default function MobileProjectsView({
@@ -42,12 +43,14 @@ export default function MobileProjectsView({
     onEditMaterial,
     onEditGlass,
     onEditAluDoor,
-    onUpdateMaterial
+    onUpdateMaterial,
+    onToggleHidden
 }: MobileProjectsViewProps) {
     const [searchTerm, setSearchTerm] = useState('');
     const [statusFilter, setStatusFilter] = useState('');
     const [expandedProjectId, setExpandedProjectId] = useState<string | null>(null);
     const [expandedProductId, setExpandedProductId] = useState<string | null>(null);
+    const [showHidden, setShowHidden] = useState(false);
 
     // Quick edit mode for materials
     const [quickEditMode, setQuickEditMode] = useState<string | null>(null); // Product_ID in quick edit mode
@@ -178,8 +181,14 @@ export default function MobileProjectsView({
         });
     }
 
+    const hiddenCount = projects.filter(p => p.Hidden).length;
+
     const filteredProjects = useMemo(() => {
         let result = projects.filter(project => {
+            // Hide hidden projects unless showHidden is on
+            if (!showHidden && project.Hidden) return false;
+            if (showHidden && !project.Hidden) return false;
+
             const term = searchTerm?.toLowerCase() || '';
             const matchesSearch =
                 (project.Client_Name?.toLowerCase() || '').includes(term) ||
@@ -195,7 +204,7 @@ export default function MobileProjectsView({
         }
 
         return result;
-    }, [projects, searchTerm, statusFilter, isInFocusMode, expandedProjectId]);
+    }, [projects, searchTerm, statusFilter, isInFocusMode, expandedProjectId, showHidden]);
 
     const getStatusColor = (status: string) => {
         switch (status) {
@@ -253,6 +262,13 @@ export default function MobileProjectsView({
                             {status}
                         </button>
                     ))}
+                    <button
+                        className={`filter-pill archive-pill ${showHidden ? 'active' : ''}`}
+                        onClick={() => setShowHidden(!showHidden)}
+                    >
+                        <span className="material-icons-round" style={{ fontSize: '15px' }}>{showHidden ? 'inventory_2' : 'archive'}</span>
+                        Arhiva{hiddenCount > 0 ? ` (${hiddenCount})` : ''}
+                    </button>
                 </div>
             )}
 
@@ -518,6 +534,11 @@ export default function MobileProjectsView({
                                 <button className="mp-action-btn primary" onClick={() => onOpenProjectModal(project)}>
                                     <span className="material-icons-round">edit</span>
                                 </button>
+                                {onToggleHidden && (
+                                    <button className={`mp-action-btn archive-action ${project.Hidden ? 'is-hidden' : ''}`} onClick={() => onToggleHidden(project)} title={project.Hidden ? 'Vrati iz arhive' : 'Arhiviraj'}>
+                                        <span className="material-icons-round">{project.Hidden ? 'unarchive' : 'archive'}</span>
+                                    </button>
+                                )}
                                 <button className="mp-action-btn danger-text" onClick={() => onDeleteProject(project.Project_ID)}>
                                     <span className="material-icons-round">delete</span>
                                 </button>
@@ -528,8 +549,8 @@ export default function MobileProjectsView({
 
                 {filteredProjects.length === 0 && (
                     <div className="mobile-empty-state">
-                        <span className="material-icons-round">folder_off</span>
-                        <p>Nema pronađenih projekata</p>
+                        <span className="material-icons-round">{showHidden ? 'inventory_2' : 'folder_off'}</span>
+                        <p>{showHidden ? 'Nema arhiviranih projekata' : 'Nema pronađenih projekata'}</p>
                     </div>
                 )}
             </div>
@@ -1063,6 +1084,46 @@ export default function MobileProjectsView({
 
                 .mp-action-btn .material-icons-round {
                     font-size: 22px;
+                }
+
+                /* Archive Filter Pill */
+                .filter-pill.archive-pill {
+                    display: flex;
+                    align-items: center;
+                    gap: 6px;
+                    background: #fffbeb;
+                    border-color: #fde68a;
+                    color: #92400e;
+                }
+
+                .filter-pill.archive-pill.active {
+                    background: linear-gradient(135deg, #f59e0b, #d97706);
+                    border-color: #b45309;
+                    color: #ffffff;
+                }
+
+                .filter-pill.archive-pill .material-icons-round {
+                    color: inherit;
+                }
+
+                /* Archive Action Button on Cards */
+                .mp-action-btn.archive-action {
+                    background: rgba(245, 158, 11, 0.1);
+                    color: #d97706;
+                }
+
+                .mp-action-btn.archive-action:active {
+                    background: rgba(245, 158, 11, 0.2);
+                    transform: scale(0.92);
+                }
+
+                .mp-action-btn.archive-action.is-hidden {
+                    background: rgba(5, 150, 105, 0.1);
+                    color: #059669;
+                }
+
+                .mp-action-btn.archive-action.is-hidden:active {
+                    background: rgba(5, 150, 105, 0.2);
                 }
 
                 /* Mobile Quick Edit Styles */

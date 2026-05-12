@@ -105,6 +105,65 @@ export default function MobileProjectModal({ isOpen, onClose, project, onSave }:
                     </div>
 
                     <div className="form-group">
+                        <label>Tip klijenta</label>
+                        <div style={{ display: 'flex', gap: '10px' }}>
+                            <button
+                                type="button"
+                                className={`status-chip ${(formData.Client_Type || 'fizicko') === 'fizicko' ? 'selected' : ''}`}
+                                onClick={() => setFormData({ ...formData, Client_Type: 'fizicko' })}
+                                style={(formData.Client_Type || 'fizicko') === 'fizicko' ? {
+                                    backgroundColor: '#dbeafe', color: '#2563eb', borderColor: '#dbeafe', flex: 1
+                                } : { flex: 1 }}
+                            >
+                                {(formData.Client_Type || 'fizicko') === 'fizicko' && <span className="material-icons-round check">check</span>}
+                                Fizičko lice
+                            </button>
+                            <button
+                                type="button"
+                                className={`status-chip ${formData.Client_Type === 'pravno' ? 'selected' : ''}`}
+                                onClick={() => setFormData({ ...formData, Client_Type: 'pravno' })}
+                                style={formData.Client_Type === 'pravno' ? {
+                                    backgroundColor: '#ede9fe', color: '#7c3aed', borderColor: '#ede9fe', flex: 1
+                                } : { flex: 1 }}
+                            >
+                                {formData.Client_Type === 'pravno' && <span className="material-icons-round check">check</span>}
+                                Pravno lice
+                            </button>
+                        </div>
+                    </div>
+
+                    {formData.Client_Type === 'pravno' && (
+                        <>
+                            <div className="form-group">
+                                <label>ID broj (JIB)</label>
+                                <div className="input-with-icon">
+                                    <span className="material-icons-round icon">badge</span>
+                                    <input
+                                        type="text"
+                                        className="mobile-input"
+                                        placeholder="4200000000000"
+                                        value={formData.Client_ID_Number || ''}
+                                        onChange={(e) => setFormData({ ...formData, Client_ID_Number: e.target.value })}
+                                    />
+                                </div>
+                            </div>
+                            <div className="form-group">
+                                <label>PDV broj</label>
+                                <div className="input-with-icon">
+                                    <span className="material-icons-round icon">receipt_long</span>
+                                    <input
+                                        type="text"
+                                        className="mobile-input"
+                                        placeholder="200000000000"
+                                        value={formData.Client_PDV_Number || ''}
+                                        onChange={(e) => setFormData({ ...formData, Client_PDV_Number: e.target.value })}
+                                    />
+                                </div>
+                            </div>
+                        </>
+                    )}
+
+                    <div className="form-group">
                         <label>Status</label>
                         <div className="status-grid">
                             {PROJECT_STATUSES.map(status => {

@@ -65,6 +65,7 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
     const [showMaterialsSummary, setShowMaterialsSummary] = useState<Set<string>>(new Set());
     const [materialsOverviewProject, setMaterialsOverviewProject] = useState<Project | null>(null);
     const [syncing, setSyncing] = useState(false);
+    const [showHidden, setShowHidden] = useState(false);
 
     // Auto-expand project/product when navigating from OffersTab
     useEffect(() => {
@@ -154,7 +155,14 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
 
 
     // Filter projects
+    const hiddenCount = projects.filter(p => p.Hidden).length;
+
     const filteredProjects = projects.filter(project => {
+        // Hide hidden projects unless showHidden is on
+        if (!showHidden && project.Hidden) return false;
+        // If showHidden is on and no other filters, show only hidden
+        if (showHidden && !project.Hidden) return false;
+
         const term = searchTerm.toLowerCase();
         const matchesSearch = project.Client_Name.toLowerCase().includes(term) ||
             project.Name?.toLowerCase().includes(term) ||
@@ -268,6 +276,18 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
             onRefresh('projects');
         } else {
             showToast(result.message, 'error');
+        }
+    }
+
+    async function handleToggleHidden(project: Project) {
+        if (!organizationId) return;
+        const newHidden = !project.Hidden;
+        const result = await saveProject({ ...project, Hidden: newHidden }, organizationId);
+        if (result.success) {
+            showToast(newHidden ? 'Projekat sakriven' : 'Projekat prikazan', 'success');
+            onRefresh('projects');
+        } else {
+            showToast('Greška pri ažuriranju projekta', 'error');
         }
     }
 
@@ -911,6 +931,7 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                             showToast(result.message, 'error');
                         }
                     }}
+                    onToggleHidden={handleToggleHidden}
                 />
 
                 {/* Modals are shared but different for mobile */}
@@ -948,6 +969,51 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                                 placeholder="Adresa lokacije"
                             />
                         </div>
+                        <div className="form-group">
+                            <label>Tip klijenta</label>
+                            <div style={{ display: 'flex', gap: '8px' }}>
+                                <button
+                                    type="button"
+                                    className={`glass-btn ${(editingProject?.Client_Type || 'fizicko') === 'fizicko' ? 'glass-btn-primary' : ''}`}
+                                    onClick={() => setEditingProject({ ...editingProject, Client_Type: 'fizicko' })}
+                                    style={{ flex: 1, fontSize: '13px', padding: '8px 12px' }}
+                                >
+                                    Fizičko lice
+                                </button>
+                                <button
+                                    type="button"
+                                    className={`glass-btn ${editingProject?.Client_Type === 'pravno' ? 'glass-btn-primary' : ''}`}
+                                    onClick={() => setEditingProject({ ...editingProject, Client_Type: 'pravno' })}
+                                    style={{ flex: 1, fontSize: '13px', padding: '8px 12px' }}
+                                >
+                                    Pravno lice
+                                </button>
+                            </div>
+                        </div>
+                        {editingProject?.Client_Type === 'pravno' && (
+                            <>
+                                <div className="form-group">
+                                    <label>ID broj (JIB)</label>
+                                    <input
+                                        type="text"
+                                        className="form-control"
+                                        value={editingProject?.Client_ID_Number || ''}
+                                        onChange={(e) => setEditingProject({ ...editingProject, Client_ID_Number: e.target.value })}
+                                        placeholder="4200000000000"
+                                    />
+                                </div>
+                                <div className="form-group">
+                                    <label>PDV broj</label>
+                                    <input
+                                        type="text"
+                                        className="form-control"
+                                        value={editingProject?.Client_PDV_Number || ''}
+                                        onChange={(e) => setEditingProject({ ...editingProject, Client_PDV_Number: e.target.value })}
+                                        placeholder="200000000000"
+                                    />
+                                </div>
+                            </>
+                        )}
                         <div className="form-group">
                             <label>Status</label>
                             <select
@@ -1234,6 +1300,17 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                         <option key={status} value={status}>{status}</option>
                     ))}
                 </select>
+                <button
+                    className={`glass-btn archive-toggle-btn ${showHidden ? 'archive-active' : ''}`}
+                    onClick={() => setShowHidden(!showHidden)}
+                    title={showHidden ? 'Prikaži aktivne projekte' : 'Prikaži skrivene projekte'}
+                >
+                    <span className="material-icons-round">{showHidden ? 'inventory_2' : 'archive'}</span>
+                    {showHidden ? 'Aktivni' : 'Arhiva'}
+                    {!showHidden && hiddenCount > 0 && (
+                        <span className="archive-badge">{hiddenCount}</span>
+                    )}
+                </button>
                 <button className="glass-btn glass-btn-primary" onClick={() => openProjectModal()}>
                     <span className="material-icons-round">add</span>
                     Novi Projekat
@@ -1290,9 +1367,9 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
             <div className="projects-list">
                 {filteredProjects.length === 0 ? (
                     <div className="empty-state">
-                        <span className="material-icons-round">folder_off</span>
-                        <h3>Nema projekata</h3>
-                        <p>Kreirajte prvi projekat klikom na "Novi Projekat"</p>
+                        <span className="material-icons-round">{showHidden ? 'inventory_2' : 'folder_off'}</span>
+                        <h3>{showHidden ? 'Nema skrivenih projekata' : 'Nema projekata'}</h3>
+                        <p>{showHidden ? 'Trenutno nema arhiviranih projekata' : 'Kreirajte prvi projekat klikom na "Novi Projekat"'}</p>
                     </div>
                 ) : (
                     // Unified view: always grouped by status, expanded projects show products inline
@@ -1461,6 +1538,9 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                                                     )}
                                                     <button className="icon-btn" onClick={() => openProjectModal(project)} title="Uredi projekat">
                                                         <span className="material-icons-round">edit</span>
+                                                    </button>
+                                                    <button className={`icon-btn archive-icon-btn ${project.Hidden ? 'is-hidden' : ''}`} onClick={() => handleToggleHidden(project)} title={project.Hidden ? 'Vrati iz arhive' : 'Arhiviraj projekat'}>
+                                                        <span className="material-icons-round">{project.Hidden ? 'unarchive' : 'archive'}</span>
                                                     </button>
                                                     <button className="icon-btn danger" onClick={() => handleDeleteProject(project.Project_ID)} title="Obriši projekat">
                                                         <span className="material-icons-round">delete</span>
@@ -2025,6 +2105,51 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                         />
                     </div>
                 </div>
+                <div className="form-group">
+                    <label>Tip klijenta</label>
+                    <div style={{ display: 'flex', gap: '8px' }}>
+                        <button
+                            type="button"
+                            className={`glass-btn ${(editingProject?.Client_Type || 'fizicko') === 'fizicko' ? 'glass-btn-primary' : ''}`}
+                            onClick={() => setEditingProject({ ...editingProject, Client_Type: 'fizicko' })}
+                            style={{ flex: 1, fontSize: '13px', padding: '8px 12px' }}
+                        >
+                            <span className="material-icons-round" style={{ fontSize: '16px', marginRight: '6px' }}>person</span>
+                            Fizičko lice
+                        </button>
+                        <button
+                            type="button"
+                            className={`glass-btn ${editingProject?.Client_Type === 'pravno' ? 'glass-btn-primary' : ''}`}
+                            onClick={() => setEditingProject({ ...editingProject, Client_Type: 'pravno' })}
+                            style={{ flex: 1, fontSize: '13px', padding: '8px 12px' }}
+                        >
+                            <span className="material-icons-round" style={{ fontSize: '16px', marginRight: '6px' }}>business</span>
+                            Pravno lice
+                        </button>
+                    </div>
+                </div>
+                {editingProject?.Client_Type === 'pravno' && (
+                    <div className="form-row">
+                        <div className="form-group">
+                            <label>ID broj (JIB)</label>
+                            <input
+                                type="text"
+                                value={editingProject?.Client_ID_Number || ''}
+                                onChange={(e) => setEditingProject({ ...editingProject, Client_ID_Number: e.target.value })}
+                                placeholder="4200000000000"
+                            />
+                        </div>
+                        <div className="form-group">
+                            <label>PDV broj</label>
+                            <input
+                                type="text"
+                                value={editingProject?.Client_PDV_Number || ''}
+                                onChange={(e) => setEditingProject({ ...editingProject, Client_PDV_Number: e.target.value })}
+                                placeholder="200000000000"
+                            />
+                        </div>
+                    </div>
+                )}
                 <div className="form-group">
                     <label>Adresa</label>
                     <input

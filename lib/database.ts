@@ -1410,13 +1410,22 @@ export async function getOffers(organizationId: string): Promise<Offer[]> {
         extrasByOfferProduct.get(e.Offer_Product_ID)!.push(e);
     });
 
-    // Enrich offers with Client_Name, Client_Phone, Client_Email, Address and products (with extras)
+    // Enrich offers with client data and products (with extras)
     offers.forEach(offer => {
         const proj = projectsMap.get(offer.Project_ID);
-        offer.Client_Name = proj?.Client_Name || '';
-        (offer as any).Client_Phone = proj?.Client_Phone || '';
-        (offer as any).Client_Email = proj?.Client_Email || '';
-        (offer as any).Client_Address = proj?.Address || '';
+        // Only enrich from project if offer doesn't have its own stored client data
+        if (!offer.Client_Name && proj) {
+            offer.Client_Name = proj.Client_Name || '';
+        }
+        if (!(offer as any).Client_Phone && proj) {
+            (offer as any).Client_Phone = proj.Client_Phone || '';
+        }
+        if (!(offer as any).Client_Email && proj) {
+            (offer as any).Client_Email = proj.Client_Email || '';
+        }
+        if (!(offer as any).Client_Address && proj) {
+            (offer as any).Client_Address = proj.Address || '';
+        }
         const prods = offerProductsByOffer.get(offer.Offer_ID) || [];
         prods.forEach(prod => {
             (prod as any).extras = extrasByOfferProduct.get(prod.ID) || [];
@@ -1468,7 +1477,29 @@ export async function getOffer(offerId: string, organizationId: string): Promise
         where('Organization_ID', '==', organizationId)
     ));
     if (!projectSnap.empty) {
-        offer.Client_Name = projectSnap.docs[0].data().Client_Name;
+        const projData = projectSnap.docs[0].data();
+        // Only enrich from project if offer doesn't have its own stored client data
+        if (!offer.Client_Name) {
+            offer.Client_Name = projData.Client_Name;
+        }
+        if (!(offer as any).Client_Phone) {
+            (offer as any).Client_Phone = projData.Client_Phone || '';
+        }
+        if (!(offer as any).Client_Email) {
+            (offer as any).Client_Email = projData.Client_Email || '';
+        }
+        if (!(offer as any).Client_Address) {
+            (offer as any).Client_Address = projData.Address || '';
+        }
+        if (!(offer as any).Client_Type) {
+            (offer as any).Client_Type = projData.Client_Type || 'fizicko';
+        }
+        if (!(offer as any).Client_ID_Number) {
+            (offer as any).Client_ID_Number = projData.Client_ID_Number || '';
+        }
+        if (!(offer as any).Client_PDV_Number) {
+            (offer as any).Client_PDV_Number = projData.Client_PDV_Number || '';
+        }
     }
 
     return offer;
@@ -1568,6 +1599,14 @@ export async function createOfferWithProducts(offerData: any, organizationId: st
             PDV_Rate: offerData.PDV_Rate ?? 17,
             Currency: offerData.Currency || 'KM',
             Language: offerData.Language || 'bs',
+            // Client override fields
+            Client_Name: offerData.Client_Name || '',
+            Client_Phone: offerData.Client_Phone || '',
+            Client_Email: offerData.Client_Email || '',
+            Client_Address: offerData.Client_Address || '',
+            Client_Type: offerData.Client_Type || '',
+            Client_ID_Number: offerData.Client_ID_Number || '',
+            Client_PDV_Number: offerData.Client_PDV_Number || '',
         };
 
         // ATOMIC: Write offer + all products + all extras in a single batch
@@ -1734,6 +1773,14 @@ export async function updateOfferWithProducts(offerData: any, organizationId: st
             PDV_Rate: offerData.PDV_Rate ?? 17,
             Currency: offerData.Currency || 'KM',
             Language: offerData.Language || 'bs',
+            // Client override fields
+            Client_Name: offerData.Client_Name || '',
+            Client_Phone: offerData.Client_Phone || '',
+            Client_Email: offerData.Client_Email || '',
+            Client_Address: offerData.Client_Address || '',
+            Client_Type: offerData.Client_Type || '',
+            Client_ID_Number: offerData.Client_ID_Number || '',
+            Client_PDV_Number: offerData.Client_PDV_Number || '',
         });
 
         // Step 2: Queue deletion of existing offer products and their extras

@@ -90,6 +90,16 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
     const [includePDV, setIncludePDV] = useState(true);
     const [pdvRate, setPdvRate] = useState(17);
 
+    // Client Override State (for swapping client on an offer)
+    const [clientOverride, setClientOverride] = useState(false);
+    const [overrideClientName, setOverrideClientName] = useState('');
+    const [overrideClientPhone, setOverrideClientPhone] = useState('');
+    const [overrideClientEmail, setOverrideClientEmail] = useState('');
+    const [overrideClientAddress, setOverrideClientAddress] = useState('');
+    const [overrideClientType, setOverrideClientType] = useState<'fizicko' | 'pravno'>('fizicko');
+    const [overrideClientIdNumber, setOverrideClientIdNumber] = useState('');
+    const [overrideClientPdvNumber, setOverrideClientPdvNumber] = useState('');
+
     // Unsaved changes confirmation dialog
     const [confirmCloseModal, setConfirmCloseModal] = useState(false);
     const [pendingNavigate, setPendingNavigate] = useState<{ projectId: string; productId: string; offerId?: string } | null>(null);
@@ -311,6 +321,15 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
         setNotes('Plaćanje: Avansno ili po dogovoru\nRok isporuke: Po dogovoru nakon potvrde');
         setOfferCurrency('KM');
         setOfferLanguage('bs');
+        // Reset client override
+        setClientOverride(false);
+        setOverrideClientName('');
+        setOverrideClientPhone('');
+        setOverrideClientEmail('');
+        setOverrideClientAddress('');
+        setOverrideClientType('fizicko');
+        setOverrideClientIdNumber('');
+        setOverrideClientPdvNumber('');
         setCreateModal(true);
     }
 
@@ -528,6 +547,26 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
         setIsSaving(true);
 
         // ALWAYS save all monetary values in KM — Currency is only a display flag
+        // Build client override fields — only save if override is active
+        const clientFields = clientOverride ? {
+            Client_Name: overrideClientName,
+            Client_Phone: overrideClientPhone,
+            Client_Email: overrideClientEmail,
+            Client_Address: overrideClientAddress,
+            Client_Type: overrideClientType,
+            Client_ID_Number: overrideClientIdNumber,
+            Client_PDV_Number: overrideClientPdvNumber,
+        } : {
+            // Clear any previous override — let service enrich from project
+            Client_Name: '',
+            Client_Phone: '',
+            Client_Email: '',
+            Client_Address: '',
+            Client_Type: '',
+            Client_ID_Number: '',
+            Client_PDV_Number: '',
+        };
+
         const offerData = {
             Project_ID: selectedProjectId,
             Name: offerName || '',
@@ -540,6 +579,7 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
             PDV_Rate: pdvRate,
             Currency: offerCurrency,
             Language: offerLanguage,
+            ...clientFields,
             products: offerProducts.map(p => {
                 return {
                     Product_ID: p.Product_ID,
@@ -823,6 +863,30 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
         setPdvRate((fullOffer as any).PDV_Rate ?? 17);
         setOfferCurrency((fullOffer as any).Currency || 'KM');
         setOfferLanguage((fullOffer as any).Language || 'bs');
+
+        // Load client override — check if offer has its own client data different from project
+        const proj = projects.find(pr => pr.Project_ID === fullOffer.Project_ID);
+        const hasOverride = fullOffer.Client_Name && proj && fullOffer.Client_Name !== proj.Client_Name;
+        if (hasOverride) {
+            setClientOverride(true);
+            setOverrideClientName(fullOffer.Client_Name || '');
+            setOverrideClientPhone(fullOffer.Client_Phone || '');
+            setOverrideClientEmail(fullOffer.Client_Email || '');
+            setOverrideClientAddress(fullOffer.Client_Address || '');
+            setOverrideClientType(fullOffer.Client_Type || 'fizicko');
+            setOverrideClientIdNumber(fullOffer.Client_ID_Number || '');
+            setOverrideClientPdvNumber(fullOffer.Client_PDV_Number || '');
+        } else {
+            setClientOverride(false);
+            setOverrideClientName('');
+            setOverrideClientPhone('');
+            setOverrideClientEmail('');
+            setOverrideClientAddress('');
+            setOverrideClientType(proj?.Client_Type || 'fizicko');
+            setOverrideClientIdNumber('');
+            setOverrideClientPdvNumber('');
+        }
+
         setCurrentOffer(fullOffer);
     }
 
@@ -938,6 +1002,8 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
                     ${(offer as any).Client_Address ? `<div class="client-contact">${(offer as any).Client_Address}</div>` : ''}
                     ${(offer as any).Client_Phone ? `<div class="client-contact">${isEN ? 'Phone' : 'Tel'}: ${(offer as any).Client_Phone}</div>` : ''}
                     ${(offer as any).Client_Email ? `<div class="client-contact">Email: ${(offer as any).Client_Email}</div>` : ''}
+                    ${(offer as any).Client_ID_Number ? `<div class="client-contact" style="margin-top: 4px; font-size: 9px; color: #888;">ID: ${(offer as any).Client_ID_Number}</div>` : ''}
+                    ${(offer as any).Client_PDV_Number ? `<div class="client-contact" style="font-size: 9px; color: #888;">${isEN ? 'VAT' : 'PDV'}: ${(offer as any).Client_PDV_Number}</div>` : ''}
                 </div>
                 <div class="doc-info">
                     <div class="doc-type">${t.offer}</div>
@@ -1802,14 +1868,150 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
 
                             {/* Client Info */}
                             {selectedProject && (
-                                <div className="offer-client-info">
-                                    <div className="client-avatar">
-                                        {selectedProject.Client_Name?.charAt(0).toUpperCase() || '?'}
+                                <div className="offer-client-info" style={{ flexDirection: 'column', gap: '12px' }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px', width: '100%' }}>
+                                        <div className="client-avatar" style={{ background: clientOverride ? 'linear-gradient(135deg, #7c3aed, #a78bfa)' : undefined }}>
+                                            {(clientOverride ? overrideClientName : selectedProject.Client_Name)?.charAt(0).toUpperCase() || '?'}
+                                        </div>
+                                        <div className="client-details" style={{ flex: 1 }}>
+                                            <div className="client-name">
+                                                {clientOverride ? overrideClientName || 'Novi klijent' : selectedProject.Client_Name}
+                                                {clientOverride && (
+                                                    <span style={{ fontSize: '11px', marginLeft: '8px', padding: '2px 8px', borderRadius: '6px', background: 'rgba(124, 58, 237, 0.1)', color: '#7c3aed', fontWeight: 600 }}>Override</span>
+                                                )}
+                                            </div>
+                                            <div className="client-address">{clientOverride ? (overrideClientAddress || 'Adresa nije unesena') : (selectedProject.Address || 'Adresa nije unesena')}</div>
+                                        </div>
+                                        <button
+                                            type="button"
+                                            className={`glass-btn ${clientOverride ? 'glass-btn-primary' : ''}`}
+                                            onClick={() => {
+                                                if (!clientOverride) {
+                                                    // Pre-fill with project data
+                                                    setOverrideClientName(selectedProject.Client_Name || '');
+                                                    setOverrideClientPhone(selectedProject.Client_Phone || '');
+                                                    setOverrideClientEmail(selectedProject.Client_Email || '');
+                                                    setOverrideClientAddress(selectedProject.Address || '');
+                                                    setOverrideClientType(selectedProject.Client_Type || 'fizicko');
+                                                    setOverrideClientIdNumber(selectedProject.Client_ID_Number || '');
+                                                    setOverrideClientPdvNumber(selectedProject.Client_PDV_Number || '');
+                                                }
+                                                setClientOverride(!clientOverride);
+                                            }}
+                                            style={{ fontSize: '12px', padding: '6px 12px', whiteSpace: 'nowrap' }}
+                                        >
+                                            <span className="material-icons-round" style={{ fontSize: '16px' }}>{clientOverride ? 'person_off' : 'swap_horiz'}</span>
+                                            {clientOverride ? 'Vrati' : 'Zamijeni'}
+                                        </button>
                                     </div>
-                                    <div className="client-details">
-                                        <div className="client-name">{selectedProject.Client_Name}</div>
-                                        <div className="client-address">{selectedProject.Address || 'Adresa nije unesena'}</div>
-                                    </div>
+
+                                    {/* Override Fields */}
+                                    {clientOverride && (
+                                        <div style={{
+                                            width: '100%',
+                                            padding: '16px',
+                                            background: 'var(--bg-secondary)',
+                                            borderRadius: '10px',
+                                            border: '1px solid var(--border-light)',
+                                            display: 'flex',
+                                            flexDirection: 'column',
+                                            gap: '10px',
+                                            animation: 'fadeIn 0.2s ease'
+                                        }}>
+                                            {/* Pick existing client from projects */}
+                                            <div>
+                                                <label style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '4px', display: 'block' }}>Izaberi postojećeg klijenta</label>
+                                                <select
+                                                    style={{ width: '100%', padding: '8px 10px', fontSize: '13px', borderRadius: '8px', border: '1px solid var(--border)', background: 'var(--surface)', cursor: 'pointer' }}
+                                                    value=""
+                                                    onChange={(e) => {
+                                                        const proj = projects.find(p => p.Project_ID === e.target.value);
+                                                        if (proj) {
+                                                            setOverrideClientName(proj.Client_Name || '');
+                                                            setOverrideClientPhone(proj.Client_Phone || '');
+                                                            setOverrideClientEmail(proj.Client_Email || '');
+                                                            setOverrideClientAddress(proj.Address || '');
+                                                            setOverrideClientType(proj.Client_Type || 'fizicko');
+                                                            setOverrideClientIdNumber(proj.Client_ID_Number || '');
+                                                            setOverrideClientPdvNumber(proj.Client_PDV_Number || '');
+                                                        }
+                                                    }}
+                                                >
+                                                    <option value="">— Izaberi klijenta iz baze —</option>
+                                                    {(() => {
+                                                        // Deduplicate clients by name
+                                                        const seen = new Set<string>();
+                                                        return projects
+                                                            .filter(p => {
+                                                                if (!p.Client_Name || seen.has(p.Client_Name)) return false;
+                                                                seen.add(p.Client_Name);
+                                                                return true;
+                                                            })
+                                                            .sort((a, b) => (a.Client_Name || '').localeCompare(b.Client_Name || '', 'hr'))
+                                                            .map(p => (
+                                                                <option key={p.Project_ID} value={p.Project_ID}>
+                                                                    {p.Client_Name}{p.Client_Type === 'pravno' ? ' (Pravno)' : ''}
+                                                                </option>
+                                                            ));
+                                                    })()}
+                                                </select>
+                                            </div>
+                                            <div style={{ borderBottom: '1px solid var(--border-light)', margin: '2px 0' }} />
+                                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                                                <div>
+                                                    <label style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '4px', display: 'block' }}>Ime klijenta *</label>
+                                                    <input type="text" value={overrideClientName} onChange={(e) => setOverrideClientName(e.target.value)} placeholder="Ime i prezime / Naziv firme" style={{ width: '100%', padding: '8px 10px', fontSize: '13px', borderRadius: '8px', border: '1px solid var(--border)', background: 'var(--surface)' }} />
+                                                </div>
+                                                <div>
+                                                    <label style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '4px', display: 'block' }}>Adresa</label>
+                                                    <input type="text" value={overrideClientAddress} onChange={(e) => setOverrideClientAddress(e.target.value)} placeholder="Adresa" style={{ width: '100%', padding: '8px 10px', fontSize: '13px', borderRadius: '8px', border: '1px solid var(--border)', background: 'var(--surface)' }} />
+                                                </div>
+                                            </div>
+                                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                                                <div>
+                                                    <label style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '4px', display: 'block' }}>Telefon</label>
+                                                    <input type="tel" value={overrideClientPhone} onChange={(e) => setOverrideClientPhone(e.target.value)} placeholder="+387..." style={{ width: '100%', padding: '8px 10px', fontSize: '13px', borderRadius: '8px', border: '1px solid var(--border)', background: 'var(--surface)' }} />
+                                                </div>
+                                                <div>
+                                                    <label style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '4px', display: 'block' }}>Email</label>
+                                                    <input type="email" value={overrideClientEmail} onChange={(e) => setOverrideClientEmail(e.target.value)} placeholder="email@..." style={{ width: '100%', padding: '8px 10px', fontSize: '13px', borderRadius: '8px', border: '1px solid var(--border)', background: 'var(--surface)' }} />
+                                                </div>
+                                            </div>
+                                            <div>
+                                                <label style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '6px', display: 'block' }}>Tip klijenta</label>
+                                                <div style={{ display: 'flex', gap: '8px' }}>
+                                                    <button type="button" onClick={() => setOverrideClientType('fizicko')} style={{
+                                                        flex: 1, padding: '7px 10px', fontSize: '12px', fontWeight: 600, borderRadius: '8px', border: '1.5px solid', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', transition: 'all 0.2s',
+                                                        borderColor: overrideClientType === 'fizicko' ? '#2563eb' : 'var(--border)',
+                                                        background: overrideClientType === 'fizicko' ? '#dbeafe' : 'var(--surface)',
+                                                        color: overrideClientType === 'fizicko' ? '#2563eb' : 'var(--text-secondary)'
+                                                    }}>
+                                                        <span className="material-icons-round" style={{ fontSize: '15px' }}>person</span>Fizičko
+                                                    </button>
+                                                    <button type="button" onClick={() => setOverrideClientType('pravno')} style={{
+                                                        flex: 1, padding: '7px 10px', fontSize: '12px', fontWeight: 600, borderRadius: '8px', border: '1.5px solid', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', transition: 'all 0.2s',
+                                                        borderColor: overrideClientType === 'pravno' ? '#7c3aed' : 'var(--border)',
+                                                        background: overrideClientType === 'pravno' ? '#ede9fe' : 'var(--surface)',
+                                                        color: overrideClientType === 'pravno' ? '#7c3aed' : 'var(--text-secondary)'
+                                                    }}>
+                                                        <span className="material-icons-round" style={{ fontSize: '15px' }}>business</span>Pravno
+                                                    </button>
+                                                </div>
+                                            </div>
+                                            {overrideClientType === 'pravno' && (
+                                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                                                    <div>
+                                                        <label style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '4px', display: 'block' }}>ID broj (JIB)</label>
+                                                        <input type="text" value={overrideClientIdNumber} onChange={(e) => setOverrideClientIdNumber(e.target.value)} placeholder="4200000000000" style={{ width: '100%', padding: '8px 10px', fontSize: '13px', borderRadius: '8px', border: '1px solid var(--border)', background: 'var(--surface)' }} />
+                                                    </div>
+                                                    <div>
+                                                        <label style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '4px', display: 'block' }}>PDV broj</label>
+                                                        <input type="text" value={overrideClientPdvNumber} onChange={(e) => setOverrideClientPdvNumber(e.target.value)} placeholder="200000000000" style={{ width: '100%', padding: '8px 10px', fontSize: '13px', borderRadius: '8px', border: '1px solid var(--border)', background: 'var(--surface)' }} />
+                                                    </div>
+                                                </div>
+                                            )}
+                                        </div>
+                                    )}
                                 </div>
                             )}
 
@@ -2274,9 +2476,23 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
                                 <span style={{ fontSize: '11px', textTransform: 'uppercase', color: 'var(--text-secondary)', fontWeight: 600, letterSpacing: '0.5px' }}>Klijent</span>
                                 <span style={{ fontSize: '15px', fontWeight: 600, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                                    <span className="material-icons-round" style={{ fontSize: '16px', color: 'var(--text-secondary)' }}>person</span>
+                                    <span className="material-icons-round" style={{ fontSize: '16px', color: 'var(--text-secondary)' }}>{(currentOffer as any).Client_Type === 'pravno' ? 'business' : 'person'}</span>
                                     {currentOffer.Client_Name || '-'}
                                 </span>
+                                {(currentOffer as any).Client_Address && (
+                                    <span style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '2px' }}>{(currentOffer as any).Client_Address}</span>
+                                )}
+                                {((currentOffer as any).Client_Phone || (currentOffer as any).Client_Email) && (
+                                    <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
+                                        {[(currentOffer as any).Client_Phone, (currentOffer as any).Client_Email].filter(Boolean).join(' · ')}
+                                    </span>
+                                )}
+                                {((currentOffer as any).Client_ID_Number || (currentOffer as any).Client_PDV_Number) && (
+                                    <span style={{ fontSize: '11px', color: 'var(--text-secondary)', display: 'flex', gap: '8px', marginTop: '2px' }}>
+                                        {(currentOffer as any).Client_ID_Number && <span>ID: {(currentOffer as any).Client_ID_Number}</span>}
+                                        {(currentOffer as any).Client_PDV_Number && <span>PDV: {(currentOffer as any).Client_PDV_Number}</span>}
+                                    </span>
+                                )}
                             </div>
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
                                 <span style={{ fontSize: '11px', textTransform: 'uppercase', color: 'var(--text-secondary)', fontWeight: 600, letterSpacing: '0.5px' }}>Kreirano</span>

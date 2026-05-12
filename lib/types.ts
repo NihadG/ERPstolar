@@ -9,11 +9,15 @@ export interface Project {
     Client_Name: string;
     Client_Phone: string;
     Client_Email: string;
+    Client_Type?: 'fizicko' | 'pravno';   // Fizičko ili pravno lice
+    Client_ID_Number?: string;              // ID broj firme (JIB)
+    Client_PDV_Number?: string;             // PDV broj firme
     Address: string;
     Notes: string;
     Status: string;
     Created_Date: string;
     Deadline: string;
+    Hidden?: boolean;                       // Soft-hide from main list
     products?: Product[];
     offers?: Offer[];
 }
@@ -128,6 +132,10 @@ export interface Offer {
     Client_Name?: string;
     Client_Phone?: string;
     Client_Email?: string;
+    Client_Address?: string;
+    Client_Type?: 'fizicko' | 'pravno';
+    Client_ID_Number?: string;
+    Client_PDV_Number?: string;
     products?: OfferProduct[];
 }
 
