@@ -215,20 +215,24 @@ export default function MobileProjectsView({
 
     return (
         <div className="mobile-projects-view">
+            {/* Main FAB for adding projects */}
+            {!isInFocusMode && (
+                <button className="mobile-fab" onClick={() => onOpenProjectModal()}>
+                    <span className="material-icons-round">add</span>
+                </button>
+            )}
+
             {/* Mobile Toolbar */}
             <div className="mobile-toolbar">
                 <div className="mobile-search">
                     <span className="material-icons-round">search</span>
                     <input
                         type="text"
-                        placeholder="Traži..."
+                        placeholder="Traži projekte..."
                         value={searchTerm}
                         onChange={(e) => setSearchTerm(e.target.value)}
                     />
                 </div>
-                <button className="mobile-add-btn" onClick={() => onOpenProjectModal()}>
-                    <span className="material-icons-round">add</span>
-                </button>
             </div>
 
             {/* Filter Pills - Hidden in Focus Mode */}
@@ -532,25 +536,67 @@ export default function MobileProjectsView({
 
             <style jsx>{`
                 .mobile-projects-view {
-                    padding-bottom: 80px; /* Space for FAB or bottom nav */
+                    padding-bottom: 90px; /* Space for FAB */
+                    position: relative;
+                    min-height: 100%;
+                }
+
+                /* Floating Action Button */
+                .mobile-fab {
+                    position: fixed;
+                    bottom: 80px; /* Above bottom nav */
+                    right: 20px;
+                    width: 56px;
+                    height: 56px;
+                    border-radius: 28px;
+                    background: linear-gradient(135deg, #007aff 0%, #005bb5 100%);
+                    color: white;
+                    border: none;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    box-shadow: 0 8px 24px rgba(0, 122, 255, 0.4);
+                    z-index: 100;
+                    transition: transform 0.2s cubic-bezier(0.25, 0.8, 0.25, 1), box-shadow 0.2s;
+                }
+                
+                .mobile-fab:active {
+                    transform: scale(0.92);
+                    box-shadow: 0 4px 12px rgba(0, 122, 255, 0.3);
+                }
+                
+                .mobile-fab .material-icons-round {
+                    font-size: 28px;
                 }
 
                 .mobile-toolbar {
                     display: flex;
                     gap: 12px;
                     margin-bottom: 16px;
+                    position: sticky;
+                    top: 0;
+                    z-index: 50;
+                    background: rgba(245, 245, 247, 0.8);
+                    backdrop-filter: blur(12px);
+                    -webkit-backdrop-filter: blur(12px);
+                    padding: 8px 0;
+                    margin-top: -8px;
                 }
 
                 .mobile-search {
                     flex: 1;
-                    height: 52px;
-                    background: white;
+                    height: 48px;
+                    background: #ffffff;
                     border-radius: 16px;
                     display: flex;
                     align-items: center;
                     padding: 0 16px;
-                    box-shadow: 0 2px 12px rgba(0,0,0,0.04);
-                    border: 1px solid #f1f5f9;
+                    box-shadow: 0 2px 12px rgba(0,0,0,0.03);
+                    border: 1px solid rgba(0,0,0,0.05);
+                }
+
+                .mobile-search .material-icons-round {
+                    color: #86868b;
                 }
 
                 .mobile-search input {
@@ -561,20 +607,12 @@ export default function MobileProjectsView({
                     margin-left: 10px;
                     font-size: 16px;
                     outline: none;
-                    color: #1e293b;
+                    color: #1d1d1f;
+                    font-weight: 500;
                 }
-
-                .mobile-add-btn {
-                    width: 44px;
-                    height: 44px;
-                    background: #2563eb;
-                    color: white;
-                    border: none;
-                    border-radius: 12px;
-                    display: flex;
-                    align-items: center;
-                    justify-content: center;
-                    box-shadow: 0 4px 12px rgba(37, 99, 235, 0.3);
+                
+                .mobile-search input::placeholder {
+                    color: #86868b;
                 }
 
                 /* Focus Mode Back Button */
@@ -582,30 +620,31 @@ export default function MobileProjectsView({
                     display: flex;
                     align-items: center;
                     gap: 8px;
-                    padding: 10px 16px;
-                    background: white;
-                    border: 1px solid #e2e8f0;
-                    border-radius: 10px;
-                    font-size: 14px;
+                    padding: 12px 16px;
+                    background: rgba(0, 122, 255, 0.1);
+                    border: none;
+                    border-radius: 16px;
+                    font-size: 15px;
                     font-weight: 600;
-                    color: #475569;
-                    margin-bottom: 12px;
-                    box-shadow: 0 2px 6px rgba(0,0,0,0.05);
+                    color: #007aff;
+                    margin-bottom: 16px;
+                    transition: transform 0.2s, background 0.2s;
                 }
                 
                 .focus-back-btn:active {
-                    background: #f8fafc;
+                    transform: scale(0.97);
+                    background: rgba(0, 122, 255, 0.15);
                 }
                 
                 .focus-back-btn .material-icons-round {
                     font-size: 20px;
-                    color: #64748b;
                 }
                 
                 .focus-back-btn.small {
                     padding: 8px 12px;
                     font-size: 13px;
-                    margin-bottom: 10px;
+                    margin-bottom: 12px;
+                    border-radius: 12px;
                 }
                 
                 .focus-back-btn.small .material-icons-round {
@@ -619,17 +658,17 @@ export default function MobileProjectsView({
                     justify-content: center;
                     width: 32px;
                     height: 32px;
-                    background: #eff6ff;
-                    color: #2563eb;
-                    border: 1px solid #bfdbfe;
+                    background: rgba(0, 122, 255, 0.1);
+                    color: #007aff;
+                    border: none;
                     padding: 0;
-                    border-radius: 8px;
+                    border-radius: 10px;
                     transition: all 0.2s;
                 }
                 
                 .mobile-add-tiny-btn:active {
-                    background: #dbeafe;
-                    transform: scale(0.98);
+                    background: rgba(0, 122, 255, 0.2);
+                    transform: scale(0.95);
                 }
 
                 .mobile-add-tiny-btn .material-icons-round {
@@ -640,8 +679,8 @@ export default function MobileProjectsView({
                     display: flex;
                     gap: 8px;
                     overflow-x: auto;
-                    padding-bottom: 4px; /* Hide scrollbar visual glitch */
-                    margin-bottom: 20px;
+                    padding-bottom: 8px; 
+                    margin-bottom: 16px;
                     -webkit-overflow-scrolling: touch;
                     scrollbar-width: none;
                 }
@@ -654,17 +693,19 @@ export default function MobileProjectsView({
                     white-space: nowrap;
                     padding: 8px 16px;
                     border-radius: 20px;
-                    border: 1px solid #e2e8f0;
-                    background: white;
-                    color: #64748b;
+                    border: 1px solid rgba(0,0,0,0.05);
+                    background: #ffffff;
+                    color: #86868b;
                     font-size: 14px;
-                    font-weight: 500;
+                    font-weight: 600;
+                    box-shadow: 0 1px 4px rgba(0,0,0,0.02);
+                    transition: all 0.2s;
                 }
 
                 .filter-pill.active {
-                    background: #2563eb;
-                    color: white;
-                    border-color: #2563eb;
+                    background: #1d1d1f;
+                    color: #ffffff;
+                    border-color: #1d1d1f;
                 }
 
                 .mobile-list {
@@ -674,92 +715,111 @@ export default function MobileProjectsView({
                 }
 
                 .mobile-project-card {
-                    background: white;
-                    border-radius: 16px;
-                    padding: 16px;
-                    box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+                    background: #ffffff;
+                    border-radius: 24px;
+                    padding: 20px;
+                    box-shadow: 0 4px 20px rgba(0,0,0,0.04);
+                    border: 1px solid rgba(0,0,0,0.02);
+                    transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
+                }
+                
+                .mobile-project-card.expanded {
+                    border: 1px solid rgba(0, 122, 255, 0.3);
+                    box-shadow: 0 8px 30px rgba(0, 122, 255, 0.1);
                 }
 
                 .mp-header {
-                    margin-bottom: 12px;
+                    margin-bottom: 16px;
                 }
 
                 .mp-title-row {
                     display: flex;
                     justify-content: space-between;
                     align-items: flex-start;
-                    margin-bottom: 4px;
+                    margin-bottom: 6px;
                 }
 
                 .mp-client {
-                    font-size: 18px;
+                    font-size: 20px;
                     font-weight: 700;
                     margin: 0;
-                    color: #1e293b;
+                    color: #1d1d1f;
+                    line-height: 1.2;
                 }
 
                 .mp-status-badge {
                     font-size: 11px;
-                    font-weight: 600;
-                    padding: 4px 8px;
-                    border-radius: 6px;
+                    font-weight: 700;
+                    padding: 4px 10px;
+                    border-radius: 8px;
                     text-transform: uppercase;
+                    letter-spacing: 0.5px;
                 }
 
                 .mp-subtitle {
-                    color: #64748b;
-                    font-size: 14px;
+                    color: #515154;
+                    font-size: 15px;
+                    font-weight: 500;
                 }
 
                 .mp-address {
-                    color: #94a3b8;
-                    font-size: 13px;
+                    color: #86868b;
+                    font-size: 14px;
                     margin-top: 4px;
+                    display: flex;
+                    align-items: center;
+                    gap: 4px;
                 }
 
                 .mp-stats {
-                    padding: 16px;
-                    background: #f8fafc;
-                    border-radius: 12px;
+                    padding: 12px 16px;
+                    background: #f5f5f7;
+                    border-radius: 16px;
                     margin-bottom: 16px;
                     display: flex;
                     justify-content: space-between;
                     align-items: center;
-                    border: 1px solid #e2e8f0;
                 }
 
                 .mp-stat-item {
                     display: flex;
                     align-items: center;
-                    gap: 10px;
-                    font-size: 15px;
+                    gap: 8px;
+                    font-size: 14px;
                     font-weight: 600;
-                    color: #334155;
+                    color: #1d1d1f;
                 }
 
                 .mp-stat-item .material-icons-round {
-                    font-size: 24px;
-                    color: #2563eb;
-                    background: #dbeafe;
+                    font-size: 20px;
+                    color: #007aff;
+                    background: #ffffff;
                     padding: 6px;
-                    border-radius: 8px;
+                    border-radius: 10px;
+                    box-shadow: 0 2px 8px rgba(0,0,0,0.04);
                 }
                 
                 .chevron {
-                    color: #cbd5e1;
-                    transition: transform 0.2s;
+                    color: #86868b;
+                    transition: transform 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
+                    background: #ffffff;
+                    border-radius: 50%;
+                    width: 32px;
+                    height: 32px;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    box-shadow: 0 2px 8px rgba(0,0,0,0.04);
                 }
                 
                 .mobile-project-card.expanded .chevron {
                     transform: rotate(180deg);
-                    color: #2563eb;
+                    color: #007aff;
                 }
                 
                 .mp-products-section {
                     margin-bottom: 16px;
-                    background: #f8fafc;
-                    border-radius: 12px;
-                    padding: 12px;
+                    background: transparent;
                 }
                 
                 .label-row {
@@ -767,28 +827,30 @@ export default function MobileProjectsView({
                     justify-content: space-between;
                     align-items: center;
                     margin-bottom: 12px;
-                    font-size: 13px;
-                    font-weight: 600;
-                    color: #64748b;
+                    font-size: 14px;
+                    font-weight: 700;
+                    color: #1d1d1f;
+                    padding-left: 4px;
                 }
                 
                 .mp-products-list {
                     display: flex;
                     flex-direction: column;
-                    gap: 8px;
+                    gap: 12px;
                 }
                 
                 .mp-product-card {
-                    background: white;
-                    border-radius: 8px;
-                    padding: 10px;
-                    border: 1px solid #e2e8f0;
-                    transition: all 0.2s;
+                    background: #ffffff;
+                    border-radius: 16px;
+                    padding: 16px;
+                    border: 1px solid rgba(0,0,0,0.06);
+                    box-shadow: 0 2px 8px rgba(0,0,0,0.02);
+                    transition: all 0.2s cubic-bezier(0.25, 0.8, 0.25, 1);
                 }
                 
                 .mp-product-card.expanded {
-                    border-color: #2563eb;
-                    box-shadow: 0 4px 12px rgba(37,99,235,0.1);
+                    border-color: #007aff;
+                    box-shadow: 0 4px 16px rgba(0, 122, 255, 0.08);
                 }
 
                 .img-ph-actions-row {
@@ -803,81 +865,85 @@ export default function MobileProjectsView({
                 
                 .mp-prod-buttons {
                     display: flex;
-                    gap: 4px;
-                    margin-left: 8px;
+                    gap: 6px;
+                    margin-left: 12px;
                 }
                 
                 .mini-btn {
-                    width: 30px;
-                    height: 30px;
+                    width: 32px;
+                    height: 32px;
                     display: flex;
                     align-items: center;
                     justify-content: center;
-                    border: 1px solid #e2e8f0;
-                    background: white;
-                    border-radius: 8px;
-                    color: #64748b;
-                    box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+                    border: none;
+                    background: #f5f5f7;
+                    border-radius: 10px;
+                    color: #515154;
+                    transition: all 0.2s;
                 }
                 
                 .mini-btn:active {
-                    background: #f1f5f9;
+                    transform: scale(0.92);
+                    background: #e5e5ea;
                 }
 
                 .mini-btn.danger {
-                    color: #ef4444;
-                    background: #fff;
-                    border-color: #fee2e2;
+                    color: #ff3b30;
+                    background: rgba(255, 59, 48, 0.1);
                 }
                 
                 .mini-btn.danger:active {
-                    background: #fef2f2;
+                    background: rgba(255, 59, 48, 0.2);
                 }
 
                 .mini-btn .material-icons-round {
-                    font-size: 20px;
+                    font-size: 18px;
                 }
 
                 .mpp-name {
                     display: block;
-                    font-weight: 600;
-                    color: #1e293b;
-                    font-size: 14px;
-                    margin-bottom: 2px;
+                    font-weight: 700;
+                    color: #1d1d1f;
+                    font-size: 15px;
+                    margin-bottom: 4px;
                 }
                 
                 .mpp-qty {
-                    background: #eff6ff;
-                    color: #2563eb;
-                    padding: 2px 6px;
-                    border-radius: 4px;
-                    font-size: 11px;
-                    font-weight: 600;
+                    background: rgba(0, 122, 255, 0.1);
+                    color: #007aff;
+                    padding: 2px 8px;
+                    border-radius: 6px;
+                    font-size: 12px;
+                    font-weight: 700;
+                    display: inline-block;
                 }
                 
                 .mpp-dims {
-                    font-size: 12px;
-                    color: #94a3b8;
-                    margin-bottom: 8px;
-                    margin-top: 4px;
+                    font-size: 13px;
+                    color: #86868b;
+                    margin-bottom: 12px;
+                    margin-top: 6px;
+                    font-weight: 500;
                 }
                 
                 .mpp-materials-summary {
                     display: flex;
                     align-items: center;
-                    gap: 4px;
-                    font-size: 11px;
-                    color: #64748b;
-                    margin-top: 8px;
-                    padding-top: 8px;
-                    border-top: 1px dashed #e2e8f0;
+                    gap: 6px;
+                    font-size: 13px;
+                    font-weight: 600;
+                    color: #515154;
+                    margin-top: 12px;
+                    padding: 12px;
+                    background: #f5f5f7;
+                    border-radius: 12px;
                 }
 
                 /* Expanded Materials */
                 .mpp-expanded-materials {
-                    margin-top: 12px;
-                    padding-top: 12px;
-                    border-top: 1px solid #f1f5f9;
+                    margin-top: 16px;
+                    padding-top: 16px;
+                    border-top: 1px solid rgba(0,0,0,0.06);
                 }
                 
                 .mpp-mat-header {
@@ -885,9 +951,9 @@ export default function MobileProjectsView({
                     justify-content: space-between;
                     align-items: center;
                     margin-bottom: 12px;
-                    font-size: 12px;
-                    font-weight: 600;
-                    color: #64748b;
+                    font-size: 13px;
+                    font-weight: 700;
+                    color: #86868b;
                 }
                 
                 .mpp-materials-list.detailed {
@@ -900,101 +966,110 @@ export default function MobileProjectsView({
                     display: flex;
                     justify-content: space-between;
                     align-items: center;
-                    padding: 8px;
-                    background: #f8fafc;
-                    border-radius: 6px;
-                    border: 1px solid #f1f5f9;
+                    padding: 12px;
+                    background: #fcfcfd;
+                    border-radius: 12px;
+                    border: 1px solid rgba(0,0,0,0.04);
                 }
                 
                 .m-info {
                     flex: 1;
-                    font-size: 12px;
+                    font-size: 13px;
                 }
                 
                 .m-name {
                     display: block;
                     font-weight: 600;
-                    color: #334155;
-                    margin-bottom: 2px;
+                    color: #1d1d1f;
+                    margin-bottom: 4px;
                 }
                 
                 .m-detail {
                     display: block;
-                    color: #64748b;
-                    font-size: 11px;
+                    color: #86868b;
+                    font-size: 12px;
+                    font-weight: 500;
                 }
                 
                 .m-total {
                     display: block;
-                    margin-top: 2px;
-                    color: #15803d;
-                    font-size: 11px;
+                    margin-top: 4px;
+                    color: #34c759;
+                    font-size: 12px;
+                    font-weight: 600;
                 }
                 
                 .m-actions {
                     display: flex;
-                    gap: 4px;
+                    gap: 6px;
                     margin-left: 8px;
                 }
                 
-                .mp-no-data {
+                .mp-no-data, .mp-no-products {
                     text-align: center;
-                    font-size: 12px;
-                    color: #94a3b8;
-                    padding: 12px;
+                    font-size: 14px;
+                    font-weight: 500;
+                    color: #86868b;
+                    padding: 16px;
+                    background: #f5f5f7;
+                    border-radius: 12px;
                 }
                 
                 .mp-actions {
                     display: flex;
-                    gap: 8px;
+                    gap: 10px;
                     justify-content: flex-end;
-                    margin-top: 12px;
+                    margin-top: 16px;
+                    padding-top: 16px;
+                    border-top: 1px solid rgba(0,0,0,0.04);
                 }
 
                 .mp-action-btn {
-                    width: 40px;
-                    height: 40px;
+                    width: 44px;
+                    height: 44px;
                     padding: 0;
-                    border: 1px solid #e2e8f0;
-                    background: white;
-                    border-radius: 10px;
+                    border: none;
+                    background: #f5f5f7;
+                    border-radius: 14px;
                     display: flex;
                     align-items: center;
                     justify-content: center;
-                    color: #475569;
-                    transition: all 0.2s;
+                    color: #515154;
+                    transition: all 0.2s cubic-bezier(0.25, 0.8, 0.25, 1);
                 }
                 
                 .mp-action-btn:active {
-                    background: #f8fafc;
-                    transform: scale(0.96);
+                    transform: scale(0.92);
+                    background: #e5e5ea;
                 }
 
                 .mp-action-btn.primary {
-                    background: #eff6ff;
-                    color: #2563eb;
-                    border-color: #bfdbfe;
+                    background: rgba(0, 122, 255, 0.1);
+                    color: #007aff;
                 }
                 
                 .mp-action-btn.primary:active {
-                    background: #dbeafe;
+                    background: rgba(0, 122, 255, 0.2);
                 }
 
                 .mp-action-btn.danger-text {
-                    color: #ef4444;
-                    border-color: #fee2e2;
-                    background: #fef2f2;
+                    color: #ff3b30;
+                    background: rgba(255, 59, 48, 0.1);
                 }
                 
+                .mp-action-btn.danger-text:active {
+                    background: rgba(255, 59, 48, 0.2);
+                }
+
                 .mp-action-btn .material-icons-round {
-                    font-size: 20px;
+                    font-size: 22px;
                 }
 
                 /* Mobile Quick Edit Styles */
                 .mobile-quick-edit-btn {
                     padding: 0;
                     background: none;
-                    color: #f59e0b;
+                    color: #ff9500;
                     border: none;
                     display: flex;
                     align-items: center;
@@ -1003,11 +1078,11 @@ export default function MobileProjectsView({
                 }
 
                 .mobile-quick-edit-btn:active {
-                    transform: scale(0.9);
+                    transform: scale(0.85);
                 }
 
                 .mobile-quick-edit-btn.active {
-                    color: #10b981;
+                    color: #34c759;
                 }
 
                 .mobile-quick-edit-btn .material-icons-round {
@@ -1015,8 +1090,8 @@ export default function MobileProjectsView({
                 }
 
                 .mpp-material-item-detailed.editing {
-                    background: linear-gradient(135deg, #fffbeb 0%, #ffffff 100%);
-                    border-left: 3px solid #f59e0b;
+                    background: #fffcf2;
+                    border: 1px solid #ffcc00;
                 }
 
                 .m-quick-edit-controls {
@@ -1025,51 +1100,51 @@ export default function MobileProjectsView({
                     gap: 12px;
                     margin-top: 12px;
                     padding: 12px;
-                    background: white;
-                    border-radius: 8px;
-                    border: 1px solid #fde68a;
+                    background: #ffffff;
+                    border-radius: 10px;
+                    border: 1px solid rgba(255, 149, 0, 0.3);
                 }
 
                 .m-edit-field {
                     display: flex;
                     align-items: center;
-                    gap: 8px;
+                    gap: 12px;
                 }
 
                 .m-edit-field label {
-                    font-size: 12px;
+                    font-size: 13px;
                     font-weight: 600;
-                    color: #64748b;
+                    color: #515154;
                     min-width: 60px;
                 }
 
                 .mobile-quick-edit-input {
                     flex: 1;
-                    padding: 10px 12px;
-                    border: 1.5px solid #f59e0b;
-                    border-radius: 8px;
+                    padding: 12px;
+                    border: 1px solid #e5e5ea;
+                    border-radius: 10px;
                     font-size: 16px;
-                    font-weight: 500;
+                    font-weight: 600;
                     text-align: center;
-                    background: white;
-                    color: #1e293b;
+                    background: #f9f9f9;
+                    color: #1d1d1f;
+                    transition: all 0.2s;
                 }
 
                 .mobile-quick-edit-input:focus {
                     outline: none;
-                    border-color: #d97706;
-                    background: #fffbeb;
-                    box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.1);
+                    border-color: #ff9500;
+                    background: #ffffff;
+                    box-shadow: 0 0 0 3px rgba(255, 149, 0, 0.15);
                 }
 
                 .unit-label {
-                    font-size: 13px;
+                    font-size: 14px;
                     font-weight: 600;
-                    color: #64748b;
+                    color: #86868b;
                     min-width: 30px;
                 }
 
-                /* Remove spinner arrows for mobile number inputs */
                 .mobile-quick-edit-input::-webkit-outer-spin-button,
                 .mobile-quick-edit-input::-webkit-inner-spin-button {
                     -webkit-appearance: none;
@@ -1078,6 +1153,27 @@ export default function MobileProjectsView({
 
                 .mobile-quick-edit-input[type=number] {
                     -moz-appearance: textfield;
+                }
+                
+                .mobile-empty-state {
+                    display: flex;
+                    flex-direction: column;
+                    align-items: center;
+                    justify-content: center;
+                    padding: 40px 20px;
+                    text-align: center;
+                    color: #86868b;
+                }
+                
+                .mobile-empty-state .material-icons-round {
+                    font-size: 48px;
+                    margin-bottom: 16px;
+                    color: #d1d1d6;
+                }
+                
+                .mobile-empty-state p {
+                    font-size: 16px;
+                    font-weight: 500;
                 }
             `}</style>
         </div>
