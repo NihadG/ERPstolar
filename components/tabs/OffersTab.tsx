@@ -69,7 +69,11 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
     const [offerLanguage, setOfferLanguage] = useState<'bs' | 'en'>('bs');
     const [isSaving, setIsSaving] = useState(false); // Double-save guard
 
-    // Extras Modal State
+    // Extras List Modal State (intermediate view of existing extras)
+    const [extrasListModal, setExtrasListModal] = useState(false);
+    const [extrasListProductIndex, setExtrasListProductIndex] = useState<number | null>(null);
+
+    // Extras Modal State (add/edit single extra)
     const [extrasModal, setExtrasModal] = useState(false);
     const [currentProductIndex, setCurrentProductIndex] = useState<number | null>(null);
     const [editingExtraIndex, setEditingExtraIndex] = useState<number | null>(null);
@@ -450,7 +454,23 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
     }
 
     // ============================================
-    // EXTRAS MODAL
+    // EXTRAS LIST MODAL (view/manage existing extras)
+    // ============================================
+
+    function openExtrasListOrAdd(productIndex: number) {
+        const product = offerProducts[productIndex];
+        if (product.extras && product.extras.length > 0) {
+            // Has existing extras — show the list view
+            setExtrasListProductIndex(productIndex);
+            setExtrasListModal(true);
+        } else {
+            // No extras yet — go straight to add form
+            openExtrasModal(productIndex);
+        }
+    }
+
+    // ============================================
+    // EXTRAS MODAL (add/edit single extra)
     // ============================================
 
     function openExtrasModal(productIndex: number, extraIndex?: number) {
@@ -2141,7 +2161,7 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
                                                                 <button 
                                                                     type="button" 
                                                                     className="sheet-btn"
-                                                                    onClick={() => openExtrasModal(index)}
+                                                                    onClick={() => openExtrasListOrAdd(index)}
                                                                     disabled={!product.included}
                                                                 >
                                                                     {product.extras && product.extras.length > 0 ? (
@@ -2324,6 +2344,116 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
                                     </div>
                                 </div>
                             </div>
+                        )}
+                    </div>
+                )}
+            </Modal>
+
+            {/* Extras List Modal — shows existing extras for a product */}
+            <Modal
+                isOpen={extrasListModal}
+                onClose={() => setExtrasListModal(false)}
+                title={extrasListProductIndex !== null ? `Usluge — ${offerProducts[extrasListProductIndex]?.Product_Name || ''}` : 'Usluge'}
+                zIndex={1900}
+                footer={
+                    <>
+                        <button className="btn btn-secondary" onClick={() => setExtrasListModal(false)}>Zatvori</button>
+                        <button className="btn btn-primary" onClick={() => {
+                            if (extrasListProductIndex !== null) {
+                                openExtrasModal(extrasListProductIndex);
+                            }
+                        }}>
+                            <span className="material-icons-round" style={{ fontSize: '16px', marginRight: '4px' }}>add</span>
+                            Dodaj uslugu
+                        </button>
+                    </>
+                }
+            >
+                {extrasListProductIndex !== null && offerProducts[extrasListProductIndex] && (
+                    <div style={{ minWidth: '400px' }}>
+                        {offerProducts[extrasListProductIndex].extras.length === 0 ? (
+                            <div style={{ textAlign: 'center', padding: '32px 16px', color: 'var(--text-secondary)' }}>
+                                <span className="material-icons-round" style={{ fontSize: '40px', opacity: 0.4, display: 'block', marginBottom: '8px' }}>handyman</span>
+                                Nema dodanih usluga
+                            </div>
+                        ) : (
+                            <>
+                                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+                                    <thead>
+                                        <tr style={{ borderBottom: '2px solid var(--border-light)', textAlign: 'left' }}>
+                                            <th style={{ padding: '8px 10px', fontWeight: 600, color: 'var(--text-secondary)', fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Naziv</th>
+                                            <th style={{ padding: '8px 10px', fontWeight: 600, color: 'var(--text-secondary)', fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.5px', textAlign: 'center' }}>Količina</th>
+                                            <th style={{ padding: '8px 10px', fontWeight: 600, color: 'var(--text-secondary)', fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.5px', textAlign: 'right' }}>Cijena</th>
+                                            <th style={{ padding: '8px 10px', fontWeight: 600, color: 'var(--text-secondary)', fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.5px', textAlign: 'right' }}>Ukupno</th>
+                                            <th style={{ padding: '8px 10px', width: '80px' }}></th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {offerProducts[extrasListProductIndex].extras.map((extra, ei) => (
+                                            <tr key={ei} style={{ borderBottom: '1px solid var(--border-light)', transition: 'background 0.15s' }}
+                                                onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--bg-hover, rgba(0,0,0,0.02))')}
+                                                onMouseLeave={(e) => (e.currentTarget.style.background = '')}
+                                            >
+                                                <td style={{ padding: '10px' }}>
+                                                    <div style={{ fontWeight: 500, color: 'var(--text-primary)' }}>{extra.name}</div>
+                                                    {extra.note && <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginTop: '2px' }}>{extra.note}</div>}
+                                                </td>
+                                                <td style={{ padding: '10px', textAlign: 'center', color: 'var(--text-secondary)' }}>
+                                                    {extra.qty} {extra.unit}
+                                                </td>
+                                                <td style={{ padding: '10px', textAlign: 'right', color: 'var(--text-secondary)' }}>
+                                                    {formatCurrency(extra.price)}
+                                                </td>
+                                                <td style={{ padding: '10px', textAlign: 'right', fontWeight: 600, color: 'var(--accent)' }}>
+                                                    {formatCurrency(extra.total || extra.qty * extra.price)}
+                                                </td>
+                                                <td style={{ padding: '10px', textAlign: 'right' }}>
+                                                    <div style={{ display: 'flex', gap: '4px', justifyContent: 'flex-end' }}>
+                                                        <button
+                                                            type="button"
+                                                            className="btn btn-sm"
+                                                            style={{ padding: '4px 8px', fontSize: '12px', border: '1px solid var(--border-light)', borderRadius: '6px', background: 'transparent', cursor: 'pointer', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '2px' }}
+                                                            onClick={() => {
+                                                                if (extrasListProductIndex !== null) {
+                                                                    openExtrasModal(extrasListProductIndex, ei);
+                                                                }
+                                                            }}
+                                                            title="Uredi"
+                                                        >
+                                                            <span className="material-icons-round" style={{ fontSize: '14px' }}>edit</span>
+                                                        </button>
+                                                        <button
+                                                            type="button"
+                                                            className="btn btn-sm"
+                                                            style={{ padding: '4px 8px', fontSize: '12px', border: '1px solid var(--border-light)', borderRadius: '6px', background: 'transparent', cursor: 'pointer', color: '#ef4444', display: 'flex', alignItems: 'center', gap: '2px' }}
+                                                            onClick={() => {
+                                                                if (extrasListProductIndex !== null) {
+                                                                    const remaining = offerProducts[extrasListProductIndex].extras.length - 1;
+                                                                    removeExtra(extrasListProductIndex, ei);
+                                                                    // If no extras left after removal, close the list modal
+                                                                    if (remaining <= 0) {
+                                                                        setExtrasListModal(false);
+                                                                    }
+                                                                }
+                                                            }}
+                                                            title="Obriši"
+                                                        >
+                                                            <span className="material-icons-round" style={{ fontSize: '14px' }}>delete</span>
+                                                        </button>
+                                                    </div>
+                                                </td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                                <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '12px 10px 4px', borderTop: '2px solid var(--border-light)', marginTop: '4px' }}>
+                                    <span style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)' }}>
+                                        Ukupno usluge: <span style={{ color: 'var(--accent)' }}>
+                                            {formatCurrency(offerProducts[extrasListProductIndex].extras.reduce((sum, e) => sum + (e.total || e.qty * e.price), 0))}
+                                        </span>
+                                    </span>
+                                </div>
+                            </>
                         )}
                     </div>
                 )}
