@@ -23,6 +23,8 @@ interface ProductionTabProps {
     workers: Worker[];
     onRefresh: (...collections: string[]) => void;
     showToast: (message: string, type: 'success' | 'error' | 'info') => void;
+    pendingWorkOrderProducts?: { projectId: string; projectName: string; products: { productId: string; productName: string; quantity: number }[] } | null;
+    onClearPendingWorkOrder?: () => void;
 }
 
 interface ProductSelection {
@@ -40,7 +42,7 @@ interface ProductSelection {
     Source_Work_Order_ID?: string; // For montaža: links to original production order
 }
 
-export default function ProductionTab({ workOrders, projects, workers, onRefresh, showToast }: ProductionTabProps) {
+export default function ProductionTab({ workOrders, projects, workers, onRefresh, showToast, pendingWorkOrderProducts, onClearPendingWorkOrder }: ProductionTabProps) {
     const { organizationId } = useData();
     const [searchTerm, setSearchTerm] = useState('');
     const [statusFilter, setStatusFilter] = useState('');
@@ -423,6 +425,56 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
         setActiveStep(0);
         setCreateModal(true);
     }
+
+    // Handle pending work order products from ProjectsTab
+    useEffect(() => {
+        if (!pendingWorkOrderProducts) return;
+
+        const { projectId, projectName, products: pendingProducts } = pendingWorkOrderProducts;
+
+        // Set wizard mode
+        setWizardMode('production');
+        setSelectedProcesses(['Rezanje', 'Kantiranje', 'Bušenje', 'Sklapanje']);
+        setDueDate('');
+        setNotes('');
+        setProductSearch('');
+
+        // Pre-select the project
+        setSelectedProjectIds([projectId]);
+
+        // Pre-select the products
+        const preSelected: ProductSelection[] = pendingProducts.map(p => ({
+            Product_ID: p.productId,
+            Product_Name: p.productName,
+            Project_ID: projectId,
+            Project_Name: projectName,
+            Quantity: p.quantity,
+            Work_Order_Quantity: p.quantity,
+            Status: '',
+            assignments: {
+                'Rezanje': '',
+                'Kantiranje': '',
+                'Bušenje': '',
+                'Sklapanje': '',
+            },
+            helperAssignments: {
+                'Rezanje': [],
+                'Kantiranje': [],
+                'Bušenje': [],
+                'Sklapanje': [],
+            },
+        }));
+        setSelectedProducts(preSelected);
+
+        // Start at Processes step (step 2) since project and products are already selected
+        setActiveStep(2);
+        setCreateModal(true);
+
+        // Clear the pending data
+        if (onClearPendingWorkOrder) {
+            onClearPendingWorkOrder();
+        }
+    }, [pendingWorkOrderProducts]);
 
     function openMontazaModal() {
         setWizardMode('montaza');

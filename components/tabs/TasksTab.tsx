@@ -1931,6 +1931,31 @@ function TaskModal({ task, projects, products, workers, materials, workOrders, o
     // New checklist item
     const [newChecklistItem, setNewChecklistItem] = useState('');
 
+    // Inline editing of existing checklist items
+    const [editingChecklistId, setEditingChecklistId] = useState<string | null>(null);
+    const [editingChecklistText, setEditingChecklistText] = useState('');
+
+    const startEditChecklistItem = (id: string, text: string) => {
+        setEditingChecklistId(id);
+        setEditingChecklistText(text);
+    };
+
+    const saveEditChecklistItem = () => {
+        if (!editingChecklistId) return;
+        if (editingChecklistText.trim()) {
+            setChecklist(checklist.map(c =>
+                c.id === editingChecklistId ? { ...c, text: editingChecklistText.trim() } : c
+            ));
+        }
+        setEditingChecklistId(null);
+        setEditingChecklistText('');
+    };
+
+    const cancelEditChecklistItem = () => {
+        setEditingChecklistId(null);
+        setEditingChecklistText('');
+    };
+
     // Available entities based on selected type
     const getAvailableEntities = () => {
         switch (linkType) {
@@ -2222,20 +2247,65 @@ function TaskModal({ task, projects, products, workers, materials, workOrders, o
                                         <div className="empty-checklist">Nema stavki u checklisti</div>
                                     ) : (
                                         [...checklist].sort((a, b) => (a.completed === b.completed ? 0 : a.completed ? 1 : -1)).map(item => (
-                                            <div key={item.id} className={`checklist-list-item ${item.completed ? 'completed' : ''}`}>
+                                            <div key={item.id} className={`checklist-list-item ${item.completed ? 'completed' : ''} ${editingChecklistId === item.id ? 'editing' : ''}`}>
                                                 <button
                                                     className="modal-item-toggle"
-                                                    onClick={() => toggleChecklistItemInModal(item.id)}
-                                                    style={{ background: 'none', border: 'none', cursor: 'pointer', display: 'flex', color: item.completed ? '#34C759' : '#ccc' }}
+                                                    onClick={() => editingChecklistId !== item.id && toggleChecklistItemInModal(item.id)}
+                                                    style={{ background: 'none', border: 'none', cursor: 'pointer', display: 'flex', color: item.completed ? '#34C759' : '#ccc', flexShrink: 0 }}
                                                 >
                                                     {item.completed ? <CheckCircle2 size={18} /> : <Circle size={18} />}
                                                 </button>
-                                                <span style={{ textDecoration: item.completed ? 'line-through' : 'none', color: item.completed ? '#888' : 'inherit' }}>
-                                                    {item.text}
-                                                </span>
-                                                <button onClick={() => removeChecklistItem(item.id)} className="delete-item">
-                                                    <Trash2 size={14} />
-                                                </button>
+
+                                                {editingChecklistId === item.id ? (
+                                                    <input
+                                                        autoFocus
+                                                        className="checklist-inline-edit"
+                                                        value={editingChecklistText}
+                                                        onChange={e => setEditingChecklistText(e.target.value)}
+                                                        onKeyDown={e => {
+                                                            if (e.key === 'Enter') saveEditChecklistItem();
+                                                            if (e.key === 'Escape') cancelEditChecklistItem();
+                                                        }}
+                                                        onBlur={saveEditChecklistItem}
+                                                    />
+                                                ) : (
+                                                    <span
+                                                        className="checklist-item-text"
+                                                        style={{ textDecoration: item.completed ? 'line-through' : 'none', color: item.completed ? '#888' : 'inherit' }}
+                                                        onDoubleClick={() => !item.completed && startEditChecklistItem(item.id, item.text)}
+                                                        title={item.completed ? '' : 'Dvostruki klik za editovanje'}
+                                                    >
+                                                        {item.text}
+                                                    </span>
+                                                )}
+
+                                                <div className="checklist-item-actions">
+                                                    {editingChecklistId === item.id ? (
+                                                        <button
+                                                            className="checklist-action-btn confirm"
+                                                            onMouseDown={e => { e.preventDefault(); saveEditChecklistItem(); }}
+                                                            title="Potvrdi"
+                                                        >
+                                                            <Check size={14} />
+                                                        </button>
+                                                    ) : (
+                                                        <button
+                                                            className="checklist-action-btn edit"
+                                                            onClick={() => !item.completed && startEditChecklistItem(item.id, item.text)}
+                                                            disabled={item.completed}
+                                                            title="Edituj stavku"
+                                                        >
+                                                            <Edit3 size={14} />
+                                                        </button>
+                                                    )}
+                                                    <button
+                                                        onClick={() => removeChecklistItem(item.id)}
+                                                        className="checklist-action-btn delete-item"
+                                                        title="Obriši"
+                                                    >
+                                                        <Trash2 size={14} />
+                                                    </button>
+                                                </div>
                                             </div>
                                         ))
                                     )}

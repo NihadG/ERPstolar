@@ -9676,27 +9676,108 @@ textarea::placeholder {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 12px 16px;
+  padding: 10px 14px;
   background: #fff;
   border-radius: 10px;
-  border: 1px solid rgba(0, 0, 0, 0.04);
+  border: 1px solid rgba(0, 0, 0, 0.05);
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.checklist-list-item:hover {
+  border-color: rgba(0, 0, 0, 0.1);
+}
+
+.checklist-list-item.editing {
+  border-color: #007AFF;
+  box-shadow: 0 0 0 3px rgba(0, 122, 255, 0.08);
+}
+
+.checklist-item-text {
+  flex: 1;
+  font-size: 14px;
+  line-height: 1.4;
+  cursor: default;
+  user-select: none;
+}
+
+.checklist-list-item:not(.completed) .checklist-item-text {
+  cursor: text;
+}
+
+.checklist-inline-edit {
+  flex: 1;
+  font-size: 14px;
+  line-height: 1.4;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: inherit;
+  padding: 0;
+  font-family: inherit;
+}
+
+.checklist-item-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.checklist-list-item:hover .checklist-item-actions,
+.checklist-list-item.editing .checklist-item-actions {
+  opacity: 1;
+}
+
+.checklist-action-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+  border: none;
+  cursor: pointer;
+  background: none;
+  transition: background 0.15s, color 0.15s;
+}
+
+.checklist-action-btn.edit {
+  color: #999;
+}
+
+.checklist-action-btn.edit:hover:not(:disabled) {
+  background: rgba(0, 122, 255, 0.08);
+  color: #007AFF;
+}
+
+.checklist-action-btn.edit:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+.checklist-action-btn.confirm {
+  color: #34C759;
+  background: rgba(52, 199, 89, 0.08);
+}
+
+.checklist-action-btn.confirm:hover {
+  background: rgba(52, 199, 89, 0.16);
+}
+
+.checklist-action-btn.delete-item {
+  color: #ccc;
+}
+
+.checklist-action-btn.delete-item:hover {
+  background: rgba(255, 59, 48, 0.08);
+  color: #ff3b30;
 }
 
 .item-icon {
   color: #007AFF;
-}
-
-.delete-item {
-  margin-left: auto;
-  background: none;
-  border: none;
-  color: #ccc;
-  cursor: pointer;
-  padding: 4px;
-}
-
-.delete-item:hover {
-  color: #ff3b30;
 }
 
 /* Footer */

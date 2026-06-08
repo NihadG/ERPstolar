@@ -47,6 +47,7 @@ interface ProjectsTabProps {
     onRefresh: (...collections: string[]) => void;
     showToast: (message: string, type: 'success' | 'error' | 'info') => void;
     onNavigateToTasks?: (projectId: string) => void;
+    onCreateWorkOrder?: (projectId: string, projectName: string, products: { productId: string; productName: string; quantity: number }[]) => void;
     autoExpandProjectId?: string | null;
     autoExpandProductId?: string | null;
     returnToOfferId?: string | null;
@@ -54,7 +55,7 @@ interface ProjectsTabProps {
     onClearAutoExpand?: () => void;
 }
 
-export default function ProjectsTab({ projects, materials, workOrders = [], offers = [], workLogs = [], onRefresh, showToast, onNavigateToTasks, autoExpandProjectId, autoExpandProductId, returnToOfferId, onReturnToOffer, onClearAutoExpand }: ProjectsTabProps) {
+export default function ProjectsTab({ projects, materials, workOrders = [], offers = [], workLogs = [], onRefresh, showToast, onNavigateToTasks, onCreateWorkOrder, autoExpandProjectId, autoExpandProductId, returnToOfferId, onReturnToOffer, onClearAutoExpand }: ProjectsTabProps) {
     const { organizationId, appState } = useData();
     const allWorkers = appState.workers || [];
     const [searchTerm, setSearchTerm] = useState('');
@@ -66,6 +67,9 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
     const [materialsOverviewProject, setMaterialsOverviewProject] = useState<Project | null>(null);
     const [syncing, setSyncing] = useState(false);
     const [showHidden, setShowHidden] = useState(false);
+
+    // Work order product selection state
+    const [selectedForWorkOrder, setSelectedForWorkOrder] = useState<Set<string>>(new Set());
 
     // Auto-expand project/product when navigating from OffersTab
     useEffect(() => {
@@ -328,7 +332,8 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
         if (result.success) {
             showToast(result.message, 'success');
             setProductModal(false);
-            onRefresh('projects');
+            // Also refresh offers and orders so renamed product names appear immediately
+            onRefresh('projects', 'offers', 'orders');
         } else {
             showToast(result.message, 'error');
         }
@@ -1408,11 +1413,35 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                                     return sum + (p.materials || []).reduce((ms, m) => ms + (m.Total_Price || 0), 0);
                                 }, 0);
                                 const sortedProducts = [...(project.products || [])].sort((a, b) => {
+                                    const statusA = getProductStatus(a);
+                                    const statusB = getProductStatus(b);
+
+                                    const getStatusWeight = (status: string) => {
+                                        if (status === 'U proizvodnji') return 1;
+                                        if (status === 'Na čekanju') return 2;
+                                        return 3;
+                                    };
+
+                                    const weightA = getStatusWeight(statusA);
+                                    const weightB = getStatusWeight(statusB);
+
+                                    if (weightA !== weightB) {
+                                        return weightA - weightB;
+                                    }
+
                                     const extractPoz = (name: string): number => {
                                         const match = name?.match(/^Poz\s*(\d+(?:\.\d+)?)/i);
                                         return match ? parseFloat(match[1]) : Infinity;
                                     };
-                                    return extractPoz(a.Name || '') - extractPoz(b.Name || '');
+
+                                    const pozA = extractPoz(a.Name || '');
+                                    const pozB = extractPoz(b.Name || '');
+
+                                    if (pozA !== pozB) {
+                                        return pozA - pozB;
+                                    }
+
+                                    return (a.Name || '').localeCompare(b.Name || '');
                                 });
                                 const previewProducts = sortedProducts.slice(0, 3);
                                 const moreCount = totalProducts - previewProducts.length;
@@ -1555,15 +1584,62 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                                                 <div className={`project-products expanded`}>
                                                     <div className="products-header">
                                                         <h4>Proizvodi ({project.products?.length || 0})</h4>
-                                                        <button className="btn-add-item" onClick={() => openProductModal(project.Project_ID)}>
-                                                            <span className="material-icons-round">add</span>
-                                                            Dodaj proizvod
-                                                        </button>
+                                                        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                                                            {onCreateWorkOrder && sortedProducts.length > 0 && (
+                                                                <button className="btn-add-item" onClick={() => {
+                                                                    const allIds = sortedProducts.map(p => p.Product_ID);
+                                                                    const allSelected = allIds.every(id => selectedForWorkOrder.has(id));
+                                                                    if (allSelected) {
+                                                                        setSelectedForWorkOrder(prev => {
+                                                                            const next = new Set(prev);
+                                                                            allIds.forEach(id => next.delete(id));
+                                                                            return next;
+                                                                        });
+                                                                    } else {
+                                                                        setSelectedForWorkOrder(prev => {
+                                                                            const next = new Set(prev);
+                                                                            allIds.forEach(id => next.add(id));
+                                                                            return next;
+                                                                        });
+                                                                    }
+                                                                }}>
+                                                                    <span className="material-icons-round">
+                                                                        {sortedProducts.every(p => selectedForWorkOrder.has(p.Product_ID)) ? 'deselect' : 'select_all'}
+                                                                    </span>
+                                                                    {sortedProducts.every(p => selectedForWorkOrder.has(p.Product_ID)) ? 'Poništi odabir' : 'Odaberi sve'}
+                                                                </button>
+                                                            )}
+                                                            <button className="btn-add-item" onClick={() => openProductModal(project.Project_ID)}>
+                                                                <span className="material-icons-round">add</span>
+                                                                Dodaj proizvod
+                                                            </button>
+                                                        </div>
                                                     </div>
 
                                                     {sortedProducts.map(product => (
-                                                        <div key={product.Product_ID} className="product-card">
+                                                        <div key={product.Product_ID} className={`product-card ${selectedForWorkOrder.has(product.Product_ID) ? 'selected-for-order' : ''}`}>
                                                             <div className="product-header" onClick={() => toggleProduct(product.Product_ID)}>
+                                                                {onCreateWorkOrder && (
+                                                                    <div
+                                                                        className={`product-select-checkbox ${selectedForWorkOrder.has(product.Product_ID) ? 'checked' : ''}`}
+                                                                        onClick={(e) => {
+                                                                            e.stopPropagation();
+                                                                            setSelectedForWorkOrder(prev => {
+                                                                                const next = new Set(prev);
+                                                                                if (next.has(product.Product_ID)) {
+                                                                                    next.delete(product.Product_ID);
+                                                                                } else {
+                                                                                    next.add(product.Product_ID);
+                                                                                }
+                                                                                return next;
+                                                                            });
+                                                                        }}
+                                                                    >
+                                                                        <span className="material-icons-round">
+                                                                            {selectedForWorkOrder.has(product.Product_ID) ? 'check_box' : 'check_box_outline_blank'}
+                                                                        </span>
+                                                                    </div>
+                                                                )}
                                                                 <button className={`expand-btn ${expandedProducts.has(product.Product_ID) ? 'expanded' : ''}`}>
                                                                     <span className="material-icons-round">chevron_right</span>
                                                                 </button>
@@ -1579,98 +1655,8 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                                                                 <span className={`status-badge ${getStatusClass(getProductStatus(product))}`}>
                                                                     {getProductStatus(product)}
                                                                 </span>
-                                                                {/* Profit Badge or Material Cost Badge */}
+                                                                {/* Material Cost Badge */}
                                                                 {(() => {
-                                                                    // === STEP 1: Get ORIGINAL offer values ===
-                                                                    let originalSellingPrice: number | undefined;
-                                                                    let originalExtras = 0;
-                                                                    let originalTransport = 0;
-                                                                    let offerRef: Offer | undefined;
-                                                                    const acceptedOffers = offers.filter(o => o.Status === 'Prihvaćeno');
-                                                                    for (const offer of acceptedOffers) {
-                                                                        const offerProduct = (offer.products || []).find(op => op.Product_ID === product.Product_ID);
-                                                                        if (offerProduct) {
-                                                                            offerRef = offer;
-                                                                            originalSellingPrice = offerProduct.Selling_Price || offerProduct.Total_Price;
-                                                                            const ledCost = offerProduct.LED_Total || 0;
-                                                                            const groutingCost = offerProduct.Grouting ? (offerProduct.Grouting_Price || 0) : 0;
-                                                                            const sinkCost = offerProduct.Sink_Faucet ? (offerProduct.Sink_Faucet_Price || 0) : 0;
-                                                                            const extrasCost = ((offerProduct as any).extras || []).reduce((sum: number, e: any) =>
-                                                                                sum + (e.Total || e.total || 0), 0);
-                                                                            originalExtras = ledCost + groutingCost + sinkCost + extrasCost;
-                                                                            if (offerRef && originalSellingPrice) {
-                                                                                const offerSubtotal = offerRef.Subtotal || 0;
-                                                                                if (offerSubtotal > 0) {
-                                                                                    const productRatio = originalSellingPrice / offerSubtotal;
-                                                                                    originalTransport = (offerRef.Transport_Cost || 0) * productRatio;
-                                                                                }
-                                                                            }
-                                                                            break;
-                                                                        }
-                                                                    }
-
-                                                                    // === STEP 2: Find matching WorkOrderItem ===
-                                                                    let woItem: WorkOrderItem | undefined;
-                                                                    let woItemFallback: WorkOrderItem | undefined;
-                                                                    for (const wo of workOrders) {
-                                                                        const item = (wo.items || []).find(i => i.Product_ID === product.Product_ID);
-                                                                        if (item) {
-                                                                            if (item.Status !== 'Završeno') { woItem = item; break; }
-                                                                            else if (!woItemFallback) { woItemFallback = item; }
-                                                                        }
-                                                                    }
-                                                                    if (!woItem) woItem = woItemFallback;
-
-                                                                    // === STEP 3: Calculate profit ===
-                                                                    if (woItem) {
-                                                                        const woSellingPrice = woItem.Product_Value || 0;
-                                                                        const finalSellingPrice = woItem?.Profit_Overrides?.Selling_Price ?? (woSellingPrice > 0 ? woSellingPrice : originalSellingPrice);
-                                                                        const transportShare = woItem?.Profit_Overrides?.Transport_Share ?? originalTransport;
-                                                                        const servicesTotal = woItem?.Services_Total || 0;
-
-                                                                        if (finalSellingPrice && finalSellingPrice > 0 && (woItem.Status === 'U toku' || woItem.Status === 'Završeno')) {
-                                                                            const materialCost = (product.materials || []).reduce((sum, m) => sum + (m.Total_Price || 0), 0);
-                                                                            const productLogs = workLogs.filter(wl => wl.Work_Order_Item_ID === woItem!.ID);
-                                                                            const laborCost = Math.round(productLogs.reduce((sum, wl) => sum + (wl.Daily_Rate || 0), 0));
-                                                                            const profit = Math.round(finalSellingPrice - materialCost - laborCost - transportShare - servicesTotal);
-                                                                            const margin = Math.round((profit / finalSellingPrice) * 100);
-
-                                                                            return (
-                                                                                <span
-                                                                                    className="product-profit-badge"
-                                                                                    style={{
-                                                                                        cursor: 'pointer',
-                                                                                        color: margin >= 30 ? '#10b981' : margin >= 15 ? '#f59e0b' : '#ef4444',
-                                                                                    }}
-                                                                                    title={`Materijal: ${materialCost.toLocaleString('hr-HR')} KM | Rad: ${laborCost.toLocaleString('hr-HR')} KM | Transport: ${Math.round(transportShare).toLocaleString('hr-HR')} KM | Usluge: ${Math.round(servicesTotal).toLocaleString('hr-HR')} KM`}
-                                                                                    onClick={(e) => {
-                                                                                        e.stopPropagation();
-                                                                                        setTimelineProduct({
-                                                                                            product,
-                                                                                            sellingPrice: finalSellingPrice,
-                                                                                            materialCost,
-                                                                                            laborCost,
-                                                                                            profit,
-                                                                                            profitMargin: margin,
-                                                                                            workOrderItemId: woItem!.ID,
-                                                                                            workOrderItem: woItem,
-                                                                                            originalSellingPrice,
-                                                                                            originalExtras,
-                                                                                            originalTransport,
-                                                                                            hasOverrides: !!(woItem!.Profit_Overrides?.Selling_Price !== undefined || woItem!.Profit_Overrides?.Transport_Share !== undefined),
-                                                                                        });
-                                                                                    }}
-                                                                                >
-                                                                                    <span className="material-icons-round" style={{ fontSize: '16px' }}>
-                                                                                        {margin >= 30 ? 'trending_up' : margin >= 15 ? 'trending_flat' : 'trending_down'}
-                                                                                    </span>
-                                                                                    {profit.toLocaleString('hr-HR')} KM ({margin}%)
-                                                                                </span>
-                                                                            );
-                                                                        }
-                                                                    }
-
-                                                                    // No profit data — show material cost
                                                                     const matCost = (product.materials || []).reduce((sum, m) => sum + (m.Total_Price || 0), 0);
                                                                     if (matCost > 0) {
                                                                         return (
@@ -1950,6 +1936,54 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                                                             })()}
                                                         </div>
                                                     ))}
+
+                                                    {/* Floating Work Order Selection Toolbar */}
+                                                    {onCreateWorkOrder && (() => {
+                                                        const selectedInThisProject = sortedProducts.filter(p => selectedForWorkOrder.has(p.Product_ID));
+                                                        if (selectedInThisProject.length === 0) return null;
+                                                        return (
+                                                            <div className="product-selection-toolbar">
+                                                                <div className="selection-info">
+                                                                    <span className="material-icons-round" style={{ fontSize: '20px' }}>checklist</span>
+                                                                    <span className="selection-count">{selectedInThisProject.length}</span>
+                                                                    <span>proizvod{selectedInThisProject.length === 1 ? '' : 'a'} odabrano</span>
+                                                                </div>
+                                                                <div className="selection-actions">
+                                                                    <button
+                                                                        className="btn-clear-selection"
+                                                                        onClick={() => {
+                                                                            setSelectedForWorkOrder(prev => {
+                                                                                const next = new Set(prev);
+                                                                                selectedInThisProject.forEach(p => next.delete(p.Product_ID));
+                                                                                return next;
+                                                                            });
+                                                                        }}
+                                                                    >
+                                                                        <span className="material-icons-round" style={{ fontSize: '16px' }}>close</span>
+                                                                        Poništi
+                                                                    </button>
+                                                                    <button
+                                                                        className="btn-create-wo"
+                                                                        onClick={() => {
+                                                                            onCreateWorkOrder(
+                                                                                project.Project_ID,
+                                                                                project.Client_Name,
+                                                                                selectedInThisProject.map(p => ({
+                                                                                    productId: p.Product_ID,
+                                                                                    productName: p.Name,
+                                                                                    quantity: p.Quantity || 1,
+                                                                                }))
+                                                                            );
+                                                                            setSelectedForWorkOrder(new Set());
+                                                                        }}
+                                                                    >
+                                                                        <span className="material-icons-round">assignment</span>
+                                                                        Kreiraj radni nalog
+                                                                    </button>
+                                                                </div>
+                                                            </div>
+                                                        );
+                                                    })()}
                                                 </div>
 
                                                 {/* Grouped Materials Summary */}

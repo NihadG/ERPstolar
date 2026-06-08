@@ -18,10 +18,57 @@ import {
     where,
     getDocs,
     deleteDoc,
+    writeBatch,
 } from '../shared/firestoreClient';
 import { eventBus } from '../eventBus';
 import { v4 as uuidv4 } from 'uuid';
 import type { Product, ProductMaterial } from '../../types';
+
+// ============================================
+// HELPERS
+// ============================================
+
+/**
+ * When a product is renamed, propagate the new name to all collections
+ * that store a denormalised Product_Name field.
+ */
+async function propagateProductNameChange(
+    productId: string,
+    newName: string,
+    organizationId: string
+): Promise<void> {
+    const db = getDb();
+    const batch = writeBatch(db);
+    let hasChanges = false;
+
+    // 1. offer_products
+    const offerProductsSnap = await getDocs(query(
+        collection(db, COLLECTIONS.OFFER_PRODUCTS),
+        where('Product_ID', '==', productId),
+        where('Organization_ID', '==', organizationId)
+    ));
+    offerProductsSnap.docs.forEach(d => { batch.update(d.ref, { Product_Name: newName }); hasChanges = true; });
+
+    // 2. work_order_items
+    const woItemsSnap = await getDocs(query(
+        collection(db, COLLECTIONS.WORK_ORDER_ITEMS),
+        where('Product_ID', '==', productId),
+        where('Organization_ID', '==', organizationId)
+    ));
+    woItemsSnap.docs.forEach(d => { batch.update(d.ref, { Product_Name: newName }); hasChanges = true; });
+
+    // 3. order_items
+    const orderItemsSnap = await getDocs(query(
+        collection(db, COLLECTIONS.ORDER_ITEMS),
+        where('Product_ID', '==', productId),
+        where('Organization_ID', '==', organizationId)
+    ));
+    orderItemsSnap.docs.forEach(d => { batch.update(d.ref, { Product_Name: newName }); hasChanges = true; });
+
+    if (hasChanges) {
+        await batch.commit();
+    }
+}
 
 // ============================================
 // READ
@@ -107,6 +154,11 @@ export async function saveProduct(
             if (ref) {
                 const { Organization_ID, ...updateData } = data;
                 await updateDocByRef(ref, updateData as Record<string, unknown>);
+
+                // Propagate name change to all dependent collections
+                if (data.Name) {
+                    await propagateProductNameChange(data.Product_ID!, data.Name, organizationId);
+                }
             }
         }
 

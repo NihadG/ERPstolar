@@ -1352,3 +1352,150 @@
     font-weight: 600;
     white-space: nowrap;
 }
+
+/* === Product Selection for Work Orders === */
+.product-select-checkbox {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    padding: 4px;
+    margin-right: 4px;
+    flex-shrink: 0;
+}
+
+.product-select-checkbox .material-icons-round {
+    font-size: 22px;
+    color: #d0d5dd;
+    transition: color 0.2s ease, transform 0.2s ease;
+}
+
+.product-select-checkbox:hover .material-icons-round {
+    color: #94a3b8;
+    transform: scale(1.1);
+}
+
+.product-select-checkbox.checked .material-icons-round {
+    color: #0071e3;
+}
+
+.product-card.selected-for-order {
+    background: #f0f7ff;
+    border-color: rgba(0, 113, 227, 0.25);
+}
+
+/* Floating selection toolbar */
+.product-selection-toolbar {
+    position: sticky;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    z-index: 50;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 14px 24px;
+    margin-top: 16px;
+    background: linear-gradient(135deg, #1d1d1f 0%, #2d2d30 100%);
+    border-radius: 16px;
+    box-shadow: 0 -4px 24px rgba(0, 0, 0, 0.15), 0 0 0 1px rgba(255,255,255,0.06) inset;
+    animation: slideUpToolbar 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+    color: white;
+}
+
+@keyframes slideUpToolbar {
+    from {
+        opacity: 0;
+        transform: translateY(20px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.product-selection-toolbar .selection-info {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 14px;
+    font-weight: 500;
+}
+
+.product-selection-toolbar .selection-count {
+    background: rgba(255, 255, 255, 0.15);
+    padding: 4px 12px;
+    border-radius: 20px;
+    font-weight: 700;
+    font-size: 13px;
+}
+
+.product-selection-toolbar .selection-actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.product-selection-toolbar .btn-create-wo {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 22px;
+    background: linear-gradient(135deg, #0071e3 0%, #0077ED 100%);
+    color: white;
+    border: none;
+    border-radius: 12px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    box-shadow: 0 2px 8px rgba(0, 113, 227, 0.3);
+}
+
+.product-selection-toolbar .btn-create-wo:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 16px rgba(0, 113, 227, 0.4);
+    background: linear-gradient(135deg, #0077ED 0%, #0084FF 100%);
+}
+
+.product-selection-toolbar .btn-create-wo .material-icons-round {
+    font-size: 20px;
+}
+
+.product-selection-toolbar .btn-clear-selection {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 16px;
+    background: rgba(255, 255, 255, 0.1);
+    color: rgba(255, 255, 255, 0.7);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 10px;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.product-selection-toolbar .btn-clear-selection:hover {
+    background: rgba(255, 255, 255, 0.18);
+    color: white;
+}
+
+@media (max-width: 768px) {
+    .product-selection-toolbar {
+        flex-direction: column;
+        gap: 12px;
+        padding: 12px 16px;
+        border-radius: 14px;
+        margin: 12px 0 0 0;
+    }
+    .product-selection-toolbar .selection-actions {
+        width: 100%;
+    }
+    .product-selection-toolbar .btn-create-wo {
+        flex: 1;
+        justify-content: center;
+    }
+}

@@ -64,6 +64,9 @@ export default function Home() {
     // Tasks filter state for cross-tab navigation
     const [tasksProjectFilter, setTasksProjectFilter] = useState<string | null>(null);
 
+    // Work order creation from ProjectsTab
+    const [pendingWorkOrderProducts, setPendingWorkOrderProducts] = useState<{ projectId: string; projectName: string; products: { productId: string; productName: string; quantity: number }[] } | null>(null);
+
     // Quote-to-Project navigation state
     const [autoExpandProjectId, setAutoExpandProjectId] = useState<string | null>(null);
     const [autoExpandProductId, setAutoExpandProductId] = useState<string | null>(null);
@@ -77,6 +80,17 @@ export default function Home() {
     const handleNavigateToTasks = (projectId: string) => {
         setTasksProjectFilter(projectId);
         setActiveTab('tasks');
+    };
+
+    // Handler to create work order from ProjectsTab
+    const handleCreateWorkOrderFromProjects = (projectId: string, projectName: string, products: { productId: string; productName: string; quantity: number }[]) => {
+        setPendingWorkOrderProducts({ projectId, projectName, products });
+        setActiveTab('production');
+        showToast(`${products.length} proizvod(a) spremno za radni nalog`, 'info');
+    };
+
+    const clearPendingWorkOrder = () => {
+        setPendingWorkOrderProducts(null);
     };
 
     // Handler to navigate from offer to project
@@ -431,6 +445,7 @@ export default function Home() {
                             onRefresh={refreshCollections}
                             showToast={showToast}
                             onNavigateToTasks={handleNavigateToTasks}
+                            onCreateWorkOrder={handleCreateWorkOrderFromProjects}
                             autoExpandProjectId={autoExpandProjectId}
                             autoExpandProductId={autoExpandProductId}
                             returnToOfferId={returnToOfferId}
@@ -477,6 +492,8 @@ export default function Home() {
                             workers={appState.workers}
                             onRefresh={refreshCollections}
                             showToast={showToast}
+                            pendingWorkOrderProducts={pendingWorkOrderProducts}
+                            onClearPendingWorkOrder={clearPendingWorkOrder}
                         />
                     )}
 
