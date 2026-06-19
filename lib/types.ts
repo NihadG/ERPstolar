@@ -526,6 +526,10 @@ export interface WorkLog {
     // Proces na kojem je radnik radio
     Process_Name?: string;           // Rezanje, Kantiranje, etc.
 
+    // DNEVNA KNJIGA RADA — eksplicitno bilježenje
+    Day_Fraction?: number;           // Težina dana na ovom proizvodu: 1 = cijeli, 0.5 = pola
+    Booking_Source?: 'attendance' | 'manual';  // 'manual' = unešeno kroz Dnevnu knjigu rada
+
     // Status i metadata
     Is_From_Attendance: boolean;     // Da li je automatski kreirano iz sihtarice
     Notes?: string;

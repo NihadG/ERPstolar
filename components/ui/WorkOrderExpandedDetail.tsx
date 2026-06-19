@@ -607,7 +607,7 @@ export default function WorkOrderExpandedDetail({
                     <span className="material-icons-round" style={{ fontSize: '16px' }}>
                         {showTimeline ? 'expand_less' : 'schedule'}
                     </span>
-                    <span>Radnici — Timeline</span>
+                    <span>Trošak rada po proizvodu</span>
                     {workLogs.length > 0 && (
                         <span className="timeline-badge">{workLogs.length} zapisa</span>
                     )}
@@ -624,12 +624,19 @@ export default function WorkOrderExpandedDetail({
                             const itemLogs = workLogs.filter(wl => wl.Work_Order_Item_ID === item.ID);
                             const laborCost = itemLogs.reduce((sum, wl) => sum + (wl.Daily_Rate || 0), 0);
                             const workerCount = new Set(itemLogs.map(wl => wl.Worker_ID)).size;
+                            const workDays = Math.round(itemLogs.reduce((sum, wl) => sum + (wl.Day_Fraction ?? 1), 0) * 100) / 100;
+                            const planned = item.Planned_Labor_Cost || 0;
+                            const overBudget = planned > 0 && laborCost > planned;
+                            const fillPct = planned > 0
+                                ? Math.min((laborCost / planned) * 100, 100)
+                                : (laborCost > 0 ? 100 : 0);
+                            const barColor = overBudget ? '#ef4444' : '#10b981';
                             return (
                                 <button
                                     key={item.ID}
                                     onClick={() => setTimelineItem(item)}
                                     style={{
-                                        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                                        display: 'flex', flexDirection: 'column', gap: '8px',
                                         padding: '10px 14px', borderRadius: '8px',
                                         border: '1px solid #e2e8f0', background: '#f9fafb',
                                         cursor: 'pointer', width: '100%', textAlign: 'left',
@@ -638,21 +645,40 @@ export default function WorkOrderExpandedDetail({
                                     onMouseEnter={e => { e.currentTarget.style.background = '#f0f9ff'; e.currentTarget.style.borderColor = '#93c5fd'; }}
                                     onMouseLeave={e => { e.currentTarget.style.background = '#f9fafb'; e.currentTarget.style.borderColor = '#e2e8f0'; }}
                                 >
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                                        <span className="material-icons-round" style={{ fontSize: '18px', color: '#3b82f6' }}>timeline</span>
-                                        <div>
-                                            <div style={{ fontWeight: 600, fontSize: '13px', color: '#0f172a' }}>
-                                                {item.Product_Name}
-                                            </div>
-                                            <div style={{ fontSize: '11px', color: '#64748b' }}>
-                                                {workerCount > 0 ? `${workerCount} radnik(a) • ${itemLogs.length} zapisa` : 'Nema zapisa'}
+                                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                                            <span className="material-icons-round" style={{ fontSize: '18px', color: '#3b82f6' }}>timeline</span>
+                                            <div>
+                                                <div style={{ fontWeight: 600, fontSize: '13px', color: '#0f172a' }}>
+                                                    {item.Product_Name}
+                                                </div>
+                                                <div style={{ fontSize: '11px', color: '#64748b' }}>
+                                                    {workDays > 0
+                                                        ? `${workDays} ${workDays === 1 ? 'radni dan' : 'radnih dana'} • ${workerCount} radnik(a)`
+                                                        : 'Nema zapisa'}
+                                                </div>
                                             </div>
                                         </div>
+                                        <div style={{ textAlign: 'right' }}>
+                                            <div style={{ fontSize: '13px', fontWeight: 600, color: overBudget ? '#ef4444' : '#374151' }}>
+                                                {Math.round(laborCost).toLocaleString('hr-HR')} KM
+                                            </div>
+                                            {planned > 0 && (
+                                                <div style={{ fontSize: '11px', color: '#94a3b8' }}>
+                                                    plan {Math.round(planned).toLocaleString('hr-HR')} KM
+                                                </div>
+                                            )}
+                                        </div>
                                     </div>
-                                    {laborCost > 0 && (
-                                        <span style={{ fontSize: '13px', fontWeight: 600, color: '#374151' }}>
-                                            {laborCost.toLocaleString('hr-HR')} KM
-                                        </span>
+                                    {(planned > 0 || laborCost > 0) && (
+                                        <div style={{ height: '6px', background: '#e5e7eb', borderRadius: '6px', overflow: 'hidden', width: '100%' }}>
+                                            <div style={{ width: `${fillPct}%`, height: '100%', background: barColor, transition: 'width 0.2s' }} />
+                                        </div>
+                                    )}
+                                    {overBudget && (
+                                        <div style={{ fontSize: '11px', color: '#ef4444', fontWeight: 600 }}>
+                                            prekoračen plan rada za {Math.round(laborCost - planned).toLocaleString('hr-HR')} KM
+                                        </div>
                                     )}
                                 </button>
                             );

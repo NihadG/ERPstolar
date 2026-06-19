@@ -5037,6 +5037,8 @@ export async function createWorkLog(data: {
     Is_From_Attendance?: boolean;
     Original_Daily_Rate?: number;
     Split_Factor?: number;
+    Day_Fraction?: number;
+    Booking_Source?: 'attendance' | 'manual';
     Notes?: string;
     Date?: string;
 }, organizationId: string): Promise<{ success: boolean; data?: { WorkLog_ID: string }; message: string }> {
@@ -5065,6 +5067,8 @@ export async function createWorkLog(data: {
             Is_From_Attendance: data.Is_From_Attendance ?? false,
             Original_Daily_Rate: data.Original_Daily_Rate,
             Split_Factor: data.Split_Factor,
+            Day_Fraction: data.Day_Fraction,
+            Booking_Source: data.Booking_Source,
             Notes: data.Notes,
             Created_At: now,
         };
@@ -5165,14 +5169,15 @@ export async function calculateItemLaborCost(workOrderItemId: string, organizati
         const workerMap = new Map<string, { workerName: string; days: number; cost: number }>();
 
         for (const log of logs) {
+            const dayWeight = log.Day_Fraction ?? 1;  // Legacy logs (bez Day_Fraction) = cijeli dan
             const existing = workerMap.get(log.Worker_ID);
             if (existing) {
-                existing.days += 1;
+                existing.days += dayWeight;
                 existing.cost += log.Daily_Rate;
             } else {
                 workerMap.set(log.Worker_ID, {
                     workerName: log.Worker_Name,
-                    days: 1,
+                    days: dayWeight,
                     cost: log.Daily_Rate,
                 });
             }
@@ -5181,14 +5186,14 @@ export async function calculateItemLaborCost(workOrderItemId: string, organizati
         const workerBreakdown = Array.from(workerMap.entries()).map(([workerId, data]) => ({
             workerId,
             workerName: data.workerName,
-            days: data.days,
-            cost: data.cost,
+            days: Math.round(data.days * 100) / 100,
+            cost: Math.round(data.cost * 100) / 100,
         }));
 
         const totalCost = logs.reduce((sum, log) => sum + log.Daily_Rate, 0);
-        const totalDays = logs.length;
+        const totalDays = logs.reduce((sum, log) => sum + (log.Day_Fraction ?? 1), 0);
 
-        return { totalCost, totalDays, workerBreakdown };
+        return { totalCost: Math.round(totalCost * 100) / 100, totalDays: Math.round(totalDays * 100) / 100, workerBreakdown };
     } catch (error) {
         console.error('calculateItemLaborCost error:', error);
         return { totalCost: 0, totalDays: 0, workerBreakdown: [] };

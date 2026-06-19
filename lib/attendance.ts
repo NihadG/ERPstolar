@@ -516,6 +516,9 @@ export async function markAttendanceAndRecalculate(
         // ═══════════════════════════════════════════════════════════════
 
         // STEP 1: Find which WOs had logs BEFORE deletion (for recalculation later)
+        // Also detect MANUAL bookings (Dnevna knjiga rada) — those are the source of truth
+        // and must NOT be overwritten by the auto-split pipeline.
+        let hasManualBooking = false;
         try {
             const existingLogsQ = query(
                 collection(firestore, 'work_logs'),
@@ -525,11 +528,20 @@ export async function markAttendanceAndRecalculate(
             );
             const existingLogsSnap = await getDocs(existingLogsQ);
             existingLogsSnap.docs.forEach(d => {
-                const woId = d.data().Work_Order_ID;
+                const data = d.data();
+                if (data.Booking_Source === 'manual') hasManualBooking = true;
+                const woId = data.Work_Order_ID;
                 if (woId) affectedWorkOrderIds.add(woId);
             });
         } catch (err) {
             console.warn('Pre-deletion WO lookup failed:', err);
+        }
+
+        // GUARD: Ručni booking postoji → on vlada danom. Prisutnost je već spremljena;
+        // ne diramo work logove (ni brisanje ni auto-kreiranje).
+        if (hasManualBooking) {
+            console.log(`[ATTENDANCE] Ručni booking postoji za ${attendance.Worker_Name} na ${attendance.Date} — preskačem auto work logove.`);
+            return { success: true, affectedWorkOrders: [], workLogsCreated: 0, workLogsDeleted: 0 };
         }
 
         // STEP 2: DELETE all existing work logs for this worker+date (clean slate)
@@ -599,12 +611,266 @@ export async function markAttendanceAndRecalculate(
     }
 }
 
+// ════════════════════════════════════════════════════════════════════
+// DNEVNA KNJIGA RADA (Daily Work Booking)
+// Eksplicitno bilježenje radnih dana/dnevnica po proizvodu (Model B+A).
+// Izvor istine za trošak rada — piše WorkLog sa Day_Fraction i Booking_Source:'manual'.
+// ════════════════════════════════════════════════════════════════════
+
+export interface DailyBookingItemInput {
+    workOrderItemId: string;
+    dayFraction: number;        // 1 (cijeli) ili 0.5 (pola)
+    processName?: string;       // opcioni tag procesa
+}
+export interface DailyBookingEntryInput {
+    workerId: string;
+    items: DailyBookingItemInput[];
+}
+
+export interface DailyBookingItemView {
+    workOrderItemId: string;
+    workOrderId: string;
+    productName: string;
+    projectName: string;
+    dayFraction: number;
+    processName?: string;
+    amount: number;             // KM koje su pale na ovaj proizvod (Daily_Rate zapisa)
+}
+export interface DailyBookingEntryView {
+    workerId: string;
+    workerName: string;
+    dailyRate: number;
+    items: DailyBookingItemView[];
+}
+
+/**
+ * Helper: dohvati WorkOrderItem-e po ID-jevima (chunked 'in' upiti, max 10 po upitu).
+ */
+async function fetchWorkOrderItemsByIds(itemIds: string[], organizationId: string): Promise<Map<string, WorkOrderItem>> {
+    const map = new Map<string, WorkOrderItem>();
+    if (itemIds.length === 0) return map;
+    const firestore = getDb();
+    for (let i = 0; i < itemIds.length; i += 10) {
+        const chunk = itemIds.slice(i, i + 10);
+        const q = query(
+            collection(firestore, COLLECTIONS.WORK_ORDER_ITEMS),
+            where('ID', 'in', chunk),
+            where('Organization_ID', '==', organizationId)
+        );
+        const snap = await getDocs(q);
+        snap.docs.forEach(d => {
+            const it = d.data() as WorkOrderItem;
+            map.set(it.ID, it);
+        });
+    }
+    return map;
+}
+
+/**
+ * Spremi dnevnu knjigu rada za dati dan. Booking je IZVOR ISTINE:
+ * za svakog radnika u `entries` briše postojeće work logove tog dana i piše nove.
+ * Daily_Rate = round(dnevnica × dayFraction).
+ */
+export async function saveDailyWorkBooking(
+    date: string,
+    organizationId: string,
+    entries: DailyBookingEntryInput[]
+): Promise<{ success: boolean; logsCreated: number; affectedWorkOrders: string[]; message: string }> {
+    if (!organizationId || !date) {
+        return { success: false, logsCreated: 0, affectedWorkOrders: [], message: 'Nedostaju datum ili organizacija' };
+    }
+    try {
+        const workers = await getWorkers(organizationId);
+        const affected = new Set<string>();
+        let logsCreated = 0;
+
+        const allItemIds = Array.from(new Set(entries.flatMap(e => e.items.map(i => i.workOrderItemId))));
+        const itemMap = await fetchWorkOrderItemsByIds(allItemIds, organizationId);
+
+        for (const entry of entries) {
+            const worker = workers.find(w => w.Worker_ID === entry.workerId);
+            const dailyRate = worker?.Daily_Rate || 0;
+            const workerName = worker?.Name || 'Nepoznat';
+
+            // Clean slate: booking u potpunosti preuzima dan ovog radnika
+            try {
+                await deleteWorkLogsForWorkerOnDate(entry.workerId, date, organizationId);
+            } catch (e) {
+                console.warn('saveDailyWorkBooking cleanup failed:', e);
+            }
+
+            for (const item of entry.items) {
+                const woi = itemMap.get(item.workOrderItemId);
+                if (!woi) continue;
+                const frac = item.dayFraction === 0.5 ? 0.5 : 1;
+                const amount = Math.round(dailyRate * frac * 100) / 100;
+                const res = await createWorkLog({
+                    Worker_ID: entry.workerId,
+                    Worker_Name: workerName,
+                    Daily_Rate: amount,
+                    Original_Daily_Rate: dailyRate,
+                    Day_Fraction: frac,
+                    Booking_Source: 'manual',
+                    Is_From_Attendance: false,
+                    Hours_Worked: frac === 0.5 ? 4 : 8,
+                    Work_Order_ID: woi.Work_Order_ID,
+                    Work_Order_Item_ID: woi.ID,
+                    Product_ID: woi.Product_ID,
+                    Process_Name: item.processName,
+                    Date: date,
+                }, organizationId);
+                if (res.success) {
+                    logsCreated++;
+                    if (woi.Work_Order_ID) affected.add(woi.Work_Order_ID);
+                }
+            }
+        }
+
+        const affectedList = Array.from(affected);
+        await Promise.all(affectedList.map(id => recalculateWorkOrder(id).catch(err => console.warn('recalc failed', id, err))));
+
+        return { success: true, logsCreated, affectedWorkOrders: affectedList, message: `Spremljeno ${logsCreated} zapisa rada` };
+    } catch (error) {
+        console.error('saveDailyWorkBooking error:', error);
+        return { success: false, logsCreated: 0, affectedWorkOrders: [], message: 'Greška pri spremanju knjige rada' };
+    }
+}
+
+/**
+ * Pročitaj postojeću knjigu rada za dan (grupisano po radniku) — za prikaz/uređivanje.
+ */
+export async function getDailyWorkBooking(date: string, organizationId: string): Promise<DailyBookingEntryView[]> {
+    if (!organizationId || !date) return [];
+    try {
+        const firestore = getDb();
+        const q = query(
+            collection(firestore, 'work_logs'),
+            where('Date', '==', date),
+            where('Organization_ID', '==', organizationId)
+        );
+        const snap = await getDocs(q);
+        if (snap.empty) return [];
+
+        const logs = snap.docs.map(d => d.data() as WorkLog);
+        const itemMap = await fetchWorkOrderItemsByIds(
+            Array.from(new Set(logs.map(l => l.Work_Order_Item_ID).filter(Boolean))),
+            organizationId
+        );
+        const workers = await getWorkers(organizationId);
+
+        const byWorker = new Map<string, DailyBookingEntryView>();
+        for (const log of logs) {
+            let entry = byWorker.get(log.Worker_ID);
+            if (!entry) {
+                const w = workers.find(x => x.Worker_ID === log.Worker_ID);
+                entry = {
+                    workerId: log.Worker_ID,
+                    workerName: log.Worker_Name,
+                    dailyRate: w?.Daily_Rate ?? log.Original_Daily_Rate ?? 0,
+                    items: [],
+                };
+                byWorker.set(log.Worker_ID, entry);
+            }
+            const woi = itemMap.get(log.Work_Order_Item_ID);
+            entry.items.push({
+                workOrderItemId: log.Work_Order_Item_ID,
+                workOrderId: log.Work_Order_ID,
+                productName: woi?.Product_Name ?? '',
+                projectName: woi?.Project_Name ?? '',
+                dayFraction: log.Day_Fraction ?? 1,
+                processName: log.Process_Name,
+                amount: log.Daily_Rate,
+            });
+        }
+        return Array.from(byWorker.values());
+    } catch (error) {
+        console.error('getDailyWorkBooking error:', error);
+        return [];
+    }
+}
+
+/**
+ * Predloži raspodjelu za `date` na osnovu zadnjeg ranijeg dana sa zabilježenim radom,
+ * za radnike koji su danas prisutni (Prisutan/Teren). Model A kao prijedlog.
+ */
+export async function suggestDailyBooking(date: string, organizationId: string): Promise<DailyBookingEntryView[]> {
+    if (!organizationId || !date) return [];
+    try {
+        const firestore = getDb();
+
+        // Ko je danas prisutan?
+        const attQ = query(
+            collection(firestore, COLLECTIONS.WORKER_ATTENDANCE),
+            where('Date', '==', date),
+            where('Organization_ID', '==', organizationId)
+        );
+        const attSnap = await getDocs(attQ);
+        const presentWorkerIds = attSnap.docs
+            .map(d => d.data() as WorkerAttendance)
+            .filter(a => a.Status === 'Prisutan' || a.Status === 'Teren')
+            .map(a => a.Worker_ID);
+        if (presentWorkerIds.length === 0) return [];
+
+        const workers = await getWorkers(organizationId);
+        const suggestions: DailyBookingEntryView[] = [];
+
+        for (const workerId of presentWorkerIds) {
+            // Svi logovi radnika, nađi zadnji datum < date
+            const logsQ = query(
+                collection(firestore, 'work_logs'),
+                where('Worker_ID', '==', workerId),
+                where('Organization_ID', '==', organizationId)
+            );
+            const logsSnap = await getDocs(logsQ);
+            const priorLogs = logsSnap.docs
+                .map(d => d.data() as WorkLog)
+                .filter(l => l.Date < date);
+            if (priorLogs.length === 0) continue;
+
+            const lastDate = priorLogs.reduce((max, l) => (l.Date > max ? l.Date : max), priorLogs[0].Date);
+            const lastDayLogs = priorLogs.filter(l => l.Date === lastDate);
+            if (lastDayLogs.length === 0) continue;
+
+            const w = workers.find(x => x.Worker_ID === workerId);
+            const dailyRate = w?.Daily_Rate ?? lastDayLogs[0].Original_Daily_Rate ?? 0;
+            const itemMap = await fetchWorkOrderItemsByIds(
+                Array.from(new Set(lastDayLogs.map(l => l.Work_Order_Item_ID).filter(Boolean))),
+                organizationId
+            );
+
+            const items: DailyBookingItemView[] = [];
+            for (const log of lastDayLogs) {
+                const woi = itemMap.get(log.Work_Order_Item_ID);
+                // Predloži samo proizvode iz naloga koji NIJE završen/otkazan
+                if (!woi) continue;
+                const frac = log.Day_Fraction ?? 1;
+                items.push({
+                    workOrderItemId: log.Work_Order_Item_ID,
+                    workOrderId: log.Work_Order_ID,
+                    productName: woi.Product_Name ?? '',
+                    projectName: woi.Project_Name ?? '',
+                    dayFraction: frac,
+                    processName: log.Process_Name,
+                    amount: Math.round(dailyRate * frac * 100) / 100,
+                });
+            }
+            if (items.length > 0) {
+                suggestions.push({ workerId, workerName: w?.Name ?? lastDayLogs[0].Worker_Name, dailyRate, items });
+            }
+        }
+        return suggestions;
+    } catch (error) {
+        console.error('suggestDailyBooking error:', error);
+        return [];
+    }
+}
+
 
 
 /**
  * Create WorkLog entries for a worker's attendance
  * Finds all active work order items where the worker is assigned and creates work logs
- * 
+ *
  * CRITICAL FIX (S2.6): Daily rate is now SPLIT across all active assignments.
  * A worker assigned to 3 items gets dailyRate/3 per item, NOT dailyRate × 3.
  * 

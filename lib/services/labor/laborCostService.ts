@@ -101,6 +101,50 @@ export async function backfillWorkLogsFromAttendance(
 }
 
 // ============================================
+// DNEVNA KNJIGA RADA (Daily Work Booking)
+// ============================================
+
+import type {
+    DailyBookingEntryInput,
+    DailyBookingEntryView,
+} from '../../attendance';
+export type {
+    DailyBookingItemInput,
+    DailyBookingEntryInput,
+    DailyBookingItemView,
+    DailyBookingEntryView,
+} from '../../attendance';
+
+export async function saveDailyWorkBooking(
+    date: string,
+    organizationId: string,
+    entries: DailyBookingEntryInput[]
+): Promise<{ success: boolean; logsCreated: number; affectedWorkOrders: string[]; message: string }> {
+    const { saveDailyWorkBooking: _save } = await import('../../attendance');
+    const result = await _save(date, organizationId, entries);
+    if (result.success) {
+        eventBus.emit('workOrder:recalculated', { workOrderId: '', organizationId });
+    }
+    return result;
+}
+
+export async function getDailyWorkBooking(
+    date: string,
+    organizationId: string
+): Promise<DailyBookingEntryView[]> {
+    const { getDailyWorkBooking: _get } = await import('../../attendance');
+    return _get(date, organizationId);
+}
+
+export async function suggestDailyBooking(
+    date: string,
+    organizationId: string
+): Promise<DailyBookingEntryView[]> {
+    const { suggestDailyBooking: _suggest } = await import('../../attendance');
+    return _suggest(date, organizationId);
+}
+
+// ============================================
 // RECALCULATION
 // ============================================
 

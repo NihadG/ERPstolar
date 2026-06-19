@@ -127,6 +127,11 @@ export {
     repairAllProductStatuses, startWorkOrderItem, completeWorkOrderItem,
     formatLocalDateISO,
     adjustWorkOrderDates,
+    saveDailyWorkBooking, getDailyWorkBooking, suggestDailyBooking,
+} from './labor/laborCostService';
+export type {
+    DailyBookingItemInput, DailyBookingEntryInput,
+    DailyBookingItemView, DailyBookingEntryView,
 } from './labor/laborCostService';
 
 // Profit

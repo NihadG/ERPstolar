@@ -25,6 +25,7 @@ import {
     BadgeDollarSign,
     Database,
     ClipboardList,
+    NotebookPen,
     Shield,
 } from 'lucide-react';
 import NotificationCenter from './NotificationCenter';
@@ -159,6 +160,7 @@ const Sidebar: React.FC<SidebarProps> = ({ activeTab, onTabChange, isOpen, onClo
             icon: Factory,
             items: [
                 { id: 'production', icon: ClipboardList, label: 'Nalozi' },
+                { id: 'worklog', icon: NotebookPen, label: 'Knjiga rada' },
                 { id: 'planer', icon: GanttChart, label: 'Planer' },
                 { id: 'attendance', icon: Calendar, label: 'Šihtarica' },
             ]
