@@ -4,20 +4,18 @@ import { useState, useMemo, useEffect, useCallback } from 'react';
 import {
     ChevronLeft,
     ChevronRight,
-    Calendar,
     Plus,
     X,
     Save,
-    Sparkles,
+    History,
     Loader2,
-    Box,
-    AlertTriangle,
-    CheckCircle,
     NotebookPen,
     BarChart3,
     User,
     Package,
-    ClipboardList,
+    UserPlus,
+    Edit2,
+    CheckCircle,
 } from 'lucide-react';
 import type { WorkOrder, Worker, WorkLog } from '@/lib/types';
 import {
@@ -55,6 +53,8 @@ interface BookableItem {
     workOrderId: string;
     workOrderNumber: string;
     processes: string[];
+    isCustom?: boolean;
+    linkedName?: string;     // naziv povezanog proizvoda (za custom zadatke)
 }
 
 const toISO = (d: Date) => {
@@ -66,10 +66,11 @@ const toISO = (d: Date) => {
 const DAY_NAMES = ['Ned', 'Pon', 'Uto', 'Sri', 'Čet', 'Pet', 'Sub'];
 const DAY_FULL = ['Nedjelja', 'Ponedjeljak', 'Utorak', 'Srijeda', 'Četvrtak', 'Petak', 'Subota'];
 const MONTHS = ['Januar', 'Februar', 'Mart', 'April', 'Maj', 'Juni', 'Juli', 'August', 'Septembar', 'Oktobar', 'Novembar', 'Decembar'];
+const MONTHS_GEN = ['januar', 'februar', 'mart', 'april', 'maj', 'juni', 'juli', 'august', 'septembar', 'oktobar', 'novembar', 'decembar'];
 
 const formatHuman = (iso: string) => {
     const d = new Date(iso + 'T00:00:00');
-    return `${DAY_FULL[d.getDay()]}, ${d.toLocaleDateString('bs-BA')}`;
+    return `${DAY_FULL[d.getDay()]}, ${d.getDate()}. ${MONTHS_GEN[d.getMonth()]}`;
 };
 const startOfWeek = (d: Date) => {
     const x = new Date(d);
@@ -80,6 +81,7 @@ const startOfWeek = (d: Date) => {
 };
 const km = (n: number) => Math.round(n).toLocaleString('bs-BA') + ' KM';
 const daysLabel = (n: number) => `${Math.round(n * 100) / 100} ${n === 1 ? 'dan' : 'dana'}`;
+const initialsOf = (name?: string) => (name || '?').split(' ').map(s => s[0]).slice(0, 2).join('').toUpperCase();
 
 export default function DailyWorkBookingBoard({ workOrders, workers, workLogs, onRefresh, showToast }: DailyWorkBookingBoardProps) {
     const { organization } = useAuth();
@@ -93,6 +95,8 @@ export default function DailyWorkBookingBoard({ workOrders, workers, workLogs, o
     const [presentWorkerIds, setPresentWorkerIds] = useState<Set<string>>(new Set());
     const [loading, setLoading] = useState(false);
     const [saving, setSaving] = useState(false);
+    const [editing, setEditing] = useState(false);   // false = spremljeni dan zaključan (read-only)
+    const [savedDays, setSavedDays] = useState(false); // da li dan već ima spremljene zapise
 
     // ── Overview state ──────────────────────────────────────────────────────
     const [periodMode, setPeriodMode] = useState<'week' | 'month'>('week');
@@ -105,9 +109,12 @@ export default function DailyWorkBookingBoard({ workOrders, workers, workLogs, o
             if (wo.Status === 'Završeno' || wo.Status === 'Otkazano') return;
             (wo.items || []).forEach(item => {
                 if (item.Status === 'Završeno') return;
-                const processes = (item.Processes && item.Processes.length > 0)
-                    ? item.Processes.map(p => p.Process_Name)
-                    : (wo.Production_Steps || []);
+                // Custom (ad-hoc) zadaci nemaju procese u knjizi rada (implicitni 'Rad' je samo za pokretanje naloga)
+                const processes = item.Item_Type === 'custom'
+                    ? []
+                    : (item.Processes && item.Processes.length > 0)
+                        ? item.Processes.map(p => p.Process_Name)
+                        : (wo.Production_Steps || []);
                 list.push({
                     id: item.ID,
                     productName: item.Product_Name,
@@ -115,6 +122,8 @@ export default function DailyWorkBookingBoard({ workOrders, workers, workLogs, o
                     workOrderId: wo.Work_Order_ID,
                     workOrderNumber: wo.Work_Order_Number,
                     processes,
+                    isCustom: item.Item_Type === 'custom',
+                    linkedName: item.Linked_Product_Name,
                 });
             });
         });
@@ -133,7 +142,6 @@ export default function DailyWorkBookingBoard({ workOrders, workers, workLogs, o
         return m;
     }, [workers]);
 
-    // Worker → product name / WO number resolution across ALL work orders (for stats/history)
     const itemMetaAll = useMemo(() => {
         const m = new Map<string, { product: string; project: string; woId: string; woNumber: string }>();
         workOrders.forEach(wo => (wo.items || []).forEach(it => {
@@ -145,13 +153,14 @@ export default function DailyWorkBookingBoard({ workOrders, workers, workLogs, o
     const productOptions = useMemo(
         () => bookableItems.map(i => ({
             value: i.id,
-            label: i.productName,
-            subLabel: `${i.projectName} · Nalog ${i.workOrderNumber}`,
+            label: i.isCustom ? `⚙ ${i.productName}` : i.productName,
+            subLabel: i.isCustom
+                ? (i.linkedName ? `Zadatak → ${i.linkedName}` : `Razni poslovi · Nalog ${i.workOrderNumber}`)
+                : `${i.projectName} · Nalog ${i.workOrderNumber}`,
         })),
         [bookableItems]
     );
 
-    // Workers assigned to active work orders ("koji imaju naloge")
     const relevantWorkerIds = useMemo(() => {
         const s = new Set<string>();
         workOrders.forEach(wo => {
@@ -164,7 +173,7 @@ export default function DailyWorkBookingBoard({ workOrders, workers, workLogs, o
         return s;
     }, [workOrders]);
 
-    // ── Load existing booking + present workers for the date ────────────────
+    // ── Load existing booking + present workers ──────────────────────────────
     const loadDay = useCallback(async () => {
         if (!orgId) return;
         setLoading(true);
@@ -176,15 +185,13 @@ export default function DailyWorkBookingBoard({ workOrders, workers, workLogs, o
             setPresentWorkerIds(new Set(
                 monthAtt.filter(a => a.Date === date && (a.Status === 'Prisutan' || a.Status === 'Teren')).map(a => a.Worker_ID)
             ));
-            // Seed ONLY workers that already have a booking that day (no auto-populate of all workers)
             setEntries(existing.map(e => ({
                 workerId: e.workerId,
-                items: e.items.map(it => ({
-                    workOrderItemId: it.workOrderItemId,
-                    dayFraction: it.dayFraction,
-                    processName: it.processName,
-                })),
+                items: e.items.map(it => ({ workOrderItemId: it.workOrderItemId, dayFraction: it.dayFraction, processName: it.processName })),
             })));
+            // Spremljeni dan → zaključan (read-only). Prazan dan → odmah u uređivanju.
+            setSavedDays(existing.length > 0);
+            setEditing(existing.length === 0);
         } catch (err) {
             console.error('loadDay error', err);
             showToast('Greška pri učitavanju knjige rada', 'error');
@@ -234,9 +241,8 @@ export default function DailyWorkBookingBoard({ workOrders, workers, workLogs, o
                 return Array.from(map.values());
             });
             showToast('Predložena raspodjela kao zadnji radni dan', 'success');
-        } catch (err) {
-            console.error(err); showToast('Greška pri prijedlogu', 'error');
-        } finally { setLoading(false); }
+        } catch (err) { console.error(err); showToast('Greška pri prijedlogu', 'error'); }
+        finally { setLoading(false); }
     };
 
     const handleSave = async () => {
@@ -250,39 +256,38 @@ export default function DailyWorkBookingBoard({ workOrders, workers, workLogs, o
                 })),
             }));
             const res = await saveDailyWorkBooking(date, orgId, payload);
-            if (res.success) { showToast(res.message, 'success'); onRefresh('workOrders', 'workLogs'); }
+            if (res.success) {
+                showToast(res.message, 'success');
+                onRefresh('workOrders', 'workLogs');
+                // Zaključaj dan nakon spremanja (spriječi slučajno dupliranje)
+                const stillHas = payload.some(p => p.items.length > 0);
+                setSavedDays(stillHas);
+                setEditing(!stillHas);
+            }
             else showToast(res.message, 'error');
-        } catch (err) {
-            console.error(err); showToast('Greška pri spremanju', 'error');
-        } finally { setSaving(false); }
+        } catch (err) { console.error(err); showToast('Greška pri spremanju', 'error'); }
+        finally { setSaving(false); }
     };
 
+    const cancelEdit = () => { loadDay(); };
+
     // ── Daily derived ───────────────────────────────────────────────────────
-    const productTotals = useMemo(() => {
-        const m = new Map<string, { name: string; project: string; days: number; amount: number }>();
+    const dayTotals = useMemo(() => {
+        let amount = 0, days = 0;
         entries.forEach(e => {
             const rate = workerLookup.get(e.workerId)?.Daily_Rate || 0;
-            e.items.forEach(i => {
-                const meta = itemLookup.get(i.workOrderItemId);
-                if (!meta) return;
-                const cur = m.get(i.workOrderItemId) || { name: meta.productName, project: meta.projectName, days: 0, amount: 0 };
-                cur.days += i.dayFraction; cur.amount += rate * i.dayFraction;
-                m.set(i.workOrderItemId, cur);
-            });
+            e.items.forEach(i => { amount += rate * i.dayFraction; days += i.dayFraction; });
         });
-        return Array.from(m.values());
-    }, [entries, itemLookup, workerLookup]);
+        return { amount, days };
+    }, [entries, workerLookup]);
 
-    const dayTotalAmount = useMemo(() => productTotals.reduce((s, p) => s + p.amount, 0), [productTotals]);
     const isToday = date === toISO(new Date());
 
-    // Quick-add chips: present today OR assigned to active orders, not already added
-    const quickAddWorkers = useMemo(() => {
-        return workers.filter(w =>
+    const quickAddWorkers = useMemo(() =>
+        workers.filter(w =>
             (presentWorkerIds.has(w.Worker_ID) || relevantWorkerIds.has(w.Worker_ID)) &&
             !entries.some(e => e.workerId === w.Worker_ID)
-        );
-    }, [presentWorkerIds, relevantWorkerIds, workers, entries]);
+        ), [presentWorkerIds, relevantWorkerIds, workers, entries]);
 
     const availableWorkerOptions = useMemo(
         () => workers.filter(w => !entries.some(e => e.workerId === w.Worker_ID))
@@ -314,12 +319,7 @@ export default function DailyWorkBookingBoard({ workOrders, workers, workLogs, o
         const totalCost = periodLogs.reduce((s, l) => s + (l.Daily_Rate || 0), 0);
         const totalDays = periodLogs.reduce((s, l) => s + (l.Day_Fraction ?? 1), 0);
         const recordedDates = new Set(periodLogs.map(l => l.Date));
-        return {
-            totalCost,
-            totalDays,
-            recordedDays: recordedDates.size,
-            avgRate: totalDays > 0 ? totalCost / totalDays : 0,
-        };
+        return { totalCost, totalDays, recordedDays: recordedDates.size, avgRate: totalDays > 0 ? totalCost / totalDays : 0 };
     }, [periodLogs]);
 
     const byWorker = useMemo(() => {
@@ -348,7 +348,6 @@ export default function DailyWorkBookingBoard({ workOrders, workers, workLogs, o
         periodLogs.forEach(l => m.set(l.Date, (m.get(l.Date) || 0) + (l.Daily_Rate || 0)));
         return m;
     }, [periodLogs]);
-
     const maxDayCost = useMemo(() => Math.max(1, ...Array.from(dayCostMap.values())), [dayCostMap]);
 
     const shiftPeriod = (delta: number) => {
@@ -361,7 +360,6 @@ export default function DailyWorkBookingBoard({ workOrders, workers, workLogs, o
     // ════════════════════════════════════════════════════════════════════════
     return (
         <div className="dwb">
-            {/* View switcher */}
             <div className="dwb-tabs">
                 <button className={view === 'daily' ? 'active' : ''} onClick={() => setView('daily')}>
                     <NotebookPen size={15} /> Dnevni unos
@@ -373,145 +371,169 @@ export default function DailyWorkBookingBoard({ workOrders, workers, workLogs, o
 
             {view === 'daily' ? (
                 <>
-                    {/* Daily header */}
-                    <div className="dwb-header">
-                        <div className="dwb-date-nav">
-                            <button className="dwb-icon-btn" onClick={() => shiftDay(-1)} aria-label="Prethodni dan"><ChevronLeft size={18} /></button>
-                            <label className="dwb-date-label">
-                                <Calendar size={15} />
-                                <input type="date" className="dwb-date-input" value={date} onChange={e => e.target.value && setDate(e.target.value)} />
-                            </label>
-                            <button className="dwb-icon-btn" onClick={() => shiftDay(1)} aria-label="Sljedeći dan"><ChevronRight size={18} /></button>
-                            <div className="dwb-date-meta">
-                                <span className="dwb-date-main">{formatHuman(date)}{isToday && <span className="dwb-today-pill">danas</span>}</span>
-                                <span className="dwb-date-sub">{entries.length} radnik(a) · {km(dayTotalAmount)} raspoređeno</span>
+                    {/* Header bar */}
+                    <div className="dwb-bar">
+                        <div className="dwb-bar-left">
+                            <button className="dwb-nav" onClick={() => shiftDay(-1)} aria-label="Prethodni dan"><ChevronLeft size={18} /></button>
+                            <button className="dwb-nav" onClick={() => shiftDay(1)} aria-label="Sljedeći dan"><ChevronRight size={18} /></button>
+                            <div className="dwb-bar-title">
+                                <div className="dwb-bar-date">
+                                    {formatHuman(date)}
+                                    {isToday && <span className="dwb-today">danas</span>}
+                                    <input className="dwb-date-input" type="date" value={date} onChange={e => e.target.value && setDate(e.target.value)} aria-label="Izaberi datum" />
+                                </div>
+                                <div className="dwb-bar-sub">
+                                    {savedDays && !editing
+                                        ? <span className="dwb-saved-badge"><CheckCircle size={13} /> Spremljeno</span>
+                                        : <>{entries.length} radnik(a) · {km(dayTotals.amount)} raspoređeno</>}
+                                </div>
                             </div>
                         </div>
-                        <div className="dwb-header-actions">
-                            <button className="dwb-btn dwb-btn-ghost" onClick={handleSuggest} disabled={loading || saving}><Sparkles size={15} /> Kao jučer</button>
-                            <button className="dwb-btn dwb-btn-primary" onClick={handleSave} disabled={loading || saving}>
-                                {saving ? <Loader2 size={15} className="dwb-spin" /> : <Save size={15} />} Spremi
-                            </button>
+                        <div className="dwb-bar-actions">
+                            {editing ? (
+                                <>
+                                    {savedDays && (
+                                        <button className="dwb-btn" onClick={cancelEdit} disabled={loading || saving}>Odustani</button>
+                                    )}
+                                    <button className="dwb-btn" onClick={handleSuggest} disabled={loading || saving}><History size={15} /> Kao jučer</button>
+                                    <button className="dwb-btn dwb-btn-dark" onClick={handleSave} disabled={loading || saving}>
+                                        {saving ? <Loader2 size={15} className="dwb-spin" /> : <Save size={15} />} Spremi
+                                    </button>
+                                </>
+                            ) : (
+                                <button className="dwb-btn dwb-btn-dark" onClick={() => setEditing(true)} disabled={loading}>
+                                    <Edit2 size={15} /> Uredi
+                                </button>
+                            )}
                         </div>
                     </div>
 
-                    {/* Quick-add chips */}
-                    {quickAddWorkers.length > 0 && (
-                        <div className="dwb-quickadd">
-                            <span className="dwb-quickadd-label">Dodaj:</span>
-                            {quickAddWorkers.map(w => (
-                                <button key={w.Worker_ID} className="dwb-chip" onClick={() => addWorkerEntry(w.Worker_ID)}>
-                                    <Plus size={13} /> {w.Name}
-                                    {presentWorkerIds.has(w.Worker_ID) && <span className="dwb-chip-dot" title="Prisutan u šihtarici" />}
-                                </button>
-                            ))}
+                    {loading && <div className="dwb-loading"><Loader2 size={16} className="dwb-spin" /> Učitavam…</div>}
+
+                    {entries.length === 0 && !loading ? (
+                        <div className="dwb-empty">
+                            <NotebookPen size={26} />
+                            <p>Knjiga rada za ovaj dan je prazna.</p>
+                            <p className="dwb-empty-hint">Dodaj radnike koji su radili — prečicama ili pretragom ispod.</p>
+                        </div>
+                    ) : entries.length > 0 && (
+                        <div className="dwb-cards-container">
+                            {entries.map(entry => {
+                                const worker = workerLookup.get(entry.workerId);
+                                const rate = worker?.Daily_Rate || 0;
+                                const totalFraction = entry.items.reduce((s, i) => s + i.dayFraction, 0);
+                                return (
+                                    <div className="dwb-card" key={entry.workerId}>
+                                        <div className="dwb-card-header">
+                                            <div className="dwb-card-worker">
+                                                <div className={`dwb-ava ${worker?.Worker_Type === 'Pomoćnik' ? 'helper' : ''}`}>{initialsOf(worker?.Name)}</div>
+                                                <div className="dwb-card-wname">
+                                                    <span className="dwb-wname-text">{worker?.Name || 'Nepoznat radnik'}</span>
+                                                    <span className="dwb-wname-rate">{rate} KM/dan</span>
+                                                </div>
+                                            </div>
+                                            <div className="dwb-card-actions">
+                                                <div className={`dwb-card-total ${totalFraction > 1 ? 'over' : totalFraction === 1 ? 'full' : ''}`}>
+                                                    {daysLabel(totalFraction)}
+                                                </div>
+                                                {editing && (
+                                                    <button className="dwb-x-subtle dwb-x-worker" onClick={() => removeWorkerEntry(entry.workerId)} aria-label="Ukloni radnika"><X size={16} /></button>
+                                                )}
+                                            </div>
+                                        </div>
+
+                                        <div className="dwb-card-body">
+                                            {entry.items.map(item => {
+                                                const meta = itemLookup.get(item.workOrderItemId);
+                                                const amount = Math.round(rate * item.dayFraction);
+                                                return (
+                                                    <div className="dwb-item-row" key={item.workOrderItemId}>
+                                                        <div className="dwb-item-main">
+                                                            <div className="dwb-item-name">{meta?.productName || 'Proizvod nije aktivan'}</div>
+                                                            <div className="dwb-item-sub">
+                                                                {meta && meta.processes.length > 0 ? (
+                                                                    <select className="dwb-proc" value={item.processName || ''} disabled={!editing}
+                                                                        onChange={e => updateItem(entry.workerId, item.workOrderItemId, { processName: e.target.value || undefined })}>
+                                                                        <option value="" disabled hidden>Odaberi proces...</option>
+                                                                        {meta.processes.map(p => <option key={p} value={p}>{p}</option>)}
+                                                                    </select>
+                                                                ) : item.processName ? (
+                                                                    <span className="dwb-proc-none">{item.processName}</span>
+                                                                ) : <span className="dwb-proc-none">—</span>}
+                                                                <span className="dwb-item-wo">· Nalog {meta?.workOrderNumber || ''}</span>
+                                                            </div>
+                                                        </div>
+                                                        <div className="dwb-item-controls">
+                                                            {editing ? (
+                                                                <div className="dwb-frac-modern">
+                                                                    <button className={item.dayFraction === 1 ? 'active' : ''} onClick={() => updateItem(entry.workerId, item.workOrderItemId, { dayFraction: 1 })}>1</button>
+                                                                    <button className={item.dayFraction === 0.5 ? 'active' : ''} onClick={() => updateItem(entry.workerId, item.workOrderItemId, { dayFraction: 0.5 })}>½</button>
+                                                                </div>
+                                                            ) : (
+                                                                <span className="dwb-frac-static">{item.dayFraction === 0.5 ? '½ dana' : '1 dan'}</span>
+                                                            )}
+                                                            <div className="dwb-item-amount">{amount} KM</div>
+                                                            {editing && (
+                                                                <button className="dwb-x-subtle dwb-item-remove" onClick={() => removeItem(entry.workerId, item.workOrderItemId)} aria-label="Ukloni"><X size={15} /></button>
+                                                            )}
+                                                        </div>
+                                                    </div>
+                                                );
+                                            })}
+
+                                            {editing && (
+                                                <div className="dwb-item-add">
+                                                    <SearchableSelect
+                                                        options={productOptions.filter(o => !entry.items.some(i => i.workOrderItemId === o.value))}
+                                                        value="" onChange={v => addItem(entry.workerId, v)} placeholder="+ dodaj proizvod…"
+                                                    />
+                                                </div>
+                                            )}
+                                        </div>
+                                    </div>
+                                );
+                            })}
                         </div>
                     )}
 
-                    {loading && <div className="dwb-loading"><Loader2 size={18} className="dwb-spin" /> Učitavam…</div>}
-
-                    {/* Worker entries */}
-                    <div className="dwb-entries">
-                        {entries.length === 0 && !loading && (
-                            <div className="dwb-empty">
-                                <NotebookPen size={26} />
-                                <p>Knjiga rada za ovaj dan je prazna.</p>
-                                <p className="dwb-empty-hint">Dodaj radnike koji su radili — gornjim prečicama ili pretragom ispod.</p>
+                    {/* Add worker + quick pills */}
+                    {editing && availableWorkerOptions.length > 0 && (
+                        <div className="dwb-addrow">
+                            <div className="dwb-addrow-select">
+                                <UserPlus size={15} />
+                                <SearchableSelect options={availableWorkerOptions} value="" onChange={addWorkerEntry} placeholder="Dodaj radnika…" />
                             </div>
-                        )}
-
-                        {entries.map(entry => {
-                            const worker = workerLookup.get(entry.workerId);
-                            const rate = worker?.Daily_Rate || 0;
-                            const totalFraction = entry.items.reduce((s, i) => s + i.dayFraction, 0);
-                            const initials = (worker?.Name || '?').split(' ').map(s => s[0]).slice(0, 2).join('').toUpperCase();
-                            return (
-                                <div className="dwb-worker-card" key={entry.workerId}>
-                                    <div className="dwb-worker-head">
-                                        <div className={`dwb-avatar ${worker?.Worker_Type === 'Pomoćnik' ? 'is-helper' : ''}`}>{initials}</div>
-                                        <div className="dwb-worker-meta">
-                                            <div className="dwb-worker-name">{worker?.Name || 'Nepoznat radnik'}</div>
-                                            <div className="dwb-worker-sub">dnevnica {rate} KM</div>
-                                        </div>
-                                        <div className={`dwb-day-badge ${totalFraction > 1 ? 'over' : totalFraction === 1 ? 'full' : ''}`}>
-                                            {totalFraction > 1 && <AlertTriangle size={12} />}
-                                            {totalFraction === 1 && <CheckCircle size={12} />}
-                                            {daysLabel(totalFraction)}
-                                        </div>
-                                        <button className="dwb-icon-btn dwb-remove" onClick={() => removeWorkerEntry(entry.workerId)} aria-label="Ukloni radnika"><X size={16} /></button>
-                                    </div>
-
-                                    <div className="dwb-items">
-                                        {entry.items.map(item => {
-                                            const meta = itemLookup.get(item.workOrderItemId);
-                                            const amount = Math.round(rate * item.dayFraction);
-                                            return (
-                                                <div className="dwb-item" key={item.workOrderItemId}>
-                                                    <Box size={15} className="dwb-item-icon" />
-                                                    <div className="dwb-item-main">
-                                                        <div className="dwb-item-name">{meta?.productName || 'Proizvod nije aktivan'}</div>
-                                                        <div className="dwb-item-sub">{meta?.projectName} · Nalog {meta?.workOrderNumber}</div>
-                                                    </div>
-                                                    {meta && meta.processes.length > 0 && (
-                                                        <select className="dwb-process-select" value={item.processName || ''}
-                                                            onChange={e => updateItem(entry.workerId, item.workOrderItemId, { processName: e.target.value || undefined })}>
-                                                            <option value="">— proces —</option>
-                                                            {meta.processes.map(p => <option key={p} value={p}>{p}</option>)}
-                                                        </select>
-                                                    )}
-                                                    <div className="dwb-frac-toggle">
-                                                        <button className={item.dayFraction === 1 ? 'active' : ''} onClick={() => updateItem(entry.workerId, item.workOrderItemId, { dayFraction: 1 })}>cijeli</button>
-                                                        <button className={item.dayFraction === 0.5 ? 'active' : ''} onClick={() => updateItem(entry.workerId, item.workOrderItemId, { dayFraction: 0.5 })}>½</button>
-                                                    </div>
-                                                    <div className="dwb-item-amount">{amount} KM</div>
-                                                    <button className="dwb-icon-btn dwb-remove" onClick={() => removeItem(entry.workerId, item.workOrderItemId)} aria-label="Ukloni proizvod"><X size={14} /></button>
-                                                </div>
-                                            );
-                                        })}
-                                        <div className="dwb-add-item">
-                                            <SearchableSelect
-                                                options={productOptions.filter(o => !entry.items.some(i => i.workOrderItemId === o.value))}
-                                                value="" onChange={v => addItem(entry.workerId, v)} placeholder="+ dodaj proizvod…"
-                                            />
-                                        </div>
-                                    </div>
+                            {quickAddWorkers.length > 0 && (
+                                <div className="dwb-pills">
+                                    {quickAddWorkers.slice(0, 6).map(w => (
+                                        <button key={w.Worker_ID} className="dwb-pill" onClick={() => addWorkerEntry(w.Worker_ID)}>
+                                            <Plus size={12} /> {w.Name}
+                                            {presentWorkerIds.has(w.Worker_ID) && <span className="dwb-pill-dot" title="Prisutan u šihtarici" />}
+                                        </button>
+                                    ))}
                                 </div>
-                            );
-                        })}
+                            )}
+                        </div>
+                    )}
 
-                        {availableWorkerOptions.length > 0 && (
-                            <div className="dwb-add-worker">
-                                <Plus size={15} />
-                                <SearchableSelect options={availableWorkerOptions} value="" onChange={addWorkerEntry} placeholder="Dodaj radnika u knjigu rada…" />
-                            </div>
-                        )}
-                    </div>
-
-                    {productTotals.length > 0 && (
-                        <div className="dwb-rollup">
-                            <div className="dwb-rollup-title">Danas po proizvodu</div>
-                            {productTotals.map((p, idx) => (
-                                <div className="dwb-rollup-row" key={idx}>
-                                    <span className="dwb-rollup-name">{p.name}</span>
-                                    <span className="dwb-rollup-meta">{p.project}</span>
-                                    <span className="dwb-rollup-days">{daysLabel(p.days)}</span>
-                                    <span className="dwb-rollup-amount">{km(p.amount)}</span>
-                                </div>
-                            ))}
+                    {dayTotals.days > 0 && (
+                        <div className="dwb-summary">
+                            <span className="dwb-summary-label">Ukupno danas</span>
+                            <span className="dwb-summary-val"><span className="muted">{daysLabel(dayTotals.days)}</span> · <strong>{km(dayTotals.amount)}</strong></span>
                         </div>
                     )}
                 </>
             ) : (
                 /* ── OVERVIEW ─────────────────────────────────────────────── */
                 <>
-                    <div className="dwb-header">
-                        <div className="dwb-date-nav">
-                            <button className="dwb-icon-btn" onClick={() => shiftPeriod(-1)} aria-label="Prethodni period"><ChevronLeft size={18} /></button>
-                            <div className="dwb-date-meta">
-                                <span className="dwb-date-main">{period.label}</span>
-                                <span className="dwb-date-sub">{stats.recordedDays} evidentiran(ih) dana</span>
+                    <div className="dwb-bar">
+                        <div className="dwb-bar-left">
+                            <button className="dwb-nav" onClick={() => shiftPeriod(-1)} aria-label="Prethodni period"><ChevronLeft size={18} /></button>
+                            <button className="dwb-nav" onClick={() => shiftPeriod(1)} aria-label="Sljedeći period"><ChevronRight size={18} /></button>
+                            <div className="dwb-bar-title">
+                                <div className="dwb-bar-date">{period.label}</div>
+                                <div className="dwb-bar-sub">{stats.recordedDays} evidentiran(ih) dana</div>
                             </div>
-                            <button className="dwb-icon-btn" onClick={() => shiftPeriod(1)} aria-label="Sljedeći period"><ChevronRight size={18} /></button>
                         </div>
                         <div className="dwb-segmented">
                             <button className={periodMode === 'week' ? 'active' : ''} onClick={() => setPeriodMode('week')}>Sedmica</button>
@@ -519,7 +541,6 @@ export default function DailyWorkBookingBoard({ workOrders, workers, workLogs, o
                         </div>
                     </div>
 
-                    {/* Metric cards */}
                     <div className="dwb-metrics">
                         <div className="dwb-metric"><span className="dwb-metric-label">Trošak rada</span><span className="dwb-metric-value">{km(stats.totalCost)}</span></div>
                         <div className="dwb-metric"><span className="dwb-metric-label">Radnih dana</span><span className="dwb-metric-value">{Math.round(stats.totalDays * 100) / 100}</span></div>
@@ -527,7 +548,6 @@ export default function DailyWorkBookingBoard({ workOrders, workers, workLogs, o
                         <div className="dwb-metric"><span className="dwb-metric-label">Prosj. dnevnica</span><span className="dwb-metric-value">{km(stats.avgRate)}</span></div>
                     </div>
 
-                    {/* Calendar strip — gaps visible */}
                     <div className="dwb-cal">
                         {period.days.map(d => {
                             const cost = dayCostMap.get(d) || 0;
@@ -559,7 +579,6 @@ export default function DailyWorkBookingBoard({ workOrders, workers, workLogs, o
                                     </div>
                                 ))}
                             </div>
-
                             <div className="dwb-book">
                                 <div className="dwb-book-title"><Package size={15} /> Po proizvodu</div>
                                 {byProduct.map((p, i) => (

@@ -418,6 +418,12 @@ export interface WorkOrderItem {
     Quantity: number;
     Total_Product_Quantity?: number;  // Total quantity of the product (from project)
 
+    // AD-HOC ZADACI (Razni poslovi) — proizvoljni zadatak koji nije proizvod iz baze
+    Item_Type?: 'product' | 'custom';     // 'custom' = ad-hoc zadatak (izrada paleta, čišćenje...)
+    Linked_Item_ID?: string;              // Ako je zadatak povezan: ID WorkOrderItem-a proizvoda
+    Linked_Product_ID?: string;           // Product_ID povezanog proizvoda
+    Linked_Product_Name?: string;         // Naziv povezanog proizvoda (za prikaz)
+
     // STATUS I DATUMI
     Status: 'Na čekanju' | 'U toku' | 'Završeno';
     Is_Paused?: boolean;          // If true, daily rates won't accrue
@@ -552,8 +558,8 @@ export const WORKER_ROLES = ['Rezač', 'Kantiranje', 'Bušenje', 'Montaža', 'In
 export const WORKER_TYPES = ['Glavni', 'Pomoćnik'] as const;
 export const WORK_ORDER_STATUSES = ['Na čekanju', 'U toku', 'Završeno', 'Otkazano'];
 export const PRODUCTION_STEPS = ['Priprema', 'Sklapanje', 'Farbanje', 'Montaža'];
-export type WorkOrderType = 'Proizvodnja' | 'Montaža';
-export const WORK_ORDER_TYPES: WorkOrderType[] = ['Proizvodnja', 'Montaža'];
+export type WorkOrderType = 'Proizvodnja' | 'Montaža' | 'Zadaci';
+export const WORK_ORDER_TYPES: WorkOrderType[] = ['Proizvodnja', 'Montaža', 'Zadaci'];
 export const MONTAZA_STEPS = ['Transport', 'Montaža', 'Čišćenje', 'Primopredaja'];
 export const ATTENDANCE_STATUSES = ['Prisutan', 'Odsutan', 'Bolovanje', 'Odmor', 'Teren', 'Vikend', 'Praznik'] as const;
 export const PROCESS_STATUSES = ['Na čekanju', 'U toku', 'Odloženo', 'Završeno'] as const;

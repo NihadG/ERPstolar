@@ -52,7 +52,7 @@ export default function WorkOrderExpandedDetail({
 
     // Workers Timeline State
     const [workLogs, setWorkLogs] = useState<WorkLog[]>([]);
-    const [showTimeline, setShowTimeline] = useState(false);
+    const [showTimeline, setShowTimeline] = useState(true);
     const [timelineItem, setTimelineItem] = useState<WorkOrderItem | null>(null);
 
     useEffect(() => {
@@ -607,7 +607,7 @@ export default function WorkOrderExpandedDetail({
                     <span className="material-icons-round" style={{ fontSize: '16px' }}>
                         {showTimeline ? 'expand_less' : 'schedule'}
                     </span>
-                    <span>Trošak rada po proizvodu</span>
+                    <span>Profit po proizvodu (iz dnevnika rada)</span>
                     {workLogs.length > 0 && (
                         <span className="timeline-badge">{workLogs.length} zapisa</span>
                     )}
@@ -623,61 +623,83 @@ export default function WorkOrderExpandedDetail({
                         {localItems.map(item => {
                             const itemLogs = workLogs.filter(wl => wl.Work_Order_Item_ID === item.ID);
                             const laborCost = itemLogs.reduce((sum, wl) => sum + (wl.Daily_Rate || 0), 0);
-                            const workerCount = new Set(itemLogs.map(wl => wl.Worker_ID)).size;
                             const workDays = Math.round(itemLogs.reduce((sum, wl) => sum + (wl.Day_Fraction ?? 1), 0) * 100) / 100;
                             const planned = item.Planned_Labor_Cost || 0;
                             const overBudget = planned > 0 && laborCost > planned;
-                            const fillPct = planned > 0
-                                ? Math.min((laborCost / planned) * 100, 100)
-                                : (laborCost > 0 ? 100 : 0);
-                            const barColor = overBudget ? '#ef4444' : '#10b981';
+
+                            // P&L: cijena − materijal − rad = što je ostalo
+                            const value = ((item as any).Profit_Overrides?.Selling_Price ?? item.Product_Value) || 0;
+                            const material = item.Material_Cost || 0;
+                            const profit = value - material - laborCost;
+                            const profitColor = profit >= 0 ? '#059669' : '#dc2626';
+
+                            // Po radniku (iz dnevnika rada)
+                            const wMap = new Map<string, { name: string; days: number; cost: number }>();
+                            itemLogs.forEach(wl => {
+                                const cur = wMap.get(wl.Worker_ID) || { name: wl.Worker_Name, days: 0, cost: 0 };
+                                cur.days += wl.Day_Fraction ?? 1; cur.cost += wl.Daily_Rate || 0;
+                                wMap.set(wl.Worker_ID, cur);
+                            });
+                            const workersArr = Array.from(wMap.values()).sort((a, b) => b.cost - a.cost);
+                            const fmt = (n: number) => Math.round(n).toLocaleString('hr-HR');
+
                             return (
                                 <button
                                     key={item.ID}
                                     onClick={() => setTimelineItem(item)}
                                     style={{
-                                        display: 'flex', flexDirection: 'column', gap: '8px',
-                                        padding: '10px 14px', borderRadius: '8px',
-                                        border: '1px solid #e2e8f0', background: '#f9fafb',
-                                        cursor: 'pointer', width: '100%', textAlign: 'left',
-                                        transition: 'all 0.15s'
+                                        display: 'flex', flexDirection: 'column', gap: '10px',
+                                        padding: '14px', borderRadius: '10px',
+                                        border: '1px solid #e2e8f0', background: '#ffffff',
+                                        cursor: 'pointer', width: '100%', textAlign: 'left', transition: 'all 0.15s'
                                     }}
-                                    onMouseEnter={e => { e.currentTarget.style.background = '#f0f9ff'; e.currentTarget.style.borderColor = '#93c5fd'; }}
-                                    onMouseLeave={e => { e.currentTarget.style.background = '#f9fafb'; e.currentTarget.style.borderColor = '#e2e8f0'; }}
+                                    onMouseEnter={e => { e.currentTarget.style.borderColor = '#93c5fd'; e.currentTarget.style.background = '#f8fafc'; }}
+                                    onMouseLeave={e => { e.currentTarget.style.borderColor = '#e2e8f0'; e.currentTarget.style.background = '#ffffff'; }}
                                 >
-                                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
-                                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                                            <span className="material-icons-round" style={{ fontSize: '18px', color: '#3b82f6' }}>timeline</span>
-                                            <div>
-                                                <div style={{ fontWeight: 600, fontSize: '13px', color: '#0f172a' }}>
-                                                    {item.Product_Name}
-                                                </div>
-                                                <div style={{ fontSize: '11px', color: '#64748b' }}>
-                                                    {workDays > 0
-                                                        ? `${workDays} ${workDays === 1 ? 'radni dan' : 'radnih dana'} • ${workerCount} radnik(a)`
-                                                        : 'Nema zapisa'}
-                                                </div>
-                                            </div>
-                                        </div>
+                                    {/* Header: naziv + profit */}
+                                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px' }}>
+                                        <div style={{ fontWeight: 600, fontSize: '14px', color: '#0f172a' }}>{item.Product_Name}</div>
                                         <div style={{ textAlign: 'right' }}>
-                                            <div style={{ fontSize: '13px', fontWeight: 600, color: overBudget ? '#ef4444' : '#374151' }}>
-                                                {Math.round(laborCost).toLocaleString('hr-HR')} KM
+                                            <div style={{ fontSize: '15px', fontWeight: 700, color: profitColor }}>
+                                                {profit >= 0 ? '' : '−'}{fmt(Math.abs(profit))} KM
                                             </div>
-                                            {planned > 0 && (
-                                                <div style={{ fontSize: '11px', color: '#94a3b8' }}>
-                                                    plan {Math.round(planned).toLocaleString('hr-HR')} KM
-                                                </div>
-                                            )}
+                                            <div style={{ fontSize: '10px', color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.04em' }}>ostaje</div>
                                         </div>
                                     </div>
-                                    {(planned > 0 || laborCost > 0) && (
-                                        <div style={{ height: '6px', background: '#e5e7eb', borderRadius: '6px', overflow: 'hidden', width: '100%' }}>
-                                            <div style={{ width: `${fillPct}%`, height: '100%', background: barColor, transition: 'width 0.2s' }} />
+
+                                    {/* P&L breakdown: cijena − materijal − rad */}
+                                    <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '6px 10px', fontSize: '12px' }}>
+                                        <span style={{ color: '#475569' }}>Cijena <b style={{ color: '#0f172a' }}>{fmt(value)}</b></span>
+                                        <span style={{ color: '#cbd5e1' }}>−</span>
+                                        <span style={{ color: '#475569' }}>Materijal <b style={{ color: '#0f172a' }}>{fmt(material)}</b></span>
+                                        <span style={{ color: '#cbd5e1' }}>−</span>
+                                        <span style={{ color: '#475569' }}>
+                                            Rad <b style={{ color: overBudget ? '#dc2626' : '#0f172a' }}>{fmt(laborCost)}</b>
+                                            {workDays > 0 && <span style={{ color: '#94a3b8' }}> ({workDays} {workDays === 1 ? 'dan' : 'dana'})</span>}
+                                        </span>
+                                    </div>
+
+                                    {/* Po radniku */}
+                                    {workersArr.length > 0 ? (
+                                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                                            {workersArr.map((w, i) => (
+                                                <span key={i} style={{
+                                                    display: 'inline-flex', alignItems: 'center', gap: '5px',
+                                                    fontSize: '11px', color: '#334155', background: '#f1f5f9',
+                                                    padding: '3px 9px', borderRadius: '999px'
+                                                }}>
+                                                    <span style={{ fontWeight: 600 }}>{w.name}</span>
+                                                    <span style={{ color: '#64748b' }}>{Math.round(w.days * 100) / 100} {w.days === 1 ? 'dan' : 'dana'} · {fmt(w.cost)} KM</span>
+                                                </span>
+                                            ))}
                                         </div>
+                                    ) : (
+                                        <div style={{ fontSize: '11px', color: '#94a3b8' }}>Nema zapisa rada — unesi u Knjizi rada</div>
                                     )}
+
                                     {overBudget && (
-                                        <div style={{ fontSize: '11px', color: '#ef4444', fontWeight: 600 }}>
-                                            prekoračen plan rada za {Math.round(laborCost - planned).toLocaleString('hr-HR')} KM
+                                        <div style={{ fontSize: '11px', color: '#dc2626', fontWeight: 600 }}>
+                                            prekoračen plan rada za {fmt(laborCost - planned)} KM (plan {fmt(planned)} KM)
                                         </div>
                                     )}
                                 </button>

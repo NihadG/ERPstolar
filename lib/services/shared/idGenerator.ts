@@ -62,7 +62,7 @@ export function generateOrderNumber(): string {
  * Format: RN-YYYYMMDD-HHMMSS-RRR (Proizvodnja)
  *         MN-YYYYMMDD-HHMMSS-RRR (Montaža)
  */
-export function generateWorkOrderNumber(type?: 'Proizvodnja' | 'Montaža'): string {
+export function generateWorkOrderNumber(type?: 'Proizvodnja' | 'Montaža' | 'Zadaci'): string {
     const now = new Date();
     const year = now.getFullYear();
     const month = String(now.getMonth() + 1).padStart(2, '0');
@@ -71,6 +71,6 @@ export function generateWorkOrderNumber(type?: 'Proizvodnja' | 'Montaža'): stri
     const minutes = String(now.getMinutes()).padStart(2, '0');
     const seconds = String(now.getSeconds()).padStart(2, '0');
     const random = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
-    const prefix = type === 'Montaža' ? 'MN' : 'RN';
+    const prefix = type === 'Montaža' ? 'MN' : type === 'Zadaci' ? 'ZN' : 'RN';
     return `${prefix}-${year}${month}${day}-${hours}${minutes}${seconds}-${random}`;
 }

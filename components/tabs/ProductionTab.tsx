@@ -13,6 +13,7 @@ import ProfitDashboardModal from '@/components/ui/ProfitDashboardModal';
 
 import PriceEditModal from '@/components/ui/PriceEditModal';
 import AttendanceFixModal from '@/components/ui/AttendanceFixModal';
+import CustomTasksModal from '@/components/ui/CustomTasksModal';
 import { WORK_ORDER_STATUSES, PRODUCTION_STEPS, MONTAZA_STEPS } from '@/lib/types';
 import type { WorkOrderType } from '@/lib/types';
 import MobileWorkOrdersView from './mobile/MobileWorkOrdersView';
@@ -280,6 +281,7 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
 
     // Create Modal State
     const [createModal, setCreateModal] = useState(false);
+    const [tasksModal, setTasksModal] = useState(false);
     const [activeStep, setActiveStep] = useState(0); // 0: Projects, 1: Products, 2: Processes, 3: Details
     const [wizardMode, setWizardMode] = useState<'production' | 'montaza'>('production');
 
@@ -1395,6 +1397,21 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                     >
                         <span className="material-icons-round" style={{ fontSize: '18px' }}>build</span>
                         Montaža
+                    </button>
+                    <button
+                        className="glass-btn"
+                        onClick={() => setTasksModal(true)}
+                        style={{
+                            background: '#7c3aed',
+                            color: 'white',
+                            border: 'none',
+                            fontWeight: 600,
+                            padding: '8px 14px',
+                            whiteSpace: 'nowrap',
+                        }}
+                    >
+                        <span className="material-icons-round" style={{ fontSize: '18px' }}>checklist</span>
+                        Razni poslovi
                     </button>
                 </div>
             </div>
@@ -3161,6 +3178,16 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                     showToast={showToast}
                 />
             )}
+
+            <CustomTasksModal
+                isOpen={tasksModal}
+                onClose={() => setTasksModal(false)}
+                workOrders={workOrders}
+                workers={workers}
+                organizationId={organizationId || ''}
+                onCreated={onRefresh}
+                showToast={showToast}
+            />
         </div >
     );
 }

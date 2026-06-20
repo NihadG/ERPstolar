@@ -3252,7 +3252,7 @@ export async function deleteAluDoorItemsByMaterial(productMaterialId: string): P
 // ============================================
 
 // Collision-safe work order number — delegated to shared/idGenerator.ts
-export function generateWorkOrderNumber(type?: 'Proizvodnja' | 'Montaža'): string {
+export function generateWorkOrderNumber(type?: 'Proizvodnja' | 'Montaža' | 'Zadaci'): string {
     return _generateWorkOrderNumber(type);
 }
 
@@ -3309,7 +3309,7 @@ export async function getWorkOrder(workOrderId: string, organizationId: string):
 }
 
 export async function createWorkOrder(data: {
-    Work_Order_Type?: 'Proizvodnja' | 'Montaža';
+    Work_Order_Type?: 'Proizvodnja' | 'Montaža' | 'Zadaci';
     Production_Steps: string[];
     Due_Date?: string;
     Notes?: string;
@@ -3328,6 +3328,11 @@ export async function createWorkOrder(data: {
         Material_Cost?: number;
         Planned_Labor_Cost?: number;
         Source_Work_Order_ID?: string;
+        Item_Type?: 'product' | 'custom';
+        Linked_Item_ID?: string;
+        Linked_Product_ID?: string;
+        Linked_Product_Name?: string;
+        Assigned_Workers?: { Worker_ID: string; Worker_Name: string; Daily_Rate: number }[];
         Process_Assignments?: Record<string, {
             Worker_ID?: string;
             Worker_Name?: string;
@@ -3408,6 +3413,11 @@ export async function createWorkOrder(data: {
                 Material_Cost: item.Material_Cost ?? 0,
                 Planned_Labor_Cost: item.Planned_Labor_Cost ?? 0,
                 ...(item.Source_Work_Order_ID && { Source_Work_Order_ID: item.Source_Work_Order_ID }),
+                ...(item.Item_Type && { Item_Type: item.Item_Type }),
+                ...(item.Linked_Item_ID && { Linked_Item_ID: item.Linked_Item_ID }),
+                ...(item.Linked_Product_ID && { Linked_Product_ID: item.Linked_Product_ID }),
+                ...(item.Linked_Product_Name && { Linked_Product_Name: item.Linked_Product_Name }),
+                ...(item.Assigned_Workers && item.Assigned_Workers.length > 0 && { Assigned_Workers: item.Assigned_Workers }),
             };
             const itemRef = doc(collection(db, COLLECTIONS.WORK_ORDER_ITEMS));
             batch.set(itemRef, workOrderItem);

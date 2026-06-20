@@ -684,8 +684,35 @@ export async function saveDailyWorkBooking(
         const affected = new Set<string>();
         let logsCreated = 0;
 
-        const allItemIds = Array.from(new Set(entries.flatMap(e => e.items.map(i => i.workOrderItemId))));
-        const itemMap = await fetchWorkOrderItemsByIds(allItemIds, organizationId);
+        // RECALC SAFETY: zabilježi naloge koji su PRIJE imali zapise za ove radnike na ovaj datum,
+        // da ih osvježimo čak i ako rad pređe na drugi proizvod/nalog (inače ostane stari trošak).
+        try {
+            const fs = getDb();
+            for (const e of entries) {
+                const prevQ = query(
+                    collection(fs, 'work_logs'),
+                    where('Worker_ID', '==', e.workerId),
+                    where('Date', '==', date),
+                    where('Organization_ID', '==', organizationId)
+                );
+                const prevSnap = await getDocs(prevQ);
+                prevSnap.docs.forEach(d => { const wo = d.data().Work_Order_ID; if (wo) affected.add(wo); });
+            }
+        } catch (e) { console.warn('saveDailyWorkBooking pre-affected lookup failed:', e); }
+
+        const bookedItemIds = Array.from(new Set(entries.flatMap(e => e.items.map(i => i.workOrderItemId))));
+        let itemMap = await fetchWorkOrderItemsByIds(bookedItemIds, organizationId);
+        // Custom (ad-hoc) zadaci koji su POVEZANI s proizvodom → trošak ide na povezani proizvod.
+        // Dohvati i povezane iteme da bismo zapis upisali na njih.
+        const linkedIds = Array.from(new Set(
+            Array.from(itemMap.values())
+                .filter(it => it.Item_Type === 'custom' && it.Linked_Item_ID)
+                .map(it => it.Linked_Item_ID as string)
+        ));
+        if (linkedIds.length > 0) {
+            const linkedMap = await fetchWorkOrderItemsByIds(linkedIds, organizationId);
+            linkedMap.forEach((v, k) => itemMap.set(k, v));
+        }
 
         for (const entry of entries) {
             const worker = workers.find(w => w.Worker_ID === entry.workerId);
@@ -700,10 +727,21 @@ export async function saveDailyWorkBooking(
             }
 
             for (const item of entry.items) {
-                const woi = itemMap.get(item.workOrderItemId);
-                if (!woi) continue;
+                const booked = itemMap.get(item.workOrderItemId);
+                if (!booked) continue;
                 const frac = item.dayFraction === 0.5 ? 0.5 : 1;
                 const amount = Math.round(dailyRate * frac * 100) / 100;
+
+                // POVEZAN custom zadatak → upiši zapis na povezani proizvod (trošak se dodaje proizvodu),
+                // a naziv zadatka ide u Process_Name. Inače piši na sam booked item.
+                const linked = (booked.Item_Type === 'custom' && booked.Linked_Item_ID)
+                    ? itemMap.get(booked.Linked_Item_ID)
+                    : undefined;
+                const target = linked || booked;
+                const processName = linked
+                    ? booked.Product_Name                       // naziv zadatka kao "proces" na proizvodu
+                    : item.processName;
+
                 const res = await createWorkLog({
                     Worker_ID: entry.workerId,
                     Worker_Name: workerName,
@@ -713,15 +751,15 @@ export async function saveDailyWorkBooking(
                     Booking_Source: 'manual',
                     Is_From_Attendance: false,
                     Hours_Worked: frac === 0.5 ? 4 : 8,
-                    Work_Order_ID: woi.Work_Order_ID,
-                    Work_Order_Item_ID: woi.ID,
-                    Product_ID: woi.Product_ID,
-                    Process_Name: item.processName,
+                    Work_Order_ID: target.Work_Order_ID,
+                    Work_Order_Item_ID: target.ID,
+                    Product_ID: target.Product_ID,
+                    Process_Name: processName,
                     Date: date,
                 }, organizationId);
                 if (res.success) {
                     logsCreated++;
-                    if (woi.Work_Order_ID) affected.add(woi.Work_Order_ID);
+                    if (target.Work_Order_ID) affected.add(target.Work_Order_ID);
                 }
             }
         }
@@ -1843,6 +1881,13 @@ export async function startWorkOrderItem(
         });
 
         await recalculateWorkOrder(workOrderId);
+
+        // Propagiraj status projekta (proizvod u pokrenutom nalogu → projekat "U proizvodnji")
+        const itemData = itemSnap.data();
+        if (itemData?.Project_ID) {
+            try { await syncProjectStatus(itemData.Project_ID, itemData.Organization_ID); }
+            catch (e) { console.warn('startWorkOrderItem: syncProjectStatus failed:', e); }
+        }
     } catch (error) {
         console.error('Error starting item:', error);
         throw error;
@@ -2775,8 +2820,9 @@ export async function syncProjectStatus(projectId: string, organizationId?: stri
         const projectDoc = projectSnap.docs[0];
         const project = projectDoc.data();
 
-        // Skip if project is in early stages or cancelled
-        if (['Nacrt', 'Ponuđeno', 'Otkazano'].includes(project.Status)) {
+        // Skip only cancelled projects — projekti bez ponude (Nacrt/Ponuđeno) i dalje
+        // moraju moći preći u "U proizvodnji" kad im se proizvod nađe u pokrenutom nalogu.
+        if (project.Status === 'Otkazano') {
             return;
         }
 
@@ -2831,6 +2877,26 @@ export async function syncProjectStatus(projectId: string, organizationId?: stri
             console.warn('syncProjectStatus: Error checking montaža WOs:', err);
         }
 
+        // Jak signal: ima li projekat proizvod u POKRENUTOM nalogu ('U toku')?
+        // Tada je projekat "U proizvodnji" bez obzira na ponudu i mikro-status proizvoda.
+        let hasActiveWorkOrder = false;
+        try {
+            const activeWoConstraints = [where('Status', '==', 'U toku')] as any[];
+            if (organizationId) activeWoConstraints.push(where('Organization_ID', '==', organizationId));
+            const activeWoSnap = await getDocs(query(collection(firestore, COLLECTIONS.WORK_ORDERS), ...activeWoConstraints));
+            for (const woDoc of activeWoSnap.docs) {
+                const woData = woDoc.data();
+                const itemsSnap = await getDocs(query(
+                    collection(firestore, COLLECTIONS.WORK_ORDER_ITEMS),
+                    where('Work_Order_ID', '==', woData.Work_Order_ID),
+                    where('Project_ID', '==', projectId)
+                ));
+                if (!itemsSnap.empty) { hasActiveWorkOrder = true; break; }
+            }
+        } catch (err) {
+            console.warn('syncProjectStatus: Error checking active WOs:', err);
+        }
+
         // Statuses
         const waitingStatuses = ['Na čekanju', 'Materijali naručeni', 'Materijali spremni'];
         const montazaActiveStatuses = ['Transport', 'Montaža', 'Čišćenje', 'Primopredaja'];
@@ -2856,11 +2922,13 @@ export async function syncProjectStatus(projectId: string, organizationId?: stri
                 || montazaActiveStatuses.includes(status);
         });
 
+        const inProduction = anyInProduction || hasActiveWorkOrder;
+        const preProduction = ['Nacrt', 'Ponuđeno', 'Odobreno'];
         let newStatus = project.Status;
 
-        if (allComplete && project.Status !== 'Završeno') {
+        if (allComplete && !hasActiveWorkOrder && (project.Status === 'U proizvodnji' || project.Status === 'Odobreno')) {
             newStatus = 'Završeno';
-        } else if (anyInProduction && project.Status === 'Odobreno') {
+        } else if (inProduction && preProduction.includes(project.Status)) {
             newStatus = 'U proizvodnji';
         }
 
