@@ -843,20 +843,25 @@ export default function ProductTimelineModal({
                             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '12px' }}>
                                 {(() => {
                                     const displayLaborCost = stats.totalLaborCost;
-                                    // Konzistentno sa karticom u nalogu: cijena − materijal − rad = ostaje
-                                    const displayProfit = profit ?? (sellingPrice - (materialCost || 0) - displayLaborCost);
+                                    // Usluge i transport su troškovi (isto kao u Projekti tabu)
+                                    const servicesTotalVal = (workOrderItem as any)?.Services_Total || 0;
+                                    const transportShareVal = (workOrderItem as any)?.Profit_Overrides?.Transport_Share ?? (workOrderItem as any)?.Transport_Share ?? 0;
+                                    const displayProfit = profit ?? (sellingPrice - (materialCost || 0) - displayLaborCost - servicesTotalVal - transportShareVal);
                                     const displayMargin = profitMargin ?? (sellingPrice > 0 ? (displayProfit / sellingPrice) * 100 : 0);
-                                    return [
+                                    const cards: { label: string; value: number; icon: any; color: string }[] = [
                                         { label: 'Prodajna', value: sellingPrice, icon: DollarSign, color: '#0f172a' },
                                         { label: 'Materijal', value: materialCost || 0, icon: Package, color: '#dc2626' },
                                         { label: 'Rad', value: displayLaborCost, icon: User, color: '#ea580c' },
-                                        { label: 'Profit', value: displayProfit, icon: displayMargin >= 15 ? TrendingUp : TrendingDown, color: getProfitColor(displayMargin) }
                                     ];
-                                })().map((item, i) => (
+                                    if (servicesTotalVal > 0) cards.push({ label: 'Usluge', value: servicesTotalVal, icon: Package, color: '#7c3aed' });
+                                    if (transportShareVal > 0) cards.push({ label: 'Transport', value: transportShareVal, icon: Package, color: '#0891b2' });
+                                    cards.push({ label: 'Profit', value: displayProfit, icon: displayMargin >= 15 ? TrendingUp : TrendingDown, color: getProfitColor(displayMargin) });
+                                    return cards;
+                                })().map((item, i, arr) => (
                                     <div key={i} style={{
                                         display: 'flex', alignItems: 'center', gap: '10px',
                                         padding: '12px', background: 'white', borderRadius: '12px',
-                                        border: `1px solid ${i === 3 ? item.color + '40' : '#e5e7eb'}`
+                                        border: `1px solid ${i === arr.length - 1 ? item.color + '40' : '#e5e7eb'}`
                                     }}>
                                         <item.icon size={20} style={{ color: item.color, flexShrink: 0 }} />
                                         <div style={{ minWidth: 0 }}>

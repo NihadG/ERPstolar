@@ -761,6 +761,96 @@ export async function saveDailyWorkBooking(
 }
 
 /**
+ * BRZI RETROSPEKTIVNI UNOS — za zaboravljene naloge.
+ * Za svaki radni dan u rasponu, dnevnica svakog radnika se RAVNOMJERNO podijeli na izabrane proizvode
+ * (Day_Fraction = 1/N). Total rada = radnici × dani × dnevnica. Preskače dane gdje već postoji zapis
+ * (workLogExists) → bezbjedno za ponovni unos. Pojedinačno se kasnije fino podešava u timeline-u proizvoda.
+ */
+export async function bulkBookWorkOrderLabor(
+    workOrderId: string,
+    workerIds: string[],
+    itemIds: string[],
+    dateFrom: string,
+    dateTo: string,
+    skipWeekends: boolean,
+    organizationId: string
+): Promise<{ success: boolean; logsCreated: number; message: string }> {
+    if (!organizationId || !workOrderId || workerIds.length === 0 || itemIds.length === 0 || !dateFrom || !dateTo) {
+        return { success: false, logsCreated: 0, message: 'Nedostaju parametri (radnici, proizvodi, raspon)' };
+    }
+    try {
+        const workers = await getWorkers(organizationId);
+        const itemMap = await fetchWorkOrderItemsByIds(itemIds, organizationId);
+        const split = itemIds.length;
+        let logsCreated = 0;
+
+        const start = new Date(dateFrom + 'T00:00:00');
+        const end = new Date(dateTo + 'T00:00:00');
+        if (start > end) return { success: false, logsCreated: 0, message: 'Datum "od" je poslije "do"' };
+
+        const fs = getDb();
+        let skippedAbsent = 0;
+
+        for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+            const dow = d.getDay();
+            if (skipWeekends && (dow === 0 || dow === 6)) continue;
+            const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
+            // ŠIHTARICA: radnik označen odsutnim tog dana (ne Prisutan/Teren) → bez dnevnice
+            const absentThatDay = new Set<string>();
+            try {
+                const attSnap = await getDocs(query(
+                    collection(fs, COLLECTIONS.WORKER_ATTENDANCE),
+                    where('Date', '==', dateStr),
+                    where('Organization_ID', '==', organizationId)
+                ));
+                attSnap.docs.forEach(doc => {
+                    const a = doc.data() as WorkerAttendance;
+                    if (a.Status && a.Status !== 'Prisutan' && a.Status !== 'Teren') absentThatDay.add(a.Worker_ID);
+                });
+            } catch (e) { console.warn('bulk attendance lookup failed for', dateStr, e); }
+
+            for (const wid of workerIds) {
+                if (absentThatDay.has(wid)) { skippedAbsent++; continue; }  // odsutan u šihtarici
+                const w = workers.find(x => x.Worker_ID === wid);
+                const rate = w?.Daily_Rate || 0;
+                const perItemRate = Math.round((rate / split) * 100) / 100;
+                for (const itemId of itemIds) {
+                    const woi = itemMap.get(itemId);
+                    if (!woi) continue;
+                    const exists = await workLogExists(wid, itemId, dateStr, organizationId);
+                    if (exists) continue;  // već ima zapis za taj dan/proizvod/radnika — preskoči
+                    const res = await createWorkLog({
+                        Worker_ID: wid,
+                        Worker_Name: w?.Name || 'Nepoznat',
+                        Daily_Rate: perItemRate,
+                        Original_Daily_Rate: rate,
+                        Day_Fraction: Math.round((1 / split) * 100) / 100,
+                        Booking_Source: 'manual',
+                        Is_From_Attendance: false,
+                        Hours_Worked: 8,
+                        Work_Order_ID: woi.Work_Order_ID,
+                        Work_Order_Item_ID: woi.ID,
+                        Product_ID: woi.Product_ID,
+                        Date: dateStr,
+                    }, organizationId);
+                    if (res.success) logsCreated++;
+                }
+            }
+        }
+
+        await recalculateWorkOrder(workOrderId);
+        const msg = skippedAbsent > 0
+            ? `Dodano ${logsCreated} zapisa rada · ${skippedAbsent} dan(a) preskočeno (radnik odsutan u šihtarici)`
+            : `Dodano ${logsCreated} zapisa rada`;
+        return { success: true, logsCreated, message: msg };
+    } catch (error) {
+        console.error('bulkBookWorkOrderLabor error:', error);
+        return { success: false, logsCreated: 0, message: 'Greška pri brzom unosu rada' };
+    }
+}
+
+/**
  * Pročitaj postojeću knjigu rada za dan (grupisano po radniku) — za prikaz/uređivanje.
  */
 export async function getDailyWorkBooking(date: string, organizationId: string): Promise<DailyBookingEntryView[]> {
@@ -2455,6 +2545,44 @@ export async function recalculateWorkOrder(workOrderId: string): Promise<void> {
                     }
                 } catch (backfillErr) {
                     console.warn('Product_Value backfill failed (non-critical):', backfillErr);
+                }
+            }
+
+            // BACKFILL: Services_Total (usluge = trošak) iz ponude ako nije postavljeno — one-time self-healing
+            if ((item as any).Services_Total === undefined && item.Product_ID && item.Project_ID && workOrder.Organization_ID) {
+                try {
+                    const offSnap = await getDocs(query(
+                        collection(firestore, COLLECTIONS.OFFERS),
+                        where('Project_ID', '==', item.Project_ID),
+                        where('Status', '==', 'Prihvaćeno'),
+                        where('Organization_ID', '==', workOrder.Organization_ID)
+                    ));
+                    if (!offSnap.empty) {
+                        const offerId = offSnap.docs[0].data().Offer_ID;
+                        const opSnap = await getDocs(query(
+                            collection(firestore, COLLECTIONS.OFFER_PRODUCTS),
+                            where('Offer_ID', '==', offerId),
+                            where('Product_ID', '==', item.Product_ID),
+                            where('Organization_ID', '==', workOrder.Organization_ID)
+                        ));
+                        if (!opSnap.empty) {
+                            const opId = opSnap.docs[0].data().ID;
+                            let services = 0;
+                            if (opId) {
+                                const exSnap = await getDocs(query(
+                                    collection(firestore, 'offer_extras'),
+                                    where('Offer_Product_ID', '==', opId)
+                                ));
+                                services = exSnap.docs.reduce((s, d) => s + (d.data().Total || 0), 0);
+                            }
+                            const itemRef = doc(firestore, COLLECTIONS.WORK_ORDER_ITEMS, item.ID);
+                            await updateDoc(itemRef, { Services_Total: services });
+                            (item as any).Services_Total = services;  // za tekuću agregaciju
+                            console.log(`Backfilled Services_Total=${services} for item ${item.Product_Name}`);
+                        }
+                    }
+                } catch (svcErr) {
+                    console.warn('Services_Total backfill failed (non-critical):', svcErr);
                 }
             }
 

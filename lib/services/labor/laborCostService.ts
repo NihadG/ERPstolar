@@ -144,6 +144,21 @@ export async function suggestDailyBooking(
     return _suggest(date, organizationId);
 }
 
+export async function bulkBookWorkOrderLabor(
+    workOrderId: string,
+    workerIds: string[],
+    itemIds: string[],
+    dateFrom: string,
+    dateTo: string,
+    skipWeekends: boolean,
+    organizationId: string
+): Promise<{ success: boolean; logsCreated: number; message: string }> {
+    const { bulkBookWorkOrderLabor: _bulk } = await import('../../attendance');
+    const result = await _bulk(workOrderId, workerIds, itemIds, dateFrom, dateTo, skipWeekends, organizationId);
+    if (result.success) eventBus.emit('workOrder:recalculated', { workOrderId, organizationId });
+    return result;
+}
+
 // ============================================
 // RECALCULATION
 // ============================================

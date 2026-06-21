@@ -1449,15 +1449,18 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                                 // Calculate project profit
                                 let projectProfit = 0;
                                 let projectSellingTotal = 0;
+                                let totalServicesCost = 0;
                                 let hasAnyProfit = false;
                                 (project.products || []).forEach(product => {
                                     let sellingPrice: number | undefined;
                                     let originalTransport = 0;
+                                    let originalServices = 0;
                                     const acceptedOffers = offers.filter(o => o.Status === 'Prihvaćeno');
                                     for (const offer of acceptedOffers) {
                                         const offerProduct = (offer.products || []).find(op => op.Product_ID === product.Product_ID);
                                         if (offerProduct) {
                                             sellingPrice = offerProduct.Selling_Price || offerProduct.Total_Price;
+                                            originalServices = ((offerProduct as any).extras || []).reduce((s: number, e: any) => s + (e.Total || 0), 0);
                                             if (offer && sellingPrice) {
                                                 const offerSubtotal = offer.Subtotal || 0;
                                                 if (offerSubtotal > 0) {
@@ -1480,7 +1483,8 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                                     const woSellingPrice = woItem?.Product_Value || 0;
                                     const finalSellingPrice = woItem?.Profit_Overrides?.Selling_Price ?? (woSellingPrice > 0 ? woSellingPrice : sellingPrice);
                                     const transportShare = woItem?.Profit_Overrides?.Transport_Share ?? originalTransport;
-                                    const servicesTotal = woItem?.Services_Total || 0;
+                                    const servicesTotal = woItem?.Services_Total || originalServices;
+                                    totalServicesCost += servicesTotal;
                                     if (!woItem || !finalSellingPrice || finalSellingPrice <= 0) return;
                                     if (woItem.Status !== 'U toku' && woItem.Status !== 'Završeno') return;
                                     const actualMaterialCost = (product.materials || []).reduce((sum, m) => sum + (m.Total_Price || 0), 0);
@@ -1516,10 +1520,10 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                                                         <span className="material-icons-round">inventory_2</span>
                                                         {totalProducts} {totalProducts === 1 ? 'proizvod' : 'proizvoda'}
                                                     </span>
-                                                    {totalMaterialCost > 0 && (
+                                                    {(totalMaterialCost + totalServicesCost) > 0 && (
                                                         <span className="info-chip chip-cost">
                                                             <span className="material-icons-round">payments</span>
-                                                            {totalMaterialCost.toLocaleString('hr-HR')} KM
+                                                            {(totalMaterialCost + totalServicesCost).toLocaleString('hr-HR')} KM
                                                         </span>
                                                     )}
                                                     {hasAnyProfit && (

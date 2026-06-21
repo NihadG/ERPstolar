@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Calendar, Play, Pause, CheckCircle, Clock, Edit2, AlertTriangle, NotebookPen, Printer, Trash2 } from 'lucide-react';
+import { Calendar, Play, Pause, CheckCircle, Clock, Edit2, AlertTriangle, NotebookPen, Printer, Trash2, History } from 'lucide-react';
 import { useData } from '@/context/DataContext';
 import {
     checkMissingAttendanceHistory,
@@ -12,6 +12,7 @@ import {
 } from '@/lib/services';
 import type { WorkOrder, Worker, WorkOrderItem, WorkLog } from '@/lib/types';
 import ProductTimelineModal from './ProductTimelineModal';
+import BulkBookingModal from './BulkBookingModal';
 
 interface WorkOrderExpandedDetailProps {
     workOrder: WorkOrder;
@@ -44,6 +45,7 @@ export default function WorkOrderExpandedDetail({
     // Work logs (izvor profita po proizvodu — iz dnevnika rada)
     const [workLogs, setWorkLogs] = useState<WorkLog[]>([]);
     const [timelineItem, setTimelineItem] = useState<WorkOrderItem | null>(null);
+    const [bulkOpen, setBulkOpen] = useState(false);
 
     useEffect(() => {
         if (workOrder?.Work_Order_ID && organizationId && workOrder.Started_At) {
@@ -328,10 +330,13 @@ export default function WorkOrderExpandedDetail({
                             const planned = item.Planned_Labor_Cost || 0;
                             const overBudget = planned > 0 && laborCost > planned;
 
-                            // P&L: cijena − materijal − rad = što je ostalo
+                            // P&L: cijena − materijal − rad − usluge − transport = što je ostalo
+                            // (usluge i transport su troškovi — isto kao u Projekti tabu)
                             const value = ((item as any).Profit_Overrides?.Selling_Price ?? item.Product_Value) || 0;
                             const material = item.Material_Cost || 0;
-                            const profit = value - material - laborCost;
+                            const services = (item as any).Services_Total || 0;
+                            const transport = (item as any).Profit_Overrides?.Transport_Share ?? (item as any).Transport_Share ?? 0;
+                            const profit = value - material - laborCost - services - transport;
                             const profitColor = profit >= 0 ? '#059669' : '#dc2626';
 
                             // Po radniku (iz dnevnika rada)
@@ -397,6 +402,14 @@ export default function WorkOrderExpandedDetail({
                                             Rad <b style={{ color: overBudget ? '#dc2626' : '#0f172a' }}>{fmt(laborCost)}</b>
                                             {workDays > 0 && <span style={{ color: '#94a3b8' }}> ({workDays} {workDays === 1 ? 'dan' : 'dana'})</span>}
                                         </span>
+                                        {services > 0 && <>
+                                            <span style={{ color: '#cbd5e1' }}>−</span>
+                                            <span style={{ color: '#475569' }}>Usluge <b style={{ color: '#0f172a' }}>{fmt(services)}</b></span>
+                                        </>}
+                                        {transport > 0 && <>
+                                            <span style={{ color: '#cbd5e1' }}>−</span>
+                                            <span style={{ color: '#475569' }}>Transport <b style={{ color: '#0f172a' }}>{fmt(transport)}</b></span>
+                                        </>}
                                     </div>
 
                                     {/* Po radniku */}
@@ -441,6 +454,9 @@ export default function WorkOrderExpandedDetail({
                     }}>
                         <NotebookPen size={15} /> Evidentiraj rad
                     </button>
+                    <button className="wo-act" onClick={() => setBulkOpen(true)}>
+                        <History size={15} /> Brzi unos (period)
+                    </button>
                     <button className="wo-act" onClick={() => onPrint(workOrder)}>
                         <Printer size={15} /> Printaj
                     </button>
@@ -449,6 +465,19 @@ export default function WorkOrderExpandedDetail({
                     </button>
                 </div>
             </div>
+
+            {/* Brzi retrospektivni unos rada za cijeli nalog */}
+            {bulkOpen && (
+                <BulkBookingModal
+                    isOpen={true}
+                    onClose={() => setBulkOpen(false)}
+                    workOrder={workOrder}
+                    workers={workers}
+                    organizationId={organizationId || ''}
+                    onDone={(...c) => onRefresh?.(...c)}
+                    showToast={showToast || (() => { })}
+                />
+            )}
 
             {/* ProductTimelineModal for selected item */}
             {timelineItem && (
