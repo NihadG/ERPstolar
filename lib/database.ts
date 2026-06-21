@@ -5043,6 +5043,7 @@ export async function createWorkLog(data: {
     Product_ID: string;
     SubTask_ID?: string;
     Process_Name?: string;
+    Process_Tags?: string[];
     Hours_Worked?: number;
     Is_From_Attendance?: boolean;
     Original_Daily_Rate?: number;
@@ -5074,6 +5075,7 @@ export async function createWorkLog(data: {
             Product_ID: data.Product_ID,
             SubTask_ID: data.SubTask_ID,
             Process_Name: data.Process_Name,
+            Process_Tags: data.Process_Tags,
             Is_From_Attendance: data.Is_From_Attendance ?? false,
             Original_Daily_Rate: data.Original_Daily_Rate,
             Split_Factor: data.Split_Factor,

@@ -177,6 +177,16 @@ export default function ProductTimelineModal({
     const [newDayDate, setNewDayDate] = useState('');
     const [extraDates, setExtraDates] = useState<Set<string>>(new Set());
 
+    // Opcioni hronološki procesi po danu (iz Process_Tags na work logovima — ne utiče na trošak)
+    const processByDate = useMemo(() => {
+        const m: Record<string, string[]> = {};
+        workLogs.forEach(l => {
+            const tags = (l as any).Process_Tags as string[] | undefined;
+            if (tags && tags.length) m[l.Date] = Array.from(new Set([...(m[l.Date] || []), ...tags]));
+        });
+        return m;
+    }, [workLogs]);
+
     const startTimelineEdit = () => {
         // Clone work logs into editable state
         const logs: EditedLogEntry[] = workLogs.map((wl, i) => ({
@@ -491,12 +501,14 @@ export default function ProductTimelineModal({
             const dayLogs = workLogsByDate.get(dateStr) || [];
 
             // Determine day type
+            // VAŽNO: zapis rada (trošak) UVIJEK znači radni dan — i ako je dan u periodu pauze.
+            // Trošak = suma work logova; pauza se prikazuje samo za dane BEZ zabilježenog rada.
             let dayType: DayType;
             if (isFuture) dayType = 'future';
-            else if (isPaused) dayType = 'paused';
+            else if (dayLogs.length > 0) dayType = 'working';
             else if (isHoliday) dayType = 'holiday';
             else if (isWeekend) dayType = 'weekend';
-            else if (dayLogs.length > 0) dayType = 'working';
+            else if (isPaused) dayType = 'paused';
             else dayType = 'no_work';
 
             // Build entries for this day
@@ -574,9 +586,9 @@ export default function ProductTimelineModal({
         return days;
     }, [workOrderItem, workLogs, workLogsByDate, holidays, isPausedOnDate, assignedWorkerIds, attendanceMap, pausePeriods, materialEvents, extraDates]);
 
-    // Summary stats
+    // Summary stats — dani se ne preklapaju (svaki dan je tačno jednog tipa)
     const stats = useMemo(() => {
-        const workingDays = timeline.filter(d => d.entries.some(e => e.type === 'worker')).length;
+        const workingDays = timeline.filter(d => d.dayType === 'working').length;
         const pausedDays = timeline.filter(d => d.dayType === 'paused').length;
         const totalDays = timeline.filter(d => d.dayType !== 'future').length;
         const totalLaborCost = timeline.reduce((sum, d) => sum + d.dailyLaborCost, 0);
@@ -831,9 +843,8 @@ export default function ProductTimelineModal({
                             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '12px' }}>
                                 {(() => {
                                     const displayLaborCost = stats.totalLaborCost;
-                                    const transportShareVal = costBreakdown?.transportShare || workOrderItem?.Transport_Share || 0;
-                                    const servicesTotalVal = (workOrderItem as any)?.Services_Total || 0;
-                                    const displayProfit = profit ?? (sellingPrice - (materialCost || 0) - displayLaborCost - transportShareVal - servicesTotalVal);
+                                    // Konzistentno sa karticom u nalogu: cijena − materijal − rad = ostaje
+                                    const displayProfit = profit ?? (sellingPrice - (materialCost || 0) - displayLaborCost);
                                     const displayMargin = profitMargin ?? (sellingPrice > 0 ? (displayProfit / sellingPrice) * 100 : 0);
                                     return [
                                         { label: 'Prodajna', value: sellingPrice, icon: DollarSign, color: '#0f172a' },
@@ -1033,6 +1044,14 @@ export default function ProductTimelineModal({
                                                     {day.dayType === 'no_work' && 'Bez rada'}
                                                     {day.dayType === 'future' && 'Budući dan'}
                                                 </div>
+                                                {/* Procesi tog dana (opciono, hronološki) */}
+                                                {(processByDate[day.date]?.length ?? 0) > 0 && (
+                                                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginTop: '4px' }}>
+                                                        {processByDate[day.date].map(proc => (
+                                                            <span key={proc} style={{ fontSize: '10px', fontWeight: 600, color: '#6d28d9', background: '#f3f0ff', padding: '2px 8px', borderRadius: '999px' }}>{proc}</span>
+                                                        ))}
+                                                    </div>
+                                                )}
                                             </div>
                                         </div>
 

@@ -502,23 +502,16 @@ export async function markAttendanceAndRecalculate(
         const firestore = getDb();
 
         // ═══════════════════════════════════════════════════════════════
-        // REACTIVE PATTERN: DELETE-BEFORE-CREATE
-        // 
-        // ALWAYS delete existing work logs first, then create fresh ones.
-        // This handles ALL status transition scenarios:
-        //   Prisutan → Teren:  old production logs deleted, montaža logs created
-        //   Teren → Prisutan:  old montaža logs deleted, production logs created
-        //   Prisutan → Odsutan: all logs deleted
-        //   Odsutan → Prisutan: fresh production logs created
-        //
-        // This is the standard ERP reconciliation pattern — idempotent
-        // and always produces correct results regardless of previous state.
+        // MODEL: Radna knjiga = JEDINI izvor dnevnica. Šihtarica je POTVRDA.
+        //   - Prisutan / Teren  → ne diramo dnevnice (Radna knjiga vlada).
+        //   - Odsutan/Bolovanje/Odmor/Vikend/Praznik → dnevnice tog dana se NE računaju
+        //     → brišemo work logove tog radnika za taj dan.
+        // Šihtarica VIŠE NE kreira dnevnice automatski.
         // ═══════════════════════════════════════════════════════════════
+        const PRESENT_STATUSES = ['Prisutan', 'Teren'];
+        const isAbsent = attendance.Status != null && !PRESENT_STATUSES.includes(attendance.Status);
 
-        // STEP 1: Find which WOs had logs BEFORE deletion (for recalculation later)
-        // Also detect MANUAL bookings (Dnevna knjiga rada) — those are the source of truth
-        // and must NOT be overwritten by the auto-split pipeline.
-        let hasManualBooking = false;
+        // Pronađi naloge koji imaju dnevnice za ovog radnika/datum (za recalc)
         try {
             const existingLogsQ = query(
                 collection(firestore, 'work_logs'),
@@ -528,60 +521,28 @@ export async function markAttendanceAndRecalculate(
             );
             const existingLogsSnap = await getDocs(existingLogsQ);
             existingLogsSnap.docs.forEach(d => {
-                const data = d.data();
-                if (data.Booking_Source === 'manual') hasManualBooking = true;
-                const woId = data.Work_Order_ID;
+                const woId = d.data().Work_Order_ID;
                 if (woId) affectedWorkOrderIds.add(woId);
             });
         } catch (err) {
-            console.warn('Pre-deletion WO lookup failed:', err);
+            console.warn('Attendance WO lookup failed:', err);
         }
 
-        // GUARD: Ručni booking postoji → on vlada danom. Prisutnost je već spremljena;
-        // ne diramo work logove (ni brisanje ni auto-kreiranje).
-        if (hasManualBooking) {
-            console.log(`[ATTENDANCE] Ručni booking postoji za ${attendance.Worker_Name} na ${attendance.Date} — preskačem auto work logove.`);
-            return { success: true, affectedWorkOrders: [], workLogsCreated: 0, workLogsDeleted: 0 };
-        }
-
-        // STEP 2: DELETE all existing work logs for this worker+date (clean slate)
-        try {
-            const cleanupResult = await deleteWorkLogsForWorkerOnDate(
-                attendance.Worker_ID,
-                attendance.Date,
-                attendance.Organization_ID
-            );
-            workLogsDeleted = cleanupResult.deleted;
-            if (workLogsDeleted > 0) {
-                console.log(`[ATTENDANCE] Cleaned ${workLogsDeleted} old work logs for ${attendance.Worker_Name} on ${attendance.Date}`);
+        // ODSUTAN → obriši dnevnice tog dana (ne računaju se). PRISUTAN → ne diramo.
+        if (isAbsent) {
+            try {
+                const cleanupResult = await deleteWorkLogsForWorkerOnDate(
+                    attendance.Worker_ID,
+                    attendance.Date,
+                    attendance.Organization_ID
+                );
+                workLogsDeleted = cleanupResult.deleted;
+                if (workLogsDeleted > 0) {
+                    console.log(`[ATTENDANCE] ${attendance.Worker_Name} ${attendance.Status} na ${attendance.Date} — obrisano ${workLogsDeleted} dnevnica (ne računaju se).`);
+                }
+            } catch (deleteError) {
+                console.error('Work log cleanup on absence failed:', deleteError);
             }
-        } catch (deleteError) {
-            console.error('Work log cleanup during attendance change failed:', deleteError);
-        }
-
-        // STEP 3: CREATE fresh work logs based on current status
-        if (attendance.Status === 'Prisutan' || attendance.Status === 'Teren') {
-            const workers = await getWorkers(attendance.Organization_ID);
-            const worker = workers.find(w => w.Worker_ID === attendance.Worker_ID);
-            const dailyRate = worker?.Daily_Rate || 0;
-            const workerName = attendance.Worker_Name || worker?.Name || 'Unknown';
-
-            // CREATE work logs with WO type filter:
-            //   Prisutan → ONLY on Proizvodnja orders (factory work)
-            //   Teren    → ONLY on Montaža orders (field work)
-            const result = await createWorkLogsForAttendance(
-                attendance.Worker_ID,
-                workerName,
-                dailyRate,
-                attendance.Date,
-                attendance.Organization_ID,
-                attendance.Status // Pass status to filter by WO type
-            );
-
-            workLogsCreated = result.created;
-            result.affectedWorkOrderIds.forEach(id => affectedWorkOrderIds.add(id));
-
-            console.log(`[ATTENDANCE] ${workerName}: ${attendance.Status} on ${attendance.Date}. Created: ${result.created}, Skipped: ${result.skipped}`);
         }
 
         // 4. RECALCULATE affected work orders so profit/labor cost stays fresh
@@ -620,7 +581,7 @@ export async function markAttendanceAndRecalculate(
 export interface DailyBookingItemInput {
     workOrderItemId: string;
     dayFraction: number;        // 1 (cijeli) ili 0.5 (pola)
-    processName?: string;       // opcioni tag procesa
+    processes?: string[];       // opcioni procesi koje je radnik radio (ne utiče na trošak)
 }
 export interface DailyBookingEntryInput {
     workerId: string;
@@ -633,7 +594,7 @@ export interface DailyBookingItemView {
     productName: string;
     projectName: string;
     dayFraction: number;
-    processName?: string;
+    processes?: string[];
     amount: number;             // KM koje su pale na ovaj proizvod (Daily_Rate zapisa)
 }
 export interface DailyBookingEntryView {
@@ -683,6 +644,22 @@ export async function saveDailyWorkBooking(
         const workers = await getWorkers(organizationId);
         const affected = new Set<string>();
         let logsCreated = 0;
+        let skippedAbsent = 0;
+
+        // POTVRDA IZ ŠIHTARICE: radnik označen odsutnim (ne Prisutan/Teren) tog dana → dnevnica se NE računa
+        const absentWorkerIds = new Set<string>();
+        try {
+            const fs = getDb();
+            const attSnap = await getDocs(query(
+                collection(fs, COLLECTIONS.WORKER_ATTENDANCE),
+                where('Date', '==', date),
+                where('Organization_ID', '==', organizationId)
+            ));
+            attSnap.docs.forEach(d => {
+                const a = d.data() as WorkerAttendance;
+                if (a.Status && a.Status !== 'Prisutan' && a.Status !== 'Teren') absentWorkerIds.add(a.Worker_ID);
+            });
+        } catch (e) { console.warn('saveDailyWorkBooking attendance lookup failed:', e); }
 
         // RECALC SAFETY: zabilježi naloge koji su PRIJE imali zapise za ove radnike na ovaj datum,
         // da ih osvježimo čak i ako rad pređe na drugi proizvod/nalog (inače ostane stari trošak).
@@ -726,6 +703,12 @@ export async function saveDailyWorkBooking(
                 console.warn('saveDailyWorkBooking cleanup failed:', e);
             }
 
+            // POTVRDA: ako je radnik tog dana označen odsutnim u šihtarici → dnevnica se ne računa (preskoči)
+            if (absentWorkerIds.has(entry.workerId) && entry.items.length > 0) {
+                skippedAbsent++;
+                continue;
+            }
+
             for (const item of entry.items) {
                 const booked = itemMap.get(item.workOrderItemId);
                 if (!booked) continue;
@@ -738,9 +721,8 @@ export async function saveDailyWorkBooking(
                     ? itemMap.get(booked.Linked_Item_ID)
                     : undefined;
                 const target = linked || booked;
-                const processName = linked
-                    ? booked.Product_Name                       // naziv zadatka kao "proces" na proizvodu
-                    : item.processName;
+                const processName = linked ? booked.Product_Name : undefined;  // naziv zadatka kao "proces" na proizvodu
+                const processTags = Array.from(new Set((item.processes || []).map(p => p.trim()).filter(Boolean)));
 
                 const res = await createWorkLog({
                     Worker_ID: entry.workerId,
@@ -755,6 +737,7 @@ export async function saveDailyWorkBooking(
                     Work_Order_Item_ID: target.ID,
                     Product_ID: target.Product_ID,
                     Process_Name: processName,
+                    Process_Tags: processTags.length > 0 ? processTags : undefined,
                     Date: date,
                 }, organizationId);
                 if (res.success) {
@@ -767,7 +750,10 @@ export async function saveDailyWorkBooking(
         const affectedList = Array.from(affected);
         await Promise.all(affectedList.map(id => recalculateWorkOrder(id).catch(err => console.warn('recalc failed', id, err))));
 
-        return { success: true, logsCreated, affectedWorkOrders: affectedList, message: `Spremljeno ${logsCreated} zapisa rada` };
+        const msg = skippedAbsent > 0
+            ? `Spremljeno ${logsCreated} zapisa rada · ${skippedAbsent} radnik(a) preskočen(o) (označen odsutan u šihtarici)`
+            : `Spremljeno ${logsCreated} zapisa rada`;
+        return { success: true, logsCreated, affectedWorkOrders: affectedList, message: msg };
     } catch (error) {
         console.error('saveDailyWorkBooking error:', error);
         return { success: false, logsCreated: 0, affectedWorkOrders: [], message: 'Greška pri spremanju knjige rada' };
@@ -816,7 +802,7 @@ export async function getDailyWorkBooking(date: string, organizationId: string):
                 productName: woi?.Product_Name ?? '',
                 projectName: woi?.Project_Name ?? '',
                 dayFraction: log.Day_Fraction ?? 1,
-                processName: log.Process_Name,
+                processes: log.Process_Tags ?? [],
                 amount: log.Daily_Rate,
             });
         }
@@ -888,7 +874,7 @@ export async function suggestDailyBooking(date: string, organizationId: string):
                     productName: woi.Product_Name ?? '',
                     projectName: woi.Project_Name ?? '',
                     dayFraction: frac,
-                    processName: log.Process_Name,
+                    processes: log.Process_Tags ?? [],
                     amount: Math.round(dailyRate * frac * 100) / 100,
                 });
             }
@@ -3686,65 +3672,8 @@ export async function syncAllProjectData(
             }
         }
 
-        // Get active items (not paused)
-        const activeItems = (wo.items || []).filter(item => !item.Is_Paused);
-        if (activeItems.length === 0) continue;
-
-        // Check if ANY item in this WO has explicit worker assignments
-        const hasAnyAssignment = activeItems.some(it =>
-            ((it.Assigned_Workers || []).length > 0) ||
-            ((it.Processes || []).some((p: any) => p.Worker_ID))
-        );
-
-        // Check each date with attendance
-        for (const [date, presentWorkers] of Array.from(attendanceByDate.entries())) {
-            if (date < woStartDate) continue;
-
-            for (const attWorker of presentWorkers) {
-                for (const item of activeItems) {
-                    const itemStartDate = item.Started_At
-                        ? new Date(item.Started_At).toISOString().split('T')[0]
-                        : woStartDate;
-                    if (date < itemStartDate) continue;
-                    if (item.Status === 'Završeno' && item.Completed_At && date > item.Completed_At.split('T')[0]) continue;
-
-                    // If there are explicit assignments, only assigned workers get logs
-                    if (hasAnyAssignment) {
-                        const isAssigned =
-                            (item.Assigned_Workers || []).some((w: any) => w.Worker_ID === attWorker.Worker_ID) ||
-                            (item.Processes || []).some((p: any) =>
-                                p.Worker_ID === attWorker.Worker_ID ||
-                                (p.Helpers || []).some((h: any) => h.Worker_ID === attWorker.Worker_ID)
-                            );
-                        if (!isAssigned) continue;
-                    }
-                    // If NO assignments at all, ALL present workers get logs for ALL items
-
-                    // Check if work log already exists
-                    const exists = await workLogExists(attWorker.Worker_ID, item.ID, date, organizationId);
-                    if (exists) continue;
-
-                    // Count total active items for daily rate splitting
-                    const worker = workerMap.get(attWorker.Worker_ID);
-                    const dailyRate = worker?.Daily_Rate || 0;
-                    const splitRate = activeItems.length > 0 ? dailyRate / activeItems.length : dailyRate;
-
-                    await createWorkLog({
-                        Worker_ID: attWorker.Worker_ID,
-                        Worker_Name: attWorker.Worker_Name,
-                        Work_Order_ID: wo.Work_Order_ID,
-                        Work_Order_Item_ID: item.ID,
-                        Product_ID: item.Product_ID || '',
-                        Date: date,
-                        Daily_Rate: splitRate,
-                        Hours_Worked: 8,
-                        Process_Name: '',
-                        Is_From_Attendance: true,
-                    }, organizationId);
-                    workLogsCreated++;
-                }
-            }
-        }
+        // NAPOMENA: Dnevnice se VIŠE ne kreiraju iz šihtarice (Radna knjiga je jedini izvor).
+        // "Sync" sada samo osvježava (auto-Started_At iznad + preračun ispod).
 
         // Recalculate this work order
         try {

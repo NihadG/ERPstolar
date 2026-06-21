@@ -1,21 +1,17 @@
 import { useState, useEffect } from 'react';
-import { Calendar, Play, CheckCircle, Clock, Edit2, Plus, X, AlertTriangle } from 'lucide-react';
+import { Calendar, Play, Pause, CheckCircle, Clock, Edit2, AlertTriangle, NotebookPen, Printer, Trash2 } from 'lucide-react';
 import { useData } from '@/context/DataContext';
-import { checkMissingAttendanceHistory, getWorkLogsForWorkOrder, overrideWorkLogs } from '@/lib/services';
-import type { WorkOrder, Worker, WorkOrderItem, ItemProcessStatus, SubTask, WorkLog } from '@/lib/types';
-import ProcessKanbanBoard from './ProcessKanbanBoard';
-import ProductTimelineModal from './ProductTimelineModal';
-import { PRODUCTION_STEPS } from '@/lib/types';
-
 import {
-    updateItemProcess,
-    updateAllItemProcesses,
-    bulkUpdateProcesses,
-    createSubTasks,
-    updateSubTask,
-    moveSubTask,
-    canWorkerStartProcess
+    checkMissingAttendanceHistory,
+    getWorkLogsForWorkOrder,
+    overrideWorkLogs,
+    startWorkOrderItem,
+    completeWorkOrderItem,
+    updateWorkOrderItemStatus,
+    toggleItemPause,
 } from '@/lib/services';
+import type { WorkOrder, Worker, WorkOrderItem, WorkLog } from '@/lib/types';
+import ProductTimelineModal from './ProductTimelineModal';
 
 interface WorkOrderExpandedDetailProps {
     workOrder: WorkOrder;
@@ -40,19 +36,13 @@ export default function WorkOrderExpandedDetail({
 }: WorkOrderExpandedDetailProps) {
     const [localItems, setLocalItems] = useState<WorkOrderItem[]>([]);
     const [isLoading, setIsLoading] = useState<string | null>(null);
-
-    // Process editing
-    const [editingProcesses, setEditingProcesses] = useState(false);
-    const [localProcesses, setLocalProcesses] = useState<string[]>([]);
-    const [newProcessName, setNewProcessName] = useState('');
     const { organizationId } = useData();
 
     // S16: Missing Attendance State
     const [missingAttendance, setMissingAttendance] = useState<{ count: number; details: string[] } | null>(null);
 
-    // Workers Timeline State
+    // Work logs (izvor profita po proizvodu — iz dnevnika rada)
     const [workLogs, setWorkLogs] = useState<WorkLog[]>([]);
-    const [showTimeline, setShowTimeline] = useState(true);
     const [timelineItem, setTimelineItem] = useState<WorkOrderItem | null>(null);
 
     useEffect(() => {
@@ -74,58 +64,17 @@ export default function WorkOrderExpandedDetail({
 
     // Initialize local state
     useEffect(() => {
-        if (workOrder?.items) {
-            const itemsWithProcesses = workOrder.items.map(item => {
-                if (!item.Processes || item.Processes.length === 0) {
-                    return {
-                        ...item,
-                        Processes: (workOrder.Production_Steps || PRODUCTION_STEPS).map(step => ({
-                            Process_Name: step,
-                            Status: 'Na čekanju' as const
-                        }))
-                    };
-                }
-                return item;
-            });
-            setLocalItems(itemsWithProcesses);
-        }
-        if (workOrder?.Production_Steps) {
-            setLocalProcesses(workOrder.Production_Steps);
-        } else {
-            setLocalProcesses(PRODUCTION_STEPS);
-        }
-
-        // #2 Fix: Auto-merge legacy process names from item data
-        // If items have process names that don't exist in the column list, add them
-        if (workOrder?.items) {
-            const columnProcesses = new Set(workOrder?.Production_Steps || PRODUCTION_STEPS);
-            const missingProcesses: string[] = [];
-            workOrder.items.forEach(item => {
-                item.Processes?.forEach(p => {
-                    if (p.Process_Name && !columnProcesses.has(p.Process_Name) && !missingProcesses.includes(p.Process_Name)) {
-                        missingProcesses.push(p.Process_Name);
-                    }
-                });
-                item.SubTasks?.forEach(st => {
-                    if (st.Current_Process && !columnProcesses.has(st.Current_Process) && !missingProcesses.includes(st.Current_Process)) {
-                        missingProcesses.push(st.Current_Process);
-                    }
-                });
-            });
-            if (missingProcesses.length > 0) {
-                setLocalProcesses(prev => [...prev, ...missingProcesses]);
-            }
-        }
+        setLocalItems(workOrder?.items || []);
     }, [workOrder]);
 
-    // Fetch work logs for timeline
+    // Fetch work logs (per-product labor/profit)
     useEffect(() => {
-        if (workOrder?.Work_Order_ID && organizationId && showTimeline) {
+        if (workOrder?.Work_Order_ID && organizationId) {
             getWorkLogsForWorkOrder(workOrder.Work_Order_ID, organizationId)
                 .then(logs => setWorkLogs(logs))
                 .catch(err => console.error('Error fetching work logs:', err));
         }
-    }, [workOrder?.Work_Order_ID, organizationId, showTimeline]);
+    }, [workOrder?.Work_Order_ID, organizationId]);
 
     // Format helpers
     const formatDate = (dateStr: string | undefined): string => {
@@ -137,150 +86,40 @@ export default function WorkOrderExpandedDetail({
         });
     };
 
-    // Process update handler (for single field updates like worker assignment)
-    const handleProcessUpdate = async (itemId: string, processName: string, updates: Partial<ItemProcessStatus>) => {
-        try {
-            setIsLoading(itemId);
-            await updateItemProcess(workOrder.Work_Order_ID, itemId, processName, updates);
-
-            setLocalItems(prev => prev.map(item => {
-                if (item.ID !== itemId) return item;
-                const processes = (item.Processes || []).map(p =>
-                    p.Process_Name === processName ? { ...p, ...updates } : p
-                );
-                return { ...item, Processes: processes };
-            }));
-        } catch (error) {
-            console.error('Error updating process:', error);
-        } finally {
-            setIsLoading(null);
-            onRefresh?.('workOrders', 'projects'); // Refresh parent data
-        }
-    };
-
-    // Move item to a specific stage (drag-and-drop) - synchronizes ALL process statuses
-    const handleMoveToStage = async (itemId: string, targetProcess: string, allProcesses: string[]) => {
-        const now = new Date().toISOString();
-        const targetIndex = targetProcess === 'ZAVRŠENO' ? allProcesses.length : allProcesses.indexOf(targetProcess);
-
-        // Find the item
-        const item = localItems.find(i => i.ID === itemId);
-        if (!item) return;
-
-        // VALIDATION: Check if item is currently waiting and moving to U toku
-        const currentStage = item.Processes?.find(p => p.Status !== 'Završeno');
-        const isStartingWork = currentStage?.Status === 'Na čekanju' && targetIndex >= 0;
-
-        if (isStartingWork && item.materials && item.materials.length > 0) {
-            // Check essential materials
-            const missingMaterials = item.materials.filter(
-                m => m.Is_Essential && m.Status !== 'Primljeno'
-            );
-
-            if (missingMaterials.length > 0) {
-                const materialNames = missingMaterials.map(m => m.Material_Name).join(', ');
-                alert(`⚠️ Ne možete pokrenuti rad.\n\nEsencijalni materijali nisu spremni:\n${materialNames}`);
+    // Status proizvoda: Na čekanju → U toku → Završeno
+    const setItemStatus = async (item: WorkOrderItem, status: 'Na čekanju' | 'U toku' | 'Završeno') => {
+        if (isLoading) return;
+        // Provjera esencijalnih materijala pri pokretanju
+        if (status === 'U toku' && item.materials && item.materials.length > 0) {
+            const missing = item.materials.filter(m => m.Is_Essential && m.Status !== 'Primljeno' && m.Status !== 'Na stanju');
+            if (missing.length > 0) {
+                showToast?.(`Esencijalni materijali nisu spremni: ${missing.map(m => m.Material_Name).join(', ')}`, 'error');
                 return;
             }
         }
-
-        // VALIDATION: Check worker attendance when starting work
-        if (isStartingWork && currentStage?.Worker_ID) {
-            const availability = await canWorkerStartProcess(currentStage.Worker_ID);
-            if (!availability.allowed) {
-                alert(`⚠️ Ne možete pokrenuti rad.\n\nRadnik "${currentStage.Worker_Name}" nije prisutan.\nRazlog: ${availability.reason}`);
-                return;
-            }
-
-            // Check helpers for this stage
-            if (currentStage.Helpers && currentStage.Helpers.length > 0) {
-                for (const helper of currentStage.Helpers) {
-                    const helperAvailability = await canWorkerStartProcess(helper.Worker_ID);
-                    if (!helperAvailability.allowed) {
-                        alert(`⚠️ Ne možete pokrenuti rad.\n\nPomoćnik "${helper.Worker_Name}" nije prisutan.\nRazlog: ${helperAvailability.reason}`);
-                        return;
-                    }
-                }
-            }
-        }
-
-        // Build new process statuses
-        const newProcesses: ItemProcessStatus[] = allProcesses.map((processName, index) => {
-            const existing = (item.Processes?.find(p => p.Process_Name === processName) || {}) as Partial<ItemProcessStatus>;
-
-            if (targetProcess === 'ZAVRŠENO' || index < targetIndex) {
-                // All processes before target (or all if target is ZAVRŠENO) are completed
-                return {
-                    ...existing,
-                    Process_Name: processName,
-                    Status: 'Završeno' as const,
-                    Started_At: existing.Started_At || now,
-                    Completed_At: existing.Completed_At || now
-                };
-            } else if (index === targetIndex) {
-                // Target process is "In Progress" - don't include Completed_At (undefined not allowed in Firestore)
-                const inProgressProcess: ItemProcessStatus = {
-                    Process_Name: processName,
-                    Status: 'U toku' as const,
-                    Started_At: existing.Started_At || now
-                };
-                if (existing.Worker_ID) inProgressProcess.Worker_ID = existing.Worker_ID;
-                if (existing.Worker_Name) inProgressProcess.Worker_Name = existing.Worker_Name;
-                return inProgressProcess;
-            } else {
-                // Processes after target are waiting
-                return {
-                    Process_Name: processName,
-                    Status: 'Na čekanju' as const,
-                    Worker_ID: existing.Worker_ID,
-                    Worker_Name: existing.Worker_Name
-                };
-            }
-        });
-
-        // OPTIMISTIC UPDATE: Update UI immediately for smooth experience
-        setLocalItems(prev => prev.map(i =>
-            i.ID === itemId ? { ...i, Processes: newProcesses } : i
-        ));
-
-        // Then persist to database (single write!)
         try {
-            setIsLoading(itemId);
-            await updateAllItemProcesses(workOrder.Work_Order_ID, itemId, newProcesses);
+            setIsLoading(item.ID);
+            if (status === 'U toku') await startWorkOrderItem(workOrder.Work_Order_ID, item.ID);
+            else if (status === 'Završeno') await completeWorkOrderItem(workOrder.Work_Order_ID, item.ID);
+            else await updateWorkOrderItemStatus(item.ID, 'Na čekanju', organizationId || '');
+            onRefresh?.('workOrders', 'projects', 'workLogs');
         } catch (error) {
-            console.error('Error moving item to stage:', error);
-            // Revert optimistic update on error
-            setLocalItems(prev => prev.map(i =>
-                i.ID === itemId ? { ...i, Processes: item.Processes } : i
-            ));
+            console.error('Error setting item status:', error);
+            showToast?.('Greška pri promjeni statusa', 'error');
         } finally {
             setIsLoading(null);
-            onRefresh?.('workOrders', 'projects'); // Refresh parent data
         }
     };
 
-    // Work order level process editing
-    const addWorkOrderProcess = () => {
-        if (!newProcessName.trim()) return;
-        if (localProcesses.includes(newProcessName.trim())) return;
-        setLocalProcesses([...localProcesses, newProcessName.trim()]);
-        setNewProcessName('');
-    };
-
-    const removeWorkOrderProcess = (process: string) => {
-        setLocalProcesses(localProcesses.filter(p => p !== process));
-    };
-
-    const saveWorkOrderProcesses = async () => {
+    // Pauza / nastavak proizvoda (dnevnice ne teku dok je pauziran)
+    const pauseItem = async (item: WorkOrderItem, isPaused: boolean) => {
+        setLocalItems(prev => prev.map(i => i.ID === item.ID ? { ...i, Is_Paused: isPaused } : i));
         try {
-            setIsLoading('processes');
-            await onUpdate(workOrder.Work_Order_ID, { Production_Steps: localProcesses });
-            setEditingProcesses(false);
-            onRefresh?.('workOrders', 'projects'); // CRITICAL: refresh data so UI reflects saved changes
+            await toggleItemPause(workOrder.Work_Order_ID, item.ID, isPaused);
+            onRefresh?.('workOrders', 'projects', 'workLogs');
         } catch (error) {
-            console.error('Error saving processes:', error);
-        } finally {
-            setIsLoading(null);
+            console.error('Error toggling pause:', error);
+            setLocalItems(prev => prev.map(i => i.ID === item.ID ? { ...i, Is_Paused: !isPaused } : i));
         }
     };
 
@@ -473,153 +312,15 @@ export default function WorkOrderExpandedDetail({
             </div>
 
 
-            {/* === DEFAULT PROCESSES - only visible when editing === */}
-            {editingProcesses ? (
-                <div className="processes-section">
-                    <div className="section-header">
-                        <span>🔧 Zadani procesi</span>
-                        <button className="btn-save-sm" onClick={saveWorkOrderProcesses} disabled={isLoading === 'processes'}>
-                            {isLoading === 'processes' ? '...' : 'Sačuvaj'}
-                        </button>
-                    </div>
-                    <div className="process-chips">
-                        {localProcesses.map((process, idx) => (
-                            <div key={process} className="process-chip">
-                                <span className="chip-num">{idx + 1}</span>
-                                {process}
-                                <button className="chip-remove" onClick={() => removeWorkOrderProcess(process)}>
-                                    <X size={12} />
-                                </button>
-                            </div>
-                        ))}
-                        <div className="add-chip">
-                            <input
-                                placeholder="Novi..."
-                                value={newProcessName}
-                                onChange={(e) => setNewProcessName(e.target.value)}
-                                onKeyDown={(e) => e.key === 'Enter' && addWorkOrderProcess()}
-                            />
-                            <button onClick={addWorkOrderProcess}><Plus size={14} /></button>
-                        </div>
-                    </div>
-                    <div className="quick-add">
-                        {PRODUCTION_STEPS.filter(s => !localProcesses.includes(s)).map(step => (
-                            <button key={step} onClick={() => setLocalProcesses([...localProcesses, step])}>
-                                + {step}
-                            </button>
-                        ))}
-                    </div>
+            {/* === PROIZVODI (status + profit iz dnevnika rada) === */}
+            <div className="products-section">
+                <div className="products-head">
+                    <span>Proizvodi</span>
+                    {workLogs.length > 0 && <span className="products-badge">{workLogs.length} zapisa rada</span>}
                 </div>
-            ) : (
-                <div className="edit-processes-bar">
-                    <button className="btn-edit-processes" onClick={() => setEditingProcesses(true)}>
-                        <Edit2 size={14} /> Uredi procese
-                    </button>
-                </div>
-            )}
 
-            {/* === KANBAN BOARD === */}
-            <ProcessKanbanBoard
-                items={localItems}
-                processes={localProcesses}
-                workers={workers}
-                organizationId={organizationId || undefined}
-                showToast={showToast}
-                onProcessUpdate={handleProcessUpdate}
-                onMoveToStage={handleMoveToStage}
-                onSubTaskUpdate={async (itemId, subTaskId, updates) => {
-                    // OPTIMISTIC UPDATE: Update UI immediately
-                    setLocalItems(prev => prev.map(item => {
-                        if (item.ID !== itemId) return item;
-                        const updatedSubTasks = item.SubTasks?.map(st =>
-                            st.SubTask_ID === subTaskId ? { ...st, ...updates } : st
-                        );
-                        return { ...item, SubTasks: updatedSubTasks };
-                    }));
-
-                    // Then persist to database (non-blocking)
-                    updateSubTask(workOrder.Work_Order_ID, itemId, subTaskId, updates)
-                        .then(() => onRefresh?.('workOrders', 'projects'))
-                        .catch(error => {
-                            console.error('Error updating sub-task:', error);
-                            // Could revert optimistic update here if needed
-                        });
-                }}
-                onSubTaskCreate={async (itemId, subTasks) => {
-                    const item = localItems.find(i => i.ID === itemId);
-                    if (!item) return;
-
-                    // OPTIMISTIC UPDATE: Update UI immediately
-                    const existingSubTasks = item.SubTasks || [];
-                    const allSubTasks = [...existingSubTasks, ...subTasks];
-                    setLocalItems(prev => prev.map(i =>
-                        i.ID === itemId ? { ...i, SubTasks: allSubTasks } : i
-                    ));
-
-                    // Then persist to database
-                    createSubTasks(workOrder.Work_Order_ID, itemId, allSubTasks)
-                        .then(() => onRefresh?.('workOrders', 'projects'))
-                        .catch(error => console.error('Error creating sub-task:', error));
-                }}
-                onSubTaskMove={async (itemId, subTaskId, targetProcess) => {
-                    // OPTIMISTIC UPDATE: Update UI immediately
-                    const now = new Date().toISOString();
-                    setLocalItems(prev => prev.map(item => {
-                        if (item.ID !== itemId) return item;
-                        const updatedSubTasks = item.SubTasks?.map(st => {
-                            if (st.SubTask_ID !== subTaskId) return st;
-                            return {
-                                ...st,
-                                Current_Process: targetProcess,
-                                Status: targetProcess === 'ZAVRŠENO' ? 'Završeno' as const : 'U toku' as const,
-                                Started_At: st.Started_At || now
-                            };
-                        });
-                        return { ...item, SubTasks: updatedSubTasks };
-                    }));
-
-                    // Then persist to database
-                    moveSubTask(workOrder.Work_Order_ID, itemId, subTaskId, targetProcess)
-                        .then(() => onRefresh?.('workOrders', 'projects'))
-                        .catch(error => console.error('Error moving sub-task:', error));
-                }}
-                onPauseToggle={async (itemId, isPaused) => {
-                    // OPTIMISTIC UPDATE: Update UI immediately (before DB call)
-                    setLocalItems(prev => prev.map(item =>
-                        item.ID === itemId ? { ...item, Is_Paused: isPaused } : item
-                    ));
-
-                    // Then persist to database
-                    import('@/lib/services').then(({ toggleItemPause }) => {
-                        toggleItemPause(workOrder.Work_Order_ID, itemId, isPaused)
-                            .then(() => onRefresh?.('workOrders', 'projects'))
-                            .catch(error => console.error('Error toggling pause:', error));
-                    });
-                }}
-            />
-
-            {/* === PER-PRODUCT TIMELINES === */}
-            <div className="timeline-section">
-                <button
-                    className="timeline-toggle"
-                    onClick={() => setShowTimeline(!showTimeline)}
-                >
-                    <span className="material-icons-round" style={{ fontSize: '16px' }}>
-                        {showTimeline ? 'expand_less' : 'schedule'}
-                    </span>
-                    <span>Profit po proizvodu (iz dnevnika rada)</span>
-                    {workLogs.length > 0 && (
-                        <span className="timeline-badge">{workLogs.length} zapisa</span>
-                    )}
-                </button>
-
-
-                {showTimeline && localItems.length > 0 && (
-                    <div style={{
-                        display: 'flex', flexDirection: 'column', gap: '6px',
-                        padding: '12px', background: 'white', borderRadius: '10px',
-                        border: '1px solid #e5e7eb', marginTop: '8px'
-                    }}>
+                {localItems.length > 0 ? (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
                         {localItems.map(item => {
                             const itemLogs = workLogs.filter(wl => wl.Work_Order_Item_ID === item.ID);
                             const laborCost = itemLogs.reduce((sum, wl) => sum + (wl.Daily_Rate || 0), 0);
@@ -643,28 +344,47 @@ export default function WorkOrderExpandedDetail({
                             const workersArr = Array.from(wMap.values()).sort((a, b) => b.cost - a.cost);
                             const fmt = (n: number) => Math.round(n).toLocaleString('hr-HR');
 
+                            const status = (item.Status as string) || 'Na čekanju';
+                            const isPaused = !!item.Is_Paused;
                             return (
-                                <button
+                                <div
                                     key={item.ID}
-                                    onClick={() => setTimelineItem(item)}
                                     style={{
                                         display: 'flex', flexDirection: 'column', gap: '10px',
                                         padding: '14px', borderRadius: '10px',
                                         border: '1px solid #e2e8f0', background: '#ffffff',
-                                        cursor: 'pointer', width: '100%', textAlign: 'left', transition: 'all 0.15s'
                                     }}
-                                    onMouseEnter={e => { e.currentTarget.style.borderColor = '#93c5fd'; e.currentTarget.style.background = '#f8fafc'; }}
-                                    onMouseLeave={e => { e.currentTarget.style.borderColor = '#e2e8f0'; e.currentTarget.style.background = '#ffffff'; }}
                                 >
                                     {/* Header: naziv + profit */}
-                                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px' }}>
-                                        <div style={{ fontWeight: 600, fontSize: '14px', color: '#0f172a' }}>{item.Product_Name}</div>
+                                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px', flexWrap: 'wrap' }}>
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0 }}>
+                                            <span style={{ fontWeight: 600, fontSize: '14px', color: '#0f172a' }}>{item.Product_Name}</span>
+                                            {isPaused && <span style={{ fontSize: '10px', fontWeight: 700, color: '#b45309', background: '#fef3c7', padding: '2px 7px', borderRadius: '999px' }}>PAUZA</span>}
+                                        </div>
                                         <div style={{ textAlign: 'right' }}>
                                             <div style={{ fontSize: '15px', fontWeight: 700, color: profitColor }}>
                                                 {profit >= 0 ? '' : '−'}{fmt(Math.abs(profit))} KM
                                             </div>
                                             <div style={{ fontSize: '10px', color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.04em' }}>ostaje</div>
                                         </div>
+                                    </div>
+
+                                    {/* Status + pauza */}
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                                        <div className="status-seg">
+                                            {(['Na čekanju', 'U toku', 'Završeno'] as const).map(s => (
+                                                <button key={s}
+                                                    className={status === s ? 'active' : ''}
+                                                    disabled={isLoading === item.ID}
+                                                    onClick={() => setItemStatus(item, s)}
+                                                >{s === 'Na čekanju' ? 'Čeka' : s}</button>
+                                            ))}
+                                        </div>
+                                        {status === 'U toku' && (
+                                            <button className="pause-btn" disabled={isLoading === item.ID} onClick={() => pauseItem(item, !isPaused)}>
+                                                {isPaused ? <><Play size={13} /> Nastavi</> : <><Pause size={13} /> Pauza</>}
+                                            </button>
+                                        )}
                                     </div>
 
                                     {/* P&L breakdown: cijena − materijal − rad */}
@@ -702,17 +422,32 @@ export default function WorkOrderExpandedDetail({
                                             prekoračen plan rada za {fmt(laborCost - planned)} KM (plan {fmt(planned)} KM)
                                         </div>
                                     )}
-                                </button>
+
+                                    <button className="details-link" onClick={() => setTimelineItem(item)}>
+                                        Detalji rada →
+                                    </button>
+                                </div>
                             );
                         })}
                     </div>
+                ) : (
+                    <div className="products-empty">Nema proizvoda u ovom nalogu.</div>
                 )}
 
-                {showTimeline && localItems.length === 0 && (
-                    <div className="timeline-empty">
-                        Nema stavki u ovom nalogu.
-                    </div>
-                )}
+                {/* Akcije naloga */}
+                <div className="wo-actions">
+                    <button className="wo-act wo-act-primary" onClick={() => {
+                        window.dispatchEvent(new CustomEvent('switchTab', { detail: { tab: 'worklog' } }));
+                    }}>
+                        <NotebookPen size={15} /> Evidentiraj rad
+                    </button>
+                    <button className="wo-act" onClick={() => onPrint(workOrder)}>
+                        <Printer size={15} /> Printaj
+                    </button>
+                    <button className="wo-act wo-act-danger" onClick={() => onDelete(workOrder.Work_Order_ID)}>
+                        <Trash2 size={15} /> Obriši nalog
+                    </button>
+                </div>
             </div>
 
             {/* ProductTimelineModal for selected item */}
@@ -966,6 +701,61 @@ export default function WorkOrderExpandedDetail({
                     .wo-detail-v2 { padding: 10px; }
                     .header-bar { flex-direction: column; align-items: flex-start; }
                 }
+
+                /* === Proizvodi === */
+                .products-section { margin-top: 16px; }
+                .products-head {
+                    display: flex; align-items: center; gap: 10px;
+                    font-size: 12px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase;
+                    color: #64748b; margin-bottom: 10px;
+                }
+                .products-badge {
+                    font-size: 11px; font-weight: 600; color: #3b82f6; background: #eff6ff;
+                    padding: 2px 9px; border-radius: 999px; text-transform: none; letter-spacing: 0;
+                }
+                .products-empty {
+                    text-align: center; color: #94a3b8; font-size: 13px;
+                    padding: 28px; border: 1px dashed #e2e8f0; border-radius: 12px;
+                }
+
+                /* Status segment */
+                .status-seg { display: inline-flex; border: 1px solid #e2e8f0; border-radius: 8px; overflow: hidden; }
+                .status-seg button {
+                    border: none; background: white; color: #64748b;
+                    font-size: 12px; font-weight: 600; padding: 6px 12px; cursor: pointer; transition: all 0.15s;
+                }
+                .status-seg button + button { border-left: 1px solid #e2e8f0; }
+                .status-seg button.active { background: #0f172a; color: white; }
+                .status-seg button:disabled { opacity: 0.5; cursor: default; }
+
+                .pause-btn {
+                    display: inline-flex; align-items: center; gap: 5px;
+                    border: 1px solid #e2e8f0; background: white; color: #b45309;
+                    font-size: 12px; font-weight: 600; padding: 6px 12px; border-radius: 8px; cursor: pointer;
+                }
+                .pause-btn:hover { background: #fffbeb; border-color: #fcd34d; }
+
+                .details-link {
+                    align-self: flex-start; border: none; background: transparent; color: #3b82f6;
+                    font-size: 12px; font-weight: 600; padding: 2px 0; cursor: pointer;
+                }
+                .details-link:hover { text-decoration: underline; }
+
+                /* Akcije naloga */
+                .wo-actions {
+                    display: flex; gap: 8px; flex-wrap: wrap;
+                    margin-top: 16px; padding-top: 16px; border-top: 1px solid #e2e8f0;
+                }
+                .wo-act {
+                    display: inline-flex; align-items: center; gap: 6px;
+                    border: 1px solid #e2e8f0; background: white; color: #334155;
+                    font-size: 13px; font-weight: 600; padding: 9px 16px; border-radius: 8px; cursor: pointer;
+                }
+                .wo-act:hover { background: #f8fafc; }
+                .wo-act-primary { background: #0f172a; border-color: #0f172a; color: white; }
+                .wo-act-primary:hover { background: #1e293b; }
+                .wo-act-danger { color: #dc2626; margin-left: auto; }
+                .wo-act-danger:hover { background: #fef2f2; border-color: #fca5a5; }
 
                 /* Timeline Section */
                 .timeline-section {

@@ -418,7 +418,7 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
 
     function openCreateModal() {
         setWizardMode('production');
-        setSelectedProcesses(['Rezanje', 'Kantiranje', 'Bušenje', 'Sklapanje']);
+        setSelectedProcesses(['Rad']);
         setSelectedProducts([]);
         setDueDate('');
         setNotes('');
@@ -436,7 +436,7 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
 
         // Set wizard mode
         setWizardMode('production');
-        setSelectedProcesses(['Rezanje', 'Kantiranje', 'Bušenje', 'Sklapanje']);
+        setSelectedProcesses(['Rad']);
         setDueDate('');
         setNotes('');
         setProductSearch('');
@@ -453,22 +453,12 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
             Quantity: p.quantity,
             Work_Order_Quantity: p.quantity,
             Status: '',
-            assignments: {
-                'Rezanje': '',
-                'Kantiranje': '',
-                'Bušenje': '',
-                'Sklapanje': '',
-            },
-            helperAssignments: {
-                'Rezanje': [],
-                'Kantiranje': [],
-                'Bušenje': [],
-                'Sklapanje': [],
-            },
+            assignments: { 'Rad': '' },
+            helperAssignments: { 'Rad': [] },
         }));
         setSelectedProducts(preSelected);
 
-        // Start at Processes step (step 2) since project and products are already selected
+        // Projekat i proizvodi su već odabrani → idi na korak Radnik & rok (step 2)
         setActiveStep(2);
         setCreateModal(true);
 
@@ -500,8 +490,7 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
     const productionSteps = [
         { id: 0, title: 'Projekti', subtitle: 'Odaberite projekat' },
         { id: 1, title: 'Proizvodi', subtitle: 'Odaberite proizvode' },
-        { id: 2, title: 'Procesi', subtitle: 'Definišite procese' },
-        { id: 3, title: 'Dodjela', subtitle: 'Raspored radnika' }
+        { id: 2, title: 'Radnik & rok', subtitle: 'Dodijelite radnika' }
     ];
 
     const steps = wizardMode === 'montaza' ? montazaSteps : productionSteps;
@@ -513,10 +502,9 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
             if (activeStep === 1) return selectedProcesses.length > 0;
             return true;
         }
-        // Production mode
+        // Production mode (3 koraka: Projekti → Proizvodi → Radnik & rok)
         if (activeStep === 0) return selectedProjectIds.length > 0;
         if (activeStep === 1) return selectedProducts.length > 0;
-        if (activeStep === 2) return selectedProcesses.length > 0;
         return true;
     }, [activeStep, selectedProjectIds, selectedProducts, selectedProcesses, wizardMode]);
 
@@ -1948,7 +1936,7 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                         )}
 
                         {/* STEP 3: PROCESSES (production step 2, montaža step 1) */}
-                        {((wizardMode === 'production' && activeStep === 2) || (wizardMode === 'montaza' && activeStep === 1)) && (
+                        {(wizardMode === 'montaza' && activeStep === 1) && (
                             <div className="wizard-step step-processes">
                                 <div className="step-page-header text-center">
                                     <h3>Definišite procese</h3>
@@ -1970,8 +1958,8 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                             </div>
                         )}
 
-                        {/* STEP 4: DETAILS & WORKERS (production step 3, montaža step 2) */}
-                        {((wizardMode === 'production' && activeStep === 3) || (wizardMode === 'montaza' && activeStep === 2)) && (
+                        {/* DETAILS & WORKERS (production step 2, montaža step 2) */}
+                        {((wizardMode === 'production' && activeStep === 2) || (wizardMode === 'montaza' && activeStep === 2)) && (
                             <div className="wizard-step step-details" onClick={(e) => {
                                 // Close dropdowns when clicking outside
                                 if (!(e.target as HTMLElement).closest('.wdd')) { setOpenDropdown(null); setWorkerSearch(''); }

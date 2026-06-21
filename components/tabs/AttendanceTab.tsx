@@ -8,7 +8,6 @@ import {
     getAllAttendanceByMonth,
     autoPopulateWeekends,
     formatLocalDateISO,
-    backfillWorkLogsFromAttendance,
 } from '@/lib/services';
 import {
     CheckCircle2,
@@ -22,8 +21,7 @@ import {
     ChevronLeft,
     ChevronRight,
     Calendar,
-    Users,
-    Database
+    Users
 } from 'lucide-react';
 import Modal from '@/components/ui/Modal';
 import { useData } from '@/context/DataContext';
@@ -251,11 +249,12 @@ export default function AttendanceTab({ workers, onRefresh, showToast }: Attenda
                 Organization_ID: organizationId || undefined
             });
 
-            // Bug 4 FIX: Show feedback about work log creation
-            if (result.workLogsCreated > 0) {
-                showToast(`Kreirano ${result.workLogsCreated} radnih zapisa za ${result.affectedWorkOrders.length} nalog(a)`, 'success');
-            } else if (finalStatus === 'Prisutan' || finalStatus === 'Teren') {
-                showToast('Prisustvo sačuvano — nema aktivnih naloga za ovog radnika', 'info');
+            // Dnevnice se unose u Radnoj knjizi; šihtarica je potvrda.
+            // Ako je radnik označen odsutnim, njegove dnevnice tog dana su uklonjene (ne računaju se).
+            if (result.workLogsDeleted > 0) {
+                showToast(`Prisustvo sačuvano — uklonjeno ${result.workLogsDeleted} dnevnica (odsutan se ne računa)`, 'info');
+            } else {
+                showToast('Prisustvo sačuvano', 'success');
             }
 
             // Reload just this month to confirm
@@ -292,34 +291,6 @@ export default function AttendanceTab({ workers, onRefresh, showToast }: Attenda
         }
     }
 
-    // Backfill work logs from existing attendance records
-    async function handleBackfillWorkLogs() {
-        if (!organizationId) {
-            showToast('Greška: Nema organizacije', 'error');
-            return;
-        }
-
-        try {
-            setLoading(true);
-
-            // Get date range from loaded months
-            const firstMonth = loadedMonths[0];
-            const lastMonth = loadedMonths[loadedMonths.length - 1];
-            const dateFrom = `${firstMonth.year}-${String(firstMonth.month).padStart(2, '0')}-01`;
-            const lastDay = new Date(lastMonth.year, lastMonth.month, 0).getDate();
-            const dateTo = `${lastMonth.year}-${String(lastMonth.month).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
-
-            const result = await backfillWorkLogsFromAttendance(organizationId, dateFrom, dateTo);
-
-            showToast(`Sinkronizacija završena: ${result.totalCreated} work logova kreirano`, 'success');
-            onRefresh('workers', 'workOrders');
-        } catch (error) {
-            console.error('Backfill error:', error);
-            showToast('Greška pri sinkronizaciji', 'error');
-        } finally {
-            setLoading(false);
-        }
-    }
 
     // Navigate months (Infinity Scroll Loaders)
     function previousMonth() {
@@ -434,13 +405,10 @@ export default function AttendanceTab({ workers, onRefresh, showToast }: Attenda
                 }
             }
 
-            // Bug 6 FIX: Show aggregate feedback about work log creation
-            const totalCreated = results.reduce((sum, r) => sum + r.workLogsCreated, 0);
+            // Dnevnice se unose u Radnoj knjizi; odsutni dani uklanjaju postojeće dnevnice.
             const totalDeleted = results.reduce((sum, r) => sum + r.workLogsDeleted, 0);
-            const totalAffectedWOs = new Set(results.flatMap(r => r.affectedWorkOrders)).size;
-
-            if (totalCreated > 0) {
-                showToast(`Prisustvo sačuvano za ${workersToUpdate.length} radnika — ${totalCreated} radnih zapisa za ${totalAffectedWOs} nalog(a)`, 'success');
+            if (totalDeleted > 0) {
+                showToast(`Prisustvo sačuvano za ${workersToUpdate.length} radnika — uklonjeno ${totalDeleted} dnevnica (odsutni)`, 'info');
             } else {
                 showToast(`Prisustvo sačuvano za ${workersToUpdate.length} radnika`, 'success');
             }
@@ -495,16 +463,6 @@ export default function AttendanceTab({ workers, onRefresh, showToast }: Attenda
                         />
                     </div>
 
-                    <button
-                        className="glass-btn"
-                        onClick={handleBackfillWorkLogs}
-                        disabled={loading}
-                        style={{ padding: '8px 14px', background: '#fff7ed', borderColor: '#fed7aa', color: '#c2410c' }}
-                        title="Sync prisustvo sa work logovima za učitane mjesece"
-                    >
-                        <Database size={16} />
-                        Sync Work Logs
-                    </button>
                 </div>
             </div>
 

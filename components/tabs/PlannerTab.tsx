@@ -3,7 +3,7 @@
 import { useState, useMemo, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { DragDropContext, Droppable, Draggable, DropResult } from '@hello-pangea/dnd';
-import type { WorkOrder, Worker, WorkOrderItem, WorkerConflict } from '@/lib/types';
+import type { WorkOrder, Worker, WorkOrderItem, WorkerConflict, WorkLog } from '@/lib/types';
 import { scheduleWorkOrder, unscheduleWorkOrder, startWorkOrder, checkWorkerConflicts, rescheduleWorkOrder, updateDueDate, updatePlannedStartDate } from '@/lib/services';
 import { useAuth } from '@/context/AuthContext';
 import {
@@ -31,6 +31,7 @@ import './PlannerTab.css';
 interface PlannerTabProps {
     workOrders: WorkOrder[];
     workers: Worker[];
+    workLogs: WorkLog[];
     onRefresh: (...collections: string[]) => void;
     showToast: (message: string, type: 'success' | 'error' | 'info') => void;
 }
@@ -151,7 +152,7 @@ const getDeadlineWarning = (wo: WorkOrder): 'overdue' | 'approaching' | 'ok' => 
     return 'ok';
 };
 
-export default function PlannerTab({ workOrders, workers, onRefresh, showToast }: PlannerTabProps) {
+export default function PlannerTab({ workOrders, workers, workLogs, onRefresh, showToast }: PlannerTabProps) {
     const { organization } = useAuth();
     const orgId = organization?.Organization_ID || '';
     const cellWidth = 65;
@@ -216,9 +217,25 @@ export default function PlannerTab({ workOrders, workers, onRefresh, showToast }
         [workOrders]
     );
 
+    // Radnici koji STVARNO rade na nalogu — iz work logova (dnevnik rada = izvor istine)
+    const workerIdsByWO = useMemo(() => {
+        const m = new Map<string, Set<string>>();
+        workLogs.forEach(l => {
+            if (!l.Work_Order_ID || !l.Worker_ID) return;
+            if (!m.has(l.Work_Order_ID)) m.set(l.Work_Order_ID, new Set());
+            m.get(l.Work_Order_ID)!.add(l.Worker_ID);
+        });
+        return m;
+    }, [workLogs]);
+
     const getWorkerIds = (wo: WorkOrder): string[] => {
+        // 1) Ako ima zabilježenog rada → prikaži samo radnike koji su stvarno radili
+        const fromLogs = workerIdsByWO.get(wo.Work_Order_ID);
+        if (fromLogs && fromLogs.size > 0) return Array.from(fromLogs);
+        // 2) Inače (nalog još nije ni počeo) → planirani radnici iz dodjele
         const ids = new Set<string>();
         wo.items?.forEach(item => {
+            (item.Assigned_Workers || []).forEach(w => { if (w.Worker_ID) ids.add(w.Worker_ID); });
             item.Processes?.forEach(p => {
                 if (p.Worker_ID) ids.add(p.Worker_ID);
                 p.Helpers?.forEach(h => { if (h.Worker_ID) ids.add(h.Worker_ID); });
@@ -243,7 +260,7 @@ export default function PlannerTab({ workOrders, workers, onRefresh, showToast }
         });
 
         return map;
-    }, [scheduled, workers]);
+    }, [scheduled, workers, workerIdsByWO]);
 
     // Sort workers: active orders first, then scheduled, then alphabetically
     const allWorkers = useMemo(() => {

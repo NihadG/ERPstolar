@@ -16,7 +16,6 @@ import {
     Grid,
     ChevronDown,
     Lock,
-    Calendar,
     CheckSquare,
     GanttChart,
     FileUp,
@@ -160,9 +159,8 @@ const Sidebar: React.FC<SidebarProps> = ({ activeTab, onTabChange, isOpen, onClo
             icon: Factory,
             items: [
                 { id: 'production', icon: ClipboardList, label: 'Nalozi' },
-                { id: 'worklog', icon: NotebookPen, label: 'Knjiga rada' },
+                { id: 'worklog', icon: NotebookPen, label: 'Dnevni unos' },
                 { id: 'planer', icon: GanttChart, label: 'Planer' },
-                { id: 'attendance', icon: Calendar, label: 'Šihtarica' },
             ]
         },
         {

@@ -512,6 +512,7 @@ export default function Home() {
                         <PlannerTab
                             workOrders={appState.workOrders}
                             workers={appState.workers}
+                            workLogs={appState.workLogs}
                             onRefresh={refreshCollections}
                             showToast={showToast}
                         />

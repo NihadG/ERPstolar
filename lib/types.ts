@@ -530,7 +530,8 @@ export interface WorkLog {
     SubTask_ID?: string;             // Ako je split, koja grupa
 
     // Proces na kojem je radnik radio
-    Process_Name?: string;           // Rezanje, Kantiranje, etc.
+    Process_Name?: string;           // Rezanje, Kantiranje, etc. (legacy/single + naziv povezanog zadatka)
+    Process_Tags?: string[];         // Opcioni procesi koje je radnik radio na proizvodu taj dan (ne utiče na trošak)
 
     // DNEVNA KNJIGA RADA — eksplicitno bilježenje
     Day_Fraction?: number;           // Težina dana na ovom proizvodu: 1 = cijeli, 0.5 = pola
@@ -543,6 +544,12 @@ export interface WorkLog {
     Created_At: string;
     Modified_At?: string;
 }
+
+// Česti procesi za stolariju po mjeri (quick-add; korisnik može upisati i custom)
+export const COMMON_PROCESSES = [
+    'Furniranje', 'Krojenje MDF', 'Krojenje iverala', 'Kantiranje', 'Bušenje',
+    'Sklapanje', 'Brušenje', 'Lakiranje', 'Farbanje', 'Montaža', 'Pakovanje'
+];
 
 // ============================================
 // CONSTANTS
