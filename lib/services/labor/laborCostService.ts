@@ -159,6 +159,16 @@ export async function bulkBookWorkOrderLabor(
     return result;
 }
 
+/** JEDNOKRATNA MIGRACIJA: uskladi sve postojeće dnevnice s kanonskim (ravnomjernim) modelom. */
+export async function recalcAllWorkLogSplits(
+    organizationId: string
+): Promise<{ success: boolean; pairs: number; logs: number; workOrders: number; message: string }> {
+    const { recalcAllWorkLogSplits: _fn } = await import('../../attendance');
+    const result = await _fn(organizationId);
+    if (result.success) eventBus.emit('workOrder:recalculated', { workOrderId: '', organizationId });
+    return result;
+}
+
 // ============================================
 // RECALCULATION
 // ============================================
@@ -382,6 +392,8 @@ export async function overrideWorkLogs(
         Worker_Name: string;
         Date: string;
         Daily_Rate: number;
+        Original_Daily_Rate?: number;
+        Presence?: number;
         Process_Name?: string;
     }>,
     organizationId: string,

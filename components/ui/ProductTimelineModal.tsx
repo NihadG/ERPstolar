@@ -60,6 +60,8 @@ interface ProductTimelineModalProps {
         Worker_Name: string;
         Date: string;
         Daily_Rate: number;
+        Original_Daily_Rate?: number;
+        Presence?: number;
         Process_Name?: string;
     }>) => Promise<{ success: boolean; message: string }>;
     workers?: Worker[];
@@ -195,8 +197,9 @@ export default function ProductTimelineModal({
             Worker_Name: wl.Worker_Name,
             Date: wl.Date,
             Daily_Rate: wl.Daily_Rate || 0,
-            Original_Rate: wl.Daily_Rate || 0,
-            Is_Half_Day: false,
+            // Original_Rate = PUNA dnevnica (za ravnomjernu podjelu pri spremanju), ne split iznos
+            Original_Rate: wl.Original_Daily_Rate || wl.Daily_Rate || 0,
+            Is_Half_Day: wl.Presence === 0.5,
             Process_Name: wl.Process_Name
         }));
         setEditedLogs(logs);
@@ -223,6 +226,8 @@ export default function ProductTimelineModal({
                 Worker_Name: l.Worker_Name,
                 Date: l.Date,
                 Daily_Rate: l.Daily_Rate,
+                Original_Daily_Rate: l.Original_Rate,
+                Presence: l.Is_Half_Day ? 0.5 : 1,
                 Process_Name: l.Process_Name
             })));
             if (result.success) {

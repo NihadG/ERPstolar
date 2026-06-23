@@ -580,11 +580,12 @@ export async function markAttendanceAndRecalculate(
 
 export interface DailyBookingItemInput {
     workOrderItemId: string;
-    dayFraction: number;        // 1 (cijeli) ili 0.5 (pola)
+    dayFraction?: number;       // DEPRECATED — podjela se sada računa ravnomjerno (presence / N). Ignoriše se.
     processes?: string[];       // opcioni procesi koje je radnik radio (ne utiče na trošak)
 }
 export interface DailyBookingEntryInput {
     workerId: string;
+    presence?: number;          // Prisutnost radnika za taj dan: 1 (cijeli) ili 0.5 (pola). Default 1.
     items: DailyBookingItemInput[];
 }
 
@@ -593,7 +594,7 @@ export interface DailyBookingItemView {
     workOrderId: string;
     productName: string;
     projectName: string;
-    dayFraction: number;
+    dayFraction: number;        // = Day_Fraction zapisa (presence / N) — za informaciju
     processes?: string[];
     amount: number;             // KM koje su pale na ovaj proizvod (Daily_Rate zapisa)
 }
@@ -601,6 +602,7 @@ export interface DailyBookingEntryView {
     workerId: string;
     workerName: string;
     dailyRate: number;
+    presence: number;           // Prisutnost radnika za taj dan (1 ili 0.5), rekonstruisana iz zapisa
     items: DailyBookingItemView[];
 }
 
@@ -627,10 +629,202 @@ async function fetchWorkOrderItemsByIds(itemIds: string[], organizationId: strin
     return map;
 }
 
+// ════════════════════════════════════════════════════════════════════
+// KANONSKA PODJELA DNEVNICE — jedini izvor istine za iznos po proizvodu.
+// Čista logika je u lib/laborSplit.ts (bez Firebase, pokrivena testovima).
+// ════════════════════════════════════════════════════════════════════
+export { splitDnevnica, splitDnevnicaExact, normalizePresence } from './laborSplit';
+import { splitDnevnicaExact } from './laborSplit';
+
+/**
+ * Ravnomjerno raspodijeli dnevnicu radnika preko SVIH njegovih logova na dati datum
+ * (cijela organizacija, kroz sve naloge). IDEMPOTENTNO. Garantuje invarijantu:
+ *   Σ Daily_Rate (svi proizvodi radnika tog dana) = Original_Daily_Rate × Presence.
+ * Vraća skup pogođenih Work_Order_ID (za naknadni recalculateWorkOrder).
+ */
+export async function renormalizeWorkerDay(
+    workerId: string,
+    date: string,
+    organizationId: string,
+    presenceHint?: number
+): Promise<Set<string>> {
+    const affected = new Set<string>();
+    if (!workerId || !date || !organizationId) return affected;
+    const firestore = getDb();
+    const snap = await getDocs(query(
+        collection(firestore, 'work_logs'),
+        where('Worker_ID', '==', workerId),
+        where('Date', '==', date),
+        where('Organization_ID', '==', organizationId)
+    ));
+    if (snap.empty) return affected;
+
+    const docs = snap.docs;
+    const n = docs.length;  // dijeli po broju logova → Σ je uvijek tačno dnevnica × presence
+
+    // presence je per-(radnik, dan): hint (zadnja korisnička namjera) ima prednost,
+    // inače eksplicitni Presence sa zapisa, inače 1.
+    let presence = 1;
+    if (presenceHint === 0.5 || presenceHint === 1) {
+        presence = presenceHint;
+    } else {
+        for (const d of docs) {
+            const p = d.data().Presence;
+            if (p === 0.5 || p === 1) { presence = p; break; }
+        }
+    }
+    // dnevnica = Original_Daily_Rate; fallback na trenutnu dnevnicu radnika ako nedostaje
+    let dnevnica = 0;
+    for (const d of docs) {
+        const o = d.data().Original_Daily_Rate;
+        if (typeof o === 'number' && o > 0) { dnevnica = o; break; }
+    }
+    if (dnevnica <= 0) {
+        const workers = await getWorkers(organizationId);
+        dnevnica = workers.find(w => w.Worker_ID === workerId)?.Daily_Rate || 0;
+    }
+
+    const { amounts, dayFraction } = splitDnevnicaExact(dnevnica, presence, n);
+
+    const batch = writeBatch(firestore);
+    let changed = 0;
+    docs.forEach((d, i) => {
+        const data = d.data();
+        if (data.Work_Order_ID) affected.add(data.Work_Order_ID);
+        const amount = amounts[i];
+        const needsUpdate =
+            Math.abs((data.Daily_Rate || 0) - amount) > 0.001 ||
+            Math.abs((data.Day_Fraction ?? 1) - dayFraction) > 0.0001 ||
+            (data.Split_Factor || 0) !== n ||
+            (data.Original_Daily_Rate || 0) !== dnevnica ||
+            (data.Presence ?? 1) !== presence;
+        if (needsUpdate) {
+            batch.update(d.ref, {
+                Daily_Rate: amount,
+                Day_Fraction: dayFraction,
+                Split_Factor: n,
+                Original_Daily_Rate: dnevnica,
+                Presence: presence,
+            });
+            changed++;
+        }
+    });
+    if (changed > 0) await batch.commit();
+    return affected;
+}
+
+/**
+ * JEDNOKRATNA MIGRACIJA — uskladi SVE postojeće work logove s kanonskim modelom.
+ * Grupiše po (radnik, datum), ravnomjerno raspoređuje dnevnicu (presence iz zapisa ili 1),
+ * čisti zastarjele Labor_Cost_Frozen/Labor_Cost_Source oznake i preračuna sve pogođene naloge.
+ */
+export async function recalcAllWorkLogSplits(
+    organizationId: string
+): Promise<{ success: boolean; pairs: number; logs: number; workOrders: number; message: string }> {
+    if (!organizationId) return { success: false, pairs: 0, logs: 0, workOrders: 0, message: 'Organization ID je obavezan' };
+    try {
+        const firestore = getDb();
+        const workers = await getWorkers(organizationId);
+        const rateOf = new Map(workers.map(w => [w.Worker_ID, w.Daily_Rate || 0]));
+
+        const snap = await getDocs(query(
+            collection(firestore, 'work_logs'),
+            where('Organization_ID', '==', organizationId)
+        ));
+        if (snap.empty) return { success: true, pairs: 0, logs: 0, workOrders: 0, message: 'Nema zapisa rada za preračun' };
+
+        // Grupiši po (radnik, datum)
+        type LogDoc = (typeof snap.docs)[number];
+        const groups = new Map<string, LogDoc[]>();
+        snap.docs.forEach(d => {
+            const x = d.data();
+            const key = `${x.Worker_ID}__${x.Date}`;
+            const arr = groups.get(key) || [];
+            arr.push(d);
+            groups.set(key, arr);
+        });
+
+        const affectedWO = new Set<string>();
+        const itemLabor = new Map<string, number>();   // itemId -> Σ Daily_Rate (novi raspoređeni iznosi)
+        let logsUpdated = 0;
+        let batch = writeBatch(firestore);
+        let ops = 0;
+        const flush = async () => { if (ops > 0) { await batch.commit(); batch = writeBatch(firestore); ops = 0; } };
+
+        for (const docs of Array.from(groups.values())) {
+            const n = docs.length;
+            let presence = 1;
+            for (const d of docs) { const p = d.data().Presence; if (p === 0.5 || p === 1) { presence = p; break; } }
+            let dnevnica = 0;
+            for (const d of docs) { const o = d.data().Original_Daily_Rate; if (typeof o === 'number' && o > 0) { dnevnica = o; break; } }
+            if (dnevnica <= 0) dnevnica = rateOf.get(docs[0].data().Worker_ID) || 0;
+
+            const { amounts, dayFraction } = splitDnevnicaExact(dnevnica, presence, n);
+            docs.forEach((d, i) => {
+                const data = d.data();
+                if (data.Work_Order_ID) affectedWO.add(data.Work_Order_ID);
+                const itemId = data.Work_Order_Item_ID;
+                if (itemId) itemLabor.set(itemId, Math.round(((itemLabor.get(itemId) || 0) + amounts[i]) * 100) / 100);
+                batch.update(d.ref, {
+                    Daily_Rate: amounts[i],
+                    Day_Fraction: dayFraction,
+                    Split_Factor: n,
+                    Original_Daily_Rate: dnevnica,
+                    Presence: presence,
+                });
+                logsUpdated++; ops++;
+            });
+            if (ops >= 400) await flush();
+        }
+        await flush();
+
+        // BRZI UPIS TROŠKA: direktno upiši Actual_Labor_Cost na stavke + naloge (Σ Daily_Rate),
+        // očisti zastarjele override oznake. BEZ teškog recalc-a (bez materijala/backfilla/snapshot/sync)
+        // i paralelno u grupama → migracija je brza čak i za mnogo naloga.
+        const woIds = Array.from(affectedWO);
+        const CHUNK = 5;
+        for (let i = 0; i < woIds.length; i += CHUNK) {
+            const chunk = woIds.slice(i, i + CHUNK);
+            await Promise.all(chunk.map(async (woId) => {
+                try {
+                    const [itemsSnap, woSnap] = await Promise.all([
+                        getDocs(query(collection(firestore, COLLECTIONS.WORK_ORDER_ITEMS), where('Work_Order_ID', '==', woId))),
+                        getDocs(query(collection(firestore, COLLECTIONS.WORK_ORDERS), where('Work_Order_ID', '==', woId))),
+                    ]);
+                    const ib = writeBatch(firestore);
+                    let woLabor = 0;
+                    itemsSnap.docs.forEach(d => {
+                        const x = d.data();
+                        const labor = Math.round((itemLabor.get(x.ID) || 0) * 100) / 100;
+                        woLabor += labor;
+                        const payload: Record<string, any> = { Actual_Labor_Cost: labor };
+                        if (x.Labor_Cost_Frozen || x.Labor_Cost_Source) { payload.Labor_Cost_Frozen = false; payload.Labor_Cost_Source = 'work_logs'; }
+                        ib.update(d.ref, payload);
+                    });
+                    woLabor = Math.round(woLabor * 100) / 100;
+                    woSnap.docs.forEach(d => ib.update(d.ref, { Actual_Labor_Cost: woLabor, Labor_Cost: woLabor }));
+                    await ib.commit();
+                } catch (e) { console.warn('[recalcAll] WO labor update failed for', woId, e); }
+            }));
+        }
+
+        return {
+            success: true,
+            pairs: groups.size,
+            logs: logsUpdated,
+            workOrders: affectedWO.size,
+            message: `Preračunato ${logsUpdated} zapisa · ${groups.size} radnik-dan · ${affectedWO.size} naloga`,
+        };
+    } catch (error) {
+        console.error('recalcAllWorkLogSplits error:', error);
+        return { success: false, pairs: 0, logs: 0, workOrders: 0, message: 'Greška pri preračunu dnevnica' };
+    }
+}
+
 /**
  * Spremi dnevnu knjigu rada za dati dan. Booking je IZVOR ISTINE:
  * za svakog radnika u `entries` briše postojeće work logove tog dana i piše nove.
- * Daily_Rate = round(dnevnica × dayFraction).
+ * Dnevnica radnika (× presence) se RAVNOMJERNO dijeli na N proizvoda (splitDnevnicaExact).
  */
 export async function saveDailyWorkBooking(
     date: string,
@@ -709,11 +903,18 @@ export async function saveDailyWorkBooking(
                 continue;
             }
 
-            for (const item of entry.items) {
-                const booked = itemMap.get(item.workOrderItemId);
-                if (!booked) continue;
-                const frac = item.dayFraction === 0.5 ? 0.5 : 1;
-                const amount = Math.round(dailyRate * frac * 100) / 100;
+            // KANONSKA PODJELA: dnevnica (× presence) ravnomjerno na N proizvoda na kojima radnik radi taj dan.
+            const validItems = entry.items.filter(it => itemMap.get(it.workOrderItemId));
+            const presence = entry.presence === 0.5 ? 0.5 : 1;
+            const splitCount = validItems.length;
+            if (splitCount === 0) continue;
+            const { amounts, dayFraction } = splitDnevnicaExact(dailyRate, presence, splitCount);
+            const hoursPerItem = Math.round((8 * presence / splitCount) * 10) / 10;
+
+            let idx = 0;
+            for (const item of validItems) {
+                const booked = itemMap.get(item.workOrderItemId)!;
+                const amount = amounts[idx++] ?? 0;
 
                 // POVEZAN custom zadatak → upiši zapis na povezani proizvod (trošak se dodaje proizvodu),
                 // a naziv zadatka ide u Process_Name. Inače piši na sam booked item.
@@ -729,10 +930,12 @@ export async function saveDailyWorkBooking(
                     Worker_Name: workerName,
                     Daily_Rate: amount,
                     Original_Daily_Rate: dailyRate,
-                    Day_Fraction: frac,
+                    Day_Fraction: dayFraction,
+                    Presence: presence,
+                    Split_Factor: splitCount,
                     Booking_Source: 'manual',
                     Is_From_Attendance: false,
-                    Hours_Worked: frac === 0.5 ? 4 : 8,
+                    Hours_Worked: hoursPerItem,
                     Work_Order_ID: target.Work_Order_ID,
                     Work_Order_Item_ID: target.ID,
                     Product_ID: target.Product_ID,
@@ -748,7 +951,8 @@ export async function saveDailyWorkBooking(
         }
 
         const affectedList = Array.from(affected);
-        await Promise.all(affectedList.map(id => recalculateWorkOrder(id).catch(err => console.warn('recalc failed', id, err))));
+        // skipSnapshot: izmjena dnevnice ne treba AI snapshot (pravi se samo na završetku naloga)
+        await Promise.all(affectedList.map(id => recalculateWorkOrder(id, { skipSnapshot: true }).catch(err => console.warn('recalc failed', id, err))));
 
         const msg = skippedAbsent > 0
             ? `Spremljeno ${logsCreated} zapisa rada · ${skippedAbsent} radnik(a) preskočen(o) (označen odsutan u šihtarici)`
@@ -790,6 +994,7 @@ export async function bulkBookWorkOrderLabor(
 
         const fs = getDb();
         let skippedAbsent = 0;
+        const touchedPairs = new Map<string, { workerId: string; date: string }>();
 
         for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
             const dow = d.getDay();
@@ -826,6 +1031,8 @@ export async function bulkBookWorkOrderLabor(
                         Daily_Rate: perItemRate,
                         Original_Daily_Rate: rate,
                         Day_Fraction: Math.round((1 / split) * 100) / 100,
+                        Presence: 1,
+                        Split_Factor: split,
                         Booking_Source: 'manual',
                         Is_From_Attendance: false,
                         Hours_Worked: 8,
@@ -834,12 +1041,24 @@ export async function bulkBookWorkOrderLabor(
                         Product_ID: woi.Product_ID,
                         Date: dateStr,
                     }, organizationId);
-                    if (res.success) logsCreated++;
+                    if (res.success) { logsCreated++; touchedPairs.set(`${wid}__${dateStr}`, { workerId: wid, date: dateStr }); }
                 }
             }
         }
 
-        await recalculateWorkOrder(workOrderId);
+        // KANONSKA podjela: uskladi svaki pogođeni (radnik, datum) — ravnomjerno preko SVIH proizvoda
+        // tog radnika tog dana (uključujući postojeće logove iz drugih naloga).
+        const affectedWO = new Set<string>([workOrderId]);
+        for (const p of Array.from(touchedPairs.values())) {
+            try {
+                // bez hint-a: zadrži postojeću prisutnost dana ako je radnik već imao zapis (npr. ručni ½)
+                const wos = await renormalizeWorkerDay(p.workerId, p.date, organizationId);
+                wos.forEach(id => affectedWO.add(id));
+            } catch (e) { console.warn('[bulkBook] renormalize failed', p, e); }
+        }
+        await Promise.all(Array.from(affectedWO).map(id =>
+            recalculateWorkOrder(id, { skipSnapshot: true }).catch(err => console.warn('[bulkBook] recalc failed', id, err))
+        ));
         const msg = skippedAbsent > 0
             ? `Dodano ${logsCreated} zapisa rada · ${skippedAbsent} dan(a) preskočeno (radnik odsutan u šihtarici)`
             : `Dodano ${logsCreated} zapisa rada`;
@@ -873,6 +1092,7 @@ export async function getDailyWorkBooking(date: string, organizationId: string):
         const workers = await getWorkers(organizationId);
 
         const byWorker = new Map<string, DailyBookingEntryView>();
+        const explicitPresence = new Map<string, number>();
         for (const log of logs) {
             let entry = byWorker.get(log.Worker_ID);
             if (!entry) {
@@ -881,10 +1101,12 @@ export async function getDailyWorkBooking(date: string, organizationId: string):
                     workerId: log.Worker_ID,
                     workerName: log.Worker_Name,
                     dailyRate: w?.Daily_Rate ?? log.Original_Daily_Rate ?? 0,
+                    presence: 1,
                     items: [],
                 };
                 byWorker.set(log.Worker_ID, entry);
             }
+            if (log.Presence === 0.5 || log.Presence === 1) explicitPresence.set(log.Worker_ID, log.Presence);
             const woi = itemMap.get(log.Work_Order_Item_ID);
             entry.items.push({
                 workOrderItemId: log.Work_Order_Item_ID,
@@ -895,6 +1117,13 @@ export async function getDailyWorkBooking(date: string, organizationId: string):
                 processes: log.Process_Tags ?? [],
                 amount: log.Daily_Rate,
             });
+        }
+        // presence po radniku: eksplicitni Presence ako postoji, inače rekonstrukcija iz Σ Day_Fraction
+        for (const entry of Array.from(byWorker.values())) {
+            const exp = explicitPresence.get(entry.workerId);
+            if (exp != null) { entry.presence = exp; continue; }
+            const sumFrac = entry.items.reduce((s, it) => s + (it.dayFraction || 0), 0);
+            entry.presence = sumFrac > 0 && sumFrac <= 0.6 ? 0.5 : 1;
         }
         return Array.from(byWorker.values());
     } catch (error) {
@@ -952,24 +1181,31 @@ export async function suggestDailyBooking(date: string, organizationId: string):
                 organizationId
             );
 
+            // presence sa zadnjeg dana (eksplicitni Presence ili rekonstrukcija iz Σ Day_Fraction)
+            const sumFracPrev = lastDayLogs.reduce((s, l) => s + (l.Day_Fraction ?? 1), 0);
+            const presence = (lastDayLogs[0].Presence === 0.5 || lastDayLogs[0].Presence === 1)
+                ? lastDayLogs[0].Presence
+                : (sumFracPrev > 0 && sumFracPrev <= 0.6 ? 0.5 : 1);
+
+            // Predloži samo proizvode čiji nalog/stavka još postoji; dnevnica ravnomjerno podijeljena.
+            const validLogs = lastDayLogs.filter(l => itemMap.get(l.Work_Order_Item_ID));
+            const { amounts, dayFraction } = splitDnevnicaExact(dailyRate, presence, validLogs.length || 1);
+
             const items: DailyBookingItemView[] = [];
-            for (const log of lastDayLogs) {
-                const woi = itemMap.get(log.Work_Order_Item_ID);
-                // Predloži samo proizvode iz naloga koji NIJE završen/otkazan
-                if (!woi) continue;
-                const frac = log.Day_Fraction ?? 1;
+            validLogs.forEach((log, i) => {
+                const woi = itemMap.get(log.Work_Order_Item_ID)!;
                 items.push({
                     workOrderItemId: log.Work_Order_Item_ID,
                     workOrderId: log.Work_Order_ID,
                     productName: woi.Product_Name ?? '',
                     projectName: woi.Project_Name ?? '',
-                    dayFraction: frac,
+                    dayFraction,
                     processes: log.Process_Tags ?? [],
-                    amount: Math.round(dailyRate * frac * 100) / 100,
+                    amount: amounts[i] ?? 0,
                 });
-            }
+            });
             if (items.length > 0) {
-                suggestions.push({ workerId, workerName: w?.Name ?? lastDayLogs[0].Worker_Name, dailyRate, items });
+                suggestions.push({ workerId, workerName: w?.Name ?? lastDayLogs[0].Worker_Name, dailyRate, presence, items });
             }
         }
         return suggestions;
@@ -1144,6 +1380,8 @@ export async function createWorkLogsForAttendance(
                 Daily_Rate: splitRate,
                 Original_Daily_Rate: dailyRate,
                 Split_Factor: totalAssignments,
+                Day_Fraction: totalAssignments > 0 ? Math.round((1 / totalAssignments) * 1e6) / 1e6 : 1,
+                Presence: 1,
                 Work_Order_ID: pending.workOrderId,
                 Work_Order_Item_ID: pending.item.ID,
                 Product_ID: pending.item.Product_ID,
@@ -2010,105 +2248,9 @@ export async function completeWorkOrderItem(
     }
 }
 
-/**
- * Proportionally split labor costs across WO items when same worker works
- * on multiple products on the same day.
- *
- * For each (Worker_ID, Date) combination that appears in work logs of
- * multiple items, split the Original_Daily_Rate proportionally by material cost.
- *
- * Example: Worker (100 KM/day) works on Product A (material: 1900 KM) and
- * Product B (material: 300 KM) on the same day:
- *   A gets: 100 × 1900/(1900+300) = 86 KM
- *   B gets: 100 ×  300/(1900+300) = 14 KM
- */
-async function recalculateWOLaborSplit(
-    workOrderId: string,
-    organizationId: string
-): Promise<void> {
-    const firestore = getDb();
-
-    // 1. Get ALL work logs for this WO
-    const logsQuery = query(
-        collection(firestore, 'work_logs'),
-        where('Work_Order_ID', '==', workOrderId),
-        where('Organization_ID', '==', organizationId)
-    );
-    const logsSnap = await getDocs(logsQuery);
-    if (logsSnap.empty) return;
-
-    // 2. Get all WO items to find material costs
-    const itemsQuery = query(
-        collection(firestore, COLLECTIONS.WORK_ORDER_ITEMS),
-        where('Work_Order_ID', '==', workOrderId)
-    );
-    const itemsSnap = await getDocs(itemsQuery);
-    const itemMaterialCosts = new Map<string, number>(); // itemID -> materialCost
-    itemsSnap.docs.forEach(d => {
-        const data = d.data();
-        itemMaterialCosts.set(data.ID, data.Material_Cost || data.Product_Value || 1);
-    });
-
-    // 3. Group logs by (Worker_ID, Date) → list of { docRef, itemId, originalRate }
-    type LogInfo = { ref: any; itemId: string; originalRate: number; docId: string };
-    const workerDateMap = new Map<string, LogInfo[]>();
-
-    logsSnap.docs.forEach(d => {
-        const data = d.data();
-        const key = `${data.Worker_ID}__${data.Date}`;
-        const entry: LogInfo = {
-            ref: d.ref,
-            itemId: data.Work_Order_Item_ID,
-            originalRate: data.Original_Daily_Rate || data.Daily_Rate || 0,
-            docId: d.id,
-        };
-        const existing = workerDateMap.get(key) || [];
-        existing.push(entry);
-        workerDateMap.set(key, existing);
-    });
-
-    // 4. For each worker-date group, check if logs span multiple items
-    const CHUNK_SIZE = 450;
-    const updates: Array<{ ref: any; newRate: number }> = [];
-
-    for (const entry of Array.from(workerDateMap.entries())) {
-        const logs = entry[1];
-        // Get unique item IDs for this worker-date
-        const uniqueItemIds = Array.from(new Set(logs.map((l: LogInfo) => l.itemId)));
-
-        if (uniqueItemIds.length <= 1) {
-            // Only one item — ensure full rate (no split needed)
-            for (const log of logs) {
-                if (Math.round(log.originalRate) !== Math.round(log.originalRate)) continue; // skip if fine
-                updates.push({ ref: log.ref, newRate: Math.round(log.originalRate) });
-            }
-            continue;
-        }
-
-        // Multiple items — split proportionally by material cost
-        const totalMaterial = uniqueItemIds.reduce(
-            (sum, id) => sum + (itemMaterialCosts.get(id) || 1), 0
-        );
-
-        for (const log of logs) {
-            const itemMaterial = itemMaterialCosts.get(log.itemId) || 1;
-            const ratio = itemMaterial / totalMaterial;
-            const splitRate = Math.round(log.originalRate * ratio);
-            updates.push({ ref: log.ref, newRate: splitRate });
-        }
-    }
-
-    // 5. Batch update all adjusted rates
-    if (updates.length > 0) {
-        for (let i = 0; i < updates.length; i += CHUNK_SIZE) {
-            const chunk = updates.slice(i, i + CHUNK_SIZE);
-            const batch = writeBatch(firestore);
-            chunk.forEach(u => batch.update(u.ref, { Daily_Rate: u.newRate }));
-            await batch.commit();
-        }
-        console.log(`[recalculateWOLaborSplit] WO ${workOrderId}: ${updates.length} logs adjusted across ${itemMaterialCosts.size} items`);
-    }
-}
+// [UKLONJENO] recalculateWOLaborSplit — dijelila je dnevnicu po trošku materijala, što je
+// pravilo nespojivo s ostalim putevima unosa i glavni uzrok nekonzistentnih iznosa u timeline-u.
+// Zamijenjeno kanonskom RAVNOMJERNOM podjelom kroz renormalizeWorkerDay().
 
 /**
  * Override work logs for a specific work order item.
@@ -2127,7 +2269,9 @@ export async function overrideWorkLogs(
         Worker_ID: string;
         Worker_Name: string;
         Date: string;
-        Daily_Rate: number;
+        Daily_Rate: number;            // (informativno) — konačni iznos određuje renormalizeWorkerDay
+        Original_Daily_Rate?: number;  // puna dnevnica radnika (za ravnomjernu podjelu)
+        Presence?: number;             // 1 ili 0.5 (cijeli/pola dana)
         Process_Name?: string;
     }>,
     organizationId: string,
@@ -2171,26 +2315,32 @@ export async function overrideWorkLogs(
             await batch.commit();
         }
 
-        // 2. Write new work logs with ALL required fields
-        //    Must match the schema used by createWorkLog / calculateActualLaborCost
-        const newLogs = entries.map(entry => ({
-            Work_Log_ID: generateUUID(),
-            Organization_ID: organizationId,
-            Work_Order_ID: workOrderId,
-            Work_Order_Item_ID: itemId,          // ← correct field name
-            Product_ID: resolvedProductId,        // ← required for timeline display
-            Worker_ID: entry.Worker_ID,
-            Worker_Name: entry.Worker_Name,
-            Date: entry.Date,
-            Daily_Rate: entry.Daily_Rate,
-            Original_Daily_Rate: entry.Daily_Rate,
-            Split_Factor: 1,
-            Hours_Worked: 8,                      // ← required field
-            Process_Name: entry.Process_Name || '',
-            Is_From_Attendance: false,            // ← manual override, not from attendance
-            Source: 'manual_override' as const,
-            Created_At: new Date().toISOString(),
-        }));
+        // 2. Write new work logs. Daily_Rate/Day_Fraction/Split_Factor će biti TAČNO postavljeni
+        //    naknadno (renormalizeWorkerDay) — ovdje upisujemo punu dnevnicu + presence kao osnovu.
+        const newLogs = entries.map(entry => {
+            const original = entry.Original_Daily_Rate ?? entry.Daily_Rate;
+            const presence = entry.Presence === 0.5 ? 0.5 : 1;
+            return {
+                WorkLog_ID: generateUUID(),
+                Organization_ID: organizationId,
+                Work_Order_ID: workOrderId,
+                Work_Order_Item_ID: itemId,
+                Product_ID: resolvedProductId,        // ← required for timeline display
+                Worker_ID: entry.Worker_ID,
+                Worker_Name: entry.Worker_Name,
+                Date: entry.Date,
+                Daily_Rate: entry.Daily_Rate,
+                Original_Daily_Rate: original,
+                Presence: presence,
+                Split_Factor: 1,
+                Day_Fraction: presence,
+                Hours_Worked: 8,
+                Process_Name: entry.Process_Name || '',
+                Is_From_Attendance: false,
+                Booking_Source: 'manual' as const,
+                Created_At: new Date().toISOString(),
+            };
+        });
 
         for (let i = 0; i < newLogs.length; i += CHUNK_SIZE) {
             const chunk = newLogs.slice(i, i + CHUNK_SIZE);
@@ -2202,37 +2352,34 @@ export async function overrideWorkLogs(
             await batch.commit();
         }
 
-        // 3. Mark item as having manual labor cost override
-        //    Query by ID field since Firestore doc ID may differ from item.ID
-        try {
-            const totalLaborCost = entries.reduce((sum, e) => sum + e.Daily_Rate, 0);
-            const itemQuery = query(
-                collection(firestore, COLLECTIONS.WORK_ORDER_ITEMS),
-                where('ID', '==', itemId)
-            );
-            const itemSnap = await getDocs(itemQuery);
-            if (!itemSnap.empty) {
-                const itemRef = itemSnap.docs[0].ref;
-                await updateDoc(itemRef, {
-                    Labor_Cost_Frozen: true,
-                    Actual_Labor_Cost: totalLaborCost,
-                    Labor_Cost_Updated_At: new Date().toISOString(),
-                    Labor_Cost_Source: 'manual_override',
-                });
-            } else {
-                console.warn(`[overrideWorkLogs] Item ${itemId} not found in collection — skipping metadata update`);
-            }
-        } catch (itemErr) {
-            console.warn(`[overrideWorkLogs] Failed to update item ${itemId}:`, itemErr);
+        // 3. KANONSKA podjela: za svaki pogođeni (radnik, datum) ravnomjerno preraspodijeli dnevnicu
+        //    preko SVIH proizvoda tog radnika tog dana (uklj. uklonjene → siblinzi dobiju veći udio).
+        //    Bez "Labor_Cost_Frozen"/override — Actual_Labor_Cost je uvijek Σ work logova.
+        const pairs = new Map<string, { workerId: string; date: string; presence?: number }>();
+        existingSnap.docs.forEach(d => {
+            const x = d.data();
+            if (x.Worker_ID && x.Date) pairs.set(`${x.Worker_ID}__${x.Date}`, { workerId: x.Worker_ID, date: x.Date });
+        });
+        // entries (upravo uređeni proizvod) nose najsvježiju namjeru presence → ona pobjeđuje za cijeli dan
+        entries.forEach(e => pairs.set(`${e.Worker_ID}__${e.Date}`, {
+            workerId: e.Worker_ID, date: e.Date, presence: e.Presence === 0.5 ? 0.5 : 1,
+        }));
+
+        const affectedWO = new Set<string>([workOrderId]);
+        for (const p of Array.from(pairs.values())) {
+            try {
+                const wos = await renormalizeWorkerDay(p.workerId, p.date, organizationId, p.presence);
+                wos.forEach(id => affectedWO.add(id));
+            } catch (e) { console.warn('[overrideWorkLogs] renormalize failed', p, e); }
         }
 
-        // 4. Proportionally split labor costs across sibling items
-        await recalculateWOLaborSplit(workOrderId, organizationId);
+        // 4. Preračunaj sve pogođene naloge (radnik je mogao raditi na proizvodima drugih naloga isti dan)
+        //    skipSnapshot: izmjena timeline-a ne treba AI snapshot; paralelno za brzinu.
+        await Promise.all(Array.from(affectedWO).map(id =>
+            recalculateWorkOrder(id, { skipSnapshot: true }).catch(err => console.warn('[overrideWorkLogs] recalc failed', id, err))
+        ));
 
-        // 5. Recalculate work order totals
-        await recalculateWorkOrder(workOrderId);
-
-        console.log(`[overrideWorkLogs] WO ${workOrderId} item ${itemId}: ${docsToDelete.length} deleted, ${newLogs.length} created`);
+        console.log(`[overrideWorkLogs] WO ${workOrderId} item ${itemId}: ${docsToDelete.length} deleted, ${newLogs.length} created, ${affectedWO.size} WO recalc`);
         return { success: true, message: `${newLogs.length} zapisa ažurirano` };
     } catch (error) {
         console.error('overrideWorkLogs error:', error);
@@ -2484,9 +2631,19 @@ export async function calculateActualLaborCost(item: any, organizationId?: strin
 }
 
 /**
- * Recalculate Work Order aggregates from items
+ * Recalculate Work Order aggregates from items.
+ * options (za labor-only puteve, da bude brzo):
+ *   skipSnapshot       — ne pravi AI production snapshot (samo na završetku naloga treba)
+ *   skipStatusSync     — ne dira statuse proizvoda/projekata (labor ne mijenja status)
+ *   skipMaterialRefresh— ne dohvaća svjež materijal po stavci (koristi spremljeni Material_Cost)
  */
-export async function recalculateWorkOrder(workOrderId: string): Promise<void> {
+export async function recalculateWorkOrder(
+    workOrderId: string,
+    options?: { skipSnapshot?: boolean; skipStatusSync?: boolean; skipMaterialRefresh?: boolean }
+): Promise<void> {
+    const skipSnapshot = options?.skipSnapshot ?? false;
+    const skipStatusSync = options?.skipStatusSync ?? false;
+    const skipMaterialRefresh = options?.skipMaterialRefresh ?? false;
     try {
         const firestore = getDb();
         const workOrder = await getWorkOrderWithItems(workOrderId);
@@ -2606,7 +2763,7 @@ export async function recalculateWorkOrder(workOrderId: string): Promise<void> {
             } else if ((item as any).Material_Cost_Source === 'manual' && (item.Material_Cost || 0) > 0) {
                 // Manually set via PriceEditModal: preserve user's value
                 itemMaterialCost = item.Material_Cost || 0;
-            } else if (item.Product_ID && workOrder.Organization_ID) {
+            } else if (!skipMaterialRefresh && item.Product_ID && workOrder.Organization_ID) {
                 // Active: fetch fresh material costs
                 const materials = await getProductMaterials(item.Product_ID, workOrder.Organization_ID);
                 itemMaterialCost = materials.reduce((sum, m) => sum + (m.Total_Price || 0), 0);
@@ -2624,23 +2781,9 @@ export async function recalculateWorkOrder(workOrderId: string): Promise<void> {
 
             plannedLaborCost += item.Planned_Labor_Cost || 0;
 
-            // Calculate labor cost from work logs
-            // FIX #5: If labor cost was manually overridden (manual_override source),
-            // preserve the user's value — don't overwrite with auto-calculated cost.
-            // Auto-attendance logs still recalculate normally.
-            let freshItemLaborCost: number;
-            const isManualOverride = (item as any).Labor_Cost_Source === 'manual_override';
-            if (isManualOverride && (item.Actual_Labor_Cost || 0) > 0) {
-                // Manual override: use the stored value (set by overrideWorkLogs)
-                // Still recalculate from work_logs to stay in sync with manual entries
-                freshItemLaborCost = await calculateActualLaborCost(item, workOrder.Organization_ID);
-                // If work_logs exist, use them; otherwise fall back to stored value
-                if (freshItemLaborCost === 0) {
-                    freshItemLaborCost = item.Actual_Labor_Cost || 0;
-                }
-            } else {
-                freshItemLaborCost = await calculateActualLaborCost(item, workOrder.Organization_ID);
-            }
+            // INVARIJANTA: trošak rada proizvoda = Σ Daily_Rate iz work logova (jedini izvor istine).
+            // Nema "manual_override" izuzetka — sve izmjene (knjiga rada, timeline) idu kroz work logove.
+            const freshItemLaborCost = await calculateActualLaborCost(item, workOrder.Organization_ID);
             actualLaborCost += freshItemLaborCost;
 
             // SYNC: Update item-level Material_Cost and Actual_Labor_Cost for consistency
@@ -2650,9 +2793,6 @@ export async function recalculateWorkOrder(workOrderId: string): Promise<void> {
                     Material_Cost: itemMaterialCost,
                     Actual_Labor_Cost: freshItemLaborCost
                 };
-                if ((item as any).Labor_Cost_Frozen === true) {
-                    updatePayload.Labor_Cost_Updated_At = new Date().toISOString();
-                }
                 await updateDoc(itemRef, updatePayload);
             } catch (syncErr) {
                 console.warn(`Failed to sync costs on item ${item.ID}:`, syncErr);
@@ -2706,7 +2846,8 @@ export async function recalculateWorkOrder(workOrderId: string): Promise<void> {
         });
 
         // AI TRAINING: Create production snapshot when work order is completed
-        if (status === 'Završeno' && workOrder.Organization_ID) {
+        // (preskoči za labor-only preračune — snapshot nije potreban kod izmjene dnevnice)
+        if (!skipSnapshot && status === 'Završeno' && workOrder.Organization_ID) {
             try {
                 await createProductionSnapshot(workOrderId, workOrder.Organization_ID);
                 console.log(`[AI Training] Production snapshot created for WorkOrder ${workOrderId}`);
@@ -2716,18 +2857,20 @@ export async function recalculateWorkOrder(workOrderId: string): Promise<void> {
             }
         }
 
-        // SYNC: Update product statuses in projects
-        await syncProductStatuses(workOrder.items);
+        if (!skipStatusSync) {
+            // SYNC: Update product statuses in projects
+            await syncProductStatuses(workOrder.items);
 
-        // SYNC: Update project status based on product statuses
-        // Collect unique project IDs from work order items
-        const projectIds = new Set<string>();
-        for (const item of workOrder.items) {
-            if (item.Project_ID) projectIds.add(item.Project_ID);
-        }
-        for (const projectId of Array.from(projectIds)) {
-            // GAP-4 FIX: Pass organizationId for proper multi-tenancy isolation
-            await syncProjectStatus(projectId, workOrder.Organization_ID);
+            // SYNC: Update project status based on product statuses
+            // Collect unique project IDs from work order items
+            const projectIds = new Set<string>();
+            for (const item of workOrder.items) {
+                if (item.Project_ID) projectIds.add(item.Project_ID);
+            }
+            for (const projectId of Array.from(projectIds)) {
+                // GAP-4 FIX: Pass organizationId for proper multi-tenancy isolation
+                await syncProjectStatus(projectId, workOrder.Organization_ID);
+            }
         }
     } catch (error) {
         console.error('Error recalculating work order:', error);
@@ -2760,15 +2903,15 @@ export async function recalculateAllActiveWorkOrders(
         const activeSnap = await getDocs(activeWoQuery);
 
         let totalRecalculated = 0;
+        const CHUNK = 5;  // paralelno u grupama (brže, ali bez preopterećenja Firestore-a)
 
-        for (const woDoc of activeSnap.docs) {
-            const woId = woDoc.data().Work_Order_ID;
-            try {
-                await recalculateWorkOrder(woId);
-                totalRecalculated++;
-            } catch (err) {
-                console.warn(`Failed to recalculate active WO ${woId}:`, err);
-            }
+        // skipSnapshot: batch preračun ne treba AI snapshot (snapshot se pravi kod stvarnog završetka naloga)
+        const activeIds = activeSnap.docs.map(d => d.data().Work_Order_ID).filter(Boolean);
+        for (let i = 0; i < activeIds.length; i += CHUNK) {
+            await Promise.all(activeIds.slice(i, i + CHUNK).map(async (woId) => {
+                try { await recalculateWorkOrder(woId, { skipSnapshot: true }); totalRecalculated++; }
+                catch (err) { console.warn(`Failed to recalculate active WO ${woId}:`, err); }
+            }));
         }
 
         // GAP-2 FIX: Also recalculate recently completed WOs when called from attendance context
@@ -2784,17 +2927,16 @@ export async function recalculateAllActiveWorkOrders(
             );
             const completedSnap = await getDocs(completedWoQuery);
 
-            for (const woDoc of completedSnap.docs) {
-                const woData = woDoc.data();
-                // Only recalculate if completed within the last 30 days
-                if (woData.Completed_At && woData.Completed_At >= cutoffISO) {
-                    try {
-                        await recalculateWorkOrder(woData.Work_Order_ID);
-                        totalRecalculated++;
-                    } catch (err) {
-                        console.warn(`Failed to recalculate completed WO ${woData.Work_Order_ID}:`, err);
-                    }
-                }
+            // Only recalculate WOs completed within the last 30 days (retroaktivne izmjene), bez snapshot-a, paralelno
+            const completedIds = completedSnap.docs
+                .map(d => d.data())
+                .filter(w => w.Completed_At && w.Completed_At >= cutoffISO)
+                .map(w => w.Work_Order_ID).filter(Boolean);
+            for (let i = 0; i < completedIds.length; i += CHUNK) {
+                await Promise.all(completedIds.slice(i, i + CHUNK).map(async (woId) => {
+                    try { await recalculateWorkOrder(woId, { skipSnapshot: true }); totalRecalculated++; }
+                    catch (err) { console.warn(`Failed to recalculate completed WO ${woId}:`, err); }
+                }));
             }
         }
 

@@ -5,6 +5,8 @@ import type { WorkOrder, Project, Worker } from '@/lib/types';
 import { createWorkOrder, deleteWorkOrder, startWorkOrder, getWorkOrder, updateWorkOrder, updatePlannedStartDate } from '@/lib/services';
 import { validateWorkOrderProfitData, checkMissingAttendanceForActiveOrders, recalculateWorkOrder, assignWorkersToItem, syncProjectStatus } from '@/lib/services';
 import { repairAllProductStatuses, startWorkOrderItem, completeWorkOrderItem } from '@/lib/services';
+import { workOrderDueDate, todayISO, buildSaturdayChecker } from '@/lib/planning';
+import { getAllAttendanceByMonth } from '@/lib/services';
 import { useData } from '@/context/DataContext';
 import Modal from '@/components/ui/Modal';
 import WorkOrderExpandedDetail from '@/components/ui/WorkOrderExpandedDetail';
@@ -291,12 +293,66 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
     const [selectedProcesses, setSelectedProcesses] = useState<string[]>(['Priprema', 'Sklapanje', 'Farbanje', 'Montaža']);
     const [customProcessInput, setCustomProcessInput] = useState('');
     const [dueDate, setDueDate] = useState('');
+    const [startDate, setStartDate] = useState(todayISO());
     const [notes, setNotes] = useState('');
     const [productSearch, setProductSearch] = useState('');
 
     // Worker search dropdown state for step 4
     const [openDropdown, setOpenDropdown] = useState<string | null>(null);
     const [workerSearch, setWorkerSearch] = useState('');
+
+    // ── AUTO-ROK: rok = danas + Σ planiranih radnih dana po proizvodu (iz ponude) ──
+    // Sekvencijalno (kao u zahtjevu: 2 proizvoda × 2 dana = 4 dana). Subota se računa,
+    // nedjelje se preskaču, A subote uvažavaju ROTACIJU po radniku iz šihtarice (vidi lib/planning.ts).
+    const totalPlannedDays = useMemo(() => {
+        if (wizardMode !== 'production') return 0;
+        return selectedProducts.reduce((sum, p) => {
+            const project = projects.find(pr => pr.Project_ID === p.Project_ID);
+            const offer = project?.offers?.find(o => o.Status === 'Prihvaćeno');
+            const op = offer?.products?.find(x => x.Product_ID === p.Product_ID);
+            return sum + (op?.Labor_Days || 0);
+        }, 0);
+    }, [selectedProducts, projects, wizardMode]);
+
+    // Dodijeljeni radnici (glavni + pomoćnici) — za subotnju rotaciju u roku.
+    const assignedWorkerIds = useMemo(() => {
+        const s = new Set<string>();
+        selectedProducts.forEach(p => {
+            Object.values(p.assignments || {}).forEach(id => { if (id) s.add(id); });
+            Object.values(p.helperAssignments || {}).forEach(arr => (arr || []).forEach(id => { if (id) s.add(id); }));
+        });
+        return Array.from(s);
+    }, [selectedProducts]);
+
+    // Šihtarica (tekući + prethodni mjesec) — izvor za alternaciju subota; učita se na koraku "Radnik & rok".
+    const [wizardAttendance, setWizardAttendance] = useState<{ Worker_ID: string; Date: string; Status: string }[]>([]);
+    useEffect(() => {
+        if (!organizationId || activeStep !== 2 || wizardMode !== 'production') return;
+        let cancelled = false;
+        (async () => {
+            const now = new Date();
+            const prevD = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+            const [cur, prev] = await Promise.all([
+                getAllAttendanceByMonth(String(now.getFullYear()), String(now.getMonth() + 1).padStart(2, '0'), organizationId),
+                getAllAttendanceByMonth(String(prevD.getFullYear()), String(prevD.getMonth() + 1).padStart(2, '0'), organizationId),
+            ]);
+            if (!cancelled) setWizardAttendance([...prev, ...cur].map(a => ({ Worker_ID: a.Worker_ID, Date: a.Date, Status: a.Status })));
+        })().catch(e => console.warn('wizard attendance load failed', e));
+        return () => { cancelled = true; };
+    }, [organizationId, activeStep, wizardMode]);
+
+    const suggestedDueDate = useMemo(() => {
+        if (totalPlannedDays <= 0) return '';
+        const checker = buildSaturdayChecker(assignedWorkerIds, wizardAttendance);
+        return workOrderDueDate(startDate || todayISO(), totalPlannedDays, checker);
+    }, [totalPlannedDays, assignedWorkerIds, wizardAttendance, startDate]);
+
+    // Auto-popuni rok kad uđemo u korak "Radnik & rok" ako još nije postavljen (ostaje uredljiv).
+    useEffect(() => {
+        if (activeStep === 2 && wizardMode === 'production' && !dueDate && suggestedDueDate) {
+            setDueDate(suggestedDueDate);
+        }
+    }, [activeStep, wizardMode, suggestedDueDate, dueDate]);
 
     // Expansion State
     const [expandedOrderId, setExpandedOrderId] = useState<string | null>(null);
@@ -421,6 +477,7 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
         setSelectedProcesses(['Rad']);
         setSelectedProducts([]);
         setDueDate('');
+        setStartDate(todayISO());
         setNotes('');
         setProductSearch('');
         setSelectedProjectIds([]);
@@ -438,6 +495,7 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
         setWizardMode('production');
         setSelectedProcesses(['Rad']);
         setDueDate('');
+        setStartDate(todayISO());
         setNotes('');
         setProductSearch('');
 
@@ -473,6 +531,7 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
         setSelectedProcesses([...MONTAZA_STEPS]);
         setSelectedProducts([]);
         setDueDate('');
+        setStartDate(todayISO());
         setNotes('');
         setProductSearch('');
         setSelectedProjectIds([]);
@@ -723,6 +782,10 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                 Planned_Labor_Cost: isMontazaMode ? 0 : (offerProduct
                     ? (offerProduct.Labor_Workers || 1) * (offerProduct.Labor_Days || 0) * (offerProduct.Labor_Daily_Rate || 0)
                     : undefined),
+                // Planirani dani/radnici/dnevnica iz ponude — koristi se za AUTO-ROK (rok = početak + Σ dani)
+                Planned_Labor_Days: isMontazaMode ? 0 : (offerProduct?.Labor_Days || undefined),
+                Planned_Labor_Workers: isMontazaMode ? 0 : (offerProduct?.Labor_Workers || undefined),
+                Planned_Labor_Rate: isMontazaMode ? 0 : (offerProduct?.Labor_Daily_Rate || undefined),
                 Processes: selectedProcesses.map(proc => {
                     const workerId = p.assignments[proc];
                     const worker = workers.find(w => w.Worker_ID === workerId);
@@ -760,6 +823,7 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
             Work_Order_Type: wizardMode === 'montaza' ? 'Montaža' : 'Proizvodnja',
             Production_Steps: selectedProcesses,
             Due_Date: dueDate,
+            Planned_Start_Date: startDate || undefined,
             Notes: notes,
             Total_Value: isMontazaMode ? 0 : (totalValue > 0 ? totalValue : undefined),
             Material_Cost: isMontazaMode ? 0 : (materialCost > 0 ? materialCost : undefined),
@@ -1966,8 +2030,18 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                             }}>
                                 <div className="details-top">
                                     <div className="input-group">
-                                        <label>Rok završetka</label>
+                                        <label>Početak</label>
+                                        <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} />
+                                    </div>
+                                    <div className="input-group">
+                                        <label>Rok završetka{totalPlannedDays > 0 ? ` · ${totalPlannedDays} planiranih radnih dana` : ''}</label>
                                         <input type="date" value={dueDate} onChange={e => setDueDate(e.target.value)} />
+                                        {suggestedDueDate && suggestedDueDate !== dueDate && (
+                                            <button type="button" onClick={() => setDueDate(suggestedDueDate)}
+                                                style={{ marginTop: 4, fontSize: 12, color: '#2563eb', background: 'none', border: 'none', cursor: 'pointer', padding: 0, textAlign: 'left' }}>
+                                                ⤵ Predloženo iz planiranih dana: {suggestedDueDate}
+                                            </button>
+                                        )}
                                     </div>
                                     <div className="input-group full">
                                         <label>Napomena</label>

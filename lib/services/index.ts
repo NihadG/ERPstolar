@@ -128,6 +128,7 @@ export {
     formatLocalDateISO,
     adjustWorkOrderDates,
     saveDailyWorkBooking, getDailyWorkBooking, suggestDailyBooking, bulkBookWorkOrderLabor,
+    recalcAllWorkLogSplits,
 } from './labor/laborCostService';
 export type {
     DailyBookingItemInput, DailyBookingEntryInput,

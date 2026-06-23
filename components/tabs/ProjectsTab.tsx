@@ -1485,11 +1485,19 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                                     const transportShare = woItem?.Profit_Overrides?.Transport_Share ?? originalTransport;
                                     const servicesTotal = woItem?.Services_Total || originalServices;
                                     totalServicesCost += servicesTotal;
+                                    // SVI proizvodi u nalogu ulaze u profit projekta po PUNOJ cijeni iz ponude
+                                    // (Product_Value = cijena × količina), bez obzira na status stavke
+                                    // (Na čekanju / U toku / Završeno).
                                     if (!woItem || !finalSellingPrice || finalSellingPrice <= 0) return;
-                                    if (woItem.Status !== 'U toku' && woItem.Status !== 'Završeno') return;
                                     const actualMaterialCost = (product.materials || []).reduce((sum, m) => sum + (m.Total_Price || 0), 0);
                                     const productLogs = workLogs.filter(wl => wl.Work_Order_Item_ID === woItem.ID);
-                                    const laborCost = Math.round(productLogs.reduce((sum, wl) => sum + (wl.Daily_Rate || 0), 0));
+                                    const actualLabor = Math.round(productLogs.reduce((sum, wl) => sum + (wl.Daily_Rate || 0), 0));
+                                    // OČEKIVANI PROFIT: dok rad nije (do kraja) evidentiran koristi PLANIRANI rad iz naloga
+                                    // (radnici×dani×dnevnica); stvarni evidentirani rad ga koriguje SAMO ako pređe plan (max).
+                                    // Time profit kartice odgovara marži iz ponude i ne pokazuje lažno visok iznos tokom proizvodnje.
+                                    // Planned_Labor_Cost je PO KOMADU → množi s količinom (kao i Product_Value = cijena × količina).
+                                    const plannedLabor = Math.round((woItem.Planned_Labor_Cost || 0) * (woItem.Quantity || 1));
+                                    const laborCost = Math.max(actualLabor, plannedLabor);
                                     projectProfit += finalSellingPrice - actualMaterialCost - laborCost - transportShare - servicesTotal;
                                     projectSellingTotal += finalSellingPrice;
                                     hasAnyProfit = true;

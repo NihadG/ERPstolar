@@ -25,6 +25,7 @@ import {
     suggestDailyBooking,
     saveDailyWorkBooking,
     getAllAttendanceByMonth,
+    recalcAllWorkLogSplits,
 } from '@/lib/services';
 import { useAuth } from '@/context/AuthContext';
 import { SearchableSelect } from './SearchableSelect';
@@ -42,12 +43,12 @@ interface DailyWorkBookingBoardProps {
 
 interface BookingItem {
     workOrderItemId: string;
-    dayFraction: number;       // 1 ili 0.5
     processes: string[];       // opcioni procesi (ne utiče na trošak)
 }
 interface BookingEntry {
     workerId: string;
-    items: BookingItem[];
+    presence: number;          // prisutnost radnika za taj dan: 1 (cijeli) ili 0.5 (pola)
+    items: BookingItem[];      // proizvodi na kojima je radio (dnevnica se ravnomjerno dijeli na njih)
 }
 
 interface BookableItem {
@@ -85,7 +86,8 @@ const startOfWeek = (d: Date) => {
     return x;
 };
 const km = (n: number) => Math.round(n).toLocaleString('bs-BA') + ' KM';
-const daysLabel = (n: number) => `${Math.round(n * 100) / 100} ${n === 1 ? 'dan' : 'dana'}`;
+const km2 = (n: number) => (Math.round(n * 100) / 100).toLocaleString('bs-BA', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' KM';
+const daysLabel = (n: number) => n === 0.5 ? '½ dana' : `${Math.round(n * 100) / 100} ${n === 1 ? 'dan' : 'dana'}`;
 const initialsOf = (name?: string) => (name || '?').split(' ').map(s => s[0]).slice(0, 2).join('').toUpperCase();
 
 export default function DailyWorkBookingBoard({ workOrders, workers, workLogs, onRefresh, showToast }: DailyWorkBookingBoardProps) {
@@ -102,6 +104,7 @@ export default function DailyWorkBookingBoard({ workOrders, workers, workLogs, o
     const [saving, setSaving] = useState(false);
     const [editing, setEditing] = useState(false);   // false = spremljeni dan zaključan (read-only)
     const [savedDays, setSavedDays] = useState(false); // da li dan već ima spremljene zapise
+    const [recalcing, setRecalcing] = useState(false); // jednokratni preračun historije dnevnica
     const originalWorkerIdsRef = useRef<string[]>([]); // radnici učitani za dan (za brisanje uklonjenih)
 
     // ── Overview state ──────────────────────────────────────────────────────
@@ -195,7 +198,8 @@ export default function DailyWorkBookingBoard({ workOrders, workers, workLogs, o
             ));
             setEntries(existing.map(e => ({
                 workerId: e.workerId,
-                items: e.items.map(it => ({ workOrderItemId: it.workOrderItemId, dayFraction: it.dayFraction, processes: it.processes || [] })),
+                presence: e.presence ?? 1,
+                items: e.items.map(it => ({ workOrderItemId: it.workOrderItemId, processes: it.processes || [] })),
             })));
             originalWorkerIdsRef.current = existing.map(e => e.workerId);
             // Spremljeni dan → zaključan (read-only). Prazan dan → odmah u uređivanju.
@@ -207,7 +211,11 @@ export default function DailyWorkBookingBoard({ workOrders, workers, workLogs, o
         } finally {
             setLoading(false);
         }
-    }, [orgId, date, showToast]);
+        // NAPOMENA: showToast NIJE u deps namjerno — on je nova funkcija svaki render parenta (app/page.tsx),
+        // pa bi inače loadDay bio nestabilan i RE-UČITAVAO dan na svaki toast (gazi "Kao jučer" prijedlog
+        // i lokalne izmjene). Učitavanje treba zavisiti samo od orgId/date.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [orgId, date]);
 
     useEffect(() => { if (view === 'daily') loadDay(); }, [loadDay, view]);
 
@@ -219,7 +227,7 @@ export default function DailyWorkBookingBoard({ workOrders, workers, workLogs, o
     };
     const addWorkerEntry = (workerId: string) => {
         if (!workerId) return;
-        setEntries(prev => prev.some(e => e.workerId === workerId) ? prev : [...prev, { workerId, items: [] }]);
+        setEntries(prev => prev.some(e => e.workerId === workerId) ? prev : [...prev, { workerId, presence: 1, items: [] }]);
     };
     const removeWorkerEntry = (workerId: string) => setEntries(prev => prev.filter(e => e.workerId !== workerId));
     const addItem = (workerId: string, itemId: string) => {
@@ -227,11 +235,11 @@ export default function DailyWorkBookingBoard({ workOrders, workers, workLogs, o
         setEntries(prev => prev.map(e => {
             if (e.workerId !== workerId) return e;
             if (e.items.some(i => i.workOrderItemId === itemId)) return e;
-            return { ...e, items: [...e.items, { workOrderItemId: itemId, dayFraction: 1, processes: [] }] };
+            return { ...e, items: [...e.items, { workOrderItemId: itemId, processes: [] }] };
         }));
     };
-    const updateItem = (workerId: string, itemId: string, patch: Partial<BookingItem>) =>
-        setEntries(prev => prev.map(e => e.workerId !== workerId ? e : { ...e, items: e.items.map(i => i.workOrderItemId === itemId ? { ...i, ...patch } : i) }));
+    const setWorkerPresence = (workerId: string, presence: number) =>
+        setEntries(prev => prev.map(e => e.workerId === workerId ? { ...e, presence } : e));
     const removeItem = (workerId: string, itemId: string) =>
         setEntries(prev => prev.map(e => e.workerId !== workerId ? e : { ...e, items: e.items.filter(i => i.workOrderItemId !== itemId) }));
     const addItemProcess = (workerId: string, itemId: string, proc: string) => {
@@ -258,7 +266,8 @@ export default function DailyWorkBookingBoard({ workOrders, workers, workLogs, o
                 const map = new Map(prev.map(e => [e.workerId, e]));
                 suggestions.forEach(s => map.set(s.workerId, {
                     workerId: s.workerId,
-                    items: s.items.map(it => ({ workOrderItemId: it.workOrderItemId, dayFraction: it.dayFraction, processes: it.processes || [] })),
+                    presence: s.presence ?? 1,
+                    items: s.items.map(it => ({ workOrderItemId: it.workOrderItemId, processes: it.processes || [] })),
                 }));
                 return Array.from(map.values());
             });
@@ -273,14 +282,15 @@ export default function DailyWorkBookingBoard({ workOrders, workers, workLogs, o
         try {
             const payload = entries.map(e => ({
                 workerId: e.workerId,
+                presence: e.presence ?? 1,
                 items: e.items.filter(i => itemLookup.has(i.workOrderItemId)).map(i => ({
-                    workOrderItemId: i.workOrderItemId, dayFraction: i.dayFraction, processes: i.processes,
+                    workOrderItemId: i.workOrderItemId, processes: i.processes,
                 })),
             }));
             // Uklonjeni radnici (bili učitani, sad ih nema) → prazan unos da im se logovi tog dana obrišu
             const currentIds = new Set(entries.map(e => e.workerId));
             originalWorkerIdsRef.current.forEach(wid => {
-                if (!currentIds.has(wid)) payload.push({ workerId: wid, items: [] });
+                if (!currentIds.has(wid)) payload.push({ workerId: wid, presence: 1, items: [] });
             });
             const res = await saveDailyWorkBooking(date, orgId, payload);
             if (res.success) {
@@ -298,12 +308,32 @@ export default function DailyWorkBookingBoard({ workOrders, workers, workLogs, o
 
     const cancelEdit = () => { loadDay(); };
 
+    // Jednokratni preračun: uskladi sve postojeće dnevnice s kanonskim (ravnomjernim) modelom.
+    const handleRecalcAll = async () => {
+        if (!orgId || recalcing) return;
+        if (!window.confirm('Preračunati SVE postojeće dnevnice po novom modelu (ravnomjerna podjela dnevnice na proizvode)?\n\nOvo ažurira historijske zapise rada i timeline svih naloga. Može potrajati.')) return;
+        setRecalcing(true);
+        try {
+            const res = await recalcAllWorkLogSplits(orgId);
+            showToast(res.message, res.success ? 'success' : 'error');
+            if (res.success) onRefresh('workOrders', 'workLogs');
+        } catch (err) {
+            console.error('recalcAll error', err);
+            showToast('Greška pri preračunu dnevnica', 'error');
+        } finally {
+            setRecalcing(false);
+        }
+    };
+
     // ── Daily derived ───────────────────────────────────────────────────────
     const dayTotals = useMemo(() => {
         let amount = 0, days = 0;
         entries.forEach(e => {
+            if (e.items.length === 0) return;            // radnik bez proizvoda ne troši dnevnicu
             const rate = workerLookup.get(e.workerId)?.Daily_Rate || 0;
-            e.items.forEach(i => { amount += rate * i.dayFraction; days += i.dayFraction; });
+            const presence = e.presence ?? 1;
+            amount += rate * presence;                  // cijela dnevnica (× presence) — podijeljena na proizvode
+            days += presence;
         });
         return { amount, days };
     }, [entries, workerLookup]);
@@ -459,7 +489,9 @@ export default function DailyWorkBookingBoard({ workOrders, workers, workLogs, o
                             {entries.map(entry => {
                                 const worker = workerLookup.get(entry.workerId);
                                 const rate = worker?.Daily_Rate || 0;
-                                const totalFraction = entry.items.reduce((s, i) => s + i.dayFraction, 0);
+                                const presence = entry.presence ?? 1;
+                                const itemCount = entry.items.length;
+                                const perItemAmount = itemCount > 0 ? Math.round((rate * presence / itemCount) * 100) / 100 : 0;
                                 return (
                                     <div className="dwb-card" key={entry.workerId}>
                                         <div className="dwb-card-header">
@@ -471,9 +503,14 @@ export default function DailyWorkBookingBoard({ workOrders, workers, workLogs, o
                                                 </div>
                                             </div>
                                             <div className="dwb-card-actions">
-                                                <div className={`dwb-card-total ${totalFraction > 1 ? 'over' : totalFraction === 1 ? 'full' : ''}`}>
-                                                    {daysLabel(totalFraction)}
-                                                </div>
+                                                {editing ? (
+                                                    <div className="dwb-frac-modern" title="Prisutnost radnika za ovaj dan (cijela / pola dnevnice)">
+                                                        <button className={presence === 1 ? 'active' : ''} onClick={() => setWorkerPresence(entry.workerId, 1)}>1</button>
+                                                        <button className={presence === 0.5 ? 'active' : ''} onClick={() => setWorkerPresence(entry.workerId, 0.5)}>½</button>
+                                                    </div>
+                                                ) : (
+                                                    <div className="dwb-card-total full">{daysLabel(presence)}</div>
+                                                )}
                                                 {editing && (
                                                     <button className="dwb-x-subtle dwb-x-worker" onClick={() => removeWorkerEntry(entry.workerId)} aria-label="Ukloni radnika"><X size={16} /></button>
                                                 )}
@@ -483,7 +520,6 @@ export default function DailyWorkBookingBoard({ workOrders, workers, workLogs, o
                                         <div className="dwb-card-body">
                                             {entry.items.map(item => {
                                                 const meta = itemLookup.get(item.workOrderItemId);
-                                                const amount = Math.round(rate * item.dayFraction);
                                                 return (
                                                     <div className="dwb-item-row" key={item.workOrderItemId}>
                                                         <div className="dwb-item-main">
@@ -511,15 +547,7 @@ export default function DailyWorkBookingBoard({ workOrders, workers, workLogs, o
                                                             </div>
                                                         </div>
                                                         <div className="dwb-item-controls">
-                                                            {editing ? (
-                                                                <div className="dwb-frac-modern">
-                                                                    <button className={item.dayFraction === 1 ? 'active' : ''} onClick={() => updateItem(entry.workerId, item.workOrderItemId, { dayFraction: 1 })}>1</button>
-                                                                    <button className={item.dayFraction === 0.5 ? 'active' : ''} onClick={() => updateItem(entry.workerId, item.workOrderItemId, { dayFraction: 0.5 })}>½</button>
-                                                                </div>
-                                                            ) : (
-                                                                <span className="dwb-frac-static">{item.dayFraction === 0.5 ? '½ dana' : '1 dan'}</span>
-                                                            )}
-                                                            <div className="dwb-item-amount">{amount} KM</div>
+                                                            <div className="dwb-item-amount">{km2(perItemAmount)}</div>
                                                             {editing && (
                                                                 <button className="dwb-x-subtle dwb-item-remove" onClick={() => removeItem(entry.workerId, item.workOrderItemId)} aria-label="Ukloni"><X size={15} /></button>
                                                             )}
@@ -597,6 +625,15 @@ export default function DailyWorkBookingBoard({ workOrders, workers, workLogs, o
                         <div className="dwb-metric"><span className="dwb-metric-label">Radnih dana</span><span className="dwb-metric-value">{Math.round(stats.totalDays * 100) / 100}</span></div>
                         <div className="dwb-metric"><span className="dwb-metric-label">Evidentiranih dana</span><span className="dwb-metric-value">{stats.recordedDays}</span></div>
                         <div className="dwb-metric"><span className="dwb-metric-label">Prosj. dnevnica</span><span className="dwb-metric-value">{km(stats.avgRate)}</span></div>
+                    </div>
+
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', padding: '10px 14px', margin: '4px 0 8px', background: '#f8fafc', border: '1px dashed #cbd5e1', borderRadius: 10 }}>
+                        <span style={{ fontSize: 12, color: '#64748b' }}>
+                            Stari zapisi izgledaju nedosljedno? Preračunaj sve dnevnice po novom modelu (ravnomjerna podjela na proizvode).
+                        </span>
+                        <button className="dwb-btn" onClick={handleRecalcAll} disabled={recalcing} style={{ whiteSpace: 'nowrap' }}>
+                            {recalcing ? <Loader2 size={14} className="dwb-spin" /> : <History size={14} />} Preračunaj sve dnevnice
+                        </button>
                     </div>
 
                     <div className="dwb-cal">

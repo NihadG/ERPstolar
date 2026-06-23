@@ -534,7 +534,11 @@ export interface WorkLog {
     Process_Tags?: string[];         // Opcioni procesi koje je radnik radio na proizvodu taj dan (ne utiče na trošak)
 
     // DNEVNA KNJIGA RADA — eksplicitno bilježenje
-    Day_Fraction?: number;           // Težina dana na ovom proizvodu: 1 = cijeli, 0.5 = pola
+    // KANONSKI MODEL: dnevnica radnika za dan se RAVNOMJERNO dijeli na N proizvoda na kojima je radio.
+    //   Daily_Rate = round(Original_Daily_Rate × Presence / N),  Day_Fraction = Presence / N,  Split_Factor = N
+    //   Invarijanta: Σ Daily_Rate (svi proizvodi radnika tog dana) = Original_Daily_Rate × Presence (≤ 1 dnevnica/dan)
+    Presence?: number;               // Prisutnost radnika za TAJ DAN: 1 = cijeli dan, 0.5 = pola dana (isto za sve njegove proizvode tog dana)
+    Day_Fraction?: number;           // Težina ovog proizvoda u danu = Presence / N (npr. 1 proizvod/cijeli dan = 1, 6 proizvoda = 0.1667)
     Booking_Source?: 'attendance' | 'manual';  // 'manual' = unešeno kroz Dnevnu knjigu rada
 
     // Status i metadata

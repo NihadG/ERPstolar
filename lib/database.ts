@@ -3312,6 +3312,7 @@ export async function createWorkOrder(data: {
     Work_Order_Type?: 'Proizvodnja' | 'Montaža' | 'Zadaci';
     Production_Steps: string[];
     Due_Date?: string;
+    Planned_Start_Date?: string;   // planirani početak (iz wizarda); ako postoji → nalog se odmah zakazuje u Planeru
     Notes?: string;
     Total_Value?: number;
     Material_Cost?: number;
@@ -3327,6 +3328,9 @@ export async function createWorkOrder(data: {
         Product_Value?: number;
         Material_Cost?: number;
         Planned_Labor_Cost?: number;
+        Planned_Labor_Days?: number;
+        Planned_Labor_Workers?: number;
+        Planned_Labor_Rate?: number;
         Services_Total?: number;
         Transport_Share?: number;
         Source_Work_Order_ID?: string;
@@ -3366,6 +3370,13 @@ export async function createWorkOrder(data: {
             ...(data.Labor_Cost && { Labor_Cost: data.Labor_Cost }),
             ...(data.Profit && { Profit: data.Profit }),
             ...(data.Profit_Margin && { Profit_Margin: data.Profit_Margin }),
+            // Planirani početak iz wizarda → odmah zakaži u Planeru (traka: početak → rok).
+            ...(data.Planned_Start_Date && {
+                Planned_Start_Date: data.Planned_Start_Date,
+                Planned_End_Date: data.Due_Date || data.Planned_Start_Date,
+                Is_Scheduled: true,
+                Scheduled_At: new Date().toISOString(),
+            }),
         };
 
         // ATOMIC: Write work order + all items in a single batch
@@ -3414,6 +3425,9 @@ export async function createWorkOrder(data: {
                 Product_Value: item.Product_Value ?? 0,
                 Material_Cost: item.Material_Cost ?? 0,
                 Planned_Labor_Cost: item.Planned_Labor_Cost ?? 0,
+                Planned_Labor_Days: item.Planned_Labor_Days ?? 0,        // planirani dani (iz ponude) — za auto-rok
+                Planned_Labor_Workers: item.Planned_Labor_Workers ?? 0,
+                Planned_Labor_Rate: item.Planned_Labor_Rate ?? 0,
                 Services_Total: item.Services_Total ?? 0,   // usluge = trošak (iz ponude)
                 Transport_Share: item.Transport_Share ?? 0,
                 ...(item.Source_Work_Order_ID && { Source_Work_Order_ID: item.Source_Work_Order_ID }),
@@ -5053,6 +5067,7 @@ export async function createWorkLog(data: {
     Original_Daily_Rate?: number;
     Split_Factor?: number;
     Day_Fraction?: number;
+    Presence?: number;
     Booking_Source?: 'attendance' | 'manual';
     Notes?: string;
     Date?: string;
@@ -5084,6 +5099,7 @@ export async function createWorkLog(data: {
             Original_Daily_Rate: data.Original_Daily_Rate,
             Split_Factor: data.Split_Factor,
             Day_Fraction: data.Day_Fraction,
+            Presence: data.Presence,
             Booking_Source: data.Booking_Source,
             Notes: data.Notes,
             Created_At: now,
