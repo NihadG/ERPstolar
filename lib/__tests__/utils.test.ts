@@ -3,6 +3,7 @@
  */
 
 import {
+    workOrderDisplayName,
     formatCurrency,
     formatDate,
     formatDateTime,
@@ -308,5 +309,20 @@ describe('getStatusColor', () => {
 
     test('returns default color for unknown status', () => {
         expect(getStatusColor('Unknown')).toBe('#86868b');
+    });
+});
+
+describe('workOrderDisplayName', () => {
+    test('koristi ime ako postoji', () => {
+        expect(workOrderDisplayName({ Name: 'Kuhinja Dino', Work_Order_Number: 'RN-1', items: [{ Project_Name: 'Projekt X' }] })).toBe('Kuhinja Dino');
+    });
+    test('fallback na naziv projekta kad nema imena', () => {
+        expect(workOrderDisplayName({ Work_Order_Number: 'RN-1', items: [{ Project_Name: 'Dino Deović - Kuća' }] })).toBe('Dino Deović - Kuća');
+    });
+    test('fallback na #RN kad nema ni imena ni projekta', () => {
+        expect(workOrderDisplayName({ Work_Order_Number: 'RN-20260621-205647-804' })).toBe('#RN-20260621-205647-804');
+    });
+    test('prazno ime se ignoriše (trim)', () => {
+        expect(workOrderDisplayName({ Name: '   ', Work_Order_Number: 'RN-9', items: [{ Project_Name: 'Proj' }] })).toBe('Proj');
     });
 });

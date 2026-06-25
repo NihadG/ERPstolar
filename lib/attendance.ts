@@ -582,6 +582,7 @@ export interface DailyBookingItemInput {
     workOrderItemId: string;
     dayFraction?: number;       // DEPRECATED — podjela se sada računa ravnomjerno (presence / N). Ignoriše se.
     processes?: string[];       // opcioni procesi koje je radnik radio (ne utiče na trošak)
+    processNodeId?: string;     // izabrani čvor grafa procesa (za auto-datum/status u grafu)
 }
 export interface DailyBookingEntryInput {
     workerId: string;
@@ -596,6 +597,7 @@ export interface DailyBookingItemView {
     projectName: string;
     dayFraction: number;        // = Day_Fraction zapisa (presence / N) — za informaciju
     processes?: string[];
+    processNodeId?: string;     // izabrani čvor grafa procesa
     amount: number;             // KM koje su pale na ovaj proizvod (Daily_Rate zapisa)
 }
 export interface DailyBookingEntryView {
@@ -941,6 +943,7 @@ export async function saveDailyWorkBooking(
                     Product_ID: target.Product_ID,
                     Process_Name: processName,
                     Process_Tags: processTags.length > 0 ? processTags : undefined,
+                    Process_Node_ID: item.processNodeId,
                     Date: date,
                 }, organizationId);
                 if (res.success) {
@@ -1115,6 +1118,7 @@ export async function getDailyWorkBooking(date: string, organizationId: string):
                 projectName: woi?.Project_Name ?? '',
                 dayFraction: log.Day_Fraction ?? 1,
                 processes: log.Process_Tags ?? [],
+                processNodeId: log.Process_Node_ID,
                 amount: log.Daily_Rate,
             });
         }

@@ -44,6 +44,8 @@ import type {
     SnapshotProcess,
     SnapshotExtra,
     AppState,
+    ProcessGraph,
+    ProcessFlowTemplate,
 } from './types';
 import { ALLOWED_ORDER_TRANSITIONS } from './types';
 
@@ -3311,6 +3313,7 @@ export async function getWorkOrder(workOrderId: string, organizationId: string):
 export async function createWorkOrder(data: {
     Work_Order_Type?: 'Proizvodnja' | 'Montaža' | 'Zadaci';
     Production_Steps: string[];
+    Name?: string;                 // opisni naziv naloga (npr. "Kuhinja — Dino, Kuća")
     Due_Date?: string;
     Planned_Start_Date?: string;   // planirani početak (iz wizarda); ako postoji → nalog se odmah zakazuje u Planeru
     Notes?: string;
@@ -3360,6 +3363,7 @@ export async function createWorkOrder(data: {
             Organization_ID: organizationId,
             Work_Order_Number: workOrderNumber,
             Created_Date: new Date().toISOString(),
+            ...(data.Name && data.Name.trim() && { Name: data.Name.trim() }),
             Due_Date: data.Due_Date || '',
             Status: 'Na čekanju',
             Production_Steps: data.Production_Steps,
@@ -5045,6 +5049,87 @@ export async function getScheduledWorkOrders(
 }
 
 // ============================================
+// GRAF PROCESA (po nalogu) + TEMPLEJTI TOKA
+// ============================================
+
+/** Pročitaj graf procesa naloga (ili prazan graf). */
+export async function getProcessGraph(workOrderId: string, organizationId: string): Promise<ProcessGraph> {
+    const empty: ProcessGraph = { nodes: [], edges: [] };
+    if (!organizationId || !workOrderId) return empty;
+    try {
+        const db = getDb();
+        const snap = await getDocs(query(
+            collection(db, COLLECTIONS.WORK_ORDERS),
+            where('Work_Order_ID', '==', workOrderId),
+            where('Organization_ID', '==', organizationId)
+        ));
+        if (snap.empty) return empty;
+        const g = snap.docs[0].data().Process_Graph as ProcessGraph | undefined;
+        return g && Array.isArray(g.nodes) ? g : empty;
+    } catch (e) { console.error('getProcessGraph error:', e); return empty; }
+}
+
+/** Spremi graf procesa naloga (fetch-modify-replace, kao ostali nested update-i). */
+export async function saveProcessGraph(workOrderId: string, graph: ProcessGraph, organizationId: string): Promise<{ success: boolean; message: string }> {
+    if (!organizationId || !workOrderId) return { success: false, message: 'Nedostaje nalog/organizacija' };
+    try {
+        const db = getDb();
+        const snap = await getDocs(query(
+            collection(db, COLLECTIONS.WORK_ORDERS),
+            where('Work_Order_ID', '==', workOrderId),
+            where('Organization_ID', '==', organizationId)
+        ));
+        if (snap.empty) return { success: false, message: 'Nalog nije pronađen' };
+        const clean = JSON.parse(JSON.stringify(graph || { nodes: [], edges: [] }));
+        await updateDoc(snap.docs[0].ref, { Process_Graph: clean });
+        return { success: true, message: 'Procesi spremljeni' };
+    } catch (e) { console.error('saveProcessGraph error:', e); return { success: false, message: 'Greška pri spremanju procesa' }; }
+}
+
+const PROCESS_TEMPLATES = 'process_flow_templates';
+
+export async function listProcessTemplates(organizationId: string): Promise<ProcessFlowTemplate[]> {
+    if (!organizationId) return [];
+    try {
+        const db = getDb();
+        const snap = await getDocs(query(collection(db, PROCESS_TEMPLATES), where('Organization_ID', '==', organizationId)));
+        return snap.docs.map(d => d.data() as ProcessFlowTemplate);
+    } catch (e) { console.error('listProcessTemplates error:', e); return []; }
+}
+
+export async function saveProcessTemplate(
+    name: string,
+    nodes: ProcessFlowTemplate['nodes'],
+    edges: ProcessFlowTemplate['edges'],
+    organizationId: string
+): Promise<{ success: boolean; message: string }> {
+    if (!organizationId || !name.trim()) return { success: false, message: 'Nedostaje naziv/organizacija' };
+    try {
+        const db = getDb();
+        const tpl: ProcessFlowTemplate = {
+            id: generateUUID(),
+            Organization_ID: organizationId,
+            name: name.trim(),
+            nodes, edges,
+            Created_At: new Date().toISOString(),
+        };
+        await addDoc(collection(db, PROCESS_TEMPLATES), JSON.parse(JSON.stringify(tpl)));
+        return { success: true, message: 'Templejt spremljen' };
+    } catch (e) { console.error('saveProcessTemplate error:', e); return { success: false, message: 'Greška pri spremanju templejta' }; }
+}
+
+export async function deleteProcessTemplate(templateId: string, organizationId: string): Promise<{ success: boolean; message: string }> {
+    if (!organizationId) return { success: false, message: 'Nedostaje organizacija' };
+    try {
+        const db = getDb();
+        const snap = await getDocs(query(collection(db, PROCESS_TEMPLATES), where('id', '==', templateId), where('Organization_ID', '==', organizationId)));
+        if (snap.empty) return { success: false, message: 'Templejt nije pronađen' };
+        await deleteDoc(snap.docs[0].ref);
+        return { success: true, message: 'Templejt obrisan' };
+    } catch (e) { console.error('deleteProcessTemplate error:', e); return { success: false, message: 'Greška pri brisanju templejta' }; }
+}
+
+// ============================================
 // WORK LOGS CRUD - Real-time Profit Tracking (Multi-tenancy enabled)
 // ============================================
 
@@ -5062,6 +5147,7 @@ export async function createWorkLog(data: {
     SubTask_ID?: string;
     Process_Name?: string;
     Process_Tags?: string[];
+    Process_Node_ID?: string;
     Hours_Worked?: number;
     Is_From_Attendance?: boolean;
     Original_Daily_Rate?: number;
@@ -5095,6 +5181,7 @@ export async function createWorkLog(data: {
             SubTask_ID: data.SubTask_ID,
             Process_Name: data.Process_Name,
             Process_Tags: data.Process_Tags,
+            Process_Node_ID: data.Process_Node_ID,
             Is_From_Attendance: data.Is_From_Attendance ?? false,
             Original_Daily_Rate: data.Original_Daily_Rate,
             Split_Factor: data.Split_Factor,

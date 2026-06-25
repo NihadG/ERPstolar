@@ -25,6 +25,18 @@ export function formatCurrency(amount: number | undefined | null, showCurrency: 
  * @param dateString - ISO datum string
  * @returns Formatirani datum string
  */
+export function workOrderDisplayName(wo: {
+    Name?: string;
+    Work_Order_Number?: string;
+    items?: { Project_Name?: string }[];
+}): string {
+    const name = wo?.Name?.trim();
+    if (name) return name;
+    const proj = wo?.items?.find(i => i.Project_Name?.trim())?.Project_Name?.trim();
+    if (proj) return proj;
+    return wo?.Work_Order_Number ? `#${wo.Work_Order_Number}` : 'Nalog';
+}
+
 export function formatDate(dateString: string | undefined | null): string {
     if (!dateString) return '-';
     try {

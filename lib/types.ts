@@ -370,7 +370,41 @@ export interface WorkOrder {
     Scheduled_At?: string;         // Timestamp kada je zakazan
     Color_Code?: string;           // Boja za prikaz u planeru (hex)
 
+    // GRAF PROCESA (od 2026-06): vizuelni tok procesa po nalogu (čvorovi + veze)
+    Process_Graph?: ProcessGraph;
+
     items?: WorkOrderItem[];
+}
+
+// ════════════════════════════════════════════════════════════════════
+// GRAF PROCESA — tok proizvodnje po nalogu (React Flow editor)
+// Čvor = proces (naziv + dodijeljeni proizvodi); veza = nastavak (sekvenca).
+// Paralela = više čvorova s istim prethodnikom, bez veze među sobom.
+// Datum/status čvora se NE sprema — računa se iz work logova (Process_Node_ID).
+// ════════════════════════════════════════════════════════════════════
+export interface ProcessNode {
+    id: string;
+    name: string;                  // slobodan tekst (autocomplete COMMON_PROCESSES)
+    itemIds: string[];             // Work_Order_Item.ID koje proces pokriva; prazno = svi proizvodi naloga
+    position?: { x: number; y: number };  // opcioni ručni override; inače auto-raspored
+}
+export interface ProcessEdge {
+    id: string;
+    source: string;                // ProcessNode.id (prethodnik)
+    target: string;                // ProcessNode.id (nastavak)
+}
+export interface ProcessGraph {
+    nodes: ProcessNode[];
+    edges: ProcessEdge[];
+}
+// Templejt toka (bez vezivanja proizvoda) — snimi i primijeni na novi nalog
+export interface ProcessFlowTemplate {
+    id: string;
+    Organization_ID: string;
+    name: string;
+    nodes: { id: string; name: string; position?: { x: number; y: number } }[];
+    edges: ProcessEdge[];
+    Created_At?: string;
 }
 
 // Status procesa za pojedinačni proizvod u radnom nalogu
@@ -532,6 +566,7 @@ export interface WorkLog {
     // Proces na kojem je radnik radio
     Process_Name?: string;           // Rezanje, Kantiranje, etc. (legacy/single + naziv povezanog zadatka)
     Process_Tags?: string[];         // Opcioni procesi koje je radnik radio na proizvodu taj dan (ne utiče na trošak)
+    Process_Node_ID?: string;        // Veza na čvor grafa procesa (ProcessNode.id) → auto-datum/status čvora
 
     // DNEVNA KNJIGA RADA — eksplicitno bilježenje
     // KANONSKI MODEL: dnevnica radnika za dan se RAVNOMJERNO dijeli na N proizvoda na kojima je radio.

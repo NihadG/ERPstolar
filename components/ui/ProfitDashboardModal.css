@@ -29,7 +29,7 @@
     width: 100%;
     max-width: 1300px;
     margin: 24px;
-    background: #f8fafc;
+    background: var(--surface);
     border-radius: 20px;
     display: flex;
     flex-direction: column;
@@ -46,7 +46,7 @@
     justify-content: space-between;
     padding: 20px 28px;
     background: white;
-    border-bottom: 1px solid #e2e8f0;
+    border-bottom: 1px solid var(--border-light);
     flex-shrink: 0;
 }
 
@@ -70,13 +70,13 @@
 .pdm-header h2 {
     font-size: 20px;
     font-weight: 700;
-    color: #0f172a;
+    color: var(--text-primary);
     margin: 0;
 }
 
 .pdm-header-subtitle {
     font-size: 13px;
-    color: #64748b;
+    color: var(--text-secondary);
     margin-top: 2px;
 }
 
@@ -84,19 +84,19 @@
     width: 36px;
     height: 36px;
     border-radius: 10px;
-    border: 1px solid #e2e8f0;
+    border: 1px solid var(--border-light);
     background: white;
     display: flex;
     align-items: center;
     justify-content: center;
     cursor: pointer;
-    color: #64748b;
+    color: var(--text-secondary);
     transition: all 0.15s ease;
 }
 
 .pdm-close-btn:hover {
-    background: #f1f5f9;
-    color: #0f172a;
+    background: var(--surface);
+    color: var(--text-primary);
 }
 
 /* ===================== SUMMARY CARDS ===================== */
@@ -107,20 +107,20 @@
     gap: 12px;
     padding: 16px 28px;
     background: white;
-    border-bottom: 1px solid #e2e8f0;
+    border-bottom: 1px solid var(--border-light);
     flex-shrink: 0;
 }
 
 .pdm-summary-card {
     padding: 14px 16px;
     border-radius: 12px;
-    background: #f8fafc;
-    border: 1px solid #e2e8f0;
+    background: var(--surface);
+    border: 1px solid var(--border-light);
 }
 
 .pdm-summary-card .sc-label {
     font-size: 11px;
-    color: #64748b;
+    color: var(--text-secondary);
     font-weight: 500;
     letter-spacing: 0.3px;
     text-transform: uppercase;
@@ -130,12 +130,12 @@
 .pdm-summary-card .sc-value {
     font-size: 20px;
     font-weight: 700;
-    color: #0f172a;
+    color: var(--text-primary);
 }
 
 .pdm-summary-card .sc-sub {
     font-size: 11px;
-    color: #94a3b8;
+    color: var(--text-tertiary);
     margin-top: 2px;
 }
 
@@ -159,18 +159,18 @@
     gap: 10px;
     padding: 12px 28px;
     background: white;
-    border-bottom: 1px solid #e2e8f0;
+    border-bottom: 1px solid var(--border-light);
     flex-shrink: 0;
 }
 
 .pdm-filter-bar input,
 .pdm-filter-bar select {
     padding: 8px 12px;
-    border: 1px solid #e2e8f0;
+    border: 1px solid var(--border-light);
     border-radius: 8px;
     font-size: 13px;
-    background: #f8fafc;
-    color: #0f172a;
+    background: var(--surface);
+    color: var(--text-primary);
     outline: none;
     transition: border-color 0.15s ease;
 }
@@ -188,7 +188,7 @@
 
 .pdm-refresh-btn {
     padding: 8px 12px;
-    border: 1px solid #e2e8f0;
+    border: 1px solid var(--border-light);
     border-radius: 8px;
     background: white;
     cursor: pointer;
@@ -196,13 +196,13 @@
     align-items: center;
     gap: 6px;
     font-size: 13px;
-    color: #64748b;
+    color: var(--text-secondary);
     transition: all 0.15s ease;
 }
 
 .pdm-refresh-btn:hover {
-    background: #f1f5f9;
-    color: #0f172a;
+    background: var(--surface);
+    color: var(--text-primary);
 }
 
 .pdm-refresh-btn.spinning svg {
@@ -232,15 +232,15 @@
 .pdm-table thead th {
     position: sticky;
     top: 0;
-    background: #f1f5f9;
+    background: var(--surface);
     padding: 10px 14px;
     font-size: 11px;
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.5px;
-    color: #64748b;
+    color: var(--text-secondary);
     text-align: left;
-    border-bottom: 1px solid #e2e8f0;
+    border-bottom: 1px solid var(--border-light);
     z-index: 2;
     white-space: nowrap;
 }
@@ -259,7 +259,7 @@
 }
 
 .pdm-table tbody tr:hover {
-    background: #f8fafc;
+    background: var(--surface);
 }
 
 .pdm-table tbody tr.expanded {
@@ -269,14 +269,14 @@
 .pdm-table tbody td {
     padding: 12px 14px;
     font-size: 13px;
-    color: #374151;
-    border-bottom: 1px solid #f1f5f9;
+    color: var(--text-primary);
+    border-bottom: 1px solid var(--surface);
     vertical-align: middle;
 }
 
 .pdm-table .col-product {
     font-weight: 600;
-    color: #0f172a;
+    color: var(--text-primary);
     max-width: 200px;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -285,7 +285,7 @@
 
 .pdm-table .col-wo {
     font-size: 12px;
-    color: #64748b;
+    color: var(--text-secondary);
     font-family: 'SF Mono', monospace;
 }
 
@@ -312,7 +312,7 @@
 
 .pdm-table .col-workers {
     font-size: 12px;
-    color: #64748b;
+    color: var(--text-secondary);
     max-width: 150px;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -362,19 +362,19 @@
 
 .pdm-expanded-row td {
     padding: 0 !important;
-    border-bottom: 2px solid #e2e8f0 !important;
+    border-bottom: 2px solid var(--border-light) !important;
 }
 
 .pdm-expanded-content {
     padding: 16px 20px;
     background: #fafffe;
-    border-top: 1px solid #e2e8f0;
+    border-top: 1px solid var(--border-light);
 }
 
 .pdm-expanded-content h4 {
     font-size: 13px;
     font-weight: 600;
-    color: #0f172a;
+    color: var(--text-primary);
     margin: 0 0 12px 0;
     display: flex;
     align-items: center;
@@ -391,7 +391,7 @@
 .pdm-worker-card {
     padding: 12px;
     background: white;
-    border: 1px solid #e2e8f0;
+    border: 1px solid var(--border-light);
     border-radius: 10px;
     display: flex;
     flex-direction: column;
@@ -401,19 +401,19 @@
 .pdm-worker-card .wc-name {
     font-weight: 600;
     font-size: 13px;
-    color: #0f172a;
+    color: var(--text-primary);
 }
 
 .pdm-worker-card .wc-detail {
     font-size: 12px;
-    color: #64748b;
+    color: var(--text-secondary);
     display: flex;
     justify-content: space-between;
 }
 
 .pdm-worker-card .wc-detail .wc-value {
     font-weight: 500;
-    color: #374151;
+    color: var(--text-primary);
 }
 
 /* Daily breakdown mini-table */
@@ -430,16 +430,16 @@
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.4px;
-    color: #94a3b8;
+    color: var(--text-tertiary);
     text-align: left;
-    border-bottom: 1px solid #e2e8f0;
+    border-bottom: 1px solid var(--border-light);
 }
 
 .pdm-daily-table td {
     padding: 6px 10px;
     font-size: 12px;
-    color: #374151;
-    border-bottom: 1px solid #f1f5f9;
+    color: var(--text-primary);
+    border-bottom: 1px solid var(--surface);
 }
 
 .pdm-daily-table td:last-child {
@@ -456,30 +456,30 @@
     align-items: center;
     justify-content: center;
     padding: 60px 20px;
-    color: #94a3b8;
+    color: var(--text-tertiary);
 }
 
 .pdm-empty-icon {
     width: 64px;
     height: 64px;
     border-radius: 16px;
-    background: #f1f5f9;
+    background: var(--surface);
     display: flex;
     align-items: center;
     justify-content: center;
     margin-bottom: 16px;
-    color: #cbd5e1;
+    color: var(--border);
 }
 
 .pdm-empty h3 {
     font-size: 16px;
-    color: #64748b;
+    color: var(--text-secondary);
     margin: 0 0 6px 0;
 }
 
 .pdm-empty p {
     font-size: 13px;
-    color: #94a3b8;
+    color: var(--text-tertiary);
     margin: 0;
 }
 
@@ -500,8 +500,8 @@
 }
 
 .pdm-status-badge.na-cekanju {
-    background: #f1f5f9;
-    color: #64748b;
+    background: var(--surface);
+    color: var(--text-secondary);
 }
 
 /* ===================== LOADING ===================== */
@@ -513,14 +513,14 @@
     justify-content: center;
     padding: 60px 20px;
     gap: 12px;
-    color: #64748b;
+    color: var(--text-secondary);
     font-size: 14px;
 }
 
 .pdm-loading-spinner {
     width: 32px;
     height: 32px;
-    border: 3px solid #e2e8f0;
+    border: 3px solid var(--border-light);
     border-top-color: #22c55e;
     border-radius: 50%;
     animation: pdm-spin 0.8s linear infinite;

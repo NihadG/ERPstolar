@@ -130,6 +130,7 @@ const getStatusLabel = (wo: WorkOrder): { text: string; icon: typeof Clock } => 
 
 // Get project name from work order
 const getProjectName = (wo: WorkOrder): string => {
+    if (wo.Name && wo.Name.trim()) return wo.Name.trim();
     if (wo.items && wo.items.length > 0) {
         return wo.items[0].Project_Name || 'Nepoznat projekt';
     }

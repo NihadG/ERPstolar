@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Calendar, Play, Pause, CheckCircle, Clock, Edit2, AlertTriangle, NotebookPen, Printer, Trash2, History } from 'lucide-react';
+import { Calendar, Play, Pause, CheckCircle, Clock, Edit2, AlertTriangle, NotebookPen, Printer, Trash2, History, GitBranch } from 'lucide-react';
 import { useData } from '@/context/DataContext';
 import {
     checkMissingAttendanceHistory,
@@ -13,6 +13,8 @@ import {
 import type { WorkOrder, Worker, WorkOrderItem, WorkLog } from '@/lib/types';
 import ProductTimelineModal from './ProductTimelineModal';
 import BulkBookingModal from './BulkBookingModal';
+import ProcessGraphModal from './ProcessGraphModal';
+import { workOrderDisplayName } from '@/lib/utils';
 
 interface WorkOrderExpandedDetailProps {
     workOrder: WorkOrder;
@@ -46,6 +48,18 @@ export default function WorkOrderExpandedDetail({
     const [workLogs, setWorkLogs] = useState<WorkLog[]>([]);
     const [timelineItem, setTimelineItem] = useState<WorkOrderItem | null>(null);
     const [bulkOpen, setBulkOpen] = useState(false);
+    const [processOpen, setProcessOpen] = useState(false);
+    const [editingName, setEditingName] = useState(false);
+    const [nameDraft, setNameDraft] = useState('');
+
+    const saveName = async () => {
+        const v = nameDraft.trim();
+        setEditingName(false);
+        if (v !== (workOrder.Name || '')) {
+            await onUpdate(workOrder.Work_Order_ID, { Name: v });
+            onRefresh?.('workOrders');
+        }
+    };
 
     useEffect(() => {
         if (workOrder?.Work_Order_ID && organizationId && workOrder.Started_At) {
@@ -144,6 +158,26 @@ export default function WorkOrderExpandedDetail({
                     </div>
                 </div>
             )}
+
+            {/* === HEADER: NAZIV + DATES === */}
+            <div className="wo-title-row" style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12, flexWrap: 'wrap' }}>
+                {editingName ? (
+                    <input autoFocus value={nameDraft}
+                        onChange={e => setNameDraft(e.target.value)}
+                        onBlur={saveName}
+                        onKeyDown={e => { if (e.key === 'Enter') saveName(); if (e.key === 'Escape') setEditingName(false); }}
+                        placeholder="Naziv naloga"
+                        style={{ fontSize: 18, fontWeight: 700, padding: '4px 8px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--accent)', outline: 'none', minWidth: 260 }} />
+                ) : (
+                    <button onClick={() => { setNameDraft(workOrder.Name || ''); setEditingName(true); }}
+                        style={{ display: 'inline-flex', alignItems: 'center', gap: 8, background: 'none', border: 'none', cursor: 'pointer', padding: 0, fontSize: 18, fontWeight: 700, color: 'var(--text-primary)' }}
+                        title="Preimenuj nalog">
+                        {workOrderDisplayName(workOrder)}
+                        <Edit2 size={15} style={{ color: 'var(--text-tertiary)' }} />
+                    </button>
+                )}
+                <span style={{ fontSize: 12, color: 'var(--text-tertiary)', fontWeight: 500 }}>#{workOrder.Work_Order_Number}</span>
+            </div>
 
             {/* === HEADER: DATES === */}
             <div className="header-bar">
@@ -457,6 +491,9 @@ export default function WorkOrderExpandedDetail({
                     <button className="wo-act" onClick={() => setBulkOpen(true)}>
                         <History size={15} /> Brzi unos (period)
                     </button>
+                    <button className="wo-act" onClick={() => setProcessOpen(true)}>
+                        <GitBranch size={15} /> Procesi
+                    </button>
                     <button className="wo-act" onClick={() => onPrint(workOrder)}>
                         <Printer size={15} /> Printaj
                     </button>
@@ -476,6 +513,20 @@ export default function WorkOrderExpandedDetail({
                     organizationId={organizationId || ''}
                     onDone={(...c) => onRefresh?.(...c)}
                     showToast={showToast || (() => { })}
+                />
+            )}
+
+            {/* Graf procesa naloga */}
+            {processOpen && (
+                <ProcessGraphModal
+                    workOrderId={workOrder.Work_Order_ID}
+                    workOrderNumber={workOrder.Work_Order_Number}
+                    workOrderName={workOrderDisplayName(workOrder)}
+                    items={(localItems.length ? localItems : (workOrder.items || [])).map(i => ({ ID: i.ID, Product_Name: i.Product_Name }))}
+                    workLogs={workLogs}
+                    organizationId={organizationId || ''}
+                    onClose={() => setProcessOpen(false)}
+                    showToast={showToast}
                 />
             )}
 

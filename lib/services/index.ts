@@ -107,6 +107,9 @@ export {
     getWorkLogs, getWorkLogsForItem, getWorkLogsForWorkOrder, createWorkLog,
 } from './workOrder/workOrderService';
 
+// Graf procesa (po nalogu) + templejti toka
+export { getProcessGraph, saveProcessGraph, listProcessTemplates, saveProcessTemplate, deleteProcessTemplate } from '../database';
+
 // Labor / Attendance
 export {
     markAttendanceAndRecalculate, saveWorkerAttendance,

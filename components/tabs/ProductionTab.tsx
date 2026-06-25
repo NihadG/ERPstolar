@@ -7,6 +7,7 @@ import { validateWorkOrderProfitData, checkMissingAttendanceForActiveOrders, rec
 import { repairAllProductStatuses, startWorkOrderItem, completeWorkOrderItem } from '@/lib/services';
 import { workOrderDueDate, todayISO, buildSaturdayChecker } from '@/lib/planning';
 import { getAllAttendanceByMonth } from '@/lib/services';
+import { workOrderDisplayName } from '@/lib/utils';
 import { useData } from '@/context/DataContext';
 import Modal from '@/components/ui/Modal';
 import WorkOrderExpandedDetail from '@/components/ui/WorkOrderExpandedDetail';
@@ -294,6 +295,7 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
     const [customProcessInput, setCustomProcessInput] = useState('');
     const [dueDate, setDueDate] = useState('');
     const [startDate, setStartDate] = useState(todayISO());
+    const [workOrderName, setWorkOrderName] = useState('');
     const [notes, setNotes] = useState('');
     const [productSearch, setProductSearch] = useState('');
 
@@ -478,6 +480,7 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
         setSelectedProducts([]);
         setDueDate('');
         setStartDate(todayISO());
+        setWorkOrderName('');
         setNotes('');
         setProductSearch('');
         setSelectedProjectIds([]);
@@ -496,6 +499,7 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
         setSelectedProcesses(['Rad']);
         setDueDate('');
         setStartDate(todayISO());
+        setWorkOrderName('');
         setNotes('');
         setProductSearch('');
 
@@ -532,6 +536,7 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
         setSelectedProducts([]);
         setDueDate('');
         setStartDate(todayISO());
+        setWorkOrderName('');
         setNotes('');
         setProductSearch('');
         setSelectedProjectIds([]);
@@ -822,6 +827,7 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
         const result = await createWorkOrder({
             Work_Order_Type: wizardMode === 'montaza' ? 'Montaža' : 'Proizvodnja',
             Production_Steps: selectedProcesses,
+            Name: workOrderName.trim() || undefined,
             Due_Date: dueDate,
             Planned_Start_Date: startDate || undefined,
             Notes: notes,
@@ -1080,9 +1086,9 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                         <div className="project-title-section">
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
                                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-                                    <div className="project-name">{wo.Name || `#${wo.Work_Order_Number}`}</div>
-                                    {wo.Name && <span style={{ fontSize: '12px', color: '#9ca3af', fontWeight: 500 }}>#{wo.Work_Order_Number}</span>}
-                                    {wo.items?.[0]?.Project_Name && (
+                                    <div className="project-name">{workOrderDisplayName(wo)}</div>
+                                    <span style={{ fontSize: '12px', color: '#9ca3af', fontWeight: 500 }}>#{wo.Work_Order_Number}</span>
+                                    {wo.Name && wo.items?.[0]?.Project_Name && (
                                         <>
                                             <span style={{ color: '#d1d5db' }}>•</span>
                                             <span style={{ fontSize: '13px', color: '#4b5563', fontWeight: 500 }}>
@@ -2029,6 +2035,10 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                                 if (!(e.target as HTMLElement).closest('.wdd')) { setOpenDropdown(null); setWorkerSearch(''); }
                             }}>
                                 <div className="details-top">
+                                    <div className="input-group full">
+                                        <label>Naziv naloga</label>
+                                        <input type="text" placeholder="npr. Kuhinja — Dino, Kuća (opcionalno)" value={workOrderName} onChange={e => setWorkOrderName(e.target.value)} />
+                                    </div>
                                     <div className="input-group">
                                         <label>Početak</label>
                                         <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} />
@@ -3036,7 +3046,7 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                 <div className="delete-modal-overlay" onClick={() => setDeleteConfirmModal({ isOpen: false, workOrderId: null, workOrderNumber: '' })}>
                     <div className="delete-modal" onClick={(e) => e.stopPropagation()}>
                         <div className="delete-modal-header">
-                            <h3>🗑️ Obriši nalog {deleteConfirmModal.workOrderNumber}</h3>
+                            <h3>🗑️ Obriši nalog: {workOrderDisplayName(workOrders.find(w => w.Work_Order_ID === deleteConfirmModal.workOrderId) || { Work_Order_Number: deleteConfirmModal.workOrderNumber })}</h3>
                         </div>
                         <div className="delete-modal-body">
                             <p>Šta želite uraditi sa proizvodima iz ovog naloga?</p>

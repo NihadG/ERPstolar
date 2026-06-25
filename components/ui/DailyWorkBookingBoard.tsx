@@ -17,8 +17,9 @@ import {
     Edit2,
     CheckCircle,
     CalendarDays,
+    GitBranch,
 } from 'lucide-react';
-import type { WorkOrder, Worker, WorkLog } from '@/lib/types';
+import type { WorkOrder, Worker, WorkLog, ProcessGraph } from '@/lib/types';
 import { COMMON_PROCESSES } from '@/lib/types';
 import {
     getDailyWorkBooking,
@@ -26,11 +27,13 @@ import {
     saveDailyWorkBooking,
     getAllAttendanceByMonth,
     recalcAllWorkLogSplits,
+    getProcessGraph,
 } from '@/lib/services';
 import { useAuth } from '@/context/AuthContext';
 import { SearchableSelect } from './SearchableSelect';
 import AttendanceTab from '../tabs/AttendanceTab';
 import ProcessTimelineModal from './ProcessTimelineModal';
+import ProcessGraphModal from './ProcessGraphModal';
 import './DailyWorkBookingBoard.css';
 
 interface DailyWorkBookingBoardProps {
@@ -44,6 +47,7 @@ interface DailyWorkBookingBoardProps {
 interface BookingItem {
     workOrderItemId: string;
     processes: string[];       // opcioni procesi (ne utiče na trošak)
+    processNodeId?: string;    // izabrani čvor grafa procesa (za auto-datum u grafu)
 }
 interface BookingEntry {
     workerId: string;
@@ -58,6 +62,7 @@ interface BookableItem {
     projectName: string;
     workOrderId: string;
     workOrderNumber: string;
+    workOrderName?: string;
     processes: string[];
     isCustom?: boolean;
     linkedName?: string;     // naziv povezanog proizvoda (za custom zadatke)
@@ -132,6 +137,7 @@ export default function DailyWorkBookingBoard({ workOrders, workers, workLogs, o
                     projectName: item.Project_Name,
                     workOrderId: wo.Work_Order_ID,
                     workOrderNumber: wo.Work_Order_Number,
+                    workOrderName: wo.Name,
                     processes,
                     isCustom: item.Item_Type === 'custom',
                     linkedName: item.Linked_Product_Name,
@@ -199,7 +205,7 @@ export default function DailyWorkBookingBoard({ workOrders, workers, workLogs, o
             setEntries(existing.map(e => ({
                 workerId: e.workerId,
                 presence: e.presence ?? 1,
-                items: e.items.map(it => ({ workOrderItemId: it.workOrderItemId, processes: it.processes || [] })),
+                items: e.items.map(it => ({ workOrderItemId: it.workOrderItemId, processes: it.processes || [], processNodeId: it.processNodeId })),
             })));
             originalWorkerIdsRef.current = existing.map(e => e.workerId);
             // Spremljeni dan → zaključan (read-only). Prazan dan → odmah u uređivanju.
@@ -255,6 +261,62 @@ export default function DailyWorkBookingBoard({ workOrders, workers, workLogs, o
             ...e, items: e.items.map(i => i.workOrderItemId === itemId
                 ? { ...i, processes: i.processes.filter(p => p !== proc) } : i),
         }));
+    const setItemNode = (workerId: string, itemId: string, nodeId: string) =>
+        setEntries(prev => prev.map(e => e.workerId !== workerId ? e : {
+            ...e, items: e.items.map(i => i.workOrderItemId === itemId ? { ...i, processNodeId: nodeId || undefined } : i),
+        }));
+
+    // Dodaj radnika na proizvod (prikaz „Po proizvodu") — kreira unos radnika ako ne postoji.
+    const addWorkerToProduct = (itemId: string, workerId: string) => {
+        if (!workerId || !itemId) return;
+        setEntries(prev => {
+            const base = prev.some(e => e.workerId === workerId) ? prev : [...prev, { workerId, presence: 1, items: [] }];
+            return base.map(e => e.workerId !== workerId ? e
+                : (e.items.some(i => i.workOrderItemId === itemId) ? e : { ...e, items: [...e.items, { workOrderItemId: itemId, processes: [] }] }));
+        });
+    };
+
+    // Pivot: grupiši dnevne unose PO PROIZVODU (isti podaci kao po radniku, druga perspektiva).
+    const productGroups = useMemo(() => {
+        const m = new Map<string, { itemId: string; productName: string; woLabel: string; woNumber: string; rows: { workerId: string; workerName: string; rate: number; presence: number; amount: number }[]; total: number }>();
+        entries.forEach(e => {
+            const worker = workerLookup.get(e.workerId);
+            const rate = worker?.Daily_Rate || 0;
+            const presence = e.presence ?? 1;
+            const n = e.items.length || 1;
+            const amount = Math.round((rate * presence / n) * 100) / 100;
+            e.items.forEach(it => {
+                const meta = itemLookup.get(it.workOrderItemId);
+                let g = m.get(it.workOrderItemId);
+                if (!g) {
+                    g = { itemId: it.workOrderItemId, productName: meta?.productName || 'Proizvod nije aktivan', woLabel: meta?.workOrderName || meta?.projectName || 'Nalog', woNumber: meta?.workOrderNumber || '', rows: [], total: 0 };
+                    m.set(it.workOrderItemId, g);
+                }
+                g.rows.push({ workerId: e.workerId, workerName: worker?.Name || 'Radnik', rate, presence, amount });
+                g.total += amount;
+            });
+        });
+        return Array.from(m.values());
+    }, [entries, workerLookup, itemLookup]);
+
+    // Učitaj grafove procesa za naloge koji su prisutni u dnevnim unosima (za izbor čvora po liniji)
+    useEffect(() => {
+        if (!orgId) return;
+        const woIds = new Set<string>();
+        entries.forEach(e => e.items.forEach(it => {
+            const m = itemLookup.get(it.workOrderItemId);
+            if (m?.workOrderId) woIds.add(m.workOrderId);
+        }));
+        const missing = Array.from(woIds).filter(id => !(id in graphCache));
+        if (missing.length === 0) return;
+        let cancelled = false;
+        (async () => {
+            const results = await Promise.all(missing.map(async id => [id, await getProcessGraph(id, orgId)] as const));
+            if (!cancelled) setGraphCache(prev => { const next = { ...prev }; results.forEach(([id, g]) => { next[id] = g; }); return next; });
+        })().catch(e => console.warn('process graph load failed', e));
+        return () => { cancelled = true; };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [entries, orgId, itemLookup]);
 
     const handleSuggest = async () => {
         if (!orgId) return;
@@ -267,7 +329,7 @@ export default function DailyWorkBookingBoard({ workOrders, workers, workLogs, o
                 suggestions.forEach(s => map.set(s.workerId, {
                     workerId: s.workerId,
                     presence: s.presence ?? 1,
-                    items: s.items.map(it => ({ workOrderItemId: it.workOrderItemId, processes: it.processes || [] })),
+                    items: s.items.map(it => ({ workOrderItemId: it.workOrderItemId, processes: it.processes || [], processNodeId: it.processNodeId })),
                 }));
                 return Array.from(map.values());
             });
@@ -284,7 +346,7 @@ export default function DailyWorkBookingBoard({ workOrders, workers, workLogs, o
                 workerId: e.workerId,
                 presence: e.presence ?? 1,
                 items: e.items.filter(i => itemLookup.has(i.workOrderItemId)).map(i => ({
-                    workOrderItemId: i.workOrderItemId, processes: i.processes,
+                    workOrderItemId: i.workOrderItemId, processes: i.processes, processNodeId: i.processNodeId,
                 })),
             }));
             // Uklonjeni radnici (bili učitani, sad ih nema) → prazan unos da im se logovi tog dana obrišu
@@ -400,6 +462,13 @@ export default function DailyWorkBookingBoard({ workOrders, workers, workLogs, o
         return Array.from(m.values()).sort((a, b) => b.cost - a.cost);
     }, [periodLogs, itemMetaAll]);
 
+    // Modal grafa procesa (otvoren iz linije bookinga, za nalog te stavke)
+    const [processWO, setProcessWO] = useState<{ id: string; number: string; name: string } | null>(null);
+    const [groupBy, setGroupBy] = useState<'worker' | 'product'>('worker');
+
+    // Cache grafova procesa po nalogu (za izbor čvora po liniji → auto-datum)
+    const [graphCache, setGraphCache] = useState<Record<string, ProcessGraph>>({});
+
     // Modal hronologije procesa (klik na proizvod u statistici)
     const [procProduct, setProcProduct] = useState<{ name: string; logs: WorkLog[] } | null>(null);
     const openProcessTimeline = (itemId: string, name: string) => {
@@ -458,6 +527,14 @@ export default function DailyWorkBookingBoard({ workOrders, workers, workLogs, o
                             </div>
                         </div>
                         <div className="dwb-bar-actions">
+                            <div style={{ display: 'inline-flex', background: 'var(--surface)', borderRadius: 'var(--radius-sm)', padding: 3, marginRight: 8 }}>
+                                {(['worker', 'product'] as const).map(g => (
+                                    <button key={g} onClick={() => setGroupBy(g)}
+                                        style={{ padding: '5px 12px', borderRadius: 6, border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 600, background: groupBy === g ? 'var(--background)' : 'transparent', color: groupBy === g ? 'var(--text-primary)' : 'var(--text-secondary)', boxShadow: groupBy === g ? '0 1px 2px rgba(0,0,0,0.06)' : 'none' }}>
+                                        {g === 'worker' ? 'Po radniku' : 'Po proizvodu'}
+                                    </button>
+                                ))}
+                            </div>
                             {editing ? (
                                 <>
                                     {savedDays && (
@@ -484,7 +561,7 @@ export default function DailyWorkBookingBoard({ workOrders, workers, workLogs, o
                             <p>Knjiga rada za ovaj dan je prazna.</p>
                             <p className="dwb-empty-hint">Dodaj radnike koji su radili — prečicama ili pretragom ispod.</p>
                         </div>
-                    ) : entries.length > 0 && (
+                    ) : entries.length > 0 ? (groupBy === 'worker' ? (
                         <div className="dwb-cards-container">
                             {entries.map(entry => {
                                 const worker = workerLookup.get(entry.workerId);
@@ -525,7 +602,28 @@ export default function DailyWorkBookingBoard({ workOrders, workers, workLogs, o
                                                         <div className="dwb-item-main">
                                                             <div className="dwb-item-name">{meta?.productName || 'Proizvod nije aktivan'}</div>
                                                             <div className="dwb-item-sub">
-                                                                <span className="dwb-item-wo">Nalog {meta?.workOrderNumber || ''}</span>
+                                                                <span className="dwb-item-wo">
+                                                                    {meta?.workOrderName || meta?.projectName || 'Nalog'}
+                                                                    <span style={{ color: 'var(--text-tertiary)', fontWeight: 400, marginLeft: 6 }}>#{meta?.workOrderNumber || ''}</span>
+                                                                </span>
+                                                                {meta?.workOrderId && (
+                                                                    <button
+                                                                        onClick={() => setProcessWO({ id: meta.workOrderId, number: meta.workOrderNumber, name: meta.workOrderName || meta.projectName || ('Nalog ' + meta.workOrderNumber) })}
+                                                                        style={{ display: 'inline-flex', alignItems: 'center', gap: 4, marginLeft: 8, padding: '1px 7px', border: '1px solid var(--border-light)', background: 'var(--accent-light)', color: 'var(--accent)', borderRadius: 'var(--radius-sm)', fontSize: 11, fontWeight: 600, cursor: 'pointer' }}>
+                                                                        <GitBranch size={11} /> Procesi
+                                                                    </button>
+                                                                )}
+                                                                {editing && meta?.workOrderId && (graphCache[meta.workOrderId]?.nodes?.length ?? 0) > 0 && (
+                                                                    <select
+                                                                        value={item.processNodeId || ''}
+                                                                        onChange={e => setItemNode(entry.workerId, item.workOrderItemId, e.target.value)}
+                                                                        style={{ marginLeft: 8, padding: '1px 6px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-light)', fontSize: 11, color: 'var(--text-primary)', background: 'var(--background)' }}>
+                                                                        <option value="">— proces —</option>
+                                                                        {graphCache[meta.workOrderId].nodes
+                                                                            .filter(n => !n.itemIds?.length || n.itemIds.includes(item.workOrderItemId))
+                                                                            .map(n => <option key={n.id} value={n.id}>{n.name || 'Proces'}</option>)}
+                                                                    </select>
+                                                                )}
                                                             </div>
                                                             <div className="dwb-proc-tags">
                                                                 {item.processes.map(p => (
@@ -569,10 +667,59 @@ export default function DailyWorkBookingBoard({ workOrders, workers, workLogs, o
                                 );
                             })}
                         </div>
-                    )}
+                    ) : (
+                        <div className="dwb-cards-container">
+                            {productGroups.map(g => (
+                                <div className="dwb-card" key={g.itemId}>
+                                    <div className="dwb-card-header">
+                                        <div className="dwb-card-worker">
+                                            <div className="dwb-ava"><Package size={16} /></div>
+                                            <div className="dwb-card-wname">
+                                                <span className="dwb-wname-text">{g.productName}</span>
+                                                <span className="dwb-wname-rate">{g.woLabel} · {g.rows.length} radnik(a)</span>
+                                            </div>
+                                        </div>
+                                        <div className="dwb-card-total full">{km(g.total)}</div>
+                                    </div>
+                                    <div className="dwb-card-body">
+                                        {g.rows.map(r => (
+                                            <div className="dwb-item-row" key={r.workerId}>
+                                                <div className="dwb-item-main">
+                                                    <div className="dwb-item-name">{r.workerName}</div>
+                                                    <div className="dwb-item-sub">
+                                                        <span className="dwb-item-wo">{r.rate} KM/dan · {daysLabel(r.presence)}</span>
+                                                    </div>
+                                                </div>
+                                                <div className="dwb-item-controls">
+                                                    {editing && (
+                                                        <div className="dwb-frac-modern" title="Prisutnost radnika za ovaj dan">
+                                                            <button className={r.presence === 1 ? 'active' : ''} onClick={() => setWorkerPresence(r.workerId, 1)}>1</button>
+                                                            <button className={r.presence === 0.5 ? 'active' : ''} onClick={() => setWorkerPresence(r.workerId, 0.5)}>½</button>
+                                                        </div>
+                                                    )}
+                                                    <div className="dwb-item-amount">{km2(r.amount)}</div>
+                                                    {editing && (
+                                                        <button className="dwb-x-subtle dwb-item-remove" onClick={() => removeItem(r.workerId, g.itemId)} aria-label="Ukloni radnika"><X size={15} /></button>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        ))}
+                                        {editing && (
+                                            <div className="dwb-item-add">
+                                                <SearchableSelect
+                                                    options={workers.filter(w => !g.rows.some(r => r.workerId === w.Worker_ID)).map(w => ({ value: w.Worker_ID, label: w.Name }))}
+                                                    value="" onChange={wid => addWorkerToProduct(g.itemId, wid)} placeholder="+ dodaj radnika…"
+                                                />
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    )) : null}
 
-                    {/* Add worker + quick pills */}
-                    {editing && availableWorkerOptions.length > 0 && (
+                    {/* Add worker + quick pills (samo u prikazu po radniku) */}
+                    {editing && groupBy === 'worker' && availableWorkerOptions.length > 0 && (
                         <div className="dwb-addrow">
                             <div className="dwb-addrow-select">
                                 <UserPlus size={15} />
@@ -688,6 +835,19 @@ export default function DailyWorkBookingBoard({ workOrders, workers, workLogs, o
                     onClose={() => setProcProduct(null)}
                     productName={procProduct.name}
                     logs={procProduct.logs}
+                />
+            )}
+
+            {processWO && (
+                <ProcessGraphModal
+                    workOrderId={processWO.id}
+                    workOrderNumber={processWO.number}
+                    workOrderName={processWO.name}
+                    items={(workOrders.find(w => w.Work_Order_ID === processWO.id)?.items || []).map(i => ({ ID: i.ID, Product_Name: i.Product_Name }))}
+                    workLogs={workLogs.filter(l => l.Work_Order_ID === processWO.id)}
+                    organizationId={orgId}
+                    onClose={() => setProcessWO(null)}
+                    showToast={showToast}
                 />
             )}
         </div>
