@@ -297,9 +297,11 @@ export default function Home() {
         // Targeted reload — only specified collections
         // Expand with dependencies: if projects change, workOrders need fresh data too
         // (material costs feed into WO profit calculations)
+        // NB: work_logs se NE povlači automatski (velika, rastuća kolekcija) — mijenja se samo kroz
+        // dnevnik/timeline koji ga osvježavaju EKSPLICITNO (onRefresh(...,'workLogs')). Time status
+        // narudžbe i izmjene projekta ne reloadaju cijeli work_logs (znatno brže).
         const deps: Record<string, string[]> = {
-            projects: ['workOrders', 'workLogs'],  // material cost → WO profit, work logs → labor cost
-            workOrders: ['workLogs'],               // WO changes affect labor cost display
+            projects: ['workOrders'],   // material cost → WO profit
         };
         const expanded = new Set(collections);
         collections.forEach(c => deps[c]?.forEach(d => expanded.add(d)));

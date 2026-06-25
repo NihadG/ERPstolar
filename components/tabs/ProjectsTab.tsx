@@ -1490,13 +1490,18 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                                     // (Na čekanju / U toku / Završeno).
                                     if (!woItem || !finalSellingPrice || finalSellingPrice <= 0) return;
                                     const actualMaterialCost = (product.materials || []).reduce((sum, m) => sum + (m.Total_Price || 0), 0);
-                                    const productLogs = workLogs.filter(wl => wl.Work_Order_Item_ID === woItem.ID);
+                                    // RAD proizvoda = SVE dnevnice po Product_ID kroz SVE naloge (proizvodni + MONTAŽNI).
+                                    // Tako montažne dnevnice ulaze u profit proizvoda (montaža je integrisana u cjelinu).
+                                    const productLogs = workLogs.filter(wl => wl.Product_ID === product.Product_ID);
                                     const actualLabor = Math.round(productLogs.reduce((sum, wl) => sum + (wl.Daily_Rate || 0), 0));
                                     // OČEKIVANI PROFIT: dok rad nije (do kraja) evidentiran koristi PLANIRANI rad iz naloga
                                     // (radnici×dani×dnevnica); stvarni evidentirani rad ga koriguje SAMO ako pređe plan (max).
-                                    // Time profit kartice odgovara marži iz ponude i ne pokazuje lažno visok iznos tokom proizvodnje.
-                                    // Planned_Labor_Cost je PO KOMADU → množi s količinom (kao i Product_Value = cijena × količina).
-                                    const plannedLabor = Math.round((woItem.Planned_Labor_Cost || 0) * (woItem.Quantity || 1));
+                                    // Planirani rad = Σ po SVIM stavkama tog proizvoda (montaža = 0 → bez dvostrukog brojanja).
+                                    const plannedLabor = Math.round(
+                                        workOrders
+                                            .flatMap(w => (w.items || []).filter(i => i.Product_ID === product.Product_ID))
+                                            .reduce((s, it) => s + (it.Planned_Labor_Cost || 0) * (it.Quantity || 1), 0)
+                                    );
                                     const laborCost = Math.max(actualLabor, plannedLabor);
                                     projectProfit += finalSellingPrice - actualMaterialCost - laborCost - transportShare - servicesTotal;
                                     projectSellingTotal += finalSellingPrice;
@@ -2455,7 +2460,7 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                     const result = await overrideWorkLogs(woItem.Work_Order_ID, woItem.ID, entries, organizationId, timelineProduct?.product.Product_ID);
                     if (result.success) {
                         showToast('Timeline ažuriran', 'success');
-                        onRefresh('workOrders');
+                        onRefresh('workOrders', 'workLogs');
                         setTimelineProduct(null);
                     } else {
                         showToast(result.message, 'error');

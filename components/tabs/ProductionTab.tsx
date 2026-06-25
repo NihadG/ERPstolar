@@ -307,7 +307,6 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
     // Sekvencijalno (kao u zahtjevu: 2 proizvoda × 2 dana = 4 dana). Subota se računa,
     // nedjelje se preskaču, A subote uvažavaju ROTACIJU po radniku iz šihtarice (vidi lib/planning.ts).
     const totalPlannedDays = useMemo(() => {
-        if (wizardMode !== 'production') return 0;
         return selectedProducts.reduce((sum, p) => {
             const project = projects.find(pr => pr.Project_ID === p.Project_ID);
             const offer = project?.offers?.find(o => o.Status === 'Prihvaćeno');
@@ -351,10 +350,10 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
 
     // Auto-popuni rok kad uđemo u korak "Radnik & rok" ako još nije postavljen (ostaje uredljiv).
     useEffect(() => {
-        if (activeStep === 2 && wizardMode === 'production' && !dueDate && suggestedDueDate) {
+        if (activeStep === 2 && !dueDate && suggestedDueDate) {
             setDueDate(suggestedDueDate);
         }
-    }, [activeStep, wizardMode, suggestedDueDate, dueDate]);
+    }, [activeStep, suggestedDueDate, dueDate]);
 
     // Expansion State
     const [expandedOrderId, setExpandedOrderId] = useState<string | null>(null);
@@ -3248,6 +3247,7 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                 <ProfitDashboardModal
                     onClose={() => setProfitDashboardOpen(false)}
                     showToast={showToast}
+                    onRefresh={onRefresh}
                 />
             )}
 

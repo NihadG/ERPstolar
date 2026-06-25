@@ -857,21 +857,24 @@ export async function saveDailyWorkBooking(
             });
         } catch (e) { console.warn('saveDailyWorkBooking attendance lookup failed:', e); }
 
-        // RECALC SAFETY: zabilježi naloge koji su PRIJE imali zapise za ove radnike na ovaj datum,
-        // da ih osvježimo čak i ako rad pređe na drugi proizvod/nalog (inače ostane stari trošak).
+        // JEDAN upit za sve logove tog dana (mala lista) → pre-affected nalozi + ref-ovi za brisanje
+        // postojećih logova radnika iz unosa (clean slate). Briše se + kreira u BATCH-u (ne po stavci).
+        const fs = getDb();
+        const entryWorkerIds = new Set(entries.map(e => e.workerId));
+        const toDelete: any[] = [];
         try {
-            const fs = getDb();
-            for (const e of entries) {
-                const prevQ = query(
-                    collection(fs, 'work_logs'),
-                    where('Worker_ID', '==', e.workerId),
-                    where('Date', '==', date),
-                    where('Organization_ID', '==', organizationId)
-                );
-                const prevSnap = await getDocs(prevQ);
-                prevSnap.docs.forEach(d => { const wo = d.data().Work_Order_ID; if (wo) affected.add(wo); });
-            }
-        } catch (e) { console.warn('saveDailyWorkBooking pre-affected lookup failed:', e); }
+            const dayLogsSnap = await getDocs(query(
+                collection(fs, 'work_logs'),
+                where('Date', '==', date),
+                where('Organization_ID', '==', organizationId)
+            ));
+            dayLogsSnap.docs.forEach(d => {
+                const x = d.data();
+                if (!entryWorkerIds.has(x.Worker_ID)) return;
+                if (x.Work_Order_ID) affected.add(x.Work_Order_ID);  // osvježi i naloge gdje je rad ranije bio
+                toDelete.push(d.ref);
+            });
+        } catch (e) { console.warn('saveDailyWorkBooking day-logs lookup failed:', e); }
 
         const bookedItemIds = Array.from(new Set(entries.flatMap(e => e.items.map(i => i.workOrderItemId))));
         let itemMap = await fetchWorkOrderItemsByIds(bookedItemIds, organizationId);
@@ -887,23 +890,15 @@ export async function saveDailyWorkBooking(
             linkedMap.forEach((v, k) => itemMap.set(k, v));
         }
 
+        // Sastavi SVE nove logove (clean-slate brisanja su već skupljena u `toDelete`).
+        const newLogs: Record<string, any>[] = [];
         for (const entry of entries) {
             const worker = workers.find(w => w.Worker_ID === entry.workerId);
             const dailyRate = worker?.Daily_Rate || 0;
             const workerName = worker?.Name || 'Nepoznat';
 
-            // Clean slate: booking u potpunosti preuzima dan ovog radnika
-            try {
-                await deleteWorkLogsForWorkerOnDate(entry.workerId, date, organizationId);
-            } catch (e) {
-                console.warn('saveDailyWorkBooking cleanup failed:', e);
-            }
-
-            // POTVRDA: ako je radnik tog dana označen odsutnim u šihtarici → dnevnica se ne računa (preskoči)
-            if (absentWorkerIds.has(entry.workerId) && entry.items.length > 0) {
-                skippedAbsent++;
-                continue;
-            }
+            // POTVRDA: radnik označen odsutnim tog dana → dnevnica se ne računa
+            if (absentWorkerIds.has(entry.workerId) && entry.items.length > 0) { skippedAbsent++; continue; }
 
             // KANONSKA PODJELA: dnevnica (× presence) ravnomjerno na N proizvoda na kojima radnik radi taj dan.
             const validItems = entry.items.filter(it => itemMap.get(it.workOrderItemId));
@@ -918,16 +913,18 @@ export async function saveDailyWorkBooking(
                 const booked = itemMap.get(item.workOrderItemId)!;
                 const amount = amounts[idx++] ?? 0;
 
-                // POVEZAN custom zadatak → upiši zapis na povezani proizvod (trošak se dodaje proizvodu),
-                // a naziv zadatka ide u Process_Name. Inače piši na sam booked item.
+                // POVEZAN custom zadatak → upiši zapis na povezani proizvod; naziv zadatka ide u Process_Name.
                 const linked = (booked.Item_Type === 'custom' && booked.Linked_Item_ID)
                     ? itemMap.get(booked.Linked_Item_ID)
                     : undefined;
                 const target = linked || booked;
-                const processName = linked ? booked.Product_Name : undefined;  // naziv zadatka kao "proces" na proizvodu
+                const processName = linked ? booked.Product_Name : undefined;
                 const processTags = Array.from(new Set((item.processes || []).map(p => p.trim()).filter(Boolean)));
 
-                const res = await createWorkLog({
+                const log: Record<string, any> = {
+                    WorkLog_ID: generateUUID(),
+                    Organization_ID: organizationId,
+                    Date: date,
                     Worker_ID: entry.workerId,
                     Worker_Name: workerName,
                     Daily_Rate: amount,
@@ -935,27 +932,45 @@ export async function saveDailyWorkBooking(
                     Day_Fraction: dayFraction,
                     Presence: presence,
                     Split_Factor: splitCount,
+                    Hours_Worked: hoursPerItem,
                     Booking_Source: 'manual',
                     Is_From_Attendance: false,
-                    Hours_Worked: hoursPerItem,
                     Work_Order_ID: target.Work_Order_ID,
                     Work_Order_Item_ID: target.ID,
                     Product_ID: target.Product_ID,
                     Process_Name: processName,
                     Process_Tags: processTags.length > 0 ? processTags : undefined,
                     Process_Node_ID: item.processNodeId,
-                    Date: date,
-                }, organizationId);
-                if (res.success) {
-                    logsCreated++;
-                    if (target.Work_Order_ID) affected.add(target.Work_Order_ID);
-                }
+                    Created_At: new Date().toISOString(),
+                };
+                Object.keys(log).forEach(k => log[k] === undefined && delete log[k]);
+                newLogs.push(log);
+                logsCreated++;
+                if (target.Work_Order_ID) affected.add(target.Work_Order_ID);
             }
         }
 
+        // BATCH: brisanja starih + upis novih (max 450 ops po batchu) → minimalan broj round-tripova.
+        const ops: Array<{ del?: any; set?: Record<string, any> }> = [
+            ...toDelete.map(ref => ({ del: ref })),
+            ...newLogs.map(l => ({ set: l })),
+        ];
+        for (let i = 0; i < ops.length; i += 450) {
+            const b = writeBatch(fs);
+            for (const op of ops.slice(i, i + 450)) {
+                if (op.del) b.delete(op.del);
+                else if (op.set) b.set(doc(collection(fs, 'work_logs')), op.set);
+            }
+            await b.commit();
+        }
+
         const affectedList = Array.from(affected);
-        // skipSnapshot: izmjena dnevnice ne treba AI snapshot (pravi se samo na završetku naloga)
-        await Promise.all(affectedList.map(id => recalculateWorkOrder(id, { skipSnapshot: true }).catch(err => console.warn('recalc failed', id, err))));
+        // Labor-only preračun: bez snapshota, bez status-sync i bez ponovnog dohvata materijala
+        // (unos dnevnice ne mijenja status ni materijal) → bitno brže spremanje.
+        await Promise.all(affectedList.map(id =>
+            recalculateWorkOrder(id, { skipSnapshot: true, skipStatusSync: true, skipMaterialRefresh: true })
+                .catch(err => console.warn('recalc failed', id, err))
+        ));
 
         const msg = skippedAbsent > 0
             ? `Spremljeno ${logsCreated} zapisa rada · ${skippedAbsent} radnik(a) preskočen(o) (označen odsutan u šihtarici)`

@@ -218,11 +218,20 @@ export default function PlannerTab({ workOrders, workers, workLogs, onRefresh, s
         [workOrders]
     );
 
-    // Radnici koji STVARNO rade na nalogu — iz work logova (dnevnik rada = izvor istine)
+    // TRENUTNA EKIPA po nalogu — radnici sa ZADNJEG zabilježenog dana (dnevnik = izvor istine).
+    // Time Planer prati rotaciju: kad se radnik zamijeni, stari (raniji dani) više se ne prikazuje,
+    // a prikazuju se samo oni koji su zadnji put radili na nalogu. (Cijela historija je u timeline-u.)
     const workerIdsByWO = useMemo(() => {
+        const latestDate = new Map<string, string>();
+        workLogs.forEach(l => {
+            if (!l.Work_Order_ID || !l.Worker_ID || !l.Date) return;
+            const cur = latestDate.get(l.Work_Order_ID);
+            if (!cur || l.Date > cur) latestDate.set(l.Work_Order_ID, l.Date);
+        });
         const m = new Map<string, Set<string>>();
         workLogs.forEach(l => {
-            if (!l.Work_Order_ID || !l.Worker_ID) return;
+            if (!l.Work_Order_ID || !l.Worker_ID || !l.Date) return;
+            if (l.Date !== latestDate.get(l.Work_Order_ID)) return;  // samo zadnji radni dan naloga
             if (!m.has(l.Work_Order_ID)) m.set(l.Work_Order_ID, new Set());
             m.get(l.Work_Order_ID)!.add(l.Worker_ID);
         });

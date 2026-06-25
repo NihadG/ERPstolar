@@ -2345,6 +2345,7 @@ export async function updateOrderStatus(orderId: string, status: string, organiz
             const affectedProducts = new Set<string>();
             const affectedProjects = new Set<string>();
 
+            const itemBatch = writeBatch(db);
             for (const docSnap of itemsSnap.docs) {
                 const item = docSnap.data() as OrderItem;
                 if (item.Status === 'Primljeno') continue;
@@ -2353,27 +2354,27 @@ export async function updateOrderStatus(orderId: string, status: string, organiz
                 for (const matId of materialIds) {
                     materialUpdates.push({ materialId: matId, status: 'Naručeno', orderId, orderedQty: qtyPerMat });
                 }
-                await updateDoc(docSnap.ref, { Status: 'Naručeno' });
+                itemBatch.update(docSnap.ref, { Status: 'Naručeno' });
                 if (item.Product_ID) affectedProducts.add(item.Product_ID);
                 if (item.Project_ID) affectedProjects.add(item.Project_ID);
             }
-            if (materialUpdates.length > 0) {
-                await batchUpdateMaterialStatuses(materialUpdates, organizationId);
-            }
+            // Stavke + materijali paralelno (batch, ne jedna-po-jedna)
+            await Promise.all([
+                itemBatch.commit(),
+                materialUpdates.length > 0 ? batchUpdateMaterialStatuses(materialUpdates, organizationId) : Promise.resolve(),
+            ]);
 
-            // Cascade: Product → Materijali naručeni, Project → U proizvodnji
-            for (const productId of Array.from(affectedProducts)) {
-                const product = await getProduct(productId, organizationId);
-                if (product && product.Status === 'Na čekanju') {
-                    await updateProductStatus(productId, 'Materijali naručeni', organizationId);
-                }
-            }
-            for (const projectId of Array.from(affectedProjects)) {
-                const project = await getProject(projectId, organizationId);
-                if (project && project.Status === 'Odobreno') {
-                    await updateProjectStatus(projectId, 'U proizvodnji', organizationId);
-                }
-            }
+            // Cascade paralelno: Product → Materijali naručeni, Project → U proizvodnji
+            await Promise.all([
+                ...Array.from(affectedProducts).map(async (productId) => {
+                    const product = await getProduct(productId, organizationId);
+                    if (product && product.Status === 'Na čekanju') await updateProductStatus(productId, 'Materijali naručeni', organizationId);
+                }),
+                ...Array.from(affectedProjects).map(async (projectId) => {
+                    const project = await getProject(projectId, organizationId);
+                    if (project && project.Status === 'Odobreno') await updateProjectStatus(projectId, 'U proizvodnji', organizationId);
+                }),
+            ]);
         }
 
         // ── Transition: ANY → Primljeno (receive all) ──
@@ -2382,6 +2383,8 @@ export async function updateOrderStatus(orderId: string, status: string, organiz
             const materialUpdates: { materialId: string; status: string; orderId: string; orderedQty: number; receivedQty: number }[] = [];
             const affectedProductIds = new Set<string>();
 
+            const nowIso = new Date().toISOString();
+            const itemBatch = writeBatch(db);
             for (const docSnap of itemsSnap.docs) {
                 const item = docSnap.data() as OrderItem;
                 if (item.Status === 'Primljeno') continue;
@@ -2391,26 +2394,21 @@ export async function updateOrderStatus(orderId: string, status: string, organiz
                     // Subtract from ordered, add to received (not hard reset)
                     materialUpdates.push({ materialId: matId, status: 'Primljeno', orderId, orderedQty: -qtyPerMat, receivedQty: qtyPerMat });
                 }
-                await updateDoc(docSnap.ref, {
-                    Status: 'Primljeno',
-                    Received_Date: new Date().toISOString()
-                });
+                itemBatch.update(docSnap.ref, { Status: 'Primljeno', Received_Date: nowIso });
                 if (item.Product_ID) affectedProductIds.add(item.Product_ID);
             }
-            if (materialUpdates.length > 0) {
-                await batchUpdateMaterialStatuses(materialUpdates, organizationId);
-            }
+            // Stavke + materijali paralelno (batch)
+            await Promise.all([
+                itemBatch.commit(),
+                materialUpdates.length > 0 ? batchUpdateMaterialStatuses(materialUpdates, organizationId) : Promise.resolve(),
+            ]);
 
-            // Cascade: Check if all materials received → Product → Materijali spremni
-            for (const productId of Array.from(affectedProductIds)) {
+            // Cascade paralelno: ako su svi materijali primljeni → Product → Materijali spremni
+            await Promise.all(Array.from(affectedProductIds).map(async (productId) => {
                 const materials = await getProductMaterials(productId, organizationId);
-                const allReceived = materials.every(m =>
-                    ['Primljeno', 'Na stanju'].includes(m.Status)
-                );
-                if (allReceived) {
-                    await updateProductStatus(productId, 'Materijali spremni', organizationId);
-                }
-            }
+                const allReceived = materials.every(m => ['Primljeno', 'Na stanju'].includes(m.Status));
+                if (allReceived) await updateProductStatus(productId, 'Materijali spremni', organizationId);
+            }));
         }
 
 
@@ -2545,90 +2543,66 @@ export async function markMaterialsReceived(orderItemIds: string[], organization
         // Collect all material updates for a single batch operation instead of N+1
         const materialBatchUpdates: { materialId: string; status: string; orderId: string; orderedQty: number; receivedQty: number }[] = [];
 
-        for (const itemId of orderItemIds) {
-            // Find order item with organization filter
-            const itemQ = query(
+        const nowIso = new Date().toISOString();
+        // Dohvati SVE stavke paralelno (umjesto getDocs jedna-po-jedna — to je bilo glavno usporenje "Primi sve")
+        const itemDocs = await Promise.all(orderItemIds.map(async (itemId) => {
+            const itemSnap = await getDocs(query(
                 collection(db, COLLECTIONS.ORDER_ITEMS),
                 where('ID', '==', itemId),
                 where('Organization_ID', '==', organizationId)
-            );
-            const itemSnap = await getDocs(itemQ);
+            ));
+            return itemSnap.empty ? null : itemSnap.docs[0];
+        }));
 
-            if (itemSnap.empty) continue;
-
-            const item = itemSnap.docs[0].data() as OrderItem;
-
-            // E2: Skip items that are already received (prevent double-receive)
-            if (item.Status === 'Primljeno') continue;
-
-            // Update order item status and received date
-            await updateDoc(itemSnap.docs[0].ref, {
-                Status: 'Primljeno',
-                Received_Date: new Date().toISOString()
-            });
-
-            // Collect material updates (batch instead of N+1)
+        const itemBatch = writeBatch(db);
+        let itemUpdates = 0;
+        for (const docSnap of itemDocs) {
+            if (!docSnap) continue;
+            const item = docSnap.data() as OrderItem;
+            if (item.Status === 'Primljeno') continue;  // već primljeno (spriječi dvostruko)
+            itemBatch.update(docSnap.ref, { Status: 'Primljeno', Received_Date: nowIso });
+            itemUpdates++;
             const materialIds = extractMaterialIds(item);
             const receivedQtyPerMat = materialIds.length > 0 ? (item.Quantity || 0) / materialIds.length : 0;
             for (const matId of materialIds) {
-                materialBatchUpdates.push({
-                    materialId: matId,
-                    status: 'Primljeno',
-                    orderId: item.Order_ID,
-                    orderedQty: -receivedQtyPerMat,  // Subtract from ordered
-                    receivedQty: receivedQtyPerMat,   // Add to received
-                });
+                materialBatchUpdates.push({ materialId: matId, status: 'Primljeno', orderId: item.Order_ID, orderedQty: -receivedQtyPerMat, receivedQty: receivedQtyPerMat });
             }
-
             if (item.Product_ID) affectedProducts.add(item.Product_ID);
             if (item.Project_ID) affectedProjects.add(item.Project_ID);
             if (item.Order_ID) affectedOrderIds.add(item.Order_ID);
         }
 
-        // Single batch update for ALL materials (was N+1 updateProductMaterial calls)
-        if (materialBatchUpdates.length > 0) {
-            await batchUpdateMaterialStatuses(materialBatchUpdates, organizationId);
-        }
+        // Stavke + materijali paralelno (batch umjesto N+1)
+        await Promise.all([
+            itemUpdates > 0 ? itemBatch.commit() : Promise.resolve(),
+            materialBatchUpdates.length > 0 ? batchUpdateMaterialStatuses(materialBatchUpdates, organizationId) : Promise.resolve(),
+        ]);
 
-        // ── Auto-update order status (Djelomično / Primljeno) ──
-        for (const oId of Array.from(affectedOrderIds)) {
-            const allItemsQ = query(
-                collection(db, COLLECTIONS.ORDER_ITEMS),
-                where('Order_ID', '==', oId),
-                where('Organization_ID', '==', organizationId)
-            );
-            const allItemsSnap = await getDocs(allItemsQ);
-            const totalItems = allItemsSnap.docs.length;
-            const receivedItems = allItemsSnap.docs.filter(d => (d.data() as OrderItem).Status === 'Primljeno').length;
-
-            if (totalItems > 0 && receivedItems === totalItems) {
-                // All items received → order is Primljeno
-                const orderQ = query(
-                    collection(db, COLLECTIONS.ORDERS),
+        // Auto-status narudžbe + cascade proizvoda — paralelno (nakon što su stavke/materijali upisani)
+        await Promise.all([
+            ...Array.from(affectedOrderIds).map(async (oId) => {
+                const allItemsSnap = await getDocs(query(
+                    collection(db, COLLECTIONS.ORDER_ITEMS),
                     where('Order_ID', '==', oId),
                     where('Organization_ID', '==', organizationId)
-                );
-                const orderSnap = await getDocs(orderQ);
-                if (!orderSnap.empty) {
-                    await updateDoc(orderSnap.docs[0].ref, { Status: 'Primljeno' });
+                ));
+                const totalItems = allItemsSnap.docs.length;
+                const receivedItems = allItemsSnap.docs.filter(d => (d.data() as OrderItem).Status === 'Primljeno').length;
+                if (totalItems > 0 && receivedItems === totalItems) {
+                    const orderSnap = await getDocs(query(
+                        collection(db, COLLECTIONS.ORDERS),
+                        where('Order_ID', '==', oId),
+                        where('Organization_ID', '==', organizationId)
+                    ));
+                    if (!orderSnap.empty) await updateDoc(orderSnap.docs[0].ref, { Status: 'Primljeno' });
                 }
-            } else if (receivedItems > 0) {
-                // Some items received — order stays at Poslano
-                // (item-level tracking handles partial receipt)
-            }
-        }
-
-        // Check if all materials for products are received
-        for (const productId of Array.from(affectedProducts)) {
-            const materials = await getProductMaterials(productId, organizationId);
-            const allReceived = materials.every(m =>
-                ['Primljeno', 'Na stanju'].includes(m.Status)
-            );
-
-            if (allReceived) {
-                await updateProductStatus(productId, 'Materijali spremni', organizationId);
-            }
-        }
+            }),
+            ...Array.from(affectedProducts).map(async (productId) => {
+                const materials = await getProductMaterials(productId, organizationId);
+                const allReceived = materials.every(m => ['Primljeno', 'Na stanju'].includes(m.Status));
+                if (allReceived) await updateProductStatus(productId, 'Materijali spremni', organizationId);
+            }),
+        ]);
 
         // Note: Project status sync is now handled by syncProjectStatus() 
         // based on work order item progress, not material receipt

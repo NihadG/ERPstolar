@@ -9,9 +9,10 @@ import ProductTimelineModal from './ProductTimelineModal';
 interface ProfitDashboardModalProps {
     onClose: () => void;
     showToast?: (message: string, type: 'success' | 'error' | 'info') => void;
+    onRefresh?: (...collections: string[]) => void;
 }
 
-export default function ProfitDashboardModal({ onClose, showToast }: ProfitDashboardModalProps) {
+export default function ProfitDashboardModal({ onClose, showToast, onRefresh }: ProfitDashboardModalProps) {
     const { organizationId, appState } = useData();
     const allWorkers = appState.workers || [];
     const [data, setData] = useState<ProfitDashboardData | null>(null);
@@ -181,9 +182,15 @@ export default function ProfitDashboardModal({ onClose, showToast }: ProfitDashb
                                     </span>
                                     <span className="wo-num">{group.woNumber}</span>
                                     <span className="wo-type-badge">{group.woType}</span>
-                                    <span className={`wo-profit-badge ${group.items.reduce((s, i) => s + i.profit, 0) >= 0 ? 'green' : 'red'}`}>
-                                        {fmt(group.items.reduce((s, i) => s + i.profit, 0))}
-                                    </span>
+                                    {group.woType === 'Montaža' ? (
+                                        <span className="wo-profit-badge" style={{ color: '#64748b' }} title="Montaža nosi samo trošak rada; prihod je na proizvodnom nalogu">
+                                            Trošak: {fmt(group.items.reduce((s, i) => s + i.laborCost, 0))}
+                                        </span>
+                                    ) : (
+                                        <span className={`wo-profit-badge ${group.items.reduce((s, i) => s + i.profit, 0) >= 0 ? 'green' : 'red'}`}>
+                                            {fmt(group.items.reduce((s, i) => s + i.profit, 0))}
+                                        </span>
+                                    )}
                                 </div>
 
                                 {/* Products */}
@@ -203,23 +210,32 @@ export default function ProfitDashboardModal({ onClose, showToast }: ProfitDashb
                                                     </div>
                                                 </div>
                                                 <div className="pr-numbers">
-                                                    <div className="pr-num">
-                                                        <span className="pr-label">Cijena</span>
-                                                        <span className="pr-val">{fmt(product.sellingPrice)}</span>
-                                                    </div>
-                                                    <div className="pr-num">
-                                                        <span className="pr-label">Materijal</span>
-                                                        <span className="pr-val">{fmt(product.materialCost)}</span>
-                                                    </div>
-                                                    <div className="pr-num">
-                                                        <span className="pr-label">Dnevnice</span>
-                                                        <span className="pr-val amber">{fmt(product.laborCost)}</span>
-                                                    </div>
-                                                    <div className="pr-num profit-num">
-                                                        <span className="pr-label">Profit</span>
-                                                        <span className={`pr-val bold ${product.profit >= 0 ? 'green' : 'red'}`}>{fmt(product.profit)}</span>
-                                                        <span className={`pr-margin ${product.profitMargin >= 0 ? 'green' : 'red'}`}>{pct(product.profitMargin)}</span>
-                                                    </div>
+                                                    {product.workOrderType === 'Montaža' ? (
+                                                        <div className="pr-num profit-num">
+                                                            <span className="pr-label">Trošak montaže</span>
+                                                            <span className="pr-val bold amber">{fmt(product.laborCost)}</span>
+                                                        </div>
+                                                    ) : (
+                                                        <>
+                                                            <div className="pr-num">
+                                                                <span className="pr-label">Cijena</span>
+                                                                <span className="pr-val">{fmt(product.sellingPrice)}</span>
+                                                            </div>
+                                                            <div className="pr-num">
+                                                                <span className="pr-label">Materijal</span>
+                                                                <span className="pr-val">{fmt(product.materialCost)}</span>
+                                                            </div>
+                                                            <div className="pr-num">
+                                                                <span className="pr-label">Dnevnice</span>
+                                                                <span className="pr-val amber">{fmt(product.laborCost)}</span>
+                                                            </div>
+                                                            <div className="pr-num profit-num">
+                                                                <span className="pr-label">Profit</span>
+                                                                <span className={`pr-val bold ${product.profit >= 0 ? 'green' : 'red'}`}>{fmt(product.profit)}</span>
+                                                                <span className={`pr-margin ${product.profitMargin >= 0 ? 'green' : 'red'}`}>{pct(product.profitMargin)}</span>
+                                                            </div>
+                                                        </>
+                                                    )}
                                                 </div>
                                             </div>
 
@@ -305,6 +321,7 @@ export default function ProfitDashboardModal({ onClose, showToast }: ProfitDashb
                         );
                         if (result.success) {
                             showToast?.('Timeline ažuriran', 'success');
+                            onRefresh?.('workOrders', 'workLogs');
                             closeTimeline();
                         } else {
                             showToast?.(result.message, 'error');

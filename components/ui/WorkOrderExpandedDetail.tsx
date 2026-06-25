@@ -372,6 +372,8 @@ export default function WorkOrderExpandedDetail({
                             const transport = (item as any).Profit_Overrides?.Transport_Share ?? (item as any).Transport_Share ?? 0;
                             const profit = value - material - laborCost - services - transport;
                             const profitColor = profit >= 0 ? '#059669' : '#dc2626';
+                            // Montažni nalog: nema prihoda/materijala (oni su na proizvodnom nalogu) → prikaži TROŠAK montaže, ne "profit".
+                            const isMontaza = workOrder.Work_Order_Type === 'Montaža';
 
                             // Po radniku (iz dnevnika rada)
                             const wMap = new Map<string, { name: string; days: number; cost: number }>();
@@ -401,10 +403,19 @@ export default function WorkOrderExpandedDetail({
                                             {isPaused && <span style={{ fontSize: '10px', fontWeight: 700, color: '#b45309', background: '#fef3c7', padding: '2px 7px', borderRadius: '999px' }}>PAUZA</span>}
                                         </div>
                                         <div style={{ textAlign: 'right' }}>
-                                            <div style={{ fontSize: '15px', fontWeight: 700, color: profitColor }}>
-                                                {profit >= 0 ? '' : '−'}{fmt(Math.abs(profit))} KM
-                                            </div>
-                                            <div style={{ fontSize: '10px', color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.04em' }}>ostaje</div>
+                                            {isMontaza ? (
+                                                <>
+                                                    <div style={{ fontSize: '15px', fontWeight: 700, color: '#0f172a' }}>{fmt(laborCost)} KM</div>
+                                                    <div style={{ fontSize: '10px', color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.04em' }}>trošak montaže</div>
+                                                </>
+                                            ) : (
+                                                <>
+                                                    <div style={{ fontSize: '15px', fontWeight: 700, color: profitColor }}>
+                                                        {profit >= 0 ? '' : '−'}{fmt(Math.abs(profit))} KM
+                                                    </div>
+                                                    <div style={{ fontSize: '10px', color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.04em' }}>ostaje</div>
+                                                </>
+                                            )}
                                         </div>
                                     </div>
 
@@ -426,25 +437,35 @@ export default function WorkOrderExpandedDetail({
                                         )}
                                     </div>
 
-                                    {/* P&L breakdown: cijena − materijal − rad */}
-                                    <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '6px 10px', fontSize: '12px' }}>
-                                        <span style={{ color: '#475569' }}>Cijena <b style={{ color: '#0f172a' }}>{fmt(value)}</b></span>
-                                        <span style={{ color: '#cbd5e1' }}>−</span>
-                                        <span style={{ color: '#475569' }}>Materijal <b style={{ color: '#0f172a' }}>{fmt(material)}</b></span>
-                                        <span style={{ color: '#cbd5e1' }}>−</span>
-                                        <span style={{ color: '#475569' }}>
-                                            Rad <b style={{ color: overBudget ? '#dc2626' : '#0f172a' }}>{fmt(laborCost)}</b>
-                                            {workDays > 0 && <span style={{ color: '#94a3b8' }}> ({workDays} {workDays === 1 ? 'dan' : 'dana'})</span>}
-                                        </span>
-                                        {services > 0 && <>
+                                    {/* P&L breakdown */}
+                                    {isMontaza ? (
+                                        <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '6px 10px', fontSize: '12px' }}>
+                                            <span style={{ color: '#475569' }}>
+                                                Montažni rad <b style={{ color: '#0f172a' }}>{fmt(laborCost)}</b>
+                                                {workDays > 0 && <span style={{ color: '#94a3b8' }}> ({workDays} {workDays === 1 ? 'dan' : 'dana'})</span>}
+                                            </span>
+                                            <span style={{ color: '#94a3b8', fontSize: '11px' }}>· prihod je na proizvodnom nalogu</span>
+                                        </div>
+                                    ) : (
+                                        <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '6px 10px', fontSize: '12px' }}>
+                                            <span style={{ color: '#475569' }}>Cijena <b style={{ color: '#0f172a' }}>{fmt(value)}</b></span>
                                             <span style={{ color: '#cbd5e1' }}>−</span>
-                                            <span style={{ color: '#475569' }}>Usluge <b style={{ color: '#0f172a' }}>{fmt(services)}</b></span>
-                                        </>}
-                                        {transport > 0 && <>
+                                            <span style={{ color: '#475569' }}>Materijal <b style={{ color: '#0f172a' }}>{fmt(material)}</b></span>
                                             <span style={{ color: '#cbd5e1' }}>−</span>
-                                            <span style={{ color: '#475569' }}>Transport <b style={{ color: '#0f172a' }}>{fmt(transport)}</b></span>
-                                        </>}
-                                    </div>
+                                            <span style={{ color: '#475569' }}>
+                                                Rad <b style={{ color: overBudget ? '#dc2626' : '#0f172a' }}>{fmt(laborCost)}</b>
+                                                {workDays > 0 && <span style={{ color: '#94a3b8' }}> ({workDays} {workDays === 1 ? 'dan' : 'dana'})</span>}
+                                            </span>
+                                            {services > 0 && <>
+                                                <span style={{ color: '#cbd5e1' }}>−</span>
+                                                <span style={{ color: '#475569' }}>Usluge <b style={{ color: '#0f172a' }}>{fmt(services)}</b></span>
+                                            </>}
+                                            {transport > 0 && <>
+                                                <span style={{ color: '#cbd5e1' }}>−</span>
+                                                <span style={{ color: '#475569' }}>Transport <b style={{ color: '#0f172a' }}>{fmt(transport)}</b></span>
+                                            </>}
+                                        </div>
+                                    )}
 
                                     {/* Po radniku */}
                                     {workersArr.length > 0 ? (
@@ -560,7 +581,7 @@ export default function WorkOrderExpandedDetail({
                             getWorkLogsForWorkOrder(workOrder.Work_Order_ID, organizationId)
                                 .then(logs => setWorkLogs(logs))
                                 .catch(err => console.error('Error re-fetching work logs:', err));
-                            onRefresh?.('workOrders', 'projects');
+                            onRefresh?.('workOrders', 'projects', 'workLogs');
                             setTimelineItem(null);
                         } else {
                             showToast?.(result.message, 'error');
