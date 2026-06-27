@@ -30,6 +30,7 @@ import {
     getProcessGraph,
 } from '@/lib/services';
 import { useAuth } from '@/context/AuthContext';
+import { splitDnevnicaByOrder } from '@/lib/laborSplit';
 import { SearchableSelect } from './SearchableSelect';
 import AttendanceTab from '../tabs/AttendanceTab';
 import ProcessTimelineModal from './ProcessTimelineModal';
@@ -95,11 +96,36 @@ const km2 = (n: number) => (Math.round(n * 100) / 100).toLocaleString('bs-BA', {
 const daysLabel = (n: number) => n === 0.5 ? '½ dana' : `${Math.round(n * 100) / 100} ${n === 1 ? 'dan' : 'dana'}`;
 const initialsOf = (name?: string) => (name || '?').split(' ').map(s => s[0]).slice(0, 2).join('').toUpperCase();
 
+/**
+ * Iznos dnevnice po proizvodu za PRIKAZ — mora odgovarati saveDailyWorkBooking-u:
+ * dnevnica × presence se dijeli RAVNOMJERNO po nalogu, pa po proizvodu unutar naloga.
+ */
+const perItemAmounts = (
+    itemIds: string[],
+    rate: number,
+    presence: number,
+    orderOf: (itemId: string) => string,
+): Map<string, number> => {
+    const orderIds: string[] = [];
+    const byOrder = new Map<string, string[]>();
+    itemIds.forEach(id => {
+        const woId = orderOf(id) || '__none__';
+        if (!byOrder.has(woId)) { byOrder.set(woId, []); orderIds.push(woId); }
+        byOrder.get(woId)!.push(id);
+    });
+    const { amounts } = splitDnevnicaByOrder(rate, presence, orderIds.map(id => byOrder.get(id)!.length));
+    const result = new Map<string, number>();
+    orderIds.forEach((woId, oi) => byOrder.get(woId)!.forEach((id, j) => result.set(id, amounts[oi][j])));
+    return result;
+};
+
 export default function DailyWorkBookingBoard({ workOrders, workers, workLogs, onRefresh, showToast }: DailyWorkBookingBoardProps) {
     const { organization } = useAuth();
     const orgId = organization?.Organization_ID || '';
 
-    const [view, setView] = useState<'daily' | 'overview' | 'attendance'>('daily');
+    // Unos dnevnica je premješten u "Knjiga rada naloga" (po nalogu). Ovdje ostaju samo
+    // Statistika (pregled) i Šihtarica. 'daily' grana se više ne prikazuje (dormant).
+    const [view, setView] = useState<'daily' | 'overview' | 'attendance'>('overview');
 
     // ── Daily state ─────────────────────────────────────────────────────────
     const [date, setDate] = useState<string>(toISO(new Date()));
@@ -296,10 +322,14 @@ export default function DailyWorkBookingBoard({ workOrders, workers, workLogs, o
             const worker = workerLookup.get(e.workerId);
             const rate = worker?.Daily_Rate || 0;
             const presence = e.presence ?? 1;
-            const n = e.items.length || 1;
-            const amount = Math.round((rate * presence / n) * 100) / 100;
+            // Dvonivovska podjela (po nalogu pa po proizvodu) — isto kao kod spremanja.
+            const amountByItem = perItemAmounts(
+                e.items.map(i => i.workOrderItemId), rate, presence,
+                id => itemLookup.get(id)?.workOrderId || '',
+            );
             e.items.forEach(it => {
                 const meta = itemLookup.get(it.workOrderItemId);
+                const amount = amountByItem.get(it.workOrderItemId) ?? 0;
                 let g = m.get(it.workOrderItemId);
                 if (!g) {
                     g = { itemId: it.workOrderItemId, productName: meta?.productName || 'Proizvod nije aktivan', woLabel: meta?.workOrderName || meta?.projectName || 'Nalog', woNumber: meta?.workOrderNumber || '', rows: [], total: 0 };
@@ -526,9 +556,6 @@ export default function DailyWorkBookingBoard({ workOrders, workers, workLogs, o
     return (
         <div className="dwb" style={view === 'attendance' ? { maxWidth: 'none' } : undefined}>
             <div className="dwb-tabs">
-                <button className={view === 'daily' ? 'active' : ''} onClick={() => setView('daily')}>
-                    <NotebookPen size={15} /> Knjiga rada
-                </button>
                 <button className={view === 'overview' ? 'active' : ''} onClick={() => setView('overview')}>
                     <BarChart3 size={15} /> Statistika
                 </button>
@@ -600,8 +627,11 @@ export default function DailyWorkBookingBoard({ workOrders, workers, workLogs, o
                                 const worker = workerLookup.get(entry.workerId);
                                 const rate = worker?.Daily_Rate || 0;
                                 const presence = entry.presence ?? 1;
-                                const itemCount = entry.items.length;
-                                const perItemAmount = itemCount > 0 ? Math.round((rate * presence / itemCount) * 100) / 100 : 0;
+                                // Iznos po proizvodu: dvonivovska podjela (po nalogu pa po proizvodu).
+                                const itemAmounts = perItemAmounts(
+                                    entry.items.map(i => i.workOrderItemId), rate, presence,
+                                    id => itemLookup.get(id)?.workOrderId || '',
+                                );
                                 return (
                                     <div className="dwb-card" key={entry.workerId}>
                                         <div className="dwb-card-header">
@@ -678,7 +708,7 @@ export default function DailyWorkBookingBoard({ workOrders, workers, workLogs, o
                                                             </div>
                                                         </div>
                                                         <div className="dwb-item-controls">
-                                                            <div className="dwb-item-amount">{km2(perItemAmount)}</div>
+                                                            <div className="dwb-item-amount">{km2(itemAmounts.get(item.workOrderItemId) ?? 0)}</div>
                                                             {editing && (
                                                                 <button className="dwb-x-subtle dwb-item-remove" onClick={() => removeItem(entry.workerId, item.workOrderItemId)} aria-label="Ukloni"><X size={15} /></button>
                                                             )}
@@ -841,7 +871,7 @@ export default function DailyWorkBookingBoard({ workOrders, workers, workLogs, o
                             const isWeekend = dd.getDay() === 0 || dd.getDay() === 6;
                             return (
                                 <button key={d} className={`dwb-cal-day ${cost > 0 ? 'has' : 'empty'} ${isWeekend ? 'weekend' : ''}`}
-                                    onClick={() => { setDate(d); setView('daily'); }} title={`${formatHuman(d)} — ${km(cost)}`}>
+                                    title={`${formatHuman(d)} — ${km(cost)}`}>
                                     <span className="dwb-cal-bar" style={{ height: `${h}px` }} />
                                     <span className="dwb-cal-dow">{DAY_NAMES[dd.getDay()]}</span>
                                     <span className="dwb-cal-num">{dd.getDate()}</span>

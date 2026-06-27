@@ -350,8 +350,10 @@ export async function calculateWorkOrderProfitability(
             ? (laborVariance / plannedLaborCost) * 100
             : 0;
 
-        // Services/extras are NOT deducted — they're estimates baked into selling price
-        const grossProfit = totalValue - materialCost - transportCost;
+        // KONZISTENTNOST: usluge se oduzimaju kao trošak — isto kao per-item
+        // (calculateProductProfitability) i aktivni dashboard (profitDashboardService).
+        // Time je Σ(net proizvoda) === net naloga (invarijanta, vidi scenarios.integration.test).
+        const grossProfit = totalValue - materialCost - transportCost - servicesCost;
         const netProfit = grossProfit - actualLaborCost;
         const profitMargin = totalValue > 0 ? (netProfit / totalValue) * 100 : 0;
 

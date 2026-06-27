@@ -39,3 +39,47 @@ export function splitDnevnica(dnevnica: number, presence: number, n: number): nu
     const count = Math.max(1, Math.round(n));
     return Math.round(((dnevnica || 0) * p / count) * 100) / 100;
 }
+
+/**
+ * DVONIVOVSKA PODJELA — dnevnica × presence se prvo RAVNOMJERNO dijeli na NALOGE
+ * (na kojima je radnik radio taj dan), pa se udio svakog naloga RAVNOMJERNO dijeli
+ * na njegove proizvode. Centi se raspoređuju na oba nivoa tako da je Σ TAČAN.
+ *
+ *   udio_naloga   = round2(dnevnica × presence / brojNaloga)
+ *   iznos_proizvoda = round2(udio_naloga / proizvodaUNalogu)
+ *   Day_Fraction  = presence / (brojNaloga × proizvodaUNalogu)
+ *   Σ svih iznosa = round2(dnevnica × presence)        ← invarijanta (≤ 1 dnevnica/dan)
+ *   Σ svih Day_Fraction = presence
+ *
+ * Za jedan nalog ([n]) rezultat je IDENTIČAN splitDnevnicaExact(dnevnica, presence, n).
+ *
+ * @param orderItemCounts broj proizvoda po nalogu, npr. [12, 1] = prvi nalog 12, drugi 1
+ * @returns amounts[oi][j] i dayFractions[oi][j] u istom redoslijedu kao orderItemCounts
+ */
+export function splitDnevnicaByOrder(
+    dnevnica: number,
+    presence: number,
+    orderItemCounts: number[]
+): { amounts: number[][]; dayFractions: number[][] } {
+    const p = normalizePresence(presence);
+    const counts = (orderItemCounts.length > 0 ? orderItemCounts : [1]).map(c => Math.max(1, Math.round(c)));
+    const numOrders = counts.length;
+    const totalCents = Math.max(0, Math.round((dnevnica || 0) * p * 100));
+
+    // Nivo 1: totalCents → nalozi (zaostatak centa na prve naloge)
+    const baseO = Math.floor(totalCents / numOrders);
+    const remO = totalCents - baseO * numOrders;
+    const orderCents = counts.map((_, i) => baseO + (i < remO ? 1 : 0));
+
+    const amounts: number[][] = [];
+    const dayFractions: number[][] = [];
+    counts.forEach((count, oi) => {
+        // Nivo 2: orderCents[oi] → proizvodi tog naloga
+        const baseI = Math.floor(orderCents[oi] / count);
+        const remI = orderCents[oi] - baseI * count;
+        amounts.push(Array.from({ length: count }, (_, j) => (baseI + (j < remI ? 1 : 0)) / 100));
+        const df = Math.round((p / (numOrders * count)) * 1e6) / 1e6;
+        dayFractions.push(Array.from({ length: count }, () => df));
+    });
+    return { amounts, dayFractions };
+}

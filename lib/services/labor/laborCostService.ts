@@ -107,12 +107,14 @@ export async function backfillWorkLogsFromAttendance(
 import type {
     DailyBookingEntryInput,
     DailyBookingEntryView,
+    WorkOrderDayEntryInput,
 } from '../../attendance';
 export type {
     DailyBookingItemInput,
     DailyBookingEntryInput,
     DailyBookingItemView,
     DailyBookingEntryView,
+    WorkOrderDayEntryInput,
 } from '../../attendance';
 
 export async function saveDailyWorkBooking(
@@ -124,6 +126,20 @@ export async function saveDailyWorkBooking(
     const result = await _save(date, organizationId, entries);
     if (result.success) {
         eventBus.emit('workOrder:recalculated', { workOrderId: '', organizationId });
+    }
+    return result;
+}
+
+export async function saveWorkOrderDayBooking(
+    workOrderId: string,
+    date: string,
+    organizationId: string,
+    entries: WorkOrderDayEntryInput[]
+): Promise<{ success: boolean; logsCreated: number; affectedWorkOrders: string[]; message: string }> {
+    const { saveWorkOrderDayBooking: _save } = await import('../../attendance');
+    const result = await _save(workOrderId, date, organizationId, entries);
+    if (result.success) {
+        result.affectedWorkOrders.forEach(id => eventBus.emit('workOrder:recalculated', { workOrderId: id, organizationId }));
     }
     return result;
 }

@@ -159,7 +159,7 @@ const Sidebar: React.FC<SidebarProps> = ({ activeTab, onTabChange, isOpen, onClo
             icon: Factory,
             items: [
                 { id: 'production', icon: ClipboardList, label: 'Nalozi' },
-                { id: 'worklog', icon: NotebookPen, label: 'Dnevni unos' },
+                { id: 'worklog', icon: NotebookPen, label: 'Pregled rada' },
                 { id: 'planer', icon: GanttChart, label: 'Planer' },
             ]
         },

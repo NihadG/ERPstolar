@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Calendar, Play, Pause, CheckCircle, Clock, Edit2, AlertTriangle, NotebookPen, Printer, Trash2, History, GitBranch } from 'lucide-react';
+import { Calendar, Play, Pause, CheckCircle, Clock, Edit2, AlertTriangle, NotebookPen, Printer, Trash2, GitBranch } from 'lucide-react';
 import { useData } from '@/context/DataContext';
 import {
     checkMissingAttendanceHistory,
@@ -12,7 +12,7 @@ import {
 } from '@/lib/services';
 import type { WorkOrder, Worker, WorkOrderItem, WorkLog } from '@/lib/types';
 import ProductTimelineModal from './ProductTimelineModal';
-import BulkBookingModal from './BulkBookingModal';
+import WorkOrderWorkLog from './WorkOrderWorkLog';
 import ProcessGraphModal from './ProcessGraphModal';
 import { workOrderDisplayName } from '@/lib/utils';
 
@@ -47,7 +47,6 @@ export default function WorkOrderExpandedDetail({
     // Work logs (izvor profita po proizvodu — iz dnevnika rada)
     const [workLogs, setWorkLogs] = useState<WorkLog[]>([]);
     const [timelineItem, setTimelineItem] = useState<WorkOrderItem | null>(null);
-    const [bulkOpen, setBulkOpen] = useState(false);
     const [processOpen, setProcessOpen] = useState(false);
     const [editingName, setEditingName] = useState(false);
     const [nameDraft, setNameDraft] = useState('');
@@ -91,6 +90,16 @@ export default function WorkOrderExpandedDetail({
                 .catch(err => console.error('Error fetching work logs:', err));
         }
     }, [workOrder?.Work_Order_ID, organizationId]);
+
+    // Re-fetch ovog naloga + osvježi globalno (poslije knjiženja rada u trackeru)
+    const reloadWorkLogs = () => {
+        if (workOrder?.Work_Order_ID && organizationId) {
+            getWorkLogsForWorkOrder(workOrder.Work_Order_ID, organizationId)
+                .then(logs => setWorkLogs(logs))
+                .catch(err => console.error('Error fetching work logs:', err));
+        }
+        onRefresh?.('workOrders', 'projects', 'workLogs');
+    };
 
     // Format helpers
     const formatDate = (dateStr: string | undefined): string => {
@@ -437,62 +446,9 @@ export default function WorkOrderExpandedDetail({
                                         )}
                                     </div>
 
-                                    {/* P&L breakdown */}
-                                    {isMontaza ? (
-                                        <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '6px 10px', fontSize: '12px' }}>
-                                            <span style={{ color: '#475569' }}>
-                                                Montažni rad <b style={{ color: '#0f172a' }}>{fmt(laborCost)}</b>
-                                                {workDays > 0 && <span style={{ color: '#94a3b8' }}> ({workDays} {workDays === 1 ? 'dan' : 'dana'})</span>}
-                                            </span>
-                                            <span style={{ color: '#94a3b8', fontSize: '11px' }}>· prihod je na proizvodnom nalogu</span>
-                                        </div>
-                                    ) : (
-                                        <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '6px 10px', fontSize: '12px' }}>
-                                            <span style={{ color: '#475569' }}>Cijena <b style={{ color: '#0f172a' }}>{fmt(value)}</b></span>
-                                            <span style={{ color: '#cbd5e1' }}>−</span>
-                                            <span style={{ color: '#475569' }}>Materijal <b style={{ color: '#0f172a' }}>{fmt(material)}</b></span>
-                                            <span style={{ color: '#cbd5e1' }}>−</span>
-                                            <span style={{ color: '#475569' }}>
-                                                Rad <b style={{ color: overBudget ? '#dc2626' : '#0f172a' }}>{fmt(laborCost)}</b>
-                                                {workDays > 0 && <span style={{ color: '#94a3b8' }}> ({workDays} {workDays === 1 ? 'dan' : 'dana'})</span>}
-                                            </span>
-                                            {services > 0 && <>
-                                                <span style={{ color: '#cbd5e1' }}>−</span>
-                                                <span style={{ color: '#475569' }}>Usluge <b style={{ color: '#0f172a' }}>{fmt(services)}</b></span>
-                                            </>}
-                                            {transport > 0 && <>
-                                                <span style={{ color: '#cbd5e1' }}>−</span>
-                                                <span style={{ color: '#475569' }}>Transport <b style={{ color: '#0f172a' }}>{fmt(transport)}</b></span>
-                                            </>}
-                                        </div>
-                                    )}
-
-                                    {/* Po radniku */}
-                                    {workersArr.length > 0 ? (
-                                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
-                                            {workersArr.map((w, i) => (
-                                                <span key={i} style={{
-                                                    display: 'inline-flex', alignItems: 'center', gap: '5px',
-                                                    fontSize: '11px', color: '#334155', background: '#f1f5f9',
-                                                    padding: '3px 9px', borderRadius: '999px'
-                                                }}>
-                                                    <span style={{ fontWeight: 600 }}>{w.name}</span>
-                                                    <span style={{ color: '#64748b' }}>{Math.round(w.days * 100) / 100} {w.days === 1 ? 'dan' : 'dana'} · {fmt(w.cost)} KM</span>
-                                                </span>
-                                            ))}
-                                        </div>
-                                    ) : (
-                                        <div style={{ fontSize: '11px', color: '#94a3b8' }}>Nema zapisa rada — unesi u Knjizi rada</div>
-                                    )}
-
-                                    {overBudget && (
-                                        <div style={{ fontSize: '11px', color: '#dc2626', fontWeight: 600 }}>
-                                            prekoračen plan rada za {fmt(laborCost - planned)} KM (plan {fmt(planned)} KM)
-                                        </div>
-                                    )}
-
+                                    {/* Detalji (cijena/materijal/rad, po radniku, plan vs stvarno) na zahtjev — u modalu */}
                                     <button className="details-link" onClick={() => setTimelineItem(item)}>
-                                        Detalji rada →
+                                        Detalji proizvoda →
                                     </button>
                                 </div>
                             );
@@ -502,16 +458,22 @@ export default function WorkOrderExpandedDetail({
                     <div className="products-empty">Nema proizvoda u ovom nalogu.</div>
                 )}
 
+                {/* Knjiga rada naloga — jedinstveni dnevni tracker (zamjenjuje Evidentiraj rad + Brzi unos) */}
+                <div className="wo-worklog">
+                    <div className="wo-worklog-head"><NotebookPen size={15} /> Knjiga rada naloga</div>
+                    <WorkOrderWorkLog
+                        workOrder={workOrder}
+                        items={(localItems.length ? localItems : (workOrder.items || []))}
+                        workLogs={workLogs}
+                        workers={workers}
+                        organizationId={organizationId || ''}
+                        onReload={reloadWorkLogs}
+                        showToast={showToast || (() => { })}
+                    />
+                </div>
+
                 {/* Akcije naloga */}
                 <div className="wo-actions">
-                    <button className="wo-act wo-act-primary" onClick={() => {
-                        window.dispatchEvent(new CustomEvent('switchTab', { detail: { tab: 'worklog' } }));
-                    }}>
-                        <NotebookPen size={15} /> Evidentiraj rad
-                    </button>
-                    <button className="wo-act" onClick={() => setBulkOpen(true)}>
-                        <History size={15} /> Brzi unos (period)
-                    </button>
                     <button className="wo-act" onClick={() => setProcessOpen(true)}>
                         <GitBranch size={15} /> Procesi
                     </button>
@@ -523,19 +485,6 @@ export default function WorkOrderExpandedDetail({
                     </button>
                 </div>
             </div>
-
-            {/* Brzi retrospektivni unos rada za cijeli nalog */}
-            {bulkOpen && (
-                <BulkBookingModal
-                    isOpen={true}
-                    onClose={() => setBulkOpen(false)}
-                    workOrder={workOrder}
-                    workers={workers}
-                    organizationId={organizationId || ''}
-                    onDone={(...c) => onRefresh?.(...c)}
-                    showToast={showToast || (() => { })}
-                />
-            )}
 
             {/* Graf procesa naloga */}
             {processOpen && (
@@ -843,6 +792,16 @@ export default function WorkOrderExpandedDetail({
                 .details-link:hover { text-decoration: underline; }
 
                 /* Akcije naloga */
+                /* === Knjiga rada naloga === */
+                .wo-worklog {
+                    margin-top: 16px; padding-top: 16px; border-top: 1px solid #e2e8f0;
+                }
+                .wo-worklog-head {
+                    display: flex; align-items: center; gap: 8px;
+                    font-size: 12px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase;
+                    color: #64748b; margin-bottom: 12px;
+                }
+
                 .wo-actions {
                     display: flex; gap: 8px; flex-wrap: wrap;
                     margin-top: 16px; padding-top: 16px; border-top: 1px solid #e2e8f0;

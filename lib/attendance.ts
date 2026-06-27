@@ -502,14 +502,15 @@ export async function markAttendanceAndRecalculate(
         const firestore = getDb();
 
         // ═══════════════════════════════════════════════════════════════
-        // MODEL: Radna knjiga = JEDINI izvor dnevnica. Šihtarica je POTVRDA.
-        //   - Prisutan / Teren  → ne diramo dnevnice (Radna knjiga vlada).
+        // MODEL (od 2026-06-27): Šihtarica AUTO-KNJIŽI dnevnicu prisutnih.
+        //   - Prisutan / Teren  → auto-knjiži na AKTIVNE NEPAUZIRANE dodijeljene naloge
+        //     (idempotentno; manualni unos ima prednost). Vidi autoBookPresentWorker / lib/autoBook.ts.
         //   - Odsutan/Bolovanje/Odmor/Vikend/Praznik → dnevnice tog dana se NE računaju
         //     → brišemo work logove tog radnika za taj dan.
-        // Šihtarica VIŠE NE kreira dnevnice automatski.
         // ═══════════════════════════════════════════════════════════════
         const PRESENT_STATUSES = ['Prisutan', 'Teren'];
         const isAbsent = attendance.Status != null && !PRESENT_STATUSES.includes(attendance.Status);
+        const isPresent = attendance.Status != null && PRESENT_STATUSES.includes(attendance.Status);
 
         // Pronađi naloge koji imaju dnevnice za ovog radnika/datum (za recalc)
         try {
@@ -528,7 +529,20 @@ export async function markAttendanceAndRecalculate(
             console.warn('Attendance WO lookup failed:', err);
         }
 
-        // ODSUTAN → obriši dnevnice tog dana (ne računaju se). PRISUTAN → ne diramo.
+        // PRISUTAN/TEREN → auto-knjiži na aktivne nepauzirane dodijeljene naloge (idempotentno).
+        if (isPresent) {
+            try {
+                const auto = await autoBookPresentWorker(
+                    attendance.Worker_ID, attendance.Worker_Name || '', attendance.Date, attendance.Organization_ID, attendance.Status!
+                );
+                workLogsCreated += auto.created;
+                auto.affectedWorkOrderIds.forEach(id => affectedWorkOrderIds.add(id));
+            } catch (autoErr) {
+                console.warn('[ATTENDANCE] auto-book failed:', autoErr);
+            }
+        }
+
+        // ODSUTAN → obriši dnevnice tog dana (ne računaju se).
         if (isAbsent) {
             try {
                 const cleanupResult = await deleteWorkLogsForWorkerOnDate(
@@ -569,6 +583,106 @@ export async function markAttendanceAndRecalculate(
     } catch (error) {
         console.error('Error marking attendance:', error);
         throw error;
+    }
+}
+
+/**
+ * AUTO-KNJIŽENJE IZ ŠIHTARICE: kad je radnik PRISUTAN/TEREN, automatski proknjiži dnevnicu na
+ * AKTIVNE NEPAUZIRANE naloge na kojima je DODIJELJEN (odluka: lib/autoBook.ts → selectAutoBookItemIds).
+ * Idempotentno — preskače proizvode koji već imaju zapis tog dana (manualni unos ima prednost).
+ * Bazni log (presence 1); konačnu DVONIVOVSKU podjelu radi renormalizeWorkerDay (po nalogu pa proizvodu).
+ * Ne dira druge radnike. Odsutan/pauziran/nedodijeljen → ništa (osim ručno).
+ */
+export async function autoBookPresentWorker(
+    workerId: string,
+    workerName: string,
+    date: string,
+    organizationId: string,
+    status: string
+): Promise<{ created: number; affectedWorkOrderIds: string[] }> {
+    if (!workerId || !date || !organizationId) return { created: 0, affectedWorkOrderIds: [] };
+    if (status !== 'Prisutan' && status !== 'Teren') return { created: 0, affectedWorkOrderIds: [] };
+    try {
+        const fs = getDb();
+
+        // Aktivni nalozi (U toku + nedavno Završeni) + njihove stavke
+        const woSnap = await getDocs(query(
+            collection(fs, COLLECTIONS.WORK_ORDERS),
+            where('Organization_ID', '==', organizationId),
+            where('Status', 'in', ['U toku', 'Završeno'])
+        ));
+        if (woSnap.empty) return { created: 0, affectedWorkOrderIds: [] };
+
+        const orderMap = new Map<string, AutoBookOrder>();
+        woSnap.docs.forEach(d => {
+            const w = d.data();
+            orderMap.set(w.Work_Order_ID, {
+                Work_Order_ID: w.Work_Order_ID, Status: w.Status, Work_Order_Type: w.Work_Order_Type,
+                Started_At: w.Started_At, Completed_At: w.Completed_At, items: [],
+            });
+        });
+
+        const itemsSnap = await getDocs(query(
+            collection(fs, COLLECTIONS.WORK_ORDER_ITEMS),
+            where('Organization_ID', '==', organizationId)
+        ));
+        const itemDataById = new Map<string, Record<string, unknown>>();
+        itemsSnap.docs.forEach(d => {
+            const it = d.data();
+            const ord = orderMap.get(it.Work_Order_ID);
+            if (!ord) return;
+            ord.items.push({
+                ID: it.ID, Status: it.Status, Is_Paused: it.Is_Paused, Completed_At: it.Completed_At,
+                Assigned_Workers: it.Assigned_Workers, Processes: it.Processes, SubTasks: it.SubTasks,
+            });
+            itemDataById.set(it.ID, it);
+        });
+
+        // Postojeći logovi radnika za taj dan (idempotentnost)
+        const logSnap = await getDocs(query(
+            collection(fs, 'work_logs'),
+            where('Worker_ID', '==', workerId),
+            where('Date', '==', date),
+            where('Organization_ID', '==', organizationId)
+        ));
+        const loggedItemIds = new Set<string>();
+        logSnap.docs.forEach(d => { const id = d.data().Work_Order_Item_ID; if (id) loggedItemIds.add(id); });
+
+        const targetItemIds = selectAutoBookItemIds({
+            workerId, date, status,
+            orders: Array.from(orderMap.values()),
+            hasExistingLog: (id) => loggedItemIds.has(id),
+        });
+        if (targetItemIds.length === 0) return { created: 0, affectedWorkOrderIds: [] };
+
+        const workers = await getWorkers(organizationId);
+        const dailyRate = workers.find(w => w.Worker_ID === workerId)?.Daily_Rate || 0;
+
+        const batch = writeBatch(fs);
+        const affected = new Set<string>();
+        for (const itemId of targetItemIds) {
+            const it = itemDataById.get(itemId);
+            if (!it) continue;
+            batch.set(doc(collection(fs, 'work_logs')), {
+                WorkLog_ID: generateUUID(), Organization_ID: organizationId, Date: date,
+                Worker_ID: workerId, Worker_Name: workerName, Daily_Rate: dailyRate, Original_Daily_Rate: dailyRate,
+                Day_Fraction: 1, Presence: 1, Split_Factor: 1, Hours_Worked: 8,
+                Booking_Source: 'attendance', Is_From_Attendance: true,
+                Work_Order_ID: it.Work_Order_ID, Work_Order_Item_ID: it.ID, Product_ID: it.Product_ID,
+                Created_At: new Date().toISOString(),
+            });
+            if (it.Work_Order_ID) affected.add(it.Work_Order_ID as string);
+        }
+        await batch.commit();
+
+        // Kanonska dvonivovska podjela preko cijelog radnikovog dana (uklj. druge naloge/manualno)
+        const wos = await renormalizeWorkerDay(workerId, date, organizationId, 1);
+        wos.forEach(id => affected.add(id));
+
+        return { created: targetItemIds.length, affectedWorkOrderIds: Array.from(affected) };
+    } catch (error) {
+        console.error('autoBookPresentWorker error:', error);
+        return { created: 0, affectedWorkOrderIds: [] };
     }
 }
 
@@ -635,8 +749,9 @@ async function fetchWorkOrderItemsByIds(itemIds: string[], organizationId: strin
 // KANONSKA PODJELA DNEVNICE — jedini izvor istine za iznos po proizvodu.
 // Čista logika je u lib/laborSplit.ts (bez Firebase, pokrivena testovima).
 // ════════════════════════════════════════════════════════════════════
-export { splitDnevnica, splitDnevnicaExact, normalizePresence } from './laborSplit';
-import { splitDnevnicaExact } from './laborSplit';
+export { splitDnevnica, splitDnevnicaExact, splitDnevnicaByOrder, normalizePresence } from './laborSplit';
+import { splitDnevnicaExact, splitDnevnicaByOrder } from './laborSplit';
+import { selectAutoBookItemIds, type AutoBookOrder } from './autoBook';
 
 /**
  * Ravnomjerno raspodijeli dnevnicu radnika preko SVIH njegovih logova na dati datum
@@ -662,7 +777,6 @@ export async function renormalizeWorkerDay(
     if (snap.empty) return affected;
 
     const docs = snap.docs;
-    const n = docs.length;  // dijeli po broju logova → Σ je uvijek tačno dnevnica × presence
 
     // presence je per-(radnik, dan): hint (zadnja korisnička namjera) ima prednost,
     // inače eksplicitni Presence sa zapisa, inače 1.
@@ -686,30 +800,44 @@ export async function renormalizeWorkerDay(
         dnevnica = workers.find(w => w.Worker_ID === workerId)?.Daily_Rate || 0;
     }
 
-    const { amounts, dayFraction } = splitDnevnicaExact(dnevnica, presence, n);
+    // DVONIVOVSKA PODJELA: grupiši logove po NALOGU → udio po nalogu, pa po proizvodu.
+    // (jedan nalog → identično ravnomjernoj podjeli; više naloga → svaki nalog dobije jednak udio)
+    const orderIds: string[] = [];
+    const byOrder = new Map<string, typeof docs>();
+    docs.forEach(d => {
+        const woId = (d.data().Work_Order_ID as string) || '__none__';
+        if (!byOrder.has(woId)) { byOrder.set(woId, [] as unknown as typeof docs); orderIds.push(woId); }
+        (byOrder.get(woId) as typeof docs).push(d);
+    });
+    const { amounts, dayFractions } = splitDnevnicaByOrder(dnevnica, presence, orderIds.map(id => byOrder.get(id)!.length));
 
     const batch = writeBatch(firestore);
     let changed = 0;
-    docs.forEach((d, i) => {
-        const data = d.data();
-        if (data.Work_Order_ID) affected.add(data.Work_Order_ID);
-        const amount = amounts[i];
-        const needsUpdate =
-            Math.abs((data.Daily_Rate || 0) - amount) > 0.001 ||
-            Math.abs((data.Day_Fraction ?? 1) - dayFraction) > 0.0001 ||
-            (data.Split_Factor || 0) !== n ||
-            (data.Original_Daily_Rate || 0) !== dnevnica ||
-            (data.Presence ?? 1) !== presence;
-        if (needsUpdate) {
-            batch.update(d.ref, {
-                Daily_Rate: amount,
-                Day_Fraction: dayFraction,
-                Split_Factor: n,
-                Original_Daily_Rate: dnevnica,
-                Presence: presence,
-            });
-            changed++;
-        }
+    orderIds.forEach((woId, oi) => {
+        const group = byOrder.get(woId)!;
+        const splitFactor = orderIds.length * group.length;  // efektivni djelitelj za proizvod
+        group.forEach((d, j) => {
+            const data = d.data();
+            if (data.Work_Order_ID) affected.add(data.Work_Order_ID);
+            const amount = amounts[oi][j];
+            const dayFraction = dayFractions[oi][j];
+            const needsUpdate =
+                Math.abs((data.Daily_Rate || 0) - amount) > 0.001 ||
+                Math.abs((data.Day_Fraction ?? 1) - dayFraction) > 0.0001 ||
+                (data.Split_Factor || 0) !== splitFactor ||
+                (data.Original_Daily_Rate || 0) !== dnevnica ||
+                (data.Presence ?? 1) !== presence;
+            if (needsUpdate) {
+                batch.update(d.ref, {
+                    Daily_Rate: amount,
+                    Day_Fraction: dayFraction,
+                    Split_Factor: splitFactor,
+                    Original_Daily_Rate: dnevnica,
+                    Presence: presence,
+                });
+                changed++;
+            }
+        });
     });
     if (changed > 0) await batch.commit();
     return affected;
@@ -754,27 +882,40 @@ export async function recalcAllWorkLogSplits(
         const flush = async () => { if (ops > 0) { await batch.commit(); batch = writeBatch(firestore); ops = 0; } };
 
         for (const docs of Array.from(groups.values())) {
-            const n = docs.length;
             let presence = 1;
             for (const d of docs) { const p = d.data().Presence; if (p === 0.5 || p === 1) { presence = p; break; } }
             let dnevnica = 0;
             for (const d of docs) { const o = d.data().Original_Daily_Rate; if (typeof o === 'number' && o > 0) { dnevnica = o; break; } }
             if (dnevnica <= 0) dnevnica = rateOf.get(docs[0].data().Worker_ID) || 0;
 
-            const { amounts, dayFraction } = splitDnevnicaExact(dnevnica, presence, n);
-            docs.forEach((d, i) => {
-                const data = d.data();
-                if (data.Work_Order_ID) affectedWO.add(data.Work_Order_ID);
-                const itemId = data.Work_Order_Item_ID;
-                if (itemId) itemLabor.set(itemId, Math.round(((itemLabor.get(itemId) || 0) + amounts[i]) * 100) / 100);
-                batch.update(d.ref, {
-                    Daily_Rate: amounts[i],
-                    Day_Fraction: dayFraction,
-                    Split_Factor: n,
-                    Original_Daily_Rate: dnevnica,
-                    Presence: presence,
+            // DVONIVOVSKA PODJELA: grupiši (radnik,dan) logove po NALOGU → udio po nalogu, pa po proizvodu.
+            const orderIds: string[] = [];
+            const byOrder = new Map<string, LogDoc[]>();
+            docs.forEach(d => {
+                const woId = (d.data().Work_Order_ID as string) || '__none__';
+                if (!byOrder.has(woId)) { byOrder.set(woId, []); orderIds.push(woId); }
+                byOrder.get(woId)!.push(d);
+            });
+            const { amounts, dayFractions } = splitDnevnicaByOrder(dnevnica, presence, orderIds.map(id => byOrder.get(id)!.length));
+
+            orderIds.forEach((woId, oi) => {
+                const group = byOrder.get(woId)!;
+                const splitFactor = orderIds.length * group.length;
+                group.forEach((d, j) => {
+                    const data = d.data();
+                    if (data.Work_Order_ID) affectedWO.add(data.Work_Order_ID);
+                    const itemId = data.Work_Order_Item_ID;
+                    const amount = amounts[oi][j];
+                    if (itemId) itemLabor.set(itemId, Math.round(((itemLabor.get(itemId) || 0) + amount) * 100) / 100);
+                    batch.update(d.ref, {
+                        Daily_Rate: amount,
+                        Day_Fraction: dayFractions[oi][j],
+                        Split_Factor: splitFactor,
+                        Original_Daily_Rate: dnevnica,
+                        Presence: presence,
+                    });
+                    logsUpdated++; ops++;
                 });
-                logsUpdated++; ops++;
             });
             if (ops >= 400) await flush();
         }
@@ -900,54 +1041,69 @@ export async function saveDailyWorkBooking(
             // POTVRDA: radnik označen odsutnim tog dana → dnevnica se ne računa
             if (absentWorkerIds.has(entry.workerId) && entry.items.length > 0) { skippedAbsent++; continue; }
 
-            // KANONSKA PODJELA: dnevnica (× presence) ravnomjerno na N proizvoda na kojima radnik radi taj dan.
+            // DVONIVOVSKA PODJELA: dnevnica × presence → RAVNOMJERNO po NALOGU, pa po proizvodu unutar naloga.
+            // (npr. nalog A s 12 proizvoda + nalog B s 1 proizvodom, cijeli dan → 65 KM na A i 65 KM na B,
+            //  a NE 130/13 na sve. Jedan nalog → identično ravnomjernoj podjeli.)
             const validItems = entry.items.filter(it => itemMap.get(it.workOrderItemId));
             const presence = entry.presence === 0.5 ? 0.5 : 1;
-            const splitCount = validItems.length;
-            if (splitCount === 0) continue;
-            const { amounts, dayFraction } = splitDnevnicaExact(dailyRate, presence, splitCount);
-            const hoursPerItem = Math.round((8 * presence / splitCount) * 10) / 10;
+            if (validItems.length === 0) continue;
 
-            let idx = 0;
-            for (const item of validItems) {
+            // Svaku stavku mapiraj na CILJNI (troškovni) proizvod/nalog: povezani custom zadatak → povezani proizvod.
+            const mapped = validItems.map(item => {
                 const booked = itemMap.get(item.workOrderItemId)!;
-                const amount = amounts[idx++] ?? 0;
-
-                // POVEZAN custom zadatak → upiši zapis na povezani proizvod; naziv zadatka ide u Process_Name.
                 const linked = (booked.Item_Type === 'custom' && booked.Linked_Item_ID)
                     ? itemMap.get(booked.Linked_Item_ID)
                     : undefined;
-                const target = linked || booked;
-                const processName = linked ? booked.Product_Name : undefined;
-                const processTags = Array.from(new Set((item.processes || []).map(p => p.trim()).filter(Boolean)));
-
-                const log: Record<string, any> = {
-                    WorkLog_ID: generateUUID(),
-                    Organization_ID: organizationId,
-                    Date: date,
-                    Worker_ID: entry.workerId,
-                    Worker_Name: workerName,
-                    Daily_Rate: amount,
-                    Original_Daily_Rate: dailyRate,
-                    Day_Fraction: dayFraction,
-                    Presence: presence,
-                    Split_Factor: splitCount,
-                    Hours_Worked: hoursPerItem,
-                    Booking_Source: 'manual',
-                    Is_From_Attendance: false,
-                    Work_Order_ID: target.Work_Order_ID,
-                    Work_Order_Item_ID: target.ID,
-                    Product_ID: target.Product_ID,
-                    Process_Name: processName,
-                    Process_Tags: processTags.length > 0 ? processTags : undefined,
-                    Process_Node_ID: item.processNodeId,
-                    Created_At: new Date().toISOString(),
-                };
-                Object.keys(log).forEach(k => log[k] === undefined && delete log[k]);
-                newLogs.push(log);
-                logsCreated++;
-                if (target.Work_Order_ID) affected.add(target.Work_Order_ID);
+                return { item, booked, linked, target: linked || booked };
+            });
+            // Grupiši po CILJNOM nalogu (stabilan redoslijed unosa)
+            const orderIds: string[] = [];
+            const byOrder = new Map<string, typeof mapped>();
+            for (const m of mapped) {
+                const woId = (m.target.Work_Order_ID as string) || '__none__';
+                if (!byOrder.has(woId)) { byOrder.set(woId, []); orderIds.push(woId); }
+                byOrder.get(woId)!.push(m);
             }
+            const { amounts, dayFractions } = splitDnevnicaByOrder(dailyRate, presence, orderIds.map(id => byOrder.get(id)!.length));
+
+            orderIds.forEach((woId, oi) => {
+                const group = byOrder.get(woId)!;
+                const splitFactor = orderIds.length * group.length;             // efektivni djelitelj za proizvod
+                const hoursPerItem = Math.round((8 * presence / splitFactor) * 10) / 10;
+                group.forEach((m, j) => {
+                    const { item, booked, linked, target } = m;
+                    const amount = amounts[oi][j] ?? 0;
+                    const processName = linked ? booked.Product_Name : undefined;
+                    const processTags = Array.from(new Set((item.processes || []).map(p => p.trim()).filter(Boolean)));
+
+                    const log: Record<string, any> = {
+                        WorkLog_ID: generateUUID(),
+                        Organization_ID: organizationId,
+                        Date: date,
+                        Worker_ID: entry.workerId,
+                        Worker_Name: workerName,
+                        Daily_Rate: amount,
+                        Original_Daily_Rate: dailyRate,
+                        Day_Fraction: dayFractions[oi][j],
+                        Presence: presence,
+                        Split_Factor: splitFactor,
+                        Hours_Worked: hoursPerItem,
+                        Booking_Source: 'manual',
+                        Is_From_Attendance: false,
+                        Work_Order_ID: target.Work_Order_ID,
+                        Work_Order_Item_ID: target.ID,
+                        Product_ID: target.Product_ID,
+                        Process_Name: processName,
+                        Process_Tags: processTags.length > 0 ? processTags : undefined,
+                        Process_Node_ID: item.processNodeId,
+                        Created_At: new Date().toISOString(),
+                    };
+                    Object.keys(log).forEach(k => log[k] === undefined && delete log[k]);
+                    newLogs.push(log);
+                    logsCreated++;
+                    if (target.Work_Order_ID) affected.add(target.Work_Order_ID);
+                });
+            });
         }
 
         // BATCH: brisanja starih + upis novih (max 450 ops po batchu) → minimalan broj round-tripova.
@@ -979,6 +1135,159 @@ export async function saveDailyWorkBooking(
     } catch (error) {
         console.error('saveDailyWorkBooking error:', error);
         return { success: false, logsCreated: 0, affectedWorkOrders: [], message: 'Greška pri spremanju knjige rada' };
+    }
+}
+
+export interface WorkOrderDayEntryInput {
+    workerId: string;
+    presence: number;        // 1 = cijeli dan, 0.5 = pola dana
+    itemIds: string[];       // proizvodi OVOG naloga na kojima je radnik radio taj dan
+}
+
+/**
+ * Spremi knjigu rada za JEDAN nalog i JEDAN dan ("Knjiga rada naloga").
+ * `entries` je KOMPLETNO stanje tog naloga za taj dan (izvor istine).
+ *
+ * Razlika od `saveDailyWorkBooking` (koji briše CIJELI radnikov dan kroz sve naloge):
+ * ovdje je clean-slate SCOPED na (nalog × dan) — logovi istog radnika na DRUGIM nalozima
+ * tog dana ostaju netaknuti. Konačna (dvonivovska) podjela dnevnice se određuje u
+ * `renormalizeWorkerDay` preko SVIH radnikovih logova tog dana (uklj. druge naloge).
+ *
+ * Knjiženje je dozvoljeno i za pauzirane/završene dane — trošak je nezavisan od statusa
+ * (dan s logom je radni dan). Status proizvoda se NE mijenja.
+ */
+export async function saveWorkOrderDayBooking(
+    workOrderId: string,
+    date: string,
+    organizationId: string,
+    entries: WorkOrderDayEntryInput[]
+): Promise<{ success: boolean; logsCreated: number; affectedWorkOrders: string[]; message: string }> {
+    if (!organizationId || !date || !workOrderId) {
+        return { success: false, logsCreated: 0, affectedWorkOrders: [], message: 'Nedostaju nalog, datum ili organizacija' };
+    }
+    try {
+        const fs = getDb();
+        const workers = await getWorkers(organizationId);
+        const affected = new Set<string>([workOrderId]);
+        const affectedWorkers = new Set<string>();
+        let logsCreated = 0;
+        let skippedAbsent = 0;
+
+        // POTVRDA IZ ŠIHTARICE: radnik označen odsutnim tog dana → dnevnica se NE računa
+        const absentWorkerIds = new Set<string>();
+        try {
+            const attSnap = await getDocs(query(
+                collection(fs, COLLECTIONS.WORKER_ATTENDANCE),
+                where('Date', '==', date),
+                where('Organization_ID', '==', organizationId)
+            ));
+            attSnap.docs.forEach(d => {
+                const a = d.data() as WorkerAttendance;
+                if (a.Status && a.Status !== 'Prisutan' && a.Status !== 'Teren') absentWorkerIds.add(a.Worker_ID);
+            });
+        } catch (e) { console.warn('saveWorkOrderDayBooking attendance lookup failed:', e); }
+
+        // CLEAN-SLATE SCOPED: obriši SVE logove OVOG naloga za taj dan (kompletno stanje dolazi iz `entries`).
+        // Logovi drugih naloga (isti radnik, isti dan) se NE diraju.
+        const toDelete: import('firebase/firestore').DocumentReference[] = [];
+        try {
+            const daySnap = await getDocs(query(
+                collection(fs, 'work_logs'),
+                where('Work_Order_ID', '==', workOrderId),
+                where('Date', '==', date),
+                where('Organization_ID', '==', organizationId)
+            ));
+            daySnap.docs.forEach(d => {
+                toDelete.push(d.ref);
+                const wid = d.data().Worker_ID;
+                if (wid) affectedWorkers.add(wid);     // i uklonjeni radnici se renormalizuju
+            });
+        } catch (e) { console.warn('saveWorkOrderDayBooking day-logs lookup failed:', e); }
+
+        // Proizvodi ovog naloga (validacija + Product_ID po stavci)
+        const itemIds = Array.from(new Set(entries.flatMap(e => e.itemIds)));
+        const itemMap = await fetchWorkOrderItemsByIds(itemIds, organizationId);
+
+        // Bazni logovi (puna dnevnica + presence; TAČAN iznos postavlja renormalizeWorkerDay)
+        const newLogs: Record<string, unknown>[] = [];
+        for (const entry of entries) {
+            const worker = workers.find(w => w.Worker_ID === entry.workerId);
+            const dailyRate = worker?.Daily_Rate || 0;
+            const workerName = worker?.Name || 'Nepoznat';
+            affectedWorkers.add(entry.workerId);
+
+            if (absentWorkerIds.has(entry.workerId) && entry.itemIds.length > 0) { skippedAbsent++; continue; }
+
+            const presence = entry.presence === 0.5 ? 0.5 : 1;
+            const validItemIds = entry.itemIds.filter(id => itemMap.get(id));
+            if (validItemIds.length === 0) continue;
+
+            for (const itemId of validItemIds) {
+                const booked = itemMap.get(itemId)!;
+                const log: Record<string, unknown> = {
+                    WorkLog_ID: generateUUID(),
+                    Organization_ID: organizationId,
+                    Date: date,
+                    Worker_ID: entry.workerId,
+                    Worker_Name: workerName,
+                    Daily_Rate: dailyRate,            // placeholder — renormalizeWorkerDay postavlja tačno
+                    Original_Daily_Rate: dailyRate,
+                    Day_Fraction: presence,
+                    Presence: presence,
+                    Split_Factor: 1,
+                    Hours_Worked: 8 * presence,
+                    Booking_Source: 'manual',
+                    Is_From_Attendance: false,
+                    Work_Order_ID: booked.Work_Order_ID || workOrderId,
+                    Work_Order_Item_ID: booked.ID,
+                    Product_ID: booked.Product_ID,
+                    Created_At: new Date().toISOString(),
+                };
+                Object.keys(log).forEach(k => log[k] === undefined && delete log[k]);
+                newLogs.push(log);
+                logsCreated++;
+                if (booked.Work_Order_ID) affected.add(booked.Work_Order_ID);
+            }
+        }
+
+        // BATCH: brisanja + upis (max 450 ops/batch)
+        const ops: Array<{ del?: import('firebase/firestore').DocumentReference; set?: Record<string, unknown> }> = [
+            ...toDelete.map(ref => ({ del: ref })),
+            ...newLogs.map(l => ({ set: l })),
+        ];
+        for (let i = 0; i < ops.length; i += 450) {
+            const b = writeBatch(fs);
+            for (const op of ops.slice(i, i + 450)) {
+                if (op.del) b.delete(op.del);
+                else if (op.set) b.set(doc(collection(fs, 'work_logs')), op.set);
+            }
+            await b.commit();
+        }
+
+        // KANONSKA dvonivovska podjela: za svaki pogođeni (radnik, dan) preraspodijeli preko SVIH
+        // radnikovih logova tog dana (po nalogu pa po proizvodu). presence iz entries pobjeđuje.
+        const presenceByWorker = new Map<string, number>();
+        entries.forEach(e => presenceByWorker.set(e.workerId, e.presence === 0.5 ? 0.5 : 1));
+        for (const wid of Array.from(affectedWorkers)) {
+            try {
+                const wos = await renormalizeWorkerDay(wid, date, organizationId, presenceByWorker.get(wid));
+                wos.forEach(id => affected.add(id));
+            } catch (e) { console.warn('[saveWorkOrderDayBooking] renormalize failed', wid, e); }
+        }
+
+        // Preračun pogođenih naloga (labor-only → brzo)
+        await Promise.all(Array.from(affected).map(id =>
+            recalculateWorkOrder(id, { skipSnapshot: true, skipStatusSync: true, skipMaterialRefresh: true })
+                .catch(err => console.warn('[saveWorkOrderDayBooking] recalc failed', id, err))
+        ));
+
+        const msg = skippedAbsent > 0
+            ? `Spremljeno ${logsCreated} zapisa · ${skippedAbsent} radnik(a) preskočen(o) (odsutan u šihtarici)`
+            : `Spremljeno ${logsCreated} zapisa rada`;
+        return { success: true, logsCreated, affectedWorkOrders: Array.from(affected), message: msg };
+    } catch (error) {
+        console.error('saveWorkOrderDayBooking error:', error);
+        return { success: false, logsCreated: 0, affectedWorkOrders: [], message: 'Greška pri spremanju knjige rada naloga' };
     }
 }
 
@@ -2680,6 +2989,22 @@ export async function recalculateWorkOrder(
         let earliestStart: Date | undefined;
         let latestCompletion: Date | undefined;
 
+        // EFIKASNOST: JEDAN upit svih logova naloga → trošak rada po stavci iz memorije
+        // (umjesto calculateActualLaborCost = 1 upit po stavci). Σ Daily_Rate po
+        // Work_Order_Item_ID je identičan staroj per-item logici (vidi calculateActualLaborCost).
+        const laborByItem = new Map<string, number>();
+        {
+            const logConstraints: any[] = [where('Work_Order_ID', '==', workOrderId)];
+            if (workOrder.Organization_ID) logConstraints.push(where('Organization_ID', '==', workOrder.Organization_ID));
+            const woLogsSnap = await getDocs(query(collection(firestore, 'work_logs'), ...logConstraints));
+            woLogsSnap.docs.forEach(d => {
+                const x = d.data();
+                laborByItem.set(x.Work_Order_Item_ID, (laborByItem.get(x.Work_Order_Item_ID) || 0) + (x.Daily_Rate || 0));
+            });
+        }
+        // EFIKASNOST: sve per-item sync izmjene idu u jedan writeBatch (umjesto N updateDoc-a).
+        const itemUpdates: { ref: any; payload: Record<string, any> }[] = [];
+
         // Use for...of to support async material + labor cost fetching
         for (const item of workOrder.items) {
             // BACKFILL: If Product_Value is 0, recover from accepted offer (one-time self-healing)
@@ -2802,20 +3127,15 @@ export async function recalculateWorkOrder(
 
             // INVARIJANTA: trošak rada proizvoda = Σ Daily_Rate iz work logova (jedini izvor istine).
             // Nema "manual_override" izuzetka — sve izmjene (knjiga rada, timeline) idu kroz work logove.
-            const freshItemLaborCost = await calculateActualLaborCost(item, workOrder.Organization_ID);
+            const freshItemLaborCost = Math.round((laborByItem.get(item.ID) || 0) * 100) / 100;
             actualLaborCost += freshItemLaborCost;
 
             // SYNC: Update item-level Material_Cost and Actual_Labor_Cost for consistency
-            try {
-                const itemRef = doc(firestore, COLLECTIONS.WORK_ORDER_ITEMS, item.ID);
-                const updatePayload: Record<string, any> = {
-                    Material_Cost: itemMaterialCost,
-                    Actual_Labor_Cost: freshItemLaborCost
-                };
-                await updateDoc(itemRef, updatePayload);
-            } catch (syncErr) {
-                console.warn(`Failed to sync costs on item ${item.ID}:`, syncErr);
-            }
+            // (skupljamo izmjene → jedan batch commit poslije petlje)
+            itemUpdates.push({
+                ref: doc(firestore, COLLECTIONS.WORK_ORDER_ITEMS, item.ID),
+                payload: { Material_Cost: itemMaterialCost, Actual_Labor_Cost: freshItemLaborCost },
+            });
 
 
             if (item.Started_At) {
@@ -2827,6 +3147,17 @@ export async function recalculateWorkOrder(
                 const comp = new Date(item.Completed_At);
                 if (!latestCompletion || comp > latestCompletion) latestCompletion = comp;
             }
+        }
+
+        // EFIKASNOST: commit svih per-item sync izmjena u batch-evima (max 450 op/batch).
+        try {
+            for (let i = 0; i < itemUpdates.length; i += 450) {
+                const b = writeBatch(firestore);
+                for (const u of itemUpdates.slice(i, i + 450)) b.update(u.ref, u.payload);
+                await b.commit();
+            }
+        } catch (syncErr) {
+            console.warn(`Failed to batch-sync item costs on WO ${workOrderId}:`, syncErr);
         }
 
         // SAFETY CHECK: If calculated total is 0 but existing WO has value, preserve it (Legacy Data Protection)

@@ -4,10 +4,11 @@
  * a zbir podijeljenih iznosa = round(dnevnica × presence) na cent.
  */
 
-import { splitDnevnicaExact, splitDnevnica, normalizePresence } from '../laborSplit';
+import { splitDnevnicaExact, splitDnevnica, splitDnevnicaByOrder, normalizePresence } from '../laborSplit';
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
 const sum = (a: number[]) => round2(a.reduce((s, x) => s + x, 0));
+const flat = (a: number[][]) => a.reduce((acc, x) => acc.concat(x), [] as number[]);
 
 describe('normalizePresence', () => {
     test('0.5 ostaje 0.5; sve ostalo → 1', () => {
@@ -83,6 +84,70 @@ describe('splitDnevnicaExact — INVARIJANTA zbira (mnogo kombinacija)', () => {
                     amounts.forEach(a => {
                         expect(a).toBeGreaterThanOrEqual(0);
                         expect(a).toBeLessThanOrEqual(round2(rate * p) + 0.01);
+                    });
+                }
+            }
+        }
+    });
+});
+
+describe('splitDnevnicaByOrder — dvonivovska podjela (po nalogu pa po proizvodu)', () => {
+    test('SCENARIO KORISNIKA: nalog A (12 proizvoda) + nalog B (1), cijeli dan → 65 na A, 65 na B', () => {
+        const { amounts, dayFractions } = splitDnevnicaByOrder(130, 1, [12, 1]);
+        // svaki nalog dobije po 65 (NE 130/13)
+        expect(sum(amounts[0])).toBe(65);
+        expect(sum(amounts[1])).toBe(65);
+        expect(amounts[1]).toEqual([65]);            // jedini proizvod naloga B = pun udio naloga
+        // ukupno tačno 130, bez gubitka centa
+        expect(sum(flat(amounts))).toBe(130);
+        // Σ Day_Fraction == presence (1)
+        expect(round2(flat(dayFractions).reduce((s, x) => s + x, 0))).toBe(1);
+        // proizvod naloga B nosi mnogo veći Day_Fraction (0.5) od proizvoda naloga A (1/24)
+        expect(dayFractions[1][0]).toBeCloseTo(0.5, 6);
+        dayFractions[0].forEach(df => expect(df).toBeCloseTo(1 / 24, 6));
+    });
+
+    test('dva naloga [3,2], cijeli dan → 65/65; unutar naloga ravnomjerno', () => {
+        const { amounts } = splitDnevnicaByOrder(130, 1, [3, 2]);
+        expect(sum(amounts[0])).toBe(65);            // nalog A: 3 proizvoda → ~21.67 svaki
+        expect(sum(amounts[1])).toBe(65);            // nalog B: 2 proizvoda → 32.5 svaki
+        expect(amounts[1]).toEqual([32.5, 32.5]);
+        expect(sum(flat(amounts))).toBe(130);
+    });
+
+    test('jedan nalog [n] == splitDnevnicaExact (kompatibilnost unazad)', () => {
+        for (const n of [1, 2, 3, 6, 13]) {
+            for (const p of [1, 0.5]) {
+                const byOrder = splitDnevnicaByOrder(130, p, [n]);
+                const exact = splitDnevnicaExact(130, p, n);
+                expect(flat(byOrder.amounts)).toEqual(exact.amounts);
+                expect(byOrder.dayFractions[0][0]).toBeCloseTo(exact.dayFraction, 6);
+            }
+        }
+    });
+
+    test('pola dana, dva naloga [2,2] → Σ = 65, po nalogu 32.5', () => {
+        const { amounts, dayFractions } = splitDnevnicaByOrder(130, 0.5, [2, 2]);
+        expect(sum(flat(amounts))).toBe(65);
+        expect(sum(amounts[0])).toBe(32.5);
+        expect(sum(amounts[1])).toBe(32.5);
+        expect(round2(flat(dayFractions).reduce((s, x) => s + x, 0))).toBe(0.5);
+    });
+
+    test('INVARIJANTA: Σ == round(dnevnica × presence) i Σ dayFraction == presence (mnogo kombinacija)', () => {
+        const rates = [0, 80, 130, 137, 333.33];
+        const presences = [1, 0.5];
+        const layouts = [[1], [12, 1], [3, 2], [5, 5, 5], [7, 1, 1, 1], [2, 9, 4]];
+        for (const rate of rates) {
+            for (const p of presences) {
+                for (const layout of layouts) {
+                    const { amounts, dayFractions } = splitDnevnicaByOrder(rate, p, layout);
+                    expect(sum(flat(amounts))).toBe(round2(rate * p));
+                    expect(round2(flat(dayFractions).reduce((s, x) => s + x, 0))).toBeCloseTo(p, 6);
+                    // svaki nalog dobije jednak udio (±1 cent zbog raspodjele)
+                    layout.forEach((_, oi) => {
+                        const share = sum(amounts[oi]);
+                        expect(Math.abs(share - round2(rate * p) / layout.length)).toBeLessThanOrEqual(0.01);
                     });
                 }
             }

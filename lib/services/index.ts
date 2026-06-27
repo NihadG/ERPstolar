@@ -131,12 +131,13 @@ export {
     repairAllProductStatuses, startWorkOrderItem, completeWorkOrderItem,
     formatLocalDateISO,
     adjustWorkOrderDates,
-    saveDailyWorkBooking, getDailyWorkBooking, suggestDailyBooking, bulkBookWorkOrderLabor,
+    saveDailyWorkBooking, saveWorkOrderDayBooking, getDailyWorkBooking, suggestDailyBooking, bulkBookWorkOrderLabor,
     recalcAllWorkLogSplits,
 } from './labor/laborCostService';
 export type {
     DailyBookingItemInput, DailyBookingEntryInput,
     DailyBookingItemView, DailyBookingEntryView,
+    WorkOrderDayEntryInput,
 } from './labor/laborCostService';
 
 // Profit
@@ -155,6 +156,10 @@ export {
 export {
     getActiveProfitDashboard,
 } from './profit/profitDashboardService';
+
+// Analitika (jedinstvena — Profiti full-screen)
+export { getAnalytics } from './profit/analyticsService';
+export type { AnalyticsData, AnalyticsOptions, AnalyticsScope } from './profit/analyticsService';
 
 // Notification
 export { createNotification, getUnreadNotifications, markNotificationAsRead, subscribeToNotifications } from './notification/notificationService';

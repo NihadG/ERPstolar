@@ -12,7 +12,7 @@ import { useData } from '@/context/DataContext';
 import Modal from '@/components/ui/Modal';
 import WorkOrderExpandedDetail from '@/components/ui/WorkOrderExpandedDetail';
 import WorkOrderPrintTemplate from '@/components/ui/WorkOrderPrintTemplate';
-import ProfitDashboardModal from '@/components/ui/ProfitDashboardModal';
+import AnalyticsDashboard from '@/components/ui/AnalyticsDashboard';
 
 import PriceEditModal from '@/components/ui/PriceEditModal';
 import AttendanceFixModal from '@/components/ui/AttendanceFixModal';
@@ -3244,7 +3244,7 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                 />
             )}
             {profitDashboardOpen && (
-                <ProfitDashboardModal
+                <AnalyticsDashboard
                     onClose={() => setProfitDashboardOpen(false)}
                     showToast={showToast}
                     onRefresh={onRefresh}

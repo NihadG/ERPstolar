@@ -1806,28 +1806,46 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
                         <span>Uredi Ponudu: {currentOffer?.Offer_Number || ''}</span>
                         {offerProducts.length > 0 && (() => {
                             const totals = calculateOfferTotals();
-                            const profit = offerProducts
-                                .filter(p => p.included)
-                                .reduce((sum, p) => sum + (p.margin || 0) * (p.Quantity || 1), 0);
+                            const inc = offerProducts.filter(p => p.included);
+                            const profit = inc.reduce((sum, p) => sum + (p.margin || 0) * (p.Quantity || 1), 0);
+                            // Planirani TROŠKOVI iz ponude (svaki × količina) + broj radnih dana.
+                            const materialTotal = inc.reduce((s, p) => s + (p.Material_Cost || 0) * (p.Quantity || 1), 0);
+                            const uslugeTotal = inc.reduce((s, p) => s + (p.extras || []).reduce((a, e) => a + (e.total || 0), 0) * (p.Quantity || 1), 0);
+                            // Trošak rada = radnici × dani × dnevnica (× količina); broj radnih dana = Σ dana.
+                            const plannedLabor = inc.reduce((s, p) => s + (p.laborWorkers || 0) * (p.laborDays || 0) * (p.laborDailyRate || 0) * (p.Quantity || 1), 0);
+                            const workDays = inc.reduce((s, p) => s + (p.laborDays || 0), 0);
+                            const km = (n: number) => n.toLocaleString('bs-BA', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                            const costChip: import('react').CSSProperties = {
+                                display: 'inline-flex', alignItems: 'center', gap: '4px',
+                                background: 'var(--bg-secondary, #f0f4f8)', borderRadius: '8px',
+                                padding: '4px 10px', fontSize: '13px', fontWeight: 500, color: 'var(--text-secondary, #555)',
+                            };
                             return (
                                 <>
-                                    <span style={{
-                                        display: 'inline-flex', alignItems: 'center', gap: '4px',
-                                        background: 'var(--bg-secondary, #f0f4f8)', borderRadius: '8px',
-                                        padding: '4px 10px', fontSize: '13px', fontWeight: 500,
-                                        color: 'var(--text-secondary, #555)'
-                                    }}>
+                                    <span style={costChip} title="Prodajna vrijednost (subtotal)">
                                         <span className="material-icons-round" style={{ fontSize: '16px', color: 'var(--accent, #0066cc)' }}>receipt_long</span>
-                                        {totals.subtotal.toLocaleString('bs-BA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} KM
+                                        {km(totals.subtotal)} KM
+                                    </span>
+                                    <span style={costChip} title="Planirani trošak materijala">
+                                        <span className="material-icons-round" style={{ fontSize: '16px', color: '#64748b' }}>inventory_2</span>
+                                        Materijal {km(materialTotal)} KM
+                                    </span>
+                                    <span style={costChip} title="Planirani trošak usluga (kolona Usluge iz ponude)">
+                                        <span className="material-icons-round" style={{ fontSize: '16px', color: '#0891b2' }}>build</span>
+                                        Usluge {km(uslugeTotal)} KM
+                                    </span>
+                                    <span style={costChip} title="Planirani trošak rada = radnici × dani × dnevnica; broj radnih dana = Σ dana">
+                                        <span className="material-icons-round" style={{ fontSize: '16px', color: '#d97706' }}>engineering</span>
+                                        Rad {km(plannedLabor)} KM · {workDays} {workDays === 1 ? 'dan' : 'dana'}
                                     </span>
                                     <span style={{
                                         display: 'inline-flex', alignItems: 'center', gap: '4px',
                                         background: profit >= 0 ? 'rgba(52,199,89,0.1)' : 'rgba(255,59,48,0.1)',
                                         borderRadius: '8px', padding: '4px 10px', fontSize: '13px', fontWeight: 500,
                                         color: profit >= 0 ? '#34c759' : '#ff3b30'
-                                    }}>
+                                    }} title="Marža (profit) = prodajna − materijal − usluge − rad">
                                         <span className="material-icons-round" style={{ fontSize: '16px' }}>trending_up</span>
-                                        {profit.toLocaleString('bs-BA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} KM
+                                        {km(profit)} KM
                                     </span>
                                 </>
                             );
