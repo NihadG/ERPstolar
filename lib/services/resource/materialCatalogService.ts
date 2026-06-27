@@ -6,10 +6,10 @@
  */
 
 import { COLLECTIONS } from '../shared/collections';
-import { queryByOrg, findRef, createDoc, updateDocByRef, getDb, query, collection, where, getDocs, writeBatch } from '../shared/firestoreClient';
+import { queryByOrg, findByIdAndOrg, findRef, createDoc, updateDocByRef, getDb, query, collection, doc, where, getDocs, writeBatch } from '../shared/firestoreClient';
 import { eventBus } from '../eventBus';
 import { v4 as uuidv4 } from 'uuid';
-import type { Material } from '../../types';
+import type { Material, MaterialTemplate } from '../../types';
 
 // ============================================
 // READ
@@ -149,6 +149,117 @@ async function propagateMaterialChange(
         } catch (err) {
             console.warn(`propagateMaterialChange: Failed to recalculate product ${productId}:`, err);
         }
+    }
+}
+
+// ============================================
+// MATERIAL TEMPLATES — named bundles of materials
+// ============================================
+
+export async function getMaterialTemplates(organizationId: string): Promise<MaterialTemplate[]> {
+    return queryByOrg<MaterialTemplate>(COLLECTIONS.MATERIAL_TEMPLATES, organizationId);
+}
+
+export async function saveMaterialTemplate(
+    data: Partial<MaterialTemplate>,
+    organizationId: string
+): Promise<{ success: boolean; data?: { Template_ID: string }; message: string }> {
+    if (!organizationId) {
+        return { success: false, message: 'Organization ID is required' };
+    }
+    if (!data.Name || !data.Name.trim()) {
+        return { success: false, message: 'Unesite naziv templejta' };
+    }
+
+    try {
+        const isNew = !data.Template_ID;
+
+        if (isNew) {
+            data.Template_ID = uuidv4();
+            data.Organization_ID = organizationId;
+            data.Created_Date = new Date().toISOString();
+            data.Items = data.Items || [];
+            await createDoc(COLLECTIONS.MATERIAL_TEMPLATES, data as Record<string, unknown>);
+        } else {
+            const ref = await findRef(COLLECTIONS.MATERIAL_TEMPLATES, 'Template_ID', data.Template_ID!, organizationId);
+            if (ref) {
+                const { Organization_ID, ...updateData } = data;
+                await updateDocByRef(ref, updateData as Record<string, unknown>);
+            }
+        }
+
+        return {
+            success: true,
+            data: { Template_ID: data.Template_ID! },
+            message: isNew ? 'Templejt sačuvan' : 'Templejt ažuriran',
+        };
+    } catch (error) {
+        console.error('saveMaterialTemplate error:', error);
+        return { success: false, message: 'Greška pri spremanju templejta' };
+    }
+}
+
+export async function deleteMaterialTemplate(
+    templateId: string,
+    organizationId: string
+): Promise<{ success: boolean; message: string }> {
+    if (!organizationId) {
+        return { success: false, message: 'Organization ID is required' };
+    }
+
+    try {
+        const ref = await findRef(COLLECTIONS.MATERIAL_TEMPLATES, 'Template_ID', templateId, organizationId);
+        if (ref) {
+            const { deleteDoc } = await import('firebase/firestore');
+            await deleteDoc(ref);
+        }
+        return { success: true, message: 'Templejt obrisan' };
+    } catch (error) {
+        console.error('deleteMaterialTemplate error:', error);
+        return { success: false, message: 'Greška pri brisanju templejta' };
+    }
+}
+
+/** Loads a template and bulk-creates all its materials in the catalog. */
+export async function applyMaterialTemplate(
+    templateId: string,
+    organizationId: string
+): Promise<{ success: boolean; created: number; message: string }> {
+    if (!organizationId) {
+        return { success: false, created: 0, message: 'Organization ID is required' };
+    }
+
+    try {
+        const { data: template } = await findByIdAndOrg<MaterialTemplate>(
+            COLLECTIONS.MATERIAL_TEMPLATES, 'Template_ID', templateId, organizationId
+        );
+
+        const items = (template?.Items || []).filter(i => i.Name && i.Name.trim());
+        if (items.length === 0) {
+            return { success: false, created: 0, message: 'Templejt je prazan' };
+        }
+
+        const db = getDb();
+        const batch = writeBatch(db);
+        for (const item of items) {
+            const ref = doc(collection(db, COLLECTIONS.MATERIALS_DB));
+            batch.set(ref, {
+                Material_ID: uuidv4(),
+                Organization_ID: organizationId,
+                Name: item.Name.trim(),
+                Category: item.Category || 'Ostalo',
+                Unit: item.Unit || 'kom',
+                Default_Unit_Price: item.Default_Unit_Price || 0,
+                Default_Supplier: item.Default_Supplier || '',
+                Description: item.Description || '',
+            });
+        }
+        await batch.commit();
+
+        return { success: true, created: items.length, message: `Dodano ${items.length} materijala iz templejta` };
+    } catch (error) {
+        console.error('applyMaterialTemplate error:', error);
+        return { success: false, created: 0, message: 'Greška pri učitavanju templejta' };
     }
 }
 

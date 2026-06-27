@@ -51,6 +51,29 @@ export interface Material {
     Is_Alu_Door?: boolean;
 }
 
+/** A single material definition stored inside a MaterialTemplate. */
+export interface MaterialTemplateItem {
+    Name: string;
+    Category: string;
+    Unit: string;
+    Default_Unit_Price: number;
+    Default_Supplier: string;
+    Description?: string;
+    /** Optional reference to an existing catalog material (used when adding to a product). */
+    Material_ID?: string;
+    /** Optional default quantity (used when pre-filling a product material selection). */
+    Quantity?: number;
+}
+
+/** A named bundle of materials that can be loaded to bulk-create catalog entries. */
+export interface MaterialTemplate {
+    Template_ID: string;
+    Organization_ID: string;  // Multi-tenancy: isolate data by organization
+    Name: string;
+    Items: MaterialTemplateItem[];
+    Created_Date: string;
+}
+
 export interface ProductMaterial {
     ID: string;
     Organization_ID: string;  // Multi-tenancy: isolate data by organization

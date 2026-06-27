@@ -9,6 +9,7 @@ export const COLLECTIONS = {
     PROJECTS: 'projects',
     PRODUCTS: 'products',
     MATERIALS_DB: 'materials',
+    MATERIAL_TEMPLATES: 'material_templates',
     PRODUCT_MATERIALS: 'product_materials',
     GLASS_ITEMS: 'glass_items',
     ALU_DOOR_ITEMS: 'alu_door_items',

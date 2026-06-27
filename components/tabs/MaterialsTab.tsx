@@ -1,10 +1,11 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
-import type { Material } from '@/lib/types';
-import { saveMaterial, deleteMaterial, deleteDuplicateMaterials } from '@/lib/services';
+import { useState, useEffect, useMemo, useCallback } from 'react';
+import type { Material, MaterialTemplate } from '@/lib/types';
+import { saveMaterial, deleteMaterial, deleteDuplicateMaterials, getMaterialTemplates, applyMaterialTemplate } from '@/lib/services';
 import { useData } from '@/context/DataContext';
 import Modal from '@/components/ui/Modal';
+import MaterialTemplatesModal from '@/components/ui/MaterialTemplatesModal';
 import { SearchableSelect } from '@/components/ui/SearchableSelect';
 import { MATERIAL_CATEGORIES } from '@/lib/types';
 import { formatCurrency } from '@/lib/utils';
@@ -23,12 +24,46 @@ export default function MaterialsTab({ materials, onRefresh, showToast }: Materi
     const [editingMaterial, setEditingMaterial] = useState<Partial<Material> | null>(null);
     const [removingDuplicates, setRemovingDuplicates] = useState(false);
 
+    // Material templates
+    const [templatesModalOpen, setTemplatesModalOpen] = useState(false);
+    const [templates, setTemplates] = useState<MaterialTemplate[]>([]);
+    const [quickTemplateId, setQuickTemplateId] = useState('');
+    const [applyingTemplate, setApplyingTemplate] = useState(false);
+
     // Load suppliers if not loaded
     useEffect(() => {
         if (!isTabLoaded('suppliers')) {
             loadTabData('suppliers');
         }
     }, [isTabLoaded, loadTabData]);
+
+    const loadTemplates = useCallback(async () => {
+        if (!organizationId) return;
+        try {
+            setTemplates(await getMaterialTemplates(organizationId));
+        } catch (err) {
+            console.error('loadTemplates error:', err);
+        }
+    }, [organizationId]);
+
+    useEffect(() => {
+        loadTemplates();
+    }, [loadTemplates]);
+
+    async function handleApplyQuickTemplate() {
+        if (!quickTemplateId || !organizationId) return;
+        setApplyingTemplate(true);
+        const result = await applyMaterialTemplate(quickTemplateId, organizationId);
+        setApplyingTemplate(false);
+        if (result.success) {
+            showToast(result.message, 'success');
+            setMaterialModal(false);
+            setQuickTemplateId('');
+            onRefresh('materials');
+        } else {
+            showToast(result.message, 'error');
+        }
+    }
 
     const supplierOptions = useMemo(() => {
         return (appState.suppliers || []).map(s => ({
@@ -139,6 +174,14 @@ export default function MaterialsTab({ materials, onRefresh, showToast }: Materi
                     <span className="material-icons-round">delete_sweep</span>
                     {removingDuplicates ? 'Brisanje...' : 'Obriši Duplikate'}
                 </button>
+                <button
+                    className="btn btn-secondary"
+                    onClick={() => setTemplatesModalOpen(true)}
+                    title="Upravljaj templejtima materijala"
+                >
+                    <span className="material-icons-round">bookmarks</span>
+                    Templejti
+                </button>
                 <button className="btn btn-primary" onClick={() => openMaterialModal()}>
                     <span className="material-icons-round">add</span>
                     Novi Materijal
@@ -189,6 +232,38 @@ export default function MaterialsTab({ materials, onRefresh, showToast }: Materi
                     </>
                 }
             >
+                {!editingMaterial?.Material_ID && templates.length > 0 && (
+                    <div className="material-template-bar">
+                        <span className="material-icons-round">bookmarks</span>
+                        <select
+                            className="filter-select"
+                            value={quickTemplateId}
+                            onChange={(e) => setQuickTemplateId(e.target.value)}
+                        >
+                            <option value="">Učitaj iz templejta…</option>
+                            {templates.map(t => (
+                                <option key={t.Template_ID} value={t.Template_ID}>
+                                    {t.Name} ({t.Items?.length || 0})
+                                </option>
+                            ))}
+                        </select>
+                        <button
+                            className="btn btn-sm btn-primary"
+                            onClick={handleApplyQuickTemplate}
+                            disabled={!quickTemplateId || applyingTemplate}
+                        >
+                            <span className="material-icons-round">download</span>
+                            {applyingTemplate ? 'Učitavam...' : 'Učitaj'}
+                        </button>
+                        <button
+                            className="btn btn-sm btn-secondary"
+                            onClick={() => { setMaterialModal(false); setTemplatesModalOpen(true); }}
+                        >
+                            Upravljaj
+                        </button>
+                    </div>
+                )}
+
                 <div className="form-group">
                     <label>Naziv *</label>
                     <input
@@ -251,6 +326,16 @@ export default function MaterialsTab({ materials, onRefresh, showToast }: Materi
                     />
                 </div>
             </Modal>
+
+            <MaterialTemplatesModal
+                isOpen={templatesModalOpen}
+                onClose={() => { setTemplatesModalOpen(false); loadTemplates(); }}
+                organizationId={organizationId || ''}
+                materials={materials}
+                supplierOptions={supplierOptions}
+                showToast={showToast}
+                onApplied={() => onRefresh('materials')}
+            />
         </div>
     );
 }

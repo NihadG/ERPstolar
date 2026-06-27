@@ -412,7 +412,7 @@
 .csv-import-preview {
     display: flex;
     flex-direction: column;
-    gap: 20px;
+    gap: 16px;
     height: 100%;
 }
 
@@ -420,11 +420,11 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 0 4px;
+    padding: 2px 2px 0;
 }
 
 .csv-import-table-header span {
-    font-size: 14px;
+    font-size: 13px;
     font-weight: 500;
     color: var(--text-secondary);
 }
@@ -432,43 +432,121 @@
 .csv-import-table-wrapper {
     overflow: auto;
     flex: 1;
-    min-height: 300px;
-    max-height: 500px;
+    min-height: 260px;
+    max-height: 460px;
     border: 1px solid var(--border);
     border-radius: 12px;
     background: var(--bg-card);
-    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
 }
 
-.csv-import-table th {
-    background: var(--bg-muted);
-    border-bottom: 2px solid var(--border);
-    font-size: 12px;
-    letter-spacing: 0.05em;
-    text-transform: uppercase;
-}
-
-.csv-import-table tr:hover td {
-    background: var(--bg-hover);
-}
-
-.csv-import-input {
-    padding: 8px 12px;
-    border: 1px solid transparent;
-    background: transparent;
-    transition: all 0.2s;
+.csv-import-table {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0;
     font-size: 13px;
+    table-layout: auto;
 }
 
-.csv-import-input:hover {
+/* Sticky, quiet header */
+.csv-import-table thead th {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    background: var(--bg-muted);
+    padding: 11px 12px;
+    text-align: left;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+}
+
+.csv-import-table tbody td {
+    padding: 0;
+    border-bottom: 1px solid var(--border);
+    vertical-align: middle;
+}
+
+.csv-import-table tbody tr:last-child td {
+    border-bottom: none;
+}
+
+.csv-import-table tbody tr:hover td {
     background: var(--bg-hover);
-    border-color: var(--border);
 }
 
-.csv-import-input:focus {
+.csv-import-table tbody tr.deselected {
+    opacity: 0.4;
+}
+
+/* Fixed, compact utility columns */
+.csv-import-table th.col-select,
+.csv-import-table td.col-select {
+    width: 44px;
+    min-width: 44px;
+    text-align: center;
+    padding: 0;
+}
+
+.csv-import-table .col-select input[type="checkbox"] {
+    width: 16px;
+    height: 16px;
+    accent-color: var(--primary);
+    cursor: pointer;
+    vertical-align: middle;
+    margin: 0;
+}
+
+.csv-import-table th.col-actions,
+.csv-import-table td.col-actions {
+    width: 48px;
+    min-width: 48px;
+    text-align: center;
+    padding: 0;
+}
+
+.csv-import-table .col-actions .icon-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.csv-import-table .col-actions .material-icons-round {
+    font-size: 18px;
+}
+
+/* Inline editable cell — must out-specify the global input[type="text"] rule */
+.csv-import-table td .csv-import-input,
+input.csv-import-input {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 10px 12px;
+    border: 1px solid transparent;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+    font-size: 13px;
+    line-height: 1.3;
+    color: var(--text-primary);
+    transition: background 0.15s ease, box-shadow 0.15s ease;
+}
+
+.csv-import-table td .csv-import-input:hover {
+    background: color-mix(in srgb, var(--primary) 5%, transparent);
+    border-color: transparent;
+    box-shadow: none;
+}
+
+.csv-import-table td .csv-import-input:focus {
     background: var(--bg-card);
-    border-color: var(--primary);
-    box-shadow: 0 0 0 3px var(--primary-light);
+    border-radius: 6px;
+    box-shadow: inset 0 0 0 2px var(--primary);
+    position: relative;
+    z-index: 1;
 }
 
 /* Results */

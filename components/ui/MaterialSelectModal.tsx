@@ -2,9 +2,9 @@
 
 import { useState, useMemo, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import type { Material } from '@/lib/types';
+import type { Material, MaterialTemplate } from '@/lib/types';
 import { MATERIAL_CATEGORIES } from '@/lib/types';
-import { saveMaterial } from '@/lib/services';
+import { saveMaterial, getMaterialTemplates, saveMaterialTemplate, deleteMaterialTemplate } from '@/lib/services';
 import './MaterialSelectModal.css';
 
 // ============================================
@@ -64,7 +64,23 @@ export default function MaterialSelectModal({
     const [newSupplier, setNewSupplier] = useState('');
     const [creatingMaterial, setCreatingMaterial] = useState(false);
 
+    // Templates state
+    const [templates, setTemplates] = useState<MaterialTemplate[]>([]);
+    const [loadTemplateId, setLoadTemplateId] = useState('');
+    const [showSaveTemplate, setShowSaveTemplate] = useState(false);
+    const [templateName, setTemplateName] = useState('');
+    const [savingTemplate, setSavingTemplate] = useState(false);
+
     const searchInputRef = useRef<HTMLInputElement>(null);
+
+    const refreshTemplates = async () => {
+        if (!organizationId) return;
+        try {
+            setTemplates(await getMaterialTemplates(organizationId));
+        } catch (err) {
+            console.error('getMaterialTemplates error:', err);
+        }
+    };
 
     // Reset on open
     useEffect(() => {
@@ -74,9 +90,14 @@ export default function MaterialSelectModal({
             setCategoryFilter('');
             setShowCreateForm(false);
             setSaving(false);
+            setLoadTemplateId('');
+            setShowSaveTemplate(false);
+            setTemplateName('');
+            refreshTemplates();
             // Focus search on open
             setTimeout(() => searchInputRef.current?.focus(), 100);
         }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [isOpen]);
 
     // Escape key
@@ -205,6 +226,106 @@ export default function MaterialSelectModal({
         setSelected(next);
     }
 
+    // ---- Templates ----
+    function handleLoadTemplate() {
+        const template = templates.find(t => t.Template_ID === loadTemplateId);
+        if (!template) return;
+
+        const next = new Map(selected);
+        let added = 0;
+        let missing = 0;
+
+        for (const item of template.Items || []) {
+            // Resolve to a catalog material (by ID first, then by name)
+            const mat = (item.Material_ID && materials.find(m => m.Material_ID === item.Material_ID))
+                || materials.find(m => m.Name.toLowerCase() === (item.Name || '').toLowerCase());
+
+            if (!mat) {
+                missing++;
+                continue;
+            }
+            // Glass / Alu doors need their own flow — skip from bulk template load
+            if (isGlass(mat) || isAluDoor(mat)) {
+                missing++;
+                continue;
+            }
+
+            next.set(mat.Material_ID, {
+                materialId: mat.Material_ID,
+                materialName: mat.Name,
+                unit: mat.Unit,
+                quantity: item.Quantity && item.Quantity > 0 ? item.Quantity : 1,
+                price: item.Default_Unit_Price ?? mat.Default_Unit_Price ?? 0,
+                supplier: item.Default_Supplier || mat.Default_Supplier || '',
+            });
+            added++;
+        }
+
+        setSelected(next);
+        setLoadTemplateId('');
+
+        if (added > 0) {
+            showToast(
+                missing > 0
+                    ? `Učitano ${added} materijala (${missing} nije pronađeno u katalogu)`
+                    : `Učitano ${added} materijala iz templejta`,
+                'success'
+            );
+        } else {
+            showToast('Nijedan materijal iz templejta nije pronađen u katalogu', 'error');
+        }
+    }
+
+    async function handleSaveTemplate() {
+        const name = templateName.trim();
+        if (!name) {
+            showToast('Unesite naziv templejta', 'error');
+            return;
+        }
+        if (selected.size === 0) return;
+
+        const items = Array.from(selected.values()).map(s => {
+            const mat = materials.find(m => m.Material_ID === s.materialId);
+            return {
+                Material_ID: s.materialId,
+                Name: s.materialName,
+                Category: mat?.Category || 'Ostalo',
+                Unit: s.unit,
+                Default_Unit_Price: s.price,
+                Default_Supplier: s.supplier,
+                Quantity: s.quantity,
+            };
+        });
+
+        setSavingTemplate(true);
+        const res = await saveMaterialTemplate({ Name: name, Items: items }, organizationId);
+        setSavingTemplate(false);
+
+        if (res.success) {
+            showToast(`Templejt "${name}" sačuvan`, 'success');
+            setShowSaveTemplate(false);
+            setTemplateName('');
+            refreshTemplates();
+        } else {
+            showToast(res.message, 'error');
+        }
+    }
+
+    async function handleDeleteTemplate(templateId: string) {
+        const template = templates.find(t => t.Template_ID === templateId);
+        if (!template) return;
+        if (!confirm(`Obrisati templejt "${template.Name}"?`)) return;
+
+        const res = await deleteMaterialTemplate(templateId, organizationId);
+        if (res.success) {
+            showToast('Templejt obrisan', 'success');
+            if (loadTemplateId === templateId) setLoadTemplateId('');
+            refreshTemplates();
+        } else {
+            showToast(res.message, 'error');
+        }
+    }
+
     // Calculate grand total
     const grandTotal = useMemo(() => {
         let total = 0;
@@ -328,6 +449,42 @@ export default function MaterialSelectModal({
                                 )}
                             </div>
                         </div>
+
+                        {/* Templates loader */}
+                        {templates.length > 0 && (
+                            <div className="msm-tpl-bar">
+                                <span className="material-icons-round msm-tpl-icon">bookmarks</span>
+                                <select
+                                    className="msm-tpl-select"
+                                    value={loadTemplateId}
+                                    onChange={e => setLoadTemplateId(e.target.value)}
+                                >
+                                    <option value="">Učitaj iz templejta…</option>
+                                    {templates.map(t => (
+                                        <option key={t.Template_ID} value={t.Template_ID}>
+                                            {t.Name} ({t.Items?.length || 0})
+                                        </option>
+                                    ))}
+                                </select>
+                                <button
+                                    className="msm-tpl-btn primary"
+                                    onClick={handleLoadTemplate}
+                                    disabled={!loadTemplateId}
+                                >
+                                    <span className="material-icons-round">download</span>
+                                    Učitaj
+                                </button>
+                                {loadTemplateId && (
+                                    <button
+                                        className="msm-tpl-btn danger"
+                                        title="Obriši ovaj templejt"
+                                        onClick={() => handleDeleteTemplate(loadTemplateId)}
+                                    >
+                                        <span className="material-icons-round">delete</span>
+                                    </button>
+                                )}
+                            </div>
+                        )}
 
                         {/* Category Tabs */}
                         <div className="msm-categories">
@@ -516,7 +673,44 @@ export default function MaterialSelectModal({
                                     <span className="msm-selection-count">{selectedArray.length}</span>
                                 )}
                             </div>
+                            {selectedArray.length > 0 && !showSaveTemplate && (
+                                <button
+                                    className="msm-tpl-save-link"
+                                    onClick={() => { setShowSaveTemplate(true); setTemplateName(''); }}
+                                >
+                                    <span className="material-icons-round">bookmark_add</span>
+                                    Sačuvaj kao templejt
+                                </button>
+                            )}
                         </div>
+
+                        {showSaveTemplate && (
+                            <div className="msm-tpl-save-row">
+                                <input
+                                    type="text"
+                                    className="msm-tpl-name-input"
+                                    placeholder="Naziv templejta (npr. Standardna kuhinja)"
+                                    value={templateName}
+                                    autoFocus
+                                    onChange={e => setTemplateName(e.target.value)}
+                                    onKeyDown={e => { if (e.key === 'Enter') handleSaveTemplate(); }}
+                                />
+                                <button
+                                    className="msm-tpl-btn primary"
+                                    onClick={handleSaveTemplate}
+                                    disabled={savingTemplate || !templateName.trim()}
+                                >
+                                    {savingTemplate ? 'Spremam...' : 'Sačuvaj'}
+                                </button>
+                                <button
+                                    className="msm-tpl-btn ghost"
+                                    title="Otkaži"
+                                    onClick={() => { setShowSaveTemplate(false); setTemplateName(''); }}
+                                >
+                                    <span className="material-icons-round">close</span>
+                                </button>
+                            </div>
+                        )}
 
                         {selectedArray.length === 0 ? (
                             <div className="msm-selection-empty">

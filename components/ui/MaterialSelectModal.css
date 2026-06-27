@@ -521,6 +521,10 @@
     border-bottom: 1px solid rgba(0, 0, 0, 0.06);
     flex-shrink: 0;
     background: rgba(0, 0, 0, 0.015);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
 }
 
 .msm-selection-title {
@@ -772,6 +776,147 @@
 .msm-btn.primary:disabled {
     opacity: 0.5;
     cursor: not-allowed;
+}
+
+/* ---- Templates ---- */
+.msm-tpl-bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 20px 0;
+    flex-shrink: 0;
+}
+
+.msm-tpl-icon {
+    font-size: 20px;
+    color: #0071e3;
+    flex-shrink: 0;
+}
+
+.msm-tpl-select {
+    flex: 1;
+    min-width: 0;
+    padding: 9px 12px;
+    border: 1.5px solid #e5e7eb;
+    border-radius: 10px;
+    background: #fff;
+    font-size: 13px;
+    color: #1d1d1f;
+    outline: none;
+    cursor: pointer;
+    transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.msm-tpl-select:focus {
+    border-color: #0071e3;
+    box-shadow: 0 0 0 3px rgba(0, 113, 227, 0.08);
+}
+
+.msm-tpl-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 9px 14px;
+    border: none;
+    border-radius: 10px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: all 0.15s;
+    flex-shrink: 0;
+}
+
+.msm-tpl-btn .material-icons-round {
+    font-size: 17px;
+}
+
+.msm-tpl-btn.primary {
+    background: #0071e3;
+    color: #fff;
+}
+
+.msm-tpl-btn.primary:hover:not(:disabled) {
+    background: #005bb5;
+}
+
+.msm-tpl-btn.primary:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+
+.msm-tpl-btn.danger {
+    background: rgba(239, 68, 68, 0.08);
+    color: #dc2626;
+    padding: 9px 11px;
+}
+
+.msm-tpl-btn.danger:hover {
+    background: rgba(239, 68, 68, 0.15);
+}
+
+.msm-tpl-btn.ghost {
+    background: transparent;
+    color: #86868b;
+    padding: 9px 10px;
+}
+
+.msm-tpl-btn.ghost:hover {
+    background: rgba(0, 0, 0, 0.05);
+    color: #1d1d1f;
+}
+
+/* Save-as-template link in selection header */
+.msm-tpl-save-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 6px 10px;
+    border: none;
+    border-radius: 8px;
+    background: rgba(0, 113, 227, 0.08);
+    color: #0071e3;
+    font-size: 12.5px;
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background 0.15s;
+}
+
+.msm-tpl-save-link:hover {
+    background: rgba(0, 113, 227, 0.15);
+}
+
+.msm-tpl-save-link .material-icons-round {
+    font-size: 17px;
+}
+
+.msm-tpl-save-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 12px 24px;
+    border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+    background: rgba(0, 113, 227, 0.03);
+    flex-shrink: 0;
+}
+
+.msm-tpl-name-input {
+    flex: 1;
+    min-width: 0;
+    padding: 9px 12px;
+    border: 1.5px solid #e5e7eb;
+    border-radius: 10px;
+    background: #fff;
+    font-size: 13px;
+    color: #1d1d1f;
+    outline: none;
+    transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.msm-tpl-name-input:focus {
+    border-color: #0071e3;
+    box-shadow: 0 0 0 3px rgba(0, 113, 227, 0.08);
 }
 
 /* ---- Animations ---- */

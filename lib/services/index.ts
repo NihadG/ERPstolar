@@ -89,6 +89,7 @@ export { getSuppliers, saveSupplier, deleteSupplier } from './resource/supplierS
 
 // Material Catalog
 export { getMaterialsCatalog, saveMaterial, deleteMaterial, deleteDuplicateMaterials } from './resource/materialCatalogService';
+export { getMaterialTemplates, saveMaterialTemplate, deleteMaterialTemplate, applyMaterialTemplate } from './resource/materialCatalogService';
 
 // Offer
 export { getOffers, createOfferWithProducts, saveOffer, updateOfferWithProducts, deleteOffer, updateOfferStatus, updateOfferProduct } from './offer/offerService';
