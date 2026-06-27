@@ -110,6 +110,7 @@ export default function DailyWorkBookingBoard({ workOrders, workers, workLogs, o
     const [editing, setEditing] = useState(false);   // false = spremljeni dan zaključan (read-only)
     const [savedDays, setSavedDays] = useState(false); // da li dan već ima spremljene zapise
     const [recalcing, setRecalcing] = useState(false); // jednokratni preračun historije dnevnica
+    const [extraProductIds, setExtraProductIds] = useState<string[]>([]); // proizvodi dodani u prikazu „Po proizvodu" koji još nemaju radnika
     const originalWorkerIdsRef = useRef<string[]>([]); // radnici učitani za dan (za brisanje uklonjenih)
 
     // ── Overview state ──────────────────────────────────────────────────────
@@ -208,6 +209,7 @@ export default function DailyWorkBookingBoard({ workOrders, workers, workLogs, o
                 items: e.items.map(it => ({ workOrderItemId: it.workOrderItemId, processes: it.processes || [], processNodeId: it.processNodeId })),
             })));
             originalWorkerIdsRef.current = existing.map(e => e.workerId);
+            setExtraProductIds([]);
             // Spremljeni dan → zaključan (read-only). Prazan dan → odmah u uređivanju.
             setSavedDays(existing.length > 0);
             setEditing(existing.length === 0);
@@ -276,6 +278,17 @@ export default function DailyWorkBookingBoard({ workOrders, workers, workLogs, o
         });
     };
 
+    // Dodaj proizvod (karticu) u prikazu „Po proizvodu" — prazna kartica spremna za radnike.
+    const addProductGroup = (itemId: string) => {
+        if (!itemId) return;
+        setExtraProductIds(prev => prev.includes(itemId) ? prev : [...prev, itemId]);
+    };
+    // Ukloni proizvod iz dana (skida ga svim radnicima + iz dodanih praznih kartica).
+    const removeProductGroup = (itemId: string) => {
+        setEntries(prev => prev.map(e => ({ ...e, items: e.items.filter(i => i.workOrderItemId !== itemId) })));
+        setExtraProductIds(prev => prev.filter(id => id !== itemId));
+    };
+
     // Pivot: grupiši dnevne unose PO PROIZVODU (isti podaci kao po radniku, druga perspektiva).
     const productGroups = useMemo(() => {
         const m = new Map<string, { itemId: string; productName: string; woLabel: string; woNumber: string; rows: { workerId: string; workerName: string; rate: number; presence: number; amount: number }[]; total: number }>();
@@ -298,6 +311,25 @@ export default function DailyWorkBookingBoard({ workOrders, workers, workLogs, o
         });
         return Array.from(m.values());
     }, [entries, workerLookup, itemLookup]);
+
+    // Prikaz „Po proizvodu": stvarne grupe + prazne kartice za ručno dodane proizvode (još bez radnika).
+    const productGroupsDisplay = useMemo(() => {
+        const existing = new Set(productGroups.map(g => g.itemId));
+        const extras = extraProductIds
+            .filter(id => !existing.has(id))
+            .map(id => {
+                const meta = itemLookup.get(id);
+                return {
+                    itemId: id,
+                    productName: meta?.productName || 'Proizvod nije aktivan',
+                    woLabel: meta?.workOrderName || meta?.projectName || 'Nalog',
+                    woNumber: meta?.workOrderNumber || '',
+                    rows: [] as { workerId: string; workerName: string; rate: number; presence: number; amount: number }[],
+                    total: 0,
+                };
+            });
+        return [...productGroups, ...extras];
+    }, [productGroups, extraProductIds, itemLookup]);
 
     // Učitaj grafove procesa za naloge koji su prisutni u dnevnim unosima (za izbor čvora po liniji)
     useEffect(() => {
@@ -358,6 +390,7 @@ export default function DailyWorkBookingBoard({ workOrders, workers, workLogs, o
             if (res.success) {
                 showToast(res.message, 'success');
                 onRefresh('workOrders', 'workLogs');
+                setExtraProductIds([]);
                 // Zaključaj dan nakon spremanja (spriječi slučajno dupliranje)
                 const stillHas = payload.some(p => p.items.length > 0);
                 setSavedDays(stillHas);
@@ -555,13 +588,13 @@ export default function DailyWorkBookingBoard({ workOrders, workers, workLogs, o
 
                     {loading && <div className="dwb-loading"><Loader2 size={16} className="dwb-spin" /> Učitavam…</div>}
 
-                    {entries.length === 0 && !loading ? (
+                    {entries.length === 0 && !loading && !(groupBy === 'product' && editing) ? (
                         <div className="dwb-empty">
                             <NotebookPen size={26} />
                             <p>Knjiga rada za ovaj dan je prazna.</p>
                             <p className="dwb-empty-hint">Dodaj radnike koji su radili — prečicama ili pretragom ispod.</p>
                         </div>
-                    ) : entries.length > 0 ? (groupBy === 'worker' ? (
+                    ) : (entries.length > 0 || (groupBy === 'product' && editing)) ? (groupBy === 'worker' ? (
                         <div className="dwb-cards-container">
                             {entries.map(entry => {
                                 const worker = workerLookup.get(entry.workerId);
@@ -669,7 +702,7 @@ export default function DailyWorkBookingBoard({ workOrders, workers, workLogs, o
                         </div>
                     ) : (
                         <div className="dwb-cards-container">
-                            {productGroups.map(g => (
+                            {productGroupsDisplay.map(g => (
                                 <div className="dwb-card" key={g.itemId}>
                                     <div className="dwb-card-header">
                                         <div className="dwb-card-worker">
@@ -679,7 +712,12 @@ export default function DailyWorkBookingBoard({ workOrders, workers, workLogs, o
                                                 <span className="dwb-wname-rate">{g.woLabel} · {g.rows.length} radnik(a)</span>
                                             </div>
                                         </div>
-                                        <div className="dwb-card-total full">{km(g.total)}</div>
+                                        <div className="dwb-card-actions">
+                                            <div className="dwb-card-total full">{km(g.total)}</div>
+                                            {editing && (
+                                                <button className="dwb-x-subtle dwb-x-worker" onClick={() => removeProductGroup(g.itemId)} aria-label="Ukloni proizvod"><X size={16} /></button>
+                                            )}
+                                        </div>
                                     </div>
                                     <div className="dwb-card-body">
                                         {g.rows.map(r => (
@@ -715,6 +753,18 @@ export default function DailyWorkBookingBoard({ workOrders, workers, workLogs, o
                                     </div>
                                 </div>
                             ))}
+
+                            {editing && (
+                                <div className="dwb-addrow dwb-addrow-product">
+                                    <div className="dwb-addrow-select">
+                                        <Package size={15} />
+                                        <SearchableSelect
+                                            options={productOptions.filter(o => !productGroupsDisplay.some(g => g.itemId === o.value))}
+                                            value="" onChange={addProductGroup} placeholder="Dodaj proizvod…"
+                                        />
+                                    </div>
+                                </div>
+                            )}
                         </div>
                     )) : null}
 
