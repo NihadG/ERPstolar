@@ -565,7 +565,7 @@ export default function DailyWorkBookingBoard({ workOrders, workers, workLogs, o
             </div>
 
             {view === 'attendance' ? (
-                <AttendanceTab workers={workers} onRefresh={onRefresh} showToast={showToast} />
+                <AttendanceTab workers={workers} workOrders={workOrders} onRefresh={onRefresh} showToast={showToast} />
             ) : view === 'daily' ? (
                 <>
                     {/* Header bar */}

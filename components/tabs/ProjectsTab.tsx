@@ -1494,15 +1494,9 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                                     // Tako montažne dnevnice ulaze u profit proizvoda (montaža je integrisana u cjelinu).
                                     const productLogs = workLogs.filter(wl => wl.Product_ID === product.Product_ID);
                                     const actualLabor = Math.round(productLogs.reduce((sum, wl) => sum + (wl.Daily_Rate || 0), 0));
-                                    // OČEKIVANI PROFIT: dok rad nije (do kraja) evidentiran koristi PLANIRANI rad iz naloga
-                                    // (radnici×dani×dnevnica); stvarni evidentirani rad ga koriguje SAMO ako pređe plan (max).
-                                    // Planirani rad = Σ po SVIM stavkama tog proizvoda (montaža = 0 → bez dvostrukog brojanja).
-                                    const plannedLabor = Math.round(
-                                        workOrders
-                                            .flatMap(w => (w.items || []).filter(i => i.Product_ID === product.Product_ID))
-                                            .reduce((s, it) => s + (it.Planned_Labor_Cost || 0) * (it.Quantity || 1), 0)
-                                    );
-                                    const laborCost = Math.max(actualLabor, plannedLabor);
+                                    // STVARNI PROFIT: rad = stvarno evidentirano (Σ dnevnice po Product_ID kroz sve naloge).
+                                    // Poređenje "planirano (ponuda) vs stvarno" za rad i materijal je u Analitici (Profiti → Plan vs Stvarno).
+                                    const laborCost = actualLabor;
                                     projectProfit += finalSellingPrice - actualMaterialCost - laborCost - transportShare - servicesTotal;
                                     projectSellingTotal += finalSellingPrice;
                                     hasAnyProfit = true;

@@ -23,7 +23,6 @@ import AttendanceTab from '@/components/tabs/AttendanceTab';
 import TasksTab from '@/components/tabs/TasksTab';
 import MobileTasksTab from '@/components/tabs/MobileTasksTab';
 import PlannerTab from '@/components/tabs/PlannerTab';
-import DailyWorkBookingBoard from '@/components/ui/DailyWorkBookingBoard';
 import Toast from '@/components/ui/Toast';
 import LoadingOverlay from '@/components/ui/LoadingOverlay';
 import ModuleGuard from '@/components/auth/ModuleGuard';
@@ -500,16 +499,6 @@ export default function Home() {
                         />
                     )}
 
-                    {activeTab === 'worklog' && (
-                        <DailyWorkBookingBoard
-                            workOrders={appState.workOrders}
-                            workers={appState.workers}
-                            workLogs={appState.workLogs}
-                            onRefresh={refreshCollections}
-                            showToast={showToast}
-                        />
-                    )}
-
                     {activeTab === 'planer' && (
                         <PlannerTab
                             workOrders={appState.workOrders}
@@ -547,6 +536,7 @@ export default function Home() {
                     {activeTab === 'attendance' && (
                         <AttendanceTab
                             workers={appState.workers}
+                            workOrders={appState.workOrders}
                             onRefresh={refreshCollections}
                             showToast={showToast}
                         />

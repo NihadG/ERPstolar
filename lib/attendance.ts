@@ -485,7 +485,7 @@ export function validateWorkOrderProfitData(workOrder: any): ProfitWarning[] {
  */
 export async function markAttendanceAndRecalculate(
     attendance: Partial<WorkerAttendance>,
-    options?: { skipRecalculation?: boolean }
+    options?: { skipRecalculation?: boolean; skipAutoBook?: boolean }
 ): Promise<{ success: boolean; affectedWorkOrders: string[]; workLogsCreated: number; workLogsDeleted: number }> {
     try {
         // 1. Save the attendance record
@@ -530,7 +530,9 @@ export async function markAttendanceAndRecalculate(
         }
 
         // PRISUTAN/TEREN → auto-knjiži na aktivne nepauzirane dodijeljene naloge (idempotentno).
-        if (isPresent) {
+        // Kad UI vodi knjiženje kroz upit potvrde (šihtarica), prosljeđuje skipAutoBook:true —
+        // tada se prisustvo samo snima, a dnevnice se knjiže nakon korisnikove potvrde.
+        if (isPresent && !options?.skipAutoBook) {
             try {
                 const auto = await autoBookPresentWorker(
                     attendance.Worker_ID, attendance.Worker_Name || '', attendance.Date, attendance.Organization_ID, attendance.Status!
@@ -655,33 +657,101 @@ export async function autoBookPresentWorker(
         });
         if (targetItemIds.length === 0) return { created: 0, affectedWorkOrderIds: [] };
 
+        // Aditivno knjiženje + kanonska podjela delegira se zajedničkom pisaču.
+        const targets: BookTarget[] = targetItemIds.map(itemId => {
+            const it = itemDataById.get(itemId)!;
+            return {
+                workOrderId: it.Work_Order_ID as string,
+                itemId: it.ID as string,
+                productId: it.Product_ID as string | undefined,
+            };
+        });
+        return await bookWorkerDayItems(workerId, workerName, date, organizationId, targets, 1);
+    } catch (error) {
+        console.error('autoBookPresentWorker error:', error);
+        return { created: 0, affectedWorkOrderIds: [] };
+    }
+}
+
+export interface BookTarget {
+    workOrderId: string;
+    itemId: string;
+    productId?: string;
+}
+
+/**
+ * ADITIVNI, IDEMPOTENTNI pisač dnevnice iz šihtarice: za (radnik, dan) proknjiži dnevnicu na
+ * EKSPLICITNE ciljne stavke (targets). Preskače parove (radnik, stavka) koji već imaju zapis
+ * tog dana (manualni/postojeći unos ima prednost — bez dupliranja). Bazni log (presence);
+ * konačnu DVONIVOVSKU podjelu (po nalogu pa proizvodu) radi renormalizeWorkerDay. Ne dira
+ * druge radnike. Koriste ga: šihtarica-upit (potvrđeni Prisutan/Teren ciljevi) i autoBookPresentWorker.
+ */
+export async function bookWorkerDayItems(
+    workerId: string,
+    workerName: string,
+    date: string,
+    organizationId: string,
+    targets: BookTarget[],
+    presence: number = 1
+): Promise<{ created: number; affectedWorkOrderIds: string[] }> {
+    if (!workerId || !date || !organizationId || !targets || targets.length === 0) {
+        return { created: 0, affectedWorkOrderIds: [] };
+    }
+    try {
+        const fs = getDb();
+
+        // Postojeći logovi radnika za taj dan → idempotentnost (preskači već knjižene stavke).
+        const logSnap = await getDocs(query(
+            collection(fs, 'work_logs'),
+            where('Worker_ID', '==', workerId),
+            where('Date', '==', date),
+            where('Organization_ID', '==', organizationId)
+        ));
+        const loggedItemIds = new Set<string>();
+        logSnap.docs.forEach(d => { const id = d.data().Work_Order_Item_ID; if (id) loggedItemIds.add(id); });
+
+        // Product_ID za ciljeve kojima nije proslijeđen.
+        const missing = targets.filter(t => !t.productId).map(t => t.itemId);
+        const itemMap = missing.length > 0
+            ? await fetchWorkOrderItemsByIds(missing, organizationId)
+            : new Map<string, WorkOrderItem>();
+
         const workers = await getWorkers(organizationId);
         const dailyRate = workers.find(w => w.Worker_ID === workerId)?.Daily_Rate || 0;
+        const norm = presence === 0.5 ? 0.5 : 1;
 
         const batch = writeBatch(fs);
         const affected = new Set<string>();
-        for (const itemId of targetItemIds) {
-            const it = itemDataById.get(itemId);
-            if (!it) continue;
-            batch.set(doc(collection(fs, 'work_logs')), {
+        const seen = new Set<string>();
+        let created = 0;
+        for (const t of targets) {
+            if (!t.itemId || !t.workOrderId) continue;
+            if (seen.has(t.itemId)) continue;              // dedupe unutar poziva
+            seen.add(t.itemId);
+            if (loggedItemIds.has(t.itemId)) continue;     // već ima zapis → preskoči (manualni ima prednost)
+            const productId = t.productId || itemMap.get(t.itemId)?.Product_ID;
+            const log: Record<string, unknown> = {
                 WorkLog_ID: generateUUID(), Organization_ID: organizationId, Date: date,
                 Worker_ID: workerId, Worker_Name: workerName, Daily_Rate: dailyRate, Original_Daily_Rate: dailyRate,
-                Day_Fraction: 1, Presence: 1, Split_Factor: 1, Hours_Worked: 8,
+                Day_Fraction: norm, Presence: norm, Split_Factor: 1, Hours_Worked: 8 * norm,
                 Booking_Source: 'attendance', Is_From_Attendance: true,
-                Work_Order_ID: it.Work_Order_ID, Work_Order_Item_ID: it.ID, Product_ID: it.Product_ID,
+                Work_Order_ID: t.workOrderId, Work_Order_Item_ID: t.itemId, Product_ID: productId,
                 Created_At: new Date().toISOString(),
-            });
-            if (it.Work_Order_ID) affected.add(it.Work_Order_ID as string);
+            };
+            Object.keys(log).forEach(k => log[k] === undefined && delete log[k]);
+            batch.set(doc(collection(fs, 'work_logs')), log);
+            affected.add(t.workOrderId);
+            created++;
         }
+        if (created === 0) return { created: 0, affectedWorkOrderIds: [] };
         await batch.commit();
 
-        // Kanonska dvonivovska podjela preko cijelog radnikovog dana (uklj. druge naloge/manualno)
-        const wos = await renormalizeWorkerDay(workerId, date, organizationId, 1);
+        // Kanonska dvonivovska podjela preko cijelog radnikovog dana (uklj. druge naloge/manualno).
+        const wos = await renormalizeWorkerDay(workerId, date, organizationId, norm);
         wos.forEach(id => affected.add(id));
-
-        return { created: targetItemIds.length, affectedWorkOrderIds: Array.from(affected) };
+        return { created, affectedWorkOrderIds: Array.from(affected) };
     } catch (error) {
-        console.error('autoBookPresentWorker error:', error);
+        console.error('bookWorkerDayItems error:', error);
         return { created: 0, affectedWorkOrderIds: [] };
     }
 }

@@ -1,14 +1,22 @@
 'use client';
 
 import { useState, useEffect, useMemo, useRef } from 'react';
-import type { Worker, WorkerAttendance } from '@/lib/types';
+import type { Worker, WorkerAttendance, WorkOrder } from '@/lib/types';
 import { ATTENDANCE_STATUSES } from '@/lib/types';
 import {
     markAttendanceAndRecalculate,
     getAllAttendanceByMonth,
     autoPopulateWeekends,
     formatLocalDateISO,
+    bookWorkerDayItems,
+    createWorkOrder,
+    startWorkOrder,
+    getWorkOrder,
+    toggleItemPause,
 } from '@/lib/services';
+import { isWorkerAssignedToAutoItem } from '@/lib/autoBook';
+import { buildBookingProposal, type ProposalRow } from '@/lib/attendanceBooking';
+import AttendanceBookingConfirmModal, { type BookingDecision } from '@/components/ui/AttendanceBookingConfirmModal';
 import {
     CheckCircle2,
     XCircle,
@@ -28,11 +36,12 @@ import { useData } from '@/context/DataContext';
 
 interface AttendanceTabProps {
     workers: Worker[];
+    workOrders: WorkOrder[];
     onRefresh: (...collections: string[]) => void;
     showToast: (message: string, type: 'success' | 'error' | 'info') => void;
 }
 
-export default function AttendanceTab({ workers, onRefresh, showToast }: AttendanceTabProps) {
+export default function AttendanceTab({ workers, workOrders, onRefresh, showToast }: AttendanceTabProps) {
     const { organizationId } = useData();
     // State for infinity scroll
     const [loadedMonths, setLoadedMonths] = useState<{ year: number; month: number }[]>([
@@ -55,6 +64,11 @@ export default function AttendanceTab({ workers, onRefresh, showToast }: Attenda
     const [bulkEditModalOpen, setBulkEditModalOpen] = useState(false);
     const [bulkEditDate, setBulkEditDate] = useState<{ dateStr: string; day: number; dayName: string } | null>(null);
     const [bulkStatuses, setBulkStatuses] = useState<Record<string, string>>({});
+
+    // Upit knjiženja dnevnica (potvrda nakon unosa prisustva)
+    const [confirmOpen, setConfirmOpen] = useState(false);
+    const [confirmRows, setConfirmRows] = useState<ProposalRow[]>([]);
+    const [confirmDate, setConfirmDate] = useState('');
 
     // Table ref for auto-scroll
     const tableContainerRef = useRef<HTMLDivElement>(null);
@@ -240,6 +254,7 @@ export default function AttendanceTab({ workers, onRefresh, showToast }: Attenda
         setEditModalOpen(false);
 
         try {
+            // skipAutoBook: prisustvo se snima, ali dnevnice se knjiže tek nakon potvrde u upitu.
             const result = await markAttendanceAndRecalculate({
                 Worker_ID: selectedCell.workerId,
                 Worker_Name: selectedCell.workerName,
@@ -247,11 +262,25 @@ export default function AttendanceTab({ workers, onRefresh, showToast }: Attenda
                 Status: finalStatus as any,
                 Notes: finalNotes,
                 Organization_ID: organizationId || undefined
-            });
+            }, { skipAutoBook: true });
 
-            // Dnevnice se unose u Radnoj knjizi; šihtarica je potvrda.
-            // Ako je radnik označen odsutnim, njegove dnevnice tog dana su uklonjene (ne računaju se).
-            if (result.workLogsDeleted > 0) {
+            const isPresent = finalStatus === 'Prisutan' || finalStatus === 'Teren';
+            if (isPresent) {
+                // Izgradi prijedlog → otvori upit (Prisutan bez kandidata ne otvara upit).
+                const rows = buildBookingProposal(
+                    [{ workerId: selectedCell.workerId, workerName: selectedCell.workerName, status: finalStatus }],
+                    workOrders,
+                    selectedCell.date
+                );
+                if (rows.length > 0) {
+                    setConfirmRows(rows);
+                    setConfirmDate(selectedCell.date);
+                    setConfirmOpen(true);
+                } else {
+                    showToast('Prisustvo sačuvano', 'success');
+                }
+            } else if (result.workLogsDeleted > 0) {
+                // Odsutan → dnevnice tog dana uklonjene (ne računaju se).
                 showToast(`Prisustvo sačuvano — uklonjeno ${result.workLogsDeleted} dnevnica (odsutan se ne računa)`, 'info');
             } else {
                 showToast('Prisustvo sačuvano', 'success');
@@ -380,7 +409,8 @@ export default function AttendanceTab({ workers, onRefresh, showToast }: Attenda
         setBulkStatuses({});
 
         try {
-            // 2. Save all in parallel — skip per-worker recalculation (we batch it below)
+            // 2. Save all in parallel — skip per-worker recalculation (we batch it below) and
+            //    skip auto-book (dnevnice se knjiže nakon potvrde u upitu).
             const results = await Promise.all(
                 workersToUpdate.map(worker =>
                     markAttendanceAndRecalculate({
@@ -390,7 +420,7 @@ export default function AttendanceTab({ workers, onRefresh, showToast }: Attenda
                         Status: bulkStatuses[worker.Worker_ID] as any,
                         Notes: null,
                         Organization_ID: organizationId || undefined
-                    }, { skipRecalculation: true })
+                    }, { skipRecalculation: true, skipAutoBook: true })
                 )
             );
 
@@ -405,18 +435,133 @@ export default function AttendanceTab({ workers, onRefresh, showToast }: Attenda
                 }
             }
 
-            // Dnevnice se unose u Radnoj knjizi; odsutni dani uklanjaju postojeće dnevnice.
+            // Odsutni dani uklanjaju postojeće dnevnice.
             const totalDeleted = results.reduce((sum, r) => sum + r.workLogsDeleted, 0);
             if (totalDeleted > 0) {
                 showToast(`Prisustvo sačuvano za ${workersToUpdate.length} radnika — uklonjeno ${totalDeleted} dnevnica (odsutni)`, 'info');
             } else {
                 showToast(`Prisustvo sačuvano za ${workersToUpdate.length} radnika`, 'success');
             }
+
+            // Konsolidovani upit knjiženja za sve prisutne/teren radnike tog dana.
+            const presentSaved = workersToUpdate
+                .filter(w => bulkStatuses[w.Worker_ID] === 'Prisutan' || bulkStatuses[w.Worker_ID] === 'Teren')
+                .map(w => ({ workerId: w.Worker_ID, workerName: w.Name, status: bulkStatuses[w.Worker_ID] }));
+            if (presentSaved.length > 0) {
+                const rows = buildBookingProposal(presentSaved, workOrders, bulkEditDate.dateStr);
+                if (rows.length > 0) {
+                    setConfirmRows(rows);
+                    setConfirmDate(bulkEditDate.dateStr);
+                    setConfirmOpen(true);
+                }
+            }
+
             loadMonth(date.getFullYear(), date.getMonth() + 1);
             onRefresh('workers', 'workOrders');
         } catch (error) {
             showToast('Greška pri čuvanju prisustva', 'error');
             loadMonth(date.getFullYear(), date.getMonth() + 1);
+        }
+    }
+
+    // ============================================
+    // KNJIŽENJE NA POTVRDU (iz upita)
+    // ============================================
+
+    function workerDailyRate(workerId: string): number {
+        return workers.find(w => w.Worker_ID === workerId)?.Daily_Rate || 0;
+    }
+
+    // Proknjiži dnevnicu radnika na izabrani nalog: bira dodijeljene (ili sve) nezavršene stavke,
+    // POKRENE PONOVO pauzirane stavke i starta nalog ako je još „Na čekanju". Vrati broj zapisa.
+    async function bookWorkerToOrder(workerId: string, workerName: string, date: string, orgId: string, workOrderId: string): Promise<number> {
+        const wo = workOrders.find(w => w.Work_Order_ID === workOrderId);
+        if (!wo) return 0;
+        const all = wo.items || [];
+        const live = all.filter(it => it.Status !== 'Završeno');
+        const base = live.length > 0 ? live : all;   // sve završeno (npr. teren na gotovom nalogu) → ipak knjiži
+        const assigned = base.filter(it =>
+            isWorkerAssignedToAutoItem({ ID: it.ID, Assigned_Workers: it.Assigned_Workers, Processes: it.Processes, SubTasks: it.SubTasks }, workerId)
+        );
+        const chosen = assigned.length > 0 ? assigned : base;
+        if (chosen.length === 0) return 0;
+
+        // Pokreni ponovo pauzirane stavke koje knjižimo.
+        for (const it of chosen) {
+            if (it.Is_Paused) {
+                try { await toggleItemPause(workOrderId, it.ID, false); } catch (e) { console.warn('resume failed', it.ID, e); }
+            }
+        }
+        // Startaj nalog ako još nije pokrenut.
+        if (wo.Status === 'Na čekanju') {
+            try { await startWorkOrder(workOrderId, orgId); } catch (e) { console.warn('start failed', workOrderId, e); }
+        }
+
+        const targets = chosen.map(it => ({ workOrderId, itemId: it.ID, productId: it.Product_ID }));
+        const res = await bookWorkerDayItems(workerId, workerName, date, orgId, targets, 1);
+        return res.created;
+    }
+
+    async function commitDecisions(decisions: BookingDecision[]) {
+        const orgId = organizationId || '';
+        const date = confirmDate;
+        let booked = 0;
+        try {
+            for (const d of decisions) {
+                if (d.kind === 'present') {
+                    for (const orderId of d.orderIds) {
+                        booked += await bookWorkerToOrder(d.workerId, d.workerName, date, orgId, orderId);
+                    }
+                } else {
+                    const c = d.choice;
+                    if (c.mode === 'none') continue;
+                    if (c.mode === 'order') {
+                        booked += await bookWorkerToOrder(d.workerId, d.workerName, date, orgId, c.workOrderId);
+                    } else if (c.mode === 'new') {
+                        // Brzi montažni nalog: jedna placeholder stavka (nuliran novac), radnik dodijeljen.
+                        const productId = (typeof crypto !== 'undefined' && crypto.randomUUID)
+                            ? crypto.randomUUID() : `teren-${Date.now()}`;
+                        const created = await createWorkOrder({
+                            Work_Order_Type: 'Montaža',
+                            Production_Steps: ['Montaža'],
+                            Name: c.name,
+                            Notes: `Kreirano iz šihtarice (teren) · ${date}`,
+                            items: [{
+                                Product_ID: productId,
+                                Product_Name: c.name,
+                                Project_ID: '',
+                                Project_Name: '',
+                                Quantity: 1,
+                                Product_Value: 0, Material_Cost: 0, Transport_Share: 0, Services_Total: 0,
+                                Planned_Labor_Cost: 0,
+                                Assigned_Workers: [{ Worker_ID: d.workerId, Worker_Name: d.workerName, Daily_Rate: workerDailyRate(d.workerId) }],
+                            }],
+                        }, orgId);
+                        if (created.success && created.data) {
+                            await startWorkOrder(created.data.Work_Order_ID, orgId);
+                            const full = await getWorkOrder(created.data.Work_Order_ID, orgId);
+                            const item = full?.items?.[0];
+                            if (full && item) {
+                                const res = await bookWorkerDayItems(
+                                    d.workerId, d.workerName, date, orgId,
+                                    [{ workOrderId: full.Work_Order_ID, itemId: item.ID, productId: item.Product_ID }], 1
+                                );
+                                booked += res.created;
+                            }
+                        } else {
+                            showToast(created.message || 'Greška pri kreiranju montažnog naloga', 'error');
+                        }
+                    }
+                }
+            }
+            if (booked > 0) showToast(`Proknjiženo ${booked} dnevnica`, 'success');
+            else showToast('Dnevnice nisu knjižene', 'info');
+            onRefresh('workers', 'workOrders');
+            const dt = new Date(date);
+            loadMonth(dt.getFullYear(), dt.getMonth() + 1);
+        } catch (e) {
+            console.error('commitDecisions error', e);
+            showToast('Greška pri knjiženju dnevnica', 'error');
         }
     }
 
@@ -873,6 +1018,18 @@ export default function AttendanceTab({ workers, onRefresh, showToast }: Attenda
                     </div>
                 </div>
             </Modal>
+
+            {/* Upit knjiženja dnevnica nakon unosa prisustva */}
+            {confirmOpen && (
+                <AttendanceBookingConfirmModal
+                    isOpen={confirmOpen}
+                    onClose={() => setConfirmOpen(false)}
+                    date={confirmDate}
+                    rows={confirmRows}
+                    workOrders={workOrders}
+                    onConfirm={commitDecisions}
+                />
+            )}
 
             {/* Styles moved to globals.css */}
         </div>

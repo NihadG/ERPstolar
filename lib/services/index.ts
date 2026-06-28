@@ -116,7 +116,7 @@ export {
     markAttendanceAndRecalculate, saveWorkerAttendance,
     getWorkerAttendance, getWorkerAttendanceByMonth, getAllAttendanceByMonth,
     autoPopulateWeekends,
-    createWorkLogsForAttendance, backfillWorkLogsFromAttendance,
+    createWorkLogsForAttendance, backfillWorkLogsFromAttendance, bookWorkerDayItems,
     recalculateWorkOrder, recalculateAllActiveWorkOrders,
     syncProjectStatus, syncAllProjectData, runStartupSync,
     checkMissingAttendanceForActiveOrders, checkMissingAttendanceHistory,
@@ -137,7 +137,7 @@ export {
 export type {
     DailyBookingItemInput, DailyBookingEntryInput,
     DailyBookingItemView, DailyBookingEntryView,
-    WorkOrderDayEntryInput,
+    WorkOrderDayEntryInput, BookTarget,
 } from './labor/laborCostService';
 
 // Profit
@@ -158,8 +158,8 @@ export {
 } from './profit/profitDashboardService';
 
 // Analitika (jedinstvena — Profiti full-screen)
-export { getAnalytics } from './profit/analyticsService';
-export type { AnalyticsData, AnalyticsOptions, AnalyticsScope } from './profit/analyticsService';
+export { getAnalytics, getAnalyticsRaw, computeAnalytics } from './profit/analyticsService';
+export type { AnalyticsData, AnalyticsOptions, AnalyticsScope, AnalyticsRaw } from './profit/analyticsService';
 
 // Notification
 export { createNotification, getUnreadNotifications, markNotificationAsRead, subscribeToNotifications } from './notification/notificationService';

@@ -14,7 +14,7 @@ import type { WorkerAttendance } from '../../types';
 
 export async function markAttendanceAndRecalculate(
     attendance: Partial<WorkerAttendance>,
-    options?: { skipRecalculation?: boolean }
+    options?: { skipRecalculation?: boolean; skipAutoBook?: boolean }
 ): Promise<{ success: boolean; affectedWorkOrders: string[]; workLogsCreated: number; workLogsDeleted: number }> {
     const { markAttendanceAndRecalculate: _mark } = await import('../../attendance');
     const result = await _mark(attendance, options);
@@ -91,6 +91,26 @@ export async function createWorkLogsForAttendance(
     return _create(workerId, workerName, dailyRate, date, organizationId, attendanceStatus);
 }
 
+/**
+ * Aditivno proknjiži dnevnicu radnika na EKSPLICITNE ciljne stavke (potvrđeni unos iz šihtarice).
+ * Idempotentno; kanonska podjela + recalc rade interno. Vidi attendance.bookWorkerDayItems.
+ */
+export async function bookWorkerDayItems(
+    workerId: string,
+    workerName: string,
+    date: string,
+    organizationId: string,
+    targets: BookTarget[],
+    presence?: number
+): Promise<{ created: number; affectedWorkOrderIds: string[] }> {
+    const { bookWorkerDayItems: _book } = await import('../../attendance');
+    const result = await _book(workerId, workerName, date, organizationId, targets, presence);
+    if (result.created > 0) {
+        eventBus.emit('attendance:marked', { workerId, date, status: 'Prisutan', organizationId });
+    }
+    return result;
+}
+
 export async function backfillWorkLogsFromAttendance(
     organizationId: string,
     dateFrom: string,
@@ -108,6 +128,7 @@ import type {
     DailyBookingEntryInput,
     DailyBookingEntryView,
     WorkOrderDayEntryInput,
+    BookTarget,
 } from '../../attendance';
 export type {
     DailyBookingItemInput,
@@ -115,6 +136,7 @@ export type {
     DailyBookingItemView,
     DailyBookingEntryView,
     WorkOrderDayEntryInput,
+    BookTarget,
 } from '../../attendance';
 
 export async function saveDailyWorkBooking(

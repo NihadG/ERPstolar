@@ -3,12 +3,12 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useData } from '@/context/DataContext';
 import {
-    X, BarChart3, Users, FolderKanban, Package, GitCompareArrows, RefreshCw, Search, Loader2,
+    X, BarChart3, FolderKanban, Package, GitCompareArrows, RefreshCw, Search, Loader2,
 } from 'lucide-react';
-import type { AnalyticsData, AnalyticsScope } from '@/lib/services/profit/analyticsService';
+import { getAnalyticsRaw, computeAnalytics } from '@/lib/services/profit/analyticsService';
+import type { AnalyticsData, AnalyticsScope, AnalyticsRaw } from '@/lib/services/profit/analyticsService';
+import type { PvAMetric } from '@/lib/analytics';
 import type { WorkLog } from '@/lib/types';
-import PlanVsActualCard from './PlanVsActualCard';
-import WorkerEarningsWidget from './WorkerEarningsWidget';
 import ProductTimelineModal from './ProductTimelineModal';
 import './AnalyticsDashboard.css';
 
@@ -51,7 +51,7 @@ export default function AnalyticsDashboard({ onClose, showToast, onRefresh }: An
     const [tab, setTab] = useState<Tab>('overview');
     const [period, setPeriod] = useState<Period>('all');
     const [scope, setScope] = useState<AnalyticsScope>('active');
-    const [data, setData] = useState<AnalyticsData | null>(null);
+    const [raw, setRaw] = useState<AnalyticsRaw | null>(null);
     const [loading, setLoading] = useState(true);
     const [search, setSearch] = useState('');
 
@@ -60,22 +60,26 @@ export default function AnalyticsDashboard({ onClose, showToast, onRefresh }: An
     const [timelineLogs, setTimelineLogs] = useState<WorkLog[]>([]);
     const [loadingTimeline, setLoadingTimeline] = useState(false);
 
-    const loadData = useCallback(async () => {
+    // Dohvat JEDNOM (otvaranje / Osvježi). Promjena perioda/opsega = in-memory (bez novog upita).
+    const loadRaw = useCallback(async () => {
         if (!organizationId) return;
         setLoading(true);
         try {
-            const { getAnalytics } = await import('@/lib/services');
-            const range = periodRange(period);
-            setData(await getAnalytics(organizationId, { ...range, scope }));
+            setRaw(await getAnalyticsRaw(organizationId));
         } catch (e) {
             console.error('analytics load failed', e);
             showToast?.('Greška pri učitavanju analitike', 'error');
         } finally {
             setLoading(false);
         }
-    }, [organizationId, period, scope, showToast]);
+    }, [organizationId, showToast]);
 
-    useEffect(() => { loadData(); }, [loadData]);
+    useEffect(() => { loadRaw(); }, [loadRaw]);
+
+    const data = useMemo<AnalyticsData | null>(
+        () => (raw ? computeAnalytics(raw, { ...periodRange(period), scope }) : null),
+        [raw, period, scope]
+    );
 
     useEffect(() => {
         const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape' && !timeline) onClose(); };
@@ -104,7 +108,6 @@ export default function AnalyticsDashboard({ onClose, showToast, onRefresh }: An
 
     const TABS: { id: Tab; label: string; Icon: typeof BarChart3 }[] = [
         { id: 'overview', label: 'Pregled', Icon: BarChart3 },
-        { id: 'workers', label: 'Radnici', Icon: Users },
         { id: 'projects', label: 'Projekti', Icon: FolderKanban },
         { id: 'products', label: 'Proizvodi', Icon: Package },
         { id: 'planvsactual', label: 'Plan vs Stvarno', Icon: GitCompareArrows },
@@ -132,7 +135,7 @@ export default function AnalyticsDashboard({ onClose, showToast, onRefresh }: An
                                 </button>
                             ))}
                         </div>
-                        <button className="ana-icon-btn" onClick={loadData} title="Osvježi"><RefreshCw size={16} /></button>
+                        <button className="ana-icon-btn" onClick={loadRaw} title="Osvježi"><RefreshCw size={16} /></button>
                         <button className="ana-icon-btn" onClick={onClose} title="Zatvori"><X size={18} /></button>
                     </div>
                 </div>
@@ -153,34 +156,7 @@ export default function AnalyticsDashboard({ onClose, showToast, onRefresh }: An
                     ) : !data || data.kpis.productCount === 0 ? (
                         <div className="ana-center">Nema podataka za odabrani period/opseg.</div>
                     ) : tab === 'overview' ? (
-                        <Overview data={data} />
-                    ) : tab === 'workers' ? (
-                        <div className="ana-section">
-                            {data.workers.length === 0 ? <div className="ana-empty">Nema evidentiranog rada u periodu.</div> : (
-                                <>
-                                    <WorkerEarningsWidget
-                                        title="Zarada radnika"
-                                        subtitle={data.range.from ? `${data.range.from} – ${data.range.to}` : 'Cijeli period'}
-                                        workers={data.workers.map(w => ({ Worker_ID: w.workerId, Worker_Name: w.name, Days: w.days, Avg_Daily_Rate: w.avgRate, Total_Earnings: w.earnings }))}
-                                        maxWorkers={50}
-                                    />
-                                    <table className="ana-table">
-                                        <thead><tr><th>Radnik</th><th className="r">Dani</th><th className="r">Zarada</th><th className="r">Prosj. dnevnica</th><th className="r">Proizvoda</th></tr></thead>
-                                        <tbody>
-                                            {data.workers.map(w => (
-                                                <tr key={w.workerId}>
-                                                    <td>{w.name}</td>
-                                                    <td className="r">{w.days}</td>
-                                                    <td className="r b">{fmt(w.earnings)}</td>
-                                                    <td className="r">{fmt(w.avgRate)}</td>
-                                                    <td className="r">{w.products}</td>
-                                                </tr>
-                                            ))}
-                                        </tbody>
-                                    </table>
-                                </>
-                            )}
-                        </div>
+                        <Overview data={data} onGoTo={setTab} />
                     ) : tab === 'projects' ? (
                         <ProjectsTab data={data} />
                     ) : tab === 'products' ? (
@@ -219,7 +195,7 @@ export default function AnalyticsDashboard({ onClose, showToast, onRefresh }: An
             {timeline && (
                 <ProductTimelineModal
                     isOpen={true}
-                    onClose={() => { setTimeline(null); setTimelineLogs([]); loadData(); }}
+                    onClose={() => { setTimeline(null); setTimelineLogs([]); loadRaw(); }}
                     productId={timeline.productId}
                     productName={timeline.productName}
                     workOrderItem={{ ID: timeline.itemId, Product_ID: timeline.productId, Product_Name: timeline.productName, Work_Order_ID: timeline.woId, Status: timeline.status, Product_Value: timeline.selling, Material_Cost: timeline.material, Actual_Labor_Cost: timeline.labor } as unknown as Parameters<typeof ProductTimelineModal>[0]['workOrderItem']}
@@ -232,7 +208,7 @@ export default function AnalyticsDashboard({ onClose, showToast, onRefresh }: An
                         if (!organizationId) return { success: false, message: 'Nedostaju podaci' };
                         const { overrideWorkLogs } = await import('@/lib/services');
                         const res = await overrideWorkLogs(timeline.woId, timeline.itemId, entries, organizationId, timeline.productId);
-                        if (res.success) { showToast?.('Ažurirano', 'success'); onRefresh?.('workOrders', 'workLogs'); setTimeline(null); loadData(); }
+                        if (res.success) { showToast?.('Ažurirano', 'success'); onRefresh?.('workOrders', 'workLogs'); setTimeline(null); loadRaw(); }
                         else showToast?.(res.message, 'error');
                         return res;
                     }}
@@ -242,39 +218,43 @@ export default function AnalyticsDashboard({ onClose, showToast, onRefresh }: An
     );
 }
 
-// ── Pregled ──────────────────────────────────────────────────────────────────
-function Overview({ data }: { data: AnalyticsData }) {
+// ── Pregled — "Kako stojimo?" ────────────────────────────────────────────────
+function Overview({ data, onGoTo }: { data: AnalyticsData; onGoTo: (t: Tab) => void }) {
     const k = data.kpis;
-    const maxWeek = Math.max(1, ...data.weeklyTrend.map(w => w.labor));
-    const topProjects = [...data.projects].sort((a, b) => b.profit - a.profit).slice(0, 6);
+    const trosak = Math.round((k.material + k.labor) * 100) / 100;
+    const topProjects = [...data.projects].sort((a, b) => b.profit - a.profit).slice(0, 3);
     const maxAbsProfit = Math.max(1, ...topProjects.map(p => Math.abs(p.profit)));
     return (
         <div className="ana-section">
-            <div className="ana-kpis">
-                <Kpi label="Prihod" value={fmt(k.revenue)} />
-                <Kpi label="Materijal" value={fmt(k.material)} />
-                <Kpi label="Rad" value={fmt(k.labor)} tone="amber" />
-                <Kpi label="Profit" value={fmt(k.profit)} tone={k.profit >= 0 ? 'green' : 'red'} big />
-                <Kpi label="Marža" value={pct(k.margin)} tone={k.margin >= 0 ? 'green' : 'red'} />
+            {/* Hero — profit dominira, prihod i trošak kao kontekst */}
+            <div className="ana-hero">
+                <div className={`ana-hero-main ${k.profit >= 0 ? 'pos' : 'neg'}`}>
+                    <span className="ana-hero-label">Profit</span>
+                    <span className="ana-hero-value">{fmt(k.profit)}</span>
+                    <span className="ana-hero-sub">marža {pct(k.margin)} · od {fmt(k.revenue)} prihoda</span>
+                </div>
+                <div className="ana-hero-side">
+                    <div className="ana-hero-kpi"><span>Prihod</span><b>{fmt(k.revenue)}</b></div>
+                    <div className="ana-hero-kpi"><span>Trošak (materijal + rad)</span><b>{fmt(trosak)}</b><em>{fmt(k.material)} mat · {fmt(k.labor)} rad</em></div>
+                </div>
             </div>
 
+            {/* Trend rada po sedmici — jedna čista linija */}
+            <div className="ana-card">
+                <div className="ana-card-title">Trošak rada po sedmici{data.range.from ? ' (period)' : ''}</div>
+                <TrendChart points={data.weeklyTrend.map(w => ({ label: human(w.weekStart), value: w.labor }))} color="#16a34a" />
+            </div>
+
+            {/* Snapshot plan vs stvarno + top projekti */}
             <div className="ana-grid2">
                 <div className="ana-card">
-                    <div className="ana-card-title">Trošak rada po sedmici {data.range.from ? '(period)' : ''}</div>
-                    {data.weeklyTrend.length === 0 ? <div className="ana-empty">Nema rada u periodu.</div> : (
-                        <div className="ana-trend">
-                            {data.weeklyTrend.map(w => (
-                                <div key={w.weekStart} className="ana-trend-col" title={`${human(w.weekStart)} — ${fmt(w.labor)}`}>
-                                    <div className="ana-trend-bar" style={{ height: `${Math.max(4, (w.labor / maxWeek) * 100)}%` }} />
-                                    <span className="ana-trend-x">{human(w.weekStart)}</span>
-                                </div>
-                            ))}
-                        </div>
-                    )}
+                    <div className="ana-card-title">Koliko smo potrefili ponudu?</div>
+                    <PvASnapshot label="Materijal" m={data.planVsActual.total.material} onClick={() => onGoTo('planvsactual')} />
+                    <PvASnapshot label="Rad" m={data.planVsActual.total.labor} onClick={() => onGoTo('planvsactual')} />
                 </div>
                 <div className="ana-card">
                     <div className="ana-card-title">Top projekti po profitu</div>
-                    {topProjects.map(p => (
+                    {topProjects.length === 0 ? <div className="ana-empty">Nema projekata.</div> : topProjects.map(p => (
                         <div key={p.projectId || p.projectName} className="ana-rowbar">
                             <span className="ana-rowbar-label" title={p.projectName}>{p.projectName}</span>
                             <HBar value={p.profit} max={maxAbsProfit} color={p.profit >= 0 ? '#22c55e' : '#ef4444'} />
@@ -283,8 +263,60 @@ function Overview({ data }: { data: AnalyticsData }) {
                     ))}
                 </div>
             </div>
+        </div>
+    );
+}
 
-            <PlanVsActualCard plannedCost={data.planVsActual.total.plannedLabor} actualCost={data.planVsActual.total.actualLabor} compact />
+/** Čist SVG line+area trend (umjesto gomile barova). */
+function TrendChart({ points, color }: { points: { label: string; value: number }[]; color: string }) {
+    if (points.length === 0) return <div className="ana-empty">Nema rada u periodu.</div>;
+    const W = 100, H = 36;
+    const max = Math.max(1, ...points.map(p => p.value));
+    const n = points.length;
+    const x = (i: number) => (n <= 1 ? W / 2 : (i / (n - 1)) * W);
+    const y = (v: number) => H - (v / max) * (H - 3) - 1.5;
+    const line = points.map((p, i) => `${i === 0 ? 'M' : 'L'} ${x(i).toFixed(1)} ${y(p.value).toFixed(1)}`).join(' ');
+    const area = `${line} L ${x(n - 1).toFixed(1)} ${H} L ${x(0).toFixed(1)} ${H} Z`;
+    return (
+        <div className="ana-chart">
+            <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" className="ana-chart-svg">
+                <path d={area} fill={color} opacity="0.12" />
+                <path d={line} fill="none" stroke={color} strokeWidth="1.5" vectorEffect="non-scaling-stroke" strokeLinejoin="round" strokeLinecap="round" />
+            </svg>
+            <div className="ana-chart-x">{points.map((p, i) => <span key={i}>{p.label}</span>)}</div>
+        </div>
+    );
+}
+
+/** Kompaktni plan-vs-stvarno snapshot (klik → tab). */
+function PvASnapshot({ label, m, onClick }: { label: string; m: PvAMetric; onClick: () => void }) {
+    const over = m.actual > m.planned;
+    return (
+        <button className="ana-snap" onClick={onClick}>
+            <div className="ana-snap-head"><span>{label}</span><b className={over ? 'red' : 'green'}>potrefio {pct(m.accuracyPct)}</b></div>
+            <div className="ana-snap-bar"><div className="ana-snap-fill" style={{ width: `${Math.min(100, Math.max(0, m.accuracyPct))}%`, background: over ? '#ef4444' : '#22c55e' }} /></div>
+            <div className="ana-snap-sub">Plan {fmt(m.planned)} → Stvarno {fmt(m.actual)}</div>
+        </button>
+    );
+}
+
+/** Veliki sažetak plan vs stvarno za metriku (materijal/rad): Plan → Stvarno + traka + "potrefio". */
+function PvASummary({ label, m }: { label: string; m: PvAMetric }) {
+    const delta = Math.round((m.actual - m.planned) * 100) / 100;   // + = potrošeno više
+    const over = delta > 0;
+    return (
+        <div className="ana-card">
+            <div className="ana-card-title">{label}</div>
+            <div className="ana-pva-big">
+                <div className="ana-pva-cell"><span className="ana-pva-k">Plan (ponuda)</span><b>{fmt(m.planned)}</b></div>
+                <span className="ana-pva-arrow">→</span>
+                <div className="ana-pva-cell"><span className="ana-pva-k">Stvarno</span><b className={over ? 'red' : 'green'}>{fmt(m.actual)}</b></div>
+            </div>
+            <div className="ana-snap-bar"><div className="ana-snap-fill" style={{ width: `${Math.min(100, Math.max(0, m.accuracyPct))}%`, background: over ? '#ef4444' : '#22c55e' }} /></div>
+            <div className="ana-pva-foot">
+                <span className={over ? 'red' : 'green'}>{over ? 'Prekoračenje ' : 'Ušteda '}{fmt(Math.abs(delta))} ({pct(Math.abs(m.variancePct))})</span>
+                <span className="ana-pva-acc-big">potrefio <b>{pct(m.accuracyPct)}</b></span>
+            </div>
         </div>
     );
 }
@@ -323,27 +355,53 @@ function ProjectsTab({ data }: { data: AnalyticsData }) {
     );
 }
 
-// ── Plan vs Stvarno ──────────────────────────────────────────────────────────
+// ── Plan vs Stvarno — paired trake (Plan vs Stvarno) po projektu ──────────────
+function PairedMetric({ label, m, max }: { label: string; m: PvAMetric; max: number }) {
+    const over = m.actual > m.planned;
+    const delta = Math.round((m.actual - m.planned) * 100) / 100;
+    const pw = max > 0 ? (m.planned / max) * 100 : 0;
+    const aw = max > 0 ? (m.actual / max) * 100 : 0;
+    return (
+        <div className="ana-pm">
+            <div className="ana-pm-label">{label}</div>
+            <div className="ana-pm-bars">
+                <div className="ana-pm-row">
+                    <span className="ana-pm-tag">Plan</span>
+                    <div className="ana-pm-track"><div className="ana-pm-fill plan" style={{ width: `${pw}%` }} /></div>
+                    <span className="ana-pm-val">{fmt(m.planned)}</span>
+                </div>
+                <div className="ana-pm-row">
+                    <span className="ana-pm-tag">Stvarno</span>
+                    <div className="ana-pm-track"><div className="ana-pm-fill" style={{ width: `${aw}%`, background: over ? '#ef4444' : '#22c55e' }} /></div>
+                    <span className="ana-pm-val">{fmt(m.actual)}</span>
+                </div>
+            </div>
+            <div className={`ana-pm-delta ${over ? 'red' : 'green'}`}>{over ? '+' : ''}{fmt(delta)} · {over ? 'preko plana' : 'ušteda'} {pct(Math.abs(m.variancePct))}</div>
+        </div>
+    );
+}
+
 function PlanVsActualTab({ data }: { data: AnalyticsData }) {
     const rows = data.planVsActual.byProject;
-    const maxAbs = Math.max(1, ...rows.map(r => Math.abs(r.variance)));
+    const total = data.planVsActual.total;
+    const maxMat = Math.max(1, ...rows.map(r => Math.max(r.material.planned, r.material.actual)));
+    const maxLab = Math.max(1, ...rows.map(r => Math.max(r.labor.planned, r.labor.actual)));
     return (
         <div className="ana-section">
-            <PlanVsActualCard plannedCost={data.planVsActual.total.plannedLabor} actualCost={data.planVsActual.total.actualLabor} />
-            <table className="ana-table">
-                <thead><tr><th>Projekat</th><th className="r">Plan (ponuda)</th><th className="r">Stvarno</th><th className="r">Razlika</th><th className="ana-barcol">Δ</th></tr></thead>
-                <tbody>
-                    {rows.map(r => (
-                        <tr key={r.projectId || r.projectName}>
-                            <td>{r.projectName}</td>
-                            <td className="r">{fmt(r.plannedLabor)}</td>
-                            <td className="r b">{fmt(r.actualLabor)}</td>
-                            <td className={`r b ${r.variance >= 0 ? 'green' : 'red'}`}>{r.variance >= 0 ? 'ušteda ' : 'prekoračenje '}{fmt(Math.abs(r.variance))} ({pct(Math.abs(r.variancePct))})</td>
-                            <td className="ana-barcol"><HBar value={r.variance} max={maxAbs} color={r.variance >= 0 ? '#22c55e' : '#ef4444'} /></td>
-                        </tr>
-                    ))}
-                </tbody>
-            </table>
+            <div className="ana-grid2">
+                <PvASummary label="Materijal (ponuda vs stvarno)" m={total.material} />
+                <PvASummary label="Rad (ponuda vs stvarno)" m={total.labor} />
+            </div>
+            <div className="ana-card-title" style={{ marginTop: 2 }}>Po projektu — gdje smo potrefili, gdje prešli plan</div>
+            {rows.length === 0 ? <div className="ana-empty">Nema projekata.</div> : rows.map((r, i) => (
+                <div key={i} className="ana-pp">
+                    <div className="ana-pp-name">{r.projectName}</div>
+                    <div className="ana-pp-metrics">
+                        <PairedMetric label="Materijal" m={r.material} max={maxMat} />
+                        <PairedMetric label="Rad" m={r.labor} max={maxLab} />
+                    </div>
+                </div>
+            ))}
         </div>
     );
 }

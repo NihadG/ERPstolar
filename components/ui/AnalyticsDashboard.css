@@ -52,6 +52,78 @@
 .ana-card { background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 14px; }
 .ana-card-title { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: #64748b; margin-bottom: 12px; }
 
+/* Plan vs Stvarno sažetak */
+.ana-pva-row { display: flex; justify-content: space-between; align-items: center; padding: 6px 0; font-size: 13px; color: #475569; border-bottom: 1px solid #f1f5f9; }
+.ana-pva-row b { color: #0f172a; font-weight: 700; }
+.ana-pva-row b.green { color: #16a34a; }
+.ana-pva-row b.red { color: #dc2626; }
+.ana-pva-acc { display: flex; justify-content: space-between; align-items: center; padding: 10px 0 0; font-size: 13px; font-weight: 600; color: #0f172a; }
+.ana-pva-acc b { color: #16a34a; font-size: 16px; }
+
+/* ── Pregled: Hero ── */
+.ana-hero { display: grid; grid-template-columns: 1.4fr 1fr; gap: 14px; }
+@media (max-width: 760px) { .ana-hero { grid-template-columns: 1fr; } }
+.ana-hero-main { border-radius: 14px; padding: 18px 20px; display: flex; flex-direction: column; gap: 4px; border: 1px solid #e2e8f0; }
+.ana-hero-main.pos { background: linear-gradient(135deg, #f0fdf4, #ecfdf5); border-color: #bbf7d0; }
+.ana-hero-main.neg { background: linear-gradient(135deg, #fef2f2, #fff1f2); border-color: #fecaca; }
+.ana-hero-label { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: #64748b; }
+.ana-hero-value { font-size: 34px; font-weight: 800; color: #0f172a; line-height: 1.1; }
+.ana-hero-main.pos .ana-hero-value { color: #15803d; }
+.ana-hero-main.neg .ana-hero-value { color: #b91c1c; }
+.ana-hero-sub { font-size: 12.5px; color: #64748b; }
+.ana-hero-side { display: flex; flex-direction: column; gap: 12px; }
+.ana-hero-kpi { background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 12px 14px; display: flex; flex-direction: column; gap: 2px; }
+.ana-hero-kpi > span { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: #94a3b8; font-weight: 600; }
+.ana-hero-kpi > b { font-size: 18px; font-weight: 800; color: #0f172a; }
+.ana-hero-kpi > em { font-size: 11px; color: #94a3b8; font-style: normal; }
+
+/* ── Trend (SVG line+area) ── */
+.ana-chart { display: flex; flex-direction: column; gap: 6px; }
+.ana-chart-svg { width: 100%; height: 120px; display: block; }
+.ana-chart-x { display: flex; font-size: 10px; color: #94a3b8; }
+.ana-chart-x span { flex: 1; text-align: center; white-space: nowrap; overflow: hidden; }
+
+/* ── Snapshot (klikabilan) ── */
+.ana-snap { display: block; width: 100%; text-align: left; background: #fff; border: 1px solid #e2e8f0; border-radius: 10px; padding: 10px 12px; cursor: pointer; margin-bottom: 8px; transition: border-color 0.15s; }
+.ana-snap:hover { border-color: #16a34a; }
+.ana-snap-head { display: flex; justify-content: space-between; font-size: 13px; font-weight: 600; color: #334155; }
+.ana-snap-head b.green { color: #16a34a; }
+.ana-snap-head b.red { color: #dc2626; }
+.ana-snap-bar { height: 8px; background: #f1f5f9; border-radius: 999px; overflow: hidden; margin: 7px 0; }
+.ana-snap-fill { height: 100%; border-radius: 999px; }
+.ana-snap-sub { font-size: 11.5px; color: #94a3b8; }
+
+/* ── PvASummary (veliki) ── */
+.ana-pva-big { display: flex; align-items: center; gap: 14px; margin-bottom: 10px; }
+.ana-pva-cell { display: flex; flex-direction: column; gap: 2px; }
+.ana-pva-k { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: #94a3b8; font-weight: 600; }
+.ana-pva-cell b { font-size: 20px; font-weight: 800; color: #0f172a; }
+.ana-pva-cell b.green { color: #16a34a; }
+.ana-pva-cell b.red { color: #dc2626; }
+.ana-pva-arrow { font-size: 18px; color: #cbd5e1; }
+.ana-pva-foot { display: flex; justify-content: space-between; align-items: center; margin-top: 8px; font-size: 12.5px; }
+.ana-pva-foot .green { color: #16a34a; font-weight: 600; }
+.ana-pva-foot .red { color: #dc2626; font-weight: 600; }
+.ana-pva-acc-big { color: #64748b; }
+.ana-pva-acc-big b { color: #0f172a; font-size: 14px; }
+
+/* ── Plan vs Stvarno: paired trake po projektu ── */
+.ana-pp { background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 12px 14px; margin-bottom: 10px; }
+.ana-pp-name { font-size: 13.5px; font-weight: 700; color: #0f172a; margin-bottom: 10px; }
+.ana-pp-metrics { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+@media (max-width: 640px) { .ana-pp-metrics { grid-template-columns: 1fr; } }
+.ana-pm-label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: #64748b; font-weight: 700; margin-bottom: 6px; }
+.ana-pm-bars { display: flex; flex-direction: column; gap: 5px; }
+.ana-pm-row { display: grid; grid-template-columns: 54px 1fr 78px; align-items: center; gap: 8px; }
+.ana-pm-tag { font-size: 11px; color: #94a3b8; }
+.ana-pm-track { height: 12px; background: #f1f5f9; border-radius: 4px; overflow: hidden; }
+.ana-pm-fill { height: 100%; border-radius: 4px; }
+.ana-pm-fill.plan { background: #cbd5e1; }
+.ana-pm-val { font-size: 12px; font-weight: 700; color: #0f172a; text-align: right; white-space: nowrap; }
+.ana-pm-delta { margin-top: 6px; font-size: 11.5px; font-weight: 600; }
+.ana-pm-delta.green { color: #16a34a; }
+.ana-pm-delta.red { color: #dc2626; }
+
 /* Trend (weekly bars) */
 .ana-trend { display: flex; align-items: flex-end; gap: 8px; height: 130px; overflow-x: auto; padding-bottom: 4px; }
 .ana-trend-col { display: flex; flex-direction: column; align-items: center; justify-content: flex-end; gap: 5px; min-width: 30px; height: 100%; }
