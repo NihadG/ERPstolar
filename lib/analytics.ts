@@ -48,6 +48,7 @@ export interface ProductRow {
     profit: number; margin: number;                       // STVARNO
     plannedMaterial: number; plannedLabor: number;
     plannedProfit: number; plannedMargin: number;         // PLANIRANO (iz ponude)
+    nonRevenue: boolean;                                  // montaža/teren (bez prihoda) → samo trošak rada
 }
 
 /** Po proizvodu: stvarni profit (živi materijal + stvarni rad) + planirani profit (ponuda). */
@@ -68,6 +69,8 @@ export function aggregateProductRows(inputs: ProductInput[]): ProductRow[] {
             profit, margin: i.selling > 0 ? r2((profit / i.selling) * 100) : 0,
             plannedMaterial: r2(i.plannedMaterial), plannedLabor: r2(i.plannedLabor),
             plannedProfit, plannedMargin: i.selling > 0 ? r2((plannedProfit / i.selling) * 100) : 0,
+            // Montaža/teren nalozi nemaju prihod (prihod je na proizvodnom nalogu) → samo trošak rada.
+            nonRevenue: i.woType === 'Montaža' || (i.selling === 0 && i.liveMaterial === 0 && i.actualLabor > 0),
         };
     });
 }
@@ -182,6 +185,7 @@ export interface Kpis {
     revenue: number; material: number; labor: number; services: number; transport: number;
     profit: number; margin: number; productCount: number;
     plannedMaterial: number; plannedLabor: number; plannedProfit: number;
+    montazaLabor: number;        // od ukupnog rada: koliko je montaža/teren (bez prihoda) — za info
 }
 
 export function computeKpis(rows: ProductRow[]): Kpis {
@@ -193,5 +197,6 @@ export function computeKpis(rows: ProductRow[]): Kpis {
         services: r2(sum(p => p.services)), transport: r2(sum(p => p.transport)),
         profit: r2(profit), margin: revenue > 0 ? r2((profit / revenue) * 100) : 0, productCount: rows.length,
         plannedMaterial: r2(sum(p => p.plannedMaterial)), plannedLabor: r2(sum(p => p.plannedLabor)), plannedProfit: r2(sum(p => p.plannedProfit)),
+        montazaLabor: r2(sum(p => p.nonRevenue ? p.labor : 0)),
     };
 }

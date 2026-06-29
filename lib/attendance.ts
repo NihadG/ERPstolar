@@ -867,6 +867,14 @@ export async function renormalizeWorkerDay(
             if (p === 0.5 || p === 1) { presence = p; break; }
         }
     }
+    // GARDA (#9): upozori (ne nadjačavaj tiho) ako dan već ima drugačiju prisutnost
+    // (npr. ručno pola dana + auto cijeli) — pomaže da se uoči konflikt više izvora/uređaja.
+    const distinctPresence = new Set<number>(
+        docs.map(d => d.data().Presence).filter((p: unknown): p is number => p === 0.5 || p === 1)
+    );
+    if (distinctPresence.size > 1 || (distinctPresence.size === 1 && !distinctPresence.has(presence))) {
+        console.warn(`[renormalizeWorkerDay] konflikt prisutnosti ${workerId} @ ${date}: postoji ${Array.from(distinctPresence).join('/')}, primjenjujem ${presence}.`);
+    }
     // dnevnica = Original_Daily_Rate; fallback na trenutnu dnevnicu radnika ako nedostaje
     let dnevnica = 0;
     for (const d of docs) {
