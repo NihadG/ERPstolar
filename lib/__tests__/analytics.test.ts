@@ -48,6 +48,29 @@ describe('aggregateProjects + INVARIJANTA (Σ proizvod == projekt == KPI)', () =
     });
 });
 
+describe('montaža/teren = ne-prihodovni (#7): samo trošak rada, ne kvari prihod', () => {
+    const withMontaza: ProductInput[] = [
+        ...inputs,
+        { itemId: 'IM', productId: 'PM', productName: 'Teren Begić', projectId: '', projectName: '—', woId: 'WO3', woNumber: '3', woType: 'Montaža', status: 'U toku',
+            selling: 0, liveMaterial: 0, plannedMaterial: 0, actualLabor: 100, plannedLabor: 0, services: 0, transport: 0 },
+    ];
+    test('montaža red: nonRevenue=true, profit = −rad, margin 0', () => {
+        const r = aggregateProductRows(withMontaza);
+        const m = r.find(x => x.productId === 'PM')!;
+        expect(m.nonRevenue).toBe(true);
+        expect(m.profit).toBe(-100);
+        expect(m.margin).toBe(0);
+        const a = r.find(x => x.productId === 'PA')!;
+        expect(a.nonRevenue).toBe(false);
+    });
+    test('KPI: prihod nepromijenjen, montažaLabor izdvojen, profit uključuje trošak', () => {
+        const k = computeKpis(aggregateProductRows(withMontaza));
+        expect(k.revenue).toBe(2400);          // 1000+600+800 (montaža 0 ne diže prihod)
+        expect(k.montazaLabor).toBe(100);
+        expect(k.profit).toBe(1100);           // 1200 − 100 (trošak montaže ispravno smanjuje profit)
+    });
+});
+
 describe('planVsActual — MATERIJAL i RAD, plan (ponuda) vs stvarno', () => {
     const rows = aggregateProductRows(inputs);
     test('ukupno: materijal poskupio, rad ispod plana', () => {
