@@ -485,18 +485,19 @@ export function validateWorkOrderProfitData(workOrder: any): ProfitWarning[] {
  */
 export async function markAttendanceAndRecalculate(
     attendance: Partial<WorkerAttendance>,
-    options?: { skipRecalculation?: boolean; skipAutoBook?: boolean }
-): Promise<{ success: boolean; affectedWorkOrders: string[]; workLogsCreated: number; workLogsDeleted: number }> {
+    options?: { skipRecalculation?: boolean; skipAutoBook?: boolean; deleteManualOnAbsence?: boolean }
+): Promise<{ success: boolean; affectedWorkOrders: string[]; workLogsCreated: number; workLogsDeleted: number; manualKept: number }> {
     try {
         // 1. Save the attendance record
         await saveWorkerAttendance(attendance);
 
         let workLogsCreated = 0;
         let workLogsDeleted = 0;
+        let manualKept = 0;
         const affectedWorkOrderIds = new Set<string>();
 
         if (!attendance.Worker_ID || !attendance.Date || !attendance.Organization_ID) {
-            return { success: true, affectedWorkOrders: [], workLogsCreated: 0, workLogsDeleted: 0 };
+            return { success: true, affectedWorkOrders: [], workLogsCreated: 0, workLogsDeleted: 0, manualKept: 0 };
         }
 
         const firestore = getDb();
@@ -547,14 +548,18 @@ export async function markAttendanceAndRecalculate(
         // ODSUTAN → obriši dnevnice tog dana (ne računaju se).
         if (isAbsent) {
             try {
+                // Po defaultu briši SAMO auto-knjižene; ručne (manual) zadrži osim ako pozivalac
+                // eksplicitno traži brisanje (deleteManualOnAbsence — odluka korisnika kroz upit). Rizik #5.
                 const cleanupResult = await deleteWorkLogsForWorkerOnDate(
                     attendance.Worker_ID,
                     attendance.Date,
-                    attendance.Organization_ID
+                    attendance.Organization_ID,
+                    options?.deleteManualOnAbsence ? undefined : { onlySource: 'attendance' }
                 );
                 workLogsDeleted = cleanupResult.deleted;
-                if (workLogsDeleted > 0) {
-                    console.log(`[ATTENDANCE] ${attendance.Worker_Name} ${attendance.Status} na ${attendance.Date} — obrisano ${workLogsDeleted} dnevnica (ne računaju se).`);
+                manualKept = cleanupResult.manualKept;
+                if (workLogsDeleted > 0 || manualKept > 0) {
+                    console.log(`[ATTENDANCE] ${attendance.Worker_Name} ${attendance.Status} na ${attendance.Date} — obrisano ${workLogsDeleted} auto-dnevnica, zadržano ${manualKept} ručnih.`);
                 }
             } catch (deleteError) {
                 console.error('Work log cleanup on absence failed:', deleteError);
@@ -581,7 +586,7 @@ export async function markAttendanceAndRecalculate(
             }
         }
 
-        return { success: true, affectedWorkOrders: finalAffectedList, workLogsCreated, workLogsDeleted };
+        return { success: true, affectedWorkOrders: finalAffectedList, workLogsCreated, workLogsDeleted, manualKept };
     } catch (error) {
         console.error('Error marking attendance:', error);
         throw error;
@@ -717,7 +722,8 @@ export async function bookWorkerDayItems(
             : new Map<string, WorkOrderItem>();
 
         const workers = await getWorkers(organizationId);
-        const dailyRate = workers.find(w => w.Worker_ID === workerId)?.Daily_Rate || 0;
+        // Cijena VAŽEĆA na datum knjiženja (efektivno-datirana istorija) — ne trenutna (rizik #2).
+        const dailyRate = effectiveDailyRate(workers.find(w => w.Worker_ID === workerId), date);
         const norm = presence === 0.5 ? 0.5 : 1;
 
         const batch = writeBatch(fs);
@@ -820,7 +826,7 @@ async function fetchWorkOrderItemsByIds(itemIds: string[], organizationId: strin
 // Čista logika je u lib/laborSplit.ts (bez Firebase, pokrivena testovima).
 // ════════════════════════════════════════════════════════════════════
 export { splitDnevnica, splitDnevnicaExact, splitDnevnicaByOrder, normalizePresence } from './laborSplit';
-import { splitDnevnicaExact, splitDnevnicaByOrder } from './laborSplit';
+import { splitDnevnicaExact, splitDnevnicaByOrder, effectiveDailyRate } from './laborSplit';
 import { selectAutoBookItemIds, type AutoBookOrder } from './autoBook';
 
 /**
@@ -846,7 +852,9 @@ export async function renormalizeWorkerDay(
     ));
     if (snap.empty) return affected;
 
-    const docs = snap.docs;
+    // Rizik #8: isključi logove OBRISANIH naloga iz podjele (ne smiju naduvati preostale naloge).
+    const docs = snap.docs.filter(d => d.data().Work_Order_Deleted !== true);
+    if (docs.length === 0) return affected;
 
     // presence je per-(radnik, dan): hint (zadnja korisnička namjera) ima prednost,
     // inače eksplicitni Presence sa zapisa, inače 1.
@@ -867,7 +875,13 @@ export async function renormalizeWorkerDay(
     }
     if (dnevnica <= 0) {
         const workers = await getWorkers(organizationId);
-        dnevnica = workers.find(w => w.Worker_ID === workerId)?.Daily_Rate || 0;
+        dnevnica = effectiveDailyRate(workers.find(w => w.Worker_ID === workerId), date);
+    }
+    // GARDA (#1): ako i dalje nemamo dnevnicu (radnik obrisan / bez cijene) — NE upisuj nule;
+    // ostavi postojeće logove netaknute da se istorijski trošak ne izgubi.
+    if (dnevnica <= 0) {
+        console.warn(`[renormalizeWorkerDay] preskočeno: nepoznata dnevnica za ${workerId} @ ${date} — ne nuliram ${docs.length} log(ova).`);
+        return affected;
     }
 
     // DVONIVOVSKA PODJELA: grupiši logove po NALOGU → udio po nalogu, pa po proizvodu.
@@ -2528,12 +2542,12 @@ export async function resplitWorkerDailyRate(
     try {
         const firestore = getDb();
 
-        // Get worker's full daily rate
+        // Get worker's full daily rate VAŽEĆU na datum (efektivno-datirano; rizik #2)
         const allWorkers = await getWorkers(organizationId);
         const worker = allWorkers.find(w => w.Worker_ID === workerId);
-        if (!worker || !worker.Daily_Rate) return;
-
-        const fullRate = worker.Daily_Rate;
+        const fullRate = effectiveDailyRate(worker, date);
+        // GARDA (#1): nepoznata cijena (obrisan radnik) → ne diraj logove (ne nuliraj).
+        if (!worker || fullRate <= 0) return;
 
         // Find ALL work logs for this worker on this date
         const logsQuery = query(
@@ -2546,13 +2560,17 @@ export async function resplitWorkerDailyRate(
 
         if (logsSnap.empty) return;
 
-        // Count total active assignments (= number of work logs for this date)
-        const totalAssignments = logsSnap.size;
+        // Rizik #8: ne računaj logove obrisanih naloga u podjelu.
+        const liveLogs = logsSnap.docs.filter(d => d.data().Work_Order_Deleted !== true);
+        if (liveLogs.length === 0) return;
+
+        // Count total active assignments (= number of live work logs for this date)
+        const totalAssignments = liveLogs.length;
         const splitRate = Math.round((fullRate / totalAssignments) * 100) / 100;
 
         // Update each log with new split rate
         const batch = writeBatch(firestore);
-        logsSnap.docs.forEach(logDoc => {
+        liveLogs.forEach(logDoc => {
             batch.update(logDoc.ref, {
                 Daily_Rate: splitRate,
                 Original_Daily_Rate: fullRate,
@@ -3171,8 +3189,11 @@ export async function recalculateWorkOrder(
             // PRICE-MODAL FIX: If Material_Cost was manually set (Material_Cost_Source === 'manual'),
             // preserve the stored value — user explicitly entered this price.
             let itemMaterialCost = 0;
-            if (item.Status === 'Završeno' && (item.Material_Cost || 0) > 0) {
-                // Completed: use stored/frozen cost
+            // Rizik #3: materijal je ZAMRZNUT za stavku koja je ikad završena (ima Completed_At) —
+            // ostaje zamrznut i ako se status privremeno vrati na 'U toku' (naknadno knjiženje).
+            const matFrozen = item.Status === 'Završeno' || !!item.Completed_At;
+            if (matFrozen && (item.Material_Cost || 0) > 0) {
+                // Završeno/zamrznuto: koristi pohranjeni trošak
                 itemMaterialCost = item.Material_Cost || 0;
             } else if ((item as any).Material_Cost_Source === 'manual' && (item.Material_Cost || 0) > 0) {
                 // Manually set via PriceEditModal: preserve user's value

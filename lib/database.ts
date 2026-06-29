@@ -5330,9 +5330,10 @@ export async function deleteWorkLog(workLogId: string, organizationId: string): 
 export async function deleteWorkLogsForWorkerOnDate(
     workerId: string,
     date: string,
-    organizationId: string
-): Promise<{ deleted: number }> {
-    if (!organizationId) return { deleted: 0 };
+    organizationId: string,
+    options?: { onlySource?: 'attendance' }
+): Promise<{ deleted: number; manualKept: number }> {
+    if (!organizationId) return { deleted: 0, manualKept: 0 };
 
     try {
         const firestore = getDb();
@@ -5344,15 +5345,26 @@ export async function deleteWorkLogsForWorkerOnDate(
         );
         const snapshot = await getDocs(q);
 
-        if (snapshot.empty) return { deleted: 0 };
+        if (snapshot.empty) return { deleted: 0, manualKept: 0 };
 
-        // Batch delete all matching work logs
+        // onlySource:'attendance' → briše SAMO auto-knjižene; RUČNE (Booking_Source='manual') čuva (rizik #5).
+        const onlyAuto = options?.onlySource === 'attendance';
+        const toDelete = onlyAuto
+            ? snapshot.docs.filter(d => d.data().Booking_Source !== 'manual')
+            : snapshot.docs;
+        const manualKept = onlyAuto
+            ? snapshot.docs.filter(d => d.data().Booking_Source === 'manual').length
+            : 0;
+
+        if (toDelete.length === 0) return { deleted: 0, manualKept };
+
+        // Batch delete matching work logs
         const batch = writeBatch(firestore);
-        snapshot.docs.forEach(doc => batch.delete(doc.ref));
+        toDelete.forEach(doc => batch.delete(doc.ref));
         await batch.commit();
 
-        console.log(`Deleted ${snapshot.size} work logs for worker ${workerId} on ${date}`);
-        return { deleted: snapshot.size };
+        console.log(`Deleted ${toDelete.length} work logs for worker ${workerId} on ${date} (kept ${manualKept} manual)`);
+        return { deleted: toDelete.length, manualKept };
     } catch (error) {
         console.error('deleteWorkLogsForWorkerOnDate error:', error);
         throw error; // Propagate error — caller must handle inconsistency

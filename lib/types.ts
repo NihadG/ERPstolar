@@ -252,7 +252,8 @@ export interface Worker {
     Worker_Type: 'Glavni' | 'Pomoćnik';
     Phone: string;
     Status: string;
-    Daily_Rate?: number;      // Dnevnica u KM
+    Daily_Rate?: number;      // Dnevnica u KM (trenutna/posljednja)
+    Daily_Rate_History?: { Effective_From: string; Rate: number }[];  // efektivno-datirana istorija dnevnice
     Specializations?: string[];
 }
 

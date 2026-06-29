@@ -76,6 +76,20 @@ export async function saveWorker(
                         rateChanged = true;
                         oldRate = existing.Daily_Rate || 0;
                         newRate = data.Daily_Rate;
+
+                        // Efektivno-datirana istorija: stare dnevnice (prošli dani) ostaju po staroj
+                        // cijeni; nova vrijedi od danas. Sprječava da retroaktivni unos koristi novu
+                        // cijenu za prošle datume (rizik #2).
+                        const today = new Date().toISOString().split('T')[0];
+                        const prevHist = Array.isArray(existing.Daily_Rate_History)
+                            ? existing.Daily_Rate_History.slice() : [];
+                        if (prevHist.length === 0 && oldRate > 0) {
+                            prevHist.push({ Effective_From: '1970-01-01', Rate: oldRate });
+                        }
+                        const cleaned = prevHist.filter(h => (h?.Effective_From || '').split('T')[0] !== today);
+                        cleaned.push({ Effective_From: today, Rate: newRate });
+                        cleaned.sort((a, b) => (a.Effective_From || '').localeCompare(b.Effective_From || ''));
+                        data.Daily_Rate_History = cleaned;
                     }
                 }
 
@@ -187,11 +201,27 @@ export async function deleteWorker(
         }
 
         const ref = await findRef(COLLECTIONS.WORKERS, 'Worker_ID', workerId, organizationId);
-        if (ref) {
-            const { deleteDoc } = await import('firebase/firestore');
-            await deleteDoc(ref);
+        if (!ref) return { success: true, message: 'Radnik obrisan' };
+
+        // Ima li radnik ikakvu istoriju (dnevnice / prisustvo)? Ako DA → SOFT-DELETE (Status='Obrisan'),
+        // da se ne izgubi/ne nulira istorijski trošak (rizik #1). Hard-delete samo ako nema istorije.
+        const [logsSnap, attSnap] = await Promise.all([
+            getDocs(query(collection(db, COLLECTIONS.WORK_LOGS),
+                where('Worker_ID', '==', workerId), where('Organization_ID', '==', organizationId))),
+            getDocs(query(collection(db, COLLECTIONS.WORKER_ATTENDANCE),
+                where('Worker_ID', '==', workerId), where('Organization_ID', '==', organizationId))),
+        ]);
+
+        if (!logsSnap.empty || !attSnap.empty) {
+            await updateDocByRef(ref, { Status: 'Obrisan', Deleted_At: new Date().toISOString() });
+            return {
+                success: true,
+                message: 'Radnik arhiviran — ima istoriju rada, pa dnevnice i prisustvo ostaju netaknuti.'
+            };
         }
 
+        const { deleteDoc } = await import('firebase/firestore');
+        await deleteDoc(ref);
         return { success: true, message: 'Radnik obrisan' };
     } catch (error) {
         console.error('deleteWorker error:', error);

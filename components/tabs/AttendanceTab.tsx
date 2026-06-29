@@ -13,6 +13,7 @@ import {
     startWorkOrder,
     getWorkOrder,
     toggleItemPause,
+    recalculateWorkOrder,
 } from '@/lib/services';
 import { isWorkerAssignedToAutoItem } from '@/lib/autoBook';
 import { buildBookingProposal, type ProposalRow } from '@/lib/attendanceBooking';
@@ -279,8 +280,11 @@ export default function AttendanceTab({ workers, workOrders, onRefresh, showToas
                 } else {
                     showToast('Prisustvo sačuvano', 'success');
                 }
+            } else if (result.manualKept > 0) {
+                // Odsutan, ali ima RUČNIH dnevnica → zadržane (ne brišemo ručni unos bez potvrde). Rizik #5.
+                showToast(`Prisustvo sačuvano — zadržano ${result.manualKept} ručnih dnevnica (provjeri ručno ako ne treba)`, 'info');
             } else if (result.workLogsDeleted > 0) {
-                // Odsutan → dnevnice tog dana uklonjene (ne računaju se).
+                // Odsutan → auto-dnevnice tog dana uklonjene (ne računaju se).
                 showToast(`Prisustvo sačuvano — uklonjeno ${result.workLogsDeleted} dnevnica (odsutan se ne računa)`, 'info');
             } else {
                 showToast('Prisustvo sačuvano', 'success');
@@ -435,9 +439,12 @@ export default function AttendanceTab({ workers, workOrders, onRefresh, showToas
                 }
             }
 
-            // Odsutni dani uklanjaju postojeće dnevnice.
+            // Odsutni dani uklanjaju auto-dnevnice; ručne se zadržavaju (rizik #5).
             const totalDeleted = results.reduce((sum, r) => sum + r.workLogsDeleted, 0);
-            if (totalDeleted > 0) {
+            const totalManualKept = results.reduce((sum, r) => sum + (r.manualKept || 0), 0);
+            if (totalManualKept > 0) {
+                showToast(`Prisustvo sačuvano — uklonjeno ${totalDeleted} auto-dnevnica, zadržano ${totalManualKept} ručnih`, 'info');
+            } else if (totalDeleted > 0) {
                 showToast(`Prisustvo sačuvano za ${workersToUpdate.length} radnika — uklonjeno ${totalDeleted} dnevnica (odsutni)`, 'info');
             } else {
                 showToast(`Prisustvo sačuvano za ${workersToUpdate.length} radnika`, 'success');
@@ -506,17 +513,25 @@ export default function AttendanceTab({ workers, workOrders, onRefresh, showToas
         const orgId = organizationId || '';
         const date = confirmDate;
         let booked = 0;
+        const affectedOrders = new Set<string>();
+        const touchedCompleted = new Set<string>();
+        const noteAffected = (orderId: string) => {
+            affectedOrders.add(orderId);
+            if (workOrders.find(w => w.Work_Order_ID === orderId)?.Status === 'Završeno') touchedCompleted.add(orderId);
+        };
         try {
             for (const d of decisions) {
                 if (d.kind === 'present') {
                     for (const orderId of d.orderIds) {
                         booked += await bookWorkerToOrder(d.workerId, d.workerName, date, orgId, orderId);
+                        noteAffected(orderId);
                     }
                 } else {
                     const c = d.choice;
                     if (c.mode === 'none') continue;
                     if (c.mode === 'order') {
                         booked += await bookWorkerToOrder(d.workerId, d.workerName, date, orgId, c.workOrderId);
+                        noteAffected(c.workOrderId);
                     } else if (c.mode === 'new') {
                         // Brzi montažni nalog: jedna placeholder stavka (nuliran novac), radnik dodijeljen.
                         const productId = (typeof crypto !== 'undefined' && crypto.randomUUID)
@@ -547,6 +562,7 @@ export default function AttendanceTab({ workers, workOrders, onRefresh, showToas
                                     [{ workOrderId: full.Work_Order_ID, itemId: item.ID, productId: item.Product_ID }], 1
                                 );
                                 booked += res.created;
+                                affectedOrders.add(full.Work_Order_ID);
                             }
                         } else {
                             showToast(created.message || 'Greška pri kreiranju montažnog naloga', 'error');
@@ -554,6 +570,16 @@ export default function AttendanceTab({ workers, workOrders, onRefresh, showToas
                     }
                 }
             }
+
+            // Preračunaj pogođene naloge: osvježi Actual_Labor_Cost/Profit na dokumentu naloga;
+            // završeni nalozi pritom dobiju NOVI production snapshot (rizik #4) + dosljedan prikaz.
+            for (const orderId of Array.from(affectedOrders)) {
+                try { await recalculateWorkOrder(orderId); } catch (e) { console.warn('recalc failed', orderId, e); }
+            }
+            if (touchedCompleted.size > 0) {
+                showToast(`Ažurirano ${touchedCompleted.size} završen${touchedCompleted.size > 1 ? 'a naloga' : ' nalog'} — profit preračunat`, 'info');
+            }
+
             if (booked > 0) showToast(`Proknjiženo ${booked} dnevnica`, 'success');
             else showToast('Dnevnice nisu knjižene', 'info');
             onRefresh('workers', 'workOrders');

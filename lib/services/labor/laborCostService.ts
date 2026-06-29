@@ -14,8 +14,8 @@ import type { WorkerAttendance } from '../../types';
 
 export async function markAttendanceAndRecalculate(
     attendance: Partial<WorkerAttendance>,
-    options?: { skipRecalculation?: boolean; skipAutoBook?: boolean }
-): Promise<{ success: boolean; affectedWorkOrders: string[]; workLogsCreated: number; workLogsDeleted: number }> {
+    options?: { skipRecalculation?: boolean; skipAutoBook?: boolean; deleteManualOnAbsence?: boolean }
+): Promise<{ success: boolean; affectedWorkOrders: string[]; workLogsCreated: number; workLogsDeleted: number; manualKept: number }> {
     const { markAttendanceAndRecalculate: _mark } = await import('../../attendance');
     const result = await _mark(attendance, options);
 

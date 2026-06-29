@@ -56,6 +56,36 @@ export function splitDnevnica(dnevnica: number, presence: number, n: number): nu
  * @param orderItemCounts broj proizvoda po nalogu, npr. [12, 1] = prvi nalog 12, drugi 1
  * @returns amounts[oi][j] i dayFractions[oi][j] u istom redoslijedu kao orderItemCounts
  */
+export interface RateHistoryEntry { Effective_From: string; Rate: number }
+
+/**
+ * Dnevnica radnika VAŽEĆA na zadati datum (YYYY-MM-DD). Čita iz `Daily_Rate_History`
+ * (najkasniji unos čiji je `Effective_From` ≤ date). Ako je datum prije svih unosa →
+ * najraniji poznati. Ako nema istorije → fallback na trenutnu `Daily_Rate`.
+ * Sprječava da retroaktivni unos ili preračun starog dana koristi pogrešnu (današnju) cijenu.
+ */
+export function effectiveDailyRate(
+    worker: { Daily_Rate?: number; Daily_Rate_History?: RateHistoryEntry[] } | undefined | null,
+    date: string
+): number {
+    if (!worker) return 0;
+    const hist = worker.Daily_Rate_History;
+    if (Array.isArray(hist) && hist.length > 0 && date) {
+        const d = date.split('T')[0];
+        let best: RateHistoryEntry | undefined; let bestFrom = '';
+        let earliest: RateHistoryEntry | undefined; let earliestFrom = '';
+        for (const h of hist) {
+            if (!h || typeof h.Rate !== 'number' || !h.Effective_From) continue;
+            const ef = h.Effective_From.split('T')[0];
+            if (!earliest || ef < earliestFrom) { earliest = h; earliestFrom = ef; }
+            if (ef <= d && (!best || ef > bestFrom)) { best = h; bestFrom = ef; }
+        }
+        if (best) return best.Rate;
+        if (earliest) return earliest.Rate;
+    }
+    return worker.Daily_Rate || 0;
+}
+
 export function splitDnevnicaByOrder(
     dnevnica: number,
     presence: number,
