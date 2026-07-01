@@ -428,6 +428,84 @@
     border-radius: 0 0 12px 12px;
 }
 
+/* Quick inline rename — avoids re-running the whole edit wizard just to change the name */
+.order-name-edit-row {
+    padding: 14px 20px 0;
+}
+
+.order-name-edit-trigger {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    border: none;
+    background: transparent;
+    color: var(--text-secondary);
+    font-size: 13px;
+    font-weight: 500;
+    padding: 4px 0;
+    cursor: pointer;
+}
+
+.order-name-edit-trigger:hover {
+    color: var(--accent);
+}
+
+.order-name-edit-trigger .material-icons-round {
+    font-size: 15px;
+}
+
+.order-name-edit-inline {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.order-name-edit-inline input {
+    flex: 1;
+    min-width: 0;
+    height: 36px;
+    box-sizing: border-box;
+    padding: 0 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    font-size: 14px;
+    color: var(--text-primary);
+    background: var(--background);
+}
+
+.order-name-edit-inline input:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-light);
+}
+
+.order-name-edit-inline button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    width: 32px;
+    height: 32px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--background);
+    color: var(--text-secondary);
+    cursor: pointer;
+}
+
+.order-name-edit-inline button:first-of-type {
+    color: var(--accent);
+    border-color: var(--accent);
+}
+
+.order-name-edit-inline button:hover {
+    background: var(--surface-hover);
+}
+
+.order-name-edit-inline .material-icons-round {
+    font-size: 18px;
+}
+
 .products-header {
     display: flex;
     align-items: center;
@@ -878,6 +956,47 @@
     display: flex;
     align-items: center;
     gap: 12px;
+}
+
+.wizard-order-name-row {
+    margin-bottom: 20px;
+}
+
+.wizard-order-name-field {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    max-width: 480px;
+}
+
+.wizard-order-name-field > span {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-secondary);
+}
+
+.wizard-order-name-field > span em {
+    font-style: normal;
+    font-weight: 400;
+    color: var(--text-tertiary);
+}
+
+.wizard-order-name-field > input {
+    height: 42px;
+    box-sizing: border-box;
+    padding: 0 14px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    font-size: 14px;
+    color: var(--text-primary);
+    background: var(--background);
+    transition: var(--transition);
+}
+
+.wizard-order-name-field > input:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-light);
 }
 
 .total-price {

@@ -5,6 +5,7 @@ interface Option {
     value: string;
     label: string;
     subLabel?: string;
+    badge?: { text: string; tone?: 'active' | 'neutral' };  // small status pill next to the label in the dropdown list
 }
 
 interface SearchableSelectProps {
@@ -141,7 +142,12 @@ export function SearchableSelect({ options, value, onChange, placeholder = 'Pret
                                         handleSelect(option);
                                     }}
                                 >
-                                    <div className="item-label">{option.label}</div>
+                                    <div className="item-label">
+                                        <span>{option.label}</span>
+                                        {option.badge && (
+                                            <span className={`item-badge item-badge--${option.badge.tone || 'neutral'}`}>{option.badge.text}</span>
+                                        )}
+                                    </div>
                                     {option.subLabel && <div className="item-sublabel">{option.subLabel}</div>}
                                     {value === option.value && <span className="material-icons-round check-icon">check</span>}
                                 </div>
@@ -269,14 +275,30 @@ export function SearchableSelect({ options, value, onChange, placeholder = 'Pret
                 }
 
                 :global(.item-label) {
+                    display: flex;
+                    align-items: center;
+                    gap: 6px;
                     font-size: 14px;
                     font-weight: 500;
                 }
 
+                :global(.item-badge) {
+                    flex-shrink: 0;
+                    font-size: 10px;
+                    font-weight: 600;
+                    line-height: 1.4;
+                    padding: 2px 7px;
+                    border-radius: 999px;
+                }
+
+                :global(.item-badge--active) { background: #e5f2ff; color: #0071e3; }
+                :global(.item-badge--neutral) { background: #f3f4f6; color: #6b7280; }
+
                 :global(.item-sublabel) {
                     font-size: 12px;
                     color: #6b7280;
-                    margin-top: 1px;
+                    margin-top: 2px;
+                    line-height: 1.45;
                 }
 
                 :global(.check-icon) {

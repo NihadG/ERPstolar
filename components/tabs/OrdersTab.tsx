@@ -2,7 +2,7 @@
 
 import { useState, useMemo, useEffect } from 'react';
 import type { Order, Supplier, Project, ProductMaterial, OrderItem } from '@/lib/types';
-import { createOrder, deleteOrder, updateOrderStatus, markOrderSent, markMaterialsReceived, getOrder, deleteOrderItemsByIds, updateOrderItem, recalculateOrderTotal } from '@/lib/services';
+import { createOrder, saveOrder, deleteOrder, updateOrderStatus, markOrderSent, markMaterialsReceived, getOrder, deleteOrderItemsByIds, updateOrderItem, recalculateOrderTotal } from '@/lib/services';
 import { useData } from '@/context/DataContext';
 import { generateOrderPDF, generatePDFFromHTML, type OrderPDFData } from '@/lib/pdfGenerator';
 import { DropdownMenu } from '@/components/ui/DropdownMenu';
@@ -50,6 +50,7 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
     const [selectedProductIds, setSelectedProductIds] = useState<Set<string>>(new Set());
     const [selectedSupplierIds, setSelectedSupplierIds] = useState<Set<string>>(new Set());
     const [selectedMaterialIds, setSelectedMaterialIds] = useState<Set<string>>(new Set());
+    const [orderName, setOrderName] = useState('');
 
     // Custom quantity state for materials
     const [orderQuantities, setOrderQuantities] = useState<Record<string, number>>({});
@@ -72,6 +73,22 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
 
     // Editing order state
     const [editingOrderId, setEditingOrderId] = useState<string | null>(null);
+
+    // Quick inline rename (independent from the full edit wizard)
+    const [renamingOrderId, setRenamingOrderId] = useState<string | null>(null);
+    const [orderNameDraft, setOrderNameDraft] = useState('');
+
+    async function saveOrderName(order: Order) {
+        const name = orderNameDraft.trim();
+        setRenamingOrderId(null);
+        if (name === (order.Name || '')) return;
+        const result = await saveOrder({ Order_ID: order.Order_ID, Name: name }, organizationId!);
+        if (result.success) {
+            onRefresh('orders');
+        } else {
+            showToast(result.message, 'error');
+        }
+    }
 
     // Order type modal (combined vs separate when multiple suppliers)
     const [orderTypeModal, setOrderTypeModal] = useState(false);
@@ -129,6 +146,7 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
                 setSelectedProjectIds(projectIds);
                 setSelectedProductIds(productIds);
                 setSelectedMaterialIds(materialIdsSet);
+                setOrderName('');
 
                 // Open wizard at step 4 (material selection)
                 setWizardStep(4);
@@ -419,6 +437,7 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
         setSelectedMaterialIds(new Set());
         setOrderQuantities({});
         setOnStockQuantities({});
+        setOrderName('');
         setEditingOrderId(null);
         setWizardModal(true);
     }
@@ -625,6 +644,7 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
                 const totalAmount = items.reduce((sum, item) => sum + item.Expected_Price, 0);
 
                 return createOrder({
+                    Name: orderName.trim() || undefined,
                     Supplier_ID: supplierId,
                     Supplier_Name: supplierName,
                     Total_Amount: totalAmount,
@@ -793,6 +813,7 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
         setSelectedMaterialIds(materialIds);
         setOrderQuantities(quantities);
         setOnStockQuantities({});
+        setOrderName(order.Name || '');
 
         // Store the order being edited so we can delete it on re-creation
         setEditingOrderId(order.Order_ID);
@@ -1701,6 +1722,37 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
 
                                                 {/* Expanded Content */}
                                                 <div className={`project-products ${isExpanded ? 'expanded' : ''}`}>
+                                                    <div className="order-name-edit-row" onClick={e => e.stopPropagation()}>
+                                                        {renamingOrderId === order.Order_ID ? (
+                                                            <div className="order-name-edit-inline">
+                                                                <input
+                                                                    type="text"
+                                                                    value={orderNameDraft}
+                                                                    onChange={e => setOrderNameDraft(e.target.value)}
+                                                                    onKeyDown={e => {
+                                                                        if (e.key === 'Enter') saveOrderName(order);
+                                                                        if (e.key === 'Escape') setRenamingOrderId(null);
+                                                                    }}
+                                                                    placeholder="Naziv narudžbe…"
+                                                                    autoFocus
+                                                                />
+                                                                <button onClick={() => saveOrderName(order)} title="Sačuvaj">
+                                                                    <span className="material-icons-round">check</span>
+                                                                </button>
+                                                                <button onClick={() => setRenamingOrderId(null)} title="Otkaži">
+                                                                    <span className="material-icons-round">close</span>
+                                                                </button>
+                                                            </div>
+                                                        ) : (
+                                                            <button
+                                                                className="order-name-edit-trigger"
+                                                                onClick={() => { setOrderNameDraft(order.Name || ''); setRenamingOrderId(order.Order_ID); }}
+                                                            >
+                                                                <span className="material-icons-round">edit</span>
+                                                                {order.Name ? 'Promijeni naziv narudžbe' : 'Dodaj naziv narudžbe'}
+                                                            </button>
+                                                        )}
+                                                    </div>
                                                     <div className="products-header">
                                                         <h4>Stavke narudžbe ({itemCount})</h4>
                                                         {selectedItemIds.size > 0 && (
@@ -1843,6 +1895,8 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
                 onStockQuantities={onStockQuantities}
                 setOrderQuantity={(id, qty) => setOrderQuantities(prev => ({ ...prev, [id]: qty }))}
                 setOnStockQuantity={(id, qty) => setOnStockQuantities(prev => ({ ...prev, [id]: qty }))}
+                orderName={orderName}
+                setOrderName={setOrderName}
             />
 
             {/* Delete Order Confirmation Modal */}

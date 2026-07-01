@@ -14,6 +14,7 @@ import type { WorkOrder, Worker, WorkOrderItem, WorkLog } from '@/lib/types';
 import ProductTimelineModal from './ProductTimelineModal';
 import WorkOrderWorkLog from './WorkOrderWorkLog';
 import ProcessGraphModal from './ProcessGraphModal';
+import ItemProcessChecklist from './ItemProcessChecklist';
 import { workOrderDisplayName } from '@/lib/utils';
 
 interface WorkOrderExpandedDetailProps {
@@ -445,6 +446,18 @@ export default function WorkOrderExpandedDetail({
                                             </button>
                                         )}
                                     </div>
+
+                                    {/* Procesi proizvoda — označi završeno (radnik + datum + pomoćnici) */}
+                                    {item.Processes && item.Processes.length > 0 && (
+                                        <ItemProcessChecklist
+                                            workOrderId={workOrder.Work_Order_ID}
+                                            itemId={item.ID}
+                                            processes={item.Processes}
+                                            workers={workers}
+                                            onChanged={() => { onRefresh?.('workOrders'); reloadWorkLogs(); }}
+                                            showToast={showToast}
+                                        />
+                                    )}
 
                                     {/* Detalji (cijena/materijal/rad, po radniku, plan vs stvarno) na zahtjev — u modalu */}
                                     <button className="details-link" onClick={() => setTimelineItem(item)}>

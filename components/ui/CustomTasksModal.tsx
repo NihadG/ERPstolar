@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { Plus, X, Loader2, ClipboardList, AlertTriangle } from 'lucide-react';
 import Modal from './Modal';
 import { SearchableSelect } from './SearchableSelect';
@@ -15,6 +15,9 @@ interface CustomTasksModalProps {
     organizationId: string;
     onCreated: (...collections: string[]) => void;
     showToast: (message: string, type: 'success' | 'error' | 'info') => void;
+    zIndex?: number;               // for stacking on top of another open modal
+    initialWorkerId?: string;      // pre-select a worker on the first task row when opened
+    onOrderCreated?: (workOrderId: string, workOrderNumber: string) => void; // fired on success, in addition to onCreated
 }
 
 interface TaskRow {
@@ -26,11 +29,22 @@ interface TaskRow {
 
 const uid = () => (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `id-${Date.now()}-${Math.random()}`);
 
-export default function CustomTasksModal({ isOpen, onClose, workOrders, workers, organizationId, onCreated, showToast }: CustomTasksModalProps) {
-    const [rows, setRows] = useState<TaskRow[]>([{ id: uid(), text: '' }]);
+export default function CustomTasksModal({ isOpen, onClose, workOrders, workers, organizationId, onCreated, showToast, zIndex, initialWorkerId, onOrderCreated }: CustomTasksModalProps) {
+    const [rows, setRows] = useState<TaskRow[]>([{ id: uid(), text: '', workerId: initialWorkerId }]);
     const [notes, setNotes] = useState('');
     const [dueDate, setDueDate] = useState('');
     const [saving, setSaving] = useState(false);
+
+    // Component may stay mounted across opens (parent toggles `isOpen`), so
+    // re-seed a clean, pre-filled state every time it actually opens.
+    useEffect(() => {
+        if (isOpen) {
+            setRows([{ id: uid(), text: '', workerId: initialWorkerId }]);
+            setNotes('');
+            setDueDate('');
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [isOpen]);
 
     const workerOptions = useMemo(
         () => workers.map(w => ({ value: w.Worker_ID, label: w.Name, subLabel: `${w.Worker_Type} · ${w.Daily_Rate || 0} KM` })),
@@ -112,6 +126,7 @@ export default function CustomTasksModal({ isOpen, onClose, workOrders, workers,
             if (res.success) {
                 showToast(`Nalog "Razni poslovi" kreiran (${items.length} zadataka)`, 'success');
                 onCreated('workOrders');
+                if (res.data) onOrderCreated?.(res.data.Work_Order_ID, res.data.Work_Order_Number);
                 reset();
                 onClose();
             } else {
@@ -126,7 +141,7 @@ export default function CustomTasksModal({ isOpen, onClose, workOrders, workers,
     };
 
     return (
-        <Modal isOpen={isOpen} onClose={onClose} title="Razni poslovi — nalog sa zadacima" size="large" footer={null}>
+        <Modal isOpen={isOpen} onClose={onClose} title="Razni poslovi — nalog sa zadacima" size="large" footer={null} zIndex={zIndex}>
             <div className="ctm">
                 <p className="ctm-intro">
                     Zadaci koji nisu proizvodi iz baze (izrada paleta, čišćenje pogona…). Dodijeli radnika da
@@ -210,13 +225,21 @@ export default function CustomTasksModal({ isOpen, onClose, workOrders, workers,
             </div>
 
             <style jsx>{`
-                .ctm { display: flex; flex-direction: column; gap: 24px; padding: 4px 4px 0; }
+                /* Single source of truth for every form control's box (input,
+                   date field, and the SearchableSelect trigger below) so none
+                   of them drift apart in height/radius/border/font again. */
+                .ctm {
+                    --ctm-control-h: 42px;
+                    --ctm-radius: var(--radius-sm);
+                    --ctm-font: 14px;
+                    display: flex; flex-direction: column; gap: 24px; padding: 4px 4px 0;
+                }
                 .ctm-intro { font-size: 13px; color: var(--text-secondary); line-height: 1.6; margin: 0; }
 
                 .ctm-section { display: flex; flex-direction: column; gap: 14px; }
                 .ctm-section-head {
                     display: flex; align-items: center; gap: 10px;
-                    font-size: 12px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-secondary);
+                    font-size: 14px; font-weight: 700; color: var(--text-primary);
                 }
                 .ctm-count {
                     display: inline-flex; align-items: center; justify-content: center; min-width: 20px; height: 20px; padding: 0 6px;
@@ -235,9 +258,10 @@ export default function CustomTasksModal({ isOpen, onClose, workOrders, workers,
                     font-size: 12px; font-weight: 700; color: var(--text-secondary); background: var(--surface);
                 }
                 .ctm-input {
-                    flex: 1; min-width: 0; height: 40px; box-sizing: border-box;
-                    border: 1px solid var(--border); border-radius: var(--radius-sm);
-                    padding: 0 12px; font-size: 14px; font-weight: 500; color: var(--text-primary); background: var(--background);
+                    flex: 1; min-width: 0; height: var(--ctm-control-h); box-sizing: border-box;
+                    border: 1px solid var(--border); border-radius: var(--ctm-radius);
+                    padding: 0 14px; font-size: var(--ctm-font); font-weight: 500; color: var(--text-primary); background: var(--background);
+                    transition: var(--transition);
                 }
                 .ctm-input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-light); }
                 .ctm-remove {
@@ -249,15 +273,53 @@ export default function CustomTasksModal({ isOpen, onClose, workOrders, workers,
 
                 .ctm-task-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; padding-left: 38px; }
                 .ctm-grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-                .ctm-field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
-                .ctm-field > span { font-size: 12px; color: var(--text-secondary); font-weight: 600; }
+
+                /* Field caption + control — shared by native inputs (Rok, Napomena)
+                   and the SearchableSelect fields (Radnik, Poveži s proizvodom).
+                   .ctm-field is itself the label element, so resetting text-transform
+                   here (not uppercase, not any other case) also fixes the global
+                   .modal label text-transform:uppercase rule that was inherited
+                   all the way down into the SearchableSelect trigger text. */
+                .ctm-field { display: flex; flex-direction: column; gap: 6px; min-width: 0; text-transform: none; }
+                .ctm-field > span { font-size: 13px; color: var(--text-secondary); font-weight: 600; text-transform: none; letter-spacing: normal; }
                 .ctm-field > span em { font-style: normal; color: var(--text-tertiary); font-weight: 400; }
                 .ctm-field > input {
-                    height: 40px; box-sizing: border-box;
-                    border: 1px solid var(--border); border-radius: var(--radius-sm);
-                    padding: 0 12px; font-size: 14px; color: var(--text-primary); background: var(--background);
+                    height: var(--ctm-control-h); box-sizing: border-box;
+                    border: 1px solid var(--border); border-radius: var(--ctm-radius);
+                    padding: 0 14px; font-size: var(--ctm-font); color: var(--text-primary); background: var(--background);
+                    transition: var(--transition);
                 }
                 .ctm-field > input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-light); }
+
+                /* SearchableSelect renders its own trigger box — pin it to the
+                   exact same height/radius/border/font as the inputs above so
+                   nothing in this modal is a different size from anything else. */
+                .ctm-field :global(.searchable-select-trigger) {
+                    height: var(--ctm-control-h) !important;
+                    box-sizing: border-box !important;
+                    padding: 0 14px !important;
+                    border: 1px solid var(--border) !important;
+                    border-radius: var(--ctm-radius) !important;
+                    background: var(--background) !important;
+                    box-shadow: none !important;
+                }
+                .ctm-field :global(.searchable-select-trigger.active) {
+                    border-color: var(--accent) !important;
+                    box-shadow: 0 0 0 3px var(--accent-light) !important;
+                }
+                .ctm-field :global(.trigger-text) {
+                    font-size: var(--ctm-font) !important;
+                    font-weight: 500 !important;
+                    color: var(--text-primary) !important;
+                }
+                .ctm-field :global(.trigger-text.placeholder) {
+                    color: var(--text-tertiary) !important;
+                    font-weight: 400 !important;
+                }
+                .ctm-field :global(.trigger-icon) {
+                    color: var(--text-tertiary) !important;
+                    font-size: 18px !important;
+                }
 
                 .ctm-add {
                     align-self: flex-start; display: inline-flex; align-items: center; gap: 6px;

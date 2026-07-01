@@ -205,6 +205,29 @@
     box-shadow: 0 0 0 3px var(--accent-light);
 }
 
+/* SearchableSelect ("Postojeći nalog") renders its own trigger box — match it
+   to the select/input style above so it isn't a visibly different size/shape. */
+.abcm-opt-control .searchable-select-trigger {
+    padding: 9px 12px !important;
+    border: 1px solid var(--border) !important;
+    border-radius: var(--radius-md) !important;
+    background: var(--background) !important;
+    box-shadow: none !important;
+}
+.abcm-opt-control .searchable-select-trigger.active {
+    border-color: var(--accent) !important;
+    box-shadow: 0 0 0 3px var(--accent-light) !important;
+}
+.abcm-opt-control .trigger-text {
+    font-size: 14px !important;
+    font-weight: 500 !important;
+    color: var(--text-primary) !important;
+}
+.abcm-opt-control .trigger-text.placeholder {
+    color: var(--text-tertiary) !important;
+    font-weight: 400 !important;
+}
+
 /* ── Footer ────────────────────────────────────────────────── */
 .abcm-foot {
     display: flex;

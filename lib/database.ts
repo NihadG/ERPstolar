@@ -2119,6 +2119,7 @@ export async function createOrder(
             Order_ID: orderId,
             Organization_ID: organizationId,
             Order_Number: orderNumber,
+            ...(data.Name && data.Name.trim() && { Name: data.Name.trim() }),
             Supplier_ID: data.Supplier_ID || '',
             Supplier_Name: data.Supplier_Name || '',
             Order_Date: new Date().toISOString(),
@@ -4055,6 +4056,7 @@ export async function updateWorkOrder(workOrderId: string, updates: Partial<Work
         if (updates.Status) updateData.Status = updates.Status;
         if (updates.Due_Date) updateData.Due_Date = updates.Due_Date;
         if (updates.Notes !== undefined) updateData.Notes = updates.Notes;
+        if (updates.Name !== undefined) updateData.Name = updates.Name;
         if (updates.Production_Steps) updateData.Production_Steps = updates.Production_Steps;
 
         if (updates.Status === 'Završeno' && !updates.Completed_Date) {

@@ -1,10 +1,12 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import type { WorkOrder } from '@/lib/types';
+import type { WorkOrder, Worker } from '@/lib/types';
 import type { ProposalRow, PresentOrderOption } from '@/lib/attendanceBooking';
 import { workOrderDisplayName, formatDate } from '@/lib/utils';
 import Modal from './Modal';
+import CustomTasksModal from './CustomTasksModal';
+import { SearchableSelect } from './SearchableSelect';
 import { CheckCircle2, Car, Plus, Ban, ClipboardList, RotateCcw } from 'lucide-react';
 import './AttendanceBookingConfirmModal.css';
 
@@ -17,8 +19,7 @@ export interface PresentDecision {
 }
 
 export type TerenChoice =
-    | { mode: 'order'; workOrderId: string }   // postojeći nalog (aktivan ili neaktivan)
-    | { mode: 'new'; name: string }            // novi montažni nalog
+    | { mode: 'order'; workOrderId: string }   // postojeći nalog (aktivan ili neaktivan) — uključujući tek kreiran
     | { mode: 'none' };                        // ništa
 
 export interface TerenDecision {
@@ -30,8 +31,10 @@ export interface TerenDecision {
 
 export type BookingDecision = PresentDecision | TerenDecision;
 
-type TerenMode = 'order' | 'new' | 'none';
-interface TerenState { mode: TerenMode; orderId: string; newName: string }
+// 'creating' = korisnik je otvorio "Razni poslovi" da napravi novi nalog za ovog
+// radnika; nije stvaran izbor, samo prelazno UI stanje dok se čeka kreiranje.
+type TerenMode = 'order' | 'creating' | 'none';
+interface TerenState { mode: TerenMode; orderId: string }
 
 interface Props {
     isOpen: boolean;
@@ -39,7 +42,11 @@ interface Props {
     date: string;
     rows: ProposalRow[];
     workOrders: WorkOrder[];
+    workers: Worker[];
+    organizationId: string;
     onConfirm: (decisions: BookingDecision[]) => Promise<void>;
+    onCreated: (...collections: string[]) => void;
+    showToast: (message: string, type: 'success' | 'error' | 'info') => void;
 }
 
 function initials(name: string): string {
@@ -49,7 +56,7 @@ function initials(name: string): string {
     return (a + b).toUpperCase() || '?';
 }
 
-export default function AttendanceBookingConfirmModal({ isOpen, onClose, date, rows, workOrders, onConfirm }: Props) {
+export default function AttendanceBookingConfirmModal({ isOpen, onClose, date, rows, workOrders, workers, organizationId, onConfirm, onCreated, showToast }: Props) {
     const presentRows = rows.filter((r): r is Extract<ProposalRow, { kind: 'present' }> => r.kind === 'present');
     const terenRows = rows.filter((r): r is Extract<ProposalRow, { kind: 'teren' }> => r.kind === 'teren');
 
@@ -60,6 +67,19 @@ export default function AttendanceBookingConfirmModal({ isOpen, onClose, date, r
         [workOrders]
     );
     const firstOrderId = activeOrders[0]?.Work_Order_ID || inactiveOrders[0]?.Work_Order_ID || '';
+
+    // Puno pretraživa lista naloga (aktivni prvo) s pregledom 2-3 proizvoda po
+    // nalogu — mnogi nalozi imaju slična imena, pa naziv sam po sebi nije dovoljan
+    // da se razlikuju; pregled stavki i status (bedž) to rješavaju.
+    const orderOptions = useMemo(
+        () => [...activeOrders, ...inactiveOrders].map(w => ({
+            value: w.Work_Order_ID,
+            label: workOrderDisplayName(w),
+            subLabel: orderItemsPreview(w),
+            badge: { text: w.Status, tone: (w.Status === 'U toku' ? 'active' : 'neutral') as 'active' | 'neutral' },
+        })),
+        [activeOrders, inactiveOrders]
+    );
 
     // State: izabrani nalozi po prisutnom radniku (default = predčekirani).
     const [checks, setChecks] = useState<Record<string, Set<string>>>(() => {
@@ -75,13 +95,15 @@ export default function AttendanceBookingConfirmModal({ isOpen, onClose, date, r
             init[r.workerId] = {
                 mode: r.suggestedWorkOrderId ? 'order' : 'none',
                 orderId: r.suggestedWorkOrderId || firstOrderId,
-                newName: '',
             };
         });
         return init;
     });
 
     const [saving, setSaving] = useState(false);
+
+    // Radnik za kojeg je trenutno otvoren "Razni poslovi" modal (kreiranje novog naloga).
+    const [creatingFor, setCreatingFor] = useState<{ workerId: string; workerName: string } | null>(null);
 
     function toggleOrder(workerId: string, orderId: string) {
         setChecks(prev => {
@@ -103,15 +125,40 @@ export default function AttendanceBookingConfirmModal({ isOpen, onClose, date, r
         setTeren(prev => ({ ...prev, [workerId]: { ...prev[workerId], ...patch } }));
     }
 
+    // "Novi nalog" otvara ISTI modal kao dugme "Razni poslovi" — jedini ispravni
+    // način da se nalog kreira. Nije zaseban ad-hoc put kreiranja.
+    function openCreateOrder(workerId: string, workerName: string) {
+        setTerenField(workerId, { mode: 'creating' });
+        setCreatingFor({ workerId, workerName });
+    }
+
+    // Nalog uspješno kreiran u "Razni poslovi" modalu → tretiraj kao normalan
+    // izbor postojećeg naloga (isti, provjereni put knjiženja pri potvrdi).
+    function handleOrderCreated(workerId: string, workOrderId: string) {
+        setTerenField(workerId, { mode: 'order', orderId: workOrderId });
+        setCreatingFor(null);
+    }
+
+    // Otkazano bez kreiranja → vrati na "ništa" umjesto da ostane zaglavljeno u 'creating'.
+    function closeCreateOrder() {
+        if (creatingFor) {
+            setTeren(prev => {
+                const cur = prev[creatingFor.workerId];
+                if (cur?.mode !== 'creating') return prev;
+                return { ...prev, [creatingFor.workerId]: { ...cur, mode: 'none' } };
+            });
+        }
+        setCreatingFor(null);
+    }
+
     // Koliko radnika će dobiti dnevnicu (za sažetak u footeru).
     const willBook = useMemo(() => {
         let n = 0;
         for (const r of presentRows) if ((checks[r.workerId]?.size || 0) > 0) n++;
         for (const r of terenRows) {
             const s = teren[r.workerId];
-            if (!s || s.mode === 'none') continue;
-            if (s.mode === 'order' && s.orderId) n++;
-            else if (s.mode === 'new') n++;
+            if (!s || s.mode !== 'order' || !s.orderId) continue;
+            n++;
         }
         return n;
     }, [presentRows, terenRows, checks, teren]);
@@ -124,9 +171,9 @@ export default function AttendanceBookingConfirmModal({ isOpen, onClose, date, r
         }
         for (const r of terenRows) {
             const s = teren[r.workerId];
-            let choice: TerenChoice = { mode: 'none' };
-            if (s.mode === 'order' && s.orderId) choice = { mode: 'order', workOrderId: s.orderId };
-            else if (s.mode === 'new') choice = { mode: 'new', name: s.newName.trim() || `Teren ${date}` };
+            const choice: TerenChoice = (s.mode === 'order' && s.orderId)
+                ? { mode: 'order', workOrderId: s.orderId }
+                : { mode: 'none' };
             out.push({ kind: 'teren', workerId: r.workerId, workerName: r.workerName, choice });
         }
         return out;
@@ -243,44 +290,24 @@ export default function AttendanceBookingConfirmModal({ isOpen, onClose, date, r
                                     </div>
                                     {s.mode === 'order' && (
                                         <div className="abcm-opt-control">
-                                            <select value={s.orderId}
-                                                onChange={e => setTerenField(r.workerId, { mode: 'order', orderId: e.target.value })}>
-                                                {activeOrders.length === 0 && inactiveOrders.length === 0 && <option value="">— nema naloga —</option>}
-                                                {activeOrders.length > 0 && (
-                                                    <optgroup label="Aktivni">
-                                                        {activeOrders.map(w => (
-                                                            <option key={w.Work_Order_ID} value={w.Work_Order_ID}>{workOrderDisplayName(w)}</option>
-                                                        ))}
-                                                    </optgroup>
-                                                )}
-                                                {inactiveOrders.length > 0 && (
-                                                    <optgroup label="Ostali">
-                                                        {inactiveOrders.map(w => (
-                                                            <option key={w.Work_Order_ID} value={w.Work_Order_ID}>
-                                                                {workOrderDisplayName(w)} · {w.Status}
-                                                            </option>
-                                                        ))}
-                                                    </optgroup>
-                                                )}
-                                            </select>
+                                            <SearchableSelect
+                                                options={orderOptions}
+                                                value={s.orderId}
+                                                onChange={v => setTerenField(r.workerId, { mode: 'order', orderId: v })}
+                                                placeholder={orderOptions.length === 0 ? '— nema naloga —' : 'Pretraži naloge…'}
+                                            />
                                         </div>
                                     )}
                                 </label>
 
-                                {/* (b) novi montažni nalog */}
-                                <label className={`abcm-opt${s.mode === 'new' ? ' is-on' : ''}`}>
+                                {/* (b) novi nalog — otvara isti "Razni poslovi" modal kao svugdje drugo */}
+                                <label className={`abcm-opt${s.mode === 'creating' ? ' is-on' : ''}`}>
                                     <div className="abcm-opt-row">
-                                        <input type="radio" name={`teren-${r.workerId}`} checked={s.mode === 'new'}
-                                            onChange={() => setTerenField(r.workerId, { mode: 'new' })} />
-                                        <span className="abcm-opt-label"><Plus size={15} /> Novi montažni nalog</span>
-                                        <span className="abcm-opt-hint">kreiraj odmah</span>
+                                        <input type="radio" name={`teren-${r.workerId}`} checked={s.mode === 'creating'}
+                                            onChange={() => openCreateOrder(r.workerId, r.workerName)} />
+                                        <span className="abcm-opt-label"><Plus size={15} /> Novi nalog</span>
+                                        <span className="abcm-opt-hint">otvara "Razni poslovi"</span>
                                     </div>
-                                    {s.mode === 'new' && (
-                                        <div className="abcm-opt-control">
-                                            <input type="text" value={s.newName} placeholder="Naziv ili lokacija terena…"
-                                                onChange={e => setTerenField(r.workerId, { mode: 'new', newName: e.target.value })} />
-                                        </div>
-                                    )}
                                 </label>
 
                                 {/* (c) ništa */}
@@ -296,12 +323,35 @@ export default function AttendanceBookingConfirmModal({ isOpen, onClose, date, r
                     );
                 })}
             </div>
+
+            {creatingFor && (
+                <CustomTasksModal
+                    isOpen={!!creatingFor}
+                    onClose={closeCreateOrder}
+                    workOrders={workOrders}
+                    workers={workers}
+                    organizationId={organizationId}
+                    onCreated={onCreated}
+                    showToast={showToast}
+                    zIndex={2000}
+                    initialWorkerId={creatingFor.workerId}
+                    onOrderCreated={(workOrderId) => handleOrderCreated(creatingFor.workerId, workOrderId)}
+                />
+            )}
         </Modal>
     );
 }
 
 function byName(a: WorkOrder, b: WorkOrder) {
     return workOrderDisplayName(a).localeCompare(workOrderDisplayName(b));
+}
+
+// Do 3 naziva proizvoda/zadataka s naloga, za razlikovanje naloga sličnih imena.
+function orderItemsPreview(w: WorkOrder): string {
+    const names = Array.from(new Set((w.items || []).map(i => i.Product_Name).filter(Boolean)));
+    if (names.length === 0) return 'Bez stavki';
+    const shown = names.slice(0, 3).join(', ');
+    return names.length > 3 ? `${shown} +${names.length - 3}` : shown;
 }
 
 function plural(n: number): string {

@@ -75,6 +75,8 @@ interface OrderWizardModalProps {
     onStockQuantities: Record<string, number>;
     setOrderQuantity: (materialId: string, quantity: number) => void;
     setOnStockQuantity: (materialId: string, quantity: number) => void;
+    orderName: string;
+    setOrderName: (name: string) => void;
 }
 
 function GroupedMaterialsStep({
@@ -88,6 +90,8 @@ function GroupedMaterialsStep({
     onStockQuantities,
     setOrderQuantity,
     setOnStockQuantity,
+    orderName,
+    setOrderName,
 }: {
     filteredMaterials: Material[];
     selectedMaterialIds: Set<string>;
@@ -99,6 +103,8 @@ function GroupedMaterialsStep({
     onStockQuantities: Record<string, number>;
     setOrderQuantity: (materialId: string, quantity: number) => void;
     setOnStockQuantity: (materialId: string, quantity: number) => void;
+    orderName: string;
+    setOrderName: (name: string) => void;
 }) {
     // Group materials by Material_Name + Unit
     const groupedMaterials = useMemo(() => {
@@ -198,6 +204,17 @@ function GroupedMaterialsStep({
 
     return (
         <div className="wizard-step-container">
+            <div className="wizard-order-name-row">
+                <label className="wizard-order-name-field">
+                    <span>Naziv narudžbe <em>(opciono)</em></span>
+                    <input
+                        type="text"
+                        value={orderName}
+                        onChange={e => setOrderName(e.target.value)}
+                        placeholder="npr. Ploče za kuhinju — Projekat Sarajevo"
+                    />
+                </label>
+            </div>
             <div className="step-header-row">
                 <div>
                     <h3>Odaberite materijale</h3>
@@ -385,7 +402,9 @@ export function OrderWizardModal({
     onStockQuantities,
     setOrderQuantity,
     setOnStockQuantity,
-    isEditing
+    isEditing,
+    orderName,
+    setOrderName,
 }: OrderWizardModalProps) {
     const canGoNext =
         (wizardStep === 1 && selectedProjectIds.size > 0) ||
@@ -623,6 +642,8 @@ export function OrderWizardModal({
                             onStockQuantities={onStockQuantities}
                             setOrderQuantity={setOrderQuantity}
                             setOnStockQuantity={setOnStockQuantity}
+                            orderName={orderName}
+                            setOrderName={setOrderName}
                         />
                     )}
                 </div>

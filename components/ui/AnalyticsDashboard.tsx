@@ -58,6 +58,9 @@ export default function AnalyticsDashboard({ onClose, showToast, onRefresh }: An
     // Drill u timeline proizvoda
     const [timeline, setTimeline] = useState<{ itemId: string; productId: string; productName: string; woId: string; status: string; selling: number; material: number; labor: number } | null>(null);
     const [timelineLogs, setTimelineLogs] = useState<WorkLog[]>([]);
+
+    // Drill u kalendar rada po projektu (dan-po-dan)
+    const [projectCal, setProjectCal] = useState<{ projectId: string; projectName: string } | null>(null);
     const [loadingTimeline, setLoadingTimeline] = useState(false);
 
     // Dohvat JEDNOM (otvaranje / Osvježi). Promjena perioda/opsega = in-memory (bez novog upita).
@@ -158,7 +161,7 @@ export default function AnalyticsDashboard({ onClose, showToast, onRefresh }: An
                     ) : tab === 'overview' ? (
                         <Overview data={data} onGoTo={setTab} />
                     ) : tab === 'projects' ? (
-                        <ProjectsTab data={data} />
+                        <ProjectsTab data={data} onPick={(projectId, projectName) => setProjectCal({ projectId, projectName })} />
                     ) : tab === 'products' ? (
                         <div className="ana-section">
                             <div className="ana-search"><Search size={16} /><input placeholder="Pretraži proizvode/projekte…" value={search} onChange={e => setSearch(e.target.value)} /></div>
@@ -212,6 +215,15 @@ export default function AnalyticsDashboard({ onClose, showToast, onRefresh }: An
                         else showToast?.(res.message, 'error');
                         return res;
                     }}
+                />
+            )}
+
+            {projectCal && raw && (
+                <ProjectWorkCalendar
+                    raw={raw}
+                    projectId={projectCal.projectId}
+                    projectName={projectCal.projectName}
+                    onClose={() => setProjectCal(null)}
                 />
             )}
         </>
@@ -331,15 +343,16 @@ function Kpi({ label, value, tone, big }: { label: string; value: string; tone?:
 }
 
 // ── Projekti ─────────────────────────────────────────────────────────────────
-function ProjectsTab({ data }: { data: AnalyticsData }) {
+function ProjectsTab({ data, onPick }: { data: AnalyticsData; onPick: (projectId: string, projectName: string) => void }) {
     const maxAbs = Math.max(1, ...data.projects.map(p => Math.abs(p.profit)));
     return (
         <div className="ana-section">
+            <div className="ana-hint">Klikni projekt za kalendar rada (dan-po-dan: ko je i na čemu radio).</div>
             <table className="ana-table">
-                <thead><tr><th>Projekat</th><th className="r">Prihod</th><th className="r">Materijal</th><th className="r">Rad</th><th className="r">Profit</th><th className="r">Marža</th><th className="ana-barcol">Profit</th></tr></thead>
+                <thead><tr><th>Projekat</th><th className="r">Prihod</th><th className="r">Materijal</th><th className="r">Rad</th><th className="r">Profit</th><th className="r">Marža</th><th className="ana-barcol">Profit</th><th></th></tr></thead>
                 <tbody>
                     {data.projects.map(p => (
-                        <tr key={p.projectId || p.projectName}>
+                        <tr key={p.projectId || p.projectName} className="ana-row-click" onClick={() => onPick(p.projectId, p.projectName)} title="Otvori kalendar rada">
                             <td>{p.projectName} <span className="muted">· {p.productCount} prod.</span></td>
                             <td className="r">{fmt(p.revenue)}</td>
                             <td className="r">{fmt(p.material)}</td>
@@ -347,11 +360,239 @@ function ProjectsTab({ data }: { data: AnalyticsData }) {
                             <td className={`r b ${p.profit >= 0 ? 'green' : 'red'}`}>{fmt(p.profit)}</td>
                             <td className={`r ${p.margin >= 0 ? 'green' : 'red'}`}>{pct(p.margin)}</td>
                             <td className="ana-barcol"><HBar value={p.profit} max={maxAbs} color={p.profit >= 0 ? '#22c55e' : '#ef4444'} /></td>
+                            <td className="r"><span className="ana-link">Kalendar →</span></td>
                         </tr>
                     ))}
                 </tbody>
             </table>
         </div>
+    );
+}
+
+// ── Kalendar rada po projektu (mjesečna mreža: avatari radnika + detalj dana) ──
+const PWC_MONTHS = ['Januar', 'Februar', 'Mart', 'April', 'Maj', 'Juni', 'Juli', 'August', 'Septembar', 'Oktobar', 'Novembar', 'Decembar'];
+const PWC_DOW = ['Pon', 'Uto', 'Sri', 'Čet', 'Pet', 'Sub', 'Ned'];
+const PWC_COLORS = ['#3b82f6', '#7c3aed', '#db2777', '#d97706', '#059669', '#0891b2', '#dc2626', '#4f46e5'];
+
+function pwcInitials(name: string): string {
+    const parts = (name || '').trim().split(/\s+/).filter(Boolean);
+    return ((parts[0]?.[0] || '') + (parts.length > 1 ? parts[parts.length - 1][0] : '')).toUpperCase() || '?';
+}
+function pwcColor(name: string): string {
+    let h = 0;
+    for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0;
+    return PWC_COLORS[h % PWC_COLORS.length];
+}
+
+function buildMonthDays(year: number, month: number): { iso: string; day: number; inMonth: boolean; weekend: boolean }[] {
+    const first = new Date(year, month, 1);
+    const startDow = (first.getDay() + 6) % 7;                  // ponedjeljak = 0
+    const last = new Date(year, month + 1, 0);
+    const endPad = 6 - ((last.getDay() + 6) % 7);
+    const cur = new Date(year, month, 1 - startDow);
+    const end = new Date(year, month, last.getDate() + endPad);
+    const out: { iso: string; day: number; inMonth: boolean; weekend: boolean }[] = [];
+    while (cur <= end) {
+        const dow = cur.getDay();
+        out.push({ iso: toISO(cur), day: cur.getDate(), inMonth: cur.getMonth() === month, weekend: dow === 0 || dow === 6 });
+        cur.setDate(cur.getDate() + 1);
+    }
+    return out;
+}
+
+interface PwcEntry { worker: string; product: string; productId: string; woNumber: string }
+
+function ProjectWorkCalendar({ raw, projectId, projectName, onClose }: { raw: AnalyticsRaw; projectId: string; projectName: string; onClose: () => void }) {
+    // Ključ projekta IDENTIČAN agregaciji (aggregateProjects): Project_ID || Project_Name || '—'.
+    const projKey = projectId || projectName || '—';
+
+    const idx = useMemo(() => {
+        const byItem = new Map<string, { product: string; productId: string; woId: string }>();
+        for (const it of raw.items) {
+            if ((it.Project_ID || it.Project_Name || '—') !== projKey) continue;
+            byItem.set(it.ID, { product: it.Product_Name || 'Proizvod', productId: it.Product_ID || '', woId: it.Work_Order_ID || '' });
+        }
+        const woNum = new Map(raw.workOrders.map(w => [w.Work_Order_ID, w.Work_Order_Number]));
+        return { byItem, woNum };
+    }, [raw, projKey]);
+
+    // Datum → zapisi rada — STROGO po stavkama ovog projekta (po Work_Order_Item_ID).
+    const byDate = useMemo(() => {
+        const m = new Map<string, PwcEntry[]>();
+        for (const l of raw.logs) {
+            const hit = l.Work_Order_Item_ID ? idx.byItem.get(l.Work_Order_Item_ID) : undefined;
+            if (!hit) continue;
+            const date = (l.Date || '').split('T')[0];
+            if (!date) continue;
+            const arr = m.get(date) || [];
+            arr.push({ worker: l.Worker_Name || 'Radnik', product: hit.product, productId: hit.productId, woNumber: hit.woId ? (idx.woNum.get(hit.woId) || '') : '' });
+            m.set(date, arr);
+        }
+        return m;
+    }, [raw, idx]);
+
+    const allDates = useMemo(() => Array.from(byDate.keys()).sort(), [byDate]);
+    const latest = allDates[allDates.length - 1];
+    const initD = latest ? new Date(latest + 'T12:00:00') : new Date();
+    const [ym, setYm] = useState<{ y: number; m: number }>({ y: initD.getFullYear(), m: initD.getMonth() });
+    const [selDay, setSelDay] = useState<string | null>(latest || null);
+    const [selWorker, setSelWorker] = useState<string | null>(null);
+    const todayIso = toISO(new Date());
+
+    // Legenda + filter: radnici sa brojem radnih dana (cijeli projekt).
+    const workerList = useMemo(() => {
+        const m = new Map<string, Set<string>>();
+        byDate.forEach((arr, date) => arr.forEach(e => { const s = m.get(e.worker) || new Set<string>(); s.add(date); m.set(e.worker, s); }));
+        return Array.from(m.entries()).map(([worker, dates]) => ({ worker, days: dates.size })).sort((a, b) => b.days - a.days || a.worker.localeCompare(b.worker));
+    }, [byDate]);
+
+    // Zapisi za dan uz aktivni filter radnika.
+    const dayEntries = useCallback((iso: string) => {
+        const all = byDate.get(iso) || [];
+        return selWorker ? all.filter(e => e.worker === selWorker) : all;
+    }, [byDate, selWorker]);
+
+    const days = useMemo(() => buildMonthDays(ym.y, ym.m), [ym]);
+    const monthStats = useMemo(() => {
+        let dws = 0; const w = new Set<string>();
+        days.forEach(d => {
+            if (!d.inMonth) return;
+            const es = (byDate.get(d.iso) || []).filter(e => !selWorker || e.worker === selWorker);
+            if (es.length) { dws++; es.forEach(e => w.add(e.worker)); }
+        });
+        return { daysWorked: dws, workers: w.size };
+    }, [days, byDate, selWorker]);
+
+    const totals = useMemo(() => {
+        const w = new Set<string>();
+        byDate.forEach(arr => arr.forEach(e => w.add(e.worker)));
+        return { days: byDate.size, workers: w.size };
+    }, [byDate]);
+
+    const shiftMonth = (delta: number) => setYm(prev => { const d = new Date(prev.y, prev.m + delta, 1); return { y: d.getFullYear(), m: d.getMonth() }; });
+    const goToday = () => { const d = new Date(); setYm({ y: d.getFullYear(), m: d.getMonth() }); };
+
+    // Detalj izabranog dana (poštuje filter radnika): radnik → uredan skup proizvoda.
+    const selByWorker = useMemo(() => {
+        const entries = selDay ? (byDate.get(selDay) || []).filter(e => !selWorker || e.worker === selWorker) : [];
+        const m = new Map<string, Map<string, string>>();
+        for (const e of entries) {
+            const wm = m.get(e.worker) || new Map<string, string>();
+            wm.set(e.productId || e.product, e.woNumber ? `${e.product} · #${e.woNumber}` : e.product);
+            m.set(e.worker, wm);
+        }
+        return Array.from(m.entries()).map(([worker, prods]) => ({ worker, products: Array.from(prods.values()) }));
+    }, [selDay, byDate, selWorker]);
+    const selProducts = useMemo(() => { const s = new Set<string>(); selByWorker.forEach(w => w.products.forEach(p => s.add(p))); return s.size; }, [selByWorker]);
+
+    return (
+        <>
+            <div className="ana-overlay pwc-overlay" onClick={onClose} />
+            <div className="pwc-modal">
+                <div className="pwc-head">
+                    <div className="pwc-title">
+                        <span className="pwc-title-main">{projectName || '—'}</span>
+                        <span className="pwc-title-sub">
+                            {totals.days > 0 ? `${totals.days} radnih dana · ${totals.workers} radnika ukupno` : 'Nema evidentiranog rada'}
+                        </span>
+                    </div>
+                    <div className="pwc-nav">
+                        <button className="ana-icon-btn" onClick={() => shiftMonth(-1)} aria-label="Prethodni mjesec">‹</button>
+                        <span className="pwc-monthlabel">{PWC_MONTHS[ym.m]} {ym.y}{monthStats.daysWorked > 0 ? ` · ${monthStats.daysWorked} dana` : ''}</span>
+                        <button className="ana-icon-btn" onClick={() => shiftMonth(1)} aria-label="Sljedeći mjesec">›</button>
+                        <button className="pwc-today-btn" onClick={goToday}>Danas</button>
+                        <button className="ana-icon-btn" onClick={onClose} aria-label="Zatvori"><X size={18} /></button>
+                    </div>
+                </div>
+
+                <div className="pwc-body">
+                    {totals.days === 0 ? (
+                        <div className="pwc-empty">Na ovom projektu još nema evidentiranog rada (dnevnica).</div>
+                    ) : (
+                        <>
+                            {/* Filter / legenda radnika (boja + broj dana) */}
+                            <div className="pwc-filters">
+                                <button className={`pwc-fchip${!selWorker ? ' on' : ''}`} onClick={() => setSelWorker(null)}>Svi radnici</button>
+                                {workerList.map(({ worker, days: wd }) => (
+                                    <button key={worker} className={`pwc-fchip${selWorker === worker ? ' on' : ''}`}
+                                        onClick={() => setSelWorker(s => s === worker ? null : worker)} title={`${worker} · ${wd} radnih dana`}>
+                                        <span className="pwc-fdot" style={{ background: pwcColor(worker) }} />
+                                        <span className="pwc-fname">{worker}</span>
+                                        <span className="pwc-fdays">{wd}</span>
+                                    </button>
+                                ))}
+                            </div>
+
+                            <div className="pwc-dowrow">
+                                {PWC_DOW.map(d => <div key={d} className="pwc-dowcell">{d}</div>)}
+                            </div>
+                            <div className="pwc-grid">
+                                {days.map(d => {
+                                    const entries = dayEntries(d.iso);
+                                    const workers = Array.from(new Set(entries.map(e => e.worker)));
+                                    const productCount = new Set(entries.map(e => e.productId || e.product)).size;
+                                    const cls = ['pwc-cell'];
+                                    if (!d.inMonth) cls.push('out');
+                                    if (d.weekend) cls.push('wknd');
+                                    if (workers.length) cls.push('has');
+                                    if (d.iso === todayIso) cls.push('today');
+                                    if (selDay === d.iso) cls.push('sel');
+                                    const prods = selWorker ? Array.from(new Set(entries.map(e => e.product))) : [];
+                                    return (
+                                        <button key={d.iso} className={cls.join(' ')}
+                                            onClick={() => workers.length && setSelDay(d.iso)}
+                                            disabled={!workers.length}
+                                            title={workers.length ? `${workers.length} radnika · ${productCount} proizvoda` : ''}>
+                                            <span className="pwc-cnum">{d.day}</span>
+                                            {workers.length > 0 && (selWorker ? (
+                                                <div className="pwc-cone">
+                                                    <span className="pwc-av" style={{ background: pwcColor(selWorker) }}>{pwcInitials(selWorker)}</span>
+                                                    <span className="pwc-cprods" title={prods.join(', ')}>{prods.slice(0, 2).join(', ')}{prods.length > 2 ? ` +${prods.length - 2}` : ''}</span>
+                                                </div>
+                                            ) : (
+                                                <>
+                                                    <div className="pwc-stack">
+                                                        {workers.slice(0, 4).map(w => <span key={w} className="pwc-av" style={{ background: pwcColor(w) }} title={w}>{pwcInitials(w)}</span>)}
+                                                        {workers.length > 4 && <span className="pwc-av pwc-more">+{workers.length - 4}</span>}
+                                                    </div>
+                                                    <span className="pwc-cprod">{productCount} {productCount === 1 ? 'proizvod' : 'proizvoda'}</span>
+                                                </>
+                                            ))}
+                                        </button>
+                                    );
+                                })}
+                            </div>
+
+                            <div className="pwc-detail">
+                                {selDay && selByWorker.length > 0 ? (
+                                    <>
+                                        <div className="pwc-dhead">
+                                            <span className="pwc-dtitle">{new Date(selDay + 'T12:00:00').toLocaleDateString('hr-HR', { weekday: 'long', day: 'numeric', month: 'long' })}</span>
+                                            <span className="pwc-dmeta">{selByWorker.length} {selByWorker.length === 1 ? 'radnik' : 'radnika'} · {selProducts} {selProducts === 1 ? 'proizvod' : 'proizvoda'}</span>
+                                        </div>
+                                        <div className="pwc-dgrid">
+                                            {selByWorker.map(({ worker, products }) => (
+                                                <div key={worker} className="pwc-wcard">
+                                                    <span className="pwc-wav" style={{ background: pwcColor(worker) }}>{pwcInitials(worker)}</span>
+                                                    <div className="pwc-wbody">
+                                                        <div className="pwc-wname">{worker}</div>
+                                                        <div className="pwc-wchips">
+                                                            {products.map((p, i) => <span key={i} className="pwc-pchip">{p}</span>)}
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </>
+                                ) : (
+                                    <div className="pwc-dempty">{selWorker ? `Nema dana za ${selWorker} u ovom mjesecu — probaj drugi.` : 'Klikni dan označen avatarima da vidiš ko je i na čemu radio.'}</div>
+                                )}
+                            </div>
+                        </>
+                    )}
+                </div>
+            </div>
+        </>
     );
 }
 

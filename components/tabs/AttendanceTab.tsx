@@ -9,9 +9,7 @@ import {
     autoPopulateWeekends,
     formatLocalDateISO,
     bookWorkerDayItems,
-    createWorkOrder,
     startWorkOrder,
-    getWorkOrder,
     toggleItemPause,
     recalculateWorkOrder,
 } from '@/lib/services';
@@ -475,10 +473,6 @@ export default function AttendanceTab({ workers, workOrders, onRefresh, showToas
     // KNJIŽENJE NA POTVRDU (iz upita)
     // ============================================
 
-    function workerDailyRate(workerId: string): number {
-        return workers.find(w => w.Worker_ID === workerId)?.Daily_Rate || 0;
-    }
-
     // Proknjiži dnevnicu radnika na izabrani nalog: bira dodijeljene (ili sve) nezavršene stavke,
     // POKRENE PONOVO pauzirane stavke i starta nalog ako je još „Na čekanju". Vrati broj zapisa.
     async function bookWorkerToOrder(workerId: string, workerName: string, date: string, orgId: string, workOrderId: string): Promise<number> {
@@ -532,41 +526,6 @@ export default function AttendanceTab({ workers, workOrders, onRefresh, showToas
                     if (c.mode === 'order') {
                         booked += await bookWorkerToOrder(d.workerId, d.workerName, date, orgId, c.workOrderId);
                         noteAffected(c.workOrderId);
-                    } else if (c.mode === 'new') {
-                        // Brzi montažni nalog: jedna placeholder stavka (nuliran novac), radnik dodijeljen.
-                        const productId = (typeof crypto !== 'undefined' && crypto.randomUUID)
-                            ? crypto.randomUUID() : `teren-${Date.now()}`;
-                        const created = await createWorkOrder({
-                            Work_Order_Type: 'Montaža',
-                            Production_Steps: ['Montaža'],
-                            Name: c.name,
-                            Notes: `Kreirano iz šihtarice (teren) · ${date}`,
-                            items: [{
-                                Product_ID: productId,
-                                Product_Name: c.name,
-                                Project_ID: '',
-                                Project_Name: '',
-                                Quantity: 1,
-                                Product_Value: 0, Material_Cost: 0, Transport_Share: 0, Services_Total: 0,
-                                Planned_Labor_Cost: 0,
-                                Assigned_Workers: [{ Worker_ID: d.workerId, Worker_Name: d.workerName, Daily_Rate: workerDailyRate(d.workerId) }],
-                            }],
-                        }, orgId);
-                        if (created.success && created.data) {
-                            await startWorkOrder(created.data.Work_Order_ID, orgId);
-                            const full = await getWorkOrder(created.data.Work_Order_ID, orgId);
-                            const item = full?.items?.[0];
-                            if (full && item) {
-                                const res = await bookWorkerDayItems(
-                                    d.workerId, d.workerName, date, orgId,
-                                    [{ workOrderId: full.Work_Order_ID, itemId: item.ID, productId: item.Product_ID }], 1
-                                );
-                                booked += res.created;
-                                affectedOrders.add(full.Work_Order_ID);
-                            }
-                        } else {
-                            showToast(created.message || 'Greška pri kreiranju montažnog naloga', 'error');
-                        }
                     }
                 }
             }
@@ -1053,7 +1012,11 @@ export default function AttendanceTab({ workers, workOrders, onRefresh, showToas
                     date={confirmDate}
                     rows={confirmRows}
                     workOrders={workOrders}
+                    workers={workers}
+                    organizationId={organizationId || ''}
                     onConfirm={commitDecisions}
+                    onCreated={onRefresh}
+                    showToast={showToast}
                 />
             )}
 
