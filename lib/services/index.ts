@@ -111,6 +111,14 @@ export {
 // Graf procesa (po nalogu) + templejti toka
 export { getProcessGraph, saveProcessGraph, listProcessTemplates, saveProcessTemplate, deleteProcessTemplate } from '../database';
 
+// Katalog procesa (org) + pravila materijal→proces + plan procesa proizvoda
+export {
+    getProcessCatalog, saveProcessCatalogItem, renameProcessCatalogItem,
+    deleteProcessCatalogItem, reorderProcessCatalog,
+    getProcessMaterialRules, saveProcessMaterialRule, deleteProcessMaterialRule,
+    applyAutoProcessPlan, saveProductProcessStages,
+} from '../database';
+
 // Labor / Attendance
 export {
     markAttendanceAndRecalculate, saveWorkerAttendance,
@@ -132,6 +140,7 @@ export {
     formatLocalDateISO,
     adjustWorkOrderDates,
     saveDailyWorkBooking, saveWorkOrderDayBooking, getDailyWorkBooking, suggestDailyBooking, bulkBookWorkOrderLabor,
+    getBookedWorkerDaysByMonth, getWorkLogsForMonth,
     recalcAllWorkLogSplits,
 } from './labor/laborCostService';
 export type {
@@ -144,18 +153,11 @@ export type {
 export {
     calculateProductProfitability, calculateWorkOrderProfitability,
     calculateWorkerProductivity, saveProfitOverrides,
-    createProductionSnapshot, getProductionSnapshots,
+    createProductionSnapshot, getProductionSnapshots, getProductionSnapshotForWorkOrder,
     checkZeroMaterialCostProducts, setManualMaterialCost,
     checkUnassignedMontazaItems, checkZeroRateAssignedWorkers,
     checkProcessesWithoutWorkers, checkMissingCostFields,
-    saveDailyProfitEntry, getDailyProfitEntries, getDailyProfitSummary,
-    deleteDailyProfitEntry, getTodaysMissingEntries,
 } from './profit/profitService';
-
-// Profit Dashboard
-export {
-    getActiveProfitDashboard,
-} from './profit/profitDashboardService';
 
 // Analitika (jedinstvena — Profiti full-screen)
 export { getAnalytics, getAnalyticsRaw, computeAnalytics } from './profit/analyticsService';

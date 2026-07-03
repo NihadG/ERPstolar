@@ -37,6 +37,30 @@ export function workOrderDisplayName(wo: {
     return wo?.Work_Order_Number ? `#${wo.Work_Order_Number}` : 'Nalog';
 }
 
+/**
+ * Napredak naloga iz procesa: završeni / ukupni procesi po stavkama.
+ * Stavka bez procesa se broji kao 1 "proces" (njen vlastiti status).
+ * Vraća null kad nema ničega za brojanje.
+ */
+export function orderProcessProgress(items: {
+    Status?: string;
+    Processes?: { Status?: string }[];
+}[]): { done: number; total: number; pct: number } | null {
+    let done = 0, total = 0;
+    for (const it of items || []) {
+        const procs = it.Processes || [];
+        if (procs.length > 0) {
+            total += procs.length;
+            done += procs.filter(p => p.Status === 'Završeno').length;
+        } else {
+            total += 1;
+            if (it.Status === 'Završeno') done += 1;
+        }
+    }
+    if (total === 0) return null;
+    return { done, total, pct: Math.round((done / total) * 100) };
+}
+
 export function formatDate(dateString: string | undefined | null): string {
     if (!dateString) return '-';
     try {

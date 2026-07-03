@@ -1,4 +1,4 @@
-import { isWorkingDay, workOrderDueDate, workerWorksSaturday, buildSaturdayChecker } from '../planning';
+import { isWorkingDay, workOrderDueDate, workerWorksSaturday, buildSaturdayChecker, plannedVsActualDays, weeklyCapacity } from '../planning';
 
 // Kalendarski sidro (potvrđeno iz aplikacije): 2026-06-22 = ponedjeljak, 21 = nedjelja, 20 = subota.
 describe('isWorkingDay', () => {
@@ -77,5 +77,85 @@ describe('buildSaturdayChecker + rok (multi-worker: subota radna ako bar jedan r
     test('bez dodijeljenih radnika → subota radna (shop-level)', () => {
         const checker = buildSaturdayChecker([], []);
         expect(workOrderDueDate('2026-06-26', 4, checker)).toBe('2026-06-30');
+    });
+});
+
+describe('plannedVsActualDays — planirani vs potrošeni radnik-dani', () => {
+    test('planirano = dani × radnici po stavci (default 1 radnik)', () => {
+        const items = [
+            { ID: 'i1', Planned_Labor_Days: 2, Planned_Labor_Workers: 2 }, // 4 radnik-dana
+            { ID: 'i2', Planned_Labor_Days: 3 },                           // 3 radnik-dana
+        ];
+        expect(plannedVsActualDays(items).planned).toBe(7);
+    });
+    test('potrošeno iz logova = Σ Day_Fraction samo za stavke naloga', () => {
+        const items = [{ ID: 'i1', Planned_Labor_Days: 2 }];
+        const logs = [
+            { Work_Order_Item_ID: 'i1', Day_Fraction: 0.5 },
+            { Work_Order_Item_ID: 'i1', Day_Fraction: 1 },
+            { Work_Order_Item_ID: 'tudji', Day_Fraction: 1 }, // druga stavka — ne broji se
+        ];
+        const r = plannedVsActualDays(items, logs);
+        expect(r.actual).toBe(1.5);
+        expect(r.ratio).toBe(0.75);
+    });
+    test('bez logova koristi sync-ovani Actual_Labor_Days sa stavki', () => {
+        const items = [
+            { ID: 'i1', Planned_Labor_Days: 4, Actual_Labor_Days: 3 },
+            { ID: 'i2', Actual_Labor_Days: 1.5 },
+        ];
+        const r = plannedVsActualDays(items);
+        expect(r.planned).toBe(4);
+        expect(r.actual).toBe(4.5);
+        expect(r.ratio).toBe(1.13); // 4.5/4 zaokruženo na 2 decimale
+    });
+    test('bez plana → ratio je null (nema lažnog prekoračenja)', () => {
+        const r = plannedVsActualDays([{ ID: 'i1', Actual_Labor_Days: 2 }]);
+        expect(r.planned).toBe(0);
+        expect(r.ratio).toBeNull();
+    });
+    test('log bez Day_Fraction broji se kao cijeli dan (legacy zapisi)', () => {
+        const r = plannedVsActualDays([{ ID: 'i1', Planned_Labor_Days: 1 }], [{ Work_Order_Item_ID: 'i1' }]);
+        expect(r.actual).toBe(1);
+    });
+});
+
+describe('weeklyCapacity — raspoloživo vs planirano po sedmici', () => {
+    // Sidro: 2026-06-22 = ponedjeljak; subote 06-20 i 06-27.
+    test('raspoloživo: 2 radnika × (pon–pet + subota po defaultu) = 12', () => {
+        const [wk] = weeklyCapacity('2026-06-22', 1, ['W1', 'W2'], [], []);
+        expect(wk.weekStartISO).toBe('2026-06-22');
+        expect(wk.available).toBe(12); // 6 radnih dana × 2
+        expect(wk.planned).toBe(0);
+    });
+    test('subotnja rotacija smanjuje raspoloživo', () => {
+        // W1 radio subotu 20.06 → 27.06 NE radi
+        const att = [{ Worker_ID: 'W1', Date: '2026-06-20', Status: 'Prisutan' }];
+        const [wk] = weeklyCapacity('2026-06-22', 1, ['W1'], att, []);
+        expect(wk.available).toBe(5); // pon–pet, bez subote
+    });
+    test('budući unos u šihtarici ima prednost (Odmor oduzima dan)', () => {
+        const att = [{ Worker_ID: 'W1', Date: '2026-06-24', Status: 'Odmor' }];
+        const [wk] = weeklyCapacity('2026-06-22', 1, ['W1'], att, []);
+        expect(wk.available).toBe(5); // 6 − 1 (srijeda odmor)
+    });
+    test('planirano: preostali dani naloga ravnomjerno po rasponu', () => {
+        // Nalog: 6 preostalih radnik-dana, raspon pon 22.06 – sub 27.06 (6 radnih dana) → 1/dan
+        const orders = [{ id: 'o1', startISO: '2026-06-22', endISO: '2026-06-27', remainingWorkerDays: 6 }];
+        const [wk1, wk2] = weeklyCapacity('2026-06-22', 2, ['W1'], [], orders);
+        expect(wk1.planned).toBe(6);
+        expect(wk2.planned).toBe(0);
+    });
+    test('nalog s prekoračenim rokom pada u tekuću sedmicu (od danas)', () => {
+        const orders = [{ id: 'o1', startISO: '2026-06-01', endISO: '2026-06-10', remainingWorkerDays: 4 }];
+        const [wk] = weeklyCapacity('2026-06-22', 1, ['W1'], [], orders);
+        expect(wk.planned).toBe(4); // sabijeno na start (= fromISO jer je rok prošao)
+    });
+    test('ratio = planned/available; prebukirana sedmica > 1', () => {
+        const orders = [{ id: 'o1', startISO: '2026-06-22', endISO: '2026-06-27', remainingWorkerDays: 9 }];
+        const [wk] = weeklyCapacity('2026-06-22', 1, ['W1'], [], orders);
+        expect(wk.available).toBe(6);
+        expect(wk.planned).toBe(9);
+        expect(wk.ratio).toBe(1.5);
     });
 });

@@ -24,6 +24,8 @@ import { SearchableSelect } from '@/components/ui/SearchableSelect';
 import MaterialSelectModal, { type SelectedMaterial } from '@/components/ui/MaterialSelectModal';
 
 import ProductTimelineModal from '@/components/ui/ProductTimelineModal';
+import ProductProcessPlan from '@/components/ui/ProductProcessPlan';
+import { planToStages } from '@/lib/productProcesses';
 
 import ProjectMaterialsModal from '@/components/ui/ProjectMaterialsModal';
 import { useData } from '@/context/DataContext';
@@ -65,6 +67,11 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
     const [expandedStatusGroups, setExpandedStatusGroups] = useState<Set<string>>(new Set(['Nacrt', 'Ponuđeno', 'Odobreno', 'U proizvodnji', 'Završeno', 'Otkazano']));
     const [showMaterialsSummary, setShowMaterialsSummary] = useState<Set<string>>(new Set());
     const [materialsOverviewProject, setMaterialsOverviewProject] = useState<Project | null>(null);
+    // Samo ID — proizvod se svaki put izvodi svjež iz `projects` (onChanged→onRefresh mora odmah ažurirati modal)
+    const [processPlanProductId, setProcessPlanProductId] = useState<string | null>(null);
+    const processPlanProduct = processPlanProductId
+        ? projects.flatMap(pr => pr.products || []).find(p => p.Product_ID === processPlanProductId) || null
+        : null;
     const [syncing, setSyncing] = useState(false);
     const [showHidden, setShowHidden] = useState(false);
 
@@ -1678,7 +1685,26 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                                                                     }
                                                                     return null;
                                                                 })()}
+                                                                {/* Process Plan Badge — broj procesa/faza na prvi pogled (bez otvaranja modala) */}
+                                                                {(() => {
+                                                                    const stages = planToStages(product.Process_Stages, product.Process_Plan);
+                                                                    if (stages.length === 0) return null;
+                                                                    const count = stages.reduce((s, st) => s + st.length, 0);
+                                                                    return (
+                                                                        <span
+                                                                            className="product-cost-badge"
+                                                                            style={{ background: '#eef2ff', color: '#4338ca', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+                                                                            title={`${count} ${count === 1 ? 'proces' : 'procesa'} u ${stages.length} ${stages.length === 1 ? 'fazi' : 'faze'}`}
+                                                                        >
+                                                                            <span className="material-icons-round" style={{ fontSize: '13px' }}>account_tree</span>
+                                                                            {count} · {stages.length}f
+                                                                        </span>
+                                                                    );
+                                                                })()}
                                                                 <div className="product-actions" onClick={(e) => e.stopPropagation()}>
+                                                                    <button className="icon-btn" onClick={() => setProcessPlanProductId(product.Product_ID)} title="Plan procesa">
+                                                                        <span className="material-icons-round">account_tree</span>
+                                                                    </button>
                                                                     <button className="icon-btn" onClick={() => openProductModal(project.Project_ID, product)} title="Uredi proizvod">
                                                                         <span className="material-icons-round">edit</span>
                                                                     </button>
@@ -2463,7 +2489,16 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                 }}
             />
 
-
+            {/* Plan procesa proizvoda (faze; paralelno unutar faze) — zasebni modal preko dugmeta na kartici */}
+            {processPlanProduct && (
+                <ProductProcessPlan
+                    product={processPlanProduct}
+                    organizationId={organizationId || ''}
+                    onChanged={() => onRefresh('projects')}
+                    onClose={() => setProcessPlanProductId(null)}
+                    showToast={showToast}
+                />
+            )}
 
             <style jsx>{`
                 .edit-modal-content {

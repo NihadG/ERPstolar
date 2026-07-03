@@ -8,7 +8,7 @@ import {
 import type { Node, Edge, Connection, NodeProps } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import Modal from './Modal';
-import { Plus, GitBranch, Wand2, Save, Trash2, Loader2, List, Network, BookmarkPlus } from 'lucide-react';
+import { Plus, GitBranch, Wand2, Save, Trash2, Loader2, List, Network, BookmarkPlus, RefreshCw } from 'lucide-react';
 import { COMMON_PROCESSES } from '@/lib/types';
 import type { WorkLog, ProcessGraph, ProcessFlowTemplate } from '@/lib/types';
 import { getProcessGraph, saveProcessGraph, generateUUID, listProcessTemplates, saveProcessTemplate } from '@/lib/services';
@@ -18,7 +18,15 @@ interface ProcessGraphModalProps {
     workOrderId: string;
     workOrderNumber?: string;
     workOrderName?: string;
-    items: { ID: string; Product_Name: string }[];
+    items: {
+        ID: string;
+        Product_Name: string;
+        // ItemProcessChecklist zapisi — čvor grafa postaje "završeno" kad svi pokriveni
+        // proizvodi imaju istoimeni proces označen završenim (veza po nazivu procesa)
+        Processes?: { Process_Name: string; Status?: string; Completed_At?: string }[];
+        // Fazni plan stavke (snapshot pri kreiranju) — izvor za "Sinhronizuj iz proizvoda"
+        Process_Stages?: { processes: string[] }[];
+    }[];
     workLogs?: WorkLog[];
     organizationId: string;
     onClose: () => void;
@@ -29,10 +37,10 @@ type ProcData = { name: string; itemIds: string[] };
 
 const fmt = (iso: string) => iso ? `${iso.slice(8, 10)}.${iso.slice(5, 7)}.` : '';
 
-// Kontekst da custom node zna nazive proizvoda + status/datum (iz dnevnika)
+// Kontekst da custom node zna nazive proizvoda + status/datum (iz dnevnika + checklist završetka)
 const GraphCtx = createContext<{
     itemName: (id: string) => string;
-    status: (nodeId: string, itemIds: string[]) => { color: string; label: string };
+    status: (nodeId: string, itemIds: string[], name?: string) => { color: string; label: string };
 }>({ itemName: () => '', status: () => ({ color: 'var(--text-tertiary)', label: 'čeka' }) });
 
 const badge: React.CSSProperties = { fontSize: 10, padding: '1px 6px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-light)', color: 'var(--accent)', background: 'var(--accent-light)', whiteSpace: 'nowrap' };
@@ -41,7 +49,7 @@ const badgeAll: React.CSSProperties = { ...badge, border: '1px dashed var(--bord
 function ProcessRFNode({ id, data, selected }: NodeProps) {
     const ctx = useContext(GraphCtx);
     const d = data as ProcData;
-    const st = ctx.status(id, d.itemIds || []);
+    const st = ctx.status(id, d.itemIds || [], d.name);
     return (
         <div style={{
             width: NODE_W, minHeight: NODE_H, background: 'var(--background)',
@@ -83,13 +91,26 @@ export default function ProcessGraphModal({
         return n.length > 14 ? n.slice(0, 13) + '…' : (n || '—');
     }, [items]);
 
-    const status = useCallback((nodeId: string, _itemIds: string[]) => {
+    const status = useCallback((nodeId: string, nodeItemIds: string[], name?: string) => {
+        // ZAVRŠENO: svi pokriveni proizvodi (prazno = svi) imaju istoimeni proces označen
+        // završenim u checklisti (ItemProcessChecklist → item.Processes). Veza po nazivu.
+        if (name) {
+            const covered = nodeItemIds.length > 0 ? items.filter(i => nodeItemIds.includes(i.ID)) : items;
+            if (covered.length > 0) {
+                const entries = covered.map(i => i.Processes?.find(p => p.Process_Name === name));
+                if (entries.every(e => e?.Status === 'Završeno')) {
+                    const doneDates = entries.map(e => e!.Completed_At?.split('T')[0] || '').filter(Boolean).sort();
+                    const last = doneDates[doneDates.length - 1];
+                    return { color: 'var(--success)', label: last ? `završeno ${fmt(last)}` : 'završeno' };
+                }
+            }
+        }
         const logs = (workLogs || []).filter(l => l.Process_Node_ID === nodeId);
         if (!logs.length) return { color: 'var(--text-tertiary)', label: 'čeka' };
         const dates = logs.map(l => l.Date).filter(Boolean).sort();
         const start = dates[0], end = dates[dates.length - 1];
         return { color: 'var(--accent)', label: start === end ? fmt(start) : `${fmt(start)} – ${fmt(end)}` };
-    }, [workLogs]);
+    }, [workLogs, items]);
 
     const ctxValue = useMemo(() => ({ itemName, status }), [itemName, status]);
 
@@ -182,6 +203,34 @@ export default function ProcessGraphModal({
         showToast?.(`Templejt „${tpl.name}" primijenjen — pridruži proizvode čvorovima`, 'info');
     }, [nodes.length, setNodes, setEdges, showToast]);
 
+    // SINHRONIZUJ IZ PROIZVODA: ponovo sintetiši graf iz FAZNIH planova stavki
+    // (Process_Stages snapshot pri kreiranju; fallback nazivi iz checkliste = sekvencijalno).
+    // Isti proces više proizvoda = jedan čvor. Pozicije istoimenih čvorova se čuvaju.
+    const syncFromProducts = useCallback(async () => {
+        if (nodes.length && typeof window !== 'undefined' && !window.confirm('Zamijeniti trenutni graf procesima iz proizvoda? Ručne izmjene grafa se gube.')) return;
+        const { synthesizeOrderGraph, planToStages } = await import('@/lib/productProcesses');
+        const planItems = items.map(i => ({
+            itemId: i.ID,
+            stages: planToStages(i.Process_Stages, (i.Processes || []).map(p => p.Process_Name).filter(Boolean) as string[]),
+        })).filter(pi => pi.stages.length > 0);
+        const { graph, warnings } = synthesizeOrderGraph(planItems);
+        if (graph.nodes.length === 0) {
+            showToast?.('Proizvodi nemaju definisane procese (checklist je prazan)', 'info');
+            return;
+        }
+        // Zadrži pozicije istoimenih postojećih čvorova; ostale rasporedi
+        const oldPosByName = new Map(nodes.map(n => [((n.data as ProcData).name || '').trim().toLowerCase(), n.position]));
+        const pos = layoutProcessGraph(graph.nodes.map(n => ({ id: n.id })), graph.edges.map(e => ({ source: e.source, target: e.target })));
+        const newNodes: Node<ProcData>[] = graph.nodes.map(n => ({
+            id: n.id, type: 'process',
+            position: oldPosByName.get(n.name.trim().toLowerCase()) ?? pos[n.id] ?? { x: 24, y: 24 },
+            data: { name: n.name, itemIds: n.itemIds },
+        }));
+        const newEdges: Edge[] = graph.edges.map(e => ({ id: e.id, source: e.source, target: e.target, markerEnd: { type: MarkerType.ArrowClosed } }));
+        setNodes(newNodes); setEdges(newEdges); setSelectedId(null);
+        showToast?.(warnings.length ? `Sinhronizovano uz ${warnings.length} upozorenje(a) o redoslijedu` : 'Graf sinhronizovan iz proizvoda — Spremi za potvrdu', warnings.length ? 'info' : 'success');
+    }, [nodes, items, setNodes, setEdges, showToast]);
+
     const saveAsTemplate = useCallback(async () => {
         const name = typeof window !== 'undefined' ? window.prompt('Naziv templejta toka:')?.trim() : '';
         if (!name) return;
@@ -195,14 +244,23 @@ export default function ProcessGraphModal({
     const selected = nodes.find(n => n.id === selectedId) || null;
     const selData = selected?.data as ProcData | undefined;
 
-    // Lista operacija: čvorovi + prethodnici + status/datum
+    // Lista operacija: čvorovi + prethodnici + status/datum + KO JE RADIO (iz dnevnika po Process_Node_ID)
     const opRows = useMemo(() => nodes.map(n => {
         const d = n.data as ProcData;
         const preds = edges.filter(e => e.target === n.id).map(e => (nodes.find(x => x.id === e.source)?.data as ProcData | undefined)?.name || '—');
-        const st = status(n.id, d.itemIds || []);
+        const st = status(n.id, d.itemIds || [], d.name);
         const prods = (d.itemIds || []).length === 0 ? 'svi' : d.itemIds.map(itemName).join(', ');
-        return { id: n.id, name: d.name || 'Proces', preds: preds.join(', ') || '—', prods, status: st.label };
-    }), [nodes, edges, status, itemName]);
+        // Radnici · dani po čvoru — odgovor na "koji radnik je koji proces radio i koliko"
+        const nodeLogs = (workLogs || []).filter(l => l.Process_Node_ID === n.id);
+        const byWorker = new Map<string, number>();
+        nodeLogs.forEach(l => byWorker.set(l.Worker_Name, (byWorker.get(l.Worker_Name) || 0) + (l.Day_Fraction ?? 1)));
+        const fmtD = (x: number) => (Number.isInteger(x) ? String(x) : x.toFixed(1));
+        const workersStr = Array.from(byWorker.entries())
+            .sort((a, b) => b[1] - a[1])
+            .map(([w, days]) => `${w} (${fmtD(days)}d)`)
+            .join(', ') || '—';
+        return { id: n.id, name: d.name || 'Proces', preds: preds.join(', ') || '—', prods, status: st.label, workers: workersStr };
+    }), [nodes, edges, status, itemName, workLogs]);
 
     const btn: React.CSSProperties = { display: 'inline-flex', alignItems: 'center', gap: 6, padding: '8px 14px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-light)', background: 'var(--background)', fontSize: 13, fontWeight: 600, cursor: 'pointer', color: 'var(--text-primary)', transition: 'var(--transition)' };
     const tab: React.CSSProperties = { display: 'inline-flex', alignItems: 'center', gap: 5, padding: '5px 10px', borderRadius: 6, border: 'none', background: 'transparent', fontSize: 13, fontWeight: 600, cursor: 'pointer', color: 'var(--text-secondary)' };
@@ -223,6 +281,9 @@ export default function ProcessGraphModal({
                         <button style={btn} onClick={() => addNode()}><Plus size={15} /> Proces</button>
                         <button style={btn} onClick={doLayout}><Wand2 size={15} /> Posloži</button>
                     </>}
+                    <button style={btn} onClick={syncFromProducts} title="Ponovo izgradi graf iz planova procesa proizvoda (isti proces = jedan čvor)">
+                        <RefreshCw size={15} /> Sinhronizuj iz proizvoda
+                    </button>
                     {templates.length > 0 && (
                         <select defaultValue="" onChange={e => { const t = templates.find(x => x.id === e.target.value); if (t) applyTemplate(t); e.currentTarget.value = ''; }} style={{ ...btn, paddingRight: 8 }}>
                             <option value="">Primijeni templejt…</option>
@@ -276,7 +337,13 @@ export default function ProcessGraphModal({
                                 <input list="pg-common" value={selData.name} placeholder="npr. Kantiranje"
                                     onChange={e => updateSelected({ name: e.target.value })}
                                     style={{ width: '100%', marginTop: 4, padding: '7px 9px', borderRadius: 8, border: '1px solid var(--border-light)', fontSize: 13 }} />
-                                <datalist id="pg-common">{COMMON_PROCESSES.map(p => <option key={p} value={p} />)}</datalist>
+                                {/* Prijedlozi: nazivi iz templejta organizacije + standardna lista kao fallback */}
+                                <datalist id="pg-common">
+                                    {Array.from(new Set([
+                                        ...templates.flatMap(t => (t.nodes || []).map(n => n.name).filter(Boolean)),
+                                        ...COMMON_PROCESSES,
+                                    ])).map(p => <option key={p} value={p} />)}
+                                </datalist>
                             </div>
 
                             <div>
@@ -316,7 +383,7 @@ export default function ProcessGraphModal({
                             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
                                 <thead>
                                     <tr style={{ textAlign: 'left', color: 'var(--text-secondary)', borderBottom: '1px solid var(--border-light)', position: 'sticky', top: 0, background: 'var(--background)' }}>
-                                        <th style={th}>Proces</th><th style={th}>Proizvodi</th><th style={th}>Prethodni proces</th><th style={th}>Status / datum</th>
+                                        <th style={th}>Proces</th><th style={th}>Proizvodi</th><th style={th}>Prethodni proces</th><th style={th}>Status / datum</th><th style={th}>Radnici · dani</th>
                                     </tr>
                                 </thead>
                                 <tbody>
@@ -326,6 +393,7 @@ export default function ProcessGraphModal({
                                             <td style={td}>{r.prods}</td>
                                             <td style={td}>{r.preds}</td>
                                             <td style={td}>{r.status}</td>
+                                            <td style={{ ...td, color: 'var(--text-secondary)' }}>{r.workers}</td>
                                         </tr>
                                     ))}
                                 </tbody>

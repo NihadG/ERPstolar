@@ -36,6 +36,16 @@ export interface Product {
     Material_Cost: number;
     Notes: string;
     materials?: ProductMaterial[];
+    // PLAN PROCESA po proizvodu u FAZAMA: procesi u ISTOJ fazi teku PARALELNO
+    // (npr. izrada nogu ∥ krojenje furnira), sljedeća faza čeka prethodnu (sklapanje → lakiranje).
+    // Firestore ne dozvoljava ugniježdene nizove → faza je mapa { processes: string[] }.
+    // Nalog iz planova odabranih proizvoda sintetiše graf (isti proces = jedan čvor).
+    Process_Stages?: { processes: string[] }[];
+    // Legacy/ravni oblik (flatten faza po redu) — čita se kao fallback, piše se radi kompatibilnosti.
+    Process_Plan?: string[];
+    // 'auto' = izveden iz pravila materijal→proces (smije se preračunati pri izmjeni materijala);
+    // 'manual' = korisnik uredio → auto ga NE dira.
+    Process_Plan_Source?: 'auto' | 'manual';
 }
 
 export interface Material {
@@ -272,33 +282,6 @@ export interface Notification {
 }
 
 // ============================================
-// DAILY PROFIT ENTRIES — Ručno praćenje profita
-// ============================================
-
-export interface DailyProfitEntry {
-    ID: string;
-    Organization_ID: string;
-    Work_Order_ID: string;
-    Work_Order_Number: string;
-    Work_Order_Item_ID?: string;     // Opciono — za unos po stavci naloga
-    Product_Name?: string;           // Naziv proizvoda (ako je per-item entry)
-    Date: string;                    // YYYY-MM-DD
-
-    // Korisnik unosi:
-    Revenue_Today: number;           // Prihod/naplata
-    Material_Cost_Today: number;     // Trošak materijala
-    Labor_Cost_Today: number;        // Trošak rada
-    Other_Costs_Today: number;       // Ostali troškovi (transport, itd)
-    Notes: string;                   // Šta se desilo danas
-
-    // Automatski izračunato:
-    Daily_Profit: number;            // Revenue - Material - Labor - Other
-
-    Created_At: string;
-    Updated_At: string;
-}
-
-// ============================================
 // TASK TYPES (Enhanced)
 // ============================================
 
@@ -431,6 +414,30 @@ export interface ProcessFlowTemplate {
     Created_At?: string;
 }
 
+// ════════════════════════════════════════════════════════════════════
+// KATALOG PROCESA (org) — korisnikov registar naziva procesa.
+// Order = KANONSKI redoslijed proizvodnje: pravila/planovi biraju KOJI
+// procesi važe, a katalog određuje KOJIM REDOM (orderByCatalog).
+// ════════════════════════════════════════════════════════════════════
+export interface ProcessCatalogItem {
+    ID: string;
+    Organization_ID: string;
+    Name: string;
+    Order: number;
+    Created_At?: string;
+}
+
+// Pravilo materijal→procesi koje korisnik sam definiše (bez hardkodovanih mapiranja):
+// kategorija materijala jednaka / naziv sadrži → dodijeli procese planu proizvoda.
+export interface ProcessMaterialRule {
+    ID: string;
+    Organization_ID: string;
+    Match_Kind: 'category' | 'name_contains';
+    Match_Value: string;
+    Processes: string[];
+    Created_At?: string;
+}
+
 // Status procesa za pojedinačni proizvod u radnom nalogu
 export interface ItemProcessStatus {
     Process_Name: string;
@@ -491,6 +498,9 @@ export interface WorkOrderItem {
 
     // PROCESI ZA OVAJ PROIZVOD (legacy - za backward compatibility)
     Processes?: ItemProcessStatus[];
+    // Snapshot FAZA plana proizvoda pri kreiranju naloga (paralelno unutar faze) —
+    // izvor za "Sinhronizuj iz proizvoda" u grafu bez dodatnih upita.
+    Process_Stages?: { processes: string[] }[];
 
     // SUB-TASKS - Za split proizvoda po količini
     SubTasks?: SubTask[];

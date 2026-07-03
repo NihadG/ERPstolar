@@ -715,11 +715,21 @@ export async function bookWorkerDayItems(
         const loggedItemIds = new Set<string>();
         logSnap.docs.forEach(d => { const id = d.data().Work_Order_Item_ID; if (id) loggedItemIds.add(id); });
 
-        // Product_ID za ciljeve kojima nije proslijeđen.
-        const missing = targets.filter(t => !t.productId).map(t => t.itemId);
-        const itemMap = missing.length > 0
-            ? await fetchWorkOrderItemsByIds(missing, organizationId)
-            : new Map<string, WorkOrderItem>();
+        // Stavke ciljeva (Product_ID fallback + item.Processes za auto-pripis tekućeg procesa).
+        const itemMap = await fetchWorkOrderItemsByIds(targets.map(t => t.itemId).filter(Boolean), organizationId);
+
+        // AUTO-PRIPIS PROCESA: graf naloga (jedan read po distinct nalogu) + tekući proces stavke
+        // (prvi nezavršen u checklisti) → Process_Node_ID/Process_Name na logu. Ručni unos u Knjizi
+        // rada i dalje ima prednost (ovaj put piše samo NOVE logove; postojeći se preskaču).
+        const graphByWO = new Map<string, import('./types').ProcessGraph>();
+        try {
+            const { getProcessGraph } = await import('./database');
+            const distinctWOs = Array.from(new Set(targets.map(t => t.workOrderId).filter(Boolean)));
+            await Promise.all(distinctWOs.map(async woId => {
+                graphByWO.set(woId, await getProcessGraph(woId, organizationId));
+            }));
+        } catch (e) { console.warn('process graph load for auto-pripis failed (non-critical):', e); }
+        const { resolveAutoProcessNode } = await import('./productProcesses');
 
         const workers = await getWorkers(organizationId);
         // Cijena VAŽEĆA na datum knjiženja (efektivno-datirana istorija) — ne trenutna (rizik #2).
@@ -735,13 +745,16 @@ export async function bookWorkerDayItems(
             if (seen.has(t.itemId)) continue;              // dedupe unutar poziva
             seen.add(t.itemId);
             if (loggedItemIds.has(t.itemId)) continue;     // već ima zapis → preskoči (manualni ima prednost)
-            const productId = t.productId || itemMap.get(t.itemId)?.Product_ID;
+            const item = itemMap.get(t.itemId);
+            const productId = t.productId || item?.Product_ID;
+            const autoNode = resolveAutoProcessNode(graphByWO.get(t.workOrderId), t.itemId, item?.Processes);
             const log: Record<string, unknown> = {
                 WorkLog_ID: generateUUID(), Organization_ID: organizationId, Date: date,
                 Worker_ID: workerId, Worker_Name: workerName, Daily_Rate: dailyRate, Original_Daily_Rate: dailyRate,
                 Day_Fraction: norm, Presence: norm, Split_Factor: 1, Hours_Worked: 8 * norm,
                 Booking_Source: 'attendance', Is_From_Attendance: true,
                 Work_Order_ID: t.workOrderId, Work_Order_Item_ID: t.itemId, Product_ID: productId,
+                ...(autoNode && { Process_Node_ID: autoNode.id, Process_Name: autoNode.name }),
                 Created_At: new Date().toISOString(),
             };
             Object.keys(log).forEach(k => log[k] === undefined && delete log[k]);
@@ -1060,6 +1073,9 @@ export async function recalcAllWorkLogSplits(
  * Spremi dnevnu knjigu rada za dati dan. Booking je IZVOR ISTINE:
  * za svakog radnika u `entries` briše postojeće work logove tog dana i piše nove.
  * Dnevnica radnika (× presence) se RAVNOMJERNO dijeli na N proizvoda (splitDnevnicaExact).
+ *
+ * @deprecated Bez UI pozivaoca od uklanjanja DailyWorkBookingBoard-a (jul 2026).
+ * Živi put je `saveWorkOrderDayBooking` (per-nalog, iz WorkOrderWorkLog). Ne koristiti za novi kod.
  */
 export async function saveDailyWorkBooking(
     date: string,
@@ -1300,6 +1316,15 @@ export async function saveWorkOrderDayBooking(
         const itemIds = Array.from(new Set(entries.flatMap(e => e.itemIds)));
         const itemMap = await fetchWorkOrderItemsByIds(itemIds, organizationId);
 
+        // AUTO-PRIPIS PROCESA: graf naloga + tekući proces stavke (prvi nezavršen u checklisti)
+        // → Process_Node_ID/Process_Name na logu (odgovor na "koji proces, koji dan, koji radnik").
+        let orderGraph: import('./types').ProcessGraph | undefined;
+        try {
+            const { getProcessGraph } = await import('./database');
+            orderGraph = await getProcessGraph(workOrderId, organizationId);
+        } catch (e) { console.warn('process graph load for auto-pripis failed (non-critical):', e); }
+        const { resolveAutoProcessNode } = await import('./productProcesses');
+
         // Bazni logovi (puna dnevnica + presence; TAČAN iznos postavlja renormalizeWorkerDay)
         const newLogs: Record<string, unknown>[] = [];
         for (const entry of entries) {
@@ -1316,6 +1341,7 @@ export async function saveWorkOrderDayBooking(
 
             for (const itemId of validItemIds) {
                 const booked = itemMap.get(itemId)!;
+                const autoNode = resolveAutoProcessNode(orderGraph, itemId, booked.Processes);
                 const log: Record<string, unknown> = {
                     WorkLog_ID: generateUUID(),
                     Organization_ID: organizationId,
@@ -1333,6 +1359,7 @@ export async function saveWorkOrderDayBooking(
                     Work_Order_ID: booked.Work_Order_ID || workOrderId,
                     Work_Order_Item_ID: booked.ID,
                     Product_ID: booked.Product_ID,
+                    ...(autoNode && { Process_Node_ID: autoNode.id, Process_Name: autoNode.name }),
                     Created_At: new Date().toISOString(),
                 };
                 Object.keys(log).forEach(k => log[k] === undefined && delete log[k]);
@@ -2143,6 +2170,74 @@ export async function getWorkerAttendanceByMonth(workerId: string, year: string,
     } catch (error) {
         console.error('Error getting monthly attendance:', error);
         throw error;
+    }
+}
+
+/**
+ * Distinct (radnik, dan) parovi koji imaju BAR JEDAN work log u mjesecu.
+ * Za šihtaricu: indikator "prisutan bez knjiženja" (poredi se s worker_attendance).
+ * Vraća ključeve oblika `${Worker_ID}|${Date}`.
+ */
+export async function getBookedWorkerDaysByMonth(
+    year: string | number,
+    month: string | number,
+    organizationId: string
+): Promise<string[]> {
+    if (!organizationId) return [];
+    try {
+        const firestore = getDb();
+        const m = String(month).padStart(2, '0');
+        const q = query(
+            collection(firestore, 'work_logs'),
+            where('Organization_ID', '==', organizationId),
+            where('Date', '>=', `${year}-${m}-01`),
+            where('Date', '<=', `${year}-${m}-31`)
+        );
+        const snapshot = await getDocs(q);
+        const keys = new Set<string>();
+        snapshot.docs.forEach(d => {
+            const x = d.data();
+            if (x.Worker_ID && x.Date) keys.add(`${x.Worker_ID}|${x.Date}`);
+        });
+        return Array.from(keys);
+    } catch (error) {
+        console.error('getBookedWorkerDaysByMonth error:', error);
+        return [];
+    }
+}
+
+/**
+ * Svi work logovi organizacije u mjesecu (lite polja za obračun plata).
+ */
+export async function getWorkLogsForMonth(
+    year: string | number,
+    month: string | number,
+    organizationId: string
+): Promise<{ Worker_ID: string; Worker_Name?: string; Date: string; Daily_Rate?: number; Day_Fraction?: number }[]> {
+    if (!organizationId) return [];
+    try {
+        const firestore = getDb();
+        const m = String(month).padStart(2, '0');
+        const q = query(
+            collection(firestore, 'work_logs'),
+            where('Organization_ID', '==', organizationId),
+            where('Date', '>=', `${year}-${m}-01`),
+            where('Date', '<=', `${year}-${m}-31`)
+        );
+        const snapshot = await getDocs(q);
+        return snapshot.docs.map(d => {
+            const x = d.data();
+            return {
+                Worker_ID: x.Worker_ID,
+                Worker_Name: x.Worker_Name,
+                Date: x.Date,
+                Daily_Rate: x.Daily_Rate,
+                Day_Fraction: x.Day_Fraction,
+            };
+        });
+    } catch (error) {
+        console.error('getWorkLogsForMonth error:', error);
+        return [];
     }
 }
 
@@ -3089,6 +3184,8 @@ export async function recalculateWorkOrder(
         // (umjesto calculateActualLaborCost = 1 upit po stavci). Σ Daily_Rate po
         // Work_Order_Item_ID je identičan staroj per-item logici (vidi calculateActualLaborCost).
         const laborByItem = new Map<string, number>();
+        // Radnik-dani po stavci (Σ Day_Fraction) — hrani Actual_Labor_Days za "planirano vs potrošeno" na kartici
+        const daysByItem = new Map<string, number>();
         {
             const logConstraints: any[] = [where('Work_Order_ID', '==', workOrderId)];
             if (workOrder.Organization_ID) logConstraints.push(where('Organization_ID', '==', workOrder.Organization_ID));
@@ -3096,6 +3193,7 @@ export async function recalculateWorkOrder(
             woLogsSnap.docs.forEach(d => {
                 const x = d.data();
                 laborByItem.set(x.Work_Order_Item_ID, (laborByItem.get(x.Work_Order_Item_ID) || 0) + (x.Daily_Rate || 0));
+                daysByItem.set(x.Work_Order_Item_ID, (daysByItem.get(x.Work_Order_Item_ID) || 0) + (x.Day_Fraction ?? 1));
             });
         }
         // EFIKASNOST: sve per-item sync izmjene idu u jedan writeBatch (umjesto N updateDoc-a).
@@ -3228,12 +3326,13 @@ export async function recalculateWorkOrder(
             // Nema "manual_override" izuzetka — sve izmjene (knjiga rada, timeline) idu kroz work logove.
             const freshItemLaborCost = Math.round((laborByItem.get(item.ID) || 0) * 100) / 100;
             actualLaborCost += freshItemLaborCost;
+            const freshItemLaborDays = Math.round((daysByItem.get(item.ID) || 0) * 100) / 100;
 
-            // SYNC: Update item-level Material_Cost and Actual_Labor_Cost for consistency
+            // SYNC: Update item-level Material_Cost, Actual_Labor_Cost i Actual_Labor_Days for consistency
             // (skupljamo izmjene → jedan batch commit poslije petlje)
             itemUpdates.push({
                 ref: doc(firestore, COLLECTIONS.WORK_ORDER_ITEMS, item.ID),
-                payload: { Material_Cost: itemMaterialCost, Actual_Labor_Cost: freshItemLaborCost },
+                payload: { Material_Cost: itemMaterialCost, Actual_Labor_Cost: freshItemLaborCost, Actual_Labor_Days: freshItemLaborDays },
             });
 
 

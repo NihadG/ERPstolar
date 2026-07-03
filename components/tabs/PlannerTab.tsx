@@ -1,10 +1,11 @@
 'use client';
 
-import { useState, useMemo, useCallback } from 'react';
+import { useState, useMemo, useCallback, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { DragDropContext, Droppable, Draggable, DropResult } from '@hello-pangea/dnd';
 import type { WorkOrder, Worker, WorkOrderItem, WorkerConflict, WorkLog } from '@/lib/types';
-import { scheduleWorkOrder, unscheduleWorkOrder, startWorkOrder, checkWorkerConflicts, rescheduleWorkOrder, updateDueDate, updatePlannedStartDate } from '@/lib/services';
+import { scheduleWorkOrder, unscheduleWorkOrder, startWorkOrder, checkWorkerConflicts, rescheduleWorkOrder, updateDueDate, updatePlannedStartDate, getAllAttendanceByMonth } from '@/lib/services';
+import { weeklyCapacity, plannedVsActualDays, todayISO, type AttendanceLite, type CapacityOrderInput } from '@/lib/planning';
 import { useAuth } from '@/context/AuthContext';
 import {
     ChevronLeft,
@@ -180,6 +181,41 @@ export default function PlannerTab({ workOrders, workers, workLogs, onRefresh, s
     }>({ open: false, conflicts: [], pendingSchedule: null });
 
     const visibleDates = useMemo(() => getDateRange(viewStart, days), [viewStart, days]);
+
+    // ── Sedmični kapacitet: šihtarica (prošli/tekući/naredni mjesec) za rotaciju subota + buduće odsutnosti ──
+    const [attLite, setAttLite] = useState<AttendanceLite[]>([]);
+    useEffect(() => {
+        if (!orgId) return;
+        const now = new Date();
+        const months: { y: number; m: number }[] = [-1, 0, 1].map(off => {
+            const d = new Date(now.getFullYear(), now.getMonth() + off, 1);
+            return { y: d.getFullYear(), m: d.getMonth() + 1 };
+        });
+        Promise.all(months.map(mm => getAllAttendanceByMonth(String(mm.y), String(mm.m), orgId)))
+            .then(res => setAttLite(res.flat() as AttendanceLite[]))
+            .catch(err => console.warn('capacity attendance load:', err));
+    }, [orgId]);
+
+    // Raspoloživi vs planirani radnik-dani po sedmici vidljivog raspona
+    const capacityWeeks = useMemo(() => {
+        const activeWorkerIds = workers
+            .filter(w => w.Status === 'Aktivan' || w.Status === 'Dostupan')
+            .map(w => w.Worker_ID);
+        if (activeWorkerIds.length === 0) return [];
+        const capOrders: CapacityOrderInput[] = workOrders
+            .filter(wo => wo.Status === 'U toku' || (wo.Status === 'Na čekanju' && wo.Is_Scheduled))
+            .map(wo => {
+                const dp = plannedVsActualDays(wo.items || [], workLogs);
+                return {
+                    id: wo.Work_Order_ID,
+                    startISO: (wo.Started_At || wo.Planned_Start_Date || todayISO()).split('T')[0],
+                    endISO: (wo.Due_Date || wo.Planned_End_Date || '').split('T')[0],
+                    remainingWorkerDays: Math.max(0, dp.planned - dp.actual),
+                };
+            })
+            .filter(o => o.remainingWorkerDays > 0);
+        return weeklyCapacity(formatDateKey(viewStart), Math.max(1, Math.ceil(days / 7)), activeWorkerIds, attLite, capOrders);
+    }, [workOrders, workers, workLogs, attLite, viewStart, days]);
 
     // Auto-forward: For 'Na čekanju' orders whose planned start is in the past,
     // shift both start and end dates forward so the bar starts from today.
@@ -592,6 +628,42 @@ export default function PlannerTab({ workOrders, workers, workLogs, onRefresh, s
                     )}
                 </div>
             </div>
+
+            {/* Sedmični kapacitet: planirani vs raspoloživi radnik-dani */}
+            {capacityWeeks.length > 0 && (
+                <div style={{ display: 'flex', gap: '10px', margin: '0 0 12px', flexWrap: 'wrap' }}>
+                    {capacityWeeks.map(wk => {
+                        const over = wk.ratio !== null && wk.ratio > 1;
+                        const tight = wk.ratio !== null && wk.ratio > 0.85 && wk.ratio <= 1;
+                        const barColor = over ? 'var(--error)' : tight ? 'var(--warning)' : '#059669';
+                        const pct = wk.ratio === null ? 0 : Math.min(100, Math.round(wk.ratio * 100));
+                        const fmtD = (n: number) => (Number.isInteger(n) ? String(n) : n.toFixed(1));
+                        const label = `${new Date(wk.weekStartISO + 'T00:00:00').toLocaleDateString('hr-HR', { day: 'numeric', month: 'numeric' })}–${new Date(wk.weekEndISO + 'T00:00:00').toLocaleDateString('hr-HR', { day: 'numeric', month: 'numeric' })}`;
+                        return (
+                            <div
+                                key={wk.weekStartISO}
+                                title={`Sedmica ${label}: planirano ${fmtD(wk.planned)} od raspoloživih ${fmtD(wk.available)} radnik-dana${over ? ' — PREBUKIRANO' : ''}`}
+                                style={{
+                                    flex: '1 1 140px', minWidth: '140px',
+                                    padding: '8px 12px', borderRadius: '10px',
+                                    border: `1px solid ${over ? '#fecaca' : '#e2e8f0'}`,
+                                    background: over ? 'var(--error-bg)' : 'white',
+                                }}
+                            >
+                                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: '#64748b', marginBottom: '4px' }}>
+                                    <span>{label}</span>
+                                    <span style={{ fontWeight: 700, color: over ? 'var(--error)' : tight ? 'var(--warning)' : '#059669' }}>
+                                        {fmtD(wk.planned)}/{fmtD(wk.available)} rd
+                                    </span>
+                                </div>
+                                <div style={{ height: '5px', borderRadius: '3px', background: '#f1f5f9', overflow: 'hidden' }}>
+                                    <div style={{ width: `${pct}%`, height: '100%', background: barColor, borderRadius: '3px' }} />
+                                </div>
+                            </div>
+                        );
+                    })}
+                </div>
+            )}
 
             {/* Gantt Table with Drag-and-Drop */}
             <DragDropContext onDragEnd={onDragEnd}>

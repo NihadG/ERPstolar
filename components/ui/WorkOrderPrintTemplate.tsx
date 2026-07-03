@@ -420,37 +420,46 @@ export default function WorkOrderPrintTemplate({ workOrder, companyName = 'ERP S
                                     </table>
                                 </div>
 
-                                {/* Processes Section (Optional) */}
-                                {showProcesses && (
-                                    <div className="section avoid-break">
-                                        <div className="section-title">RASPODJELA PO PROCESIMA</div>
-                                        <table className="data-table compact">
-                                            <thead>
-                                                <tr>
-                                                    <th className="col-name">Proizvod</th>
-                                                    {workOrder.Production_Steps?.map(step => (
-                                                        <th key={step} className="col-process">{step}</th>
-                                                    ))}
-                                                </tr>
-                                            </thead>
-                                            <tbody>
-                                                {workOrder.items?.map((item) => (
-                                                    <tr key={item.ID}>
-                                                        <td className="col-name">{item.Product_Name}</td>
-                                                        {workOrder.Production_Steps?.map(process => {
-                                                            const assignment = item.Process_Assignments?.[process];
-                                                            return (
-                                                                <td key={process} className="col-process">
-                                                                    {assignment?.Worker_Name || '—'}
-                                                                </td>
-                                                            );
-                                                        })}
+                                {/* Processes Section (Optional) — čita item.Processes (novi model); kolone = unija naziva */}
+                                {showProcesses && (() => {
+                                    const stepSet = new Set<string>();
+                                    workOrder.items?.forEach(it => it.Processes?.forEach(p => { if (p.Process_Name) stepSet.add(p.Process_Name); }));
+                                    (workOrder.Production_Steps || []).forEach(s => stepSet.add(s));
+                                    const steps = Array.from(stepSet);
+                                    if (steps.length === 0) return null;
+                                    return (
+                                        <div className="section avoid-break">
+                                            <div className="section-title">RASPODJELA PO PROCESIMA</div>
+                                            <table className="data-table compact">
+                                                <thead>
+                                                    <tr>
+                                                        <th className="col-name">Proizvod</th>
+                                                        {steps.map(step => (
+                                                            <th key={step} className="col-process">{step}</th>
+                                                        ))}
                                                     </tr>
-                                                ))}
-                                            </tbody>
-                                        </table>
-                                    </div>
-                                )}
+                                                </thead>
+                                                <tbody>
+                                                    {workOrder.items?.map((item) => (
+                                                        <tr key={item.ID}>
+                                                            <td className="col-name">{item.Product_Name}</td>
+                                                            {steps.map(process => {
+                                                                const entry = item.Processes?.find(p => p.Process_Name === process);
+                                                                const worker = entry?.Worker_Name
+                                                                    || item.Process_Assignments?.[process]?.Worker_Name; // legacy podaci starih naloga
+                                                                return (
+                                                                    <td key={process} className="col-process">
+                                                                        {worker || '—'}{entry?.Status === 'Završeno' ? ' ✓' : ''}
+                                                                    </td>
+                                                                );
+                                                            })}
+                                                        </tr>
+                                                    ))}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    );
+                                })()}
 
                                 {/* Signature Area */}
                                 <div className="signature-area avoid-break">

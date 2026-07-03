@@ -29,6 +29,7 @@ const customJestConfig = {
         '<rootDir>/node_modules/',
         '<rootDir>/.next/',
         '<rootDir>/tests/',
+        '<rootDir>/.claude/',
     ],
 
     // Transform

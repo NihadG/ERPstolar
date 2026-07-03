@@ -2,17 +2,19 @@
 
 import { useState, useMemo, useEffect } from 'react';
 import type { WorkOrder, Project, Worker } from '@/lib/types';
-import { createWorkOrder, deleteWorkOrder, startWorkOrder, getWorkOrder, updateWorkOrder, updatePlannedStartDate } from '@/lib/services';
+import { createWorkOrder, deleteWorkOrder, startWorkOrder, getWorkOrder, updateWorkOrder, updatePlannedStartDate, autoCreateOrdersForWorkOrder } from '@/lib/services';
 import { validateWorkOrderProfitData, checkMissingAttendanceForActiveOrders, recalculateWorkOrder, assignWorkersToItem, syncProjectStatus } from '@/lib/services';
 import { repairAllProductStatuses, startWorkOrderItem, completeWorkOrderItem } from '@/lib/services';
-import { workOrderDueDate, todayISO, buildSaturdayChecker } from '@/lib/planning';
+import { workOrderDueDate, todayISO, buildSaturdayChecker, plannedVsActualDays } from '@/lib/planning';
+import { planToStages, flattenStages } from '@/lib/productProcesses';
 import { getAllAttendanceByMonth } from '@/lib/services';
-import { workOrderDisplayName } from '@/lib/utils';
+import { workOrderDisplayName, orderProcessProgress } from '@/lib/utils';
 import { useData } from '@/context/DataContext';
 import Modal from '@/components/ui/Modal';
 import WorkOrderExpandedDetail from '@/components/ui/WorkOrderExpandedDetail';
 import WorkOrderPrintTemplate from '@/components/ui/WorkOrderPrintTemplate';
 import AnalyticsDashboard from '@/components/ui/AnalyticsDashboard';
+import OrderSummaryModal from '@/components/ui/OrderSummaryModal';
 
 import PriceEditModal from '@/components/ui/PriceEditModal';
 import AttendanceFixModal from '@/components/ui/AttendanceFixModal';
@@ -188,21 +190,14 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
         filteredWorkOrders.forEach(wo => {
             // For worker grouping, one order can appear in multiple groups
             if (groupBy === 'worker') {
+                // Jedan model: dodjela radnika = Assigned_Workers + Processes[] (bez legacy Process_Assignments)
                 const workerIds = new Set<string>();
                 wo.items?.forEach(item => {
-                    // Check new Processes field first
-                    if (item.Processes) {
-                        item.Processes.forEach(p => {
-                            if (p.Worker_ID) workerIds.add(p.Worker_ID);
-                        });
-                    }
-                    // Fallback to legacy assignments
-                    else {
-                        Object.values(item.Process_Assignments || {}).forEach(assignment => {
-                            if (assignment.Worker_ID) workerIds.add(assignment.Worker_ID);
-                            assignment.Helpers?.forEach((h: { Worker_ID: string; Worker_Name: string }) => workerIds.add(h.Worker_ID));
-                        });
-                    }
+                    (item.Assigned_Workers || []).forEach(w => { if (w.Worker_ID) workerIds.add(w.Worker_ID); });
+                    item.Processes?.forEach(p => {
+                        if (p.Worker_ID) workerIds.add(p.Worker_ID);
+                        p.Helpers?.forEach(h => { if (h.Worker_ID) workerIds.add(h.Worker_ID); });
+                    });
                 });
 
                 if (workerIds.size === 0) {
@@ -285,11 +280,10 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
     // Create Modal State
     const [createModal, setCreateModal] = useState(false);
     const [tasksModal, setTasksModal] = useState(false);
-    const [activeStep, setActiveStep] = useState(0); // 0: Projects, 1: Products, 2: Processes, 3: Details
+    const [activeStep, setActiveStep] = useState(0); // production: 0=Proizvodi, 1=Radnik & rok; montaža: 0=Proizvodi, 1=Procesi, 2=Dodjela
     const [wizardMode, setWizardMode] = useState<'production' | 'montaza'>('production');
 
     // Data State
-    const [selectedProjectIds, setSelectedProjectIds] = useState<string[]>([]);
     const [selectedProducts, setSelectedProducts] = useState<ProductSelection[]>([]);
     const [selectedProcesses, setSelectedProcesses] = useState<string[]>(['Priprema', 'Sklapanje', 'Farbanje', 'Montaža']);
     const [customProcessInput, setCustomProcessInput] = useState('');
@@ -302,6 +296,8 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
     // Worker search dropdown state for step 4
     const [openDropdown, setOpenDropdown] = useState<string | null>(null);
     const [workerSearch, setWorkerSearch] = useState('');
+    // Odmah kreiraj narudžbe za nedostajuće materijale (uklanja poseban odlazak u Planer/narudžbe)
+    const [createMaterialOrders, setCreateMaterialOrders] = useState(true);
 
     // ── AUTO-ROK: rok = danas + Σ planiranih radnih dana po proizvodu (iz ponude) ──
     // Sekvencijalno (kao u zahtjevu: 2 proizvoda × 2 dana = 4 dana). Subota se računa,
@@ -328,7 +324,7 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
     // Šihtarica (tekući + prethodni mjesec) — izvor za alternaciju subota; učita se na koraku "Radnik & rok".
     const [wizardAttendance, setWizardAttendance] = useState<{ Worker_ID: string; Date: string; Status: string }[]>([]);
     useEffect(() => {
-        if (!organizationId || activeStep !== 2 || wizardMode !== 'production') return;
+        if (!organizationId || activeStep !== 1 || wizardMode !== 'production') return;
         let cancelled = false;
         (async () => {
             const now = new Date();
@@ -348,16 +344,19 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
         return workOrderDueDate(startDate || todayISO(), totalPlannedDays, checker);
     }, [totalPlannedDays, assignedWorkerIds, wizardAttendance, startDate]);
 
-    // Auto-popuni rok kad uđemo u korak "Radnik & rok" ako još nije postavljen (ostaje uredljiv).
+    // Auto-popuni rok kad uđemo u posljednji korak ("Radnik & rok" / "Dodjela") ako još nije postavljen (ostaje uredljiv).
     useEffect(() => {
-        if (activeStep === 2 && !dueDate && suggestedDueDate) {
+        const onLastStep = (wizardMode === 'production' && activeStep === 1) || (wizardMode === 'montaza' && activeStep === 2);
+        if (onLastStep && !dueDate && suggestedDueDate) {
             setDueDate(suggestedDueDate);
         }
-    }, [activeStep, suggestedDueDate, dueDate]);
+    }, [activeStep, suggestedDueDate, dueDate, wizardMode]);
 
     // Expansion State
     const [expandedOrderId, setExpandedOrderId] = useState<string | null>(null);
     const [currentWorkOrderForPrint, setCurrentWorkOrderForPrint] = useState<WorkOrder | null>(null);
+    // Rezime završenog naloga (finalni P&L iz snapshota)
+    const [summaryOrder, setSummaryOrder] = useState<WorkOrder | null>(null);
 
     function toggleWorkOrder(id: string) {
         setExpandedOrderId(prev => prev === id ? null : id);
@@ -372,10 +371,11 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
         workOrderId: string | null;
         workOrderNumber: string;
     }>({ isOpen: false, workOrderId: null, workOrderNumber: '' });
+    // Proizvodi svih kvalifikovanih projekata (sortedProjects već isključuje Završeno/Otkazano
+    // i projekte sa svim spremnim proizvodima) — wizard više nema poseban korak izbora projekta.
     const eligibleProducts = useMemo(() => {
         let products: any[] = [];
-        projects.forEach(project => {
-            if (selectedProjectIds.length > 0 && !selectedProjectIds.includes(project.Project_ID)) return;
+        sortedProjects.forEach(project => {
             (project.products || []).forEach(product => {
                 // Calculate quantity already used in work orders
                 let usedQuantity = 0;
@@ -402,6 +402,8 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                         TotalQuantity: totalQuantity,
                         UsedQuantity: usedQuantity,
                         Status: product.Status,
+                        Process_Plan: product.Process_Plan,       // legacy fallback
+                        Process_Stages: product.Process_Stages,   // fazni plan (preview + sinteza grafa)
                     });
                 }
             });
@@ -415,7 +417,7 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
             );
         }
         return products;
-    }, [projects, selectedProjectIds, productSearch, workOrders]);
+    }, [sortedProjects, productSearch, workOrders]);
 
     // Montaža: Eligible products are those with status 'Spremno' across ALL projects
     const eligibleMontazaProducts = useMemo(() => {
@@ -482,7 +484,7 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
         setWorkOrderName('');
         setNotes('');
         setProductSearch('');
-        setSelectedProjectIds([]);
+        setCreateMaterialOrders(true);
         setActiveStep(0);
         setCreateModal(true);
     }
@@ -502,9 +504,6 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
         setNotes('');
         setProductSearch('');
 
-        // Pre-select the project
-        setSelectedProjectIds([projectId]);
-
         // Pre-select the products
         const preSelected: ProductSelection[] = pendingProducts.map(p => ({
             Product_ID: p.productId,
@@ -519,8 +518,8 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
         }));
         setSelectedProducts(preSelected);
 
-        // Projekat i proizvodi su već odabrani → idi na korak Radnik & rok (step 2)
-        setActiveStep(2);
+        // Proizvodi su već odabrani → idi na korak Radnik & rok (posljednji korak)
+        setActiveStep(1);
         setCreateModal(true);
 
         // Clear the pending data
@@ -538,7 +537,6 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
         setWorkOrderName('');
         setNotes('');
         setProductSearch('');
-        setSelectedProjectIds([]);
         setActiveStep(0);  // Step 0 = Odabir Spremnih proizvoda
         setCreateModal(true);
     }
@@ -550,10 +548,10 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
         { id: 2, title: 'Dodjela', subtitle: 'Raspored radnika' }
     ];
 
+    // 2 koraka: proizvodi (grupisani po projektu) → radnik & rok. Projekat se izvodi iz proizvoda.
     const productionSteps = [
-        { id: 0, title: 'Projekti', subtitle: 'Odaberite projekat' },
-        { id: 1, title: 'Proizvodi', subtitle: 'Odaberite proizvode' },
-        { id: 2, title: 'Radnik & rok', subtitle: 'Dodijelite radnika' }
+        { id: 0, title: 'Proizvodi', subtitle: 'Odaberite proizvode' },
+        { id: 1, title: 'Radnik & rok', subtitle: 'Dodijelite radnika' }
     ];
 
     const steps = wizardMode === 'montaza' ? montazaSteps : productionSteps;
@@ -565,11 +563,10 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
             if (activeStep === 1) return selectedProcesses.length > 0;
             return true;
         }
-        // Production mode (3 koraka: Projekti → Proizvodi → Radnik & rok)
-        if (activeStep === 0) return selectedProjectIds.length > 0;
-        if (activeStep === 1) return selectedProducts.length > 0;
+        // Production mode (2 koraka: Proizvodi → Radnik & rok)
+        if (activeStep === 0) return selectedProducts.length > 0;
         return true;
-    }, [activeStep, selectedProjectIds, selectedProducts, selectedProcesses, wizardMode]);
+    }, [activeStep, selectedProducts, selectedProcesses, wizardMode]);
 
     function handleNext() {
         if (activeStep < lastStep && canGoNext) setActiveStep(activeStep + 1);
@@ -580,15 +577,6 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
     }
 
     // Selection Logic
-    function toggleProjectSelection(projectId: string) {
-        if (selectedProjectIds.includes(projectId)) {
-            setSelectedProjectIds(selectedProjectIds.filter(id => id !== projectId));
-            setSelectedProducts(selectedProducts.filter(p => p.Project_ID !== projectId));
-        } else {
-            setSelectedProjectIds([...selectedProjectIds, projectId]);
-        }
-    }
-
     function toggleProduct(product: any) {
         const exists = selectedProducts.find(p => p.Product_ID === product.Product_ID);
         if (exists) {
@@ -790,25 +778,37 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                 Planned_Labor_Days: isMontazaMode ? 0 : (offerProduct?.Labor_Days || undefined),
                 Planned_Labor_Workers: isMontazaMode ? 0 : (offerProduct?.Labor_Workers || undefined),
                 Planned_Labor_Rate: isMontazaMode ? 0 : (offerProduct?.Labor_Daily_Rate || undefined),
-                Processes: selectedProcesses.map(proc => {
-                    const workerId = p.assignments[proc];
-                    const worker = workers.find(w => w.Worker_ID === workerId);
-                    return {
-                        Process_Name: proc,
-                        Status: 'Na čekanju',
-                        Worker_ID: workerId || undefined,
-                        Worker_Name: worker?.Name || undefined,
-                        Helpers: (p.helperAssignments?.[proc] || []).map(hId => {
-                            const h = workers.find(w => w.Worker_ID === hId);
-                            return {
-                                Worker_ID: hId,
-                                Worker_Name: h?.Name || 'Nepoznat'
-                            };
-                        })
-                    };
-                }),
-                // Legacy support but simplified
-                Process_Assignments: {},
+                // PLAN PROCESA PROIZVODA (FAZE): proizvodnja s definisanim planom → checklist/graf po
+                // NJEGOVIM procesima (ekipa naloga radi sve procese, pa se glavni radnik + pomoćnici iz
+                // dodjele vežu na svaki proces). Bez plana / montaža → dosadašnji selectedProcesses put.
+                Processes: (() => {
+                    const stages = !isMontazaMode ? planToStages(product?.Process_Stages, product?.Process_Plan) : [];
+                    const flatPlan = stages.length ? flattenStages(stages) : null;
+                    const buildFor = (procNames: string[], assignKey: (name: string) => string) => procNames.map(name => {
+                        const key = assignKey(name);
+                        const workerId = p.assignments[key];
+                        const worker = workers.find(w => w.Worker_ID === workerId);
+                        return {
+                            Process_Name: name,
+                            Status: 'Na čekanju',
+                            Worker_ID: workerId || undefined,
+                            Worker_Name: worker?.Name || undefined,
+                            Helpers: (p.helperAssignments?.[key] || []).map(hId => {
+                                const h = workers.find(w => w.Worker_ID === hId);
+                                return { Worker_ID: hId, Worker_Name: h?.Name || 'Nepoznat' };
+                            })
+                        };
+                    });
+                    return flatPlan
+                        ? buildFor(flatPlan, () => selectedProcesses[0] || 'Rad')  // dodjela s 'Rad' važi za sve procese plana
+                        : buildFor(selectedProcesses, name => name);
+                })(),
+                // Fazni plan za sintezu grafa naloga (paralelno unutar faze; isti proces = jedan čvor)
+                Process_Stages: (() => {
+                    if (isMontazaMode) return undefined;
+                    const stages = planToStages(product?.Process_Stages, product?.Process_Plan);
+                    return stages.length ? stages.map(s => ({ processes: s })) : undefined;
+                })(),
                 // Montaža: link back to source production work order
                 ...(p.Source_Work_Order_ID && { Source_Work_Order_ID: p.Source_Work_Order_ID }),
             };
@@ -840,6 +840,23 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
         if (result.success) {
             showToast(`Radni nalog ${result.data?.Work_Order_Number} kreiran`, 'success');
             setCreateModal(false);
+
+            // Odmah naruči nedostajuće materijale (isti put kao iz Planera) — bez posebnog odlaska.
+            if (createMaterialOrders && !isMontazaMode && result.data?.Work_Order_ID && organizationId) {
+                try {
+                    const ord = await autoCreateOrdersForWorkOrder(result.data.Work_Order_ID, startDate || todayISO(), organizationId);
+                    if (ord.ordersCreated > 0) {
+                        showToast(`Kreirano ${ord.ordersCreated} narudžbi materijala (${ord.orderNumbers.join(', ')})`, 'success');
+                        onRefresh('orders');
+                    } else {
+                        showToast('Materijali već pokriveni — nema novih narudžbi', 'info');
+                    }
+                } catch (e) {
+                    console.error('auto material orders failed', e);
+                    showToast('Nalog kreiran, ali narudžbe materijala nisu uspjele — provjeri ručno', 'error');
+                }
+            }
+
             onRefresh('workOrders', 'projects');
         } else {
             showToast(result.message, 'error');
@@ -1017,33 +1034,19 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
         const isExpanded = expandedOrderId === wo.Work_Order_ID;
         const totalItems = wo.items?.length || 0;
 
-        // Extract all workers from this work order (using new Processes structure)
+        // Radnici naloga = Assigned_Workers + Processes[] (jedan model, bez legacy Process_Assignments)
         const orderWorkers = new Map<string, { name: string; isMain: boolean; helperCount: number }>();
         wo.items?.forEach(item => {
-            // Check new Processes field
-            if (item.Processes) {
-                item.Processes.forEach(p => {
-                    if (p.Worker_ID && p.Worker_Name) {
-                        orderWorkers.set(p.Worker_ID, {
-                            name: p.Worker_Name,
-                            isMain: true,
-                            helperCount: 0
-                        });
-                    }
-                });
-            }
-            // Fallback for legacy data
-            else if (item.Process_Assignments) {
-                Object.values(item.Process_Assignments).forEach(assignment => {
-                    if (assignment.Worker_ID && assignment.Worker_Name) {
-                        orderWorkers.set(assignment.Worker_ID, {
-                            name: assignment.Worker_Name,
-                            isMain: true,
-                            helperCount: assignment.Helpers?.length || 0
-                        });
-                    }
-                });
-            }
+            (item.Assigned_Workers || []).forEach(w => {
+                if (w.Worker_ID && w.Worker_Name) {
+                    orderWorkers.set(w.Worker_ID, { name: w.Worker_Name, isMain: true, helperCount: 0 });
+                }
+            });
+            item.Processes?.forEach(p => {
+                if (p.Worker_ID && p.Worker_Name) {
+                    orderWorkers.set(p.Worker_ID, { name: p.Worker_Name, isMain: true, helperCount: 0 });
+                }
+            });
         });
 
         // Get main workers only for display
@@ -1185,6 +1188,32 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                                             </>
                                         );
                                     })()}
+
+                                    {/* GAP-2/5: Profit data quality badge — samo proizvodnja (Montaža/Zadaci nemaju cijene po dizajnu) */}
+                                    {(!wo.Work_Order_Type || wo.Work_Order_Type === 'Proizvodnja') && wo.Status !== 'Otkazano' && (() => {
+                                        const profitWarnings = validateWorkOrderProfitData(wo);
+                                        if (profitWarnings.length === 0) return null;
+                                        const hasError = profitWarnings.some(w => w.type === 'error');
+                                        const title = 'Profit može biti netačan:\n' + profitWarnings
+                                            .map(w => (w.itemName ? `${w.itemName}: ` : '') + w.message)
+                                            .join('\n');
+                                        return (
+                                            <>
+                                                <span style={{ color: '#d1d5db' }}>•</span>
+                                                <span style={{
+                                                    display: 'flex',
+                                                    alignItems: 'center',
+                                                    gap: '4px',
+                                                    fontSize: '12px',
+                                                    fontWeight: 600,
+                                                    color: hasError ? 'var(--error)' : 'var(--warning)',
+                                                }} title={title}>
+                                                    <span className="material-icons-round" style={{ fontSize: '14px' }}>report_problem</span>
+                                                    {profitWarnings.length}
+                                                </span>
+                                            </>
+                                        );
+                                    })()}
                                 </div>
                             </div>
                         </div>
@@ -1198,6 +1227,42 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                                     <span className="material-icons-round">calendar_today</span>
                                     {wo.Due_Date ? formatDate(wo.Due_Date) : '-'}
                                 </span>
+                                {/* Planirano vs potrošeno radnik-dana (Actual_Labor_Days sync-uje recalculateWorkOrder) */}
+                                {wo.Status !== 'Otkazano' && (() => {
+                                    const dp = plannedVsActualDays(wo.items || []);
+                                    if (dp.planned <= 0) return null;
+                                    const fmtDays = (n: number) => (Number.isInteger(n) ? String(n) : n.toFixed(1));
+                                    const color = dp.ratio !== null && dp.ratio > 1 ? 'var(--error)'
+                                        : dp.ratio !== null && dp.ratio >= 0.8 ? 'var(--warning)'
+                                        : undefined;
+                                    return (
+                                        <span
+                                            className="summary-item"
+                                            style={color ? { color, fontWeight: 600 } : undefined}
+                                            title={`Potrošeno ${fmtDays(dp.actual)} od ${fmtDays(dp.planned)} planiranih radnik-dana`}
+                                        >
+                                            <span className="material-icons-round">hourglass_bottom</span>
+                                            {fmtDays(dp.actual)}/{fmtDays(dp.planned)} dana
+                                        </span>
+                                    );
+                                })()}
+                                {/* Napredak iz procesa (checklist završetka) */}
+                                {(wo.Status === 'U toku' || wo.Status === 'Na čekanju') && (() => {
+                                    const prog = orderProcessProgress(wo.items || []);
+                                    if (!prog || prog.total <= 1) return null;
+                                    return (
+                                        <span
+                                            className="summary-item"
+                                            title={`Završeno ${prog.done} od ${prog.total} procesa`}
+                                            style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+                                        >
+                                            <span style={{ width: '44px', height: '5px', borderRadius: '3px', background: '#e2e8f0', overflow: 'hidden', display: 'inline-block' }}>
+                                                <span style={{ display: 'block', width: `${prog.pct}%`, height: '100%', background: prog.pct >= 100 ? '#059669' : 'var(--accent, #0071e3)', borderRadius: '3px' }} />
+                                            </span>
+                                            {prog.pct}%
+                                        </span>
+                                    );
+                                })()}
                                 {/* Planned Start Date badge for scheduled waiting orders */}
                                 {wo.Is_Scheduled && wo.Status === 'Na čekanju' && (() => {
                                     // Auto-forward: show today if planned start is in the past
@@ -1263,6 +1328,24 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                     </div>
 
                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        {/* Pokreni direktno s kartice (guard-poruke stižu kroz postojeći toast) */}
+                        {wo.Status === 'Na čekanju' && (
+                            <button className="icon-btn" title="Pokreni nalog" style={{ color: '#059669' }} onClick={(e) => {
+                                e.stopPropagation();
+                                handleStartWorkOrder(wo.Work_Order_ID);
+                            }}>
+                                <span className="material-icons-round">play_arrow</span>
+                            </button>
+                        )}
+                        {/* Rezime završenog naloga (finalni P&L iz snapshota) */}
+                        {wo.Status === 'Završeno' && (
+                            <button className="icon-btn" title="Rezime naloga (finalni profit)" onClick={(e) => {
+                                e.stopPropagation();
+                                setSummaryOrder(wo);
+                            }}>
+                                <span className="material-icons-round">receipt_long</span>
+                            </button>
+                        )}
                         <button className="icon-btn" title="Printaj Nalog" onClick={(e) => {
                             e.stopPropagation();
                             handlePrintWorkOrder(wo);
@@ -1777,49 +1860,6 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                     {/* CONTENT BODY - MAXIMIZED */}
                     <div className="wizard-body">
                         {/* STEP 1: PROJECTS (Production only) */}
-                        {activeStep === 0 && wizardMode === 'production' && (
-                            <div className="wizard-step step-projects">
-                                <div className="step-page-header">
-                                    <h3>Odaberite projekat</h3>
-                                    <p>Za koji projekat kreirate nalog?</p>
-                                </div>
-
-                                <div className="project-search-container">
-                                    <div className="search-input">
-                                        <span className="material-icons-round">search</span>
-                                        <input
-                                            placeholder="Pretraži projekte..."
-                                            value={projectSearch}
-                                            onChange={e => setProjectSearch(e.target.value)}
-                                            autoFocus
-                                        />
-                                    </div>
-                                </div>
-
-                                <div className="wz-grid">
-                                    {sortedProjects.map(proj => {
-                                        return (
-                                            <div key={proj.Project_ID}
-                                                className={`wz-card ${selectedProjectIds.includes(proj.Project_ID) ? 'selected' : ''}`}
-                                                onClick={() => toggleProjectSelection(proj.Project_ID)}>
-                                                <div className="card-check">
-                                                    <span className="material-icons-round">
-                                                        {selectedProjectIds.includes(proj.Project_ID) ? 'check_circle' : 'radio_button_unchecked'}
-                                                    </span>
-                                                </div>
-                                                <div className="card-info">
-                                                    <span className="card-title">{proj.Client_Name}</span>
-                                                    <div className="card-badges">
-                                                        <span className="card-badge">{proj.products?.length || 0} proizvoda</span>
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        )
-                                    })}
-                                </div>
-                            </div>
-                        )}
-
                         {/* MONTAŽA STEP 0: Select Spremno Products */}
                         {activeStep === 0 && wizardMode === 'montaza' && (
                             <div className="wizard-step step-products">
@@ -1913,8 +1953,8 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                             </div>
                         )}
 
-                        {/* STEP 2: PRODUCTS (Production only, montaža handles this in step 0) */}
-                        {activeStep === 1 && wizardMode === 'production' && (
+                        {/* PRODUCTION STEP 0: Products grouped by project (spojeni Projekti+Proizvodi korak) */}
+                        {activeStep === 0 && wizardMode === 'production' && (
                             <div className="wizard-step step-products">
                                 <div className="step-toolbar sticky">
                                     <div className="tb-left">
@@ -1924,15 +1964,61 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                                     <div className="tb-right">
                                         <div className="search-input">
                                             <span className="material-icons-round">search</span>
-                                            <input placeholder="Pretraži..." value={productSearch} onChange={e => setProductSearch(e.target.value)} />
+                                            <input placeholder="Pretraži proizvod ili projekat..." value={productSearch} onChange={e => setProductSearch(e.target.value)} autoFocus />
                                         </div>
                                         <button className="btn-text" onClick={selectAllProducts}>Odaberi sve</button>
                                         {selectedProducts.length > 0 && <button className="btn-text danger" onClick={() => setSelectedProducts([])}>Poništi</button>}
                                     </div>
                                 </div>
                                 <div className="wz-list-scroll">
-                                    <div className="wz-list">
-                                        {eligibleProducts.map(prod => {
+                                    {eligibleProducts.length === 0 && (
+                                        <div style={{ textAlign: 'center', padding: '48px 20px', color: 'var(--text-secondary)' }}>
+                                            <span className="material-icons-round" style={{ fontSize: '44px', opacity: 0.4, display: 'block', marginBottom: '10px' }}>inventory_2</span>
+                                            Nema dostupnih proizvoda (svi su već u nalozima ili su projekti završeni)
+                                        </div>
+                                    )}
+                                    {sortedProjects.map(proj => {
+                                        const projProds = eligibleProducts.filter(p => p.Project_ID === proj.Project_ID);
+                                        if (projProds.length === 0) return null;
+                                        const selCount = projProds.filter(p => selectedProducts.some(s => s.Product_ID === p.Product_ID)).length;
+                                        const allSelected = selCount === projProds.length;
+                                        return (
+                                            <div key={proj.Project_ID} style={{ marginBottom: '14px' }}>
+                                                {/* Zaglavlje grupe = projekat */}
+                                                <div style={{
+                                                    display: 'flex', alignItems: 'center', gap: '10px',
+                                                    padding: '8px 12px', background: 'var(--bg-tertiary, #f8fafc)',
+                                                    borderRadius: '8px', marginBottom: '6px',
+                                                    position: 'sticky', top: 0, zIndex: 2,
+                                                }}>
+                                                    <span style={{ fontWeight: 700, fontSize: '13px', color: 'var(--text-primary, #0f172a)' }}>{proj.Client_Name}</span>
+                                                    <span style={{ fontSize: '12px', color: 'var(--text-secondary, #64748b)' }}>
+                                                        {selCount > 0 ? `${selCount}/` : ''}{projProds.length} proizvoda
+                                                    </span>
+                                                    <button
+                                                        className="btn-text"
+                                                        style={{ marginLeft: 'auto', fontSize: '12px' }}
+                                                        onClick={() => {
+                                                            if (allSelected) {
+                                                                setSelectedProducts(selectedProducts.filter(s => !projProds.some(p => p.Product_ID === s.Product_ID)));
+                                                            } else {
+                                                                const toAdd = projProds
+                                                                    .filter(p => !selectedProducts.some(s => s.Product_ID === p.Product_ID))
+                                                                    .map(p => ({
+                                                                        ...p,
+                                                                        Work_Order_Quantity: p.Quantity || 1,
+                                                                        assignments: selectedProcesses.reduce((acc: Record<string, string>, proc) => ({ ...acc, [proc]: '' }), {}),
+                                                                        helperAssignments: selectedProcesses.reduce((acc: Record<string, string[]>, proc) => ({ ...acc, [proc]: [] }), {}),
+                                                                    }));
+                                                                setSelectedProducts([...selectedProducts, ...toAdd]);
+                                                            }
+                                                        }}
+                                                    >
+                                                        {allSelected ? 'Poništi projekat' : 'Označi sve'}
+                                                    </button>
+                                                </div>
+                                                <div className="wz-list">
+                                                    {projProds.map(prod => {
                                             const isSelected = selectedProducts.some(p => p.Product_ID === prod.Product_ID);
                                             const selectedProd = selectedProducts.find(p => p.Product_ID === prod.Product_ID);
 
@@ -1947,7 +2033,20 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                                                         </span>
                                                         <div className="li-content">
                                                             <span className="li-title">{prod.Product_Name}</span>
-                                                            <span className="li-sub">{prod.Project_Name}</span>
+                                                            <span className="li-sub">
+                                                                {prod.Project_Name}
+                                                                {/* Fazni plan procesa proizvoda (∥ = paralelno; graf naloga se sintetiše iz njega) */}
+                                                                <span style={{ marginLeft: '8px', color: '#94a3b8', fontSize: '11px' }}>
+                                                                    {(() => {
+                                                                        const stages = planToStages(prod.Process_Stages, prod.Process_Plan);
+                                                                        if (!stages.length) return '· Rad';
+                                                                        const parts = stages.map(s => s.join(' ∥ '));
+                                                                        return parts.length > 3
+                                                                            ? `${parts.slice(0, 3).join(' → ')} +${parts.length - 3}`
+                                                                            : parts.join(' → ');
+                                                                    })()}
+                                                                </span>
+                                                            </span>
                                                         </div>
                                                         <span className="li-qty">{prod.Quantity} kom</span>
                                                     </div>
@@ -1998,8 +2097,11 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                                                     )}
                                                 </div>
                                             );
-                                        })}
-                                    </div>
+                                                    })}
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
                                 </div>
                             </div>
                         )}
@@ -2027,8 +2129,8 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                             </div>
                         )}
 
-                        {/* DETAILS & WORKERS (production step 2, montaža step 2) */}
-                        {((wizardMode === 'production' && activeStep === 2) || (wizardMode === 'montaza' && activeStep === 2)) && (
+                        {/* DETAILS & WORKERS (production step 1, montaža step 2) */}
+                        {((wizardMode === 'production' && activeStep === 1) || (wizardMode === 'montaza' && activeStep === 2)) && (
                             <div className="wizard-step step-details" onClick={(e) => {
                                 // Close dropdowns when clicking outside
                                 if (!(e.target as HTMLElement).closest('.wdd')) { setOpenDropdown(null); setWorkerSearch(''); }
@@ -2057,6 +2159,41 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                                         <input type="text" placeholder="Dodatne upute za radnike..." value={notes} onChange={e => setNotes(e.target.value)} />
                                     </div>
                                 </div>
+
+                                {/* Odmah naruči nedostajuće materijale (samo proizvodnja) */}
+                                {wizardMode === 'production' && (
+                                    <label style={{
+                                        display: 'flex', alignItems: 'center', gap: '8px',
+                                        padding: '10px 14px', margin: '10px 0 0',
+                                        background: 'var(--bg-tertiary, #f8fafc)', borderRadius: '10px',
+                                        fontSize: '13px', color: 'var(--text-primary, #0f172a)', cursor: 'pointer',
+                                        width: 'fit-content',
+                                    }}>
+                                        <input
+                                            type="checkbox"
+                                            checked={createMaterialOrders}
+                                            onChange={e => setCreateMaterialOrders(e.target.checked)}
+                                            style={{ width: 16, height: 16, accentColor: 'var(--accent, #0071e3)' }}
+                                        />
+                                        Odmah kreiraj narudžbe za nedostajuće materijale
+                                        <span style={{ fontSize: '11px', color: 'var(--text-secondary, #64748b)' }}>
+                                            (grupisano po dobavljaču; već primljeni/na stanju se preskaču)
+                                        </span>
+                                    </label>
+                                )}
+
+                                {/* Advisory: bez radnika nalog se kasnije ne može pokrenuti (guard na startu) */}
+                                {selectedProducts.length > 0 && selectedProducts.every(p => Object.values(p.assignments || {}).every(v => !v)) && (
+                                    <div style={{
+                                        display: 'flex', alignItems: 'center', gap: '8px',
+                                        padding: '10px 14px', margin: '10px 0 0',
+                                        background: 'var(--warning-bg, #fff4e5)', border: '1px solid #fde68a',
+                                        borderRadius: '10px', fontSize: '13px', color: '#92400e',
+                                    }}>
+                                        <span className="material-icons-round" style={{ fontSize: '18px' }}>warning_amber</span>
+                                        Nijedan radnik nije dodijeljen — nalog se neće moći pokrenuti dok ne dodijeliš radnika (možeš kreirati i dodijeliti kasnije).
+                                    </div>
+                                )}
 
                                 {/* Bulk assignment row */}
                                 <div className="bulk-assign-bar">
@@ -3248,6 +3385,15 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                     onClose={() => setProfitDashboardOpen(false)}
                     showToast={showToast}
                     onRefresh={onRefresh}
+                />
+            )}
+
+            {/* Rezime završenog naloga (finalni P&L iz snapshota / živi fallback) */}
+            {summaryOrder && (
+                <OrderSummaryModal
+                    workOrder={summaryOrder}
+                    organizationId={organizationId || ''}
+                    onClose={() => setSummaryOrder(null)}
                 />
             )}
 

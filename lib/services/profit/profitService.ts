@@ -75,6 +75,14 @@ export async function getProductionSnapshots(
     return _get(organizationId);
 }
 
+export async function getProductionSnapshotForWorkOrder(
+    workOrderId: string,
+    organizationId: string
+): Promise<import('../../types').ProductionSnapshot | null> {
+    const { getProductionSnapshotForWorkOrder: _get } = await import('../../database');
+    return _get(workOrderId, organizationId);
+}
+
 // ============================================
 // DATA GAP DETECTION (for notification-driven integrity)
 // ============================================
@@ -116,17 +124,3 @@ export async function checkMissingCostFields(organizationId: string): Promise<an
     const { checkMissingCostFields: _check } = await import('../../database');
     return _check(organizationId);
 }
-
-// ============================================
-// DAILY PROFIT (Manual Entries)
-// ============================================
-
-export {
-    saveDailyProfitEntry,
-    getDailyProfitEntries,
-    getDailyProfitSummary,
-    deleteDailyProfitEntry,
-    getTodaysMissingEntries,
-} from './dailyProfitService';
-
-export type { ProfitSummary } from './dailyProfitService';

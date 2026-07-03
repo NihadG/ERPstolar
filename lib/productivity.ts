@@ -351,7 +351,7 @@ export async function calculateWorkOrderProfitability(
             : 0;
 
         // KONZISTENTNOST: usluge se oduzimaju kao trošak — isto kao per-item
-        // (calculateProductProfitability) i aktivni dashboard (profitDashboardService).
+        // (calculateProductProfitability) i analitika (lib/analytics.ts).
         // Time je Σ(net proizvoda) === net naloga (invarijanta, vidi scenarios.integration.test).
         const grossProfit = totalValue - materialCost - transportCost - servicesCost;
         const netProfit = grossProfit - actualLaborCost;

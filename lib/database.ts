@@ -46,6 +46,8 @@ import type {
     AppState,
     ProcessGraph,
     ProcessFlowTemplate,
+    ProcessCatalogItem,
+    ProcessMaterialRule,
 } from './types';
 import { ALLOWED_ORDER_TRANSITIONS } from './types';
 
@@ -703,6 +705,10 @@ export async function addMaterialToProduct(data: Partial<ProductMaterial>, organ
             recalculateProductCost(data.Product_ID, organizationId).catch(err =>
                 console.warn('Background recalculateProductCost error (non-critical):', err)
             );
+            // Auto-plan procesa iz pravila materijal→proces (poštuje 'manual' guard)
+            applyAutoProcessPlan(data.Product_ID, organizationId).catch(err =>
+                console.warn('Background applyAutoProcessPlan error (non-critical):', err)
+            );
         }
 
         return { success: true, data: { ID: data.ID }, message: 'Materijal dodan' };
@@ -846,6 +852,10 @@ export async function deleteProductMaterial(materialId: string, organizationId: 
 
             if (productId) {
                 await recalculateProductCost(productId, organizationId);
+                // Auto-plan procesa (poštuje 'manual' guard) — materijal je otišao, plan se možda mijenja
+                applyAutoProcessPlan(productId, organizationId).catch(err =>
+                    console.warn('Background applyAutoProcessPlan error (non-critical):', err)
+                );
             }
         }
 
@@ -2851,6 +2861,9 @@ export async function addGlassMaterialToProduct(data: AddGlassMaterialData, orga
         // Recalculate product cost
         if (data.productId) {
             await recalculateProductCost(data.productId, organizationId);
+            applyAutoProcessPlan(data.productId, organizationId).catch(err =>
+                console.warn('Background applyAutoProcessPlan error (non-critical):', err)
+            );
         }
 
         return {
@@ -3083,6 +3096,9 @@ export async function addAluDoorMaterialToProduct(data: AddAluDoorMaterialData, 
         // Recalculate product cost
         if (data.productId) {
             await recalculateProductCost(data.productId, organizationId);
+            applyAutoProcessPlan(data.productId, organizationId).catch(err =>
+                console.warn('Background applyAutoProcessPlan error (non-critical):', err)
+            );
         }
 
         return {
@@ -3317,6 +3333,8 @@ export async function createWorkOrder(data: {
         Linked_Product_ID?: string;
         Linked_Product_Name?: string;
         Assigned_Workers?: { Worker_ID: string; Worker_Name: string; Daily_Rate: number }[];
+        Process_Plan?: string[];   // legacy ravni plan (fallback)
+        Process_Stages?: { processes: string[] }[];  // FAZNI plan proizvoda — izvor sinteze grafa
         Process_Assignments?: Record<string, {
             Worker_ID?: string;
             Worker_Name?: string;
@@ -3364,22 +3382,13 @@ export async function createWorkOrder(data: {
 
         // Add work order document
         const woRef = doc(collection(db, COLLECTIONS.WORK_ORDERS));
-        batch.set(woRef, workOrder);
 
-        // Add items with process assignments
+        // Add items — procesi žive SAMO u Processes[] (legacy Process_Assignments se više ne piše)
+        // SINTEZA GRAFA: FAZNI plan svake stavke (paralelno unutar faze) → isti proces više
+        // proizvoda = jedan čvor; redoslijed čuvaju ivice svaka→svaka između susjednih faza.
+        const { planToStages: _planToStages } = await import('./productProcesses');
+        const planItems: { itemId: string; stages: string[][] }[] = [];
         for (const item of data.items) {
-            const processAssignments: Record<string, any> = {};
-
-            // Initialize all processes with status
-            data.Production_Steps.forEach(proc => {
-                processAssignments[proc] = {
-                    Status: 'Na čekanju',
-                    Worker_ID: item.Process_Assignments?.[proc]?.Worker_ID || null,
-                    Worker_Name: item.Process_Assignments?.[proc]?.Worker_Name || null,
-                };
-            });
-
-            // Build Processes array from input (new format)
             const processes = (item as any).Processes || data.Production_Steps.map(proc => ({
                 Process_Name: proc,
                 Status: 'Na čekanju',
@@ -3398,7 +3407,6 @@ export async function createWorkOrder(data: {
                 Project_Name: item.Project_Name,
                 Quantity: item.Quantity,
                 Status: 'Na čekanju',
-                Process_Assignments: processAssignments,
                 Processes: processes,
                 // Cost and value fields for profit calculation (default to 0 if undefined)
                 Product_Value: item.Product_Value ?? 0,
@@ -3416,10 +3424,40 @@ export async function createWorkOrder(data: {
                 ...(item.Linked_Product_Name && { Linked_Product_Name: item.Linked_Product_Name }),
                 ...(item.Assigned_Workers && item.Assigned_Workers.length > 0 && { Assigned_Workers: item.Assigned_Workers }),
             };
+            // Faze stavke: Process_Stages proizvoda → legacy Process_Plan → nazivi procesa (sekvencijalno)
+            const stages = _planToStages(
+                item.Process_Stages,
+                (item.Process_Plan && item.Process_Plan.length > 0)
+                    ? item.Process_Plan
+                    : (processes as { Process_Name: string }[]).map(p => p.Process_Name).filter(Boolean)
+            );
+            if (stages.length > 0) {
+                (workOrderItem as WorkOrderItem).Process_Stages = stages.map(s => ({ processes: s }));
+            }
+
             const itemRef = doc(collection(db, COLLECTIONS.WORK_ORDER_ITEMS));
             batch.set(itemRef, workOrderItem);
+
+            planItems.push({ itemId: workOrderItem.ID, stages });
         }
 
+        // Graf procesa odmah pri kreiranju (do sada: uvijek ručno u modalu) + Production_Steps = unija (print)
+        try {
+            const { synthesizeOrderGraph } = await import('./productProcesses');
+            const { layoutProcessGraph } = await import('./processLayout');
+            const { graph, warnings } = synthesizeOrderGraph(planItems);
+            if (graph.nodes.length > 0) {
+                const pos = layoutProcessGraph(graph.nodes, graph.edges);
+                graph.nodes.forEach(n => { n.position = pos[n.id] || { x: 24, y: 24 }; });
+                (workOrder as any).Process_Graph = JSON.parse(JSON.stringify(graph));
+                workOrder.Production_Steps = graph.nodes.map(n => n.name);
+                if (warnings.length) console.warn('Process graph synthesis warnings:', warnings);
+            }
+        } catch (synthErr) {
+            console.warn('Process graph synthesis failed (non-critical):', synthErr);
+        }
+
+        batch.set(woRef, workOrder);
         await batch.commit();
 
         return { success: true, data: { Work_Order_ID: workOrderId, Work_Order_Number: workOrderNumber }, message: 'Radni nalog kreiran' };
@@ -4090,7 +4128,6 @@ export async function updateWorkOrder(workOrderId: string, updates: Partial<Work
                     const itemUpdateData: any = {};
 
                     if (item.Status) itemUpdateData.Status = item.Status;
-                    if (item.Process_Assignments) itemUpdateData.Process_Assignments = item.Process_Assignments;
 
                     if (Object.keys(itemUpdateData).length > 0) {
                         await updateDoc(existingItem.ref, itemUpdateData);
@@ -5103,6 +5140,212 @@ export async function deleteProcessTemplate(templateId: string, organizationId: 
         await deleteDoc(snap.docs[0].ref);
         return { success: true, message: 'Templejt obrisan' };
     } catch (e) { console.error('deleteProcessTemplate error:', e); return { success: false, message: 'Greška pri brisanju templejta' }; }
+}
+
+// ============================================
+// KATALOG PROCESA (org) + PRAVILA MATERIJAL→PROCES
+// Katalog = korisnikov registar; Order = kanonski redoslijed proizvodnje.
+// ============================================
+
+const PROCESS_CATALOG = 'process_catalog';
+const PROCESS_MATERIAL_RULES = 'process_material_rules';
+
+export async function getProcessCatalog(organizationId: string): Promise<ProcessCatalogItem[]> {
+    if (!organizationId) return [];
+    try {
+        const db = getDb();
+        const snap = await getDocs(query(collection(db, PROCESS_CATALOG), where('Organization_ID', '==', organizationId)));
+        return snap.docs.map(d => d.data() as ProcessCatalogItem).sort((a, b) => (a.Order || 0) - (b.Order || 0));
+    } catch (e) { console.error('getProcessCatalog error:', e); return []; }
+}
+
+export async function saveProcessCatalogItem(
+    name: string,
+    organizationId: string,
+    order?: number
+): Promise<{ success: boolean; item?: ProcessCatalogItem; message: string }> {
+    const trimmed = (name || '').trim();
+    if (!organizationId || !trimmed) return { success: false, message: 'Nedostaje naziv/organizacija' };
+    try {
+        const db = getDb();
+        // Idempotentno po nazivu (case-insensitive): postojeći se vraća, ne duplira
+        const existing = await getProcessCatalog(organizationId);
+        const dupe = existing.find(c => c.Name.trim().toLowerCase() === trimmed.toLowerCase());
+        if (dupe) return { success: true, item: dupe, message: 'Proces već postoji u katalogu' };
+        const item: ProcessCatalogItem = {
+            ID: generateUUID(),
+            Organization_ID: organizationId,
+            Name: trimmed,
+            Order: order ?? (existing.length ? Math.max(...existing.map(c => c.Order || 0)) + 1 : 1),
+            Created_At: new Date().toISOString(),
+        };
+        await addDoc(collection(db, PROCESS_CATALOG), JSON.parse(JSON.stringify(item)));
+        return { success: true, item, message: 'Proces dodan u katalog' };
+    } catch (e) { console.error('saveProcessCatalogItem error:', e); return { success: false, message: 'Greška pri spremanju procesa' }; }
+}
+
+export async function renameProcessCatalogItem(id: string, newName: string, organizationId: string): Promise<{ success: boolean; message: string }> {
+    const trimmed = (newName || '').trim();
+    if (!organizationId || !id || !trimmed) return { success: false, message: 'Nedostaje naziv/organizacija' };
+    try {
+        const db = getDb();
+        const snap = await getDocs(query(collection(db, PROCESS_CATALOG), where('ID', '==', id), where('Organization_ID', '==', organizationId)));
+        if (snap.empty) return { success: false, message: 'Proces nije pronađen' };
+        await updateDoc(snap.docs[0].ref, { Name: trimmed });
+        return { success: true, message: 'Proces preimenovan' };
+    } catch (e) { console.error('renameProcessCatalogItem error:', e); return { success: false, message: 'Greška pri preimenovanju' }; }
+}
+
+export async function deleteProcessCatalogItem(id: string, organizationId: string): Promise<{ success: boolean; message: string }> {
+    if (!organizationId || !id) return { success: false, message: 'Nedostaje organizacija' };
+    try {
+        const db = getDb();
+        const snap = await getDocs(query(collection(db, PROCESS_CATALOG), where('ID', '==', id), where('Organization_ID', '==', organizationId)));
+        if (snap.empty) return { success: false, message: 'Proces nije pronađen' };
+        await deleteDoc(snap.docs[0].ref);
+        return { success: true, message: 'Proces obrisan iz kataloga (postojeći planovi zadržavaju naziv)' };
+    } catch (e) { console.error('deleteProcessCatalogItem error:', e); return { success: false, message: 'Greška pri brisanju' }; }
+}
+
+/** Batch upis novog redoslijeda kataloga: ids u željenom redu → Order 1..N. */
+export async function reorderProcessCatalog(orderedIds: string[], organizationId: string): Promise<{ success: boolean; message: string }> {
+    if (!organizationId || !orderedIds.length) return { success: false, message: 'Nedostaje organizacija' };
+    try {
+        const db = getDb();
+        const snap = await getDocs(query(collection(db, PROCESS_CATALOG), where('Organization_ID', '==', organizationId)));
+        const refById = new Map(snap.docs.map(d => [(d.data() as ProcessCatalogItem).ID, d.ref]));
+        const batch = writeBatch(db);
+        orderedIds.forEach((id, idx) => {
+            const ref = refById.get(id);
+            if (ref) batch.update(ref, { Order: idx + 1 });
+        });
+        await batch.commit();
+        return { success: true, message: 'Redoslijed spremljen' };
+    } catch (e) { console.error('reorderProcessCatalog error:', e); return { success: false, message: 'Greška pri spremanju redoslijeda' }; }
+}
+
+export async function getProcessMaterialRules(organizationId: string): Promise<ProcessMaterialRule[]> {
+    if (!organizationId) return [];
+    try {
+        const db = getDb();
+        const snap = await getDocs(query(collection(db, PROCESS_MATERIAL_RULES), where('Organization_ID', '==', organizationId)));
+        return snap.docs.map(d => d.data() as ProcessMaterialRule)
+            .sort((a, b) => (a.Created_At || '').localeCompare(b.Created_At || ''));
+    } catch (e) { console.error('getProcessMaterialRules error:', e); return []; }
+}
+
+export async function saveProcessMaterialRule(
+    rule: Omit<ProcessMaterialRule, 'ID' | 'Created_At'> & { ID?: string },
+    organizationId: string
+): Promise<{ success: boolean; message: string }> {
+    if (!organizationId || !(rule.Match_Value || '').trim() || !(rule.Processes || []).length) {
+        return { success: false, message: 'Pravilo mora imati vrijednost i bar jedan proces' };
+    }
+    try {
+        const db = getDb();
+        if (rule.ID) {
+            const snap = await getDocs(query(collection(db, PROCESS_MATERIAL_RULES), where('ID', '==', rule.ID), where('Organization_ID', '==', organizationId)));
+            if (snap.empty) return { success: false, message: 'Pravilo nije pronađeno' };
+            await updateDoc(snap.docs[0].ref, {
+                Match_Kind: rule.Match_Kind,
+                Match_Value: rule.Match_Value.trim(),
+                Processes: rule.Processes,
+            });
+            return { success: true, message: 'Pravilo ažurirano' };
+        }
+        const doc_: ProcessMaterialRule = {
+            ID: generateUUID(),
+            Organization_ID: organizationId,
+            Match_Kind: rule.Match_Kind,
+            Match_Value: rule.Match_Value.trim(),
+            Processes: rule.Processes,
+            Created_At: new Date().toISOString(),
+        };
+        await addDoc(collection(db, PROCESS_MATERIAL_RULES), JSON.parse(JSON.stringify(doc_)));
+        return { success: true, message: 'Pravilo spremljeno' };
+    } catch (e) { console.error('saveProcessMaterialRule error:', e); return { success: false, message: 'Greška pri spremanju pravila' }; }
+}
+
+export async function deleteProcessMaterialRule(id: string, organizationId: string): Promise<{ success: boolean; message: string }> {
+    if (!organizationId || !id) return { success: false, message: 'Nedostaje organizacija' };
+    try {
+        const db = getDb();
+        const snap = await getDocs(query(collection(db, PROCESS_MATERIAL_RULES), where('ID', '==', id), where('Organization_ID', '==', organizationId)));
+        if (snap.empty) return { success: false, message: 'Pravilo nije pronađeno' };
+        await deleteDoc(snap.docs[0].ref);
+        return { success: true, message: 'Pravilo obrisano' };
+    } catch (e) { console.error('deleteProcessMaterialRule error:', e); return { success: false, message: 'Greška pri brisanju pravila' }; }
+}
+
+/**
+ * AUTO-PLAN: preračunaj Process_Plan proizvoda iz pravila materijal→proces.
+ * Poštuje 'manual' guard (ručno uređen plan se NE dira, osim uz force).
+ * Poziva se nakon izmjena materijala proizvoda i pri kreiranju proizvoda.
+ */
+export async function applyAutoProcessPlan(
+    productId: string,
+    organizationId: string,
+    opts?: { force?: boolean }
+): Promise<{ success: boolean; plan?: string[]; message: string }> {
+    if (!productId || !organizationId) return { success: false, message: 'Nedostaje proizvod/organizacija' };
+    try {
+        const db = getDb();
+        const prodSnap = await getDocs(query(collection(db, COLLECTIONS.PRODUCTS), where('Product_ID', '==', productId), where('Organization_ID', '==', organizationId)));
+        if (prodSnap.empty) return { success: false, message: 'Proizvod nije pronađen' };
+        const prodRef = prodSnap.docs[0].ref;
+        const prod = prodSnap.docs[0].data() as Product;
+        if (prod.Process_Plan_Source === 'manual' && !opts?.force) {
+            return { success: true, plan: prod.Process_Plan, message: 'Plan je ručno uređen — auto preskočen' };
+        }
+
+        const [materials, rules, catalog, materialCatalog] = await Promise.all([
+            getProductMaterials(productId, organizationId),
+            getProcessMaterialRules(organizationId),
+            getProcessCatalog(organizationId),
+            getMaterialsCatalog(organizationId),
+        ]);
+        // Kategorija materijala živi na katalogu materijala — join po Material_ID
+        const catById = new Map(materialCatalog.map(m => [m.Material_ID, m.Category]));
+        const lite = materials.map(m => ({
+            Material_Name: m.Material_Name,
+            Category: catById.get(m.Material_ID) || '',
+        }));
+        const { suggestProcessesFromMaterials } = await import('./productProcesses');
+        const plan = suggestProcessesFromMaterials(lite, rules, catalog);
+        // Auto = sekvencijalne faze (svaki proces svoja); paralelu korisnik pravi prevlačenjem u istu fazu.
+        await updateDoc(prodRef, {
+            Process_Stages: plan.map(p => ({ processes: [p] })),
+            Process_Plan: plan,
+            Process_Plan_Source: 'auto',
+        });
+        return { success: true, plan, message: plan.length ? `Plan procesa: ${plan.join(' → ')}` : 'Nema pravila za materijale proizvoda' };
+    } catch (e) { console.error('applyAutoProcessPlan error:', e); return { success: false, message: 'Greška pri auto-planu procesa' }; }
+}
+
+/**
+ * Spremanje FAZNOG plana procesa proizvoda (procesi u istoj fazi = paralelno).
+ * Piše i ravni Process_Plan (flatten) radi kompatibilnosti.
+ */
+export async function saveProductProcessStages(
+    productId: string,
+    stages: { processes: string[] }[],
+    organizationId: string,
+    source: 'auto' | 'manual' = 'manual'
+): Promise<{ success: boolean; message: string }> {
+    if (!productId || !organizationId) return { success: false, message: 'Nedostaje proizvod/organizacija' };
+    try {
+        const db = getDb();
+        const snap = await getDocs(query(collection(db, COLLECTIONS.PRODUCTS), where('Product_ID', '==', productId), where('Organization_ID', '==', organizationId)));
+        if (snap.empty) return { success: false, message: 'Proizvod nije pronađen' };
+        const { planToStages, flattenStages } = await import('./productProcesses');
+        const clean = planToStages(stages, null).map(s => ({ processes: s }));
+        await updateDoc(snap.docs[0].ref, {
+            Process_Stages: clean,
+            Process_Plan: flattenStages(clean.map(s => s.processes)),
+            Process_Plan_Source: source,
+        });
+        return { success: true, message: 'Plan procesa spremljen' };
+    } catch (e) { console.error('saveProductProcessStages error:', e); return { success: false, message: 'Greška pri spremanju plana' }; }
 }
 
 // ============================================
@@ -6489,6 +6732,33 @@ export async function getProductionSnapshots(
     } catch (error) {
         console.error('getProductionSnapshots error:', error);
         return [];
+    }
+}
+
+/**
+ * Najnoviji production snapshot JEDNOG naloga (za "Rezime" završenog naloga).
+ * Sort in-memory po Created_At (bez composite indexa).
+ */
+export async function getProductionSnapshotForWorkOrder(
+    workOrderId: string,
+    organizationId: string
+): Promise<ProductionSnapshot | null> {
+    if (!workOrderId || !organizationId) return null;
+    try {
+        const firestore = getDb();
+        const q = query(
+            collection(firestore, COLLECTIONS.PRODUCTION_SNAPSHOTS),
+            where('Organization_ID', '==', organizationId),
+            where('Work_Order_ID', '==', workOrderId)
+        );
+        const snapshot = await getDocs(q);
+        if (snapshot.empty) return null;
+        const all = snapshot.docs.map(d => d.data() as ProductionSnapshot);
+        all.sort((a, b) => (b.Created_At || '').localeCompare(a.Created_At || ''));
+        return all[0];
+    } catch (error) {
+        console.error('getProductionSnapshotForWorkOrder error:', error);
+        return null;
     }
 }
 

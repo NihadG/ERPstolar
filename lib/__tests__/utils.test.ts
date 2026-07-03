@@ -326,3 +326,24 @@ describe('workOrderDisplayName', () => {
         expect(workOrderDisplayName({ Name: '   ', Work_Order_Number: 'RN-9', items: [{ Project_Name: 'Proj' }] })).toBe('Proj');
     });
 });
+
+describe('orderProcessProgress — napredak naloga iz procesa', () => {
+    const { orderProcessProgress } = require('../utils');
+    test('broji završene procese kroz sve stavke', () => {
+        const items = [
+            { Processes: [{ Status: 'Završeno' }, { Status: 'U toku' }] },
+            { Processes: [{ Status: 'Završeno' }] },
+        ];
+        expect(orderProcessProgress(items)).toEqual({ done: 2, total: 3, pct: 67 });
+    });
+    test('stavka bez procesa se broji preko vlastitog statusa', () => {
+        const items = [
+            { Status: 'Završeno', Processes: [] },
+            { Status: 'U toku' },
+        ];
+        expect(orderProcessProgress(items)).toEqual({ done: 1, total: 2, pct: 50 });
+    });
+    test('prazno → null', () => {
+        expect(orderProcessProgress([])).toBeNull();
+    });
+});

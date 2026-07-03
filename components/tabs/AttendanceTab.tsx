@@ -12,10 +12,14 @@ import {
     startWorkOrder,
     toggleItemPause,
     recalculateWorkOrder,
+    getWorkerAttendance,
+    getDailyWorkBooking,
+    getBookedWorkerDaysByMonth,
 } from '@/lib/services';
 import { isWorkerAssignedToAutoItem } from '@/lib/autoBook';
 import { buildBookingProposal, type ProposalRow } from '@/lib/attendanceBooking';
 import AttendanceBookingConfirmModal, { type BookingDecision } from '@/components/ui/AttendanceBookingConfirmModal';
+import PayrollModal from '@/components/ui/PayrollModal';
 import {
     CheckCircle2,
     XCircle,
@@ -28,7 +32,8 @@ import {
     ChevronLeft,
     ChevronRight,
     Calendar,
-    Users
+    Users,
+    History
 } from 'lucide-react';
 import Modal from '@/components/ui/Modal';
 import { useData } from '@/context/DataContext';
@@ -49,6 +54,8 @@ export default function AttendanceTab({ workers, workOrders, onRefresh, showToas
         { year: new Date().getFullYear(), month: new Date().getMonth() + 2 }, // Next month
     ]);
     const [attendanceCache, setAttendanceCache] = useState<Record<string, WorkerAttendance[]>>({});
+    // (radnik|dan) parovi s bar jednim work logom, po mjesecu — za indikator "prisutan bez knjiženja"
+    const [bookedCache, setBookedCache] = useState<Record<string, Set<string>>>({});
     const [loading, setLoading] = useState(false);
 
     // UI State
@@ -68,6 +75,9 @@ export default function AttendanceTab({ workers, workOrders, onRefresh, showToas
     const [confirmOpen, setConfirmOpen] = useState(false);
     const [confirmRows, setConfirmRows] = useState<ProposalRow[]>([]);
     const [confirmDate, setConfirmDate] = useState('');
+
+    // Mjesečni obračun plata
+    const [payrollOpen, setPayrollOpen] = useState(false);
 
     // Table ref for auto-scroll
     const tableContainerRef = useRef<HTMLDivElement>(null);
@@ -109,11 +119,28 @@ export default function AttendanceTab({ workers, workOrders, onRefresh, showToas
             setLoading(true);
             const data = await getAllAttendanceByMonth(year.toString(), month.toString(), organizationId || undefined);
             setAttendanceCache(prev => ({ ...prev, [key]: data }));
+            refreshBookedMonth(year, month);
         } catch (error) {
             console.error('Error loading month:', year, month, error);
         } finally {
             setLoading(false);
         }
+    }
+
+    // Osvježi (radnik|dan) knjižene parove mjeseca — poziva se i nakon knjiženja/brisanja dnevnica.
+    function refreshBookedMonth(year: number, month: number) {
+        if (!organizationId) return;
+        getBookedWorkerDaysByMonth(year, month, organizationId)
+            .then(keys => setBookedCache(prev => ({ ...prev, [`${year}-${month}`]: new Set(keys) })))
+            .catch(err => console.warn('booked-days load error:', err));
+    }
+
+    // Da li (radnik, dan) ima bar jednu proknjiženu dnevnicu (undefined = mjesec još nije učitan)
+    function isBookedInfo(workerId: string, dateStr: string): boolean | undefined {
+        const d = new Date(dateStr + 'T00:00:00');
+        const set = bookedCache[`${d.getFullYear()}-${d.getMonth() + 1}`];
+        if (!set) return undefined;
+        return set.has(`${workerId}|${dateStr}`);
     }
 
     // Generate calendar days for ALL loaded months
@@ -290,10 +317,111 @@ export default function AttendanceTab({ workers, workOrders, onRefresh, showToas
 
             // Reload just this month to confirm
             loadMonth(date.getFullYear(), date.getMonth() + 1);
+            refreshBookedMonth(date.getFullYear(), date.getMonth() + 1);
             onRefresh('workers', 'workOrders');
         } catch (error) {
             showToast('Greška pri spremanju', 'error');
             loadMonth(date.getFullYear(), date.getMonth() + 1);
+        }
+    }
+
+    // Pomjeri ISO datum za N dana (lokalno, bez UTC pomaka)
+    function shiftISO(iso: string, days: number): string {
+        const d = new Date(iso + 'T00:00:00');
+        d.setDate(d.getDate() + days);
+        return formatLocalDateISO(d);
+    }
+
+    // Jučerašnji status radnika (za labelu dugmeta "Kao jučer"; cache-only, brzo)
+    function yesterdayStatusOf(workerId: string, dateStr: string): string | undefined {
+        return getAttendance(workerId, shiftISO(dateStr, -1))?.Status;
+    }
+
+    // "KAO JUČER": ponovi jučerašnji status + ISTO knjiženje (isti nalozi/stavke, ista prisutnost).
+    // Ide isključivo kroz postojeći pipeline bookWorkerDayItems → renormalizeWorkerDay → recalculateWorkOrder;
+    // idempotentno (postojeći/ručni zapisi imaju prednost). Jučer bez knjiženja → normalan upit.
+    async function handleRepeatYesterday() {
+        if (!selectedCell || !organizationId) return;
+        const { workerId, workerName, date } = selectedCell;
+        const yesterday = shiftISO(date, -1);
+
+        let yAtt: WorkerAttendance | undefined = getAttendance(workerId, yesterday);
+        if (!yAtt) {
+            try { yAtt = (await getWorkerAttendance(workerId, yesterday, organizationId)) || undefined; } catch { /* cache-miss fallback nije kritičan */ }
+        }
+        if (!yAtt) {
+            showToast('Nema jučerašnjeg unosa za ovog radnika', 'info');
+            return;
+        }
+        const yStatus = yAtt.Status;
+
+        // Optimistički upis u cache + zatvori modal odmah
+        const dt = new Date(date);
+        const key = `${dt.getFullYear()}-${dt.getMonth() + 1}`;
+        setAttendanceCache(prev => {
+            const monthData = prev[key] || [];
+            const filtered = monthData.filter(a => !(a.Worker_ID === workerId && a.Date === date));
+            const rec: WorkerAttendance = {
+                Attendance_ID: 'opt-' + Date.now(),
+                Worker_ID: workerId,
+                Worker_Name: workerName,
+                Date: date,
+                Status: yStatus,
+                Notes: yAtt!.Notes || null,
+                Created_Date: new Date().toISOString(),
+                Organization_ID: organizationId,
+            } as WorkerAttendance;
+            return { ...prev, [key]: [...filtered, rec] };
+        });
+        setEditModalOpen(false);
+
+        try {
+            await markAttendanceAndRecalculate({
+                Worker_ID: workerId,
+                Worker_Name: workerName,
+                Date: date,
+                Status: yStatus,
+                Notes: yAtt.Notes || null,
+                Organization_ID: organizationId,
+            } as any, { skipAutoBook: true });
+
+            if (yStatus === 'Prisutan' || yStatus === 'Teren') {
+                const yEntries = await getDailyWorkBooking(yesterday, organizationId);
+                const mine = yEntries.find(e => e.workerId === workerId);
+                if (mine && mine.items.length > 0) {
+                    const targets = mine.items.map(bi => {
+                        const wo = workOrders.find(w => w.Work_Order_ID === bi.workOrderId);
+                        const item = wo?.items?.find(x => x.ID === bi.workOrderItemId);
+                        return { workOrderId: bi.workOrderId, itemId: bi.workOrderItemId, productId: item?.Product_ID };
+                    });
+                    const res = await bookWorkerDayItems(workerId, workerName, date, organizationId, targets, mine.presence || 1);
+                    for (const woId of res.affectedWorkOrderIds) {
+                        try { await recalculateWorkOrder(woId); } catch (e) { console.warn('recalc failed', woId, e); }
+                    }
+                    showToast(res.created > 0
+                        ? `Kao jučer: ${yStatus} + ${res.created} dnevnica proknjiženo`
+                        : `Kao jučer: ${yStatus} (dnevnice već postoje)`, 'success');
+                } else {
+                    // Jučer nije bilo knjiženja → standardni upit s prijedlogom.
+                    const rows = buildBookingProposal([{ workerId, workerName, status: yStatus }], workOrders, date);
+                    if (rows.length > 0) {
+                        setConfirmRows(rows);
+                        setConfirmDate(date);
+                        setConfirmOpen(true);
+                    } else {
+                        showToast(`Kao jučer: ${yStatus}`, 'success');
+                    }
+                }
+            } else {
+                showToast(`Kao jučer: ${yStatus}`, 'success');
+            }
+
+            loadMonth(dt.getFullYear(), dt.getMonth() + 1);
+            refreshBookedMonth(dt.getFullYear(), dt.getMonth() + 1);
+            onRefresh('workers', 'workOrders');
+        } catch (error) {
+            showToast('Greška pri spremanju', 'error');
+            loadMonth(dt.getFullYear(), dt.getMonth() + 1);
         }
     }
 
@@ -462,6 +590,7 @@ export default function AttendanceTab({ workers, workOrders, onRefresh, showToas
             }
 
             loadMonth(date.getFullYear(), date.getMonth() + 1);
+            refreshBookedMonth(date.getFullYear(), date.getMonth() + 1);
             onRefresh('workers', 'workOrders');
         } catch (error) {
             showToast('Greška pri čuvanju prisustva', 'error');
@@ -544,6 +673,7 @@ export default function AttendanceTab({ workers, workOrders, onRefresh, showToas
             onRefresh('workers', 'workOrders');
             const dt = new Date(date);
             loadMonth(dt.getFullYear(), dt.getMonth() + 1);
+            refreshBookedMonth(dt.getFullYear(), dt.getMonth() + 1);
         } catch (e) {
             console.error('commitDecisions error', e);
             showToast('Greška pri knjiženju dnevnica', 'error');
@@ -571,6 +701,10 @@ export default function AttendanceTab({ workers, workOrders, onRefresh, showToas
                         <button className="glass-btn" onClick={goToToday} style={{ padding: '8px 14px', fontWeight: 600, color: '#3b82f6' }}>
                             <Calendar size={16} />
                             Danas
+                        </button>
+                        <button className="glass-btn" onClick={() => setPayrollOpen(true)} style={{ padding: '8px 14px', fontWeight: 600 }} title="Mjesečni obračun plata iz šihtarice i dnevnika rada">
+                            <Users size={16} />
+                            Obračun
                         </button>
                     </div>
                 </div>
@@ -695,6 +829,53 @@ export default function AttendanceTab({ workers, workOrders, onRefresh, showToas
                                         >
                                             <div style={{ fontSize: isToday ? '15px' : '13px', color: isToday ? '#1d4ed8' : '#0f172a', marginBottom: '2px' }}>{dayInfo.day}</div>
                                             <div style={{ fontSize: '9px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>{dayInfo.dayName}</div>
+                                            {/* Brojač "prisutni bez knjiženja" — klik otvara upit knjiženja za te radnike */}
+                                            {(() => {
+                                                const unbooked = activeWorkers.filter(w => {
+                                                    const a = getAttendance(w.Worker_ID, dayInfo.dateStr);
+                                                    return a && (a.Status === 'Prisutan' || a.Status === 'Teren')
+                                                        && isBookedInfo(w.Worker_ID, dayInfo.dateStr) === false;
+                                                });
+                                                if (unbooked.length === 0) return null;
+                                                return (
+                                                    <div
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            const rows = buildBookingProposal(
+                                                                unbooked.map(w => ({
+                                                                    workerId: w.Worker_ID,
+                                                                    workerName: w.Name,
+                                                                    status: getAttendance(w.Worker_ID, dayInfo.dateStr)!.Status,
+                                                                })),
+                                                                workOrders,
+                                                                dayInfo.dateStr
+                                                            );
+                                                            if (rows.length > 0) {
+                                                                setConfirmRows(rows);
+                                                                setConfirmDate(dayInfo.dateStr);
+                                                                setConfirmOpen(true);
+                                                            } else {
+                                                                showToast('Nema kandidata za knjiženje (provjeri naloge/dodjele)', 'info');
+                                                            }
+                                                        }}
+                                                        title={`${unbooked.length} prisutn${unbooked.length === 1 ? 'i radnik' : 'a radnika'} bez knjižene dnevnice — klikni za knjiženje`}
+                                                        style={{
+                                                            marginTop: '3px',
+                                                            fontSize: '9px',
+                                                            fontWeight: 700,
+                                                            color: '#64748b',
+                                                            background: '#f1f5f9',
+                                                            border: '1px solid #cbd5e1',
+                                                            borderRadius: '999px',
+                                                            padding: '1px 5px',
+                                                            display: 'inline-block',
+                                                            cursor: 'pointer',
+                                                        }}
+                                                    >
+                                                        {unbooked.length}!
+                                                    </div>
+                                                );
+                                            })()}
                                         </th>
                                     );
                                 })}
@@ -740,6 +921,10 @@ export default function AttendanceTab({ workers, workOrders, onRefresh, showToas
                                             const isWeekend = dayInfo.dayOfWeek === 0 || dayInfo.dayOfWeek === 6;
                                             const isToday = dayInfo.dateStr === todayStr;
                                             const display = attendance ? getStatusDisplay(attendance.Status) : null;
+                                            // Prisutan/Teren bez ijedne dnevnice → suptilna donja ivica (bez bedža)
+                                            const presentUnbooked = !!attendance
+                                                && (attendance.Status === 'Prisutan' || attendance.Status === 'Teren')
+                                                && isBookedInfo(worker.Worker_ID, dayInfo.dateStr) === false;
 
                                             return (
                                                 <td
@@ -754,6 +939,7 @@ export default function AttendanceTab({ workers, workOrders, onRefresh, showToas
                                                         transition: 'all 0.12s',
                                                         borderLeft: isToday ? '2px solid #3b82f6' : '1px solid #f1f5f9',
                                                         borderRight: isToday ? '2px solid #3b82f6' : '1px solid #f1f5f9',
+                                                        borderBottom: presentUnbooked ? '3px solid #94a3b8' : undefined,
                                                         position: 'relative'
                                                     }}
                                                     onMouseEnter={(e) => {
@@ -762,7 +948,9 @@ export default function AttendanceTab({ workers, workOrders, onRefresh, showToas
                                                     onMouseLeave={(e) => {
                                                         e.currentTarget.style.background = isToday ? '#eff6ff' : isWeekend ? '#fef3c7' : 'white';
                                                     }}
-                                                    title={attendance?.Notes || (isToday ? 'Danas - klikni za označavanje' : 'Klikni za označavanje')}
+                                                    title={presentUnbooked
+                                                        ? `${attendance!.Status} — dnevnica NIJE proknjižena (klikni za označavanje/knjiženje)`
+                                                        : attendance?.Notes || (isToday ? 'Danas - klikni za označavanje' : 'Klikni za označavanje')}
                                                 >
                                                     {display && (
                                                         <div style={{
@@ -798,6 +986,22 @@ export default function AttendanceTab({ workers, workOrders, onRefresh, showToas
                 title="Označi Prisustvo"
                 footer={
                     <>
+                        {selectedCell && (() => {
+                            const yStatus = yesterdayStatusOf(selectedCell.workerId, selectedCell.date);
+                            return (
+                                <button
+                                    className="glass-btn"
+                                    onClick={handleRepeatYesterday}
+                                    title={yStatus
+                                        ? `Ponovi jučerašnji dan: ${yStatus}${(yStatus === 'Prisutan' || yStatus === 'Teren') ? ' + isti nalozi' : ''}`
+                                        : 'Ponovi jučerašnji status i knjiženje'}
+                                    style={{ marginRight: 'auto', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+                                >
+                                    <History size={15} />
+                                    Kao jučer{yStatus ? ` (${yStatus})` : ''}
+                                </button>
+                            );
+                        })()}
                         <button className="btn btn-secondary" onClick={() => setEditModalOpen(false)}>
                             Otkaži
                         </button>
@@ -926,6 +1130,29 @@ export default function AttendanceTab({ workers, workOrders, onRefresh, showToas
                             ⚡ Brzo postavi sve radnike na:
                         </div>
                         <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                            {/* Kao jučer: svaki radnik dobije svoj jučerašnji status (bez jučerašnjeg unosa → ne mijenja se) */}
+                            {bulkEditDate && (
+                                <button
+                                    className="glass-btn"
+                                    onClick={() => {
+                                        const next: Record<string, string> = { ...bulkStatuses };
+                                        let applied = 0;
+                                        activeWorkers.forEach(w => {
+                                            const ys = yesterdayStatusOf(w.Worker_ID, bulkEditDate.dateStr);
+                                            if (ys) { next[w.Worker_ID] = ys; applied++; }
+                                        });
+                                        setBulkStatuses(next);
+                                        showToast(applied > 0
+                                            ? `Postavljeno "kao jučer" za ${applied} radnika`
+                                            : 'Nema jučerašnjih unosa', applied > 0 ? 'success' : 'info');
+                                    }}
+                                    title="Svakom radniku postavi status koji je imao jučer"
+                                    style={{ padding: '8px 14px', fontSize: '13px', gap: '6px', fontWeight: 600 }}
+                                >
+                                    <History size={16} />
+                                    Kao jučer
+                                </button>
+                            )}
                             {ATTENDANCE_STATUSES.map(status => {
                                 const display = getStatusDisplay(status);
                                 return (
@@ -1016,6 +1243,17 @@ export default function AttendanceTab({ workers, workOrders, onRefresh, showToas
                     organizationId={organizationId || ''}
                     onConfirm={commitDecisions}
                     onCreated={onRefresh}
+                    showToast={showToast}
+                />
+            )}
+
+            {/* Mjesečni obračun plata */}
+            {payrollOpen && (
+                <PayrollModal
+                    isOpen={payrollOpen}
+                    onClose={() => setPayrollOpen(false)}
+                    workers={workers}
+                    organizationId={organizationId || ''}
                     showToast={showToast}
                 />
             )}

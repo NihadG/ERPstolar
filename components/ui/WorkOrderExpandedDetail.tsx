@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { Calendar, Play, Pause, CheckCircle, Clock, Edit2, AlertTriangle, NotebookPen, Printer, Trash2, GitBranch } from 'lucide-react';
 import { useData } from '@/context/DataContext';
 import {
@@ -9,7 +9,9 @@ import {
     completeWorkOrderItem,
     updateWorkOrderItemStatus,
     toggleItemPause,
+    getAllAttendanceByMonth,
 } from '@/lib/services';
+import { workOrderDueDate, buildSaturdayChecker, todayISO, plannedVsActualDays, type AttendanceLite } from '@/lib/planning';
 import type { WorkOrder, Worker, WorkOrderItem, WorkLog } from '@/lib/types';
 import ProductTimelineModal from './ProductTimelineModal';
 import WorkOrderWorkLog from './WorkOrderWorkLog';
@@ -82,6 +84,56 @@ export default function WorkOrderExpandedDetail({
     useEffect(() => {
         setLocalItems(workOrder?.items || []);
     }, [workOrder]);
+
+    // ── Advisory rok: šihtarica (prošli + tekući mjesec) za subotnju rotaciju ──
+    const [attLite, setAttLite] = useState<AttendanceLite[]>([]);
+    const [dueSuggestionDismissed, setDueSuggestionDismissed] = useState(false);
+    useEffect(() => {
+        if (!organizationId || workOrder.Status === 'Završeno' || workOrder.Status === 'Otkazano') return;
+        const now = new Date();
+        const cur = { y: now.getFullYear(), m: now.getMonth() + 1 };
+        const prev = cur.m === 1 ? { y: cur.y - 1, m: 12 } : { y: cur.y, m: cur.m - 1 };
+        Promise.all([
+            getAllAttendanceByMonth(String(prev.y), String(prev.m), organizationId),
+            getAllAttendanceByMonth(String(cur.y), String(cur.m), organizationId),
+        ]).then(([a, b]) => setAttLite([...a, ...b] as AttendanceLite[]))
+            .catch(err => console.warn('attendance for due-date suggestion:', err));
+    }, [workOrder.Work_Order_ID, organizationId, workOrder.Status]);
+
+    // Predviđeni rok iz planiranih dana (isti model kao wizard: Σ dana sekvencijalno, subotnja rotacija)
+    const dueSuggestion = useMemo(() => {
+        if (workOrder.Status === 'Završeno' || workOrder.Status === 'Otkazano') return null;
+        const totalDays = (workOrder.items || []).reduce((s, it) => s + (it.Planned_Labor_Days || 0), 0);
+        if (totalDays <= 0) return null;
+        const startISO = (workOrder.Started_At || (workOrder as any).Planned_Start_Date || todayISO()).split('T')[0];
+        const workerIds = Array.from(new Set(
+            (workOrder.items || []).flatMap(it => (it.Assigned_Workers || []).map(w => w.Worker_ID))
+        ));
+        const suggested = workOrderDueDate(startISO, totalDays, buildSaturdayChecker(workerIds, attLite));
+        const currentDue = workOrder.Due_Date?.split('T')[0] || '';
+        if (suggested === currentDue) return null;
+        return { suggested, totalDays, startISO };
+    }, [workOrder, attLite]);
+
+    // Prekoračenje planiranih radnik-dana (živ signal erozije profita)
+    const daysProgress = useMemo(() => plannedVsActualDays(localItems, workLogs), [localItems, workLogs]);
+    const laborOverrun = workOrder.Status === 'U toku' && daysProgress.ratio !== null && daysProgress.ratio >= 1;
+
+    const applySuggestedDue = async () => {
+        if (!dueSuggestion) return;
+        try {
+            const { updateDueDate } = await import('@/lib/services');
+            const res = await updateDueDate(workOrder.Work_Order_ID, dueSuggestion.suggested, workOrder.Organization_ID);
+            if (res.success) {
+                showToast?.('Rok ažuriran prema planiranim danima', 'success');
+                onRefresh?.('workOrders');
+            } else {
+                showToast?.(res.message, 'error');
+            }
+        } catch {
+            showToast?.('Greška pri ažuriranju roka', 'error');
+        }
+    };
 
     // Fetch work logs (per-product labor/profit)
     useEffect(() => {
@@ -357,6 +409,50 @@ export default function WorkOrderExpandedDetail({
                 )}
             </div>
 
+            {/* ADVISORY ROK: prijedlog iz planiranih dana — nikad ne prepisuje automatski */}
+            {dueSuggestion && !dueSuggestionDismissed && (
+                <div style={{
+                    display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap',
+                    padding: '10px 14px', margin: '10px 0',
+                    background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: '10px',
+                    fontSize: '13px', color: '#1e40af',
+                }}>
+                    <Clock size={16} />
+                    <span>
+                        Prema planiranim danima ({dueSuggestion.totalDays} radnih dana od {formatDate(dueSuggestion.startISO)}),
+                        predviđeni rok je <strong>{formatDate(dueSuggestion.suggested)}</strong>
+                        {workOrder.Due_Date ? <> (trenutni rok: {formatDate(workOrder.Due_Date)})</> : null}.
+                    </span>
+                    <div style={{ display: 'flex', gap: '6px', marginLeft: 'auto' }}>
+                        <button className="glass-btn" onClick={applySuggestedDue} style={{ padding: '4px 12px', fontSize: '12px', fontWeight: 600, color: '#1d4ed8' }}>
+                            Ažuriraj rok
+                        </button>
+                        <button className="glass-btn" onClick={() => setDueSuggestionDismissed(true)} style={{ padding: '4px 10px', fontSize: '12px', color: '#64748b' }}>
+                            Zanemari
+                        </button>
+                    </div>
+                </div>
+            )}
+
+            {/* PREKORAČENJE PLANIRANOG RADA: potrošeni radnik-dani ≥ planirani na aktivnom nalogu */}
+            {laborOverrun && (
+                <div style={{
+                    display: 'flex', alignItems: 'center', gap: '10px',
+                    padding: '10px 14px', margin: '10px 0',
+                    background: daysProgress.ratio! > 1 ? 'var(--error-bg)' : 'var(--warning-bg)',
+                    border: `1px solid ${daysProgress.ratio! > 1 ? '#fecaca' : '#fde68a'}`,
+                    borderRadius: '10px', fontSize: '13px',
+                    color: daysProgress.ratio! > 1 ? '#b91c1c' : '#92400e',
+                }}>
+                    <AlertTriangle size={16} />
+                    <span>
+                        Potrošeno <strong>{Number.isInteger(daysProgress.actual) ? daysProgress.actual : daysProgress.actual.toFixed(1)}</strong> od{' '}
+                        <strong>{Number.isInteger(daysProgress.planned) ? daysProgress.planned : daysProgress.planned.toFixed(1)}</strong> planiranih radnik-dana
+                        {daysProgress.ratio! > 1 ? ' — plan rada je prekoračen, profit se topi sa svakim novim danom.' : ' — plan rada je na izmaku.'}
+                    </span>
+                </div>
+            )}
+
 
             {/* === PROIZVODI (status + profit iz dnevnika rada) === */}
             <div className="products-section">
@@ -411,6 +507,22 @@ export default function WorkOrderExpandedDetail({
                                         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0 }}>
                                             <span style={{ fontWeight: 600, fontSize: '14px', color: '#0f172a' }}>{item.Product_Name}</span>
                                             {isPaused && <span style={{ fontSize: '10px', fontWeight: 700, color: '#b45309', background: '#fef3c7', padding: '2px 7px', borderRadius: '999px' }}>PAUZA</span>}
+                                            {/* GAP-2/5: nepotpuni podaci → profit je netačan, reci to otvoreno */}
+                                            {!isMontaza && (value <= 0 || material <= 0) && (
+                                                <span
+                                                    title={value <= 0
+                                                        ? 'Prodajna cijena nije postavljena (nema prihvaćene ponude?) — prikazani profit je nepotpun'
+                                                        : 'Materijali nisu dodati ili nemaju cijenu — prikazani profit je nepotpun'}
+                                                    style={{
+                                                        display: 'inline-flex', alignItems: 'center', gap: '4px',
+                                                        fontSize: '10px', fontWeight: 700,
+                                                        color: 'var(--warning)', background: 'var(--warning-bg)',
+                                                        padding: '2px 7px', borderRadius: '999px', cursor: 'help',
+                                                    }}
+                                                >
+                                                    <AlertTriangle size={11} /> {value <= 0 ? 'BEZ CIJENE' : 'BEZ MATERIJALA'}
+                                                </span>
+                                            )}
                                         </div>
                                         <div style={{ textAlign: 'right' }}>
                                             {isMontaza ? (
@@ -505,7 +617,7 @@ export default function WorkOrderExpandedDetail({
                     workOrderId={workOrder.Work_Order_ID}
                     workOrderNumber={workOrder.Work_Order_Number}
                     workOrderName={workOrderDisplayName(workOrder)}
-                    items={(localItems.length ? localItems : (workOrder.items || [])).map(i => ({ ID: i.ID, Product_Name: i.Product_Name }))}
+                    items={(localItems.length ? localItems : (workOrder.items || [])).map(i => ({ ID: i.ID, Product_Name: i.Product_Name, Processes: i.Processes, Process_Stages: i.Process_Stages }))}
                     workLogs={workLogs}
                     organizationId={organizationId || ''}
                     onClose={() => setProcessOpen(false)}

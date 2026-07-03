@@ -174,6 +174,24 @@ export async function getDailyWorkBooking(
     return _get(date, organizationId);
 }
 
+export async function getBookedWorkerDaysByMonth(
+    year: string | number,
+    month: string | number,
+    organizationId: string
+): Promise<string[]> {
+    const { getBookedWorkerDaysByMonth: _get } = await import('../../attendance');
+    return _get(year, month, organizationId);
+}
+
+export async function getWorkLogsForMonth(
+    year: string | number,
+    month: string | number,
+    organizationId: string
+): Promise<{ Worker_ID: string; Worker_Name?: string; Date: string; Daily_Rate?: number; Day_Fraction?: number }[]> {
+    const { getWorkLogsForMonth: _get } = await import('../../attendance');
+    return _get(year, month, organizationId);
+}
+
 export async function suggestDailyBooking(
     date: string,
     organizationId: string

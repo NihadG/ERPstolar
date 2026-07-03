@@ -1,0 +1,189 @@
+import {
+    orderByCatalog,
+    suggestProcessesFromMaterials,
+    synthesizeOrderGraph,
+    currentProcessName,
+    resolveAutoProcessNode,
+    planToStages,
+    flattenStages,
+} from '../productProcesses';
+
+const catalog = [
+    { Name: 'Krojenje iverala', Order: 1 },
+    { Name: 'Kantiranje', Order: 2 },
+    { Name: 'Bušenje', Order: 3 },
+    { Name: 'Farbanje', Order: 4 },
+    { Name: 'Sklapanje', Order: 5 },
+    { Name: 'Ugradnja stakla', Order: 6 },
+];
+
+describe('orderByCatalog — kanonski redoslijed iz kataloga', () => {
+    test('sortira po Order; nepoznati na kraj, stabilno', () => {
+        expect(orderByCatalog(['Sklapanje', 'Krojenje iverala', 'Xyz', 'Kantiranje'], catalog))
+            .toEqual(['Krojenje iverala', 'Kantiranje', 'Sklapanje', 'Xyz']);
+    });
+    test('case-insensitive poklapanje naziva', () => {
+        expect(orderByCatalog(['sklapanje', 'KANTIRANJE'], catalog)).toEqual(['KANTIRANJE', 'sklapanje']);
+    });
+});
+
+describe('suggestProcessesFromMaterials — korisnikova pravila', () => {
+    const rules = [
+        { Match_Kind: 'category' as const, Match_Value: 'Ploče i trake', Processes: ['Krojenje iverala', 'Kantiranje', 'Sklapanje'] },
+        { Match_Kind: 'category' as const, Match_Value: 'Staklo', Processes: ['Ugradnja stakla'] },
+        { Match_Kind: 'name_contains' as const, Match_Value: 'lak', Processes: ['Farbanje'] },
+    ];
+    test('unija pogođenih pravila, redoslijed iz kataloga', () => {
+        const materials = [
+            { Material_Name: 'Iveral bijeli', Category: 'Ploče i trake' },
+            { Material_Name: 'Staklo 6mm', Category: 'Staklo' },
+            { Material_Name: 'Lak mat', Category: 'Ostalo' },
+        ];
+        expect(suggestProcessesFromMaterials(materials, rules, catalog))
+            .toEqual(['Krojenje iverala', 'Kantiranje', 'Farbanje', 'Sklapanje', 'Ugradnja stakla']);
+    });
+    test('name_contains je case-insensitive podstring', () => {
+        const materials = [{ Material_Name: 'POLIURETANSKI LAK sjaj', Category: 'Ostalo' }];
+        expect(suggestProcessesFromMaterials(materials, rules, catalog)).toEqual(['Farbanje']);
+    });
+    test('bez pogodaka / bez materijala → []', () => {
+        expect(suggestProcessesFromMaterials([{ Material_Name: 'Vijak', Category: 'Okovi' }], rules, catalog)).toEqual([]);
+        expect(suggestProcessesFromMaterials([], rules, catalog)).toEqual([]);
+    });
+    test('duplikat procesa iz više pravila se ne ponavlja', () => {
+        const r2 = [...rules, { Match_Kind: 'name_contains' as const, Match_Value: 'iveral', Processes: ['Kantiranje'] }];
+        const materials = [{ Material_Name: 'Iveral hrast', Category: 'Ploče i trake' }];
+        expect(suggestProcessesFromMaterials(materials, r2, catalog)).toEqual(['Krojenje iverala', 'Kantiranje', 'Sklapanje']);
+    });
+});
+
+// helper: sekvencijalni plan → faze (svaki proces svoja faza)
+const seq = (plan: string[]) => plan.map(p => [p]);
+
+describe('planToStages / flattenStages — faze i fallback', () => {
+    test('Process_Stages ima prednost; prazne faze/nazivi se čiste', () => {
+        expect(planToStages([{ processes: ['A', ' '] }, { processes: [] }, { processes: ['B', 'C'] }], ['X']))
+            .toEqual([['A'], ['B', 'C']]);
+    });
+    test('fallback ravni plan → svaki proces svoja faza (sekvencijalno)', () => {
+        expect(planToStages(undefined, ['A', 'B'])).toEqual([['A'], ['B']]);
+        expect(planToStages([], null)).toEqual([]);
+    });
+    test('flattenStages čuva redoslijed faza i dedupira', () => {
+        expect(flattenStages([['Noge', 'Furnir'], ['Sklapanje'], ['sklapanje', 'Lak']]))
+            .toEqual(['Noge', 'Furnir', 'Sklapanje', 'Lak']);
+    });
+});
+
+describe('synthesizeOrderGraph — spajanje FAZNIH planova u graf naloga', () => {
+    test('PRIMJER STOLA: noge ∥ (furnir, MDF) → sklapanje → lakiranje', () => {
+        const { graph, warnings } = synthesizeOrderGraph([{
+            itemId: 'sto',
+            stages: [
+                ['Izrada nogu', 'Krojenje furnira', 'Formatiranje MDF'],  // paralelno
+                ['Sklapanje'],
+                ['Lakiranje'],
+            ],
+        }]);
+        expect(warnings).toEqual([]);
+        expect(graph.nodes).toHaveLength(5);
+        const edgePairs = graph.edges.map(e => {
+            const s = graph.nodes.find(n => n.id === e.source)!.name;
+            const t = graph.nodes.find(n => n.id === e.target)!.name;
+            return `${s}→${t}`;
+        }).sort();
+        expect(edgePairs).toEqual([
+            'Formatiranje MDF→Sklapanje',
+            'Izrada nogu→Sklapanje',
+            'Krojenje furnira→Sklapanje',
+            'Sklapanje→Lakiranje',
+        ]);
+        // paralelni procesi NEMAJU međusobne veze
+        expect(edgePairs.some(p => p.startsWith('Izrada nogu→Krojenje') || p.startsWith('Krojenje furnira→Izrada'))).toBe(false);
+    });
+    test('isti proces više proizvoda = JEDAN čvor; grananje i spajanje kroz ivice', () => {
+        const { graph, warnings } = synthesizeOrderGraph([
+            { itemId: 'A', stages: seq(['Krojenje', 'Kantiranje', 'Sklapanje']) },
+            { itemId: 'B', stages: seq(['Krojenje', 'Farbanje', 'Sklapanje']) },
+        ]);
+        expect(warnings).toEqual([]);
+        expect(graph.nodes).toHaveLength(4); // Krojenje, Kantiranje, Farbanje, Sklapanje
+        const byName = (n: string) => graph.nodes.find(x => x.name === n)!;
+        expect(byName('Krojenje').itemIds.sort()).toEqual(['A', 'B']);
+        expect(byName('Kantiranje').itemIds).toEqual(['A']);
+        expect(byName('Farbanje').itemIds).toEqual(['B']);
+        expect(byName('Sklapanje').itemIds.sort()).toEqual(['A', 'B']);
+        const edgePairs = graph.edges.map(e => {
+            const s = graph.nodes.find(n => n.id === e.source)!.name;
+            const t = graph.nodes.find(n => n.id === e.target)!.name;
+            return `${s}→${t}`;
+        }).sort();
+        expect(edgePairs).toEqual([
+            'Farbanje→Sklapanje',
+            'Kantiranje→Sklapanje',
+            'Krojenje→Farbanje',
+            'Krojenje→Kantiranje',
+        ]);
+    });
+    test('normalizacija naziva: " krojenje " i "Krojenje" su isti čvor', () => {
+        const { graph } = synthesizeOrderGraph([
+            { itemId: 'A', stages: seq([' krojenje ', 'Sklapanje']) },
+            { itemId: 'B', stages: seq(['Krojenje', 'Sklapanje']) },
+        ]);
+        expect(graph.nodes).toHaveLength(2);
+    });
+    test('kružni redoslijed među proizvodima → ivica ispuštena + upozorenje', () => {
+        const { graph, warnings } = synthesizeOrderGraph([
+            { itemId: 'A', stages: seq(['X', 'Y']) },
+            { itemId: 'B', stages: seq(['Y', 'X']) },
+        ]);
+        expect(graph.edges).toHaveLength(1); // samo X→Y (Y→X bi zatvorila ciklus)
+        expect(warnings).toHaveLength(1);
+    });
+    test('isti proces u susjednim fazama se ne veže sam na sebe', () => {
+        const { graph } = synthesizeOrderGraph([{ itemId: 'A', stages: seq(['X', 'X', 'Y']) }]);
+        expect(graph.nodes).toHaveLength(2);
+        expect(graph.edges).toHaveLength(1);
+    });
+    test('prazni planovi → prazan graf', () => {
+        const { graph } = synthesizeOrderGraph([{ itemId: 'A', stages: [] }]);
+        expect(graph.nodes).toEqual([]);
+        expect(graph.edges).toEqual([]);
+    });
+});
+
+describe('currentProcessName + resolveAutoProcessNode — auto-pripis', () => {
+    const procs = [
+        { Process_Name: 'Krojenje', Status: 'Završeno' },
+        { Process_Name: 'Kantiranje', Status: 'U toku' },
+        { Process_Name: 'Sklapanje', Status: 'Na čekanju' },
+    ];
+    test('tekući = prvi nezavršen; sve završeno → null', () => {
+        expect(currentProcessName(procs)).toBe('Kantiranje');
+        expect(currentProcessName(procs.map(p => ({ ...p, Status: 'Završeno' })))).toBeNull();
+        expect(currentProcessName([])).toBeNull();
+    });
+    test('resolver nađe čvor koji pokriva stavku s nazivom tekućeg procesa', () => {
+        const { graph } = synthesizeOrderGraph([
+            { itemId: 'A', stages: seq(['Krojenje', 'Kantiranje', 'Sklapanje']) },
+            { itemId: 'B', stages: seq(['Krojenje', 'Sklapanje']) },
+        ]);
+        const node = resolveAutoProcessNode(graph, 'A', procs);
+        expect(node?.name).toBe('Kantiranje');
+        // B nema Kantiranje u planu → njegov tekući (Sklapanje po njegovoj checklisti) se traži po NJEGOVOJ listi
+        const nodeB = resolveAutoProcessNode(graph, 'B', [
+            { Process_Name: 'Krojenje', Status: 'Završeno' },
+            { Process_Name: 'Sklapanje', Status: 'Na čekanju' },
+        ]);
+        expect(nodeB?.name).toBe('Sklapanje');
+    });
+    test('čvor s praznim itemIds pokriva sve stavke', () => {
+        const graph = { nodes: [{ id: 'n1', name: 'Rad', itemIds: [] }], edges: [] };
+        expect(resolveAutoProcessNode(graph, 'bilo-koja', [{ Process_Name: 'Rad', Status: 'U toku' }])?.id).toBe('n1');
+    });
+    test('bez grafa / bez tekućeg / čvor ne pokriva stavku → null', () => {
+        expect(resolveAutoProcessNode(undefined, 'A', procs)).toBeNull();
+        const graph = { nodes: [{ id: 'n1', name: 'Kantiranje', itemIds: ['X'] }], edges: [] };
+        expect(resolveAutoProcessNode(graph, 'A', procs)).toBeNull();
+    });
+});
