@@ -1,8 +1,9 @@
 'use client';
 
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import {
-    Check, ChevronDown, ChevronRight, Clock, Play, Users, Plus, X, Loader2, StickyNote, PauseCircle, RotateCcw,
+    Check, ChevronDown, ChevronRight, Clock, Play, Users, Plus, X, Loader2, StickyNote, PauseCircle, RotateCcw, Search,
 } from 'lucide-react';
 import type { WorkOrderItem, Worker, WorkLog, ItemProcessStatus, ProcessCatalogItem } from '@/lib/types';
 import { updateItemProcess, addProcessToOrderItem, getProcessCatalog } from '@/lib/services';
@@ -73,6 +74,45 @@ export default function OrderProcessBoard({
     useEffect(() => {
         if (addOpen && organizationId && catalog.length === 0) getProcessCatalog(organizationId).then(setCatalog).catch(() => { });
     }, [addOpen, organizationId, catalog.length]);
+
+    // Prilagođen dropdown kataloga procesa (zamjena za native <input list>/<datalist>,
+    // portal na document.body — ne siječe ga `.opb-row { overflow: hidden }`).
+    const catInputRef = useRef<HTMLInputElement>(null);
+    const catDropdownRef = useRef<HTMLDivElement>(null);
+    const [catPopover, setCatPopover] = useState<{ top?: number; bottom?: number; left: number; width: number } | null>(null);
+    const openCatDropdown = () => {
+        const el = catInputRef.current;
+        if (!el) return;
+        const r = el.getBoundingClientRect();
+        const estHeight = 240;
+        const spaceBelow = window.innerHeight - r.bottom;
+        const openUp = spaceBelow < estHeight && r.top > spaceBelow;
+        setCatPopover({
+            top: openUp ? undefined : r.bottom + 4,
+            bottom: openUp ? window.innerHeight - r.top + 4 : undefined,
+            left: r.left,
+            width: r.width,
+        });
+    };
+    useEffect(() => {
+        if (!catPopover) return;
+        const onDown = (e: MouseEvent) => {
+            const t = e.target as HTMLElement;
+            if (catDropdownRef.current?.contains(t) || catInputRef.current?.contains(t)) return;
+            setCatPopover(null);
+        };
+        const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setCatPopover(null); };
+        document.addEventListener('mousedown', onDown);
+        document.addEventListener('keydown', onKey);
+        return () => {
+            document.removeEventListener('mousedown', onDown);
+            document.removeEventListener('keydown', onKey);
+        };
+    }, [catPopover]);
+    const filteredCatalog = useMemo(
+        () => catalog.filter(c => c.Name.toLowerCase().includes(addName.trim().toLowerCase())),
+        [catalog, addName]
+    );
 
     const itemById = useMemo(() => new Map(items.map(it => [it.ID, it])), [items]);
     const workerName = (id: string) => workers.find(w => w.Worker_ID === id)?.Name || 'Radnik';
@@ -189,7 +229,7 @@ export default function OrderProcessBoard({
             for (const itemId of ids) await addProcessToOrderItem(workOrderId, itemId, name, organizationId);
             showToast?.('Proces dodan', 'success');
             onChanged?.();
-            setAddOpen(false); setAddName(''); setAddSel(new Set());
+            setAddOpen(false); setAddName(''); setAddSel(new Set()); setCatPopover(null);
         } catch (e) {
             console.error('OrderProcessBoard add', e);
             showToast?.('Greška pri dodavanju procesa', 'error');
@@ -330,11 +370,28 @@ export default function OrderProcessBoard({
                         </button>
                     ) : (
                         <div className="opb-add">
+                            <div className="opb-add-head">
+                                <span className="opb-add-title"><Plus size={14} /> Novi proces</span>
+                                <button type="button" className="opb-add-close" onClick={() => { setAddOpen(false); setAddName(''); setCatPopover(null); }} disabled={busy} title="Zatvori">
+                                    <X size={15} />
+                                </button>
+                            </div>
                             <div className="opb-field">
                                 <span>Naziv procesa</span>
-                                <input list="opb-cat" autoFocus value={addName} placeholder="npr. Krojenje iverala" onChange={e => setAddName(e.target.value)}
-                                    onKeyDown={e => { if (e.key === 'Enter' && addName.trim() && addSel.size) doAdd(); }} />
-                                <datalist id="opb-cat">{catalog.map(c => <option key={c.ID} value={c.Name} />)}</datalist>
+                                <input
+                                    ref={catInputRef}
+                                    type="text"
+                                    autoFocus
+                                    autoComplete="off"
+                                    value={addName}
+                                    placeholder="npr. Krojenje iverala"
+                                    onChange={e => { setAddName(e.target.value); openCatDropdown(); }}
+                                    onFocus={openCatDropdown}
+                                    onKeyDown={e => {
+                                        if (e.key === 'Enter' && addName.trim() && addSel.size) { setCatPopover(null); doAdd(); }
+                                        if (e.key === 'Escape') setCatPopover(null);
+                                    }}
+                                />
                             </div>
                             <div className="opb-field">
                                 <span>Proizvodi ({addSel.size})</span>
@@ -351,7 +408,7 @@ export default function OrderProcessBoard({
                                 </div>
                             </div>
                             <div className="opb-form-actions">
-                                <button className="opb-btn ghost" onClick={() => { setAddOpen(false); setAddName(''); }} disabled={busy}>Otkaži</button>
+                                <button className="opb-btn ghost" onClick={() => { setAddOpen(false); setAddName(''); setCatPopover(null); }} disabled={busy}>Otkaži</button>
                                 <button className="opb-btn primary" disabled={busy || !addName.trim() || addSel.size === 0} onClick={doAdd}>
                                     {busy ? <Loader2 size={14} className="opb-spin" /> : <Plus size={14} />} Dodaj na {addSel.size}
                                 </button>
@@ -359,6 +416,33 @@ export default function OrderProcessBoard({
                         </div>
                     )}
                 </div>
+            )}
+
+            {/* Katalog procesa — prilagođen dropdown (portal, ne siječe ga overflow reda) */}
+            {catPopover && createPortal(
+                <div
+                    ref={catDropdownRef}
+                    className="opb-cat-dropdown"
+                    style={{ top: catPopover.top, bottom: catPopover.bottom, left: catPopover.left, width: catPopover.width }}
+                >
+                    <div className="opb-cat-dropdown-list">
+                        {filteredCatalog.map(c => (
+                            <button key={c.ID} type="button" className="opb-cat-item" onClick={() => { setAddName(c.Name); setCatPopover(null); }}>
+                                <Search size={12} className="opb-cat-item-icon" /> {c.Name}
+                            </button>
+                        ))}
+                        {filteredCatalog.length === 0 && (
+                            addName.trim() ? (
+                                <div className="opb-cat-empty">
+                                    <Plus size={12} /> Novi proces „{addName.trim()}"
+                                </div>
+                            ) : (
+                                <div className="opb-cat-empty">Katalog procesa je prazan — upiši naziv za novi proces</div>
+                            )
+                        )}
+                    </div>
+                </div>,
+                document.body
             )}
         </div>
     );

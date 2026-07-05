@@ -944,6 +944,83 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
         onRefresh('workOrders', 'projects');
     }
 
+    // Dijeljeni modali (isti render-poziv koriste desktop i mobilna grana ispod —
+    // portal-bazirani `Modal`, pa nema styled-jsx scoping problema).
+    function renderDeleteConfirmModal() {
+        const wo = workOrders.find(w => w.Work_Order_ID === deleteConfirmModal.workOrderId);
+        return (
+            <Modal
+                isOpen={deleteConfirmModal.isOpen}
+                onClose={() => setDeleteConfirmModal({ isOpen: false, workOrderId: null, workOrderNumber: '' })}
+                title={`Obriši nalog: ${workOrderDisplayName(wo || { Work_Order_Number: deleteConfirmModal.workOrderNumber })}`}
+                footer={<button className="btn btn-secondary" onClick={() => setDeleteConfirmModal({ isOpen: false, workOrderId: null, workOrderNumber: '' })}>Odustani</button>}
+            >
+                <p style={{ margin: '0 0 16px 0', color: 'var(--text-secondary)', fontSize: 14 }}>Šta želite uraditi sa proizvodima iz ovog naloga?</p>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                    <button
+                        onClick={() => confirmDeleteWorkOrder('completed')}
+                        style={{ display: 'flex', alignItems: 'flex-start', gap: 14, padding: 16, border: '2px solid var(--border)', borderRadius: 12, background: 'var(--background)', cursor: 'pointer', textAlign: 'left' }}
+                    >
+                        <span style={{ fontSize: 24 }}>✅</span>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                            <strong style={{ fontSize: 15, color: 'var(--text-primary)' }}>Završi proizvode</strong>
+                            <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>Postavi status na "Spremno" (bez kalkulacije profita)</span>
+                        </div>
+                    </button>
+                    <button
+                        onClick={() => confirmDeleteWorkOrder('waiting')}
+                        style={{ display: 'flex', alignItems: 'flex-start', gap: 14, padding: 16, border: '2px solid var(--border)', borderRadius: 12, background: 'var(--background)', cursor: 'pointer', textAlign: 'left' }}
+                    >
+                        <span style={{ fontSize: 24 }}>⏳</span>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                            <strong style={{ fontSize: 15, color: 'var(--text-primary)' }}>Vrati na čekanje</strong>
+                            <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>Postavi status na "Na čekanju"</span>
+                        </div>
+                    </button>
+                </div>
+            </Modal>
+        );
+    }
+
+    function renderPrintModal() {
+        return (
+            <Modal
+                isOpen={printModal}
+                onClose={() => setPrintModal(false)}
+                title="Printaj Radni Nalog"
+                size="xl"
+                footer={<button className="btn btn-secondary" onClick={() => setPrintModal(false)}>Zatvori</button>}
+            >
+                {currentWorkOrderForPrint && <WorkOrderPrintTemplate workOrder={currentWorkOrderForPrint} />}
+            </Modal>
+        );
+    }
+
+    function renderAttendanceFixModal() {
+        if (!attendanceFixWorkOrder || !organizationId) return null;
+        return (
+            <AttendanceFixModal
+                workOrder={attendanceFixWorkOrder}
+                organizationId={organizationId}
+                warnings={attendanceWarnings?.warnings}
+                onClose={() => setAttendanceFixWorkOrder(null)}
+                onSaved={() => onRefresh('workOrders')}
+                showToast={showToast}
+            />
+        );
+    }
+
+    function renderSummaryModal() {
+        if (!summaryOrder) return null;
+        return (
+            <OrderSummaryModal
+                workOrder={summaryOrder}
+                organizationId={organizationId || ''}
+                onClose={() => setSummaryOrder(null)}
+            />
+        );
+    }
+
     async function handleStartWorkOrder(workOrderId: string) {
         // Get the work order to validate
         const wo = workOrders.find(w => w.Work_Order_ID === workOrderId);
@@ -1373,52 +1450,27 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
             <>
                 <MobileWorkOrdersView
                     workOrders={workOrders}
-                    projects={projects}
                     workers={workers}
                     onRefresh={onRefresh}
                     showToast={showToast}
                     onCreate={openCreateModal}
-                    onEdit={(wo) => {
-                        // We can reuse the existing edit logic, ensuring it handles mobile context if needed
-                        // For now, assume expanding detail or opening a modal is required.
-                        // But `MobileWorkOrdersView` has an `onEdit` prop.
-                        // `ProductionTab` has `WorkOrderExpandedDetail` which is desktop-centric.
-                        // I might need to make `createModal` adaptable or use a new mobile modal if editing is complex.
-                        // However, for now, let's just use the `openCreateModal` for new, but for edit...
-                        // ProductionTab doesn't have a dedicated "Edit Modal", it uses `WorkOrderExpandedDetail` inline.
-                        // I should probably pass a handler that opens the desktop expanded view? No, that won't work well on mobile if it's not responsive.
-                        // The user asked for "Nalozi tab za mobitel".
-                        // I will handle `onEdit` by just logging or showing a toast "Not implemented" if I don't have a mobile edit view, 
-                        // but actually I should probably reuse `openCreateModal` if it supports editing, 
-                        // OR, just open the "Expanded Detail" but maybe in a modal?
-                        // SImpler: Just trigger the delete/print/start handlers.
-                        // For Edit, since I don't have a specific edit modal ready (ProductionTab uses inline expansion), 
-                        // I will trigger the `toggleWorkOrder` which might not be enough.
-                        // Actually, I can use the `createModal` for editing if I populate state? 
-                        // `ProductionTab` logic for editing is `handleUpdateWorkOrder` which updates data.
-                        // `WorkOrderExpandedDetail` handles the UI for editing.
-                        // I'll stick to what I have: `MobileWorkOrdersView` handles the list.
-                        // For `onEdit`, I'll leave it empty or show a toast for now as I haven't built a mobile edit modal yet, 
-                        // OR better: I'll map it to nothing for now and rely on the list view's actions (Print, Delete, Start).
-                        // Wait, `MobileWorkOrdersView` calls `onEdit`.
-                        // I'll just pass a placeholder function or `() => showToast("Edit opcija uskoro", "info")`.
-                        // Actually, the plan was "Bottom sheet modals for viewing/editing".
-                        // I haven't created those yet.
-                        // I'll implement `MobileWorkOrdersView` to handle the list. 
-                        // The user instructions were "sada mi napravi nalozi tab za mobitel... list view".
-                        // I'll focus on the list view first. I'll pass `() => {}` for edit.
-                        // Re-reading plan: "[ ] Create MobileWorkOrdersView.tsx ... [ ] Bottom sheet modals".
-                        // I haven't created `MobileWorkOrderModal`. 
-                        // So I'll pass a placeholder.
-                        showToast("Uređivanje nije dostupno na mobitelu", "info")
-                    }}
+                    onUpdate={handleUpdateWorkOrder}
                     onDelete={handleDeleteWorkOrder}
                     onStart={handleStartWorkOrder}
                     onPrint={handlePrintWorkOrder}
+                    onSummary={setSummaryOrder}
+                    attendanceWarnings={attendanceWarnings}
+                    onAttendanceFix={setAttendanceFixWorkOrder}
                 />
 
-                {/* Re-use the existing Create Modal since it seems to be partially responsive or I'll check it later */}
-                {/* The existing create modal is `Modal` with `wizard-container`. It might look okay on mobile. */}
+                {/* Isti dijaloški modali kao na desktopu — bez ovoga Print/Brisanje/Rezime/Prisustvo
+                    tiho ne bi radili na mobitelu (mijenjaju state, ali se nigdje ne prikazuju). */}
+                {renderDeleteConfirmModal()}
+                {renderPrintModal()}
+                {renderAttendanceFixModal()}
+                {renderSummaryModal()}
+
+                {/* Mobilni unos/izmjena naloga kroz wizard je zaseban, veći zadatak — za sada placeholder. */}
                 {createModal && (
                     <Modal isOpen={createModal} onClose={() => setCreateModal(false)} title="Novi Radni Nalog" size="fullscreen" footer={null}>
                         <div style={{ padding: '20px', textAlign: 'center' }}>
@@ -2382,19 +2434,8 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                 </div>
             </Modal>
 
-            {/* ========== WORK ORDER VIEW/EDIT MODAL ========== */}
-
-
             {/* ========== PRINT TEMPLATE MODAL ========== */}
-            <Modal
-                isOpen={printModal}
-                onClose={() => setPrintModal(false)}
-                title="Printaj Radni Nalog"
-                size="xl"
-                footer={<button className="btn btn-secondary" onClick={() => setPrintModal(false)}>Zatvori</button>}
-            >
-                {currentWorkOrderForPrint && <WorkOrderPrintTemplate workOrder={currentWorkOrderForPrint} />}
-            </Modal>
+            {renderPrintModal()}
 
             <style jsx>{`
                 /* Wizard Layout */
@@ -3157,188 +3198,7 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
             `}</style>
 
             {/* Delete Confirmation Modal */}
-            {deleteConfirmModal.isOpen && (
-                <div className="delete-modal-overlay" onClick={() => setDeleteConfirmModal({ isOpen: false, workOrderId: null, workOrderNumber: '' })}>
-                    <div className="delete-modal" onClick={(e) => e.stopPropagation()}>
-                        <div className="delete-modal-header">
-                            <h3>🗑️ Obriši nalog: {workOrderDisplayName(workOrders.find(w => w.Work_Order_ID === deleteConfirmModal.workOrderId) || { Work_Order_Number: deleteConfirmModal.workOrderNumber })}</h3>
-                        </div>
-                        <div className="delete-modal-body">
-                            <p>Šta želite uraditi sa proizvodima iz ovog naloga?</p>
-                            <div className="delete-options">
-                                <button
-                                    className="delete-option option-completed"
-                                    onClick={() => confirmDeleteWorkOrder('completed')}
-                                >
-                                    <span className="option-icon">✅</span>
-                                    <div className="option-content">
-                                        <strong>Završi proizvode</strong>
-                                        <span>Postavi status na "Spremno" (bez kalkulacije profita)</span>
-                                    </div>
-                                </button>
-                                <button
-                                    className="delete-option option-waiting"
-                                    onClick={() => confirmDeleteWorkOrder('waiting')}
-                                >
-                                    <span className="option-icon">⏳</span>
-                                    <div className="option-content">
-                                        <strong>Vrati na čekanje</strong>
-                                        <span>Postavi status na "Na čekanju"</span>
-                                    </div>
-                                </button>
-                            </div>
-                        </div>
-                        <div className="delete-modal-footer">
-                            <button
-                                className="cancel-btn"
-                                onClick={() => setDeleteConfirmModal({ isOpen: false, workOrderId: null, workOrderNumber: '' })}
-                            >
-                                Odustani
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            )}
-
-            <style jsx>{`
-                .delete-modal-overlay {
-                    position: fixed;
-                    inset: 0;
-                    background: rgba(15, 23, 42, 0.6);
-                    backdrop-filter: blur(4px);
-                    display: flex;
-                    align-items: center;
-                    justify-content: center;
-                    z-index: 1000;
-                    animation: fadeIn 0.2s ease-out;
-                }
-
-                @keyframes fadeIn {
-                    from { opacity: 0; }
-                    to { opacity: 1; }
-                }
-
-                .delete-modal {
-                    background: white;
-                    border-radius: 20px;
-                    width: 100%;
-                    max-width: 440px;
-                    box-shadow: 0 25px 50px rgba(0, 0, 0, 0.2);
-                    animation: slideUp 0.3s ease-out;
-                    overflow: hidden;
-                }
-
-                @keyframes slideUp {
-                    from {
-                        opacity: 0;
-                        transform: translateY(20px) scale(0.95);
-                    }
-                    to {
-                        opacity: 1;
-                        transform: translateY(0) scale(1);
-                    }
-                }
-
-                .delete-modal-header {
-                    padding: 20px 24px;
-                    border-bottom: 1px solid #e2e8f0;
-                }
-
-                .delete-modal-header h3 {
-                    margin: 0;
-                    font-size: 18px;
-                    font-weight: 700;
-                    color: #1e293b;
-                }
-
-                .delete-modal-body {
-                    padding: 24px;
-                }
-
-                .delete-modal-body p {
-                    margin: 0 0 20px 0;
-                    color: #64748b;
-                    font-size: 14px;
-                }
-
-                .delete-options {
-                    display: flex;
-                    flex-direction: column;
-                    gap: 12px;
-                }
-
-                .delete-option {
-                    display: flex;
-                    align-items: flex-start;
-                    gap: 14px;
-                    padding: 16px;
-                    border: 2px solid #e2e8f0;
-                    border-radius: 12px;
-                    background: white;
-                    cursor: pointer;
-                    text-align: left;
-                    transition: all 0.2s;
-                }
-
-                .delete-option:hover {
-                    border-color: #94a3b8;
-                    background: #f8fafc;
-                }
-
-                .delete-option.option-completed:hover {
-                    border-color: #10b981;
-                    background: rgba(16, 185, 129, 0.05);
-                }
-
-                .delete-option.option-waiting:hover {
-                    border-color: #f59e0b;
-                    background: rgba(245, 158, 11, 0.05);
-                }
-
-                .option-icon {
-                    font-size: 24px;
-                }
-
-                .option-content {
-                    display: flex;
-                    flex-direction: column;
-                    gap: 4px;
-                }
-
-                .option-content strong {
-                    font-size: 15px;
-                    color: #1e293b;
-                }
-
-                .option-content span {
-                    font-size: 13px;
-                    color: #64748b;
-                }
-
-                .delete-modal-footer {
-                    padding: 16px 24px;
-                    border-top: 1px solid #e2e8f0;
-                    display: flex;
-                    justify-content: flex-end;
-                }
-
-                .cancel-btn {
-                    padding: 10px 20px;
-                    border: 1px solid #e2e8f0;
-                    background: white;
-                    border-radius: 10px;
-                    font-size: 14px;
-                    font-weight: 500;
-                    color: #64748b;
-                    cursor: pointer;
-                    transition: all 0.2s;
-                }
-
-                .cancel-btn:hover {
-                    background: #f8fafc;
-                    color: #1e293b;
-                }
-            `}</style>
+            {renderDeleteConfirmModal()}
 
 
             {priceEditWorkOrder && (
@@ -3349,16 +3209,7 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                     showToast={showToast}
                 />
             )}
-            {attendanceFixWorkOrder && organizationId && (
-                <AttendanceFixModal
-                    workOrder={attendanceFixWorkOrder}
-                    organizationId={organizationId}
-                    warnings={attendanceWarnings?.warnings}
-                    onClose={() => setAttendanceFixWorkOrder(null)}
-                    onSaved={() => onRefresh('workOrders')}
-                    showToast={showToast}
-                />
-            )}
+            {renderAttendanceFixModal()}
             {profitDashboardOpen && (
                 <AnalyticsDashboard
                     onClose={() => setProfitDashboardOpen(false)}
@@ -3368,13 +3219,7 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
             )}
 
             {/* Rezime završenog naloga (finalni P&L iz snapshota / živi fallback) */}
-            {summaryOrder && (
-                <OrderSummaryModal
-                    workOrder={summaryOrder}
-                    organizationId={organizationId || ''}
-                    onClose={() => setSummaryOrder(null)}
-                />
-            )}
+            {renderSummaryModal()}
 
             <CustomTasksModal
                 isOpen={tasksModal}

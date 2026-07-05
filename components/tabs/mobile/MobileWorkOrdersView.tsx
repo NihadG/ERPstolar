@@ -1,33 +1,49 @@
 'use client';
 
 import React, { useState, useMemo } from 'react';
-import type { WorkOrder, Project, Worker } from '@/lib/types';
+import type { WorkOrder, Worker } from '@/lib/types';
 import { WORK_ORDER_STATUSES } from '@/lib/types';
+import { daysUntil } from '@/lib/planning';
+import { workOrderDisplayName, orderProcessProgress } from '@/lib/utils';
+import { validateWorkOrderProfitData } from '@/lib/services';
+import WorkOrderExpandedDetail from '@/components/ui/WorkOrderExpandedDetail';
+
+interface AttendanceWarnings {
+    warnings: { Worker_ID: string; Worker_Name: string; Work_Order_ID: string; Work_Order_Name: string; Item_Name: string; Date: string }[];
+    missingCount: number;
+    totalAssigned: number;
+}
 
 interface MobileWorkOrdersViewProps {
     workOrders: WorkOrder[];
-    projects: Project[];
-    workers: Worker[]; // Needed if we want to show worker avatars or names
+    workers: Worker[];
     onRefresh: (...collections: string[]) => void;
     showToast: (message: string, type: 'success' | 'error' | 'info') => void;
 
     // Actions
     onCreate: () => void;
-    onEdit: (workOrder: WorkOrder) => void;
+    onUpdate: (workOrderId: string, updates: any) => Promise<void>;
     onDelete: (workOrderId: string) => void;
     onStart: (workOrderId: string) => void;
     onPrint: (workOrder: WorkOrder) => void;
+    onSummary?: (workOrder: WorkOrder) => void;
+    attendanceWarnings?: AttendanceWarnings | null;
+    onAttendanceFix?: (workOrder: WorkOrder) => void;
 }
 
 export default function MobileWorkOrdersView({
     workOrders,
-    projects,
     workers,
+    onRefresh,
+    showToast,
     onCreate,
-    onEdit,
+    onUpdate,
     onDelete,
     onStart,
-    onPrint
+    onPrint,
+    onSummary,
+    attendanceWarnings,
+    onAttendanceFix,
 }: MobileWorkOrdersViewProps) {
     const [searchTerm, setSearchTerm] = useState('');
     const [statusFilter, setStatusFilter] = useState('');
@@ -66,11 +82,11 @@ export default function MobileWorkOrdersView({
 
     const getStatusColor = (status: string) => {
         switch (status) {
-            case 'Završeno': return '#10b981'; // Green
-            case 'U toku': return '#3b82f6';   // Blue
-            case 'Na čekanju': return '#f59e0b'; // Amber
-            case 'Otkazano': return '#ef4444'; // Red
-            default: return '#9ca3af'; // Gray
+            case 'Završeno': return 'var(--success)';
+            case 'U toku': return 'var(--accent)';
+            case 'Na čekanju': return 'var(--warning)';
+            case 'Otkazano': return 'var(--error)';
+            default: return 'var(--text-tertiary)';
         }
     };
 
@@ -116,6 +132,27 @@ export default function MobileWorkOrdersView({
                 {filteredOrders.map(wo => {
                     const isExpanded = expandedIds.has(wo.Work_Order_ID);
                     const statusColor = getStatusColor(wo.Status);
+                    const isMontaza = wo.Work_Order_Type === 'Montaža';
+                    const items = wo.items || [];
+
+                    // Rok + odbrojavanje (isti model kao desktop kartica)
+                    const woActive = wo.Status !== 'Završeno' && wo.Status !== 'Otkazano';
+                    const dd = woActive ? daysUntil(wo.Due_Date) : null;
+                    const dueCountdown = dd === null ? '' : dd < 0 ? `kasni ${-dd} ${-dd === 1 ? 'dan' : 'dana'}` : dd === 0 ? 'danas' : `za ${dd} ${dd === 1 ? 'dan' : 'dana'}`;
+                    const dueColor = dd === null ? undefined : dd < 0 ? 'var(--error)' : dd <= 2 ? 'var(--warning)' : undefined;
+
+                    // Napredak procesa
+                    const prog = orderProcessProgress(items);
+                    const showProg = prog && prog.total > 1;
+
+                    // Upozorenje o profitu (samo standardna proizvodnja)
+                    const profitWarnings = (!wo.Work_Order_Type || wo.Work_Order_Type === 'Proizvodnja') && wo.Status !== 'Otkazano'
+                        ? validateWorkOrderProfitData(wo) : [];
+                    const hasProfitError = profitWarnings.some((w: any) => w.type === 'error');
+
+                    // Rupe u šihtarici za aktivan nalog
+                    const attWarningsForOrder = wo.Status === 'U toku' && attendanceWarnings
+                        ? attendanceWarnings.warnings.filter(w => w.Work_Order_ID === wo.Work_Order_ID) : [];
 
                     return (
                         <div
@@ -129,109 +166,88 @@ export default function MobileWorkOrdersView({
                                 <div className="wo-main-info">
                                     <div className="wo-top-row">
                                         <span className="wo-number">#{wo.Work_Order_Number}</span>
-                                        <span className="wo-date">{formatDate(wo.Due_Date)}</span>
+                                        <span className="wo-date" style={dueColor ? { color: dueColor, fontWeight: 700 } : undefined}>
+                                            {formatDate(wo.Due_Date)}{dueCountdown && ` · ${dueCountdown}`}
+                                        </span>
                                     </div>
-                                    <div className="wo-title">{wo.Name || 'Bez naziva'}</div>
+                                    <div className="wo-title-row">
+                                        <span className="wo-title">{workOrderDisplayName(wo)}</span>
+                                        {isMontaza && <span className="wo-tag montaza">Montaža</span>}
+                                    </div>
 
                                     {/* Mini summary when collapsed */}
                                     {!isExpanded && (
                                         <div className="wo-mini-stats">
                                             <span>
                                                 <span className="material-icons-round tiny">inventory_2</span>
-                                                {wo.items?.length || 0}
+                                                {items.length || 0}
                                             </span>
+                                            {showProg && (
+                                                <span title={`Završeno ${prog!.done} od ${prog!.total} procesa`}>
+                                                    <span className="wo-mini-bar"><span className="wo-mini-bar-fill" style={{ width: `${prog!.pct}%`, background: prog!.pct >= 100 ? 'var(--success)' : 'var(--accent)' }} /></span>
+                                                    {prog!.pct}%
+                                                </span>
+                                            )}
+                                            {profitWarnings.length > 0 && (
+                                                <span className="warn" style={{ color: hasProfitError ? 'var(--error)' : 'var(--warning)' }}
+                                                    title={profitWarnings.map((w: any) => (w.itemName ? `${w.itemName}: ` : '') + w.message).join('\n')}>
+                                                    <span className="material-icons-round tiny">report_problem</span>
+                                                </span>
+                                            )}
+                                            {attWarningsForOrder.length > 0 && (
+                                                <span className="warn"
+                                                    style={{ color: 'var(--warning)' }}
+                                                    title={`Nedostaje prisustvo: ${attWarningsForOrder.map(w => w.Worker_Name).join(', ')}`}
+                                                    onClick={(e) => { e.stopPropagation(); onAttendanceFix?.(wo); }}>
+                                                    <span className="material-icons-round tiny">person_off</span>
+                                                    {attWarningsForOrder.length}
+                                                </span>
+                                            )}
                                         </div>
                                     )}
+                                </div>
+
+                                {/* Brze akcije — isti set kao desktop red naloga */}
+                                <div className="wo-header-actions">
+                                    {wo.Status === 'Na čekanju' && (
+                                        <button className="wo-icon-btn start" title="Pokreni nalog"
+                                            onClick={(e) => { e.stopPropagation(); onStart(wo.Work_Order_ID); }}>
+                                            <span className="material-icons-round">play_arrow</span>
+                                        </button>
+                                    )}
+                                    {wo.Status === 'Završeno' && onSummary && (
+                                        <button className="wo-icon-btn" title="Rezime naloga"
+                                            onClick={(e) => { e.stopPropagation(); onSummary(wo); }}>
+                                            <span className="material-icons-round">receipt_long</span>
+                                        </button>
+                                    )}
+                                    <button className="wo-icon-btn" title="Printaj nalog"
+                                        onClick={(e) => { e.stopPropagation(); onPrint(wo); }}>
+                                        <span className="material-icons-round">print</span>
+                                    </button>
+                                    <button className="wo-icon-btn delete" title="Obriši nalog"
+                                        onClick={(e) => { e.stopPropagation(); onDelete(wo.Work_Order_ID); }}>
+                                        <span className="material-icons-round">delete</span>
+                                    </button>
                                 </div>
                                 <span className={`material-icons-round chevron ${isExpanded ? 'rotated' : ''}`}>
                                     expand_more
                                 </span>
                             </div>
 
-                            {/* Expanded Content */}
+                            {/* Expanded Content — isti prikaz kao desktop (hero metrike, Tok/Knjiga rada) */}
                             {isExpanded && (
                                 <div className="wo-expanded-content">
-                                    {/* Stats Grid */}
-                                    <div className="wo-stats-grid">
-                                        <div className="wo-stat-box">
-                                            <label>Status</label>
-                                            <div className="value" style={{ color: statusColor }}>
-                                                {wo.Status}
-                                            </div>
-                                        </div>
-                                        <div className="wo-stat-box">
-                                            <label>Vrijednost</label>
-                                            <div className="value">
-                                                <span className="material-icons-round">payments</span>
-                                                {wo.Total_Value ? `${wo.Total_Value.toFixed(0)} KM` : '-'}
-                                            </div>
-                                        </div>
-                                        <div className="wo-stat-box">
-                                            <label>Rok</label>
-                                            <div className="value">
-                                                <span className="material-icons-round">event</span>
-                                                {formatDate(wo.Due_Date)}
-                                            </div>
-                                        </div>
-                                    </div>
-
-                                    {/* Product List */}
-                                    {wo.items && wo.items.length > 0 && (
-                                        <div className="wo-products-section">
-                                            <h4 className="section-title">
-                                                <span className="material-icons-round">category</span>
-                                                Proizvodi ({wo.items.length})
-                                            </h4>
-                                            <div className="wo-products-list">
-                                                {wo.items.map((item, idx) => (
-                                                    <div key={idx} className="wo-product-item">
-                                                        <div className="prod-main">
-                                                            <div className="prod-name">{item.Product_Name}</div>
-                                                            <div className="prod-sub">{item.Project_Name}</div>
-                                                        </div>
-                                                        <div className="prod-qty">
-                                                            {item.Quantity} <span className="unit">kom</span>
-                                                        </div>
-                                                    </div>
-                                                ))}
-                                            </div>
-                                        </div>
-                                    )}
-
-                                    {/* Actions Bar */}
-                                    <div className="wo-actions">
-                                        {/* Status Actions */}
-                                        {wo.Status === 'Na čekanju' && (
-                                            <button
-                                                className="wo-action-btn start"
-                                                onClick={(e) => { e.stopPropagation(); onStart(wo.Work_Order_ID); }}
-                                            >
-                                                Start
-                                                <span className="material-icons-round">play_arrow</span>
-                                            </button>
-                                        )}
-
-                                        <button
-                                            className="wo-action-btn secondary"
-                                            onClick={(e) => { e.stopPropagation(); onPrint(wo); }}
-                                        >
-                                            <span className="material-icons-round">print</span>
-                                        </button>
-
-                                        <button
-                                            className="wo-action-btn edit"
-                                            onClick={(e) => { e.stopPropagation(); onEdit(wo); }}
-                                        >
-                                            <span className="material-icons-round">edit</span>
-                                        </button>
-
-                                        <button
-                                            className="wo-action-btn delete"
-                                            onClick={(e) => { e.stopPropagation(); onDelete(wo.Work_Order_ID); }}
-                                        >
-                                            <span className="material-icons-round">delete</span>
-                                        </button>
-                                    </div>
+                                    <WorkOrderExpandedDetail
+                                        workOrder={wo}
+                                        workers={workers}
+                                        onUpdate={onUpdate}
+                                        onPrint={onPrint}
+                                        onDelete={async (id) => onDelete(id)}
+                                        onStart={async (id) => onStart(id)}
+                                        onRefresh={onRefresh}
+                                        showToast={showToast}
+                                    />
                                 </div>
                             )}
                         </div>
@@ -261,12 +277,12 @@ export default function MobileWorkOrdersView({
                 .wo-search {
                     flex: 1;
                     height: 48px;
-                    background: white;
-                    border-radius: 12px;
+                    background: var(--background);
+                    border-radius: var(--radius-md);
                     display: flex;
                     align-items: center;
                     padding: 0 16px;
-                    box-shadow: 0 2px 8px rgba(0,0,0,0.03);
+                    box-shadow: 0 2px 8px var(--shadow);
                 }
 
                 .wo-search input {
@@ -276,19 +292,20 @@ export default function MobileWorkOrdersView({
                     margin-left: 8px;
                     font-size: 15px;
                     outline: none;
+                    color: var(--text-primary);
                 }
 
                 .wo-create-btn {
                     width: 48px;
                     height: 48px;
-                    border-radius: 12px;
-                    background: #2563eb;
+                    border-radius: var(--radius-md);
+                    background: var(--accent);
                     color: white;
                     border: none;
                     display: flex;
                     align-items: center;
                     justify-content: center;
-                    box-shadow: 0 4px 12px rgba(37, 99, 235, 0.2);
+                    box-shadow: 0 4px 12px var(--shadow-md);
                 }
 
                 .wo-filters {
@@ -305,9 +322,9 @@ export default function MobileWorkOrdersView({
                 .wo-pill {
                     padding: 6px 14px;
                     border-radius: 20px;
-                    background: white;
-                    border: 1px solid #e2e8f0;
-                    color: #64748b;
+                    background: var(--background);
+                    border: 1px solid var(--border);
+                    color: var(--text-secondary);
                     font-size: 13px;
                     font-weight: 500;
                     white-space: nowrap;
@@ -315,9 +332,9 @@ export default function MobileWorkOrdersView({
                 }
 
                 .wo-pill.active {
-                    background: #2563eb;
+                    background: var(--accent);
                     color: white;
-                    border-color: #2563eb;
+                    border-color: var(--accent);
                 }
 
                 .wo-list {
@@ -327,16 +344,16 @@ export default function MobileWorkOrdersView({
                 }
 
                 .wo-card {
-                    background: white;
+                    background: var(--background);
                     border-radius: 16px;
                     padding: 0;
-                    box-shadow: 0 2px 8px rgba(0,0,0,0.03);
+                    box-shadow: 0 2px 8px var(--shadow);
                     overflow: hidden;
                     transition: all 0.2s ease;
                 }
 
                 .wo-card.expanded {
-                    box-shadow: 0 8px 24px rgba(0,0,0,0.08);
+                    box-shadow: 0 8px 24px var(--shadow-md);
                 }
 
                 .wo-card-header {
@@ -345,228 +362,131 @@ export default function MobileWorkOrdersView({
                     padding: 14px;
                     cursor: pointer;
                     position: relative;
+                    gap: 8px;
                 }
 
                 .wo-status-indicator {
                     width: 4px;
                     border-radius: 4px;
-                    margin-right: 12px;
+                    margin-right: 4px;
+                    flex-shrink: 0;
                 }
 
                 .wo-main-info {
                     flex: 1;
+                    min-width: 0;
                 }
 
                 .wo-top-row {
                     display: flex;
                     justify-content: space-between;
                     font-size: 12px;
-                    color: #94a3b8;
+                    color: var(--text-tertiary);
                     margin-bottom: 4px;
+                    gap: 8px;
                 }
 
-                .wo-number { font-weight: 600; color: #64748b; }
+                .wo-number { font-weight: 600; color: var(--text-secondary); flex-shrink: 0; }
+                .wo-date { white-space: nowrap; text-align: right; }
+
+                .wo-title-row {
+                    display: flex;
+                    align-items: center;
+                    gap: 6px;
+                    margin-bottom: 4px;
+                    min-width: 0;
+                }
 
                 .wo-title {
                     font-size: 16px;
                     font-weight: 600;
-                    color: #1e293b;
-                    margin-bottom: 4px;
+                    color: var(--text-primary);
+                    overflow: hidden;
+                    text-overflow: ellipsis;
+                    white-space: nowrap;
                 }
+
+                .wo-tag {
+                    font-size: 10px;
+                    font-weight: 700;
+                    padding: 2px 7px;
+                    border-radius: 999px;
+                    flex-shrink: 0;
+                    text-transform: uppercase;
+                }
+                .wo-tag.montaza { color: #00897b; background: rgba(0, 137, 123, 0.12); }
+
+                .wo-header-actions {
+                    display: flex;
+                    align-items: center;
+                    gap: 2px;
+                    flex-shrink: 0;
+                }
+
+                .wo-icon-btn {
+                    width: 32px;
+                    height: 32px;
+                    border: none;
+                    border-radius: var(--radius-sm);
+                    background: transparent;
+                    color: var(--text-tertiary);
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                }
+                .wo-icon-btn .material-icons-round { font-size: 19px; }
+                .wo-icon-btn:active { background: var(--surface); }
+                .wo-icon-btn.start { color: var(--success); }
+                .wo-icon-btn.delete { color: var(--error); }
 
                 .chevron {
-                    color: #cbd5e1;
+                    color: var(--text-tertiary);
                     transition: transform 0.2s;
                     align-self: center;
+                    flex-shrink: 0;
                 }
 
-                .chevron.rotated { transform: rotate(180deg); color: #2563eb; }
+                .chevron.rotated { transform: rotate(180deg); color: var(--accent); }
 
                 .wo-mini-stats {
                     display: flex;
+                    align-items: center;
                     gap: 12px;
                     font-size: 12px;
-                    color: #94a3b8;
+                    color: var(--text-tertiary);
+                    flex-wrap: wrap;
                 }
-                
+
                 .wo-mini-stats span {
                     display: flex;
                     align-items: center;
                     gap: 4px;
                 }
-                
+
+                .wo-mini-stats span.warn { font-weight: 600; cursor: help; }
+
+                .wo-mini-bar { width: 28px; height: 4px; border-radius: 2px; background: var(--border-light); overflow: hidden; display: inline-block; }
+                .wo-mini-bar-fill { display: block; height: 100%; border-radius: 2px; }
+
                 .tiny { font-size: 14px; }
 
                 /* Expanded */
                 .wo-expanded-content {
-                    padding: 0 16px 16px 16px;
-                    border-top: 1px solid #f1f5f9;
+                    border-top: 1px solid var(--border-light);
                     animation: slideDown 0.2s ease-out;
-                }
-
-                .wo-stats-grid {
-                    display: flex;
-                    justify-content: space-between;
-                    gap: 8px;
-                    margin: 16px 0;
-                }
-
-
-                .wo-stat-box {
-                    flex: 1;
-                    background: #f8fafc;
-                    padding: 8px;
-                    border-radius: 8px;
-                    text-align: center;
-                    min-width: 0; /* Prevents overflow */
-                }
-
-                .wo-stat-box label {
-                    display: block;
-                    font-size: 10px;
-                    color: #94a3b8;
-                    margin-bottom: 4px;
-                    text-transform: uppercase;
-                }
-
-                .wo-stat-box .value {
-                    font-size: 13px;
-                    font-weight: 600;
-                    color: #334155;
-                    display: flex;
-                    align-items: center;
-                    justify-content: center;
-                    gap: 4px;
-                }
-                
-                .wo-stat-box .value .material-icons-round { font-size: 16px; color: #94a3b8; }
-
-                .wo-actions {
-                    display: flex;
-                    justify-content: space-between;
-                    gap: 8px;
-                    margin-top: 8px;
-                }
-
-                .wo-action-btn {
-                    flex: 1;
-                    height: 44px;
-                    border: none;
-                    border-radius: 12px;
-                    display: flex;
-                    align-items: center;
-                    justify-content: center;
-                    background: #f1f5f9;
-                    color: #64748b;
-                    transition: all 0.1s;
-                }
-
-                .wo-action-btn:active { transform: scale(0.96); }
-
-                .wo-action-btn.start {
-                    background: #dcfce7;
-                    color: #15803d;
-                    flex: 1.5; 
-                }
-
-                .wo-action-btn.edit {
-                    background: #eff6ff;
-                    color: #2563eb;
-                }
-
-                .wo-action-btn.delete {
-                    background: #fee2e2;
-                    color: #dc2626;
-                }
-                
-                .wo-action-btn.secondary {
-                    background: white;
-                    border: 1px solid #e2e8f0;
                 }
 
                 .wo-empty {
                     text-align: center;
                     padding: 40px;
-                    color: #94a3b8;
+                    color: var(--text-tertiary);
                 }
-                
+
                 .wo-empty span { font-size: 48px; opacity: 0.5; margin-bottom: 12px; display: block; }
-                
+
                 @keyframes slideDown {
                     from { opacity: 0; transform: translateY(-5px); }
                     to { opacity: 1; transform: translateY(0); }
-                }
-
-                .wo-products-section {
-                    margin: 16px 0;
-                    background: #f8fafc;
-                    border-radius: 12px;
-                    padding: 12px;
-                }
-
-                .section-title {
-                    font-size: 13px;
-                    font-weight: 600;
-                    color: #64748b;
-                    margin: 0 0 12px 0;
-                    display: flex;
-                    align-items: center;
-                    gap: 6px;
-                    text-transform: uppercase;
-                    letter-spacing: 0.5px;
-                }
-
-                .section-title .material-icons-round {
-                    font-size: 16px;
-                }
-
-                .wo-products-list {
-                    display: flex;
-                    flex-direction: column;
-                    gap: 8px;
-                }
-
-                .wo-product-item {
-                    display: flex;
-                    justify-content: space-between;
-                    align-items: center;
-                    padding: 8px 12px;
-                    background: white;
-                    border-radius: 8px;
-                    border: 1px solid #e2e8f0;
-                }
-
-                .prod-main {
-                    display: flex;
-                    flex-direction: column;
-                    gap: 2px;
-                }
-
-                .prod-name {
-                    font-size: 14px;
-                    font-weight: 500;
-                    color: #334155;
-                }
-
-                .prod-sub {
-                    font-size: 11px;
-                    color: #94a3b8;
-                }
-
-                .prod-qty {
-                    font-size: 14px;
-                    font-weight: 600;
-                    color: #2563eb;
-                    background: #eff6ff;
-                    padding: 4px 8px;
-                    border-radius: 6px;
-                }
-
-                .unit {
-                    font-size: 11px;
-                    font-weight: 400;
-                    color: #64748b;
-                    margin-left: 2px;
                 }
             `}</style>
         </div>
