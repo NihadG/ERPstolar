@@ -1,0 +1,30 @@
+{
+    "indexes": [
+        {
+            "collectionGroup": "worker_attendance",
+            "queryScope": "COLLECTION",
+            "fields": [
+                { "fieldPath": "Organization_ID", "order": "ASCENDING" },
+                { "fieldPath": "Date", "order": "ASCENDING" }
+            ]
+        },
+        {
+            "collectionGroup": "work_logs",
+            "queryScope": "COLLECTION",
+            "fields": [
+                { "fieldPath": "Organization_ID", "order": "ASCENDING" },
+                { "fieldPath": "Date", "order": "ASCENDING" }
+            ]
+        },
+        {
+            "collectionGroup": "work_logs",
+            "queryScope": "COLLECTION",
+            "fields": [
+                { "fieldPath": "Work_Order_Item_ID", "order": "ASCENDING" },
+                { "fieldPath": "Organization_ID", "order": "ASCENDING" },
+                { "fieldPath": "Date", "order": "ASCENDING" }
+            ]
+        }
+    ],
+    "fieldOverrides": []
+}

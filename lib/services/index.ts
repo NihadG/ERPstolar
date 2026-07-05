@@ -132,7 +132,7 @@ export {
     assignWorkersToItem, toggleItemPause,
     calculateActualLaborCost, calculateSubTaskLaborCost,
     validateWorkOrderProfitData,
-    updateItemProcess, bulkUpdateProcesses,
+    updateItemProcess, addProcessToOrderItem, bulkUpdateProcesses,
     createSubTasks, updateSubTask, moveSubTask,
     canWorkerStartProcess, triggerWorkLogReconciliation,
     getWorkerMonthlyAttendance, overrideWorkLogs,

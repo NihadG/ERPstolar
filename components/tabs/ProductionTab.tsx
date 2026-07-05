@@ -5,7 +5,7 @@ import type { WorkOrder, Project, Worker } from '@/lib/types';
 import { createWorkOrder, deleteWorkOrder, startWorkOrder, getWorkOrder, updateWorkOrder, updatePlannedStartDate, autoCreateOrdersForWorkOrder } from '@/lib/services';
 import { validateWorkOrderProfitData, checkMissingAttendanceForActiveOrders, recalculateWorkOrder, assignWorkersToItem, syncProjectStatus } from '@/lib/services';
 import { repairAllProductStatuses, startWorkOrderItem, completeWorkOrderItem } from '@/lib/services';
-import { workOrderDueDate, todayISO, buildSaturdayChecker, plannedVsActualDays } from '@/lib/planning';
+import { workOrderDueDate, todayISO, buildSaturdayChecker, plannedVsActualDays, daysUntil } from '@/lib/planning';
 import { planToStages, flattenStages } from '@/lib/productProcesses';
 import { getAllAttendanceByMonth } from '@/lib/services';
 import { workOrderDisplayName, orderProcessProgress } from '@/lib/utils';
@@ -1073,6 +1073,11 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
 
         const isMontaza = wo.Work_Order_Type === 'Montaža';
 
+        // Rok + odbrojavanje (živ signal na kartici u listi)
+        const dd = wo.Status !== 'Završeno' && wo.Status !== 'Otkazano' ? daysUntil(wo.Due_Date) : null;
+        const dueCountdown = dd === null ? '' : dd < 0 ? `kasni ${-dd} ${-dd === 1 ? 'dan' : 'dana'}` : dd === 0 ? 'danas' : `za ${dd} ${dd === 1 ? 'dan' : 'dana'}`;
+        const dueColor = dd === null ? undefined : dd < 0 ? 'var(--error)' : dd <= 2 ? 'var(--warning)' : undefined;
+
         return (
             <div key={wo.Work_Order_ID} className={`project-card ${isExpanded ? 'active' : ''}`}
                 style={{
@@ -1127,38 +1132,6 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                                             </span>
                                         </>
                                     )}
-
-                                    {/* Active Groups Badge */}
-                                    {(() => {
-                                        let activeGroups = 0;
-                                        wo.items?.forEach(item => {
-                                            if (item.SubTasks && item.SubTasks.length > 0) {
-                                                activeGroups += item.SubTasks.filter(st => st.Status === 'U toku').length;
-                                            } else if (item.Status === 'U toku') {
-                                                activeGroups += 1;
-                                            }
-                                        });
-
-                                        if (activeGroups > 0) {
-                                            return (
-                                                <>
-                                                    <span style={{ color: '#d1d5db' }}>•</span>
-                                                    <span style={{
-                                                        display: 'flex',
-                                                        alignItems: 'center',
-                                                        gap: '4px',
-                                                        fontSize: '12px',
-                                                        fontWeight: 500,
-                                                        color: '#4b5563',
-                                                    }} title={`${activeGroups} aktivnih grupa u proizvodnji`}>
-                                                        <span className="material-icons-round" style={{ fontSize: '14px' }}>layers</span>
-                                                        {activeGroups}
-                                                    </span>
-                                                </>
-                                            );
-                                        }
-                                        return null;
-                                    })()}
 
                                     {/* S16: Per-card Missing Attendance Badge — clickable */}
                                     {wo.Status === 'U toku' && attendanceWarnings && (() => {
@@ -1219,13 +1192,18 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                         </div>
                         <div className="project-details" style={{ marginTop: '12px' }}>
                             <div className="project-summary">
+                                {/* Sažetak se sakriva kad je kartica proširena — WorkOrderExpandedDetail
+                                    prikazuje iste podatke (i još) u hero traci, pa se ne duplira. */}
+                                {!isExpanded && (
+                                <>
                                 <span className="summary-item">
                                     <span className="material-icons-round">inventory_2</span>
                                     {totalItems} {totalItems === 1 ? 'proizvod' : 'proizvoda'}
                                 </span>
-                                <span className="summary-item">
+                                <span className="summary-item" style={dueColor ? { color: dueColor, fontWeight: 600 } : undefined}>
                                     <span className="material-icons-round">calendar_today</span>
                                     {wo.Due_Date ? formatDate(wo.Due_Date) : '-'}
+                                    {dueCountdown && <span style={{ opacity: 0.85 }}>· {dueCountdown}</span>}
                                 </span>
                                 {/* Planirano vs potrošeno radnik-dana (Actual_Labor_Days sync-uje recalculateWorkOrder) */}
                                 {wo.Status !== 'Otkazano' && (() => {
@@ -1263,7 +1241,15 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                                         </span>
                                     );
                                 })()}
-                                {/* Planned Start Date badge for scheduled waiting orders */}
+                                {mainWorkers.length > 0 && (
+                                    <span className="summary-item" style={{ color: 'var(--primary-color)' }}>
+                                        <span className="material-icons-round">person</span>
+                                        {mainWorkers.map(([, w]) => w.name.split(' ')[0]).join(', ')}
+                                    </span>
+                                )}
+                                </>
+                                )}
+                                {/* Planned Start Date badge for scheduled waiting orders — jedina akcija bez ekvivalenta u proširenom prikazu, ostaje uvijek vidljiva */}
                                 {wo.Is_Scheduled && wo.Status === 'Na čekanju' && (() => {
                                     // Auto-forward: show today if planned start is in the past
                                     const today = new Date();
@@ -1316,13 +1302,6 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                                         </span>
                                     );
                                 })()}
-                                {mainWorkers.length > 0 && (
-                                    <span className="summary-item" style={{ color: 'var(--primary-color)' }}>
-                                        <span className="material-icons-round">person</span>
-                                        {mainWorkers.map(([, w]) => w.name.split(' ')[0]).join(', ')}
-                                    </span>
-                                )}
-
                             </div>
                         </div>
                     </div>

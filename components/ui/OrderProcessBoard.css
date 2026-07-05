@@ -1,0 +1,139 @@
+/* ═══════════════════════════════════════════════════════════════════
+   Jedinstveni pregled procesa naloga (OrderProcessBoard)
+   Isti proces preko N proizvoda = jedan red; završetak za odabrani podskup.
+   Sve boje iz app tokena (globals.css).
+   ═══════════════════════════════════════════════════════════════════ */
+
+.opb { display: flex; flex-direction: column; gap: 8px; }
+
+.opb-empty {
+    text-align: center; color: var(--text-tertiary); font-size: 13px;
+    padding: 22px; border: 1px dashed var(--border-light); border-radius: var(--radius-md);
+}
+
+.opb-rows { display: flex; flex-direction: column; gap: 8px; }
+
+/* ── Red procesa ─────────────────────────────────────────────────── */
+.opb-row {
+    border: 1px solid var(--border-light); border-radius: var(--radius-md);
+    background: var(--background); overflow: hidden;
+}
+.opb-row.active { border-color: #93c5fd; box-shadow: 0 0 0 3px rgba(0, 113, 227, 0.06); }
+.opb-row.blocked { opacity: 0.72; }
+
+.opb-row-head {
+    display: flex; align-items: center; gap: 9px; width: 100%;
+    background: none; border: none; cursor: pointer; text-align: left;
+    padding: 11px 13px; color: var(--text-primary); font: inherit;
+}
+.opb-row-head:hover { background: var(--surface); }
+
+.opb-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; background: var(--text-tertiary); }
+.opb-dot.active { background: var(--accent); }
+.opb-dot.done { background: var(--success); }
+.opb-dot.blocked { background: var(--border); }
+
+.opb-name { font-size: 14px; font-weight: 600; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 260px; }
+
+.opb-flowtag { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em; color: var(--text-tertiary); background: var(--surface); border-radius: 999px; padding: 2px 8px; }
+.opb-flowtag.active { color: var(--accent); background: var(--accent-light); }
+
+.opb-progress { display: inline-flex; align-items: center; gap: 6px; margin-left: auto; }
+.opb-bar { width: 56px; height: 5px; border-radius: 3px; background: var(--border-light); overflow: hidden; }
+.opb-bar-fill { display: block; height: 100%; border-radius: 3px; background: var(--accent); }
+.opb-bar-fill.full { background: var(--success); }
+.opb-progress-txt { font-size: 12px; font-weight: 700; color: var(--text-secondary); white-space: nowrap; }
+
+.opb-workers { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 600; color: var(--success); background: var(--success-bg); border-radius: 999px; padding: 2px 8px; white-space: nowrap; }
+.opb-deferred { font-size: 11px; font-weight: 600; color: #b45309; background: var(--warning-bg); border-radius: 999px; padding: 2px 8px; }
+
+/* ── Tijelo (proširen red) ───────────────────────────────────────── */
+.opb-body { padding: 4px 13px 13px; display: flex; flex-direction: column; gap: 10px; }
+
+.opb-items { display: flex; flex-direction: column; gap: 4px; }
+.opb-item {
+    display: flex; align-items: center; gap: 9px; padding: 7px 10px;
+    background: var(--surface); border: 1px solid transparent; border-radius: var(--radius-sm); cursor: pointer;
+}
+.opb-item.sel { background: var(--accent-light); border-color: #bfdcff; }
+.opb-item input { width: 16px; height: 16px; accent-color: var(--accent); cursor: pointer; margin: 0; }
+.opb-item-name { flex: 1; font-size: 13px; color: var(--text-primary); min-width: 0; }
+
+.opb-pill { font-size: 11px; font-weight: 700; border-radius: 999px; padding: 2px 9px; white-space: nowrap; }
+.opb-pill.wait { color: var(--text-secondary); background: var(--surface-hover); }
+.opb-pill.active { color: var(--accent); background: var(--accent-light); }
+.opb-pill.done { color: var(--success); background: var(--success-bg); }
+.opb-pill.deferred { color: #b45309; background: var(--warning-bg); }
+
+.opb-item-worker { display: inline-flex; align-items: center; gap: 3px; font-size: 11px; font-weight: 600; color: var(--success); white-space: nowrap; }
+
+/* ── Alatna traka + akcije ───────────────────────────────────────── */
+.opb-selbar {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    padding-top: 8px; border-top: 1px dashed var(--border-light);
+}
+.opb-linkbtn { border: none; background: none; color: var(--accent); font-size: 12px; font-weight: 700; cursor: pointer; padding: 2px 0; }
+.opb-linkbtn:hover { text-decoration: underline; }
+.opb-selcount { font-size: 12px; color: var(--text-secondary); font-weight: 600; }
+.opb-actions { display: flex; gap: 6px; flex-wrap: wrap; margin-left: auto; }
+
+.opb-btn {
+    display: inline-flex; align-items: center; gap: 5px;
+    border: 1px solid var(--border-light); background: var(--background); color: var(--text-primary);
+    font-size: 12px; font-weight: 600; padding: 6px 11px; border-radius: var(--radius-sm); cursor: pointer;
+    transition: background var(--transition), border-color var(--transition);
+}
+.opb-btn:hover:not(:disabled) { background: var(--surface); }
+.opb-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.opb-btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.opb-btn.primary:hover:not(:disabled) { background: var(--accent-hover); }
+.opb-btn.warn { color: #b45309; }
+.opb-btn.warn:hover:not(:disabled) { background: var(--warning-bg); border-color: #fcd34d; }
+.opb-btn.ghost { color: var(--text-secondary); }
+
+/* ── Forma završetka / dodavanja ─────────────────────────────────── */
+.opb-form, .opb-add {
+    display: flex; flex-direction: column; gap: 10px;
+    padding: 12px; background: var(--surface); border: 1px solid var(--border-light); border-radius: var(--radius-md);
+}
+.opb-field { display: flex; flex-direction: column; gap: 5px; }
+.opb-field.grow { flex: 1; }
+.opb-field > span { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em; color: var(--text-tertiary); }
+.opb-field input[type="text"], .opb-field input[type="date"], .opb-field select {
+    padding: 7px 9px; border: 1px solid var(--border); border-radius: var(--radius-sm);
+    font-size: 13px; color: var(--text-primary); background: var(--background); font-family: inherit;
+}
+.opb-field input:focus, .opb-field select:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(0, 113, 227, 0.12); }
+.opb-form-row { display: flex; gap: 10px; flex-wrap: wrap; }
+
+.opb-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.opb-chip { display: inline-flex; align-items: center; gap: 4px; background: var(--accent-light); color: var(--accent); border-radius: var(--radius-sm); padding: 4px 9px; font-size: 12px; font-weight: 600; }
+.opb-chip button { border: none; background: none; color: var(--accent); cursor: pointer; display: inline-flex; padding: 0; }
+.opb-chips select { padding: 5px 8px; border: 1px dashed var(--border); border-radius: var(--radius-sm); font-size: 12px; color: var(--text-secondary); background: var(--background); cursor: pointer; }
+
+.opb-form-actions { display: flex; justify-content: flex-end; gap: 8px; }
+
+/* ── Dodaj proces ────────────────────────────────────────────────── */
+.opb-add-wrap { display: flex; }
+.opb-add { flex: 1; }
+.opb-add-btn {
+    display: inline-flex; align-items: center; gap: 5px; padding: 8px 13px;
+    border: 1px dashed var(--border); background: var(--background); color: var(--text-secondary);
+    border-radius: var(--radius-sm); font-size: 12.5px; font-weight: 600; cursor: pointer;
+}
+.opb-add-btn:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+.opb-add-items { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.opb-add-chip {
+    display: inline-flex; align-items: center; gap: 4px; font-size: 12px; font-weight: 500;
+    color: var(--text-secondary); background: var(--background); border: 1px solid var(--border-light);
+    padding: 5px 10px; border-radius: 999px; cursor: pointer;
+}
+.opb-add-chip.on { background: var(--accent-light); border-color: var(--accent); color: var(--accent); font-weight: 600; }
+
+.opb-spin { animation: opb-spin 0.8s linear infinite; }
+@keyframes opb-spin { to { transform: rotate(360deg); } }
+
+@media (max-width: 640px) {
+    .opb-actions { margin-left: 0; width: 100%; }
+    .opb-name { max-width: 150px; }
+}

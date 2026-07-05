@@ -53,6 +53,18 @@ export function todayISO(): string {
     return toISO(new Date());
 }
 
+/**
+ * Cijeli kalendarski dani od `fromISO` (default danas) do `iso`.
+ * Pozitivno = u budućnosti, 0 = danas, negativno = prošlost. null kad datum fali/nije validan.
+ */
+export function daysUntil(iso?: string | null, fromISO?: string): number | null {
+    if (!iso) return null;
+    const target = new Date(iso.split('T')[0] + 'T00:00:00');
+    const base = new Date((fromISO || todayISO()) + 'T00:00:00');
+    if (isNaN(target.getTime()) || isNaN(base.getTime())) return null;
+    return Math.round((target.getTime() - base.getTime()) / 86400000);
+}
+
 // ════════════════════════════════════════════════════════════════════
 // SUBOTNJA ROTACIJA PO RADNIKU (auto iz šihtarice)
 // Pravilo: nađi zadnju PROŠLU subotu radnika u šihtarici; ako je tada RADIO

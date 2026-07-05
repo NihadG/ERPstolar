@@ -579,7 +579,10 @@ export async function markAttendanceAndRecalculate(
                 // If the app relies on snapshots for finished orders, strictly speaking we should update them.
                 // But for now, ensuring the WO document has correct Actual_Labor_Cost is the priority (S16).
 
-                await Promise.all(finalAffectedList.map(woId => recalculateWorkOrder(woId)));
+                // Čisto knjiženje rada ne mijenja materijal ni status proizvoda/projekta.
+                await Promise.all(finalAffectedList.map(woId =>
+                    recalculateWorkOrder(woId, { skipMaterialRefresh: true, skipStatusSync: true })
+                ));
                 console.log(`Recalculated ${finalAffectedList.length} work orders affected by attendance change.`);
             } catch (recalcError) {
                 console.error('Failed to recalculate work orders after attendance change:', recalcError);
@@ -770,8 +773,13 @@ export async function bookWorkerDayItems(
         wos.forEach(id => affected.add(id));
         return { created, affectedWorkOrderIds: Array.from(affected) };
     } catch (error) {
+        // NE gutati grešku tiho: ranije se ovdje vraćalo {created:0} bez obzira na uzrok, pa je
+        // korisnik vidio zbunjujuću poruku "Dnevnice nisu knjižene" (kao da nema šta da se
+        // knjiži) čak i kad je stvarni uzrok bio pravi izuzetak (npr. Firestore greška).
+        // Sad se greška baca dalje — pozivaoci (commitDecisions i sl.) je hvataju i prikazuju
+        // pravu poruku "Greška pri knjiženju dnevnica", a stvarni uzrok ostaje u konzoli.
         console.error('bookWorkerDayItems error:', error);
-        return { created: 0, affectedWorkOrderIds: [] };
+        throw error;
     }
 }
 
@@ -1298,6 +1306,9 @@ export async function saveWorkOrderDayBooking(
         // CLEAN-SLATE SCOPED: obriši SVE logove OVOG naloga za taj dan (kompletno stanje dolazi iz `entries`).
         // Logovi drugih naloga (isti radnik, isti dan) se NE diraju.
         const toDelete: import('firebase/firestore').DocumentReference[] = [];
+        // ISTORIJA ATRIBUCIJE: sačuvaj proces sa STARIH logova (workerId|itemId → node/name) —
+        // retroaktivna izmjena prošlog dana NE smije pre-atribuirati rad na DANAŠNJI tekući proces.
+        const oldAttr = new Map<string, { nodeId?: string; name?: string }>();
         try {
             const daySnap = await getDocs(query(
                 collection(fs, 'work_logs'),
@@ -1307,8 +1318,12 @@ export async function saveWorkOrderDayBooking(
             ));
             daySnap.docs.forEach(d => {
                 toDelete.push(d.ref);
-                const wid = d.data().Worker_ID;
-                if (wid) affectedWorkers.add(wid);     // i uklonjeni radnici se renormalizuju
+                const x = d.data();
+                if (x.Worker_ID) affectedWorkers.add(x.Worker_ID);     // i uklonjeni radnici se renormalizuju
+                const attrKey = `${x.Worker_ID}|${x.Work_Order_Item_ID}`;
+                if (!oldAttr.has(attrKey) && (x.Process_Node_ID || x.Process_Name)) {
+                    oldAttr.set(attrKey, { nodeId: x.Process_Node_ID, name: x.Process_Name });
+                }
             });
         } catch (e) { console.warn('saveWorkOrderDayBooking day-logs lookup failed:', e); }
 
@@ -1341,7 +1356,13 @@ export async function saveWorkOrderDayBooking(
 
             for (const itemId of validItemIds) {
                 const booked = itemMap.get(itemId)!;
-                const autoNode = resolveAutoProcessNode(orderGraph, itemId, booked.Processes);
+                // PROŠLI dan + postojeći (radnik,stavka) par → zadrži ISTORIJSKU atribuciju procesa;
+                // auto-pripis (tekući proces) važi za danas i za nove parove.
+                const carried = date < formatLocalDateISO(new Date()) ? oldAttr.get(`${entry.workerId}|${itemId}`) : undefined;
+                const autoNode = carried ? null : resolveAutoProcessNode(orderGraph, itemId, booked.Processes);
+                const attr = carried
+                    ? { ...(carried.nodeId && { Process_Node_ID: carried.nodeId }), ...(carried.name && { Process_Name: carried.name }) }
+                    : (autoNode ? { Process_Node_ID: autoNode.id, Process_Name: autoNode.name } : {});
                 const log: Record<string, unknown> = {
                     WorkLog_ID: generateUUID(),
                     Organization_ID: organizationId,
@@ -1359,7 +1380,7 @@ export async function saveWorkOrderDayBooking(
                     Work_Order_ID: booked.Work_Order_ID || workOrderId,
                     Work_Order_Item_ID: booked.ID,
                     Product_ID: booked.Product_ID,
-                    ...(autoNode && { Process_Node_ID: autoNode.id, Process_Name: autoNode.name }),
+                    ...attr,
                     Created_At: new Date().toISOString(),
                 };
                 Object.keys(log).forEach(k => log[k] === undefined && delete log[k]);
@@ -1486,6 +1507,8 @@ export async function bulkBookWorkOrderLabor(
                         Work_Order_Item_ID: woi.ID,
                         Product_ID: woi.Product_ID,
                         Date: dateStr,
+                        // NAMJERNO bez Process_Name/Node_ID: retro raspon nepoznate istorije —
+                        // auto-pripis DANAŠNJEG tekućeg procesa bi lažno atribuirao prošle dane.
                     }, organizationId);
                     if (res.success) { logsCreated++; touchedPairs.set(`${wid}__${dateStr}`, { workerId: wid, date: dateStr }); }
                 }
@@ -2824,6 +2847,17 @@ export async function overrideWorkLogs(
         );
         const existingSnap = await getDocs(existingQuery);
 
+        // ISTORIJA ATRIBUCIJE: sačuvaj proces sa starih logova (workerId|date → node/name) —
+        // timeline override ne smije BLANKATI atribuciju (graf „Radnici·dani" gubi zapise).
+        const oldAttr = new Map<string, { nodeId?: string; name?: string }>();
+        existingSnap.docs.forEach(d => {
+            const x = d.data();
+            const k = `${x.Worker_ID}|${x.Date}`;
+            if (!oldAttr.has(k) && (x.Process_Node_ID || x.Process_Name)) {
+                oldAttr.set(k, { nodeId: x.Process_Node_ID, name: x.Process_Name });
+            }
+        });
+
         // Delete in batches
         const CHUNK_SIZE = 450;
         const docsToDelete = existingSnap.docs;
@@ -2839,6 +2873,20 @@ export async function overrideWorkLogs(
         const newLogs = entries.map(entry => {
             const original = entry.Original_Daily_Rate ?? entry.Daily_Rate;
             const presence = entry.Presence === 0.5 ? 0.5 : 1;
+            // Atribucija: ručno unesen naziv ima prednost (node se prenosi ako se naziv poklapa);
+            // bez unosa → prenesi staru atribuciju; polja se IZOSTAVLJAJU umjesto blankanja ''.
+            const old = oldAttr.get(`${entry.Worker_ID}|${entry.Date}`);
+            const manualName = (entry.Process_Name || '').trim();
+            const attr: Record<string, string> = {};
+            if (manualName) {
+                attr.Process_Name = manualName;
+                if (old?.nodeId && (old.name || '').trim().toLowerCase() === manualName.toLowerCase()) {
+                    attr.Process_Node_ID = old.nodeId;
+                }
+            } else if (old) {
+                if (old.name) attr.Process_Name = old.name;
+                if (old.nodeId) attr.Process_Node_ID = old.nodeId;
+            }
             return {
                 WorkLog_ID: generateUUID(),
                 Organization_ID: organizationId,
@@ -2854,7 +2902,7 @@ export async function overrideWorkLogs(
                 Split_Factor: 1,
                 Day_Fraction: presence,
                 Hours_Worked: 8,
-                Process_Name: entry.Process_Name || '',
+                ...attr,
                 Is_From_Attendance: false,
                 Booking_Source: 'manual' as const,
                 Created_At: new Date().toISOString(),
@@ -3199,8 +3247,11 @@ export async function recalculateWorkOrder(
         // EFIKASNOST: sve per-item sync izmjene idu u jedan writeBatch (umjesto N updateDoc-a).
         const itemUpdates: { ref: any; payload: Record<string, any> }[] = [];
 
-        // Use for...of to support async material + labor cost fetching
-        for (const item of workOrder.items) {
+        // EFIKASNOST: items se obrađuju PARALELNO (Promise.all) — svaki item radi najviše 2-3
+        // nezavisna Firestore čitanja (offer backfill, services backfill, materijali), pa je
+        // sekvencijalni for-of preko N stavki bio glavni uzrok sporog preračuna (N × round-trip).
+        // Agregacija u zajedničke akumulatore (totalValue itd.) ostaje SINHRONA nakon Promise.all.
+        const itemResults = await Promise.all(workOrder.items.map(async (item) => {
             // BACKFILL: If Product_Value is 0, recover from accepted offer (one-time self-healing)
             let itemValue = item.Product_Value || 0;
             if (itemValue <= 0 && item.Product_ID && item.Project_ID && workOrder.Organization_ID) {
@@ -3287,7 +3338,6 @@ export async function recalculateWorkOrder(
             if (overrides?.Selling_Price != null && overrides.Selling_Price > 0) {
                 itemValue = overrides.Selling_Price;
             }
-            totalValue += itemValue;
 
             // PROFIT-09 FIX: For completed items, use FROZEN material cost (don't re-fetch)
             // This prevents retroactive profit changes when material prices change after completion.
@@ -3312,29 +3362,40 @@ export async function recalculateWorkOrder(
                 // Fallback to stored value if no Product_ID
                 itemMaterialCost = item.Material_Cost || 0;
             }
-            materialCost += itemMaterialCost;
 
             // Include Transport and Services in profit calculation
             // FIX #1: Apply Profit_Overrides for Transport_Share if present
             const itemTransport = overrides?.Transport_Share != null ? overrides.Transport_Share : (item.Transport_Share || 0);
-            transportCost += itemTransport;
-            servicesCost += item.Services_Total || 0;
-
-            plannedLaborCost += item.Planned_Labor_Cost || 0;
 
             // INVARIJANTA: trošak rada proizvoda = Σ Daily_Rate iz work logova (jedini izvor istine).
             // Nema "manual_override" izuzetka — sve izmjene (knjiga rada, timeline) idu kroz work logove.
             const freshItemLaborCost = Math.round((laborByItem.get(item.ID) || 0) * 100) / 100;
-            actualLaborCost += freshItemLaborCost;
             const freshItemLaborDays = Math.round((daysByItem.get(item.ID) || 0) * 100) / 100;
+
+            return {
+                item, itemValue, itemMaterialCost, itemTransport,
+                itemServices: item.Services_Total || 0,
+                itemPlannedLabor: item.Planned_Labor_Cost || 0,
+                freshItemLaborCost, freshItemLaborDays,
+            };
+        }));
+
+        // Agregacija (sinhrono, u redoslijedu stavki) + priprema batch izmjena.
+        for (const r of itemResults) {
+            const { item } = r;
+            totalValue += r.itemValue;
+            materialCost += r.itemMaterialCost;
+            transportCost += r.itemTransport;
+            servicesCost += r.itemServices;
+            plannedLaborCost += r.itemPlannedLabor;
+            actualLaborCost += r.freshItemLaborCost;
 
             // SYNC: Update item-level Material_Cost, Actual_Labor_Cost i Actual_Labor_Days for consistency
             // (skupljamo izmjene → jedan batch commit poslije petlje)
             itemUpdates.push({
                 ref: doc(firestore, COLLECTIONS.WORK_ORDER_ITEMS, item.ID),
-                payload: { Material_Cost: itemMaterialCost, Actual_Labor_Cost: freshItemLaborCost, Actual_Labor_Days: freshItemLaborDays },
+                payload: { Material_Cost: r.itemMaterialCost, Actual_Labor_Cost: r.freshItemLaborCost, Actual_Labor_Days: r.freshItemLaborDays },
             });
-
 
             if (item.Started_At) {
                 const start = new Date(item.Started_At);
@@ -3368,12 +3429,15 @@ export async function recalculateWorkOrder(
         // Cost fields are still aggregated here for reference.
 
         // Determine overall status
+        // FLOOR 'U toku': pokrenut nalog (bar jedna stavka sa Started_At) nikad ne regresira na
+        // 'Na čekanju' — šihtarica (selectAutoBookItemIds) auto-knjiži dnevnice SAMO na aktivne
+        // naloge, pa bi regresija tiho ugasila knjiženje.
         let status: 'Na čekanju' | 'U toku' | 'Završeno' = 'Na čekanju';
         const allCompleted = workOrder.items.every((i: any) => i.Status === 'Završeno');
         const anyInProgress = workOrder.items.some((i: any) => i.Status === 'U toku');
 
         if (allCompleted) status = 'Završeno';
-        else if (anyInProgress) status = 'U toku';
+        else if (anyInProgress || earliestStart) status = 'U toku';
 
         // Use _docId from queryied work order (not the Work_Order_ID field)
         const docId = (workOrder as any)._docId;
@@ -3647,6 +3711,19 @@ export async function syncProjectStatus(projectId: string, organizationId?: stri
 
         const products = productsSnap.docs.map(d => d.data());
 
+        // EFIKASNOST: jedan zajednički upit svih work_order_items OVOG projekta (dijeli se između
+        // oba narednih provjera), umjesto da se za SVAKI aktivni/montaža nalog u CIJELOJ organizaciji
+        // pojedinačno pita "dira li ovaj projekat" (bio je N+1, sekvencijalno — glavni uzrok sporog
+        // preračuna naloga kako raste broj aktivnih naloga u organizaciji).
+        let projectItemsSnap: any = null;
+        try {
+            const itemsConstraints: any[] = [where('Project_ID', '==', projectId)];
+            if (organizationId) itemsConstraints.push(where('Organization_ID', '==', organizationId));
+            projectItemsSnap = await getDocs(query(collection(firestore, COLLECTIONS.WORK_ORDER_ITEMS), ...itemsConstraints));
+        } catch (err) {
+            console.warn('syncProjectStatus: Error fetching project work order items:', err);
+        }
+
         // Check for active montaža WOs that reference products in this project
         // This prevents premature "Završeno" when products are Spremno but montaža is pending
         let montazaProductIds = new Set<string>();
@@ -3664,19 +3741,13 @@ export async function syncProjectStatus(projectId: string, organizationId?: stri
                 ...montazaConstraints
             );
             const montazaSnap = await getDocs(montazaWoQuery);
-            for (const mDoc of montazaSnap.docs) {
-                const mData = mDoc.data();
-                const itemsQuery = query(
-                    collection(firestore, COLLECTIONS.WORK_ORDER_ITEMS),
-                    where('Work_Order_ID', '==', mData.Work_Order_ID),
-                    where('Project_ID', '==', projectId)
-                );
-                const itemsSnap = await getDocs(itemsQuery);
-                itemsSnap.docs.forEach(d => {
-                    const itemData = d.data();
-                    if (itemData.Product_ID) montazaProductIds.add(itemData.Product_ID);
-                });
-            }
+            const montazaWoIds = new Set(montazaSnap.docs.map(d => d.data().Work_Order_ID));
+            projectItemsSnap?.docs.forEach((d: any) => {
+                const itemData = d.data();
+                if (montazaWoIds.has(itemData.Work_Order_ID) && itemData.Product_ID) {
+                    montazaProductIds.add(itemData.Product_ID);
+                }
+            });
         } catch (err) {
             console.warn('syncProjectStatus: Error checking montaža WOs:', err);
         }
@@ -3688,15 +3759,8 @@ export async function syncProjectStatus(projectId: string, organizationId?: stri
             const activeWoConstraints = [where('Status', '==', 'U toku')] as any[];
             if (organizationId) activeWoConstraints.push(where('Organization_ID', '==', organizationId));
             const activeWoSnap = await getDocs(query(collection(firestore, COLLECTIONS.WORK_ORDERS), ...activeWoConstraints));
-            for (const woDoc of activeWoSnap.docs) {
-                const woData = woDoc.data();
-                const itemsSnap = await getDocs(query(
-                    collection(firestore, COLLECTIONS.WORK_ORDER_ITEMS),
-                    where('Work_Order_ID', '==', woData.Work_Order_ID),
-                    where('Project_ID', '==', projectId)
-                ));
-                if (!itemsSnap.empty) { hasActiveWorkOrder = true; break; }
-            }
+            const activeWoIds = new Set(activeWoSnap.docs.map(d => d.data().Work_Order_ID));
+            hasActiveWorkOrder = !!projectItemsSnap?.docs.some((d: any) => activeWoIds.has(d.data().Work_Order_ID));
         } catch (err) {
             console.warn('syncProjectStatus: Error checking active WOs:', err);
         }
@@ -4017,12 +4081,89 @@ export async function updateItemProcess(
 
         await updateDoc(itemRef, { Processes: processes });
 
-        // Recalculate item status based on process statuses
-        await recalculateItemStatus(workOrderId, itemId, processes);
-        await recalculateWorkOrder(workOrderId);
+        // ODSPOJENO OD STATUSA: procesi su ČIST NAPREDAK — pojedinačno pokretanje/završavanje
+        // procesa NE pomiče status stavke ni naloga. Rad/profit dolaze isključivo iz WorkLog-a
+        // (šihtarica + Knjiga rada), pa ovdje nema kaskade (recalculateItemStatus/recalculateWorkOrder).
+        // Status naloga vode samo eksplicitne akcije u kartici (Pokreni/Završi nalog).
     } catch (error) {
         console.error('Error updating item process:', error);
         throw error;
+    }
+}
+
+/**
+ * DODAJ PROCES U NALOG (samo taj nalog — plan proizvoda se NE dira):
+ *  1) upsert u item.Processes (updateItemProcess)
+ *  2) dopuni item.Process_Stages (u zadatu fazu = paralelno, ili nova faza na kraj)
+ *  3) re-sintetiši WorkOrder.Process_Graph iz svih stavki, čuvajući pozicije istoimenih čvorova
+ */
+export async function addProcessToOrderItem(
+    workOrderId: string,
+    itemId: string,
+    processName: string,
+    organizationId: string,
+    opts?: { stageIndex?: number }
+): Promise<{ success: boolean; message: string }> {
+    const name = (processName || '').trim();
+    if (!workOrderId || !itemId || !name || !organizationId) {
+        return { success: false, message: 'Nedostaju podaci za dodavanje procesa' };
+    }
+    try {
+        const firestore = getDb();
+        const { planToStages, synthesizeOrderGraph } = await import('./productProcesses');
+        const { layoutProcessGraph } = await import('./processLayout');
+        const { getProcessGraph, saveProcessGraph } = await import('./database');
+
+        // 1) upsert u item.Processes (+ recalc statusa/naloga interno)
+        await updateItemProcess(workOrderId, itemId, name, { Status: 'Na čekanju' });
+
+        // 2) dopuni Process_Stages ciljne stavke
+        const itemRef = await getItemRef(itemId);
+        const itemSnap = await getDoc(itemRef);
+        const itemData = itemSnap.data() as WorkOrderItem;
+        const curStages = planToStages(
+            (itemData as any).Process_Stages,
+            (itemData.Processes || []).map(p => p.Process_Name).filter(Boolean) as string[]
+        );
+        // ako je već negdje (npr. upsert ga stavio u Processes pa fallback izveo fazu) — ne dupliraj
+        const already = curStages.some(st => st.some(pn => pn.trim().toLowerCase() === name.toLowerCase()));
+        if (!already) {
+            if (opts?.stageIndex !== undefined && opts.stageIndex >= 0 && opts.stageIndex < curStages.length) {
+                curStages[opts.stageIndex].push(name);
+            } else {
+                curStages.push([name]); // nova faza na kraj
+            }
+        }
+        await updateDoc(itemRef, { Process_Stages: curStages.map(s => ({ processes: s })) });
+
+        // 3) re-sintetiši graf iz SVIH stavki naloga
+        const allItemsSnap = await getDocs(query(
+            collection(firestore, COLLECTIONS.WORK_ORDER_ITEMS),
+            where('Work_Order_ID', '==', workOrderId),
+            where('Organization_ID', '==', organizationId)
+        ));
+        const planItems = allItemsSnap.docs.map(d => {
+            const it = d.data() as WorkOrderItem;
+            const stages = it.ID === itemId
+                ? curStages
+                : planToStages((it as any).Process_Stages, (it.Processes || []).map(p => p.Process_Name).filter(Boolean) as string[]);
+            return { itemId: it.ID, stages };
+        }).filter(pi => pi.stages.length > 0);
+
+        const { graph } = synthesizeOrderGraph(planItems);
+        if (graph.nodes.length > 0) {
+            // sačuvaj pozicije istoimenih postojećih čvorova
+            const prev = await getProcessGraph(workOrderId, organizationId);
+            const posByName = new Map((prev.nodes || []).map(n => [n.name.trim().toLowerCase(), n.position]));
+            const pos = layoutProcessGraph(graph.nodes, graph.edges);
+            graph.nodes.forEach(n => { n.position = posByName.get(n.name.trim().toLowerCase()) || pos[n.id] || { x: 24, y: 24 }; });
+            await saveProcessGraph(workOrderId, graph, organizationId);
+        }
+
+        return { success: true, message: `Proces „${name}" dodan u nalog` };
+    } catch (error) {
+        console.error('addProcessToOrderItem error:', error);
+        return { success: false, message: 'Greška pri dodavanju procesa' };
     }
 }
 
@@ -4168,23 +4309,26 @@ async function recalculateItemStatus(
     try {
         // Note: workOrderId is kept for compatibility but not strictly needed for finding item by ID
         const itemRef = await getItemRef(itemId);
+        const itemSnap = await getDoc(itemRef);
+        const itemStartedAt: string | undefined = itemSnap.exists() ? (itemSnap.data() as any).Started_At : undefined;
 
-        const allCompleted = processes.every(p => p.Status === 'Završeno');
-        const anyInProgress = processes.some(p => p.Status === 'U toku');
-
-        let status: 'Na čekanju' | 'U toku' | 'Završeno' = 'Na čekanju';
-        if (allCompleted) status = 'Završeno';
-        else if (anyInProgress) status = 'U toku';
+        // FLOOR 'U toku': pokrenuta stavka (Started_At iz starta naloga ili prvog procesa) NIKAD ne
+        // regresira na 'Na čekanju' kad se proces vrati — regresija bi kaskadno oborila status naloga,
+        // a šihtarica (selectAutoBookItemIds) auto-knjiži samo na aktivne naloge. Vidi deriveItemStatus.
+        const { deriveItemStatus } = await import('./productProcesses');
+        const firstStarted = processes.find(p => p.Started_At);
+        const status = deriveItemStatus(processes, itemStartedAt || firstStarted?.Started_At);
+        const allCompleted = status === 'Završeno';
 
         const updates: any = { Status: status };
 
         // Set Started_At if first process started
-        const firstStarted = processes.find(p => p.Started_At);
-        if (firstStarted && !updates.Started_At) {
+        if (firstStarted && !itemStartedAt) {
             updates.Started_At = firstStarted.Started_At;
         }
 
         // Set Completed_At if all completed
+        // (pri regresiji se Completed_At NE čisti — zamrznut materijal je namjeran, Rizik #3 guard)
         if (allCompleted) {
             const lastCompleted = processes
                 .filter(p => p.Completed_At)
@@ -4535,7 +4679,9 @@ export async function runStartupSync(organizationId: string): Promise<{
         const projectIds = new Set<string>();
         const now = new Date();
 
-        for (const woDoc of woSnap.docs) {
+        // EFIKASNOST: nalozi su nezavisni dokumenti → paralelno (bilo je sekvencijalno po nalogu,
+        // usporavalo pokretanje aplikacije kad ima puno aktivnih naloga).
+        await Promise.all(woSnap.docs.map(async (woDoc) => {
             const wo = woDoc.data();
 
             // Step 1a: Auto-schedule active WOs not in Planer
@@ -4578,17 +4724,17 @@ export async function runStartupSync(organizationId: string): Promise<{
                 const pid = d.data().Project_ID;
                 if (pid) projectIds.add(pid);
             });
-        }
+        }));
 
-        // Step 3: Sync project statuses
-        for (const projectId of Array.from(projectIds)) {
+        // Step 3: Sync project statuses — paralelno.
+        await Promise.all(Array.from(projectIds).map(async (projectId) => {
             try {
                 await syncProjectStatus(projectId, organizationId);
                 projectsSynced++;
             } catch (e) {
                 console.warn(`[STARTUP-SYNC] Project sync failed for ${projectId}:`, e);
             }
-        }
+        }));
 
         console.log(`[STARTUP-SYNC] Done: ${scheduled} scheduled, ${recalculated} recalculated, ${projectsSynced} projects synced`);
     } catch (error) {

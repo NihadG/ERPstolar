@@ -650,15 +650,24 @@ export async function recalculateProductCost(productId: string, organizationId: 
         const woItemsSnap = await getDocs(woItemsQ);
         const woIds = new Set<string>();
         woItemsSnap.docs.forEach(d => {
-            const woId = d.data().Work_Order_ID;
-            if (woId) woIds.add(woId);
+            const item = d.data();
+            const woId = item.Work_Order_ID;
+            if (!woId) return;
+            // EFIKASNOST: preskoči naloge gdje je stavka ZAMRZNUTA (završena) ili ručno
+            // cijenjena — recalculateWorkOrder svejedno NEĆE osvježiti materijal za takvu
+            // stavku (vidi matFrozen/Material_Cost_Source logiku), pa je preračun čist
+            // trošak bez efekta. Bez ovoga se pri SVAKOJ promjeni cijene/statusa materijala
+            // preračunava SVAKI istorijski (davno završeni) nalog koji je ikad koristio ovaj
+            // proizvod — glavni uzrok sporog mijenjanja statusa narudžbi kako istorija raste.
+            const frozen = item.Status === 'Završeno' || !!item.Completed_At || item.Material_Cost_Source === 'manual';
+            if (!frozen) woIds.add(woId);
         });
 
         if (woIds.size > 0) {
             const { recalculateWorkOrder } = await import('./attendance');
-            for (const woId of Array.from(woIds)) {
-                await recalculateWorkOrder(woId);
-            }
+            // EFIKASNOST: nalozi su nezavisni jedan od drugog → paralelno (bilo je glavno
+            // usko grlo pri promjeni statusa narudžbe koja pogađa više naloga/proizvoda).
+            await Promise.all(Array.from(woIds).map(woId => recalculateWorkOrder(woId)));
         }
     } catch (err) {
         console.warn('recalculateProductCost: WO sync failed (non-critical):', err);
@@ -780,10 +789,8 @@ export async function batchUpdateMaterialStatuses(
             await batch.commit();
         }
 
-        // Recalculate product costs once per affected product
-        for (const productId of Array.from(affectedProductIds)) {
-            await recalculateProductCost(productId, organizationId);
-        }
+        // Recalculate product costs once per affected product — paralelno (proizvodi su nezavisni).
+        await Promise.all(Array.from(affectedProductIds).map(productId => recalculateProductCost(productId, organizationId)));
 
         return { success: true, message: 'Statusi materijala ažurirani' };
     } catch (error) {
@@ -1089,12 +1096,10 @@ async function propagateMaterialPriceChange(
         });
     }
 
-    // 3. Recalculate ALL affected work orders (profit, margin, etc.)
+    // 3. Recalculate ALL affected work orders (profit, margin, etc.) — paralelno.
     if (affectedWoIds.size > 0) {
         const { recalculateWorkOrder } = await import('./attendance');
-        for (const woId of Array.from(affectedWoIds)) {
-            await recalculateWorkOrder(woId);
-        }
+        await Promise.all(Array.from(affectedWoIds).map(woId => recalculateWorkOrder(woId)));
         console.log(`[MATERIAL PROPAGATION] Recalculated ${affectedWoIds.size} work orders`);
     }
 }
@@ -1312,9 +1317,7 @@ export async function saveWorker(data: Partial<Worker>, organizationId: string):
                             const woId = d.data().Work_Order_ID;
                             if (woId) affectedWoIds.add(woId);
                         });
-                        for (const woId of Array.from(affectedWoIds)) {
-                            await recalculateWorkOrder(woId);
-                        }
+                        await Promise.all(Array.from(affectedWoIds).map(woId => recalculateWorkOrder(woId)));
                         console.log(`[RATE PROPAGATION] Worker ${data.Worker_ID}: ${oldRate}→${newRate} KM, updated ${logsSnap.size} work logs, recalculated ${affectedWoIds.size} WOs`);
                     } catch (propErr) {
                         console.warn('Daily_Rate propagation warning (non-critical):', propErr);
@@ -6477,7 +6480,12 @@ export async function createProductionSnapshot(
             const ledTotal = offerProduct?.LED_Total || 0;
             const marginPercent = offerProduct?.Margin || 0;
             const marginType = offerProduct?.Margin_Type || 'Percentage';
-            const transportShare = offerProduct?.Transport_Share || 0;
+            // KONZISTENTNOST: Profit_Overrides važe i u snapshotu — inače Rezime (snapshot)
+            // pokazuje drugačiji profit od detalja/analitike (svi ostali putevi ih primjenjuju).
+            const itemOverrides = (item as any).Profit_Overrides as { Selling_Price?: number; Transport_Share?: number } | undefined;
+            const transportShare = itemOverrides?.Transport_Share != null
+                ? itemOverrides.Transport_Share
+                : (offerProduct?.Transport_Share || 0);
 
             // Get extras
             const snapshotExtras: SnapshotExtra[] = (offerProduct?.extras || []).map(e => ({
@@ -6488,8 +6496,12 @@ export async function createProductionSnapshot(
                 Total: e.Total
             }));
 
-            const actualLaborDays = itemWorkLogs.length;
-            const sellingPrice = item.Product_Value || offerProduct?.Selling_Price || 0;
+            // Radnik-dani = Σ Day_Fraction (konzistentno sa Actual_Labor_Days sync-om; broj redova
+            // bi pogrešno brojao podijeljene/pola dane)
+            const actualLaborDays = Math.round(itemWorkLogs.reduce((s, wl) => s + (wl.Day_Fraction ?? 1), 0) * 100) / 100;
+            const sellingPrice = (itemOverrides?.Selling_Price != null && itemOverrides.Selling_Price > 0)
+                ? itemOverrides.Selling_Price
+                : (item.Product_Value || offerProduct?.Selling_Price || 0);
             // STANDARDIZED: Use fresh labor from work logs and include Transport + Services
             const freshItemLaborCost = itemWorkLogs.reduce((sum, wl) => sum + (wl.Daily_Rate || 0), 0);
             const itemServicesTotal = (offerProduct?.extras || []).reduce((s, e) => s + (e.Total || 0), 0);

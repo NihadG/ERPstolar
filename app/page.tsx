@@ -222,7 +222,7 @@ export default function Home() {
             // Run startup sync once per session (background, non-blocking)
             if (!startupSyncDone.current) {
                 startupSyncDone.current = true;
-                import('@/lib/attendance').then(({ runStartupSync }) => {
+                import('@/lib/attendance').then(({ runStartupSync, recalculateAllActiveWorkOrders }) => {
                     runStartupSync(organization.Organization_ID)
                         .then(result => {
                             if (result.scheduled > 0 || result.recalculated > 0 || result.projectsSynced > 0) {
@@ -230,6 +230,19 @@ export default function Home() {
                             }
                         })
                         .catch(e => console.error('Startup sync error:', e));
+
+                    // JEDNOKRATNI backfill Actual_Labor_Days i za ZAVRŠENE naloge (zadnjih 30 dana) —
+                    // polje se inače sync-uje samo kroz recalculateWorkOrder, pa stari nalozi
+                    // pokazuju "0/X dana" na kartici dok se ne preračunaju.
+                    try {
+                        const BACKFILL_KEY = 'erp_ald_backfill_v1';
+                        if (typeof window !== 'undefined' && !localStorage.getItem(BACKFILL_KEY)) {
+                            localStorage.setItem(BACKFILL_KEY, new Date().toISOString());
+                            recalculateAllActiveWorkOrders(organization.Organization_ID, { includeCompleted: true })
+                                .then(() => refreshCollections('workOrders'))
+                                .catch(e => console.warn('ALD backfill error (non-critical):', e));
+                        }
+                    } catch { /* localStorage nedostupan — preskoči */ }
                 });
             }
         }

@@ -1,23 +1,24 @@
 import { useState, useEffect, useMemo } from 'react';
-import { Calendar, Play, Pause, CheckCircle, Clock, Edit2, AlertTriangle, NotebookPen, Printer, Trash2, GitBranch } from 'lucide-react';
+import { Calendar, Play, Pause, CheckCircle, Clock, Edit2, AlertTriangle, NotebookPen, GitBranch } from 'lucide-react';
 import { useData } from '@/context/DataContext';
 import {
     checkMissingAttendanceHistory,
     getWorkLogsForWorkOrder,
-    overrideWorkLogs,
     startWorkOrderItem,
     completeWorkOrderItem,
     updateWorkOrderItemStatus,
+    updateItemProcess,
     toggleItemPause,
     getAllAttendanceByMonth,
 } from '@/lib/services';
-import { workOrderDueDate, buildSaturdayChecker, todayISO, plannedVsActualDays, type AttendanceLite } from '@/lib/planning';
+import { workOrderDueDate, buildSaturdayChecker, todayISO, daysUntil, plannedVsActualDays, type AttendanceLite } from '@/lib/planning';
 import type { WorkOrder, Worker, WorkOrderItem, WorkLog } from '@/lib/types';
 import ProductTimelineModal from './ProductTimelineModal';
 import WorkOrderWorkLog from './WorkOrderWorkLog';
 import ProcessGraphModal from './ProcessGraphModal';
-import ItemProcessChecklist from './ItemProcessChecklist';
-import { workOrderDisplayName } from '@/lib/utils';
+import OrderProcessBoard from './OrderProcessBoard';
+import { workOrderDisplayName, orderProcessProgress } from '@/lib/utils';
+import './WorkOrderExpandedDetail.css';
 
 interface WorkOrderExpandedDetailProps {
     workOrder: WorkOrder;
@@ -34,14 +35,13 @@ export default function WorkOrderExpandedDetail({
     workOrder,
     workers,
     onUpdate,
-    onPrint,
-    onDelete,
     onStart,
     onRefresh,
     showToast
 }: WorkOrderExpandedDetailProps) {
     const [localItems, setLocalItems] = useState<WorkOrderItem[]>([]);
     const [isLoading, setIsLoading] = useState<string | null>(null);
+    const [orderBusy, setOrderBusy] = useState(false);   // akcije na nivou naloga (Završi/Pauza)
     const { organizationId } = useData();
 
     // S16: Missing Attendance State
@@ -53,6 +53,7 @@ export default function WorkOrderExpandedDetail({
     const [processOpen, setProcessOpen] = useState(false);
     const [editingName, setEditingName] = useState(false);
     const [nameDraft, setNameDraft] = useState('');
+    const [tab, setTab] = useState<'tok' | 'rad'>('tok');
 
     const saveName = async () => {
         const v = nameDraft.trim();
@@ -117,7 +118,6 @@ export default function WorkOrderExpandedDetail({
 
     // Prekoračenje planiranih radnik-dana (živ signal erozije profita)
     const daysProgress = useMemo(() => plannedVsActualDays(localItems, workLogs), [localItems, workLogs]);
-    const laborOverrun = workOrder.Status === 'U toku' && daysProgress.ratio !== null && daysProgress.ratio >= 1;
 
     const applySuggestedDue = async () => {
         if (!dueSuggestion) return;
@@ -175,6 +175,43 @@ export default function WorkOrderExpandedDetail({
                 return;
             }
         }
+        // Završetak proizvoda uz NEDOVRŠENE procese: ponudi da se preostali procesi uredno
+        // označe završenim (radi čistog grafa/table). Procesi su odspojeni od statusa, pa
+        // status stavke završavamo EKSPLICITNO (completeWorkOrderItem), ne kaskadom procesa.
+        if (status === 'Završeno') {
+            const unfinished = (item.Processes || []).filter(p => p.Status !== 'Završeno');
+            if (unfinished.length > 0) {
+                const fallbackWorkerId = (item as any).Assigned_Workers?.[0]?.Worker_ID
+                    || item.Processes?.find(p => p.Worker_ID)?.Worker_ID;
+                const fallbackWorker = workers.find(w => w.Worker_ID === fallbackWorkerId);
+                const ok = window.confirm(
+                    `${unfinished.length} ${unfinished.length === 1 ? 'proces nije završen' : 'procesa nije završeno'} (${unfinished.map(p => p.Process_Name).join(', ')}).\n\n` +
+                    `Označiti ih završenim (radnik: ${fallbackWorker?.Name || '—'}, današnji datum) i završiti proizvod?`
+                );
+                if (!ok) return;
+                try {
+                    setIsLoading(item.ID);
+                    const completedAt = new Date(new Date().toISOString().split('T')[0] + 'T12:00:00').toISOString();
+                    for (const p of unfinished) {
+                        await updateItemProcess(workOrder.Work_Order_ID, item.ID, p.Process_Name, {
+                            Status: 'Završeno',
+                            Completed_At: completedAt,
+                            Worker_ID: p.Worker_ID || fallbackWorker?.Worker_ID,
+                            Worker_Name: p.Worker_Name || fallbackWorker?.Name,
+                        });
+                    }
+                    // Eksplicitno završi stavku (procesi ne pomiču status).
+                    await completeWorkOrderItem(workOrder.Work_Order_ID, item.ID);
+                    onRefresh?.('workOrders', 'projects', 'workLogs');
+                } catch (error) {
+                    console.error('Error auto-completing processes:', error);
+                    showToast?.('Greška pri završavanju procesa', 'error');
+                } finally {
+                    setIsLoading(null);
+                }
+                return;
+            }
+        }
         try {
             setIsLoading(item.ID);
             if (status === 'U toku') await startWorkOrderItem(workOrder.Work_Order_ID, item.ID);
@@ -201,349 +238,303 @@ export default function WorkOrderExpandedDetail({
         }
     };
 
+    // ── Akcije na nivou naloga (eksplicitni životni ciklus: Pokreni → Završi) ──
+    // Stavke koje nisu finalne (može se na njih djelovati grupno).
+    const openItems = localItems.filter(i => {
+        const s = (i.Status as string) || 'Na čekanju';
+        return s !== 'Završeno' && s !== 'Otkazano';
+    });
+    const allPaused = openItems.length > 0 && openItems.every(i => i.Is_Paused);
+
+    // Završi cijeli nalog (sve ne-završene stavke). Procesi su odspojeni — status vodi ova akcija.
+    const completeOrder = async () => {
+        if (orderBusy) return;
+        const unfinished = localItems.filter(i => (i.Status as string) !== 'Završeno');
+        if (unfinished.length === 0) return;
+        const ok = window.confirm(
+            `Završiti cijeli nalog? (${unfinished.length} ${unfinished.length === 1 ? 'stavka' : 'stavki'})`
+        );
+        if (!ok) return;
+        try {
+            setOrderBusy(true);
+            for (const it of unfinished) {
+                await completeWorkOrderItem(workOrder.Work_Order_ID, it.ID);
+            }
+            onRefresh?.('workOrders', 'projects', 'workLogs');
+        } catch (error) {
+            console.error('Error completing order:', error);
+            showToast?.('Greška pri završavanju naloga', 'error');
+        } finally {
+            setOrderBusy(false);
+        }
+    };
+
+    // Pauza / nastavak cijelog naloga (sve otvorene stavke odjednom).
+    const toggleOrderPause = async () => {
+        if (orderBusy || openItems.length === 0) return;
+        const next = !allPaused;
+        const ids = openItems.map(i => i.ID);
+        setLocalItems(prev => prev.map(i => ids.includes(i.ID) ? { ...i, Is_Paused: next } : i));
+        try {
+            setOrderBusy(true);
+            for (const it of openItems) {
+                await toggleItemPause(workOrder.Work_Order_ID, it.ID, next);
+            }
+            onRefresh?.('workOrders', 'projects', 'workLogs');
+        } catch (error) {
+            console.error('Error toggling order pause:', error);
+            setLocalItems(prev => prev.map(i => ids.includes(i.ID) ? { ...i, Is_Paused: !next } : i));
+            showToast?.('Greška pri pauzi naloga', 'error');
+        } finally {
+            setOrderBusy(false);
+        }
+    };
+
+    // ── Izvedene vrijednosti za hero + tok ──────────────────────────────
+    const isMontaza = workOrder.Work_Order_Type === 'Montaža';
+    const fmt = (n: number) => Math.round(n).toLocaleString('hr-HR');
+    const fmtDays = (n: number) => (Number.isInteger(n) ? String(n) : n.toFixed(1));
+
+    // Financije po stavci — ista formula kao ranije; izvor i za per-item red i za hero total.
+    // (P&L: cijena − materijal − rad − usluge − transport = što ostaje.)
+    const itemFin = useMemo(() => {
+        const map = new Map<string, {
+            value: number; material: number; labor: number; services: number; transport: number;
+            profit: number; missingPrice: boolean; missingMaterial: boolean;
+        }>();
+        for (const item of localItems) {
+            const itemLogs = workLogs.filter(wl => wl.Work_Order_Item_ID === item.ID);
+            const labor = itemLogs.reduce((sum, wl) => sum + (wl.Daily_Rate || 0), 0);
+            const value = ((item as any).Profit_Overrides?.Selling_Price ?? item.Product_Value) || 0;
+            const material = item.Material_Cost || 0;
+            const services = (item as any).Services_Total || 0;
+            const transport = (item as any).Profit_Overrides?.Transport_Share ?? (item as any).Transport_Share ?? 0;
+            map.set(item.ID, {
+                value, material, labor, services, transport,
+                profit: value - material - labor - services - transport,
+                missingPrice: value <= 0, missingMaterial: material <= 0,
+            });
+        }
+        return map;
+    }, [localItems, workLogs]);
+
+    // Hero total = suma per-item (poklapa se s redovima).
+    const orderFin = useMemo(() => {
+        let value = 0, material = 0, labor = 0, services = 0, transport = 0, missingPrice = false, missingMaterial = false;
+        itemFin.forEach(f => {
+            value += f.value; material += f.material; labor += f.labor; services += f.services; transport += f.transport;
+            if (f.missingPrice) missingPrice = true;
+            if (f.missingMaterial) missingMaterial = true;
+        });
+        return { value, material, labor, services, transport, profit: value - material - labor - services - transport, missingPrice, missingMaterial };
+    }, [itemFin]);
+
+    const procProgress = useMemo(() => orderProcessProgress(localItems), [localItems]);
+    const bookedDays = useMemo(() => new Set(workLogs.map(l => l.Date)).size, [workLogs]);
+
+    // Rok + odbrojavanje (živa boja metrike zamjenjuje baner)
+    const dueDays = daysUntil(workOrder.Due_Date);
+    const woActive = workOrder.Status !== 'Završeno' && workOrder.Status !== 'Otkazano';
+    let rokSub = '';
+    let rokState = '';
+    if (woActive) {
+        if (dueDays === null) rokSub = 'nije zadan';
+        else if (dueDays < 0) { rokSub = `kasni ${-dueDays} ${-dueDays === 1 ? 'dan' : 'dana'}`; rokState = 'is-error'; }
+        else if (dueDays === 0) { rokSub = 'danas'; rokState = 'is-warn'; }
+        else { rokSub = `za ${dueDays} ${dueDays === 1 ? 'dan' : 'dana'}`; if (dueDays <= 2) rokState = 'is-warn'; }
+    }
+
+    const daniState = daysProgress.ratio === null ? '' : daysProgress.ratio > 1 ? 'is-error' : daysProgress.ratio >= 0.8 ? 'is-warn' : '';
+    const profitWarn = !isMontaza && (orderFin.missingPrice || orderFin.missingMaterial);
+    const profitWarnTitle = orderFin.missingPrice
+        ? 'Prodajna cijena nije postavljena (nema prihvaćene ponude?) — profit je nepotpun'
+        : 'Materijali nisu dodati ili nemaju cijenu — profit je nepotpun';
+
     return (
-        <div className="wo-detail-v2">
-            {/* S16: Attendance Warning */}
-            {missingAttendance && (
-                <div className="mb-4 bg-amber-50 border border-amber-200 rounded-lg p-3 flex items-start gap-3">
-                    <AlertTriangle className="w-5 h-5 text-amber-600 mt-0.5" />
-                    <div>
-                        <h4 className="font-medium text-amber-900 text-sm">Nedostaje evidencija rada ({missingAttendance.count} dana)</h4>
-                        <p className="text-amber-700 text-xs mt-1">
-                            Pronađene su rupe u sihtarici. Profit možda nije tačan.
-                            <br />
-                            <span className="opacity-75">
-                                {missingAttendance.details.slice(0, 3).join(', ')}
-                                {missingAttendance.details.length > 3 && ` i još ${missingAttendance.details.length - 3}...`}
-                            </span>
-                        </p>
+        <div className="wo-detail">
+            {/* ═══ HERO: metrike (naziv/status/rok su već vidljivi u zaglavlju iznad) ═══ */}
+            <div className="wo-hero">
+                <div className="wo-hero-top">
+                    {editingName ? (
+                        <input autoFocus className="wo-name-input" value={nameDraft}
+                            onChange={e => setNameDraft(e.target.value)}
+                            onBlur={saveName}
+                            onKeyDown={e => { if (e.key === 'Enter') saveName(); if (e.key === 'Escape') setEditingName(false); }}
+                            placeholder="Naziv naloga" />
+                    ) : (
+                        <button className="wo-rename-btn" onClick={() => { setNameDraft(workOrder.Name || ''); setEditingName(true); }} title="Preimenuj nalog">
+                            <Edit2 size={13} /> Preimenuj
+                        </button>
+                    )}
+
+                    {/* Životni ciklus naloga — jedino mjesto za start/pauza/završetak */}
+                    <div className="wo-hero-actions">
+                        {workOrder.Status === 'Na čekanju' && (
+                            <button className="wo-hact start" onClick={() => onStart(workOrder.Work_Order_ID)}>
+                                <Play size={16} /> Pokreni nalog
+                            </button>
+                        )}
+                        {workOrder.Status === 'U toku' && (
+                            <>
+                                <button className="wo-hact" disabled={orderBusy} onClick={toggleOrderPause}
+                                    title={allPaused ? 'Nastavi rad na nalogu' : 'Pauziraj nalog (dnevnice ne teku)'}>
+                                    {allPaused ? <><Play size={15} /> Nastavi</> : <><Pause size={15} /> Pauza</>}
+                                </button>
+                                <button className="wo-hact done" disabled={orderBusy} onClick={completeOrder}
+                                    title="Označi cijeli nalog završenim">
+                                    <CheckCircle size={15} /> Završi nalog
+                                </button>
+                            </>
+                        )}
                     </div>
                 </div>
-            )}
 
-            {/* === HEADER: NAZIV + DATES === */}
-            <div className="wo-title-row" style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12, flexWrap: 'wrap' }}>
-                {editingName ? (
-                    <input autoFocus value={nameDraft}
-                        onChange={e => setNameDraft(e.target.value)}
-                        onBlur={saveName}
-                        onKeyDown={e => { if (e.key === 'Enter') saveName(); if (e.key === 'Escape') setEditingName(false); }}
-                        placeholder="Naziv naloga"
-                        style={{ fontSize: 18, fontWeight: 700, padding: '4px 8px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--accent)', outline: 'none', minWidth: 260 }} />
-                ) : (
-                    <button onClick={() => { setNameDraft(workOrder.Name || ''); setEditingName(true); }}
-                        style={{ display: 'inline-flex', alignItems: 'center', gap: 8, background: 'none', border: 'none', cursor: 'pointer', padding: 0, fontSize: 18, fontWeight: 700, color: 'var(--text-primary)' }}
-                        title="Preimenuj nalog">
-                        {workOrderDisplayName(workOrder)}
-                        <Edit2 size={15} style={{ color: 'var(--text-tertiary)' }} />
-                    </button>
-                )}
-                <span style={{ fontSize: 12, color: 'var(--text-tertiary)', fontWeight: 500 }}>#{workOrder.Work_Order_Number}</span>
-            </div>
-
-            {/* === HEADER: DATES === */}
-            <div className="header-bar">
-                <div className="date-chips">
-                    {workOrder.Work_Order_Type === 'Montaža' && (
-                        <div style={{
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: '6px',
-                            padding: '4px 12px',
-                            background: 'linear-gradient(135deg, rgba(0, 199, 190, 0.15), rgba(0, 199, 190, 0.25))',
-                            color: '#00897b',
-                            border: '1px solid rgba(0, 199, 190, 0.3)',
-                            borderRadius: '8px',
-                            fontSize: '12px',
-                            fontWeight: 700,
-                        }}>
-                            <span className="material-icons-round" style={{ fontSize: '14px' }}>build</span>
-                            Montažni Nalog
-                        </div>
-                    )}
-                    <div className="date-chip">
-                        <Calendar size={14} />
-                        <span>Kreiran</span>
-                        <strong>{formatDate(workOrder.Created_Date)}</strong>
-                    </div>
-                    <div className="date-chip" style={{ cursor: workOrder.Started_At ? 'pointer' : 'default', position: 'relative' }}
-                        onClick={() => {
-                            if (!workOrder.Started_At) return;
-                            const input = document.getElementById(`start-date-${workOrder.Work_Order_ID}`) as HTMLInputElement;
-                            if (input) input.showPicker();
-                        }}
-                    >
-                        <Play size={14} />
-                        <span>Početak</span>
-                        <strong>{formatDate(workOrder.Started_At)}</strong>
-                        {workOrder.Started_At && <Edit2 size={10} style={{ color: '#86868b', marginLeft: 4 }} />}
-                        <input
-                            id={`start-date-${workOrder.Work_Order_ID}`}
-                            type="date"
-                            value={workOrder.Started_At?.split('T')[0] || ''}
-                            onChange={async (e) => {
-                                const newDate = e.target.value;
-                                if (!newDate) return;
-                                try {
-                                    const { adjustWorkOrderDates } = await import('@/lib/services');
-                                    const orgId = workOrder.Organization_ID;
-                                    const res = await adjustWorkOrderDates(workOrder.Work_Order_ID, { Started_At: newDate }, orgId);
-                                    if (res.success) {
-                                        showToast?.('Datum početka ažuriran', 'success');
-                                        onRefresh?.('workOrders', 'projects');
-                                    } else {
-                                        showToast?.(res.message, 'error');
-                                    }
-                                } catch (err) {
-                                    showToast?.('Greška pri ažuriranju datuma', 'error');
-                                }
-                            }}
-                            onClick={(e) => e.stopPropagation()}
-                            style={{
-                                position: 'absolute',
-                                bottom: 0,
-                                left: 0,
-                                width: 0,
-                                height: 0,
-                                opacity: 0,
-                                overflow: 'hidden',
-                                pointerEvents: 'none',
-                            }}
-                        />
-                    </div>
-                    <div className="date-chip" style={{ cursor: workOrder.Completed_At ? 'pointer' : 'default', position: 'relative' }}
-                        onClick={() => {
-                            if (!workOrder.Completed_At) return;
-                            const input = document.getElementById(`complete-date-${workOrder.Work_Order_ID}`) as HTMLInputElement;
-                            if (input) input.showPicker();
-                        }}
-                    >
-                        <CheckCircle size={14} />
-                        <span>Završeno</span>
-                        <strong>{formatDate(workOrder.Completed_At)}</strong>
-                        {workOrder.Completed_At && <Edit2 size={10} style={{ color: '#86868b', marginLeft: 4 }} />}
-                        <input
-                            id={`complete-date-${workOrder.Work_Order_ID}`}
-                            type="date"
-                            value={workOrder.Completed_At?.split('T')[0] || ''}
-                            onChange={async (e) => {
-                                const newDate = e.target.value;
-                                if (!newDate) return;
-                                try {
-                                    const { adjustWorkOrderDates } = await import('@/lib/services');
-                                    const orgId = workOrder.Organization_ID;
-                                    const res = await adjustWorkOrderDates(workOrder.Work_Order_ID, { Completed_At: newDate }, orgId);
-                                    if (res.success) {
-                                        showToast?.('Datum završetka ažuriran', 'success');
-                                        onRefresh?.('workOrders', 'projects');
-                                    } else {
-                                        showToast?.(res.message, 'error');
-                                    }
-                                } catch (err) {
-                                    showToast?.('Greška pri ažuriranju datuma', 'error');
-                                }
-                            }}
-                            onClick={(e) => e.stopPropagation()}
-                            style={{
-                                position: 'absolute',
-                                bottom: 0,
-                                left: 0,
-                                width: 0,
-                                height: 0,
-                                opacity: 0,
-                                overflow: 'hidden',
-                                pointerEvents: 'none',
-                            }}
-                        />
-                    </div>
-                    <div className="date-chip deadline" style={{ cursor: 'pointer', position: 'relative' }}
-                        onClick={() => {
-                            const input = document.getElementById(`due-date-${workOrder.Work_Order_ID}`) as HTMLInputElement;
-                            if (input) input.showPicker();
-                        }}
-                    >
-                        <Clock size={14} />
-                        <span>Rok</span>
-                        <strong>{formatDate(workOrder.Due_Date)}</strong>
-                        <Edit2 size={10} style={{ color: '#86868b', marginLeft: 4 }} />
-                        <input
-                            id={`due-date-${workOrder.Work_Order_ID}`}
-                            type="date"
+                {/* Traka metrika */}
+                <div className="wo-metrics">
+                    {/* Rok */}
+                    <div className={`wo-metric clickable ${rokState}`}
+                        title="Klikni za izmjenu roka"
+                        onClick={() => { const i = document.getElementById(`wo-due-${workOrder.Work_Order_ID}`) as HTMLInputElement; i?.showPicker?.(); }}>
+                        <span className="wo-metric-label"><Clock size={11} /> Rok</span>
+                        <span className="wo-metric-value">{formatDate(workOrder.Due_Date)}</span>
+                        {rokSub && <span className="wo-metric-sub">{rokSub}</span>}
+                        <input id={`wo-due-${workOrder.Work_Order_ID}`} type="date" className="wo-hidden-date"
                             value={workOrder.Due_Date?.split('T')[0] || ''}
+                            onClick={e => e.stopPropagation()}
                             onChange={async (e) => {
-                                const newDate = e.target.value;
-                                if (!newDate) return;
+                                const v = e.target.value; if (!v) return;
                                 try {
                                     const { updateDueDate } = await import('@/lib/services');
-                                    const orgId = workOrder.Organization_ID;
-                                    const res = await updateDueDate(workOrder.Work_Order_ID, newDate, orgId);
-                                    if (res.success) {
-                                        showToast?.('Rok ažuriran', 'success');
-                                        onRefresh?.('workOrders');
-                                    } else {
-                                        showToast?.(res.message, 'error');
-                                    }
-                                } catch (err) {
-                                    showToast?.('Greška pri ažuriranju roka', 'error');
-                                }
-                            }}
-                            onClick={(e) => e.stopPropagation()}
-                            style={{
-                                position: 'absolute',
-                                bottom: 0,
-                                left: 0,
-                                width: 0,
-                                height: 0,
-                                opacity: 0,
-                                overflow: 'hidden',
-                                pointerEvents: 'none',
-                            }}
-                        />
+                                    const res = await updateDueDate(workOrder.Work_Order_ID, v, workOrder.Organization_ID);
+                                    if (res.success) { showToast?.('Rok ažuriran', 'success'); onRefresh?.('workOrders'); }
+                                    else showToast?.(res.message, 'error');
+                                } catch { showToast?.('Greška pri ažuriranju roka', 'error'); }
+                            }} />
                     </div>
+
+                    {/* Profit / Trošak montaže */}
+                    <div className={`wo-metric ${isMontaza ? '' : orderFin.profit >= 0 ? 'is-good' : 'is-error'}`}>
+                        <span className="wo-metric-label" title={profitWarn ? profitWarnTitle : undefined}>
+                            {isMontaza ? 'Trošak montaže' : 'Ostaje'}
+                            {profitWarn && <AlertTriangle size={11} className="wo-metric-warnicon" />}
+                        </span>
+                        <span className="wo-metric-value">
+                            {isMontaza
+                                ? `${fmt(orderFin.labor)} KM`
+                                : `${orderFin.profit < 0 ? '−' : ''}${fmt(Math.abs(orderFin.profit))} KM`}
+                        </span>
+                    </div>
+
+                    {/* Radni dani (potrošeno / plan) */}
+                    {daysProgress.planned > 0 && (
+                        <div className={`wo-metric ${daniState}`} title="Potrošeni / planirani radnik-dani">
+                            <span className="wo-metric-label"><span className="material-icons-round" style={{ fontSize: 12 }}>hourglass_bottom</span> Radni dani</span>
+                            <span className="wo-metric-value">{fmtDays(daysProgress.actual)}/{fmtDays(daysProgress.planned)}</span>
+                        </div>
+                    )}
+
+                    {/* Procesi */}
+                    {procProgress && procProgress.total > 0 && (
+                        <div className="wo-metric" title={`Završeno ${procProgress.done} od ${procProgress.total} procesa`}>
+                            <span className="wo-metric-label"><GitBranch size={11} /> Procesi</span>
+                            <span className="wo-metric-value">{procProgress.done}/{procProgress.total}</span>
+                            <span className="wo-metric-bar"><span className={`wo-metric-bar-fill ${procProgress.pct >= 100 ? 'full' : ''}`} style={{ width: `${procProgress.pct}%` }} /></span>
+                        </div>
+                    )}
+
+                    {/* Prisustvo (rupe u šihtarici) */}
+                    {missingAttendance && (
+                        <div className="wo-metric is-error"
+                            title={`Nedostaje evidencija rada (${missingAttendance.count}): ${missingAttendance.details.slice(0, 4).join(', ')}${missingAttendance.details.length > 4 ? '…' : ''}. Profit možda nije tačan.`}>
+                            <span className="wo-metric-label"><AlertTriangle size={11} /> Prisustvo</span>
+                            <span className="wo-metric-value">⚠ {missingAttendance.count}</span>
+                        </div>
+                    )}
                 </div>
 
-                {workOrder.Status === 'Na čekanju' && (
-                    <button className="btn-action btn-start" onClick={() => onStart(workOrder.Work_Order_ID)}>
-                        <Play size={16} /> Pokreni
-                    </button>
+                {/* Advisory rok — sitni inline prijedlog (ne baner) */}
+                {dueSuggestion && !dueSuggestionDismissed && (
+                    <div className="wo-advisory">
+                        <Clock size={14} />
+                        <span>Prema planu ({dueSuggestion.totalDays} radnih dana od {formatDate(dueSuggestion.startISO)}) predviđeni rok je <strong>{formatDate(dueSuggestion.suggested)}</strong>.</span>
+                        <div className="wo-advisory-actions">
+                            <button className="wo-advisory-btn" onClick={applySuggestedDue}>Ažuriraj rok</button>
+                            <button className="wo-advisory-btn ghost" onClick={() => setDueSuggestionDismissed(true)}>Zanemari</button>
+                        </div>
+                    </div>
                 )}
             </div>
 
-            {/* ADVISORY ROK: prijedlog iz planiranih dana — nikad ne prepisuje automatski */}
-            {dueSuggestion && !dueSuggestionDismissed && (
-                <div style={{
-                    display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap',
-                    padding: '10px 14px', margin: '10px 0',
-                    background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: '10px',
-                    fontSize: '13px', color: '#1e40af',
-                }}>
-                    <Clock size={16} />
-                    <span>
-                        Prema planiranim danima ({dueSuggestion.totalDays} radnih dana od {formatDate(dueSuggestion.startISO)}),
-                        predviđeni rok je <strong>{formatDate(dueSuggestion.suggested)}</strong>
-                        {workOrder.Due_Date ? <> (trenutni rok: {formatDate(workOrder.Due_Date)})</> : null}.
-                    </span>
-                    <div style={{ display: 'flex', gap: '6px', marginLeft: 'auto' }}>
-                        <button className="glass-btn" onClick={applySuggestedDue} style={{ padding: '4px 12px', fontSize: '12px', fontWeight: 600, color: '#1d4ed8' }}>
-                            Ažuriraj rok
-                        </button>
-                        <button className="glass-btn" onClick={() => setDueSuggestionDismissed(true)} style={{ padding: '4px 10px', fontSize: '12px', color: '#64748b' }}>
-                            Zanemari
+            {/* ═══ SEGMENTED: Tok / Knjiga rada ═══ */}
+            <div className="wo-seg">
+                <button className={tab === 'tok' ? 'active' : ''} onClick={() => setTab('tok')}>
+                    Tok proizvodnje {localItems.length > 0 && <span className="wo-seg-count">{localItems.length}</span>}
+                </button>
+                <button className={tab === 'rad' ? 'active' : ''} onClick={() => setTab('rad')}>
+                    <NotebookPen size={14} /> Knjiga rada {bookedDays > 0 && <span className="wo-seg-count">{bookedDays}</span>}
+                </button>
+            </div>
+
+            {/* ═══ TOK: proizvodi + procesi (kičma) ═══ */}
+            {tab === 'tok' && (
+                <div className="wo-flow">
+                    <div className="wo-flow-head">
+                        <span className="wo-flow-title">Procesi naloga</span>
+                        <button className="wo-graf-btn" onClick={() => setProcessOpen(true)}>
+                            <GitBranch size={15} /> Graf procesa
                         </button>
                     </div>
-                </div>
-            )}
+                    <OrderProcessBoard
+                        workOrderId={workOrder.Work_Order_ID}
+                        items={localItems.length ? localItems : (workOrder.items || [])}
+                        workers={workers}
+                        workLogs={workLogs}
+                        organizationId={organizationId || undefined}
+                        onChanged={() => { onRefresh?.('workOrders'); reloadWorkLogs(); }}
+                        showToast={showToast}
+                    />
 
-            {/* PREKORAČENJE PLANIRANOG RADA: potrošeni radnik-dani ≥ planirani na aktivnom nalogu */}
-            {laborOverrun && (
-                <div style={{
-                    display: 'flex', alignItems: 'center', gap: '10px',
-                    padding: '10px 14px', margin: '10px 0',
-                    background: daysProgress.ratio! > 1 ? 'var(--error-bg)' : 'var(--warning-bg)',
-                    border: `1px solid ${daysProgress.ratio! > 1 ? '#fecaca' : '#fde68a'}`,
-                    borderRadius: '10px', fontSize: '13px',
-                    color: daysProgress.ratio! > 1 ? '#b91c1c' : '#92400e',
-                }}>
-                    <AlertTriangle size={16} />
-                    <span>
-                        Potrošeno <strong>{Number.isInteger(daysProgress.actual) ? daysProgress.actual : daysProgress.actual.toFixed(1)}</strong> od{' '}
-                        <strong>{Number.isInteger(daysProgress.planned) ? daysProgress.planned : daysProgress.planned.toFixed(1)}</strong> planiranih radnik-dana
-                        {daysProgress.ratio! > 1 ? ' — plan rada je prekoračen, profit se topi sa svakim novim danom.' : ' — plan rada je na izmaku.'}
-                    </span>
-                </div>
-            )}
-
-
-            {/* === PROIZVODI (status + profit iz dnevnika rada) === */}
-            <div className="products-section">
-                <div className="products-head">
-                    <span>Proizvodi</span>
-                    {workLogs.length > 0 && <span className="products-badge">{workLogs.length} zapisa rada</span>}
-                </div>
-
-                {localItems.length > 0 ? (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                        {localItems.map(item => {
-                            const itemLogs = workLogs.filter(wl => wl.Work_Order_Item_ID === item.ID);
-                            const laborCost = itemLogs.reduce((sum, wl) => sum + (wl.Daily_Rate || 0), 0);
-                            const workDays = Math.round(itemLogs.reduce((sum, wl) => sum + (wl.Day_Fraction ?? 1), 0) * 100) / 100;
-                            const planned = item.Planned_Labor_Cost || 0;
-                            const overBudget = planned > 0 && laborCost > planned;
-
-                            // P&L: cijena − materijal − rad − usluge − transport = što je ostalo
-                            // (usluge i transport su troškovi — isto kao u Projekti tabu)
-                            const value = ((item as any).Profit_Overrides?.Selling_Price ?? item.Product_Value) || 0;
-                            const material = item.Material_Cost || 0;
-                            const services = (item as any).Services_Total || 0;
-                            const transport = (item as any).Profit_Overrides?.Transport_Share ?? (item as any).Transport_Share ?? 0;
-                            const profit = value - material - laborCost - services - transport;
-                            const profitColor = profit >= 0 ? '#059669' : '#dc2626';
-                            // Montažni nalog: nema prihoda/materijala (oni su na proizvodnom nalogu) → prikaži TROŠAK montaže, ne "profit".
-                            const isMontaza = workOrder.Work_Order_Type === 'Montaža';
-
-                            // Po radniku (iz dnevnika rada)
-                            const wMap = new Map<string, { name: string; days: number; cost: number }>();
-                            itemLogs.forEach(wl => {
-                                const cur = wMap.get(wl.Worker_ID) || { name: wl.Worker_Name, days: 0, cost: 0 };
-                                cur.days += wl.Day_Fraction ?? 1; cur.cost += wl.Daily_Rate || 0;
-                                wMap.set(wl.Worker_ID, cur);
-                            });
-                            const workersArr = Array.from(wMap.values()).sort((a, b) => b.cost - a.cost);
-                            const fmt = (n: number) => Math.round(n).toLocaleString('hr-HR');
-
-                            const status = (item.Status as string) || 'Na čekanju';
-                            const isPaused = !!item.Is_Paused;
-                            return (
-                                <div
-                                    key={item.ID}
-                                    style={{
-                                        display: 'flex', flexDirection: 'column', gap: '10px',
-                                        padding: '14px', borderRadius: '10px',
-                                        border: '1px solid #e2e8f0', background: '#ffffff',
-                                    }}
-                                >
-                                    {/* Header: naziv + profit */}
-                                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px', flexWrap: 'wrap' }}>
-                                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0 }}>
-                                            <span style={{ fontWeight: 600, fontSize: '14px', color: '#0f172a' }}>{item.Product_Name}</span>
-                                            {isPaused && <span style={{ fontSize: '10px', fontWeight: 700, color: '#b45309', background: '#fef3c7', padding: '2px 7px', borderRadius: '999px' }}>PAUZA</span>}
-                                            {/* GAP-2/5: nepotpuni podaci → profit je netačan, reci to otvoreno */}
-                                            {!isMontaza && (value <= 0 || material <= 0) && (
-                                                <span
-                                                    title={value <= 0
-                                                        ? 'Prodajna cijena nije postavljena (nema prihvaćene ponude?) — prikazani profit je nepotpun'
-                                                        : 'Materijali nisu dodati ili nemaju cijenu — prikazani profit je nepotpun'}
-                                                    style={{
-                                                        display: 'inline-flex', alignItems: 'center', gap: '4px',
-                                                        fontSize: '10px', fontWeight: 700,
-                                                        color: 'var(--warning)', background: 'var(--warning-bg)',
-                                                        padding: '2px 7px', borderRadius: '999px', cursor: 'help',
-                                                    }}
-                                                >
-                                                    <AlertTriangle size={11} /> {value <= 0 ? 'BEZ CIJENE' : 'BEZ MATERIJALA'}
-                                                </span>
-                                            )}
-                                        </div>
-                                        <div style={{ textAlign: 'right' }}>
-                                            {isMontaza ? (
-                                                <>
-                                                    <div style={{ fontSize: '15px', fontWeight: 700, color: '#0f172a' }}>{fmt(laborCost)} KM</div>
-                                                    <div style={{ fontSize: '10px', color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.04em' }}>trošak montaže</div>
-                                                </>
-                                            ) : (
-                                                <>
-                                                    <div style={{ fontSize: '15px', fontWeight: 700, color: profitColor }}>
-                                                        {profit >= 0 ? '' : '−'}{fmt(Math.abs(profit))} KM
-                                                    </div>
-                                                    <div style={{ fontSize: '10px', color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.04em' }}>ostaje</div>
-                                                </>
-                                            )}
-                                        </div>
+                    <div className="wo-flow-title" style={{ marginTop: 6 }}>Proizvodi</div>
+                    {localItems.length > 0 ? localItems.map(item => {
+                        const fin = itemFin.get(item.ID) || { value: 0, material: 0, labor: 0, services: 0, transport: 0, profit: 0, missingPrice: true, missingMaterial: true };
+                        const status = (item.Status as string) || 'Na čekanju';
+                        const isPaused = !!item.Is_Paused;
+                        const showWarn = !isMontaza && (fin.missingPrice || fin.missingMaterial);
+                        return (
+                            <div key={item.ID} className="wo-product">
+                                {/* Naziv + profit */}
+                                <div className="wo-product-top">
+                                    <div className="wo-product-name-wrap">
+                                        <span className="wo-product-name">{item.Product_Name}</span>
+                                        {isPaused && <span className="wo-pause-tag">PAUZA</span>}
+                                        {showWarn && (
+                                            <span className="wo-warn-tag" title={fin.missingPrice ? profitWarnTitle : 'Materijali nisu dodati ili nemaju cijenu — profit je nepotpun'}>
+                                                <AlertTriangle size={11} /> {fin.missingPrice ? 'BEZ CIJENE' : 'BEZ MATERIJALA'}
+                                            </span>
+                                        )}
                                     </div>
+                                    <div className="wo-product-money">
+                                        {isMontaza ? (
+                                            <>
+                                                <div className="wo-product-money-value">{fmt(fin.labor)} KM</div>
+                                                <div className="wo-product-money-label">trošak montaže</div>
+                                            </>
+                                        ) : (
+                                            <>
+                                                <div className={`wo-product-money-value ${fin.profit >= 0 ? 'pos' : 'neg'}`}>
+                                                    {fin.profit < 0 ? '−' : ''}{fmt(Math.abs(fin.profit))} KM
+                                                </div>
+                                                <div className="wo-product-money-label">ostaje</div>
+                                            </>
+                                        )}
+                                    </div>
+                                </div>
 
-                                    {/* Status + pauza */}
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-                                        <div className="status-seg">
+                                {/* Status + pauza — per-proizvod kontrole SAMO kad ima 2+ proizvoda.
+                                    Za jedan proizvod životni ciklus vodi status naloga (hero). */}
+                                {localItems.length > 1 && (
+                                    <div className="wo-product-controls">
+                                        <div className="wo-status-seg">
                                             {(['Na čekanju', 'U toku', 'Završeno'] as const).map(s => (
                                                 <button key={s}
                                                     className={status === s ? 'active' : ''}
@@ -553,63 +544,82 @@ export default function WorkOrderExpandedDetail({
                                             ))}
                                         </div>
                                         {status === 'U toku' && (
-                                            <button className="pause-btn" disabled={isLoading === item.ID} onClick={() => pauseItem(item, !isPaused)}>
+                                            <button className="wo-pause" disabled={isLoading === item.ID} onClick={() => pauseItem(item, !isPaused)}>
                                                 {isPaused ? <><Play size={13} /> Nastavi</> : <><Pause size={13} /> Pauza</>}
                                             </button>
                                         )}
                                     </div>
+                                )}
 
-                                    {/* Procesi proizvoda — označi završeno (radnik + datum + pomoćnici) */}
-                                    {item.Processes && item.Processes.length > 0 && (
-                                        <ItemProcessChecklist
-                                            workOrderId={workOrder.Work_Order_ID}
-                                            itemId={item.ID}
-                                            processes={item.Processes}
-                                            workers={workers}
-                                            onChanged={() => { onRefresh?.('workOrders'); reloadWorkLogs(); }}
-                                            showToast={showToast}
-                                        />
-                                    )}
+                                <button className="wo-details" onClick={() => setTimelineItem(item)}>
+                                    Detalji proizvoda (cijena, materijal, rad) →
+                                </button>
+                            </div>
+                        );
+                    }) : (
+                        <div className="wo-empty">Nema proizvoda u ovom nalogu.</div>
+                    )}
+                </div>
+            )}
 
-                                    {/* Detalji (cijena/materijal/rad, po radniku, plan vs stvarno) na zahtjev — u modalu */}
-                                    <button className="details-link" onClick={() => setTimelineItem(item)}>
-                                        Detalji proizvoda →
-                                    </button>
-                                </div>
-                            );
-                        })}
+            {/* ═══ KNJIGA RADA: vremenska linija + dnevni tracker ═══ */}
+            {tab === 'rad' && (
+                <div className="wo-rad">
+                    <div className="wo-timeline">
+                        <span className="wo-date"><Calendar size={14} /> Kreiran <strong>{formatDate(workOrder.Created_Date)}</strong></span>
+                        <span className={`wo-date ${workOrder.Started_At ? 'clickable' : ''}`}
+                            onClick={() => { if (!workOrder.Started_At) return; const i = document.getElementById(`wo-start-${workOrder.Work_Order_ID}`) as HTMLInputElement; i?.showPicker?.(); }}>
+                            <Play size={14} /> Početak <strong>{formatDate(workOrder.Started_At)}</strong>
+                            {workOrder.Started_At && <Edit2 size={10} style={{ color: 'var(--text-tertiary)' }} />}
+                            <input id={`wo-start-${workOrder.Work_Order_ID}`} type="date" className="wo-hidden-date"
+                                value={workOrder.Started_At?.split('T')[0] || ''}
+                                onClick={e => e.stopPropagation()}
+                                onChange={async (e) => {
+                                    const v = e.target.value; if (!v) return;
+                                    try {
+                                        const { adjustWorkOrderDates } = await import('@/lib/services');
+                                        const res = await adjustWorkOrderDates(workOrder.Work_Order_ID, { Started_At: v }, workOrder.Organization_ID);
+                                        if (res.success) { showToast?.('Datum početka ažuriran', 'success'); onRefresh?.('workOrders', 'projects'); }
+                                        else showToast?.(res.message, 'error');
+                                    } catch { showToast?.('Greška pri ažuriranju datuma', 'error'); }
+                                }} />
+                        </span>
+                        {workOrder.Completed_At && (
+                            <span className="wo-date clickable"
+                                onClick={() => { const i = document.getElementById(`wo-comp-${workOrder.Work_Order_ID}`) as HTMLInputElement; i?.showPicker?.(); }}>
+                                <CheckCircle size={14} /> Završeno <strong>{formatDate(workOrder.Completed_At)}</strong>
+                                <Edit2 size={10} style={{ color: 'var(--text-tertiary)' }} />
+                                <input id={`wo-comp-${workOrder.Work_Order_ID}`} type="date" className="wo-hidden-date"
+                                    value={workOrder.Completed_At?.split('T')[0] || ''}
+                                    onClick={e => e.stopPropagation()}
+                                    onChange={async (e) => {
+                                        const v = e.target.value; if (!v) return;
+                                        try {
+                                            const { adjustWorkOrderDates } = await import('@/lib/services');
+                                            const res = await adjustWorkOrderDates(workOrder.Work_Order_ID, { Completed_At: v }, workOrder.Organization_ID);
+                                            if (res.success) { showToast?.('Datum završetka ažuriran', 'success'); onRefresh?.('workOrders', 'projects'); }
+                                            else showToast?.(res.message, 'error');
+                                        } catch { showToast?.('Greška pri ažuriranju datuma', 'error'); }
+                                    }} />
+                            </span>
+                        )}
+                        <span className="wo-date deadline"><Clock size={14} /> Rok <strong>{formatDate(workOrder.Due_Date)}</strong></span>
                     </div>
-                ) : (
-                    <div className="products-empty">Nema proizvoda u ovom nalogu.</div>
-                )}
 
-                {/* Knjiga rada naloga — jedinstveni dnevni tracker (zamjenjuje Evidentiraj rad + Brzi unos) */}
-                <div className="wo-worklog">
-                    <div className="wo-worklog-head"><NotebookPen size={15} /> Knjiga rada naloga</div>
-                    <WorkOrderWorkLog
-                        workOrder={workOrder}
-                        items={(localItems.length ? localItems : (workOrder.items || []))}
-                        workLogs={workLogs}
-                        workers={workers}
-                        organizationId={organizationId || ''}
-                        onReload={reloadWorkLogs}
-                        showToast={showToast || (() => { })}
-                    />
+                    <div>
+                        <div className="wo-rad-head"><NotebookPen size={15} /> Knjiga rada naloga</div>
+                        <WorkOrderWorkLog
+                            workOrder={workOrder}
+                            items={(localItems.length ? localItems : (workOrder.items || []))}
+                            workLogs={workLogs}
+                            workers={workers}
+                            organizationId={organizationId || ''}
+                            onReload={reloadWorkLogs}
+                            showToast={showToast || (() => { })}
+                        />
+                    </div>
                 </div>
-
-                {/* Akcije naloga */}
-                <div className="wo-actions">
-                    <button className="wo-act" onClick={() => setProcessOpen(true)}>
-                        <GitBranch size={15} /> Procesi
-                    </button>
-                    <button className="wo-act" onClick={() => onPrint(workOrder)}>
-                        <Printer size={15} /> Printaj
-                    </button>
-                    <button className="wo-act wo-act-danger" onClick={() => onDelete(workOrder.Work_Order_ID)}>
-                        <Trash2 size={15} /> Obriši nalog
-                    </button>
-                </div>
-            </div>
+            )}
 
             {/* Graf procesa naloga */}
             {processOpen && (
@@ -625,7 +635,7 @@ export default function WorkOrderExpandedDetail({
                 />
             )}
 
-            {/* ProductTimelineModal for selected item */}
+            {/* ProductTimelineModal — SAMO PREGLED (uređivanje dnevnica ide kroz tab „Knjiga rada") */}
             {timelineItem && (
                 <ProductTimelineModal
                     isOpen={true}
@@ -638,357 +648,9 @@ export default function WorkOrderExpandedDetail({
                     materialCost={timelineItem.Material_Cost}
                     laborCost={timelineItem.Actual_Labor_Cost}
                     workers={workers}
-                    onOverrideWorkLogs={async (entries) => {
-                        if (!timelineItem?.Work_Order_ID || !timelineItem?.ID || !organizationId) {
-                            return { success: false, message: 'Nedostaju podaci' };
-                        }
-                        const result = await overrideWorkLogs(
-                            timelineItem.Work_Order_ID,
-                            timelineItem.ID,
-                            entries,
-                            organizationId,
-                            timelineItem.Product_ID
-                        );
-                        if (result.success) {
-                            showToast?.('Timeline ažuriran', 'success');
-                            // Re-fetch work logs
-                            getWorkLogsForWorkOrder(workOrder.Work_Order_ID, organizationId)
-                                .then(logs => setWorkLogs(logs))
-                                .catch(err => console.error('Error re-fetching work logs:', err));
-                            onRefresh?.('workOrders', 'projects', 'workLogs');
-                            setTimelineItem(null);
-                        } else {
-                            showToast?.(result.message, 'error');
-                        }
-                        return result;
-                    }}
+                    readOnly
                 />
             )}
-
-
-            <style jsx>{`
-                .wo-detail-v2 {
-                    padding: 16px;
-                    background: #f8fafc;
-                    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-                }
-
-                /* Header Bar */
-                .header-bar {
-                    display: flex;
-                    justify-content: space-between;
-                    align-items: center;
-                    flex-wrap: wrap;
-                    gap: 12px;
-                    padding: 12px 16px;
-                    background: white;
-                    border-radius: 12px;
-                    margin-bottom: 12px;
-                    box-shadow: 0 1px 3px rgba(0,0,0,0.04);
-                }
-
-                .date-chips {
-                    display: flex;
-                    flex-wrap: wrap;
-                    gap: 12px;
-                }
-
-                .date-chip {
-                    display: flex;
-                    align-items: center;
-                    gap: 6px;
-                    font-size: 12px;
-                    color: #64748b;
-                }
-
-                .date-chip strong {
-                    color: #1e293b;
-                    font-weight: 600;
-                }
-
-                .date-chip.deadline strong {
-                    color: #f59e0b;
-                }
-
-                .btn-action {
-                    display: flex;
-                    align-items: center;
-                    gap: 6px;
-                    padding: 8px 14px;
-                    border-radius: 8px;
-                    font-size: 13px;
-                    font-weight: 500;
-                    border: none;
-                    cursor: pointer;
-                    transition: all 0.15s;
-                }
-
-                .btn-start {
-                    background: linear-gradient(135deg, #3b82f6, #2563eb);
-                    color: white;
-                }
-
-                /* Edit Processes Bar */
-                .edit-processes-bar {
-                    margin-bottom: 12px;
-                }
-
-                .btn-edit-processes {
-                    display: flex;
-                    align-items: center;
-                    gap: 6px;
-                    padding: 10px 16px;
-                    background: white;
-                    border: 1px dashed #cbd5e1;
-                    border-radius: 10px;
-                    font-size: 13px;
-                    font-weight: 500;
-                    color: #64748b;
-                    cursor: pointer;
-                    transition: all 0.15s;
-                    width: 100%;
-                    justify-content: center;
-                }
-
-                .btn-edit-processes:hover {
-                    background: #f1f5f9;
-                    border-color: #94a3b8;
-                    color: #475569;
-                }
-
-                /* Processes Section */
-                .processes-section {
-                    background: white;
-                    border-radius: 12px;
-                    padding: 14px 16px;
-                    margin-bottom: 12px;
-                    box-shadow: 0 1px 3px rgba(0,0,0,0.04);
-                }
-
-                .section-header {
-                    display: flex;
-                    justify-content: space-between;
-                    align-items: center;
-                    margin-bottom: 10px;
-                    font-weight: 600;
-                    font-size: 14px;
-                }
-
-                .btn-edit, .btn-save-sm {
-                    display: flex;
-                    align-items: center;
-                    gap: 4px;
-                    padding: 4px 10px;
-                    border-radius: 6px;
-                    font-size: 12px;
-                    border: none;
-                    cursor: pointer;
-                }
-
-                .btn-edit { background: #f1f5f9; color: #64748b; }
-                .btn-save-sm { background: #3b82f6; color: white; }
-
-                .process-chips {
-                    display: flex;
-                    flex-wrap: wrap;
-                    gap: 8px;
-                    align-items: center;
-                }
-
-                .process-chip {
-                    display: flex;
-                    align-items: center;
-                    gap: 6px;
-                    padding: 6px 12px;
-                    background: linear-gradient(135deg, #6366f1, #8b5cf6);
-                    color: white;
-                    border-radius: 20px;
-                    font-size: 13px;
-                    font-weight: 500;
-                }
-
-                .chip-num {
-                    width: 18px;
-                    height: 18px;
-                    background: rgba(255,255,255,0.2);
-                    border-radius: 50%;
-                    display: flex;
-                    align-items: center;
-                    justify-content: center;
-                    font-size: 11px;
-                }
-
-                .chip-remove {
-                    background: rgba(255,255,255,0.2);
-                    border: none;
-                    border-radius: 50%;
-                    width: 18px;
-                    height: 18px;
-                    display: flex;
-                    align-items: center;
-                    justify-content: center;
-                    cursor: pointer;
-                    color: white;
-                }
-
-                .add-chip {
-                    display: flex;
-                    gap: 4px;
-                }
-
-                .add-chip input {
-                    padding: 6px 10px;
-                    border: 1px dashed #cbd5e1;
-                    border-radius: 8px;
-                    font-size: 12px;
-                    width: 100px;
-                }
-
-                .add-chip button {
-                    padding: 6px 10px;
-                    background: #f1f5f9;
-                    border: none;
-                    border-radius: 8px;
-                    cursor: pointer;
-                }
-
-                .quick-add {
-                    display: flex;
-                    flex-wrap: wrap;
-                    gap: 6px;
-                    margin-top: 10px;
-                    padding-top: 10px;
-                    border-top: 1px dashed #e2e8f0;
-                }
-
-                .quick-add button {
-                    padding: 4px 10px;
-                    background: #f8fafc;
-                    border: 1px solid #e2e8f0;
-                    border-radius: 6px;
-                    font-size: 12px;
-                    color: #64748b;
-                    cursor: pointer;
-                }
-
-                /* Responsive */
-                @media (max-width: 768px) {
-                    .wo-detail-v2 { padding: 10px; }
-                    .header-bar { flex-direction: column; align-items: flex-start; }
-                }
-
-                /* === Proizvodi === */
-                .products-section { margin-top: 16px; }
-                .products-head {
-                    display: flex; align-items: center; gap: 10px;
-                    font-size: 12px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase;
-                    color: #64748b; margin-bottom: 10px;
-                }
-                .products-badge {
-                    font-size: 11px; font-weight: 600; color: #3b82f6; background: #eff6ff;
-                    padding: 2px 9px; border-radius: 999px; text-transform: none; letter-spacing: 0;
-                }
-                .products-empty {
-                    text-align: center; color: #94a3b8; font-size: 13px;
-                    padding: 28px; border: 1px dashed #e2e8f0; border-radius: 12px;
-                }
-
-                /* Status segment */
-                .status-seg { display: inline-flex; border: 1px solid #e2e8f0; border-radius: 8px; overflow: hidden; }
-                .status-seg button {
-                    border: none; background: white; color: #64748b;
-                    font-size: 12px; font-weight: 600; padding: 6px 12px; cursor: pointer; transition: all 0.15s;
-                }
-                .status-seg button + button { border-left: 1px solid #e2e8f0; }
-                .status-seg button.active { background: #0f172a; color: white; }
-                .status-seg button:disabled { opacity: 0.5; cursor: default; }
-
-                .pause-btn {
-                    display: inline-flex; align-items: center; gap: 5px;
-                    border: 1px solid #e2e8f0; background: white; color: #b45309;
-                    font-size: 12px; font-weight: 600; padding: 6px 12px; border-radius: 8px; cursor: pointer;
-                }
-                .pause-btn:hover { background: #fffbeb; border-color: #fcd34d; }
-
-                .details-link {
-                    align-self: flex-start; border: none; background: transparent; color: #3b82f6;
-                    font-size: 12px; font-weight: 600; padding: 2px 0; cursor: pointer;
-                }
-                .details-link:hover { text-decoration: underline; }
-
-                /* Akcije naloga */
-                /* === Knjiga rada naloga === */
-                .wo-worklog {
-                    margin-top: 16px; padding-top: 16px; border-top: 1px solid #e2e8f0;
-                }
-                .wo-worklog-head {
-                    display: flex; align-items: center; gap: 8px;
-                    font-size: 12px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase;
-                    color: #64748b; margin-bottom: 12px;
-                }
-
-                .wo-actions {
-                    display: flex; gap: 8px; flex-wrap: wrap;
-                    margin-top: 16px; padding-top: 16px; border-top: 1px solid #e2e8f0;
-                }
-                .wo-act {
-                    display: inline-flex; align-items: center; gap: 6px;
-                    border: 1px solid #e2e8f0; background: white; color: #334155;
-                    font-size: 13px; font-weight: 600; padding: 9px 16px; border-radius: 8px; cursor: pointer;
-                }
-                .wo-act:hover { background: #f8fafc; }
-                .wo-act-primary { background: #0f172a; border-color: #0f172a; color: white; }
-                .wo-act-primary:hover { background: #1e293b; }
-                .wo-act-danger { color: #dc2626; margin-left: auto; }
-                .wo-act-danger:hover { background: #fef2f2; border-color: #fca5a5; }
-
-                /* Timeline Section */
-                .timeline-section {
-                    margin-top: 16px;
-                }
-
-                .timeline-toggle {
-                    display: flex;
-                    align-items: center;
-                    gap: 8px;
-                    width: 100%;
-                    padding: 12px 16px;
-                    background: white;
-                    border: 1px solid #e2e8f0;
-                    border-radius: 12px;
-                    font-size: 14px;
-                    font-weight: 600;
-                    color: #334155;
-                    cursor: pointer;
-                    transition: all 0.2s;
-                }
-
-                .timeline-toggle:hover {
-                    background: #f8fafc;
-                    border-color: #cbd5e1;
-                }
-
-                .timeline-badge {
-                    margin-left: auto;
-                    padding: 2px 10px;
-                    background: #eff6ff;
-                    color: #3b82f6;
-                    border-radius: 12px;
-                    font-size: 11px;
-                    font-weight: 600;
-                }
-
-                .timeline-empty {
-                    padding: 24px;
-                    text-align: center;
-                    color: #94a3b8;
-                    font-size: 13px;
-                    background: white;
-                    border-radius: 12px;
-                    border: 1px solid #e2e8f0;
-                    margin-top: 8px;
-                }
-            `}</style>
         </div>
     );
 }

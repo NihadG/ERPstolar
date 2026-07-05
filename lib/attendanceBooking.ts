@@ -131,11 +131,14 @@ export function buildBookingProposal(
 function buildPresentOrderOptions(workOrders: WorkOrder[], workerId: string): PresentOrderOption[] {
     const out: PresentOrderOption[] = [];
     for (const wo of workOrders) {
-        if (wo.Status === 'Otkazano') continue;
+        // EFIKASNOST: samo 'U toku' nalog može uopšte imati pauziranu (nezavršenu) stavku —
+        // 'Završeno' nalog po definiciji ima SVE stavke završene (vidi recalculateWorkOrder
+        // status derivaciju), pa bi `live` uvijek bio prazan i anyPaused uvijek false.
+        // Preskoči prije skupog skeniranja stavki — bez ovoga se svaki istorijski (davno
+        // završen) nalog skenira pri SVAKOM označavanju prisustva, što s vremenom (mjeseci
+        // rada = stotine naloga) usporava otvaranje upita knjiženja.
+        if (wo.Status !== 'U toku') continue;
         const live = (wo.items || []).filter(it => it.Status !== 'Završeno');
-        const anyPaused = live.some(it => it.Is_Paused);
-        const isActive = wo.Status === 'U toku';
-        if (!isActive && !anyPaused) continue;                  // samo aktivni ili oni s pauziranim poslom
         const fullyPaused = live.length > 0 && live.every(it => it.Is_Paused);
         const assigned = live.some(it => isWorkerAssignedToAutoItem(toAutoBookItem(it), workerId));
         out.push({

@@ -1,0 +1,814 @@
+<!doctype html>
+<html lang="bs">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Priručnik — Proizvodi, Procesi i Proizvodnja</title>
+<style>
+  :root{
+    --accent:#0071e3; --accent-d:#0059b3; --accent-l:#e8f1fe;
+    --green:#10b981; --green-l:#e7f7f0;
+    --teal:#00b3ab; --teal-l:#e3f7f6;
+    --purple:#7c3aed; --purple-l:#f1eafe;
+    --amber:#f59e0b; --amber-l:#fef3e2;
+    --red:#ef4444; --red-l:#fdeaea;
+    --bg:#f4f6f9; --surface:#ffffff;
+    --text:#1d1d20; --text2:#5b6472; --text3:#8a93a3;
+    --border:#e6e9ef; --border2:#d6dbe4;
+    --radius:14px; --radius-s:9px;
+    --shadow:0 1px 3px rgba(20,30,50,.06),0 6px 20px rgba(20,30,50,.05);
+    --sidebar:288px;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{
+    margin:0; background:var(--bg); color:var(--text);
+    font:15px/1.62 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    -webkit-font-smoothing:antialiased;
+  }
+  a{color:var(--accent); text-decoration:none}
+  a:hover{text-decoration:underline}
+  h1,h2,h3,h4{line-height:1.25; color:var(--text); margin:0}
+
+  /* ---- Layout ---- */
+  .topbar{
+    position:sticky; top:0; z-index:40; display:flex; align-items:center; gap:14px;
+    padding:12px 22px; background:rgba(255,255,255,.86); backdrop-filter:blur(10px);
+    border-bottom:1px solid var(--border);
+  }
+  .brand{display:flex; align-items:center; gap:11px; font-weight:800; letter-spacing:-.01em; font-size:16px; white-space:nowrap}
+  .brand .logo{width:30px;height:30px;border-radius:8px;background:linear-gradient(135deg,var(--accent),#4aa3ff);
+    display:grid;place-items:center;color:#fff;font-size:16px;box-shadow:0 3px 10px rgba(0,113,227,.35)}
+  .search{flex:1; max-width:520px; margin-left:auto; position:relative}
+  .search input{
+    width:100%; padding:9px 14px 9px 38px; border:1px solid var(--border2); border-radius:999px;
+    background:var(--surface); font-size:14px; outline:none; transition:border-color .15s,box-shadow .15s;
+  }
+  .search input:focus{border-color:var(--accent); box-shadow:0 0 0 4px var(--accent-l)}
+  .search svg{position:absolute; left:13px; top:50%; transform:translateY(-50%); color:var(--text3)}
+  .nav-toggle{display:none; border:1px solid var(--border2); background:var(--surface); border-radius:9px;
+    width:40px;height:38px; cursor:pointer; align-items:center; justify-content:center}
+  .nav-toggle span,.nav-toggle span::before,.nav-toggle span::after{
+    content:""; display:block; width:18px; height:2px; background:var(--text); border-radius:2px; position:relative}
+  .nav-toggle span::before{position:absolute; top:-6px} .nav-toggle span::after{position:absolute; top:6px}
+
+  .shell{display:flex; align-items:flex-start; max-width:1280px; margin:0 auto}
+  .sidebar{
+    position:sticky; top:63px; align-self:flex-start; width:var(--sidebar); flex:0 0 var(--sidebar);
+    height:calc(100vh - 63px); overflow:auto; padding:22px 14px 40px;
+  }
+  .toc-title{font-size:11px; font-weight:800; text-transform:uppercase; letter-spacing:.08em; color:var(--text3); padding:0 12px; margin:14px 0 6px}
+  .toc a{display:flex; align-items:center; gap:9px; padding:8px 12px; border-radius:9px; color:var(--text2); font-weight:600; font-size:14px}
+  .toc a:hover{background:#eef1f6; text-decoration:none; color:var(--text)}
+  .toc a.active{background:var(--accent-l); color:var(--accent-d)}
+  .toc a .n{width:22px;height:22px;flex:0 0 22px;border-radius:6px;background:#eef1f6;display:grid;place-items:center;font-size:12px;font-weight:800;color:var(--text2)}
+  .toc a.active .n{background:var(--accent);color:#fff}
+  .toc .sub{padding-left:20px; font-size:13px; color:var(--text3); font-weight:600}
+
+  .content{flex:1; min-width:0; padding:26px 34px 90px}
+  .doc-section{scroll-margin-top:78px; margin-bottom:14px}
+  .doc-section.hide{display:none}
+
+  .hero{
+    background:linear-gradient(135deg,#0071e3,#4aa3ff); color:#fff; border-radius:20px; padding:30px 32px; margin-bottom:26px;
+    box-shadow:0 10px 30px rgba(0,113,227,.28);
+  }
+  .hero h1{color:#fff; font-size:29px; letter-spacing:-.02em; margin-bottom:8px}
+  .hero p{margin:0; opacity:.95; font-size:15.5px; max-width:70ch}
+  .hero .meta{margin-top:16px; display:flex; gap:10px; flex-wrap:wrap; font-size:13px}
+  .hero .meta span{background:rgba(255,255,255,.16); padding:5px 11px; border-radius:999px; font-weight:600}
+
+  .sec-head{display:flex; align-items:center; gap:12px; margin:8px 0 16px}
+  .sec-head .num{width:38px;height:38px;flex:0 0 38px;border-radius:11px;background:var(--accent);color:#fff;
+    display:grid;place-items:center;font-weight:800;font-size:17px;box-shadow:0 4px 12px rgba(0,113,227,.3)}
+  .sec-head h2{font-size:23px; letter-spacing:-.015em}
+  .sec-head p{margin:2px 0 0; color:var(--text2); font-size:14px}
+
+  .card{background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); padding:20px 22px; margin:14px 0; box-shadow:var(--shadow)}
+  .card.hide{display:none}
+  .card h3{font-size:17px; margin-bottom:6px; letter-spacing:-.01em}
+  .card h3 .lead{color:var(--accent); font-weight:800; margin-right:6px}
+  .card h4{font-size:14.5px; margin:16px 0 6px; color:var(--text)}
+  .muted{color:var(--text2)}
+  p{margin:9px 0}
+
+  /* ---- Steps (ordered) ---- */
+  ol.steps{list-style:none; counter-reset:st; margin:10px 0; padding:0}
+  ol.steps>li{counter-increment:st; position:relative; padding:4px 0 14px 44px; margin:0}
+  ol.steps>li::before{content:counter(st); position:absolute; left:0; top:0;
+    width:30px;height:30px;border-radius:50%; background:var(--accent-l); color:var(--accent-d);
+    font-weight:800; font-size:14px; display:grid; place-items:center}
+  ol.steps>li:not(:last-child)::after{content:""; position:absolute; left:14px; top:32px; bottom:2px; width:2px; background:var(--border)}
+  ol.steps>li b{color:var(--text)}
+
+  ul.plain{margin:9px 0; padding-left:20px}
+  ul.plain li{margin:5px 0}
+  ul.check{list-style:none; margin:9px 0; padding:0}
+  ul.check li{position:relative; padding:4px 0 4px 28px; margin:3px 0}
+  ul.check li::before{content:"✓"; position:absolute; left:0; top:3px; color:var(--green); font-weight:800}
+
+  /* ---- Badges & pills ---- */
+  .ui{display:inline-flex; align-items:center; gap:5px; padding:3px 10px; border-radius:8px; font-weight:700; font-size:12.5px;
+    border:1px solid var(--border2); background:var(--surface); color:var(--text); white-space:nowrap; line-height:1.4}
+  .ui.accent{background:var(--accent); border-color:var(--accent); color:#fff}
+  .ui.green{background:var(--green); border-color:var(--green); color:#fff}
+  .ui.teal{background:var(--teal); border-color:var(--teal); color:#fff}
+  .ui.purple{background:var(--purple); border-color:var(--purple); color:#fff}
+  .ui.amber{background:var(--amber); border-color:var(--amber); color:#fff}
+  .pill{display:inline-block; padding:2px 9px; border-radius:999px; font-weight:700; font-size:11.5px}
+  .pill.wait{background:#eef1f6; color:#5b6472}
+  .pill.prog{background:var(--accent-l); color:var(--accent-d)}
+  .pill.done{background:var(--green-l); color:#0a7a54}
+  .pill.defer{background:var(--amber-l); color:#a55a06}
+  code{background:#eef1f6; padding:1px 6px; border-radius:6px; font-size:13px; font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+
+  /* ---- Callouts ---- */
+  .callout{border-radius:12px; padding:14px 16px 14px 46px; margin:14px 0; position:relative; font-size:14px}
+  .callout::before{position:absolute; left:15px; top:13px; font-size:18px}
+  .callout.info{background:var(--accent-l); border:1px solid #cfe3fb} .callout.info::before{content:"ℹ️"}
+  .callout.warn{background:var(--amber-l); border:1px solid #f6dfae} .callout.warn::before{content:"⚠️"}
+  .callout.key{background:#f0fbf6; border:1px solid #bfead6} .callout.key::before{content:"⭐"}
+  .callout.tip{background:var(--purple-l); border:1px solid #e0d0fb} .callout.tip::before{content:"💡"}
+  .callout b{color:var(--text)}
+
+  /* ---- Flow diagram ---- */
+  .flow{display:flex; align-items:center; gap:6px; flex-wrap:wrap; margin:12px 0}
+  .flow .node{background:var(--surface); border:1.5px solid var(--border2); border-radius:10px; padding:9px 14px; font-weight:700; font-size:13.5px}
+  .flow .node.on{border-color:var(--accent); background:var(--accent-l); color:var(--accent-d)}
+  .flow .arw{color:var(--text3); font-weight:800}
+
+  /* ---- Tables ---- */
+  .tbl{width:100%; border-collapse:collapse; margin:12px 0; font-size:13.5px; overflow:hidden; border-radius:10px; border:1px solid var(--border)}
+  .tbl th{background:#f7f9fc; text-align:left; padding:10px 12px; font-weight:800; font-size:12px; text-transform:uppercase; letter-spacing:.03em; color:var(--text2); border-bottom:1px solid var(--border)}
+  .tbl td{padding:10px 12px; border-bottom:1px solid var(--border); vertical-align:top}
+  .tbl tr:last-child td{border-bottom:none}
+  .tbl tr:nth-child(even) td{background:#fbfcfe}
+
+  /* ---- Details / FAQ ---- */
+  details.faq{border:1px solid var(--border); border-radius:11px; padding:2px 16px; margin:9px 0; background:var(--surface)}
+  details.faq[open]{box-shadow:var(--shadow)}
+  details.faq summary{cursor:pointer; padding:12px 0; font-weight:700; list-style:none; display:flex; align-items:center; gap:10px}
+  details.faq summary::-webkit-details-marker{display:none}
+  details.faq summary::before{content:"＋"; color:var(--accent); font-weight:800}
+  details.faq[open] summary::before{content:"－"}
+  details.faq .faq-body{padding:0 0 14px 24px; color:var(--text2)}
+
+  /* ---- Stepper (case study) ---- */
+  .stepper{border:1px solid var(--border); border-radius:16px; background:var(--surface); box-shadow:var(--shadow); overflow:hidden; margin:16px 0}
+  .stepper-head{display:flex; align-items:center; gap:12px; padding:16px 20px; border-bottom:1px solid var(--border); background:linear-gradient(180deg,#fbfcfe,#fff)}
+  .stepper-head .ico{width:38px;height:38px;border-radius:11px;display:grid;place-items:center;font-size:19px;flex:0 0 38px}
+  .stepper-head h3{font-size:16px}
+  .stepper-head .sub{font-size:12.5px; color:var(--text2); margin-top:1px}
+  .progress{height:5px; background:#eef1f6}
+  .progress .bar{height:100%; background:var(--accent); width:0; transition:width .25s ease}
+  .steps-wrap{padding:20px 22px 8px; min-height:150px}
+  .step{display:none; animation:fade .25s ease}
+  .step.active{display:block}
+  @keyframes fade{from{opacity:0; transform:translateY(6px)}to{opacity:1; transform:none}}
+  .step .tag-step{display:inline-block; font-size:11.5px; font-weight:800; color:var(--accent-d); background:var(--accent-l); padding:3px 10px; border-radius:999px; margin-bottom:8px}
+  .step h4{font-size:16px; margin-bottom:6px}
+  .stepper-foot{display:flex; align-items:center; justify-content:space-between; padding:14px 20px; border-top:1px solid var(--border); background:#fbfcfe}
+  .step-counter{font-size:13px; font-weight:700; color:var(--text2)}
+  .step-btns{display:flex; gap:8px}
+  .step-btns button{border:1px solid var(--border2); background:var(--surface); border-radius:9px; padding:8px 16px; font-weight:700; font-size:13.5px; cursor:pointer; color:var(--text); transition:background .15s}
+  .step-btns button:hover:not(:disabled){background:#eef1f6}
+  .step-btns button.primary{background:var(--accent); border-color:var(--accent); color:#fff}
+  .step-btns button.primary:hover:not(:disabled){background:var(--accent-d)}
+  .step-btns button:disabled{opacity:.45; cursor:default}
+
+  /* ---- No results ---- */
+  .noRes{display:none; text-align:center; color:var(--text2); padding:50px 20px}
+  .noRes.show{display:block}
+
+  /* ---- Back to top ---- */
+  .toTop{position:fixed; right:24px; bottom:24px; width:46px;height:46px; border-radius:50%; border:none;
+    background:var(--accent); color:#fff; font-size:20px; cursor:pointer; box-shadow:0 6px 18px rgba(0,113,227,.4);
+    opacity:0; pointer-events:none; transition:opacity .2s, transform .2s; z-index:50}
+  .toTop.show{opacity:1; pointer-events:auto}
+  .toTop:hover{transform:translateY(-2px)}
+
+  .foot{max-width:1280px; margin:0 auto; padding:24px 34px 50px; color:var(--text3); font-size:13px; border-top:1px solid var(--border)}
+
+  /* ---- Responsive ---- */
+  @media (max-width:900px){
+    .nav-toggle{display:flex}
+    .sidebar{position:fixed; left:0; top:63px; z-index:38; background:var(--surface); border-right:1px solid var(--border);
+      transform:translateX(-105%); transition:transform .25s ease; box-shadow:8px 0 24px rgba(0,0,0,.08)}
+    .sidebar.open{transform:none}
+    .content{padding:20px 18px 80px}
+    .search{max-width:none}
+    .brand span.long{display:none}
+  }
+  @media (max-width:520px){
+    .hero{padding:22px}
+    .hero h1{font-size:23px}
+    .sec-head h2{font-size:20px}
+    .flow{font-size:12px}
+  }
+
+  /* ---- Print ---- */
+  @media print{
+    .topbar,.sidebar,.toTop,.stepper-foot,.nav-toggle,.search{display:none !important}
+    .shell{display:block; max-width:none}
+    .content{padding:0}
+    .doc-section.hide{display:block !important}
+    .card,.stepper{break-inside:avoid; box-shadow:none}
+    .step{display:block !important; border-top:1px dashed var(--border); padding-top:10px; margin-top:10px}
+    .hero{color:#000; background:none; box-shadow:none; border:1px solid var(--border)}
+    .hero h1{color:#000}
+  }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <button class="nav-toggle" id="navToggle" aria-label="Meni"><span></span></button>
+  <div class="brand"><span class="logo">▦</span><span class="long">Priručnik za korištenje</span></div>
+  <div class="search">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+    <input id="search" type="search" placeholder="Pretraži priručnik (npr. rok, montaža, pauza…)" autocomplete="off">
+  </div>
+</header>
+
+<div class="shell">
+  <!-- SIDEBAR -->
+  <nav class="sidebar" id="sidebar">
+    <div class="toc-title">Sadržaj</div>
+    <div class="toc">
+      <a href="#uvod"><span class="n">0</span> Uvod</a>
+      <a href="#proizvodi"><span class="n">1</span> Kreiranje proizvoda</a>
+      <a href="#procesi"><span class="n">2</span> Procesi</a>
+      <a href="#proizvodnja"><span class="n">3</span> Proizvodnja tab</a>
+      <a href="#primjeri"><span class="n">4</span> Primjeri (case study)</a>
+      <a href="#rjecnik"><span class="n">5</span> Rječnik i podsjetnik</a>
+    </div>
+    <div class="toc-title">Brzi skok</div>
+    <div class="toc">
+      <a class="sub" href="#novi-proizvod">→ Novi proizvod</a>
+      <a class="sub" href="#materijali">→ Materijali</a>
+      <a class="sub" href="#tabla-procesa">→ Tabla procesa</a>
+      <a class="sub" href="#novi-nalog">→ Novi nalog</a>
+      <a class="sub" href="#kartica">→ Kartica naloga</a>
+      <a class="sub" href="#knjiga-rada">→ Knjiga rada</a>
+    </div>
+  </nav>
+
+  <!-- CONTENT -->
+  <main class="content">
+
+    <div class="hero">
+      <h1>Priručnik: Proizvodi, Procesi i Proizvodnja</h1>
+      <p>Praktičan vodič kroz svakodnevni rad — kako se kreira proizvod, kako rade procesi i kako se vodi nalog u Proizvodnji. Na kraju su primjeri kompletnog toka na stvarnim situacijama.</p>
+      <div class="meta"><span>🏭 Za operativu</span><span>🖱️ Interaktivno — klikni sadržaj lijevo</span><span>🔎 Pretraga gore</span><span>🖨️ Print/PDF spreman</span></div>
+    </div>
+
+    <div class="noRes" id="noResults">Nema rezultata za tu pretragu. Obriši tekst da vidiš sve.</div>
+
+    <!-- ============ 0. UVOD ============ -->
+    <section class="doc-section" id="uvod">
+      <div class="sec-head"><div class="num">0</div><div><h2>Uvod</h2><p>Kako je aplikacija posložena i kako čitati ovaj priručnik.</p></div></div>
+
+      <div class="card js-search">
+        <h3>Tok od upita do gotovog posla</h3>
+        <p>Podaci putuju ovim redom. Svaki korak hrani sljedeći, pa je bitno da se prvi dijelovi (proizvod, materijal, cijena) unesu tačno.</p>
+        <div class="flow">
+          <span class="node">📁 Projekat<br><small class="muted">klijent / lokacija</small></span><span class="arw">→</span>
+          <span class="node on">📦 Proizvod<br><small class="muted">Poz 1, Poz 2…</small></span><span class="arw">→</span>
+          <span class="node">💶 Ponuda<br><small class="muted">cijena</small></span><span class="arw">→</span>
+          <span class="node">📋 Nalog<br><small class="muted">radni nalog</small></span><span class="arw">→</span>
+          <span class="node">🏭 Proizvodnja<br><small class="muted">rad + procesi</small></span>
+        </div>
+        <ul class="check">
+          <li><b>Projekat</b> je klijent/posao (npr. „Ferid – Nova Vogošća“).</li>
+          <li><b>Proizvod</b> je jedna pozicija u projektu (Poz 1, Poz 2…) — npr. kuhinja, ormar.</li>
+          <li><b>Ponuda</b> daje prodajnu cijenu; kad je prihvaćena, cijena hrani profit naloga.</li>
+          <li><b>Nalog</b> je radni dokument po kojem se proizvodi (Proizvodnja tab).</li>
+        </ul>
+      </div>
+
+      <div class="card js-search">
+        <h3>Kako koristiti ovaj priručnik</h3>
+        <ul class="plain">
+          <li><b>Sadržaj lijevo</b> — klik na sekciju te vodi na nju; aktivna sekcija se ističe dok skrolaš.</li>
+          <li><b>Pretraga gore</b> — upiši pojam (npr. „pauza“, „rok“, „montaža“) i priručnik prikaže samo relevantne kartice.</li>
+          <li><b>Primjeri (case study)</b> — idi kroz korake dugmadima <b>Naprijed / Nazad</b>.</li>
+          <li><b>Štampa</b> — <code>Ctrl/Cmd + P</code> daje uredan PDF s razvijenim svim koracima.</li>
+        </ul>
+        <div class="callout info">Priručnik pokriva <b>operativni rad</b>. Postavke koje radi administrator (katalog procesa, pravila materijal→proces) namjerno su izostavljene.</div>
+      </div>
+    </section>
+
+    <!-- ============ 1. PROIZVODI ============ -->
+    <section class="doc-section" id="proizvodi">
+      <div class="sec-head"><div class="num">1</div><div><h2>Kreiranje proizvoda</h2><p>Proizvod se uvijek pravi unutar projekta, kao pozicija (Poz).</p></div></div>
+
+      <div class="card js-search" id="novi-proizvod">
+        <h3><span class="lead">1.1</span> Novi proizvod — korak po korak</h3>
+        <ol class="steps">
+          <li>Otvori tab <b>Projekti</b> i pronađi (ili napravi) projekat za tog klijenta.</li>
+          <li>Klikni projekat da se <b>proširi</b> i pokaže listu proizvoda.</li>
+          <li>Klikni <span class="ui accent">＋ Novi Proizvod</span>. Otvara se prozor „Novi Proizvod“.</li>
+          <li>Popuni polja:
+            <ul class="plain">
+              <li><b>Naziv *</b> — automatski se ponudi <code>Poz 3 -</code> (sljedeći broj); dopiši opis, npr. „Poz 3 - Gornji kuhinjski ormar“. <i>(obavezno)</i></li>
+              <li><b>Visina (mm)</b>, <b>Širina (mm)</b>, <b>Dubina (mm)</b> — dimenzije. <i>(opciono)</i></li>
+              <li><b>Količina</b> — koliko komada te iste pozicije (podrazumijevano 1).</li>
+              <li><b>Napomene</b> — upute za proizvodnju (boja, posebni zahtjevi…).</li>
+            </ul>
+          </li>
+          <li>Klikni <span class="ui">Sačuvaj</span>. Proizvod se pojavi u listi projekta sa statusom <span class="pill wait">Na čekanju</span> i troškom materijala 0 KM.</li>
+        </ol>
+        <div class="callout tip">Naziv slobodno mijenjaj — sistem samo predlaže sljedeći „Poz“ broj da se pozicije ne pomiješaju.</div>
+      </div>
+
+      <div class="card js-search" id="materijali">
+        <h3><span class="lead">1.2</span> Materijali proizvoda</h3>
+        <p>Nakon što proizvod postoji, dodaješ mu materijale — od njih se računa <b>trošak materijala</b>.</p>
+        <ol class="steps">
+          <li>Proširi proizvod i klikni <span class="ui">Dodaj materijal</span>.</li>
+          <li>Iz kataloga izaberi materijal (pretraga po nazivu/kategoriji) i unesi <b>količinu</b> i <b>jediničnu cijenu</b> (dobavljač se popuni sam, može se izmijeniti).</li>
+          <li>Za <b>staklo</b> i <b>alu vrata</b> otvara se poseban prozor s dodatnim poljima (dimenzije, obrada ivica…).</li>
+          <li>Po potrebi označi <b>⚠️ Esencijalni materijal</b> — nalog se neće moći pokrenuti dok taj materijal ne bude <span class="pill done">Primljeno</span> ili <span class="pill done">Na stanju</span>.</li>
+        </ol>
+        <h4>Statusi materijala</h4>
+        <table class="tbl">
+          <tr><th>Status</th><th>Značenje</th><th>Napomena</th></tr>
+          <tr><td><span class="pill wait">Nije naručeno</span></td><td>Još nije poručeno</td><td>Ulazi u trošak materijala</td></tr>
+          <tr><td><span class="pill prog">Naručeno</span></td><td>Poručeno, čeka se isporuka</td><td>Ulazi u trošak</td></tr>
+          <tr><td><span class="pill done">Primljeno</span></td><td>Zaprimljeno od dobavljača</td><td><b>Cijena se zaključava</b> (ne mijenja se retroaktivno)</td></tr>
+          <tr><td><span class="pill done">Na stanju</span></td><td>Ima ga na lageru</td><td>Spremno za proizvodnju</td></tr>
+        </table>
+        <div class="callout info"><b>Trošak materijala</b> = zbroj (količina × jedinična cijena) svih materijala proizvoda. To se automatski računa i koristi kasnije u profitu.</div>
+      </div>
+
+      <div class="card js-search">
+        <h3><span class="lead">1.3</span> Odakle dolazi prodajna cijena (Ponuda)</h3>
+        <p>Proizvod nema „polje za cijenu“ na sebi. Prodajna cijena se postavlja u <b>Ponudi</b>:</p>
+        <ul class="check">
+          <li>U tabu <b>Ponude</b> napraviš ponudu za projekat i za svaki proizvod dodaš <b>maržu / prodajnu cijenu</b>.</li>
+          <li>Možeš dodati <b>Dodatke</b> (LED, ugradnja česme, fugiranje…) i <b>transport</b>.</li>
+          <li>Kad je ponuda <b>Prihvaćeno</b>, ta cijena postaje osnov za profit kad se napravi nalog.</li>
+        </ul>
+        <div class="callout warn">Ako nalog napraviš <b>bez prihvaćene ponude</b>, aplikacija te upozori da cijena nije poznata — profit neće biti tačan dok cijenu ne uneseš ručno.</div>
+      </div>
+
+      <div class="card js-search">
+        <h3><span class="lead">1.4</span> Uvoz iz SketchUp-a (opciono)</h3>
+        <p>Ako imaš cutlist iz SketchUp-a, materijale možeš uvesti umjesto ručnog unosa:</p>
+        <ol class="steps">
+          <li>Na proizvodu otvori <b>SketchUp uvoz</b> i učitaj <b>CSV</b> (naziv, dimenzije, količina, materijal).</li>
+          <li>Pregledaj i po potrebi ispravi komponente i formate ploča.</li>
+          <li>Klikni <b>Izračunaj</b> — sistem izračuna potrebne ploče, kant traku i otpad.</li>
+          <li>Upari stavke s katalogom materijala (automatski, uz opciju „AI Unaprijedi“, ili ručno).</li>
+          <li>Potvrdi s <b>Dodaj materijala</b> — svi uparieni materijali uđu u proizvod.</li>
+        </ol>
+      </div>
+
+      <div class="card js-search">
+        <h3><span class="lead">1.5</span> Pozicije i količine</h3>
+        <ul class="plain">
+          <li><b>Pozicija (Poz)</b> — svaka stavka projekta dobije redni broj (Poz 1, Poz 2…), automatski.</li>
+          <li><b>Količina</b> — koliko istih komada te pozicije; prenosi se u nalog (može se tamo promijeniti).</li>
+          <li>Svaka pozicija se prati zasebno: svoji materijali, rad, i profit.</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- ============ 2. PROCESI ============ -->
+    <section class="doc-section" id="procesi">
+      <div class="sec-head"><div class="num">2</div><div><h2>Procesi</h2><p>Koraci proizvodnje (Rezanje, Kantiranje, Farbanje, Montaža…) i kako se prate.</p></div></div>
+
+      <div class="card js-search">
+        <h3><span class="lead">2.1</span> Šta su procesi</h3>
+        <p>Procesi su faze kroz koje proizvod prolazi u proizvodnji. Tipičan tok kuhinje:</p>
+        <div class="flow">
+          <span class="node">Rezanje</span><span class="arw">→</span>
+          <span class="node">Kantiranje</span><span class="arw">→</span>
+          <span class="node">Bušenje</span><span class="arw">→</span>
+          <span class="node">Farbanje</span><span class="arw">→</span>
+          <span class="node">Montaža</span>
+        </div>
+        <p>Koji procesi idu za koji proizvod dolazi iz <b>plana procesa proizvoda</b> (postavlja se na proizvodu; administrator definiše zajednički katalog). Ti u operativi <b>pratiš</b> te procese unutar naloga.</p>
+        <div class="callout info"><b>Faze</b>: procesi u istoj fazi mogu ići <b>paralelno</b>; faze idu jedna za drugom. Plan se može ponuditi automatski („Auto prijedlog“) ili posložiti ručno.</div>
+      </div>
+
+      <div class="card js-search" id="tabla-procesa">
+        <h3><span class="lead">2.2</span> Tabla procesa (u nalogu)</h3>
+        <p>U kartici naloga, tab <b>Tok proizvodnje</b> → <b>Procesi naloga</b>. Isti proces preko više proizvoda je <b>jedan red</b>; desno se vidi napredak <code>gotovo/ukupno</code>.</p>
+        <h4>Stanja reda</h4>
+        <ul class="plain">
+          <li><span class="pill prog">na redu</span> — proces je na potezu (prethodni su gotovi).</li>
+          <li><span class="pill wait">čeka prethodni</span> — čeka da se završi raniji proces.</li>
+        </ul>
+        <h4>Radnje (klikni red da se proširi, pa odaberi proizvode)</h4>
+        <table class="tbl">
+          <tr><th>Dugme</th><th>Šta radi</th></tr>
+          <tr><td><span class="ui green">✓ Završi za odabrane</span></td><td>Otvori formu (radnik, datum, pomoćnici, napomena) i označi proces gotovim za odabrane proizvode.</td></tr>
+          <tr><td><span class="ui">▶ Pokreni</span></td><td>Označi proces kao „u toku“.</td></tr>
+          <tr><td><span class="ui amber">⏸ Odloži</span></td><td>Stavi proces na čekanje iz nekog razloga.</td></tr>
+          <tr><td><span class="ui">↩ Vrati</span></td><td>Vrati proces nazad na čekanje (poništi završetak).</td></tr>
+          <tr><td><span class="ui">＋ Dodaj proces</span></td><td>Dodaj novi proces na odabrane proizvode ovog naloga.</td></tr>
+        </table>
+      </div>
+
+      <div class="card js-search">
+        <h3><span class="lead">2.3</span> Graf procesa (pregled toka)</h3>
+        <p>Dugme <span class="ui">⎇ Graf procesa</span> otvara vizuelni tok naloga (čvorovi = procesi, veze = redoslijed). Tu možeš:</p>
+        <ul class="plain">
+          <li>Vidjeti cijeli tok i status svakog procesa (uz datume iz knjige rada).</li>
+          <li>Dodati proces kao <b>Nastavak</b> (u nizu) ili <b>Paralelno</b>.</li>
+          <li>Snimiti/primijeniti <b>templejt</b> toka i „Sinhronizuj iz proizvoda“.</li>
+        </ul>
+      </div>
+
+      <div class="card js-search">
+        <h3><span class="lead">2.4</span> ⭐ Najvažnije: procesi ne mijenjaju status naloga</h3>
+        <div class="callout key">
+          <b>Procesi su čist napredak.</b> Pokretanje ili završavanje procesa (na tabli ili u grafu) <b>ne mijenja</b> status cijelog naloga. Ako završiš sve procese, nalog <b>ostaje „U toku“</b> dok ga ti izričito ne završiš dugmetom <span class="ui green">Završi nalog</span>.
+        </div>
+        <ul class="check">
+          <li>Status naloga vodiš <b>ti</b> (Pokreni / Pauza / Završi nalog) — vidi sekciju 3.</li>
+          <li><b>Rad i profit</b> ne dolaze iz procesa, nego iz <b>Knjige rada / šihtarice</b> (dnevnice).</li>
+          <li>Zato procese možeš pratiti koliko želiš — ili ih uopšte ne dirati — bez posljedica po status i računicu.</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- ============ 3. PROIZVODNJA ============ -->
+    <section class="doc-section" id="proizvodnja">
+      <div class="sec-head"><div class="num">3</div><div><h2>Proizvodnja tab</h2><p>Kreiranje naloga i vođenje posla od pokretanja do završetka.</p></div></div>
+
+      <div class="card js-search">
+        <h3><span class="lead">3.1</span> Gornja traka</h3>
+        <table class="tbl">
+          <tr><th>Kontrola</th><th>Namjena</th></tr>
+          <tr><td><b>Pretraži naloge…</b></td><td>Traži po broju ili nazivu naloga.</td></tr>
+          <tr><td><b>Svi statusi</b></td><td>Filter: Na čekanju / U toku / Završeno / Otkazano.</td></tr>
+          <tr><td><b>Grupiši</b></td><td>Bez grupisanja, Po statusu, Po projektu, Po datumu, Po radniku.</td></tr>
+          <tr><td><span class="ui green">📊 Profiti</span></td><td>Pregled profita svih aktivnih proizvoda.</td></tr>
+          <tr><td><span class="ui">⟳ Sinkroniziraj</span></td><td>Uskladi statuse proizvoda sa nalozima.</td></tr>
+        </table>
+        <p>Tri načina kreiranja naloga: <span class="ui accent">＋ Novi nalog</span> <span class="ui teal">🔧 Montaža</span> <span class="ui purple">☑ Razni poslovi</span></p>
+      </div>
+
+      <div class="card js-search" id="novi-nalog">
+        <h3><span class="lead">3.2</span> <span class="ui accent">Novi nalog</span> — proizvodni nalog</h3>
+        <p>Za proizvodnju stvarnih proizvoda iz projekata. Čarobnjak ima 2 koraka:</p>
+        <h4>Korak 1 — Proizvodi</h4>
+        <ol class="steps">
+          <li>Pretraži i <b>odaberi proizvode</b> (grupisani po projektu). Vidi se koliko je komada dostupno.</li>
+          <li>Za svaki odabrani proizvod postavi <b>koliko komada</b> ide u nalog.</li>
+        </ol>
+        <h4>Korak 2 — Radnik &amp; rok</h4>
+        <ol class="steps">
+          <li><b>Naziv naloga</b> (opciono), <b>Početak</b>, <b>Rok završetka</b>.</li>
+          <li><b>Rok</b> se automatski predloži iz planiranih radnih dana (subota se računa, nedjelja preskače) — klikni prijedlog ili unesi ručno.</li>
+          <li>Dodijeli <b>Glavnog radnika</b> i <b>Pomoćnike</b> po procesu; <span class="ui">⚡ Dodjeli svima</span> postavi istog radnika na sve.</li>
+          <li>Opcija <b>☑ Odmah kreiraj narudžbe za nedostajuće materijale</b> (grupisano po dobavljaču).</li>
+          <li>Klikni <b>Kreiraj</b>. Dobiješ poruku „Radni nalog … kreiran“.</li>
+        </ol>
+        <div class="callout warn">Ako nijedan radnik nije dodijeljen, nalog se <b>neće moći pokrenuti</b> dok ne dodijeliš radnika (možeš to i naknadno).</div>
+      </div>
+
+      <div class="card js-search">
+        <h3><span class="lead">3.3</span> <span class="ui teal">Montaža</span> — nalog za montažu</h3>
+        <p>Za ugradnju kod klijenta. Trošak je <b>samo rad</b> (nema cijene proizvoda — prihod je na proizvodnom nalogu). Tri koraka:</p>
+        <ol class="steps">
+          <li><b>Proizvodi</b> — biraš samo proizvode koji su <span class="pill done">Spremno</span> (završena proizvodnja).</li>
+          <li><b>Procesi</b> — podrazumijevano: Transport, Montaža, Čišćenje, Primopredaja (možeš mijenjati).</li>
+          <li><b>Dodjela</b> — radnici i rok (isto kao proizvodni nalog).</li>
+        </ol>
+        <p>Na kartici takav nalog nosi oznaku <span class="ui teal">🔧 Montaža</span>, a metrika pokazuje <b>Trošak montaže</b> umjesto profita.</p>
+      </div>
+
+      <div class="card js-search">
+        <h3><span class="lead">3.4</span> <span class="ui purple">Razni poslovi</span> — zadaci van kataloga</h3>
+        <p>Za poslove koji nisu proizvod iz baze (izrada paleta, čišćenje pogona…).</p>
+        <ol class="steps">
+          <li>Upiši <b>Naziv zadatka</b> (npr. „Izrada paleta“) — možeš dodati više zadataka.</li>
+          <li>Dodijeli <b>Radnika</b> (da bi se nalog mogao pokrenuti).</li>
+          <li>Opciono <b>Poveži s proizvodom</b> — tada trošak rada ide tom proizvodu; bez veze = samostalan trošak.</li>
+          <li>Postavi <b>Rok</b>/<b>Napomenu</b> (opciono) i klikni <span class="ui purple">Kreiraj nalog</span>.</li>
+        </ol>
+      </div>
+
+      <div class="card js-search" id="kartica">
+        <h3><span class="lead">3.5</span> Kartica naloga — vođenje posla</h3>
+        <p>Klikom na nalog otvara se detaljna kartica. Sve što treba za vođenje je tu.</p>
+
+        <h4>Životni ciklus (traka gore)</h4>
+        <div class="flow">
+          <span class="node">Na čekanju</span><span class="arw">→</span>
+          <span class="node on">▶ Pokreni nalog</span><span class="arw">→</span>
+          <span class="node">U toku</span><span class="arw">→</span>
+          <span class="node">✓ Završi nalog</span><span class="arw">→</span>
+          <span class="node">Završeno</span>
+        </div>
+        <ul class="plain">
+          <li><span class="ui accent">▶ Pokreni nalog</span> — postavlja nalog u „U toku“, dodjeljuje početak i knjiži prisutne radnike.</li>
+          <li><span class="ui">⏸ Pauza</span> / <span class="ui">▶ Nastavi</span> — pauzira cijeli nalog (dnevnice ne teku dok je pauziran).</li>
+          <li><span class="ui green">✓ Završi nalog</span> — završava cijeli nalog (sve stavke → Završeno).</li>
+        </ul>
+
+        <h4>Metrike (traka pilova)</h4>
+        <ul class="plain">
+          <li><b>Rok</b> — datum + odbrojavanje (crveno = kasni). Klik = izmjena roka.</li>
+          <li><b>Ostaje / Profit</b> — koliko ostaje (za montažu: „Trošak montaže“).</li>
+          <li><b>Radni dani</b> — potrošeno / planirano (živ signal erozije profita).</li>
+          <li><b>Procesi</b> — napredak npr. 3/5 (samo informacija — vidi 2.4).</li>
+        </ul>
+
+        <h4>Tabovi</h4>
+        <ul class="plain">
+          <li><b>Tok proizvodnje</b> — tabla procesa + lista proizvoda.</li>
+          <li><b>Knjiga rada</b> — knjiženje dnevnica (rad).</li>
+        </ul>
+        <div class="callout tip">Za nalog s <b>jednim</b> proizvodom, statusom upravljaš samo preko naloga (gore). Per-proizvod kontrole (Čeka/U toku/Završeno + Pauza) pojavljuju se tek kad nalog ima <b>2+ proizvoda</b>.</div>
+      </div>
+
+      <div class="card js-search" id="knjiga-rada">
+        <h3><span class="lead">3.6</span> Knjiga rada (dnevnice)</h3>
+        <p>Ovo je <b>jedino mjesto</b> za unos i izmjenu radnih dana (dnevnica) na nalogu. Odavde dolazi trošak rada i profit.</p>
+        <ul class="check">
+          <li><b>Dodaj dan</b> — dodaj jedan radni dan i uredi radnike.</li>
+          <li><b>Popuni raspon</b> — popuni više dana odjednom (Od–Do, uz „Preskoči vikende“).</li>
+          <li><b>Zadati radnici</b> — automatski ubaci dodijeljene radnike za taj dan.</li>
+          <li><b>½ / 1</b> — pola ili puni dan po radniku; odaberi na koje proizvode ide dnevnica.</li>
+        </ul>
+        <div class="callout info">„Detalji proizvoda (cijena, materijal, rad)“ na kartici su <b>samo pregled</b> — uređivanje dnevnica ide isključivo kroz Knjigu rada. Dnevnice se najčešće knjiže i automatski iz <b>šihtarice</b> (prisustvo radnika).</div>
+      </div>
+    </section>
+
+    <!-- ============ 4. PRIMJERI ============ -->
+    <section class="doc-section" id="primjeri">
+      <div class="sec-head"><div class="num">4</div><div><h2>Primjeri (case study)</h2><p>Kompletan tok na četiri tipične situacije. Idi kroz korake dugmadima.</p></div></div>
+
+      <!-- A: Kuhinja -->
+      <div class="js-search">
+      <div class="stepper" data-stepper>
+        <div class="stepper-head">
+          <div class="ico" style="background:var(--accent-l)">🍳</div>
+          <div><h3>A · Proizvodni nalog — Kuhinja</h3><div class="sub">Od proizvoda i materijala, preko naloga, do završetka i profita</div></div>
+        </div>
+        <div class="progress"><div class="bar"></div></div>
+        <div class="steps-wrap">
+          <div class="step"><span class="tag-step">Priprema</span><h4>1. Napravi proizvod</h4>
+            <p>Projekti → projekat „Dženan – Kuhinja“ → <span class="ui accent">＋ Novi Proizvod</span>. Naziv „Poz 1 - Kuhinja“, dimenzije, Količina 1 → <span class="ui">Sačuvaj</span>.</p></div>
+          <div class="step"><span class="tag-step">Priprema</span><h4>2. Dodaj materijale</h4>
+            <p><span class="ui">Dodaj materijal</span> → iveral, kant traka, okovi… unesi količine i cijene. Trošak materijala se sam sabere. Ključne stavke označi kao <b>Esencijalni materijal</b>.</p></div>
+          <div class="step"><span class="tag-step">Cijena</span><h4>3. Ponuda i cijena</h4>
+            <p>U <b>Ponude</b> dodaj proizvod, postavi prodajnu cijenu/maržu i dodatke (npr. LED). Kad klijent prihvati → ponuda <b>Prihvaćeno</b>.</p></div>
+          <div class="step"><span class="tag-step">Nalog</span><h4>4. Kreiraj nalog</h4>
+            <p>Proizvodnja → <span class="ui accent">＋ Novi nalog</span> → odaberi „Poz 1 - Kuhinja“. Dodijeli glavnog radnika i pomoćnike po procesima, potvrdi <b>Rok</b> (auto-prijedlog iz planiranih dana) → <b>Kreiraj</b>.</p></div>
+          <div class="step"><span class="tag-step">Rad</span><h4>5. Pokreni nalog</h4>
+            <p>Otvori karticu naloga → <span class="ui accent">▶ Pokreni nalog</span>. Status prelazi u <span class="pill prog">U toku</span>. Prisutni radnici se knjiže automatski.</p></div>
+          <div class="step"><span class="tag-step">Rad</span><h4>6. Prati procese</h4>
+            <p>Tab <b>Tok proizvodnje</b> → tabla procesa. Kako se posao odvija, <span class="ui green">✓ Završi za odabrane</span> za Rezanje, pa Kantiranje, Farbanje… Napredak raste (npr. 3/5). <b>Status naloga ostaje U toku</b> — to je u redu.</p></div>
+          <div class="step"><span class="tag-step">Rad</span><h4>7. Knjiži dnevnice</h4>
+            <p>Ako se ne knjiži automatski iz šihtarice, u tabu <b>Knjiga rada</b> koristi <b>Dodaj dan</b> ili <b>Popuni raspon</b>. Metrika <b>Radni dani</b> pokazuje potrošeno/planirano.</p></div>
+          <div class="step"><span class="tag-step">Kraj</span><h4>8. Završi i pročitaj profit</h4>
+            <p>Kad je sve gotovo → <span class="ui green">✓ Završi nalog</span>. Status <span class="pill done">Završeno</span>. Metrika <b>Ostaje</b> pokazuje profit (prodajna cijena − materijal − rad − usluge − transport).</p></div>
+        </div>
+        <div class="stepper-foot">
+          <div class="step-counter">Korak 1 / 8</div>
+          <div class="step-btns"><button class="step-prev" disabled>← Nazad</button><button class="step-next primary">Naprijed →</button></div>
+        </div>
+      </div>
+      </div>
+
+      <!-- B: Montaža -->
+      <div class="js-search">
+      <div class="stepper" data-stepper>
+        <div class="stepper-head">
+          <div class="ico" style="background:var(--teal-l)">🔧</div>
+          <div><h3>B · Montaža kod klijenta</h3><div class="sub">Trošak samo rad — bez cijene proizvoda</div></div>
+        </div>
+        <div class="progress"><div class="bar"></div></div>
+        <div class="steps-wrap">
+          <div class="step"><span class="tag-step">Uslov</span><h4>1. Proizvod mora biti spreman</h4>
+            <p>Montaža je moguća tek kad je proizvod iz proizvodnje <span class="pill done">Spremno</span>.</p></div>
+          <div class="step"><span class="tag-step">Nalog</span><h4>2. Kreiraj montažni nalog</h4>
+            <p>Proizvodnja → <span class="ui teal">🔧 Montaža</span> → <b>Proizvodi</b>: odaberi spremne proizvode.</p></div>
+          <div class="step"><span class="tag-step">Procesi</span><h4>3. Procesi montaže</h4>
+            <p>Korak <b>Procesi</b>: Transport → Montaža → Čišćenje → Primopredaja (prilagodi po potrebi).</p></div>
+          <div class="step"><span class="tag-step">Dodjela</span><h4>4. Radnici i rok</h4>
+            <p>Korak <b>Dodjela</b>: dodijeli montažere i rok → <b>Kreiraj</b>. Nalog nosi oznaku <span class="ui teal">🔧 Montaža</span>.</p></div>
+          <div class="step"><span class="tag-step">Rad</span><h4>5. Vodi i završi</h4>
+            <p><span class="ui accent">▶ Pokreni nalog</span>, prati procese/dnevnice, pa <span class="ui green">✓ Završi nalog</span>. Metrika pokazuje <b>Trošak montaže</b> (samo rad), ne profit.</p></div>
+        </div>
+        <div class="stepper-foot">
+          <div class="step-counter">Korak 1 / 5</div>
+          <div class="step-btns"><button class="step-prev" disabled>← Nazad</button><button class="step-next primary">Naprijed →</button></div>
+        </div>
+      </div>
+      </div>
+
+      <!-- C: Razni poslovi -->
+      <div class="js-search">
+      <div class="stepper" data-stepper>
+        <div class="stepper-head">
+          <div class="ico" style="background:var(--purple-l)">☑️</div>
+          <div><h3>C · Razni poslovi</h3><div class="sub">Zadatak van kataloga — povezan ili samostalan</div></div>
+        </div>
+        <div class="progress"><div class="bar"></div></div>
+        <div class="steps-wrap">
+          <div class="step"><span class="tag-step">Nalog</span><h4>1. Otvori „Razni poslovi“</h4>
+            <p>Proizvodnja → <span class="ui purple">☑ Razni poslovi</span>. Upiši <b>Naziv zadatka</b>, npr. „Izrada paleta“.</p></div>
+          <div class="step"><span class="tag-step">Radnik</span><h4>2. Dodijeli radnika</h4>
+            <p>Izaberi <b>Radnika</b> — bez radnika se nalog ne može pokrenuti.</p></div>
+          <div class="step"><span class="tag-step">Veza</span><h4>3. Poveži s proizvodom (opciono)</h4>
+            <p>Ako je posao za konkretan proizvod → <b>Poveži s proizvodom</b>: trošak rada ide tom proizvodu. Ako ne → „Bez veze — samostalan trošak“.</p></div>
+          <div class="step"><span class="tag-step">Kraj</span><h4>4. Kreiraj i vodi</h4>
+            <p><span class="ui purple">Kreiraj nalog</span>, pa <span class="ui accent">▶ Pokreni nalog</span>. Rad se knjiži u <b>Knjizi rada</b> kao i kod ostalih naloga.</p></div>
+        </div>
+        <div class="stepper-foot">
+          <div class="step-counter">Korak 1 / 4</div>
+          <div class="step-btns"><button class="step-prev" disabled>← Nazad</button><button class="step-next primary">Naprijed →</button></div>
+        </div>
+      </div>
+      </div>
+
+      <!-- D: Više proizvoda + pauza -->
+      <div class="js-search">
+      <div class="stepper" data-stepper>
+        <div class="stepper-head">
+          <div class="ico" style="background:var(--amber-l)">📚</div>
+          <div><h3>D · Više proizvoda + pauza</h3><div class="sub">Per-proizvod status i pauziranje dijela naloga</div></div>
+        </div>
+        <div class="progress"><div class="bar"></div></div>
+        <div class="steps-wrap">
+          <div class="step"><span class="tag-step">Nalog</span><h4>1. Nalog s 2+ proizvoda</h4>
+            <p>U <span class="ui accent">＋ Novi nalog</span> odaberi npr. „Poz 1 - Ormar“ i „Poz 2 - Komoda“. Kreiraj i <span class="ui accent">▶ Pokreni nalog</span>.</p></div>
+          <div class="step"><span class="tag-step">Kontrole</span><h4>2. Per-proizvod kontrole</h4>
+            <p>Jer nalog ima 2+ proizvoda, svaki proizvod dobije svoj mali prekidač <span class="pill wait">Čeka</span> · <span class="pill prog">U toku</span> · <span class="pill done">Završeno</span> i dugme <b>Pauza</b>.</p></div>
+          <div class="step"><span class="tag-step">Pauza</span><h4>3. Pauziraj samo jedan proizvod</h4>
+            <p>Ako čekaš materijal za „Poz 2 - Komoda“, klikni <b>Pauza</b> na toj stavci — dnevnice za nju ne teku, a „Poz 1 - Ormar“ ide dalje normalno.</p></div>
+          <div class="step"><span class="tag-step">Nastavak</span><h4>4. Nastavi i završavaj pojedinačno</h4>
+            <p>Kad materijal stigne → <b>Nastavi</b>. Gotove stavke stavi na <span class="pill done">Završeno</span>. Cijeli nalog pauziraš/završavaš i gore preko <span class="ui">⏸ Pauza</span> / <span class="ui green">✓ Završi nalog</span>.</p></div>
+          <div class="step"><span class="tag-step">Kraj</span><h4>5. Završetak naloga</h4>
+            <p>Kad su svi proizvodi gotovi, <span class="ui green">✓ Završi nalog</span> zatvara cijeli nalog. Profit se čita iz metrike <b>Ostaje</b>.</p></div>
+        </div>
+        <div class="stepper-foot">
+          <div class="step-counter">Korak 1 / 5</div>
+          <div class="step-btns"><button class="step-prev" disabled>← Nazad</button><button class="step-next primary">Naprijed →</button></div>
+        </div>
+      </div>
+      </div>
+    </section>
+
+    <!-- ============ 5. RJEČNIK ============ -->
+    <section class="doc-section" id="rjecnik">
+      <div class="sec-head"><div class="num">5</div><div><h2>Rječnik i brzi podsjetnik</h2><p>Pojmovi, statusi i boje na jednom mjestu.</p></div></div>
+
+      <div class="card js-search">
+        <h3>Pojmovi</h3>
+        <table class="tbl">
+          <tr><th>Pojam</th><th>Značenje</th></tr>
+          <tr><td><b>Projekat</b></td><td>Klijent / posao (npr. „Ferid – Nova Vogošća“).</td></tr>
+          <tr><td><b>Proizvod / Pozicija (Poz)</b></td><td>Jedna stavka projekta (Poz 1, Poz 2…).</td></tr>
+          <tr><td><b>Ponuda</b></td><td>Cijena prema klijentu; prihvaćena ponuda hrani profit.</td></tr>
+          <tr><td><b>Nalog</b></td><td>Radni nalog za proizvodnju / montažu / razne poslove.</td></tr>
+          <tr><td><b>Proces</b></td><td>Korak proizvodnje (Rezanje, Kantiranje…). Čist napredak.</td></tr>
+          <tr><td><b>Dnevnica</b></td><td>Radni dan radnika; izvor troška rada i profita (Knjiga rada / šihtarica).</td></tr>
+          <tr><td><b>Šihtarica</b></td><td>Evidencija prisustva radnika; automatski knjiži dnevnice na aktivne naloge.</td></tr>
+          <tr><td><b>Esencijalni materijal</b></td><td>Bez njega (Primljeno/Na stanju) nalog se ne može pokrenuti.</td></tr>
+        </table>
+      </div>
+
+      <div class="card js-search">
+        <h3>Statusi i boje</h3>
+        <p><b>Status naloga / proizvoda:</b>
+          <span class="pill wait">Na čekanju</span>
+          <span class="pill prog">U toku</span>
+          <span class="pill done">Završeno</span>
+          <span class="pill defer">Odloženo</span>
+        </p>
+        <p><b>Status materijala:</b>
+          <span class="pill wait">Nije naručeno</span>
+          <span class="pill prog">Naručeno</span>
+          <span class="pill done">Primljeno / Na stanju</span>
+        </p>
+        <p><b>Tipovi naloga:</b>
+          <span class="ui accent">Proizvodnja</span>
+          <span class="ui teal">Montaža</span>
+          <span class="ui purple">Razni poslovi</span>
+        </p>
+      </div>
+
+      <div class="card js-search">
+        <h3>Brzi podsjetnik (cheat-sheet)</h3>
+        <ul class="check">
+          <li><b>Proizvod</b> se pravi u Projekti tabu; cijena dolazi iz <b>Ponude</b>.</li>
+          <li><b>Nalog</b> pokrećeš, pauziraš i završavaš dugmadima <b>gore</b> na kartici.</li>
+          <li><b>Procesi</b> = napredak; <b>ne</b> mijenjaju status ni profit.</li>
+          <li><b>Rad/profit</b> = <b>Knjiga rada</b> / šihtarica (dnevnice).</li>
+          <li><b>Per-proizvod</b> kontrole vidiš samo kad nalog ima <b>2+ proizvoda</b>.</li>
+          <li><b>Montaža</b> = samo trošak rada; <b>Razni poslovi</b> = zadaci van kataloga.</li>
+        </ul>
+      </div>
+
+      <div class="card js-search">
+        <h3>Česta pitanja</h3>
+        <details class="faq"><summary>Završio sam sve procese, zašto nalog nije „Završeno“?</summary><div class="faq-body">Namjerno. Procesi su samo napredak. Nalog završavaš dugmetom <b>✓ Završi nalog</b> gore na kartici.</div></details>
+        <details class="faq"><summary>Gdje uređujem radne dane / dnevnice?</summary><div class="faq-body">U tabu <b>Knjiga rada</b> na kartici naloga. „Detalji proizvoda“ su samo pregled.</div></details>
+        <details class="faq"><summary>Ne vidim prekidače Čeka/U toku/Završeno na proizvodu.</summary><div class="faq-body">Prikazuju se tek kad nalog ima 2+ proizvoda. Za jedan proizvod status vodiš preko cijelog naloga (gore).</div></details>
+        <details class="faq"><summary>Ne mogu pokrenuti nalog.</summary><div class="faq-body">Provjeri jesi li dodijelio radnika i jesu li <b>esencijalni materijali</b> na statusu Primljeno/Na stanju.</div></details>
+        <details class="faq"><summary>Zašto piše da profit nije tačan?</summary><div class="faq-body">Vjerovatno nema prihvaćene ponude pa prodajna cijena nije poznata, ili materijali nemaju cijenu. Unesi cijenu i provjeri materijale.</div></details>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<footer class="foot">
+  Priručnik za korištenje — Proizvodi, Procesi i Proizvodnja. Odražava trenutno stanje aplikacije (redizajn toka naloga: procesi odspojeni od statusa; akcije Pokreni / Pauza / Završi).
+</footer>
+
+<button class="toTop" id="toTop" aria-label="Nazad na vrh">↑</button>
+
+<script>
+(function(){
+  // ---- Mobile nav ----
+  var sidebar = document.getElementById('sidebar');
+  var navToggle = document.getElementById('navToggle');
+  if(navToggle){ navToggle.addEventListener('click', function(){ sidebar.classList.toggle('open'); }); }
+  document.querySelectorAll('.toc a').forEach(function(a){
+    a.addEventListener('click', function(){ if(window.innerWidth<=900) sidebar.classList.remove('open'); });
+  });
+
+  // ---- Scrollspy ----
+  var tocLinks = {};
+  document.querySelectorAll('.toc a').forEach(function(a){
+    var id = a.getAttribute('href').slice(1);
+    if(!tocLinks[id]) tocLinks[id]=[];
+    tocLinks[id].push(a);
+  });
+  var sections = [].slice.call(document.querySelectorAll('.doc-section'));
+  if('IntersectionObserver' in window){
+    var obs = new IntersectionObserver(function(entries){
+      entries.forEach(function(e){
+        if(e.isIntersecting){
+          document.querySelectorAll('.toc a.active').forEach(function(x){x.classList.remove('active');});
+          (tocLinks[e.target.id]||[]).forEach(function(x){x.classList.add('active');});
+        }
+      });
+    }, {rootMargin:'-42% 0px -50% 0px', threshold:0});
+    sections.forEach(function(s){ obs.observe(s); });
+  }
+
+  // ---- Search / filter ----
+  var search = document.getElementById('search');
+  var items = [].slice.call(document.querySelectorAll('.js-search'));
+  var noRes = document.getElementById('noResults');
+  function runSearch(){
+    var q = search.value.trim().toLowerCase();
+    if(!q){
+      items.forEach(function(i){ i.classList.remove('hide'); });
+      document.querySelectorAll('.doc-section').forEach(function(s){ s.classList.remove('hide'); });
+      noRes.classList.remove('show');
+      return;
+    }
+    var any=false;
+    items.forEach(function(i){
+      var match = i.textContent.toLowerCase().indexOf(q) !== -1;
+      i.classList.toggle('hide', !match);
+      if(match) any=true;
+    });
+    document.querySelectorAll('.doc-section').forEach(function(s){
+      var visible = s.querySelector('.js-search:not(.hide)');
+      // keep section visible if its own heading matches too
+      var headMatch = s.querySelector('.sec-head') && s.querySelector('.sec-head').textContent.toLowerCase().indexOf(q)!==-1;
+      s.classList.toggle('hide', !visible && !headMatch);
+    });
+    noRes.classList.toggle('show', !any);
+  }
+  if(search){ search.addEventListener('input', runSearch); }
+
+  // ---- Steppers ----
+  document.querySelectorAll('[data-stepper]').forEach(function(st){
+    var steps = [].slice.call(st.querySelectorAll('.step'));
+    var counter = st.querySelector('.step-counter');
+    var bar = st.querySelector('.progress .bar');
+    var prev = st.querySelector('.step-prev');
+    var next = st.querySelector('.step-next');
+    var idx = 0;
+    function render(){
+      steps.forEach(function(s,i){ s.classList.toggle('active', i===idx); });
+      counter.textContent = 'Korak ' + (idx+1) + ' / ' + steps.length;
+      bar.style.width = ((idx+1)/steps.length*100) + '%';
+      prev.disabled = idx===0;
+      next.disabled = idx===steps.length-1;
+    }
+    prev.addEventListener('click', function(){ if(idx>0){ idx--; render(); } });
+    next.addEventListener('click', function(){ if(idx<steps.length-1){ idx++; render(); } });
+    render();
+  });
+
+  // ---- Back to top ----
+  var toTop = document.getElementById('toTop');
+  window.addEventListener('scroll', function(){ toTop.classList.toggle('show', window.scrollY>500); });
+  toTop.addEventListener('click', function(){ window.scrollTo({top:0, behavior:'smooth'}); });
+})();
+</script>
+</body>
+</html>

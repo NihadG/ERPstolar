@@ -23,7 +23,8 @@ interface ProcessGraphModalProps {
         Product_Name: string;
         // ItemProcessChecklist zapisi — čvor grafa postaje "završeno" kad svi pokriveni
         // proizvodi imaju istoimeni proces označen završenim (veza po nazivu procesa)
-        Processes?: { Process_Name: string; Status?: string; Completed_At?: string }[];
+        // Worker_Name/Helpers = KO je završio (prikaz u čvoru/listi, ne samo iz dnevnika)
+        Processes?: { Process_Name: string; Status?: string; Completed_At?: string; Worker_Name?: string; Helpers?: { Worker_Name: string }[] }[];
         // Fazni plan stavke (snapshot pri kreiranju) — izvor za "Sinhronizuj iz proizvoda"
         Process_Stages?: { processes: string[] }[];
     }[];
@@ -41,7 +42,8 @@ const fmt = (iso: string) => iso ? `${iso.slice(8, 10)}.${iso.slice(5, 7)}.` : '
 const GraphCtx = createContext<{
     itemName: (id: string) => string;
     status: (nodeId: string, itemIds: string[], name?: string) => { color: string; label: string };
-}>({ itemName: () => '', status: () => ({ color: 'var(--text-tertiary)', label: 'čeka' }) });
+    completers: (itemIds: string[], name?: string) => string[];
+}>({ itemName: () => '', status: () => ({ color: 'var(--text-tertiary)', label: 'čeka' }), completers: () => [] });
 
 const badge: React.CSSProperties = { fontSize: 10, padding: '1px 6px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-light)', color: 'var(--accent)', background: 'var(--accent-light)', whiteSpace: 'nowrap' };
 const badgeAll: React.CSSProperties = { ...badge, border: '1px dashed var(--border)', color: 'var(--text-secondary)', background: 'transparent' };
@@ -50,6 +52,7 @@ function ProcessRFNode({ id, data, selected }: NodeProps) {
     const ctx = useContext(GraphCtx);
     const d = data as ProcData;
     const st = ctx.status(id, d.itemIds || [], d.name);
+    const done = ctx.completers(d.itemIds || [], d.name);
     return (
         <div style={{
             width: NODE_W, minHeight: NODE_H, background: 'var(--background)',
@@ -61,6 +64,11 @@ function ProcessRFNode({ id, data, selected }: NodeProps) {
             <div style={{ padding: '8px 10px' }}>
                 <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)', lineHeight: 1.2 }}>{d.name || 'Proces'}</div>
                 <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginTop: 2 }}>{st.label}</div>
+                {done.length > 0 && (
+                    <div style={{ fontSize: 10, color: 'var(--success)', marginTop: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        ✓ {done.slice(0, 2).join(', ')}{done.length > 2 ? ` +${done.length - 2}` : ''}
+                    </div>
+                )}
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 3, marginTop: 6 }}>
                     {(d.itemIds || []).length === 0
                         ? <span style={badgeAll}>svi proizvodi</span>
@@ -112,14 +120,42 @@ export default function ProcessGraphModal({
         return { color: 'var(--accent)', label: start === end ? fmt(start) : `${fmt(start)} – ${fmt(end)}` };
     }, [workLogs, items]);
 
-    const ctxValue = useMemo(() => ({ itemName, status }), [itemName, status]);
+    // KO je završio proces (iz checkliste — Worker_Name + Helpers pokrivenih stavki), veza po nazivu
+    const completers = useCallback((nodeItemIds: string[], name?: string): string[] => {
+        if (!name) return [];
+        const nk = name.trim().toLowerCase();
+        const covered = nodeItemIds.length > 0 ? items.filter(i => nodeItemIds.includes(i.ID)) : items;
+        const set = new Set<string>();
+        covered.forEach(i => {
+            const p = i.Processes?.find(pp => (pp.Process_Name || '').trim().toLowerCase() === nk);
+            if (p && p.Status === 'Završeno') {
+                if (p.Worker_Name) set.add(p.Worker_Name);
+                (p.Helpers || []).forEach(h => h?.Worker_Name && set.add(h.Worker_Name));
+            }
+        });
+        return Array.from(set);
+    }, [items]);
+
+    const ctxValue = useMemo(() => ({ itemName, status, completers }), [itemName, status, completers]);
 
     // Učitaj graf
     useEffect(() => {
         let cancelled = false;
         (async () => {
             setLoading(true);
-            const g = await getProcessGraph(workOrderId, organizationId);
+            let g = await getProcessGraph(workOrderId, organizationId);
+            if (cancelled) return;
+            // Auto-sinteza kad je perzistirani graf prazan → nikad prazan prikaz.
+            // (Ne snima se automatski; "Spremi" ili "Sinhronizuj" za trajno.)
+            if (!g.nodes || g.nodes.length === 0) {
+                const { synthesizeOrderGraph, planToStages } = await import('@/lib/productProcesses');
+                const planItems = items.map(i => ({
+                    itemId: i.ID,
+                    stages: planToStages(i.Process_Stages, (i.Processes || []).map(p => p.Process_Name).filter(Boolean) as string[]),
+                })).filter(pi => pi.stages.length > 0);
+                const synth = synthesizeOrderGraph(planItems);
+                if (synth.graph.nodes.length > 0) g = synth.graph;
+            }
             if (cancelled) return;
             const needLayout = g.nodes.length > 0 && g.nodes.every(n => !n.position);
             const pos = needLayout ? layoutProcessGraph(g.nodes, g.edges) : {};
@@ -255,12 +291,15 @@ export default function ProcessGraphModal({
         const byWorker = new Map<string, number>();
         nodeLogs.forEach(l => byWorker.set(l.Worker_Name, (byWorker.get(l.Worker_Name) || 0) + (l.Day_Fraction ?? 1)));
         const fmtD = (x: number) => (Number.isInteger(x) ? String(x) : x.toFixed(1));
-        const workersStr = Array.from(byWorker.entries())
-            .sort((a, b) => b[1] - a[1])
-            .map(([w, days]) => `${w} (${fmtD(days)}d)`)
-            .join(', ') || '—';
+        // Radnici iz dnevnika (s danima) + završioci s checkliste (bez dana) koji nisu u dnevniku
+        const doneNames = completers(d.itemIds || [], d.name);
+        const extra = doneNames.filter(w => !byWorker.has(w));
+        const workersStr = [
+            ...Array.from(byWorker.entries()).sort((a, b) => b[1] - a[1]).map(([w, days]) => `${w} (${fmtD(days)}d)`),
+            ...extra,
+        ].join(', ') || '—';
         return { id: n.id, name: d.name || 'Proces', preds: preds.join(', ') || '—', prods, status: st.label, workers: workersStr };
-    }), [nodes, edges, status, itemName, workLogs]);
+    }), [nodes, edges, status, itemName, workLogs, completers]);
 
     const btn: React.CSSProperties = { display: 'inline-flex', alignItems: 'center', gap: 6, padding: '8px 14px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-light)', background: 'var(--background)', fontSize: 13, fontWeight: 600, cursor: 'pointer', color: 'var(--text-primary)', transition: 'var(--transition)' };
     const tab: React.CSSProperties = { display: 'inline-flex', alignItems: 'center', gap: 5, padding: '5px 10px', borderRadius: 6, border: 'none', background: 'transparent', fontSize: 13, fontWeight: 600, cursor: 'pointer', color: 'var(--text-secondary)' };

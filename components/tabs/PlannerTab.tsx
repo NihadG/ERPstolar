@@ -6,6 +6,7 @@ import { DragDropContext, Droppable, Draggable, DropResult } from '@hello-pangea
 import type { WorkOrder, Worker, WorkOrderItem, WorkerConflict, WorkLog } from '@/lib/types';
 import { scheduleWorkOrder, unscheduleWorkOrder, startWorkOrder, checkWorkerConflicts, rescheduleWorkOrder, updateDueDate, updatePlannedStartDate, getAllAttendanceByMonth } from '@/lib/services';
 import { weeklyCapacity, plannedVsActualDays, todayISO, type AttendanceLite, type CapacityOrderInput } from '@/lib/planning';
+import { buildWorkTimeline, type WorkTimelineDay, type WorkDayType, type PausePeriodLite } from '@/lib/workOrderTimeline';
 import { useAuth } from '@/context/AuthContext';
 import {
     ChevronLeft,
@@ -37,12 +38,14 @@ interface PlannerTabProps {
     showToast: (message: string, type: 'success' | 'error' | 'info') => void;
 }
 
-// Status-based colors
-const STATUS_COLORS = {
-    scheduled: '#0071e3',   // Blue - Planned/Scheduled
-    inProgress: '#34c759', // Green - In production
-    paused: '#ff9500',     // Orange - Paused
-    completed: '#86868b'   // Gray - Completed
+// Status-based colors — vezano na app dizajn-tokene (globals.css) radi konzistentnosti
+type StatusKey = 'scheduled' | 'inProgress' | 'paused' | 'completed';
+
+const STATUS_COLORS: Record<StatusKey, string> = {
+    scheduled: 'var(--accent)',    // Plava - Planirano/Zakazano
+    inProgress: 'var(--success)',  // Zelena - U proizvodnji
+    paused: 'var(--warning)',      // Narandžasta - Pauzirano
+    completed: 'var(--text-secondary)' // Siva - Završeno
 };
 
 const formatDateKey = (d: Date) => d.toISOString().split('T')[0];
@@ -87,14 +90,14 @@ const isItemFullyPaused = (item: WorkOrderItem): boolean => {
     return item.Is_Paused === true;
 };
 
-// Get status color for work order
-const getStatusColor = (wo: WorkOrder): string => {
+// Status key za nalog — jedan izvor istine za boju/labelu/CSS klasu bara
+const getStatusKey = (wo: WorkOrder): StatusKey => {
     const items = wo.items || [];
     if (items.length === 0) {
         // No items - use WO-level status
-        if (wo.Status === 'Završeno') return STATUS_COLORS.completed;
-        if (wo.Status === 'U toku') return STATUS_COLORS.inProgress;
-        return STATUS_COLORS.scheduled;
+        if (wo.Status === 'Završeno') return 'completed';
+        if (wo.Status === 'U toku') return 'inProgress';
+        return 'scheduled';
     }
 
     // Check if ALL items are fully paused (WO is paused)
@@ -104,30 +107,24 @@ const getStatusColor = (wo: WorkOrder): string => {
     // Check if WO is completed
     const allCompleted = items.every(item => item.Status === 'Završeno');
 
-    if (wo.Status === 'Završeno' || allCompleted) return STATUS_COLORS.completed;
-    if (allPaused && wo.Status !== 'Na čekanju') return STATUS_COLORS.paused;
-    if (anyActive || wo.Status === 'U toku') return STATUS_COLORS.inProgress;
-    return STATUS_COLORS.scheduled;
+    if (wo.Status === 'Završeno' || allCompleted) return 'completed';
+    if (allPaused && wo.Status !== 'Na čekanju') return 'paused';
+    if (anyActive || wo.Status === 'U toku') return 'inProgress';
+    return 'scheduled';
 };
+
+const STATUS_META: Record<StatusKey, { text: string; icon: typeof Clock }> = {
+    scheduled: { text: 'Zakazano', icon: Clock },
+    inProgress: { text: 'U toku', icon: Play },
+    paused: { text: 'Pauzirano', icon: Pause },
+    completed: { text: 'Završeno', icon: CheckCircle },
+};
+
+// Get status color for work order
+const getStatusColor = (wo: WorkOrder): string => STATUS_COLORS[getStatusKey(wo)];
 
 // Get status label
-const getStatusLabel = (wo: WorkOrder): { text: string; icon: typeof Clock } => {
-    const items = wo.items || [];
-    if (items.length === 0) {
-        if (wo.Status === 'Završeno') return { text: 'Završeno', icon: CheckCircle };
-        if (wo.Status === 'U toku') return { text: 'U toku', icon: Play };
-        return { text: 'Zakazano', icon: Clock };
-    }
-
-    const allPaused = items.every(item => isItemFullyPaused(item));
-    const anyActive = items.some(item => isItemActive(item));
-    const allCompleted = items.every(item => item.Status === 'Završeno');
-
-    if (wo.Status === 'Završeno' || allCompleted) return { text: 'Završeno', icon: CheckCircle };
-    if (allPaused && wo.Status !== 'Na čekanju') return { text: 'Pauzirano', icon: Pause };
-    if (anyActive || wo.Status === 'U toku') return { text: 'U toku', icon: Play };
-    return { text: 'Zakazano', icon: Clock };
-};
+const getStatusLabel = (wo: WorkOrder): { text: string; icon: typeof Clock } => STATUS_META[getStatusKey(wo)];
 
 // Get project name from work order
 const getProjectName = (wo: WorkOrder): string => {
@@ -329,38 +326,124 @@ export default function PlannerTab({ workOrders, workers, workLogs, onRefresh, s
         });
     }, [workers, workerOrders]);
 
-    const getBarPosition = (wo: WorkOrder): { left: number; width: number; plannedWidth?: number; isOverdue?: boolean } | null => {
-        if (!wo.Planned_Start_Date) return null;
+    // ── Traka po danu: prošli dani prema DNEVNIKU RADA (buildWorkTimeline), budući dani
+    // projicirani do ROKA (Due_Date). Indeksi rade po (radnik × nalog) paru jer isti nalog
+    // može imati različitu "priču" za svakog dodijeljenog radnika (ko je kad radio/pauzirao).
+    const logsByWorkerOrder = useMemo(() => {
+        const m = new Map<string, WorkLog[]>();
+        workLogs.forEach(l => {
+            if (!l.Worker_ID || !l.Work_Order_ID) return;
+            const key = `${l.Worker_ID}::${l.Work_Order_ID}`;
+            if (!m.has(key)) m.set(key, []);
+            m.get(key)!.push(l);
+        });
+        return m;
+    }, [workLogs]);
 
-        const oStart = new Date(wo.Planned_Start_Date);
-        let oEnd = wo.Planned_End_Date ? new Date(wo.Planned_End_Date) : oStart;
-        oStart.setHours(0, 0, 0, 0);
-        oEnd.setHours(0, 0, 0, 0);
+    const pausePeriodsByWO = useMemo(() => {
+        const m = new Map<string, PausePeriodLite[]>();
+        workOrders.forEach(wo => {
+            const periods: PausePeriodLite[] = [];
+            (wo.items || []).forEach(item => {
+                (item.Pause_Periods || []).forEach(p => periods.push({ Started_At: p.Started_At, Ended_At: p.Ended_At }));
+            });
+            if (periods.length > 0) m.set(wo.Work_Order_ID, periods);
+        });
+        return m;
+    }, [workOrders]);
 
-        // ADAPTIVE: For active orders past deadline, extend bar to today
+    // Timeline (dan-po-dan) po (radnik, nalog) — samo za parove koji se stvarno prikazuju.
+    const timelineByWorkerOrder = useMemo(() => {
+        const m = new Map<string, WorkTimelineDay[]>();
         const today = new Date();
-        today.setHours(0, 0, 0, 0);
-        const isOverdue = wo.Status === 'U toku' && today > oEnd;
-        const plannedEnd = new Date(oEnd);
-        if (isOverdue) {
-            oEnd = today;
-        }
+        workerOrders.forEach((orders, workerId) => {
+            orders.forEach(wo => {
+                const key = `${workerId}::${wo.Work_Order_ID}`;
+                if (m.has(key)) return;
+                const logs = logsByWorkerOrder.get(key) || [];
+                const isFinal = wo.Status === 'Završeno' || wo.Status === 'Otkazano';
+                const dueOrPlannedEnd = wo.Due_Date || wo.Planned_End_Date;
+                const days = buildWorkTimeline({
+                    logs,
+                    startedAt: wo.Started_At || wo.Planned_Start_Date,
+                    completedAt: wo.Completed_At,
+                    pausePeriods: pausePeriodsByWO.get(wo.Work_Order_ID),
+                    // Budući dani se projiciraju do ROKA (ne do stare Planned_End_Date) — samo za AKTIVNE naloge.
+                    extraDates: !isFinal && dueOrPlannedEnd ? new Set([dueOrPlannedEnd.split('T')[0]]) : undefined,
+                    today,
+                });
+                if (days.length > 0) m.set(key, days);
+            });
+        });
+        return m;
+    }, [workerOrders, logsByWorkerOrder, pausePeriodsByWO]);
 
-        const vStart = visibleDates[0];
-        const vEnd = visibleDates[visibleDates.length - 1];
+    interface BarSegment { date: string; dayType: WorkDayType }
+    interface BarLayout { left: number; width: number; segments: BarSegment[] }
 
-        if (oEnd < vStart || oStart > vEnd) return null;
+    // Visina jedne "trake" (lane) u redu radnika — bar (32px) + razmak, koristi se kad se
+    // naloge istog radnika preklapaju u vremenu (svaki preklop dobije svoj red umjesto da
+    // se crtaju jedan preko drugog).
+    const LANE_SLOT = 44;
 
-        const startDayOffset = Math.max(0, (oStart.getTime() - vStart.getTime()) / 86400000);
-        const endDayOffset = Math.min(days, (oEnd.getTime() - vStart.getTime()) / 86400000 + 1);
-        const plannedEndOffset = Math.min(days, (plannedEnd.getTime() - vStart.getTime()) / 86400000 + 1);
+    const getBarLayout = (workerId: string, wo: WorkOrder): BarLayout | null => {
+        const timeline = timelineByWorkerOrder.get(`${workerId}::${wo.Work_Order_ID}`);
+        if (!timeline || timeline.length === 0) return null;
 
-        const left = startDayOffset * cellWidth;
-        const width = (endDayOffset - startDayOffset) * cellWidth;
-        const plannedWidth = isOverdue ? (plannedEndOffset - startDayOffset) * cellWidth : undefined;
+        const dayMap = new Map(timeline.map(d => [d.date, d]));
 
+        const segments: BarSegment[] = [];
+        let firstIdx = -1, lastIdx = -1;
+        visibleDates.forEach((d, idx) => {
+            const key = formatDateKey(d);
+            const day = dayMap.get(key);
+            if (!day) return;
+            if (firstIdx === -1) firstIdx = idx;
+            lastIdx = idx;
+            segments.push({ date: key, dayType: day.dayType });
+        });
+        if (firstIdx === -1) return null;
+
+        const left = firstIdx * cellWidth;
+        const width = (lastIdx - firstIdx + 1) * cellWidth;
         if (width <= 0) return null;
-        return { left, width, plannedWidth, isOverdue };
+        return { left, width, segments };
+    };
+
+    // Boje NAMJERNO ne koriste plavu (to je već "Zakazano" u legendi statusa gore) da se
+    // značenja ne miješaju. Radio = zeleno (isto kao "U toku"), pauza = narandžasto (isto
+    // kao legenda "Pauzirano"), planirano/do roka = neutralno sivo ("duh" traka).
+    // Stil je definisan u CSS-u (klase) radi lakše kontrole gradijenata/tekstura.
+    const DAY_ZONE_CLASS: Record<WorkDayType, string> = {
+        working: 'zone-working',
+        paused: 'zone-paused',
+        future: 'zone-future',
+        weekend: 'zone-empty',
+        holiday: 'zone-empty',
+        no_work: 'zone-empty',
+    };
+
+    const DAY_TYPE_LABEL: Record<WorkDayType, string> = {
+        working: 'radio',
+        paused: 'pauzirano',
+        future: 'planirano (do roka)',
+        weekend: 'vikend',
+        holiday: 'praznik',
+        no_work: 'nema zapisa',
+    };
+
+    // Spoji uzastopne dane ISTOG tipa u jednu zonu — bez ovoga bi svaki dan bio zaseban div
+    // sa vlastitim šrafiranim uzorkom, pa bi npr. 3 uzastopna pauzirana dana izgledala kao
+    // 3 vidljivo razdvojena "šahovska" polja umjesto jedne čitljive pauzirane trake.
+    interface BarZone { dayType: WorkDayType; days: number }
+    const toZones = (segments: BarSegment[]): BarZone[] => {
+        const zones: BarZone[] = [];
+        for (const seg of segments) {
+            const last = zones[zones.length - 1];
+            if (last && last.dayType === seg.dayType) last.days++;
+            else zones.push({ dayType: seg.dayType, days: 1 });
+        }
+        return zones;
     };
 
     // Navigation
@@ -581,12 +664,24 @@ export default function PlannerTab({ workOrders, workers, workLogs, onRefresh, s
             {/* Header */}
             <div className="planner-header">
                 <div className="planner-title">
-                    <Calendar size={20} />
-                    <h1>Planer</h1>
-                    <div className="status-legend">
-                        <span className="legend-item"><span className="dot" style={{ background: STATUS_COLORS.scheduled }}></span> Zakazano</span>
-                        <span className="legend-item"><span className="dot" style={{ background: STATUS_COLORS.inProgress }}></span> U toku</span>
-                        <span className="legend-item"><span className="dot" style={{ background: STATUS_COLORS.paused }}></span> Pauzirano</span>
+                    <span className="planner-icon-badge"><Calendar size={18} /></span>
+                    <div className="planner-title-text">
+                        <h1>Planer</h1>
+                        <div className="status-legend">
+                            <div className="legend-group">
+                                <span className="legend-group-label">Nalog</span>
+                                <span className="legend-chip"><span className="dot" style={{ background: STATUS_COLORS.scheduled }} />Zakazano</span>
+                                <span className="legend-chip"><span className="dot" style={{ background: STATUS_COLORS.inProgress }} />U toku</span>
+                                <span className="legend-chip"><span className="dot" style={{ background: STATUS_COLORS.paused }} />Pauzirano</span>
+                            </div>
+                            <div className="legend-sep" />
+                            <div className="legend-group">
+                                <span className="legend-group-label">Dani</span>
+                                <span className="legend-chip"><span className="dot zone-working" />Radio</span>
+                                <span className="legend-chip"><span className="dot zone-paused" />Pauza</span>
+                                <span className="legend-chip"><span className="dot zone-future" />Planirano</span>
+                            </div>
+                        </div>
                     </div>
                 </div>
 
@@ -602,9 +697,9 @@ export default function PlannerTab({ workOrders, workers, workLogs, onRefresh, s
                     </span>
 
                     <div className="zoom-group">
-                        <button onClick={() => setDays(Math.max(7, days - 7))} disabled={days <= 7}><ZoomIn size={16} /></button>
+                        <button onClick={() => setDays(Math.max(7, days - 7))} disabled={days <= 7} title="Uže"><ZoomIn size={16} /></button>
                         <span>{days}d</span>
-                        <button onClick={() => setDays(Math.min(28, days + 7))} disabled={days >= 28}><ZoomOut size={16} /></button>
+                        <button onClick={() => setDays(Math.min(28, days + 7))} disabled={days >= 28} title="Šire"><ZoomOut size={16} /></button>
                     </div>
                 </div>
             </div>
@@ -612,17 +707,21 @@ export default function PlannerTab({ workOrders, workers, workLogs, onRefresh, s
             {/* Backlog */}
             <div className="planner-backlog">
                 <div className="backlog-label">
-                    <Package size={16} />
-                    <span>Nezakazani ({backlog.length})</span>
+                    <Package size={14} />
+                    <span>Nezakazani</span>
+                    <span className="backlog-count">{backlog.length}</span>
                 </div>
                 <div className="backlog-list">
                     {backlog.length === 0 ? (
-                        <span className="backlog-empty">✓ Svi zakazani</span>
+                        <span className="backlog-empty"><CheckCircle size={14} /> Svi zakazani</span>
                     ) : (
                         backlog.map(wo => (
                             <button key={wo.Work_Order_ID} className="backlog-item" onClick={() => openScheduleModal(wo)}>
-                                <strong>{getProjectName(wo)}</strong>
-                                <span>{wo.Work_Order_Number}</span>
+                                <span className="backlog-item-icon"><Box size={13} /></span>
+                                <span className="backlog-item-text">
+                                    <strong>{getProjectName(wo)}</strong>
+                                    <span>{wo.Work_Order_Number}</span>
+                                </span>
                             </button>
                         ))
                     )}
@@ -631,33 +730,26 @@ export default function PlannerTab({ workOrders, workers, workLogs, onRefresh, s
 
             {/* Sedmični kapacitet: planirani vs raspoloživi radnik-dani */}
             {capacityWeeks.length > 0 && (
-                <div style={{ display: 'flex', gap: '10px', margin: '0 0 12px', flexWrap: 'wrap' }}>
+                <div className="capacity-strip">
                     {capacityWeeks.map(wk => {
                         const over = wk.ratio !== null && wk.ratio > 1;
                         const tight = wk.ratio !== null && wk.ratio > 0.85 && wk.ratio <= 1;
-                        const barColor = over ? 'var(--error)' : tight ? 'var(--warning)' : '#059669';
+                        const state = over ? 'over' : tight ? 'tight' : 'ok';
                         const pct = wk.ratio === null ? 0 : Math.min(100, Math.round(wk.ratio * 100));
                         const fmtD = (n: number) => (Number.isInteger(n) ? String(n) : n.toFixed(1));
                         const label = `${new Date(wk.weekStartISO + 'T00:00:00').toLocaleDateString('hr-HR', { day: 'numeric', month: 'numeric' })}–${new Date(wk.weekEndISO + 'T00:00:00').toLocaleDateString('hr-HR', { day: 'numeric', month: 'numeric' })}`;
                         return (
                             <div
                                 key={wk.weekStartISO}
+                                className={`capacity-card state-${state}`}
                                 title={`Sedmica ${label}: planirano ${fmtD(wk.planned)} od raspoloživih ${fmtD(wk.available)} radnik-dana${over ? ' — PREBUKIRANO' : ''}`}
-                                style={{
-                                    flex: '1 1 140px', minWidth: '140px',
-                                    padding: '8px 12px', borderRadius: '10px',
-                                    border: `1px solid ${over ? '#fecaca' : '#e2e8f0'}`,
-                                    background: over ? 'var(--error-bg)' : 'white',
-                                }}
                             >
-                                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: '#64748b', marginBottom: '4px' }}>
-                                    <span>{label}</span>
-                                    <span style={{ fontWeight: 700, color: over ? 'var(--error)' : tight ? 'var(--warning)' : '#059669' }}>
-                                        {fmtD(wk.planned)}/{fmtD(wk.available)} rd
-                                    </span>
+                                <div className="capacity-card-head">
+                                    <span className="capacity-card-label">{label}</span>
+                                    <span className="capacity-card-value">{fmtD(wk.planned)}/{fmtD(wk.available)} rd</span>
                                 </div>
-                                <div style={{ height: '5px', borderRadius: '3px', background: '#f1f5f9', overflow: 'hidden' }}>
-                                    <div style={{ width: `${pct}%`, height: '100%', background: barColor, borderRadius: '3px' }} />
+                                <div className="capacity-track">
+                                    <div className="capacity-fill" style={{ width: `${pct}%` }} />
                                 </div>
                             </div>
                         );
@@ -695,6 +787,24 @@ export default function PlannerTab({ workOrders, workers, workLogs, onRefresh, s
                         ) : (
                             allWorkers.map(worker => {
                                 const orders = workerOrders.get(worker.Worker_ID) || [];
+
+                                // Nezavisne trake (lanes) za naloge koji se PREKLAPAJU u vremenu —
+                                // umjesto da se crtaju jedan preko drugog, svaki dobije svoj red.
+                                const withLayout = orders
+                                    .map(wo => ({ wo, layout: getBarLayout(worker.Worker_ID, wo) }))
+                                    .filter((x): x is { wo: WorkOrder; layout: BarLayout } => !!x.layout)
+                                    .sort((a, b) => a.layout.left - b.layout.left);
+                                const laneEnds: number[] = [];
+                                const placedBars = withLayout.map(({ wo, layout }) => {
+                                    const right = layout.left + layout.width;
+                                    let lane = laneEnds.findIndex(end => end <= layout.left);
+                                    if (lane === -1) { lane = laneEnds.length; laneEnds.push(right); }
+                                    else { laneEnds[lane] = right; }
+                                    return { wo, layout, lane };
+                                });
+                                const laneCount = Math.max(1, laneEnds.length);
+                                const timelineHeight = Math.max(56, laneCount * LANE_SLOT + 16);
+
                                 return (
                                     <div key={worker.Worker_ID} className="gantt-row">
                                         <div className="gantt-worker-cell">
@@ -708,7 +818,7 @@ export default function PlannerTab({ workOrders, workers, workLogs, onRefresh, s
                                             {orders.length > 0 && <span className="count">{orders.length}</span>}
                                         </div>
 
-                                        <div className="gantt-timeline" style={{ width: totalWidth }}>
+                                        <div className="gantt-timeline" style={{ width: totalWidth, height: timelineHeight }}>
                                             {visibleDates.map(d => (
                                                 <div
                                                     key={formatDateKey(d)}
@@ -717,78 +827,64 @@ export default function PlannerTab({ workOrders, workers, workLogs, onRefresh, s
                                                 />
                                             ))}
 
-                                            {orders.map(wo => {
-                                                const pos = getBarPosition(wo);
-                                                if (!pos) return null;
-                                                const color = getStatusColor(wo);
-                                                const statusInfo = getStatusLabel(wo);
+                                            {placedBars.map(({ wo, layout, lane }) => {
+                                                const statusKey = getStatusKey(wo);
+                                                const statusColor = STATUS_COLORS[statusKey];
+                                                const statusInfo = STATUS_META[statusKey];
                                                 const StatusIcon = statusInfo.icon;
                                                 const deadlineStatus = getDeadlineWarning(wo);
+                                                const dueStr = (wo.Due_Date || wo.Planned_End_Date)?.split('T')[0];
+                                                const dueIdx = dueStr ? layout.segments.findIndex(s => s.date === dueStr) : -1;
+                                                const pinLeft = dueIdx >= 0 ? (dueIdx + 1) * cellWidth : null;
+                                                const segSummary = layout.segments.map(s => `${s.date}: ${DAY_TYPE_LABEL[s.dayType]}`).join('\n');
 
                                                 return (
                                                     <div
                                                         key={wo.Work_Order_ID}
-                                                        className={`gantt-bar ${deadlineStatus !== 'ok' ? `deadline-${deadlineStatus}` : ''} ${pos.isOverdue ? 'overdue-bar' : ''}`}
+                                                        className={`order-bar status-${statusKey} ${deadlineStatus !== 'ok' ? `deadline-${deadlineStatus}` : ''}`}
                                                         style={{
-                                                            left: pos.left + 2,
-                                                            width: pos.width - 4,
-                                                            backgroundColor: pos.isOverdue ? 'transparent' : color
+                                                            left: layout.left + 3,
+                                                            width: layout.width - 6,
+                                                            top: lane * LANE_SLOT + 8,
                                                         }}
-                                                        title={`${getProjectName(wo)} (${wo.Work_Order_Number})${deadlineStatus === 'overdue' ? ' ⚠️ ROK PREKORAČEN!' : deadlineStatus === 'approaching' ? ' ⏰ Rok se približava' : ''}`}
+                                                        title={`${getProjectName(wo)} (${wo.Work_Order_Number})${deadlineStatus === 'overdue' ? ' ⚠️ ROK PREKORAČEN!' : deadlineStatus === 'approaching' ? ' ⏰ Rok se približava' : ''}\n${segSummary}`}
                                                         onClick={() => openDetailPanel(wo)}
                                                     >
-                                                        {/* Overdue bar: show planned (green) + overdue (striped red) portions */}
-                                                        {pos.isOverdue && pos.plannedWidth ? (
-                                                            <>
-                                                                <div style={{
-                                                                    position: 'absolute',
-                                                                    left: 0,
-                                                                    top: 0,
-                                                                    bottom: 0,
-                                                                    width: Math.max(0, pos.plannedWidth - 4),
-                                                                    backgroundColor: color,
-                                                                    borderRadius: '6px 0 0 6px',
-                                                                    zIndex: 0
-                                                                }} />
-                                                                <div style={{
-                                                                    position: 'absolute',
-                                                                    left: Math.max(0, pos.plannedWidth - 4),
-                                                                    top: 0,
-                                                                    bottom: 0,
-                                                                    right: 0,
-                                                                    background: `repeating-linear-gradient(135deg, ${color}, ${color} 3px, rgba(239,68,68,0.6) 3px, rgba(239,68,68,0.6) 6px)`,
-                                                                    borderRadius: '0 6px 6px 0',
-                                                                    zIndex: 0
-                                                                }} />
-                                                            </>
-                                                        ) : null}
-                                                        <div className="bar-content">
-                                                            <span className="bar-project">
-                                                                {deadlineStatus === 'overdue' && <AlertTriangle size={10} style={{ marginRight: 3, color: '#fff' }} />}
-                                                                {deadlineStatus === 'approaching' && <AlertCircle size={10} style={{ marginRight: 3, color: '#fff' }} />}
-                                                                {getProjectName(wo)}
+                                                        {/* Glavni red: čitljivo ime + status (puna boja statusa) */}
+                                                        <div className="order-bar-row" style={{ background: statusColor }}>
+                                                            <span className="order-bar-name">
+                                                                <StatusIcon size={11} className="order-bar-status-icon" />
+                                                                {deadlineStatus === 'overdue' && <AlertTriangle size={11} className="order-bar-flag" />}
+                                                                {deadlineStatus === 'approaching' && <AlertCircle size={11} className="order-bar-flag" />}
+                                                                <span className="order-bar-name-text">{getProjectName(wo)}</span>
                                                             </span>
-                                                            <span className="bar-status">
-                                                                <StatusIcon size={10} />
-                                                                {statusInfo.text}
-                                                            </span>
+                                                            <div className="order-bar-actions">
+                                                                {wo.Status === 'Na čekanju' && (() => {
+                                                                    // Only show play button if today >= planned start date
+                                                                    const today = new Date();
+                                                                    today.setHours(0, 0, 0, 0);
+                                                                    const plannedStart = wo.Planned_Start_Date ? new Date(wo.Planned_Start_Date) : today;
+                                                                    plannedStart.setHours(0, 0, 0, 0);
+                                                                    const canStart = plannedStart <= today;
+                                                                    return canStart ? (
+                                                                        <button onClick={e => { e.stopPropagation(); startOrder(wo); }} title="Pokreni"><Play size={11} /></button>
+                                                                    ) : null;
+                                                                })()}
+                                                                {wo.Status !== 'U toku' && (
+                                                                    <button onClick={e => { e.stopPropagation(); unschedule(wo); }} title="Ukloni"><X size={11} /></button>
+                                                                )}
+                                                            </div>
                                                         </div>
-                                                        <div className="bar-actions">
-                                                            {wo.Status === 'Na čekanju' && (() => {
-                                                                // Only show play button if today >= planned start date
-                                                                const today = new Date();
-                                                                today.setHours(0, 0, 0, 0);
-                                                                const plannedStart = wo.Planned_Start_Date ? new Date(wo.Planned_Start_Date) : today;
-                                                                plannedStart.setHours(0, 0, 0, 0);
-                                                                const canStart = plannedStart <= today;
-                                                                return canStart ? (
-                                                                    <button onClick={e => { e.stopPropagation(); startOrder(wo); }} title="Pokreni"><Play size={12} /></button>
-                                                                ) : null;
-                                                            })()}
-                                                            {wo.Status !== 'U toku' && (
-                                                                <button onClick={e => { e.stopPropagation(); unschedule(wo); }} title="Ukloni"><X size={12} /></button>
-                                                            )}
+                                                        {/* Traka (footer mjerač): sažetak iz dnevnika rada (radio/pauziran) + projekcija do roka —
+                                                            uzastopni dani istog tipa spojeni u jednu zonu (čitljivije od dan-po-dan mreže) */}
+                                                        <div className="order-bar-track">
+                                                            {toZones(layout.segments).map((z, i) => (
+                                                                <div key={i} className={`order-bar-seg ${DAY_ZONE_CLASS[z.dayType]}`} style={{ flex: z.days }} />
+                                                            ))}
                                                         </div>
+                                                        {pinLeft !== null && pinLeft > 0 && pinLeft < layout.width - 6 && (
+                                                            <div className="order-bar-deadline-flag" style={{ left: pinLeft }} />
+                                                        )}
                                                     </div>
                                                 );
                                             })}

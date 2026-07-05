@@ -1,0 +1,264 @@
+/* ═══════════════════════════════════════════════════════════════════
+   Kartica naloga — prošireni detalj (tok-orijentisan redizajn)
+   Sve boje iz app dizajn-tokena (globals.css). Bez hard-koda.
+   ═══════════════════════════════════════════════════════════════════ */
+
+.wo-detail {
+    padding: 16px;
+    background: var(--surface);
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+/* ── HERO ─────────────────────────────────────────────────────────── */
+.wo-hero {
+    background: var(--background);
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius-md);
+    padding: 16px;
+    box-shadow: 0 1px 3px var(--shadow);
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+}
+
+.wo-hero-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
+/* Naziv, RN, status i tip naloga su već vidljivi u zaglavlju kartice iznad —
+   ovdje ostaje samo tanka traka akcija (bez ponavljanja identiteta). */
+.wo-rename-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    border: none;
+    background: none;
+    cursor: pointer;
+    padding: 4px 2px;
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--text-tertiary);
+    transition: color var(--transition);
+}
+.wo-rename-btn:hover { color: var(--accent); }
+.wo-name-input {
+    font-size: 15px;
+    font-weight: 700;
+    padding: 4px 8px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--accent);
+    outline: none;
+    min-width: 260px;
+    color: var(--text-primary);
+}
+
+.wo-hero-actions { display: inline-flex; align-items: center; gap: 8px; margin-left: auto; flex-shrink: 0; }
+
+.wo-hact {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    border: 1px solid var(--border);
+    background: var(--background);
+    color: var(--text-primary);
+    font-size: 13px;
+    font-weight: 600;
+    padding: 8px 14px;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: background var(--transition), border-color var(--transition);
+}
+.wo-hact:hover { background: var(--surface); }
+.wo-hact:disabled { opacity: 0.55; cursor: default; }
+.wo-hact.start { background: var(--accent); border-color: var(--accent); color: #fff; }
+.wo-hact.start:hover { background: var(--accent-hover); }
+.wo-hact.done { background: var(--success); border-color: var(--success); color: #fff; }
+.wo-hact.done:hover:not(:disabled) { filter: brightness(0.95); }
+
+/* ── METRIKE (traka pilova) ───────────────────────────────────────── */
+.wo-metrics { display: flex; flex-wrap: wrap; gap: 8px; }
+
+.wo-metric {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 8px 14px;
+    background: var(--surface);
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius-sm);
+    min-width: 96px;
+}
+.wo-metric.clickable { cursor: pointer; position: relative; transition: border-color var(--transition); }
+.wo-metric.clickable:hover { border-color: var(--accent); }
+.wo-metric-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 10.5px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-tertiary);
+}
+.wo-metric-value { font-size: 15px; font-weight: 700; color: var(--text-primary); line-height: 1.2; white-space: nowrap; }
+.wo-metric-sub { font-size: 11px; font-weight: 600; color: var(--text-secondary); }
+
+.wo-metric.is-good .wo-metric-value,   .wo-metric.is-good .wo-metric-sub   { color: var(--success); }
+.wo-metric.is-warn .wo-metric-value,   .wo-metric.is-warn .wo-metric-sub   { color: var(--warning); }
+.wo-metric.is-error .wo-metric-value,  .wo-metric.is-error .wo-metric-sub  { color: var(--error); }
+.wo-metric.is-warn  { border-color: #fde0b3; background: var(--warning-bg); }
+.wo-metric.is-error { border-color: #ffc9c4; background: var(--error-bg); }
+
+.wo-metric-warnicon { color: var(--warning); cursor: help; }
+
+.wo-metric-bar { width: 56px; height: 5px; border-radius: 3px; background: var(--border-light); overflow: hidden; margin-top: 3px; }
+.wo-metric-bar-fill { display: block; height: 100%; border-radius: 3px; background: var(--accent); }
+.wo-metric-bar-fill.full { background: var(--success); }
+
+.wo-hidden-date { position: absolute; bottom: 0; left: 0; width: 0; height: 0; opacity: 0; overflow: hidden; pointer-events: none; }
+
+/* Advisory rok — sitni inline prijedlog (ne baner) */
+.wo-advisory {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    padding: 7px 12px;
+    background: var(--accent-light);
+    border: 1px solid #bfdcff;
+    border-radius: var(--radius-sm);
+    font-size: 12px;
+    color: #1e40af;
+}
+.wo-advisory-actions { display: inline-flex; gap: 6px; margin-left: auto; }
+.wo-advisory-btn { border: none; background: none; cursor: pointer; font-size: 12px; font-weight: 700; color: var(--accent); padding: 2px 6px; border-radius: 6px; }
+.wo-advisory-btn.ghost { color: var(--text-secondary); font-weight: 600; }
+.wo-advisory-btn:hover { background: rgba(255,255,255,0.6); }
+
+/* ── SEGMENTED CONTROL ────────────────────────────────────────────── */
+.wo-seg {
+    display: inline-flex;
+    background: var(--surface);
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius-sm);
+    padding: 3px;
+    gap: 3px;
+    align-self: flex-start;
+}
+.wo-seg button {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    border: none;
+    background: transparent;
+    color: var(--text-secondary);
+    font-size: 13px;
+    font-weight: 600;
+    padding: 7px 16px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: background var(--transition), color var(--transition);
+}
+.wo-seg button:hover { color: var(--text-primary); }
+.wo-seg button.active { background: var(--background); color: var(--text-primary); box-shadow: 0 1px 2px var(--shadow-md); }
+.wo-seg-count { font-size: 11px; font-weight: 700; background: var(--border-light); color: var(--text-secondary); border-radius: 8px; padding: 0 6px; }
+.wo-seg button.active .wo-seg-count { background: var(--accent-light); color: var(--accent); }
+
+/* ── TOK (proizvodi + procesi) ────────────────────────────────────── */
+.wo-flow { display: flex; flex-direction: column; gap: 10px; }
+.wo-flow-head {
+    display: flex; align-items: center; justify-content: space-between; gap: 10px;
+}
+.wo-flow-title {
+    font-size: 12px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-tertiary);
+}
+.wo-graf-btn {
+    display: inline-flex; align-items: center; gap: 6px;
+    border: 1px solid var(--border); background: var(--background); color: var(--text-primary);
+    font-size: 12.5px; font-weight: 600; padding: 6px 12px; border-radius: var(--radius-sm); cursor: pointer;
+}
+.wo-graf-btn:hover { background: var(--surface); border-color: var(--accent); color: var(--accent); }
+
+.wo-product {
+    display: flex; flex-direction: column; gap: 11px;
+    padding: 14px; border-radius: var(--radius-md);
+    border: 1px solid var(--border-light); background: var(--background);
+}
+.wo-product-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.wo-product-name-wrap { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.wo-product-name { font-size: 14px; font-weight: 600; color: var(--text-primary); }
+.wo-pause-tag { font-size: 10px; font-weight: 700; color: #b45309; background: var(--warning-bg); padding: 2px 7px; border-radius: 999px; }
+.wo-warn-tag {
+    display: inline-flex; align-items: center; gap: 4px;
+    font-size: 10px; font-weight: 700; color: var(--warning); background: var(--warning-bg);
+    padding: 2px 7px; border-radius: 999px; cursor: help;
+}
+
+.wo-product-money { text-align: right; }
+.wo-product-money-value { font-size: 15px; font-weight: 700; color: var(--text-primary); }
+.wo-product-money-value.pos { color: var(--success); }
+.wo-product-money-value.neg { color: var(--error); }
+.wo-product-money-label { font-size: 10px; color: var(--text-tertiary); text-transform: uppercase; letter-spacing: 0.04em; }
+
+.wo-product-controls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.wo-status-seg { display: inline-flex; border: 1px solid var(--border-light); border-radius: var(--radius-sm); overflow: hidden; }
+.wo-status-seg button {
+    border: none; background: var(--background); color: var(--text-secondary);
+    font-size: 12px; font-weight: 600; padding: 6px 13px; cursor: pointer; transition: background var(--transition), color var(--transition);
+}
+.wo-status-seg button + button { border-left: 1px solid var(--border-light); }
+.wo-status-seg button:hover:not(.active):not(:disabled) { background: var(--surface); }
+.wo-status-seg button.active { background: var(--text-primary); color: var(--background); }
+.wo-status-seg button:disabled { opacity: 0.5; cursor: default; }
+
+.wo-pause {
+    display: inline-flex; align-items: center; gap: 5px;
+    border: 1px solid var(--border-light); background: var(--background); color: #b45309;
+    font-size: 12px; font-weight: 600; padding: 6px 12px; border-radius: var(--radius-sm); cursor: pointer;
+}
+.wo-pause:hover { background: var(--warning-bg); border-color: #fcd34d; }
+
+.wo-details {
+    align-self: flex-start; border: none; background: transparent; color: var(--accent);
+    font-size: 12px; font-weight: 600; padding: 2px 0; cursor: pointer;
+}
+.wo-details:hover { text-decoration: underline; }
+
+.wo-empty {
+    text-align: center; color: var(--text-tertiary); font-size: 13px;
+    padding: 28px; border: 1px dashed var(--border-light); border-radius: var(--radius-md);
+}
+
+/* ── KNJIGA RADA (dnevni tracker + vremenska linija) ──────────────── */
+.wo-rad { display: flex; flex-direction: column; gap: 14px; }
+.wo-timeline {
+    display: flex; align-items: center; flex-wrap: wrap; gap: 18px;
+    padding: 12px 16px; background: var(--background);
+    border: 1px solid var(--border-light); border-radius: var(--radius-md);
+}
+.wo-date { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-secondary); position: relative; }
+.wo-date strong { color: var(--text-primary); font-weight: 600; }
+.wo-date.deadline strong { color: var(--warning); }
+.wo-date.clickable { cursor: pointer; }
+.wo-date.clickable:hover strong { color: var(--accent); }
+
+.wo-rad-head {
+    display: flex; align-items: center; gap: 8px;
+    font-size: 12px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase;
+    color: var(--text-tertiary); margin-bottom: 2px;
+}
+
+/* ── Responsive ───────────────────────────────────────────────────── */
+@media (max-width: 768px) {
+    .wo-detail { padding: 10px; }
+    .wo-hero-top { align-items: flex-start; }
+    .wo-metric { flex: 1 1 40%; min-width: 0; }
+    .wo-seg { align-self: stretch; }
+    .wo-seg button { flex: 1; justify-content: center; }
+}

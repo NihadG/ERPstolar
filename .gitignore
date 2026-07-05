@@ -39,3 +39,8 @@ next-env.d.ts
 /blob-report/
 /playwright/.cache/
 /playwright/.auth/
+
+# Claude/Gemini agent config
+.claude/
+.gemini/
+

@@ -6,6 +6,10 @@ import {
     resolveAutoProcessNode,
     planToStages,
     flattenStages,
+    groupProcessesByStage,
+    currentStageIndex,
+    nextProcessNames,
+    deriveItemStatus,
 } from '../productProcesses';
 
 const catalog = [
@@ -185,5 +189,95 @@ describe('currentProcessName + resolveAutoProcessNode — auto-pripis', () => {
         expect(resolveAutoProcessNode(undefined, 'A', procs)).toBeNull();
         const graph = { nodes: [{ id: 'n1', name: 'Kantiranje', itemIds: ['X'] }], edges: [] };
         expect(resolveAutoProcessNode(graph, 'A', procs)).toBeNull();
+    });
+});
+
+describe('groupProcessesByStage / currentStageIndex / nextProcessNames — fazno praćenje (primjer STOLA)', () => {
+    // stol: faza 1 (3 paralelno) → sklapanje → lak
+    const stages = [
+        ['Izrada nogu', 'Krojenje furnira', 'Formatiranje MDF'],
+        ['Sklapanje'],
+        ['Lakiranje'],
+    ];
+    const mk = (name: string, status = 'Na čekanju') => ({ Process_Name: name, Status: status });
+
+    test('grupisanje procesa u faze; procesi van plana → extra', () => {
+        const procs = [
+            mk('Izrada nogu'), mk('Krojenje furnira'), mk('Formatiranje MDF'),
+            mk('Sklapanje'), mk('Lakiranje'), mk('Brušenje'), // Brušenje nije u planu → extra
+        ];
+        const { stageGroups, extra } = groupProcessesByStage(procs, stages);
+        expect(stageGroups.map(g => g.map(p => p.Process_Name))).toEqual([
+            ['Izrada nogu', 'Krojenje furnira', 'Formatiranje MDF'],
+            ['Sklapanje'],
+            ['Lakiranje'],
+        ]);
+        expect(extra.map(p => p.Process_Name)).toEqual(['Brušenje']);
+    });
+
+    test('tekuća faza ostaje 1 dok sva 3 paralelna nisu gotova; onda prelazi na Sklapanje', () => {
+        const partial = [
+            mk('Izrada nogu', 'Završeno'), mk('Krojenje furnira', 'Završeno'), mk('Formatiranje MDF', 'U toku'),
+            mk('Sklapanje'), mk('Lakiranje'),
+        ];
+        let g = groupProcessesByStage(partial, stages).stageGroups;
+        expect(currentStageIndex(g)).toBe(0); // MDF još nije gotov
+        expect(nextProcessNames(g)).toEqual(['Formatiranje MDF']);
+
+        const phase1done = partial.map(p => stages[0].includes(p.Process_Name) ? mk(p.Process_Name, 'Završeno') : p);
+        g = groupProcessesByStage(phase1done, stages).stageGroups;
+        expect(currentStageIndex(g)).toBe(1); // sad Sklapanje
+        expect(nextProcessNames(g)).toEqual(['Sklapanje']);
+    });
+
+    test('sve gotovo → currentStageIndex −1, nextProcessNames prazno', () => {
+        const allDone = stages.flat().map(n => mk(n, 'Završeno'));
+        const g = groupProcessesByStage(allDone, stages).stageGroups;
+        expect(currentStageIndex(g)).toBe(-1);
+        expect(nextProcessNames(g)).toEqual([]);
+    });
+
+    test('extra kao završna pseudo-faza: kad su stages gotove ali extra nije, tekuće je extra', () => {
+        const allStagesDone = [...stages.flat().map(n => mk(n, 'Završeno')), mk('Brušenje', 'U toku')];
+        const { stageGroups, extra } = groupProcessesByStage(allStagesDone, stages);
+        const groups = extra.length ? [...stageGroups, extra] : stageGroups;
+        expect(currentStageIndex(groups)).toBe(3); // extra grupa
+        expect(nextProcessNames(groups)).toEqual(['Brušenje']);
+    });
+
+    test('bez plana (prazne stages) → planToStages fallback: svaki proces svoja faza', () => {
+        const names = ['A', 'B', 'C'];
+        const derived = planToStages(undefined, names); // [['A'],['B'],['C']]
+        const procs = names.map(n => mk(n));
+        const { stageGroups, extra } = groupProcessesByStage(procs, derived);
+        expect(stageGroups).toHaveLength(3);
+        expect(extra).toEqual([]);
+        expect(currentStageIndex(stageGroups)).toBe(0);
+    });
+});
+
+describe('deriveItemStatus — pod "U toku" za pokrenute stavke (K1 fix)', () => {
+    const P = (s: string) => ({ Status: s });
+    test('svi završeni → Završeno (bez obzira na startedAt)', () => {
+        expect(deriveItemStatus([P('Završeno'), P('Završeno')], '2026-07-01')).toBe('Završeno');
+        expect(deriveItemStatus([P('Završeno')], undefined)).toBe('Završeno');
+    });
+    test('bilo koji U toku → U toku', () => {
+        expect(deriveItemStatus([P('Na čekanju'), P('U toku')], undefined)).toBe('U toku');
+    });
+    test('KLJUČNO: pokrenuta stavka (startedAt) sa svim procesima Na čekanju → OSTAJE U toku (ne regresira)', () => {
+        expect(deriveItemStatus([P('Na čekanju'), P('Na čekanju')], '2026-07-01T08:00:00Z')).toBe('U toku');
+    });
+    test('nepokrenuta stavka, svi Na čekanju → Na čekanju', () => {
+        expect(deriveItemStatus([P('Na čekanju')], undefined)).toBe('Na čekanju');
+        expect(deriveItemStatus([P('Na čekanju')], null)).toBe('Na čekanju');
+    });
+    test('prazna lista procesa → NIJE Završeno (Na čekanju bez starta, U toku sa startom)', () => {
+        expect(deriveItemStatus([], undefined)).toBe('Na čekanju');
+        expect(deriveItemStatus([], '2026-07-01')).toBe('U toku');
+    });
+    test('Odloženo se tretira kao nezavršeno', () => {
+        expect(deriveItemStatus([P('Završeno'), P('Odloženo')], undefined)).toBe('Na čekanju');
+        expect(deriveItemStatus([P('Završeno'), P('Odloženo')], '2026-07-01')).toBe('U toku');
     });
 });

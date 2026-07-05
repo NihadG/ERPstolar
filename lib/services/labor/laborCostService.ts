@@ -229,9 +229,12 @@ export async function recalcAllWorkLogSplits(
 // RECALCULATION
 // ============================================
 
-export async function recalculateWorkOrder(workOrderId: string): Promise<void> {
+export async function recalculateWorkOrder(
+    workOrderId: string,
+    options?: { skipSnapshot?: boolean; skipStatusSync?: boolean; skipMaterialRefresh?: boolean }
+): Promise<void> {
     const { recalculateWorkOrder: _recalc } = await import('../../attendance');
-    await _recalc(workOrderId);
+    await _recalc(workOrderId, options);
 
     eventBus.emit('workOrder:recalculated', { workOrderId, organizationId: '' });
 }
@@ -375,6 +378,17 @@ export async function updateItemProcess(
 ): Promise<void> {
     const { updateItemProcess: _fn } = await import('../../attendance');
     return _fn(workOrderId, itemId, processName, updates);
+}
+
+export async function addProcessToOrderItem(
+    workOrderId: string,
+    itemId: string,
+    processName: string,
+    organizationId: string,
+    opts?: { stageIndex?: number }
+): Promise<{ success: boolean; message: string }> {
+    const { addProcessToOrderItem: _fn } = await import('../../attendance');
+    return _fn(workOrderId, itemId, processName, organizationId, opts);
 }
 
 export async function bulkUpdateProcesses(

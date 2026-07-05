@@ -451,6 +451,7 @@ export interface ItemProcessStatus {
         Worker_ID: string;
         Worker_Name: string;
     }[];
+    Notes?: string;   // napomena po procesu (gdje je stalo, šta treba, itd.)
 }
 
 // Sub-task za split proizvoda - omogućava podjelu količine na više dijelova

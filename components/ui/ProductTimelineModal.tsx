@@ -65,6 +65,8 @@ interface ProductTimelineModalProps {
         Process_Name?: string;
     }>) => Promise<{ success: boolean; message: string }>;
     workers?: Worker[];
+    // Samo pregled: sakrij uređivanje dnevnica/profita (uređivanje ide kroz tab „Knjiga rada")
+    readOnly?: boolean;
 }
 
 type DayType = 'working' | 'paused' | 'weekend' | 'holiday' | 'no_work' | 'future';
@@ -146,7 +148,8 @@ export default function ProductTimelineModal({
     hasOverrides,
     onSaveOverrides,
     onOverrideWorkLogs,
-    workers = []
+    workers = [],
+    readOnly = false
 }: ProductTimelineModalProps) {
     const [expandedDays, setExpandedDays] = useState<Set<string>>(new Set());
     const [editingEntry, setEditingEntry] = useState<{ date: string; workerId: string } | null>(null);
@@ -323,9 +326,10 @@ export default function ProductTimelineModal({
     // Auto-enter editing mode when timeline is empty and manual editing is available
     // This makes the "add day" UI immediately accessible instead of requiring a separate click
     useEffect(() => {
-        if (isOpen && workLogs.length === 0 && onOverrideWorkLogs && !isEditingTimeline) {
+        if (!readOnly && isOpen && workLogs.length === 0 && onOverrideWorkLogs && !isEditingTimeline) {
             startTimelineEdit();
         }
+        // readOnly je stabilan prop (ne mijenja se za život modala) — namjerno van deps
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [isOpen, workLogs.length]);
 
@@ -671,7 +675,7 @@ export default function ProductTimelineModal({
                         )}
 
                         {/* Edit button */}
-                        {workOrderItemId && onSaveOverrides && !isEditingProfit && (
+                        {!readOnly && workOrderItemId && onSaveOverrides && !isEditingProfit && (
                             <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '8px' }}>
                                 <button
                                     onClick={startEditing}
@@ -900,7 +904,7 @@ export default function ProductTimelineModal({
                         </div>
                     ))}
                     <div style={{ marginLeft: 'auto', display: 'flex', gap: '6px' }}>
-                        {onOverrideWorkLogs && !isEditingTimeline && (
+                        {!readOnly && onOverrideWorkLogs && !isEditingTimeline && (
                             <button onClick={startTimelineEdit} style={{
                                 padding: '6px 12px', borderRadius: '8px', border: '1px solid #6366f1',
                                 background: 'rgba(99,102,241,0.1)', cursor: 'pointer', fontSize: '12px',
@@ -1403,7 +1407,7 @@ export default function ProductTimelineModal({
                     )}
 
                     {/* Add new day — always visible when editing is available */}
-                    {(isEditingTimeline || onOverrideWorkLogs) && (
+                    {!readOnly && (isEditingTimeline || onOverrideWorkLogs) && (
                         <div style={{
                             display: 'flex', alignItems: 'center', gap: '8px',
                             padding: '10px 14px', marginTop: '4px',

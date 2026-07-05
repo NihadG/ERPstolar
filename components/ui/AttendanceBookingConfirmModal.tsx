@@ -16,6 +16,7 @@ export interface PresentDecision {
     workerId: string;
     workerName: string;
     orderIds: string[];                 // izabrani nalozi (knjiži se na njihove stavke)
+    presence?: 0.5 | 1;                 // ½ ili cijeli dan (default 1)
 }
 
 export type TerenChoice =
@@ -27,6 +28,7 @@ export interface TerenDecision {
     workerId: string;
     workerName: string;
     choice: TerenChoice;
+    presence?: 0.5 | 1;                 // ½ ili cijeli dan (default 1)
 }
 
 export type BookingDecision = PresentDecision | TerenDecision;
@@ -102,6 +104,25 @@ export default function AttendanceBookingConfirmModal({ isOpen, onClose, date, r
 
     const [saving, setSaving] = useState(false);
 
+    // ½ ili cijeli dan po radniku (default 1) — pola dana bez odlaska u Knjigu rada.
+    const [presenceByWorker, setPresenceByWorker] = useState<Record<string, 0.5 | 1>>({});
+    const presenceOf = (workerId: string): 0.5 | 1 => presenceByWorker[workerId] ?? 1;
+    const PresenceToggle = ({ workerId }: { workerId: string }) => (
+        <span style={{ display: 'inline-flex', border: '1px solid var(--border-light)', borderRadius: 8, overflow: 'hidden' }} title="Pola ili cijeli dan">
+            {([0.5, 1] as const).map(v => (
+                <button key={v} type="button"
+                    onClick={() => setPresenceByWorker(prev => ({ ...prev, [workerId]: v }))}
+                    style={{
+                        padding: '2px 9px', fontSize: 11, fontWeight: 700, border: 'none', cursor: 'pointer',
+                        background: presenceOf(workerId) === v ? 'var(--accent)' : 'var(--background)',
+                        color: presenceOf(workerId) === v ? '#fff' : 'var(--text-secondary)',
+                    }}>
+                    {v === 0.5 ? '½' : '1'}
+                </button>
+            ))}
+        </span>
+    );
+
     // Radnik za kojeg je trenutno otvoren "Razni poslovi" modal (kreiranje novog naloga).
     const [creatingFor, setCreatingFor] = useState<{ workerId: string; workerName: string } | null>(null);
 
@@ -167,14 +188,14 @@ export default function AttendanceBookingConfirmModal({ isOpen, onClose, date, r
         const out: BookingDecision[] = [];
         for (const r of presentRows) {
             const set = checks[r.workerId] || new Set<string>();
-            out.push({ kind: 'present', workerId: r.workerId, workerName: r.workerName, orderIds: Array.from(set) });
+            out.push({ kind: 'present', workerId: r.workerId, workerName: r.workerName, orderIds: Array.from(set), presence: presenceOf(r.workerId) });
         }
         for (const r of terenRows) {
             const s = teren[r.workerId];
             const choice: TerenChoice = (s.mode === 'order' && s.orderId)
                 ? { mode: 'order', workOrderId: s.orderId }
                 : { mode: 'none' };
-            out.push({ kind: 'teren', workerId: r.workerId, workerName: r.workerName, choice });
+            out.push({ kind: 'teren', workerId: r.workerId, workerName: r.workerName, choice, presence: presenceOf(r.workerId) });
         }
         return out;
     }
@@ -237,6 +258,7 @@ export default function AttendanceBookingConfirmModal({ isOpen, onClose, date, r
                                     <span className="abcm-sub">{set.size} / {r.orders.length} naloga</span>
                                 </div>
                                 <div className="abcm-head-right">
+                                    <PresenceToggle workerId={r.workerId} />
                                     <button type="button" className="abcm-link" onClick={() => toggleAll(r)}>
                                         {allOn ? 'Poništi sve' : 'Označi sve'}
                                     </button>
@@ -276,6 +298,7 @@ export default function AttendanceBookingConfirmModal({ isOpen, onClose, date, r
                                     <span className="abcm-sub">Na šta se odnosi teren?</span>
                                 </div>
                                 <div className="abcm-head-right">
+                                    <PresenceToggle workerId={r.workerId} />
                                     <span className="abcm-badge abcm-badge--teren"><Car size={12} /> Teren</span>
                                 </div>
                             </div>

@@ -200,3 +200,74 @@ export function resolveAutoProcessNode(
         norm(n.name) === ck && ((n.itemIds || []).length === 0 || n.itemIds.includes(itemId))
     ) || null;
 }
+
+// ════════════════════════════════════════════════════════════════════
+// FAZNO PRAĆENJE u nalogu: grupiši žive procese (ItemProcessStatus) po fazama
+// plana proizvoda; procesi kojih nema u planu (dodati u toku) → `extra`.
+// ════════════════════════════════════════════════════════════════════
+
+/**
+ * Rasporedi procese stavke naloga u faze prema `stages` (nazivi po fazi).
+ * Match po nazivu (case-insensitive). Procesi van plana → `extra`.
+ */
+export function groupProcessesByStage<T extends { Process_Name: string }>(
+    processes: T[],
+    stages: string[][]
+): { stageGroups: T[][]; extra: T[] } {
+    const byName = new Map<string, T>();
+    for (const p of processes) {
+        const k = norm(p.Process_Name);
+        if (k && !byName.has(k)) byName.set(k, p);
+    }
+    const used = new Set<string>();
+    const stageGroups: T[][] = (stages || []).map(stage => {
+        const group: T[] = [];
+        for (const name of stage) {
+            const k = norm(name);
+            const proc = byName.get(k);
+            if (proc && !used.has(k)) { group.push(proc); used.add(k); }
+        }
+        return group;
+    });
+    const extra: T[] = [];
+    for (const p of processes) {
+        const k = norm(p.Process_Name);
+        if (k && !used.has(k)) { extra.push(p); used.add(k); }
+    }
+    return { stageGroups, extra };
+}
+
+/** Indeks PRVE faze koja NIJE cijela 'Završeno' (prazne faze se preskaču). −1 = sve gotovo. */
+export function currentStageIndex(groups: { Status?: string }[][]): number {
+    for (let i = 0; i < groups.length; i++) {
+        const g = groups[i];
+        if (!g || g.length === 0) continue;
+        if (!g.every(p => p.Status === 'Završeno')) return i;
+    }
+    return -1;
+}
+
+/** Nezavršeni procesi tekuće faze (mogu paralelno) = „gdje nastaviti". */
+export function nextProcessNames(groups: { Process_Name: string; Status?: string }[][]): string[] {
+    const idx = currentStageIndex(groups);
+    if (idx < 0) return [];
+    return groups[idx].filter(p => p.Status !== 'Završeno').map(p => p.Process_Name);
+}
+
+/**
+ * Derivacija statusa STAVKE iz procesa, s podom 'U toku' za pokrenute stavke:
+ * pokrenuta stavka (startedAt / knjižen rad) NIKAD ne regresira na 'Na čekanju'
+ * kad se proces vrati iz 'U toku' — regresija bi kaskadno gasila status naloga,
+ * a šihtarica auto-knjiži samo na aktivne naloge.
+ */
+export function deriveItemStatus(
+    processes: { Status?: string }[],
+    startedAt?: string | null
+): 'Na čekanju' | 'U toku' | 'Završeno' {
+    const list = processes || [];
+    const allCompleted = list.length > 0 && list.every(p => p.Status === 'Završeno');
+    if (allCompleted) return 'Završeno';
+    const anyInProgress = list.some(p => p.Status === 'U toku');
+    if (anyInProgress || startedAt) return 'U toku';
+    return 'Na čekanju';
+}
