@@ -270,6 +270,12 @@ service cloud.firestore {
       allow update, delete: if isOrgMember();
     }
 
+    match /process_stage_templates/{templateId} {
+      allow read: if isOrgMember();
+      allow create: if hasValidOrgId();
+      allow update, delete: if isOrgMember();
+    }
+
     // ============================================
     // PRODUCTION SNAPSHOTS (finalni P&L pri završetku naloga)
     // ============================================

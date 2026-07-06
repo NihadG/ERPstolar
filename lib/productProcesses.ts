@@ -87,8 +87,31 @@ export interface SynthesisItem {
 }
 
 export interface SynthesisResult {
-    graph: ProcessGraph;   // bez pozicija — layout radi pozivalac (layoutProcessGraph)
+    graph: ProcessGraph;   // bez pozicija — layout radi pozivalac (layoutProcessGraph/layoutColumns)
     warnings: string[];    // ispuštene ivice koje bi zatvorile ciklus
+    columns: string[][];   // ID-evi čvorova grupisani po fazi (min faza pojave) → fazni raspored bez veza
+}
+
+export interface SynthesisOptions {
+    /** false → NE generiši veze (čvorovi bez ivica; korisnik ih ručno povezuje). Default true. */
+    includeEdges?: boolean;
+}
+
+/** Grupa konsolidacije: `canonical` = prikazni naziv zajedničkog čvora, `members` = originalni nazivi procesa koje spaja. */
+export interface ConsolidationGroup {
+    canonical: string;
+    members: string[];
+}
+export interface Consolidation {
+    groups: ConsolidationGroup[];
+}
+
+/** Da li čvor predstavlja dati proces stavke — poklapanje po skupu sinonima (aliases), fallback na `name`. */
+export function nodeMatchesProcess(node: { name: string; aliases?: string[] }, processName: string): boolean {
+    const k = norm(processName);
+    if (!k) return false;
+    const names = node.aliases && node.aliases.length ? node.aliases : [node.name];
+    return names.some(a => norm(a) === k);
 }
 
 /**
@@ -96,30 +119,53 @@ export interface SynthesisResult {
  * - čvor po normalizovanom nazivu (display = prvi viđeni), itemIds = stavke čiji plan ga sadrži
  * - ivice = SVAKI proces faze N → SVAKI proces faze N+1 (po proizvodu; dedupe preko svih)
  * - cycle-guard: ivica koja bi zatvorila ciklus se ispušta (uz upozorenje)
+ *
+ * `consolidation` (opciono, iz wizarda): procesi s RAZLIČITIM imenima koji pripadaju istoj grupi
+ * spajaju se u JEDAN čvor (ključ = kanonski naziv grupe), a `aliases` čvora pamti sve originalne
+ * nazive — da poklapanje statusa/auto-knjiženja po proizvodu ostane tačno.
  */
-export function synthesizeOrderGraph(items: SynthesisItem[]): SynthesisResult {
+export function synthesizeOrderGraph(items: SynthesisItem[], consolidation?: Consolidation, opts?: SynthesisOptions): SynthesisResult {
+    const includeEdges = opts?.includeEdges !== false;
     const warnings: string[] = [];
     const nodeByKey = new Map<string, ProcessNode>();
+    const phaseOf = new Map<string, number>(); // node.id → najranija faza pojave (fazni raspored kolona)
     let seq = 0;
+
+    // norm(originalni naziv) → kanonski naziv grupe (spajanje različitih imena u jedan čvor)
+    const canonicalByMember = new Map<string, string>();
+    for (const g of consolidation?.groups || []) {
+        const canonical = (g.canonical || '').trim();
+        if (!canonical) continue;
+        for (const m of g.members || []) {
+            const mk = norm(m);
+            if (mk) canonicalByMember.set(mk, canonical);
+        }
+    }
+
     const nodeFor = (name: string): ProcessNode => {
-        const k = norm(name);
+        const canonical = canonicalByMember.get(norm(name)) || name.trim();
+        const k = norm(canonical);
         let n = nodeByKey.get(k);
         if (!n) {
-            n = { id: `n-${++seq}-${k.replace(/[^a-z0-9]+/g, '-')}`, name: name.trim(), itemIds: [] };
+            n = { id: `n-${++seq}-${k.replace(/[^a-z0-9]+/g, '-')}`, name: canonical, itemIds: [], aliases: [] };
             nodeByKey.set(k, n);
         }
+        // Zapamti originalni naziv kao sinonim (distinct, case-insensitive)
+        if (!n.aliases!.some(a => norm(a) === norm(name))) n.aliases!.push(name.trim());
         return n;
     };
 
-    // Čvorovi + pripadnost stavki
+    // Čvorovi + pripadnost stavki + najranija faza (za fazni raspored kolona)
     for (const it of items) {
-        for (const stage of it.stages || []) {
+        (it.stages || []).forEach((stage, si) => {
             for (const p of stage) {
                 if (!norm(p)) continue;
                 const n = nodeFor(p);
                 if (!n.itemIds.includes(it.itemId)) n.itemIds.push(it.itemId);
+                const cur = phaseOf.get(n.id);
+                if (cur === undefined || si < cur) phaseOf.set(n.id, si);
             }
-        }
+        });
     }
 
     // Ivice: uzastopni parovi po planu, dedupe; cycle-guard preko dostižnosti
@@ -141,32 +187,43 @@ export function synthesizeOrderGraph(items: SynthesisItem[]): SynthesisResult {
     };
 
     const edges: ProcessEdge[] = [];
-    for (const it of items) {
-        const stages = (it.stages || []).map(s => s.filter(p => norm(p))).filter(s => s.length > 0);
-        for (let i = 0; i + 1 < stages.length; i++) {
-            // svaka→svaka između susjednih faza (paralelni procesi faze se slijevaju u sljedeću)
-            for (const pa of stages[i]) {
-                for (const pb of stages[i + 1]) {
-                    const a = nodeFor(pa);
-                    const b = nodeFor(pb);
-                    if (a.id === b.id) continue; // isti proces u susjednim fazama
-                    const ek = `${a.id}→${b.id}`;
-                    if (edgeKeys.has(ek)) continue;
-                    // ivica b→…→a već postoji → a→b bi zatvorila ciklus
-                    if (reaches(b.id, a.id)) {
-                        warnings.push(`Preskočena veza "${a.name}" → "${b.name}" (kružni redoslijed među proizvodima)`);
-                        continue;
+    if (includeEdges) {
+        for (const it of items) {
+            const stages = (it.stages || []).map(s => s.filter(p => norm(p))).filter(s => s.length > 0);
+            for (let i = 0; i + 1 < stages.length; i++) {
+                // svaka→svaka između susjednih faza (paralelni procesi faze se slijevaju u sljedeću)
+                for (const pa of stages[i]) {
+                    for (const pb of stages[i + 1]) {
+                        const a = nodeFor(pa);
+                        const b = nodeFor(pb);
+                        if (a.id === b.id) continue; // isti proces u susjednim fazama
+                        const ek = `${a.id}→${b.id}`;
+                        if (edgeKeys.has(ek)) continue;
+                        // ivica b→…→a već postoji → a→b bi zatvorila ciklus
+                        if (reaches(b.id, a.id)) {
+                            warnings.push(`Preskočena veza "${a.name}" → "${b.name}" (kružni redoslijed među proizvodima)`);
+                            continue;
+                        }
+                        edgeKeys.add(ek);
+                        if (!adj.has(a.id)) adj.set(a.id, new Set());
+                        adj.get(a.id)!.add(b.id);
+                        edges.push({ id: `e-${a.id}-${b.id}`, source: a.id, target: b.id });
                     }
-                    edgeKeys.add(ek);
-                    if (!adj.has(a.id)) adj.set(a.id, new Set());
-                    adj.get(a.id)!.add(b.id);
-                    edges.push({ id: `e-${a.id}-${b.id}`, source: a.id, target: b.id });
                 }
             }
         }
     }
 
-    return { graph: { nodes: Array.from(nodeByKey.values()), edges }, warnings };
+    // Kolone po fazama (ID-evi čvorova) — prazne faze se ispuštaju, poredak lijevo→desno očuvan.
+    const byPhase = new Map<number, string[]>();
+    for (const n of Array.from(nodeByKey.values())) {
+        const ph = phaseOf.get(n.id) ?? 0;
+        if (!byPhase.has(ph)) byPhase.set(ph, []);
+        byPhase.get(ph)!.push(n.id);
+    }
+    const columns = Array.from(byPhase.keys()).sort((a, b) => a - b).map(k => byPhase.get(k)!);
+
+    return { graph: { nodes: Array.from(nodeByKey.values()), edges }, warnings, columns };
 }
 
 export interface ItemProcessLite {
@@ -195,9 +252,8 @@ export function resolveAutoProcessNode(
     if (!graph || !graph.nodes?.length) return null;
     const current = currentProcessName(itemProcesses);
     if (!current) return null;
-    const ck = norm(current);
     return graph.nodes.find(n =>
-        norm(n.name) === ck && ((n.itemIds || []).length === 0 || n.itemIds.includes(itemId))
+        nodeMatchesProcess(n, current) && ((n.itemIds || []).length === 0 || n.itemIds.includes(itemId))
     ) || null;
 }
 

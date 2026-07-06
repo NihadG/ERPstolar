@@ -391,8 +391,12 @@ export interface WorkOrder {
 // ════════════════════════════════════════════════════════════════════
 export interface ProcessNode {
     id: string;
-    name: string;                  // slobodan tekst (autocomplete COMMON_PROCESSES)
+    name: string;                  // prikazni/kanonski naziv (autocomplete COMMON_PROCESSES)
     itemIds: string[];             // Work_Order_Item.ID koje proces pokriva; prazno = svi proizvodi naloga
+    // Svi originalni nazivi procesa (po proizvodima) koje ovaj čvor predstavlja — uključujući `name`.
+    // Nastaje kad wizard konsolidacije spoji različito imenovane procese u jedan zajednički čvor.
+    // Prazno/undefined → ponaša se kao [name] (unazad kompatibilno; poklapanje statusa/knjiženja).
+    aliases?: string[];
     position?: { x: number; y: number };  // opcioni ručni override; inače auto-raspored
 }
 export interface ProcessEdge {
@@ -436,6 +440,15 @@ export interface ProcessMaterialRule {
     Match_Value: string;
     Processes: string[];
     Created_At?: string;
+}
+
+// Templejt FAZNOG plana procesa (snimljen sa nekog proizvoda) — primijeni na drugi proizvod jednim klikom.
+export interface ProcessStageTemplate {
+    Template_ID: string;
+    Organization_ID: string;
+    Name: string;
+    Stages: { processes: string[] }[];
+    Created_At: string;
 }
 
 // Status procesa za pojedinačni proizvod u radnom nalogu

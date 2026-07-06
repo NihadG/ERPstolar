@@ -1,0 +1,226 @@
+'use client';
+
+import { useState, useEffect } from 'react';
+import type { ProcessStageTemplate } from '@/lib/types';
+import {
+    getProcessStageTemplates,
+    saveProcessStageTemplate,
+    renameProcessStageTemplate,
+    deleteProcessStageTemplate,
+} from '@/lib/services';
+import Modal from '@/components/ui/Modal';
+import { Bookmark, Download, Pencil, Check, Trash2, Plus, Save } from 'lucide-react';
+
+interface ProcessStageTemplatesModalProps {
+    organizationId: string;
+    currentStages: string[][]; // fazni plan trenutno otvorenog proizvoda
+    onApply: (stages: string[][]) => void;
+    onClose: () => void;
+    showToast: (message: string, type: 'success' | 'error' | 'info') => void;
+    zIndex?: number; // za slaganje preko Plana procesa (koji je i sam modal)
+}
+
+function previewStages(stages: { processes: string[] }[]): string {
+    if (!stages.length) return '—';
+    const parts = stages.map(s => s.processes.join(' ∥ '));
+    return parts.length > 3 ? `${parts.slice(0, 3).join(' → ')} → +${parts.length - 3}` : parts.join(' → ');
+}
+
+const card: React.CSSProperties = {
+    display: 'flex', alignItems: 'center', gap: 12, padding: '12px 14px',
+    border: '1px solid var(--border-light)', borderRadius: 'var(--radius-md)', background: 'var(--surface)',
+};
+const iconBtn: React.CSSProperties = {
+    display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 30, height: 30,
+    border: '1px solid var(--border-light)', borderRadius: 'var(--radius-sm)', background: 'var(--background)',
+    color: 'var(--text-secondary)', cursor: 'pointer', flexShrink: 0,
+};
+
+/**
+ * Templejti FAZNOG plana procesa — snimi plan otvorenog proizvoda pod nazivom,
+ * pa ga kasnije primijeni na drugi proizvod jednim klikom (analogno templejtima materijala).
+ */
+export default function ProcessStageTemplatesModal({
+    organizationId, currentStages, onApply, onClose, showToast, zIndex,
+}: ProcessStageTemplatesModalProps) {
+    const [view, setView] = useState<'list' | 'save'>('list');
+    const [templates, setTemplates] = useState<ProcessStageTemplate[]>([]);
+    const [loading, setLoading] = useState(true);
+    const [busyId, setBusyId] = useState<string | null>(null);
+    const [editingId, setEditingId] = useState<string | null>(null);
+    const [editName, setEditName] = useState('');
+    const [saveName, setSaveName] = useState('');
+    const [saving, setSaving] = useState(false);
+
+    const hasCurrentPlan = currentStages.some(s => s.length > 0);
+
+    const load = async () => {
+        setLoading(true);
+        try {
+            setTemplates(await getProcessStageTemplates(organizationId));
+        } catch (e) {
+            console.error('load process stage templates error:', e);
+        } finally {
+            setLoading(false);
+        }
+    };
+    useEffect(() => { load(); }, [organizationId]);
+
+    function handleApply(t: ProcessStageTemplate) {
+        if (hasCurrentPlan && !confirm(`Primijeniti templejt "${t.Name}"? Trenutni plan procesa ovog proizvoda će biti zamijenjen.`)) return;
+        onApply(t.Stages.map(s => s.processes));
+        onClose();
+    }
+
+    async function handleDelete(t: ProcessStageTemplate) {
+        if (!confirm(`Obrisati templejt "${t.Name}"?`)) return;
+        setBusyId(t.Template_ID);
+        const res = await deleteProcessStageTemplate(t.Template_ID, organizationId);
+        setBusyId(null);
+        if (res.success) { showToast(res.message, 'success'); await load(); }
+        else showToast(res.message, 'error');
+    }
+
+    async function saveRename(t: ProcessStageTemplate) {
+        const trimmed = editName.trim();
+        setEditingId(null);
+        if (!trimmed || trimmed === t.Name) return;
+        const res = await renameProcessStageTemplate(t.Template_ID, trimmed, organizationId);
+        if (res.success) await load();
+        else showToast(res.message, 'error');
+    }
+
+    async function handleSaveNew() {
+        const name = saveName.trim();
+        if (!name) { showToast('Unesite naziv templejta', 'error'); return; }
+        setSaving(true);
+        const res = await saveProcessStageTemplate(name, currentStages.map(s => ({ processes: s })), organizationId);
+        setSaving(false);
+        if (res.success) {
+            showToast(res.message, 'success');
+            setSaveName('');
+            await load();
+            setView('list');
+        } else showToast(res.message, 'error');
+    }
+
+    return (
+        <Modal
+            isOpen
+            onClose={onClose}
+            size="large"
+            zIndex={zIndex}
+            title={
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                    <Bookmark size={18} style={{ color: 'var(--accent)' }} />
+                    <span>{view === 'save' ? 'Sačuvaj templejt plana' : 'Templejti plana procesa'}</span>
+                </span>
+            }
+            footer={
+                view === 'list' ? (
+                    <>
+                        <button className="btn btn-secondary" onClick={onClose}>Zatvori</button>
+                        <button
+                            className="btn btn-primary"
+                            disabled={!hasCurrentPlan}
+                            title={!hasCurrentPlan ? 'Trenutni plan je prazan' : ''}
+                            onClick={() => { setSaveName(''); setView('save'); }}
+                        >
+                            <Plus size={15} /> Sačuvaj trenutni plan
+                        </button>
+                    </>
+                ) : (
+                    <>
+                        <button className="btn btn-secondary" onClick={() => setView('list')} disabled={saving}>Nazad</button>
+                        <button className="btn btn-primary" onClick={handleSaveNew} disabled={saving}>
+                            <Save size={15} /> {saving ? 'Spremanje...' : 'Sačuvaj'}
+                        </button>
+                    </>
+                )
+            }
+        >
+            {view === 'list' ? (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 10, minHeight: 160 }}>
+                    {loading ? (
+                        <div style={{ padding: 24, textAlign: 'center', color: 'var(--text-tertiary)' }}>Učitavanje…</div>
+                    ) : templates.length === 0 ? (
+                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6, padding: '40px 24px', textAlign: 'center', color: 'var(--text-secondary)' }}>
+                            <Bookmark size={32} style={{ color: 'var(--text-tertiary)', marginBottom: 4 }} />
+                            <h4 style={{ margin: 0, fontSize: 15, color: 'var(--text-primary)' }}>Nema templejta</h4>
+                            <p style={{ margin: 0, fontSize: 13, maxWidth: 360, lineHeight: 1.5 }}>
+                                Sačuvaj plan procesa koji često ponavljaš (npr. za kuhinje ili ormare), pa ga primijeni na drugi proizvod jednim klikom.
+                            </p>
+                        </div>
+                    ) : (
+                        templates.map(t => (
+                            <div key={t.Template_ID} style={card}>
+                                <div style={{ flex: 1, minWidth: 0 }}>
+                                    {editingId === t.Template_ID ? (
+                                        <div style={{ display: 'flex', gap: 6 }}>
+                                            <input
+                                                autoFocus
+                                                value={editName}
+                                                onChange={e => setEditName(e.target.value)}
+                                                onKeyDown={e => { if (e.key === 'Enter') saveRename(t); }}
+                                                style={{ flex: 1, padding: '6px 10px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--accent)', fontSize: 13 }}
+                                            />
+                                            <button style={iconBtn} onClick={() => saveRename(t)} title="Sačuvaj naziv"><Check size={14} /></button>
+                                        </div>
+                                    ) : (
+                                        <div style={{ fontWeight: 600, fontSize: 14, color: 'var(--text-primary)' }}>{t.Name}</div>
+                                    )}
+                                    <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                        {previewStages(t.Stages)}
+                                    </div>
+                                </div>
+                                <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+                                    <button
+                                        className="btn btn-sm btn-primary"
+                                        disabled={busyId === t.Template_ID}
+                                        onClick={() => handleApply(t)}
+                                        style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+                                    >
+                                        <Download size={14} /> Primijeni
+                                    </button>
+                                    <button style={iconBtn} title="Preimenuj" onClick={() => { setEditingId(t.Template_ID); setEditName(t.Name); }}>
+                                        <Pencil size={14} />
+                                    </button>
+                                    <button
+                                        style={{ ...iconBtn, color: 'var(--error)' }}
+                                        title="Obriši"
+                                        disabled={busyId === t.Template_ID}
+                                        onClick={() => handleDelete(t)}
+                                    >
+                                        <Trash2 size={14} />
+                                    </button>
+                                </div>
+                            </div>
+                        ))
+                    )}
+                </div>
+            ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+                    <div>
+                        <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 6 }}>
+                            Trenutni plan koji se sprema
+                        </label>
+                        <div style={{ padding: '10px 12px', borderRadius: 'var(--radius-sm)', background: 'var(--surface)', border: '1px solid var(--border-light)', fontSize: 13, color: 'var(--text-primary)' }}>
+                            {previewStages(currentStages.map(s => ({ processes: s })))}
+                        </div>
+                    </div>
+                    <div className="form-group">
+                        <label>Naziv templejta *</label>
+                        <input
+                            type="text"
+                            autoFocus
+                            placeholder="npr. Kuhinja standard"
+                            value={saveName}
+                            onChange={e => setSaveName(e.target.value)}
+                            onKeyDown={e => { if (e.key === 'Enter' && saveName.trim()) handleSaveNew(); }}
+                        />
+                    </div>
+                </div>
+            )}
+        </Modal>
+    );
+}

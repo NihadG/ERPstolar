@@ -8,7 +8,8 @@ import { getProcessCatalog, saveProcessCatalogItem, saveProductProcessStages, ap
 import { planToStages } from '@/lib/productProcesses';
 import Modal from '@/components/ui/Modal';
 import ProcessCatalogModal from '@/components/ui/ProcessCatalogModal';
-import { X, Plus, RefreshCw, Settings2, GitBranch, ArrowRight, GripVertical, Search, Lock, Sparkles } from 'lucide-react';
+import ProcessStageTemplatesModal from '@/components/ui/ProcessStageTemplatesModal';
+import { X, Plus, RefreshCw, Settings2, GitBranch, ArrowRight, GripVertical, Search, Lock, Sparkles, Bookmark } from 'lucide-react';
 
 interface ProductProcessPlanProps {
     product: Product;
@@ -42,6 +43,7 @@ export default function ProductProcessPlan({ product, organizationId, onChanged,
     const [stages, setStages] = useState<string[][]>(() => planToStages(product.Process_Stages, product.Process_Plan));
     const [busy, setBusy] = useState(false);
     const [catalogModalOpen, setCatalogModalOpen] = useState(false);
+    const [templatesModalOpen, setTemplatesModalOpen] = useState(false);
 
     // Popover "dodaj proces" — portal na document.body, pozicioniran fiksno (ne siječe se overflowom modala)
     const [addPopover, setAddPopover] = useState<AddPopoverState | null>(null);
@@ -199,6 +201,9 @@ export default function ProductProcessPlan({ product, organizationId, onChanged,
                         <button className="ppp-btn" onClick={autoSuggest} disabled={busy} title="Preračunaj plan iz pravila materijal→proces (pregazi trenutni plan)">
                             <RefreshCw size={14} /> <span>Auto prijedlog</span>
                         </button>
+                        <button className="ppp-btn" onClick={() => setTemplatesModalOpen(true)} title="Sačuvaj trenutni plan kao templejt ili primijeni sačuvani">
+                            <Bookmark size={14} /> <span>Templejti</span>
+                        </button>
                         <button className="ppp-btn" onClick={() => setCatalogModalOpen(true)} title="Katalog procesa i pravila materijal→proces (za cijelu firmu)">
                             <Settings2 size={14} /> <span>Upravljaj</span>
                         </button>
@@ -216,6 +221,9 @@ export default function ProductProcessPlan({ product, organizationId, onChanged,
                             </button>
                             <button className="ppp-btn" onClick={autoSuggest} disabled={busy}>
                                 <RefreshCw size={14} /> Auto prijedlog
+                            </button>
+                            <button className="ppp-btn" onClick={() => setTemplatesModalOpen(true)}>
+                                <Bookmark size={14} /> Templejti
                             </button>
                         </div>
                     </div>
@@ -327,6 +335,17 @@ export default function ProductProcessPlan({ product, organizationId, onChanged,
                     organizationId={organizationId}
                     onClose={() => setCatalogModalOpen(false)}
                     onChanged={() => { invalidateProcessCatalogCache(); loadCatalog(true); }}
+                    showToast={showToast}
+                    zIndex={1100}
+                />
+            )}
+
+            {templatesModalOpen && (
+                <ProcessStageTemplatesModal
+                    organizationId={organizationId}
+                    currentStages={stages}
+                    onApply={(newStages) => persist(newStages, 'manual')}
+                    onClose={() => setTemplatesModalOpen(false)}
                     showToast={showToast}
                     zIndex={1100}
                 />

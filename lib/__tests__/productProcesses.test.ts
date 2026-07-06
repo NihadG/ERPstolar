@@ -2,6 +2,7 @@ import {
     orderByCatalog,
     suggestProcessesFromMaterials,
     synthesizeOrderGraph,
+    nodeMatchesProcess,
     currentProcessName,
     resolveAutoProcessNode,
     planToStages,
@@ -153,6 +154,76 @@ describe('synthesizeOrderGraph — spajanje FAZNIH planova u graf naloga', () =>
         const { graph } = synthesizeOrderGraph([{ itemId: 'A', stages: [] }]);
         expect(graph.nodes).toEqual([]);
         expect(graph.edges).toEqual([]);
+    });
+    test('bez konsolidacije: svaki čvor dobija aliases = [name]', () => {
+        const { graph } = synthesizeOrderGraph([{ itemId: 'A', stages: seq(['Krojenje', 'Sklapanje']) }]);
+        expect(graph.nodes.find(n => n.name === 'Krojenje')!.aliases).toEqual(['Krojenje']);
+    });
+    test('includeEdges:false → čvorovi bez veza, kolone po fazama', () => {
+        const { graph, columns } = synthesizeOrderGraph([{
+            itemId: 'sto',
+            stages: [['Izrada nogu', 'Krojenje furnira'], ['Sklapanje'], ['Lakiranje']],
+        }], undefined, { includeEdges: false });
+        expect(graph.edges).toEqual([]);
+        expect(graph.nodes).toHaveLength(4);
+        // kolona 0 = 2 paralelna, kolona 1 = Sklapanje, kolona 2 = Lakiranje
+        const nameById = (id: string) => graph.nodes.find(n => n.id === id)!.name;
+        expect(columns).toHaveLength(3);
+        expect(columns[0].map(nameById).sort()).toEqual(['Izrada nogu', 'Krojenje furnira']);
+        expect(columns[1].map(nameById)).toEqual(['Sklapanje']);
+        expect(columns[2].map(nameById)).toEqual(['Lakiranje']);
+    });
+    test('čvor u više faza (različiti proizvodi) → svrstan u NAJRANIJU fazu', () => {
+        const { columns, graph } = synthesizeOrderGraph([
+            { itemId: 'A', stages: [['Krojenje'], ['Sklapanje']] },       // Sklapanje = faza 1
+            { itemId: 'B', stages: [['Sklapanje'], ['Lak']] },            // Sklapanje = faza 0
+        ], undefined, { includeEdges: false });
+        const nameById = (id: string) => graph.nodes.find(n => n.id === id)!.name;
+        // Sklapanje ima min fazu 0 → kolona 0 (uz Krojenje)
+        expect(columns[0].map(nameById).sort()).toEqual(['Krojenje', 'Sklapanje']);
+    });
+});
+
+describe('nodeMatchesProcess — poklapanje po sinonimima', () => {
+    test('poklapa po name kad nema aliasa (case/space-insensitive)', () => {
+        expect(nodeMatchesProcess({ name: 'Lakiranje' }, ' lakiranje ')).toBe(true);
+        expect(nodeMatchesProcess({ name: 'Lakiranje' }, 'Sklapanje')).toBe(false);
+    });
+    test('poklapa bilo koji alias', () => {
+        const node = { name: 'Lijepljenje', aliases: ['Lijepljenje', 'lijepljenje furnira', 'Lijepljenje i obrada'] };
+        expect(nodeMatchesProcess(node, 'Lijepljenje furnira')).toBe(true);
+        expect(nodeMatchesProcess(node, 'Lijepljenje i obrada')).toBe(true);
+        expect(nodeMatchesProcess(node, 'Bušenje')).toBe(false);
+    });
+    test('prazan naziv → false', () => {
+        expect(nodeMatchesProcess({ name: 'X' }, '')).toBe(false);
+    });
+});
+
+describe('synthesizeOrderGraph — konsolidacija (spajanje različitih naziva)', () => {
+    test('dva različita naziva u jednoj grupi → JEDAN čvor s aliasima i unijom stavki', () => {
+        const consolidation = { groups: [{ canonical: 'Lijepljenje', members: ['Lijepljenje furnira', 'Lijepljenje i obrada'] }] };
+        const { graph } = synthesizeOrderGraph([
+            { itemId: 'A', stages: seq(['Krojenje', 'Lijepljenje furnira']) },
+            { itemId: 'B', stages: seq(['Krojenje', 'Lijepljenje i obrada']) },
+        ], consolidation);
+        // Krojenje + jedan spojeni Lijepljenje = 2 čvora
+        expect(graph.nodes).toHaveLength(2);
+        const lijep = graph.nodes.find(n => n.name === 'Lijepljenje')!;
+        expect(lijep).toBeTruthy();
+        expect(lijep.itemIds.sort()).toEqual(['A', 'B']);
+        expect(lijep.aliases!.map(a => a.toLowerCase()).sort()).toEqual(['lijepljenje furnira', 'lijepljenje i obrada']);
+    });
+    test('konsolidovani čvor poklapa oba originalna procesa preko nodeMatchesProcess', () => {
+        const consolidation = { groups: [{ canonical: 'Lijepljenje', members: ['Lijepljenje furnira', 'Lijepljenje i obrada'] }] };
+        const { graph } = synthesizeOrderGraph([
+            { itemId: 'A', stages: seq(['Lijepljenje furnira']) },
+            { itemId: 'B', stages: seq(['Lijepljenje i obrada']) },
+        ], consolidation);
+        const node = graph.nodes.find(n => n.name === 'Lijepljenje')!;
+        // auto-pripis dnevnice po TEKUĆEM (originalnom) nazivu stavke i dalje nalazi zajednički čvor
+        expect(resolveAutoProcessNode(graph, 'A', [{ Process_Name: 'Lijepljenje furnira', Status: 'U toku' }])?.id).toBe(node.id);
+        expect(resolveAutoProcessNode(graph, 'B', [{ Process_Name: 'Lijepljenje i obrada', Status: 'U toku' }])?.id).toBe(node.id);
     });
 });
 

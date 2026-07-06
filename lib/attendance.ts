@@ -4110,8 +4110,8 @@ export async function addProcessToOrderItem(
     }
     try {
         const firestore = getDb();
-        const { planToStages, synthesizeOrderGraph } = await import('./productProcesses');
-        const { layoutProcessGraph } = await import('./processLayout');
+        const { planToStages, synthesizeOrderGraph, nodeMatchesProcess } = await import('./productProcesses');
+        const { layoutColumns } = await import('./processLayout');
         const { getProcessGraph, saveProcessGraph } = await import('./database');
 
         // 1) upsert u item.Processes (+ recalc statusa/naloga interno)
@@ -4136,28 +4136,39 @@ export async function addProcessToOrderItem(
         }
         await updateDoc(itemRef, { Process_Stages: curStages.map(s => ({ processes: s })) });
 
-        // 3) re-sintetiši graf iz SVIH stavki naloga
-        const allItemsSnap = await getDocs(query(
-            collection(firestore, COLLECTIONS.WORK_ORDER_ITEMS),
-            where('Work_Order_ID', '==', workOrderId),
-            where('Organization_ID', '==', organizationId)
-        ));
-        const planItems = allItemsSnap.docs.map(d => {
-            const it = d.data() as WorkOrderItem;
-            const stages = it.ID === itemId
-                ? curStages
-                : planToStages((it as any).Process_Stages, (it.Processes || []).map(p => p.Process_Name).filter(Boolean) as string[]);
-            return { itemId: it.ID, stages };
-        }).filter(pi => pi.stages.length > 0);
-
-        const { graph } = synthesizeOrderGraph(planItems);
-        if (graph.nodes.length > 0) {
-            // sačuvaj pozicije istoimenih postojećih čvorova
-            const prev = await getProcessGraph(workOrderId, organizationId);
-            const posByName = new Map((prev.nodes || []).map(n => [n.name.trim().toLowerCase(), n.position]));
-            const pos = layoutProcessGraph(graph.nodes, graph.edges);
-            graph.nodes.forEach(n => { n.position = posByName.get(n.name.trim().toLowerCase()) || pos[n.id] || { x: 24, y: 24 }; });
-            await saveProcessGraph(workOrderId, graph, organizationId);
+        // 3) Ažuriraj graf naloga BEZ diranja RUČNIH veza / konsolidacije (aliasa):
+        //    - postojeći čvor već predstavlja ovaj proces (po nazivu/aliasu) → samo proširi pokrivenost
+        //    - inače dodaj NOVI čvor bez veza (korisnik ga poveže); fazni raspored
+        //    - grafa još nema → edgeless sinteza iz svih stavki
+        const prev = await getProcessGraph(workOrderId, organizationId);
+        if (prev.nodes && prev.nodes.length > 0) {
+            const existing = prev.nodes.find(n => nodeMatchesProcess(n, name));
+            if (existing) {
+                if ((existing.itemIds || []).length > 0 && !existing.itemIds.includes(itemId)) existing.itemIds.push(itemId);
+            } else {
+                const maxX = Math.max(0, ...prev.nodes.map(n => n.position?.x || 0));
+                prev.nodes.push({ id: `n-${generateUUID()}`, name, itemIds: [itemId], aliases: [name], position: { x: maxX + 260, y: 24 } });
+            }
+            await saveProcessGraph(workOrderId, prev, organizationId);
+        } else {
+            const allItemsSnap = await getDocs(query(
+                collection(firestore, COLLECTIONS.WORK_ORDER_ITEMS),
+                where('Work_Order_ID', '==', workOrderId),
+                where('Organization_ID', '==', organizationId)
+            ));
+            const planItems = allItemsSnap.docs.map(d => {
+                const it = d.data() as WorkOrderItem;
+                const stages = it.ID === itemId
+                    ? curStages
+                    : planToStages((it as any).Process_Stages, (it.Processes || []).map(p => p.Process_Name).filter(Boolean) as string[]);
+                return { itemId: it.ID, stages };
+            }).filter(pi => pi.stages.length > 0);
+            const { graph, columns } = synthesizeOrderGraph(planItems, undefined, { includeEdges: false });
+            if (graph.nodes.length > 0) {
+                const pos = layoutColumns(columns);
+                graph.nodes.forEach(n => { n.position = pos[n.id] || { x: 24, y: 24 }; });
+                await saveProcessGraph(workOrderId, graph, organizationId);
+            }
         }
 
         return { success: true, message: `Proces „${name}" dodan u nalog` };

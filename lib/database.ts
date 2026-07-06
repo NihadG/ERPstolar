@@ -48,6 +48,7 @@ import type {
     ProcessFlowTemplate,
     ProcessCatalogItem,
     ProcessMaterialRule,
+    ProcessStageTemplate,
 } from './types';
 import { ALLOWED_ORDER_TRANSITIONS } from './types';
 
@@ -3444,17 +3445,17 @@ export async function createWorkOrder(data: {
             planItems.push({ itemId: workOrderItem.ID, stages });
         }
 
-        // Graf procesa odmah pri kreiranju (do sada: uvijek ručno u modalu) + Production_Steps = unija (print)
+        // Graf procesa odmah pri kreiranju (čvorovi za auto-knjiženje) + Production_Steps = unija (print).
+        // BEZ auto-veza (korisnik ih ručno povezuje u editoru) — fazni raspored kolona kao u planu proizvoda.
         try {
             const { synthesizeOrderGraph } = await import('./productProcesses');
-            const { layoutProcessGraph } = await import('./processLayout');
-            const { graph, warnings } = synthesizeOrderGraph(planItems);
+            const { layoutColumns } = await import('./processLayout');
+            const { graph, columns } = synthesizeOrderGraph(planItems, undefined, { includeEdges: false });
             if (graph.nodes.length > 0) {
-                const pos = layoutProcessGraph(graph.nodes, graph.edges);
+                const pos = layoutColumns(columns);
                 graph.nodes.forEach(n => { n.position = pos[n.id] || { x: 24, y: 24 }; });
                 (workOrder as any).Process_Graph = JSON.parse(JSON.stringify(graph));
                 workOrder.Production_Steps = graph.nodes.map(n => n.name);
-                if (warnings.length) console.warn('Process graph synthesis warnings:', warnings);
             }
         } catch (synthErr) {
             console.warn('Process graph synthesis failed (non-critical):', synthErr);
@@ -5349,6 +5350,69 @@ export async function saveProductProcessStages(
         });
         return { success: true, message: 'Plan procesa spremljen' };
     } catch (e) { console.error('saveProductProcessStages error:', e); return { success: false, message: 'Greška pri spremanju plana' }; }
+}
+
+// ============================================
+// TEMPLEJTI PLANA PROCESA (proizvod) — snimi trenutne faze pa ih primijeni
+// na drugi proizvod jednim klikom (analogno templejtima materijala).
+// ============================================
+
+const PROCESS_STAGE_TEMPLATES = 'process_stage_templates';
+
+export async function getProcessStageTemplates(organizationId: string): Promise<ProcessStageTemplate[]> {
+    if (!organizationId) return [];
+    try {
+        const db = getDb();
+        const snap = await getDocs(query(collection(db, PROCESS_STAGE_TEMPLATES), where('Organization_ID', '==', organizationId)));
+        return snap.docs.map(d => d.data() as ProcessStageTemplate)
+            .sort((a, b) => (a.Created_At || '').localeCompare(b.Created_At || ''));
+    } catch (e) { console.error('getProcessStageTemplates error:', e); return []; }
+}
+
+export async function saveProcessStageTemplate(
+    name: string,
+    stages: { processes: string[] }[],
+    organizationId: string
+): Promise<{ success: boolean; message: string }> {
+    const trimmed = (name || '').trim();
+    if (!organizationId || !trimmed) return { success: false, message: 'Nedostaje naziv/organizacija' };
+    const clean = (stages || []).map(s => ({ processes: (s.processes || []).filter(Boolean) })).filter(s => s.processes.length > 0);
+    if (clean.length === 0) return { success: false, message: 'Plan je prazan — nema šta da se sačuva' };
+    try {
+        const db = getDb();
+        const tpl: ProcessStageTemplate = {
+            Template_ID: generateUUID(),
+            Organization_ID: organizationId,
+            Name: trimmed,
+            Stages: clean,
+            Created_At: new Date().toISOString(),
+        };
+        await addDoc(collection(db, PROCESS_STAGE_TEMPLATES), JSON.parse(JSON.stringify(tpl)));
+        return { success: true, message: 'Templejt plana sačuvan' };
+    } catch (e) { console.error('saveProcessStageTemplate error:', e); return { success: false, message: 'Greška pri spremanju templejta' }; }
+}
+
+export async function renameProcessStageTemplate(templateId: string, newName: string, organizationId: string): Promise<{ success: boolean; message: string }> {
+    const trimmed = (newName || '').trim();
+    if (!organizationId || !templateId || !trimmed) return { success: false, message: 'Nedostaje naziv/organizacija' };
+    try {
+        const db = getDb();
+        const snap = await getDocs(query(collection(db, PROCESS_STAGE_TEMPLATES), where('Template_ID', '==', templateId), where('Organization_ID', '==', organizationId)));
+        if (snap.empty) return { success: false, message: 'Templejt nije pronađen' };
+        await updateDoc(snap.docs[0].ref, { Name: trimmed });
+        return { success: true, message: 'Templejt preimenovan' };
+    } catch (e) { console.error('renameProcessStageTemplate error:', e); return { success: false, message: 'Greška pri preimenovanju' }; }
+}
+
+export async function deleteProcessStageTemplate(templateId: string, organizationId: string): Promise<{ success: boolean; message: string }> {
+    if (!organizationId || !templateId) return { success: false, message: 'Nedostaje organizacija' };
+    try {
+        const db = getDb();
+        const snap = await getDocs(query(collection(db, PROCESS_STAGE_TEMPLATES), where('Template_ID', '==', templateId), where('Organization_ID', '==', organizationId)));
+        if (snap.empty) return { success: false, message: 'Templejt nije pronađen' };
+        await deleteDoc(snap.docs[0].ref);
+        return { success: true, message: 'Templejt obrisan' };
+    } catch (e) { console.error('deleteProcessStageTemplate error:', e); return { success: false, message: 'Greška pri brisanju templejta' }; }
 }
 
 // ============================================

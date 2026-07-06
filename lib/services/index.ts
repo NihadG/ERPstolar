@@ -117,6 +117,8 @@ export {
     deleteProcessCatalogItem, reorderProcessCatalog,
     getProcessMaterialRules, saveProcessMaterialRule, deleteProcessMaterialRule,
     applyAutoProcessPlan, saveProductProcessStages,
+    getProcessStageTemplates, saveProcessStageTemplate,
+    renameProcessStageTemplate, deleteProcessStageTemplate,
 } from '../database';
 
 // Labor / Attendance

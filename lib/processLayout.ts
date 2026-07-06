@@ -88,3 +88,18 @@ export function layoutProcessGraph(
     });
     return pos;
 }
+
+/**
+ * Raspored po FAZAMA (kolonama) bez veza: kolona = faza, red = pozicija u fazi.
+ * Za graf naloga koji se učitava BEZ auto-veza (korisnik ih ručno povezuje),
+ * a zadržava pregledan fazni raspored kao u planu procesa proizvoda.
+ */
+export function layoutColumns(columns: string[][]): Record<string, XY> {
+    const pos: Record<string, XY> = {};
+    columns.forEach((col, ci) => {
+        col.forEach((id, ri) => {
+            pos[id] = { x: X0 + ci * (NODE_W + GAP_X), y: Y0 + ri * (NODE_H + GAP_Y) };
+        });
+    });
+    return pos;
+}
