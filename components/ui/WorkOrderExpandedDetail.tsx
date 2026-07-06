@@ -54,6 +54,7 @@ export default function WorkOrderExpandedDetail({
     const [editingName, setEditingName] = useState(false);
     const [nameDraft, setNameDraft] = useState('');
     const [tab, setTab] = useState<'tok' | 'rad'>('tok');
+    const [flowOpen, setFlowOpen] = useState(false);   // "Procesi naloga" — collapsed po defaultu (liste znaju biti duge)
 
     const saveName = async () => {
         const v = nameDraft.trim();
@@ -479,20 +480,28 @@ export default function WorkOrderExpandedDetail({
             {tab === 'tok' && (
                 <div className="wo-flow">
                     <div className="wo-flow-head">
-                        <span className="wo-flow-title">Procesi naloga</span>
+                        <button className="wo-flow-toggle" onClick={() => setFlowOpen(o => !o)}>
+                            <span className="material-icons-round wo-flow-chevron">{flowOpen ? 'expand_more' : 'chevron_right'}</span>
+                            <span className="wo-flow-title">Procesi naloga</span>
+                            {procProgress && procProgress.total > 0 && (
+                                <span className="wo-flow-count">{procProgress.done}/{procProgress.total}</span>
+                            )}
+                        </button>
                         <button className="wo-graf-btn" onClick={() => setProcessOpen(true)}>
                             <GitBranch size={15} /> Graf procesa
                         </button>
                     </div>
-                    <OrderProcessBoard
-                        workOrderId={workOrder.Work_Order_ID}
-                        items={localItems.length ? localItems : (workOrder.items || [])}
-                        workers={workers}
-                        workLogs={workLogs}
-                        organizationId={organizationId || undefined}
-                        onChanged={() => { onRefresh?.('workOrders'); reloadWorkLogs(); }}
-                        showToast={showToast}
-                    />
+                    {flowOpen && (
+                        <OrderProcessBoard
+                            workOrderId={workOrder.Work_Order_ID}
+                            items={localItems.length ? localItems : (workOrder.items || [])}
+                            workers={workers}
+                            workLogs={workLogs}
+                            organizationId={organizationId || undefined}
+                            onChanged={() => { onRefresh?.('workOrders'); reloadWorkLogs(); }}
+                            showToast={showToast}
+                        />
+                    )}
 
                     <div className="wo-flow-title" style={{ marginTop: 6 }}>Proizvodi</div>
                     {localItems.length > 0 ? localItems.map(item => {

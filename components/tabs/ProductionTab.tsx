@@ -1146,7 +1146,14 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
             }
         };
 
-        const statusDetails = getStatusDetails(wo.Status);
+        // Nalog je PAUZIRAN kad su sve otvorene (ne-završene/otkazane) stavke pauzirane —
+        // wo.Status i dalje piše 'U toku' (status se ne mijenja pauzom), pa ovdje preciziramo prikaz.
+        const openWoItems = (wo.items || []).filter(i => (i.Status as string) !== 'Završeno' && (i.Status as string) !== 'Otkazano');
+        const isOrderPaused = wo.Status === 'U toku' && openWoItems.length > 0 && openWoItems.every(i => i.Is_Paused);
+        const statusDetails = isOrderPaused
+            ? { color: '#f97316', icon: 'pause_circle', bg: 'linear-gradient(135deg, rgba(249, 115, 22, 0.1), rgba(249, 115, 22, 0.2))' }
+            : getStatusDetails(wo.Status);
+        const statusLabel = isOrderPaused ? 'Pauzirano' : wo.Status;
 
         const isMontaza = wo.Work_Order_Type === 'Montaža';
 
@@ -1191,7 +1198,7 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                                         color: statusDetails.color,
                                     }}>
                                         <span className="material-icons-round" style={{ fontSize: '14px' }}>{statusDetails.icon}</span>
-                                        {wo.Status}
+                                        {statusLabel}
                                     </span>
                                     {isMontaza && (
                                         <>
