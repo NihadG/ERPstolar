@@ -15,6 +15,7 @@
 
 import { splitDnevnicaExact, normalizePresence } from '../laborSplit';
 import { workOrderDueDate, isWorkingDay, buildSaturdayChecker, type AttendanceLite } from '../planning';
+import { itemMaterialTotal, isItemMaterialFrozen } from '../materialCost';
 
 // ── helpers ─────────────────────────────────────────────────────────────────
 const round2 = (n: number) => Math.round(n * 100) / 100;
@@ -314,5 +315,54 @@ describe('Scenarij 5 — invarijanta: net naloga == Σ net proizvoda (i sa uslug
     test('gross naloga == Σ gross proizvoda (usluge uračunate jednom)', () => {
         const sumGross = round2(items.reduce((s, i) => s + itemProfit(i).gross, 0));
         expect(sumGross).toBe(round2(workOrderProfit(items).gross));
+    });
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// SCENARIJ 6 — Materijal × KOLIČINA (bug iz PDF-a: Igor Gavrilović, 15 stolova)
+// Materijal se u bazi čuva PO KOMADU, prihod je UKUPAN → materijal se MORA množiti
+// količinom pri računanju profita, inače je profit precijenjen za svaki nalog Qty>1.
+// ════════════════════════════════════════════════════════════════════════════
+describe('Scenarij 6 — trošak materijala se množi količinom (itemMaterialTotal)', () => {
+    test('15 stolova × 255 = 3825 (a ne 255) — tačan primjer iz PDF-a', () => {
+        expect(itemMaterialTotal(255, 15)).toBe(3825);
+    });
+
+    test('Qty nedostaje ili < 1 → tretira se kao 1 komad', () => {
+        expect(itemMaterialTotal(255, undefined)).toBe(255);
+        expect(itemMaterialTotal(255, 0)).toBe(255);
+        expect(itemMaterialTotal(255, 1)).toBe(255);
+    });
+
+    test('profit koristi UKUPAN materijal: prihod(ukupan) − materijal(po komadu × qty) − rad', () => {
+        const unitMaterial = 100, qty = 3;
+        // prihod je ukupan: jedinična prodajna 400 × 3 = 1200
+        const fin: ItemFin = {
+            selling: 1200,
+            material: itemMaterialTotal(unitMaterial, qty), // 300
+            transport: 0, services: 0, plannedLabor: 0, actualLabor: 180,
+        };
+        expect(fin.material).toBe(300);
+        expect(itemProfit(fin).net).toBe(1200 - 300 - 180); // 720
+    });
+
+    test('miješane količine: net naloga == Σ net proizvoda (materijal × qty na oba nivoa)', () => {
+        const mk = (unit: number, qty: number, selling: number, labor: number): ItemFin => ({
+            selling, material: itemMaterialTotal(unit, qty), transport: 0, services: 0, plannedLabor: 0, actualLabor: labor,
+        });
+        const items = [mk(100, 3, 1200, 180), mk(50, 2, 400, 90), mk(255, 15, 6000, 500)];
+        const sumItems = round2(items.reduce((s, i) => s + itemProfit(i).net, 0));
+        expect(round2(workOrderProfit(items).net)).toBe(sumItems);
+        // materijal naloga = 300 + 100 + 3825 = 4225
+        expect(round2(workOrderProfit(items).material)).toBe(4225);
+    });
+
+    test('zamrznuti/manual materijal se prepoznaje (koristi pohranjeni po komadu, pa × qty)', () => {
+        expect(isItemMaterialFrozen({ Status: 'Završeno' })).toBe(true);
+        expect(isItemMaterialFrozen({ Completed_At: '2026-07-01T10:00:00Z' })).toBe(true);
+        expect(isItemMaterialFrozen({ Material_Cost_Source: 'manual' })).toBe(true);
+        expect(isItemMaterialFrozen({ Status: 'U toku' })).toBe(false);
+        // frozen ili ne — ukupno je uvijek po komadu × qty
+        expect(itemMaterialTotal(255, 15)).toBe(3825);
     });
 });

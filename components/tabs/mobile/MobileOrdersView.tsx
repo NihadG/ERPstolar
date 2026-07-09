@@ -13,6 +13,7 @@ interface MobileOrdersViewProps {
     suppliers: Supplier[];
     projects: Project[];
     onRefresh: (...collections: string[]) => void;
+    onPatchOrder?: (orderId: string, partial: Partial<Order>) => void;
     showToast: (message: string, type: 'success' | 'error' | 'info') => void;
     onOpenWizard: () => void;
     onEditOrder: (order: Order) => void;
@@ -127,7 +128,7 @@ const S = {
 };
 
 export default function MobileOrdersView({
-    orders, suppliers, projects, onRefresh, showToast,
+    orders, suppliers, projects, onRefresh, onPatchOrder, showToast,
     onOpenWizard, onEditOrder, onDeleteOrder, onDownloadPDF, onPrintOrder
 }: MobileOrdersViewProps) {
     const { organizationId } = useData();
@@ -181,11 +182,14 @@ export default function MobileOrdersView({
             }
         }
         setStatusDropdownOrderId(null);
+        onPatchOrder?.(orderId, { Status: newStatus });   // optimistično: badge odmah
         const result = await updateOrderStatus(orderId, newStatus, organizationId!);
         if (result.success) {
             showToast('Status promijenjen u "' + newStatus + '"', 'success');
-            onRefresh('orders', 'projects');
+            onRefresh('orders');
+            (result.postCascade ?? Promise.resolve()).finally(() => onRefresh('projects'));
         } else {
+            onPatchOrder?.(orderId, { Status: currentStatus });   // rollback
             showToast(result.message, 'error');
         }
     }
@@ -196,11 +200,15 @@ export default function MobileOrdersView({
             showToast('Narudžba nema stavki za slanje', 'error');
             return;
         }
+        const prevStatus = order.Status;
+        onPatchOrder?.(orderId, { Status: 'Poslano' });   // optimistično
         const result = await markOrderSent(orderId, organizationId!);
         if (result.success) {
             showToast('Narudžba poslana', 'success');
-            onRefresh('orders', 'projects');
+            onRefresh('orders');
+            (result.postCascade ?? Promise.resolve()).finally(() => onRefresh('projects'));
         } else {
+            onPatchOrder?.(orderId, { Status: prevStatus });   // rollback
             showToast(result.message, 'error');
         }
     }
@@ -211,17 +219,34 @@ export default function MobileOrdersView({
         if (unreceivedItems.length === 0) { showToast('Sve stavke su već primljene', 'info'); return; }
         if (order.Status === 'Nacrt') { showToast('Narudžba mora biti poslana prije primanja stavki', 'error'); return; }
         if (!confirm('Primiti svih ' + unreceivedItems.length + ' neprimljenih stavki?')) return;
+        // Optimistično: sve stavke primljene → narudžba 'Primljeno'
+        const prevStatus = order.Status;
+        const prevItems = order.items;
+        const nowIso = new Date().toISOString();
+        onPatchOrder?.(order.Order_ID, {
+            Status: 'Primljeno',
+            items: (order.items || []).map(i => i.Status === 'Primljeno' ? i : { ...i, Status: 'Primljeno', Received_Date: nowIso }),
+        });
         const result = await markMaterialsReceived(unreceivedItems.map(i => i.ID), organizationId!);
-        if (result.success) { showToast('Sve stavke primljene', 'success'); onRefresh('orders', 'projects'); }
-        else { showToast(result.message, 'error'); }
+        if (result.success) {
+            showToast('Sve stavke primljene', 'success');
+            onRefresh('orders');
+            (result.postCascade ?? Promise.resolve()).finally(() => onRefresh('projects'));
+        } else {
+            onPatchOrder?.(order.Order_ID, { Status: prevStatus, items: prevItems });
+            showToast(result.message, 'error');
+        }
     }
 
     async function handleReceiveSingleItem(item: OrderItem, order: Order, e: React.MouseEvent) {
         e.stopPropagation();
         if (order.Status === 'Nacrt') { showToast('Narudžba mora biti poslana prije primanja stavki', 'error'); return; }
         const result = await markMaterialsReceived([item.ID], organizationId!);
-        if (result.success) { showToast('Stavka primljena', 'success'); onRefresh('orders', 'projects'); }
-        else { showToast(result.message, 'error'); }
+        if (result.success) {
+            showToast('Stavka primljena', 'success');
+            onRefresh('orders');
+            (result.postCascade ?? Promise.resolve()).finally(() => onRefresh('projects'));
+        } else { showToast(result.message, 'error'); }
     }
 
     return (

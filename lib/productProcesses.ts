@@ -115,6 +115,33 @@ export function nodeMatchesProcess(node: { name: string; aliases?: string[] }, p
 }
 
 /**
+ * PER-ČVOR gating toka procesa (autoritet: veze grafa, ne "faze").
+ * Čvor je:
+ *   - 'done'    ako je sam završen (doneByNodeId),
+ *   - 'active'  ako su SVI njegovi DIREKTNI prethodnici završeni (ili ih nema),
+ *   - 'blocked' inače.
+ * Time se npr. "kantiranje" otvara ČIM je "krojenje" (njegov jedini prethodnik) gotov,
+ * umjesto da čeka SVE procese prve faze (dense sinteza je gatela cijelu fazu).
+ */
+export function computeProcessGating(
+    nodeIds: string[],
+    edges: { source: string; target: string }[],
+    doneByNodeId: Map<string, boolean> | Record<string, boolean>,
+): Map<string, 'done' | 'active' | 'blocked'> {
+    const isDone = (id: string) => doneByNodeId instanceof Map ? !!doneByNodeId.get(id) : !!doneByNodeId[id];
+    const preds = new Map<string, string[]>();
+    nodeIds.forEach(id => preds.set(id, []));
+    edges.forEach(e => { if (preds.has(e.target)) preds.get(e.target)!.push(e.source); });
+    const out = new Map<string, 'done' | 'active' | 'blocked'>();
+    for (const id of nodeIds) {
+        if (isDone(id)) { out.set(id, 'done'); continue; }
+        const ps = preds.get(id) || [];
+        out.set(id, ps.every(p => isDone(p)) ? 'active' : 'blocked');
+    }
+    return out;
+}
+
+/**
  * Sinteza grafa naloga iz FAZNIH planova proizvoda:
  * - čvor po normalizovanom nazivu (display = prvi viđeni), itemIds = stavke čiji plan ga sadrži
  * - ivice = SVAKI proces faze N → SVAKI proces faze N+1 (po proizvodu; dedupe preko svih)

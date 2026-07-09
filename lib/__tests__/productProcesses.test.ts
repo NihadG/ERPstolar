@@ -11,6 +11,7 @@ import {
     currentStageIndex,
     nextProcessNames,
     deriveItemStatus,
+    computeProcessGating,
 } from '../productProcesses';
 
 const catalog = [
@@ -21,6 +22,45 @@ const catalog = [
     { Name: 'Sklapanje', Order: 5 },
     { Name: 'Ugradnja stakla', Order: 6 },
 ];
+
+describe('computeProcessGating — per-čvor gating iz veza grafa (P4 iz PDF-a)', () => {
+    // krojenje → kantiranje; bušenje je nepovezano (paralelno).
+    const edges = [{ source: 'krojenje', target: 'kantiranje' }];
+    const ids = ['krojenje', 'kantiranje', 'busenje'];
+
+    test('kantiranje se otvara ČIM je krojenje gotovo (ne čeka ostale prve procese)', () => {
+        const g = computeProcessGating(ids, edges, { krojenje: true, kantiranje: false, busenje: false });
+        expect(g.get('kantiranje')).toBe('active');   // jedini prethodnik (krojenje) gotov
+        expect(g.get('krojenje')).toBe('done');
+        expect(g.get('busenje')).toBe('active');       // bez prethodnika → odmah dostupno
+    });
+
+    test('dok krojenje NIJE gotovo, kantiranje je blokirano', () => {
+        const g = computeProcessGating(ids, edges, { krojenje: false });
+        expect(g.get('kantiranje')).toBe('blocked');
+        expect(g.get('krojenje')).toBe('active');
+    });
+
+    test('više prethodnika: čeka SVE (AND semantika)', () => {
+        const g = computeProcessGating(
+            ['a', 'b', 'sklapanje'],
+            [{ source: 'a', target: 'sklapanje' }, { source: 'b', target: 'sklapanje' }],
+            { a: true, b: false },
+        );
+        expect(g.get('sklapanje')).toBe('blocked');    // b još nije gotov
+        const g2 = computeProcessGating(
+            ['a', 'b', 'sklapanje'],
+            [{ source: 'a', target: 'sklapanje' }, { source: 'b', target: 'sklapanje' }],
+            { a: true, b: true },
+        );
+        expect(g2.get('sklapanje')).toBe('active');
+    });
+
+    test('prihvata i Map i Record kao izvor doneByNodeId', () => {
+        const asMap = new Map<string, boolean>([['krojenje', true]]);
+        expect(computeProcessGating(ids, edges, asMap).get('kantiranje')).toBe('active');
+    });
+});
 
 describe('orderByCatalog — kanonski redoslijed iz kataloga', () => {
     test('sortira po Order; nepoznati na kraj, stabilno', () => {

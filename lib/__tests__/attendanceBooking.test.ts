@@ -105,6 +105,45 @@ describe('buildBookingProposal — Teren', () => {
         expect(rows).toHaveLength(1);
         if (rows[0].kind === 'teren') expect(rows[0].suggestedWorkOrderId).toBeUndefined();
     });
+
+    // ── "KAO JUČER" fallback (P7 iz PDF-a): teren bez auto-Montaže dobije jučerašnji nalog ──
+    test('teren bez auto-Montaže → predabir = nalog na koji je radnik JUČER knjižen', () => {
+        const yMap = new Map<string, string[]>([[W, ['PROD']]]);
+        const rows = buildBookingProposal(
+            [{ workerId: W, workerName: 'Radnik', status: 'Teren' }],
+            [order('PROD', [item('p1')])],
+            DAY,
+            undefined,
+            yMap,
+        );
+        expect(rows).toHaveLength(1);
+        if (rows[0].kind === 'teren') expect(rows[0].suggestedWorkOrderId).toBe('PROD');
+    });
+
+    test('teren: auto-Montaža ima prednost nad jučerašnjim (predabir = Montaža)', () => {
+        const yMap = new Map<string, string[]>([[W, ['PROD']]]);
+        const rows = buildBookingProposal(
+            [{ workerId: W, workerName: 'Radnik', status: 'Teren' }],
+            [order('PROD', [item('p1')]), order('MON', [item('m1')], { Work_Order_Type: 'Montaža' })],
+            DAY,
+            undefined,
+            yMap,
+        );
+        if (rows[0].kind === 'teren') expect(rows[0].suggestedWorkOrderId).toBe('MON');
+    });
+
+    test('prisutan bez ijednog predčekiranog naloga → jučerašnji nalog (ako je danas dostupan) predčekiran', () => {
+        const yMap = new Map<string, string[]>([[W, ['RP']]]);
+        // aktivan nalog na koji radnik NIJE dodijeljen → inače prazan suggested
+        const rows = buildBookingProposal(
+            [{ workerId: W, workerName: 'Radnik', status: 'Prisutan' }],
+            [order('RP', [item('rp1', { Assigned_Workers: [{ Worker_ID: 'OTHER', Worker_Name: 'Drugi', Daily_Rate: 80 }] })], { Name: 'Razni poslovi' })],
+            DAY,
+            undefined,
+            yMap,
+        );
+        if (rows[0].kind === 'present') expect(rows[0].suggestedOrderIds).toEqual(['RP']);
+    });
 });
 
 // ════════════════════════════════════════════════════════════════════════════

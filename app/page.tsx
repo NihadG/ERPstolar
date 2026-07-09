@@ -359,6 +359,20 @@ export default function Home() {
         }
     }
 
+    /**
+     * Optimistični lokalni patch jedne stavke u appState kolekciji — BEZ refetcha.
+     * UI (npr. badge statusa narudžbe) reaguje ODMAH, dok DB write i derivirani preračuni
+     * teku u pozadini; usklađivanje ide kroz refreshCollections. Vrati se prethodna vrijednost
+     * polja (za rollback pri grešci).
+     */
+    function patchCollection(name: keyof AppState, idField: string, id: string, partial: Record<string, any>) {
+        setAppState(prev => {
+            const arr = prev[name] as any[];
+            if (!Array.isArray(arr)) return prev;
+            return { ...prev, [name]: arr.map(x => (x?.[idField] === id ? { ...x, ...partial } : x)) };
+        });
+    }
+
     function showToast(message: string, type: 'success' | 'error' | 'info' = 'info') {
         setToast({ message, type });
         setTimeout(() => setToast(null), 3000);
@@ -493,6 +507,7 @@ export default function Home() {
                                 projects={appState.projects}
                                 productMaterials={appState.productMaterials}
                                 onRefresh={refreshCollections}
+                                onPatchOrder={(orderId, partial) => patchCollection('orders', 'Order_ID', orderId, partial)}
                                 showToast={showToast}
                                 pendingOrderMaterials={pendingOrderMaterials}
                                 onClearPendingOrder={clearPendingOrder}

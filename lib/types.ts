@@ -980,6 +980,9 @@ export interface ProductionSnapshot {
     Work_Order_ID: string;
     Work_Order_Number: string;
     Created_At: string;             // Timestamp kreiranja snapshota
+    // Verzija semantike materijala: v2+ → Total_Material_Cost je UKUPAN (po komadu × količina).
+    // Odsutan/1 = legacy (Total_Material_Cost je bio PO KOMADU) → čitaoci množe količinom.
+    Snapshot_Version?: number;
 
     // Projekt Info
     Project_ID: string;

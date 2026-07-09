@@ -3,6 +3,7 @@
 import React, { useState, useMemo } from 'react';
 import type { Project, Material, WorkOrder, Offer, WorkLog, Product, ProductMaterial } from '@/lib/types';
 import { PROJECT_STATUSES } from '@/lib/types';
+import { sortProductsByName } from '@/lib/sortProducts';
 
 interface MobileProjectsViewProps {
     projects: Project[];
@@ -104,22 +105,10 @@ export default function MobileProjectsView({
         }
     }
 
-    // Natural sort for "Poz X" product names (supports decimals: 1, 1.1, 1.2, 2, 10)
+    // Prirodni + hijerarhijski poredak naziva (Poz 1 < Poz 1.1 < Poz 2 < Poz 10, E1 < E2 < E10) —
+    // zajednički util, isti kao na desktopu (OffersTab) i data-sloju.
     function sortProductsByPosition(products: Product[]): Product[] {
-        return [...products].sort((a, b) => {
-            // Extract position numbers from names like "Poz 1 - Kitchen", "Poz 1.2 - Table"
-            const extractPoz = (name: string): number => {
-                const match = name?.match(/^Poz\s*(\d+(?:\.\d+)?)/i);
-                return match ? parseFloat(match[1]) : Infinity;
-            };
-
-            const pozA = extractPoz(a.Name || '');
-            const pozB = extractPoz(b.Name || '');
-
-            if (pozA !== pozB) return pozA - pozB;
-            // If same position, sort alphabetically
-            return (a.Name || '').localeCompare(b.Name || '');
-        });
+        return sortProductsByName(products, p => p.Name || '');
     }
 
     // Quick Edit Functions for Mobile
@@ -295,7 +284,7 @@ export default function MobileProjectsView({
                         >
                             <div className="mp-header">
                                 <div className="mp-title-row">
-                                    <h3 className="mp-client">{project.Client_Name}</h3>
+                                    <h3 className="mp-client">{project.Name || project.Client_Name}</h3>
                                     <span
                                         className="mp-status-badge"
                                         style={{ backgroundColor: statusStyle.bg, color: statusStyle.color }}
@@ -303,7 +292,7 @@ export default function MobileProjectsView({
                                         {project.Status}
                                     </span>
                                 </div>
-                                {project.Name && <div className="mp-subtitle">{project.Name}</div>}
+                                {project.Name && <div className="mp-subtitle">{project.Client_Name}</div>}
                                 {project.Address && <div className="mp-address">{project.Address}</div>}
                             </div>
 

@@ -32,7 +32,9 @@ export default function PriceEditModal({ workOrder, onClose, onSaved, showToast 
             Product_Name: item.Product_Name,
             Quantity: item.Quantity || 1,
             Product_Value: item.Product_Value || 0,
-            Material_Cost: item.Material_Cost || 0,
+            // Materijal se u bazi čuva PO KOMADU; ovdje korisnik unosi/vidi UKUPAN (× količina),
+            // isto kako je prihod (Product_Value) ukupan. Pri snimanju vraćamo na po komadu.
+            Material_Cost: (item.Material_Cost || 0) * (item.Quantity || 1),
             Transport_Share: item.Transport_Share || 0,
             Services_Total: item.Services_Total || 0,
             Actual_Labor_Cost: item.Actual_Labor_Cost || 0,
@@ -74,9 +76,11 @@ export default function PriceEditModal({ workOrder, onClose, onSaved, showToast 
                 );
                 const snap = await getDocs(q);
                 if (!snap.empty) {
+                    // Unos je UKUPAN materijal → snimi PO KOMADU (invarijanta baze).
+                    const perUnitMaterial = price.Quantity > 0 ? price.Material_Cost / price.Quantity : price.Material_Cost;
                     await updateDoc(snap.docs[0].ref, {
                         Product_Value: price.Product_Value,
-                        Material_Cost: price.Material_Cost,
+                        Material_Cost: perUnitMaterial,
                         Material_Cost_Source: 'manual',
                         Transport_Share: price.Transport_Share,
                         Services_Total: price.Services_Total,
@@ -147,7 +151,7 @@ export default function PriceEditModal({ workOrder, onClose, onSaved, showToast 
                             <tr style={{ color: 'rgba(255,255,255,0.5)', textAlign: 'left', fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
                                 <th style={{ padding: '8px 6px' }}>Stavka</th>
                                 <th style={{ padding: '8px 6px', textAlign: 'right' }}>Cijena (KM)</th>
-                                <th style={{ padding: '8px 6px', textAlign: 'right' }}>Materijal (KM)</th>
+                                <th style={{ padding: '8px 6px', textAlign: 'right' }}>Materijal (uk. KM)</th>
                                 <th style={{ padding: '8px 6px', textAlign: 'right' }}>Transport (KM)</th>
                                 <th style={{ padding: '8px 6px', textAlign: 'right' }}>Usluge (KM)</th>
                             </tr>

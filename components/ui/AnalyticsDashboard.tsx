@@ -166,7 +166,7 @@ export default function AnalyticsDashboard({ onClose, showToast, onRefresh }: An
                         <div className="ana-section">
                             <div className="ana-search"><Search size={16} /><input placeholder="Pretraži proizvode/projekte…" value={search} onChange={e => setSearch(e.target.value)} /></div>
                             <table className="ana-table">
-                                <thead><tr><th>Proizvod</th><th>Projekat</th><th className="r">Cijena</th><th className="r">Materijal</th><th className="r">Rad</th><th className="r">Profit</th><th></th></tr></thead>
+                                <thead><tr><th>Proizvod</th><th>Projekat</th><th className="r">Cijena</th><th className="r">Materijal</th><th className="r">Rad</th><th className="r">Usluge</th><th className="r">Profit</th><th></th></tr></thead>
                                 <tbody>
                                     {filteredProducts.map(p => {
                                         const isMontaza = p.woType === 'Montaža';
@@ -177,6 +177,7 @@ export default function AnalyticsDashboard({ onClose, showToast, onRefresh }: An
                                                 <td className="r">{isMontaza ? '—' : fmt(p.selling)}</td>
                                                 <td className="r">{isMontaza ? '—' : fmt(p.material)}</td>
                                                 <td className="r amber">{fmt(p.labor)}</td>
+                                                <td className="r">{isMontaza ? '—' : fmt(p.services)}</td>
                                                 <td className={`r b ${isMontaza ? 'amber' : p.profit >= 0 ? 'green' : 'red'}`}>
                                                     {isMontaza ? `−${fmt(p.labor)}` : `${fmt(p.profit)} · ${pct(p.margin)}`}
                                                 </td>
@@ -349,7 +350,7 @@ function ProjectsTab({ data, onPick }: { data: AnalyticsData; onPick: (projectId
         <div className="ana-section">
             <div className="ana-hint">Klikni projekt za kalendar rada (dan-po-dan: ko je i na čemu radio).</div>
             <table className="ana-table">
-                <thead><tr><th>Projekat</th><th className="r">Prihod</th><th className="r">Materijal</th><th className="r">Rad</th><th className="r">Profit</th><th className="r">Marža</th><th className="ana-barcol">Profit</th><th></th></tr></thead>
+                <thead><tr><th>Projekat</th><th className="r">Prihod</th><th className="r">Materijal</th><th className="r">Rad</th><th className="r">Usluge</th><th className="r">Profit</th><th className="r">Marža</th><th className="ana-barcol">Profit</th><th></th></tr></thead>
                 <tbody>
                     {data.projects.map(p => (
                         <tr key={p.projectId || p.projectName} className="ana-row-click" onClick={() => onPick(p.projectId, p.projectName)} title="Otvori kalendar rada">
@@ -357,6 +358,7 @@ function ProjectsTab({ data, onPick }: { data: AnalyticsData; onPick: (projectId
                             <td className="r">{fmt(p.revenue)}</td>
                             <td className="r">{fmt(p.material)}</td>
                             <td className="r amber">{fmt(p.labor)}</td>
+                            <td className="r">{fmt(p.services)}</td>
                             <td className={`r b ${p.profit >= 0 ? 'green' : 'red'}`}>{fmt(p.profit)}</td>
                             <td className={`r ${p.margin >= 0 ? 'green' : 'red'}`}>{pct(p.margin)}</td>
                             <td className="ana-barcol"><HBar value={p.profit} max={maxAbs} color={p.profit >= 0 ? '#22c55e' : '#ef4444'} /></td>

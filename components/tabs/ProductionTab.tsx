@@ -397,7 +397,7 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                         Product_ID: product.Product_ID,
                         Product_Name: product.Name,
                         Project_ID: project.Project_ID,
-                        Project_Name: project.Client_Name,
+                        Project_Name: project.Name || project.Client_Name,
                         Quantity: availableQuantity,  // Show available, not total
                         TotalQuantity: totalQuantity,
                         UsedQuantity: usedQuantity,
@@ -445,7 +445,7 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                     Product_ID: product.Product_ID,
                     Product_Name: product.Name,
                     Project_ID: project.Project_ID,
-                    Project_Name: project.Client_Name,
+                    Project_Name: project.Name || project.Client_Name,
                     Quantity: product.Quantity || 1,
                     TotalQuantity: product.Quantity || 1,
                     UsedQuantity: 0,
@@ -724,8 +724,7 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                 const offer = project?.offers?.find(o => o.Status === 'Prihvaćeno');
                 const offerProduct = offer?.products?.find(op => op.Product_ID === p.Product_ID);
 
-                // Calculate value (Selling_Price × quantity ratio)
-                const qtyRatio = p.Work_Order_Quantity / p.Quantity;
+                // Prihod je UKUPAN (jedinična × količina naloga).
                 if (offerProduct?.Selling_Price) {
                     totalValue += offerProduct.Selling_Price * p.Work_Order_Quantity;
                 }
@@ -734,11 +733,11 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                 totalTransport += offerProduct?.Transport_Share || 0;
                 totalServices += (offerProduct?.extras || []).reduce((s: number, e: any) => s + (e.Total || 0), 0);
 
-                // Calculate material cost from product materials
+                // Materijal: Σ product_materials je PO KOMADU → WO-agregat je × količina (kao prihod).
                 if (product?.materials) {
                     const productMaterialCost = product.materials.reduce((sum, m) =>
                         sum + (m.Unit_Price * m.Quantity), 0);
-                    materialCost += productMaterialCost * qtyRatio;
+                    materialCost += productMaterialCost * p.Work_Order_Quantity;
                 }
             });
         }
@@ -750,13 +749,11 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
             const offerProduct = offer?.products?.find(op => op.Product_ID === p.Product_ID);
             const product = project?.products?.find(prod => prod.Product_ID === p.Product_ID);
 
-            // Calculate per-item material cost
-            const qtyRatio = p.Work_Order_Quantity / p.Quantity;
+            // Trošak materijala stavke = PO KOMADU (invarijanta baze; agregacija × količina radi drugdje).
             let itemMaterialCost = 0;
             if (product?.materials) {
-                const productMaterialCost = product.materials.reduce((sum, m) =>
+                itemMaterialCost = product.materials.reduce((sum, m) =>
                     sum + (m.Unit_Price * m.Quantity), 0);
-                itemMaterialCost = productMaterialCost * qtyRatio;
             }
 
             return {
@@ -1151,7 +1148,7 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
         const openWoItems = (wo.items || []).filter(i => (i.Status as string) !== 'Završeno' && (i.Status as string) !== 'Otkazano');
         const isOrderPaused = wo.Status === 'U toku' && openWoItems.length > 0 && openWoItems.every(i => i.Is_Paused);
         const statusDetails = isOrderPaused
-            ? { color: '#f97316', icon: 'pause_circle', bg: 'linear-gradient(135deg, rgba(249, 115, 22, 0.1), rgba(249, 115, 22, 0.2))' }
+            ? { color: '#eab308', icon: 'pause_circle', bg: 'linear-gradient(135deg, rgba(234, 179, 8, 0.1), rgba(234, 179, 8, 0.2))' }
             : getStatusDetails(wo.Status);
         const statusLabel = isOrderPaused ? 'Pauzirano' : wo.Status;
 
@@ -1179,14 +1176,23 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
                                     <div className="project-name">{workOrderDisplayName(wo)}</div>
                                     <span style={{ fontSize: '12px', color: '#9ca3af', fontWeight: 500 }}>#{wo.Work_Order_Number}</span>
-                                    {wo.Name && wo.items?.[0]?.Project_Name && (
-                                        <>
-                                            <span style={{ color: '#d1d5db' }}>•</span>
-                                            <span style={{ fontSize: '13px', color: '#4b5563', fontWeight: 500 }}>
-                                                {wo.items[0].Project_Name}
-                                            </span>
-                                        </>
-                                    )}
+                                    {(() => {
+                                        const firstItem = wo.items?.[0];
+                                        if (!wo.Name || !firstItem) return null;
+                                        // Resolve project name (Name → Client_Name) so legacy items that stored
+                                        // Client_Name still show the descriptive project name when available.
+                                        const proj = projects.find(p => p.Project_ID === firstItem.Project_ID);
+                                        const projLabel = proj?.Name || proj?.Client_Name || firstItem.Project_Name;
+                                        if (!projLabel) return null;
+                                        return (
+                                            <>
+                                                <span style={{ color: '#d1d5db' }}>•</span>
+                                                <span style={{ fontSize: '13px', color: '#4b5563', fontWeight: 500 }}>
+                                                    {projLabel}
+                                                </span>
+                                            </>
+                                        );
+                                    })()}
                                 </div>
                                 <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
                                     <span style={{
@@ -2029,7 +2035,10 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                                                     borderRadius: '8px', marginBottom: '6px',
                                                     position: 'sticky', top: 0, zIndex: 2,
                                                 }}>
-                                                    <span style={{ fontWeight: 700, fontSize: '13px', color: 'var(--text-primary, #0f172a)' }}>{proj.Client_Name}</span>
+                                                    <span style={{ fontWeight: 700, fontSize: '13px', color: 'var(--text-primary, #0f172a)' }}>{proj.Name || proj.Client_Name}</span>
+                                                    {proj.Name && (
+                                                        <span style={{ fontSize: '12px', color: 'var(--text-secondary, #64748b)' }}>· {proj.Client_Name}</span>
+                                                    )}
                                                     <span style={{ fontSize: '12px', color: 'var(--text-secondary, #64748b)' }}>
                                                         {selCount > 0 ? `${selCount}/` : ''}{projProds.length} proizvoda
                                                     </span>

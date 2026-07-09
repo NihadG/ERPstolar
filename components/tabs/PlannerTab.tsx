@@ -4,7 +4,7 @@ import { useState, useMemo, useCallback, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { DragDropContext, Droppable, Draggable, DropResult } from '@hello-pangea/dnd';
 import type { WorkOrder, Worker, WorkOrderItem, WorkerConflict, WorkLog } from '@/lib/types';
-import { scheduleWorkOrder, unscheduleWorkOrder, startWorkOrder, checkWorkerConflicts, rescheduleWorkOrder, updateDueDate, updatePlannedStartDate, getAllAttendanceByMonth } from '@/lib/services';
+import { scheduleWorkOrder, unscheduleWorkOrder, startWorkOrder, checkWorkerConflicts, rescheduleWorkOrder, updateDueDate, updatePlannedStartDate, getAllAttendanceByMonth, formatLocalDateISO } from '@/lib/services';
 import { weeklyCapacity, plannedVsActualDays, todayISO, type AttendanceLite, type CapacityOrderInput } from '@/lib/planning';
 import { buildWorkTimeline, type WorkTimelineDay, type WorkDayType, type PausePeriodLite } from '@/lib/workOrderTimeline';
 import { useAuth } from '@/context/AuthContext';
@@ -48,7 +48,10 @@ const STATUS_COLORS: Record<StatusKey, string> = {
     completed: 'var(--text-secondary)' // Siva - Završeno
 };
 
-const formatDateKey = (d: Date) => d.toISOString().split('T')[0];
+// LOKALNI datumski ključ (YYYY-MM-DD) — NE toISOString(): u UTC+ zonama lokalna ponoć
+// se pod UTC vrati na prethodni dan pa je 6. juli prikazivan kao 7. Kanonski helper iz
+// lib/services (isti kao workOrderTimeline.toLocalISO), pa se ključevi kalendara i timeline-a poklapaju.
+const formatDateKey = formatLocalDateISO;
 
 const getMonday = (d: Date) => {
     const date = new Date(d);

@@ -19,6 +19,7 @@ import type {
     WorkerAttendance,
 } from './types';
 import { getProductMaterials } from './database';
+import { itemMaterialTotal } from './materialCost';
 
 // ============================================
 // WORKER PRODUCTIVITY
@@ -227,13 +228,16 @@ export async function calculateProductProfitability(
 
         // PROFIT-09 FIX: For completed items, use frozen material cost
         // For active items, fetch fresh prices so profit is accurate during production
-        let materialCost = 0;
+        // NB: obje grane daju trošak PO KOMADU (pohranjeni ili Σ product_materials za 1 komad).
+        let materialPerUnit = 0;
         if (item.Status === 'Završeno' && (item.Material_Cost || 0) > 0) {
-            materialCost = item.Material_Cost || 0;
+            materialPerUnit = item.Material_Cost || 0;
         } else {
             const materials = await getProductMaterials(item.Product_ID, organizationId);
-            materialCost = materials.reduce((sum, m) => sum + (m.Total_Price || 0), 0);
+            materialPerUnit = materials.reduce((sum, m) => sum + (m.Total_Price || 0), 0);
         }
+        // MATERIJAL × KOLIČINA: prihod (sellingPrice) je UKUPAN → materijal mora biti UKUPAN.
+        const materialCost = itemMaterialTotal(materialPerUnit, quantity);
 
         // FIX #1: Apply Profit_Overrides for Transport_Share if present
         const transportShare = overrides?.Transport_Share != null ? overrides.Transport_Share : (item.Transport_Share || 0);

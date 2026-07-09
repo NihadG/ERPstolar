@@ -5,9 +5,9 @@ import { createPortal } from 'react-dom';
 import {
     Check, ChevronDown, ChevronRight, Clock, Play, Users, Plus, X, Loader2, StickyNote, PauseCircle, RotateCcw, Search,
 } from 'lucide-react';
-import type { WorkOrderItem, Worker, WorkLog, ItemProcessStatus, ProcessCatalogItem } from '@/lib/types';
-import { updateItemProcess, addProcessToOrderItem, getProcessCatalog } from '@/lib/services';
-import { planToStages, synthesizeOrderGraph } from '@/lib/productProcesses';
+import type { WorkOrderItem, Worker, WorkLog, ItemProcessStatus, ProcessCatalogItem, ProcessNode, ProcessEdge, ProcessGraph } from '@/lib/types';
+import { updateItemProcess, addProcessToOrderItem, getProcessCatalog, getProcessGraph } from '@/lib/services';
+import { planToStages, synthesizeOrderGraph, nodeMatchesProcess, computeProcessGating } from '@/lib/productProcesses';
 import { layoutProcessGraph } from '@/lib/processLayout';
 import './OrderProcessBoard.css';
 
@@ -19,6 +19,8 @@ interface Props {
     organizationId?: string;
     onChanged?: () => void;
     showToast?: (message: string, type: 'success' | 'error' | 'info') => void;
+    /** Bump da se snimljeni graf procesa ponovo učita (npr. nakon Spremi u ProcessGraphModal). */
+    graphReloadKey?: number;
 }
 
 const norm = (s: string) => (s || '').trim().toLowerCase();
@@ -58,8 +60,21 @@ const STATUS_CLASS: Record<string, string> = {
  * status stavke i naloga. Model podataka ostaje netaknut; ovo je projekcija + akcija.
  */
 export default function OrderProcessBoard({
-    workOrderId, items, workers, organizationId, onChanged, showToast,
+    workOrderId, items, workers, organizationId, onChanged, showToast, graphReloadKey,
 }: Props) {
+    // Snimljeni graf procesa (ručne veze iz ProcessGraphModal) — AUTORITATIVAN za gating kad postoji.
+    const [savedGraph, setSavedGraph] = useState<ProcessGraph | null>(null);
+    useEffect(() => {
+        let cancelled = false;
+        if (workOrderId && organizationId) {
+            getProcessGraph(workOrderId, organizationId)
+                .then(g => { if (!cancelled) setSavedGraph(g && g.nodes && g.nodes.length ? g : null); })
+                .catch(() => { if (!cancelled) setSavedGraph(null); });
+        } else {
+            setSavedGraph(null);
+        }
+        return () => { cancelled = true; };
+    }, [workOrderId, organizationId, graphReloadKey]);
     const [expanded, setExpanded] = useState<string | null>(null);   // row.id
     const [sel, setSel] = useState<Set<string>>(new Set());          // itemIds odabrani u proširenom redu
     const [busy, setBusy] = useState(false);
@@ -119,52 +134,78 @@ export default function OrderProcessBoard({
 
     // ── Projekcija: procesi ujedinjeni preko proizvoda, u redoslijedu toka ──
     const rows = useMemo<Row[]>(() => {
+        // Izgradi redove (perItem, gating) iz proizvoljnog skupa čvorova+veza.
+        // Per-čvor predecessor gating: proces je 'active' čim su SVI njegovi (direktni) prethodnici gotovi.
+        const buildRows = (nodes: ProcessNode[], edges: ProcessEdge[]): Row[] => {
+            if (!nodes.length) return [];
+            const allPositioned = nodes.every(n => n.position);
+            const pos: Record<string, { x: number; y: number }> = allPositioned
+                ? Object.fromEntries(nodes.map(n => [n.id, n.position!]))
+                : layoutProcessGraph(nodes.map(n => ({ id: n.id })), edges.map(e => ({ source: e.source, target: e.target })));
+            const preds = new Map<string, string[]>();
+            nodes.forEach(n => preds.set(n.id, []));
+            edges.forEach(e => { if (preds.has(e.target)) preds.get(e.target)!.push(e.source); });
+
+            const ordered = [...nodes].sort((a, b) => {
+                const pa = pos[a.id] || { x: 0, y: 0 }, pb = pos[b.id] || { x: 0, y: 0 };
+                return pa.x - pb.x || pa.y - pb.y;
+            });
+
+            const doneById = new Map<string, boolean>();
+            const base: Omit<Row, 'state'>[] = ordered.map(n => {
+                const covered = (n.itemIds && n.itemIds.length) ? n.itemIds : items.map(i => i.ID);
+                const perItem: PerItem[] = covered.map(itemId => {
+                    const it = itemById.get(itemId);
+                    // Poklapanje po nazivu I sinonimima (aliases) — graf može spajati različito imenovane procese.
+                    const proc = it?.Processes?.find(p => nodeMatchesProcess({ name: n.name, aliases: n.aliases }, p.Process_Name));
+                    return {
+                        itemId, itemName: it?.Product_Name || '—',
+                        status: (proc?.Status as string) || 'Na čekanju',
+                        workerName: proc?.Worker_Name, helpers: proc?.Helpers || [], completedAt: proc?.Completed_At,
+                    };
+                });
+                const done = perItem.filter(p => p.status === 'Završeno').length;
+                const total = perItem.length;
+                doneById.set(n.id, total > 0 && done === total);
+                const wset = new Map<string, string>();
+                perItem.filter(p => p.status === 'Završeno').forEach(p => {
+                    if (p.workerName) wset.set(p.workerName, p.workerName);
+                    (p.helpers || []).forEach(h => h.Worker_Name && wset.set(h.Worker_Name, h.Worker_Name));
+                });
+                return { id: n.id, key: norm(n.name), name: n.name, perItem, done, total, workers: Array.from(wset.values()), predIds: preds.get(n.id) || [] };
+            });
+
+            // Per-čvor gating iz veza (čista, testirana logika u lib/productProcesses).
+            const gating = computeProcessGating(base.map(b => b.id), edges, doneById);
+            return base.map(r => ({ ...r, state: gating.get(r.id) || 'blocked' }));
+        };
+
         const synthItems = items.map(it => ({
             itemId: it.ID,
             stages: planToStages((it as any).Process_Stages, (it.Processes || []).map(p => p.Process_Name).filter(Boolean) as string[]),
         })).filter(si => si.stages.length > 0);
-        const { graph } = synthesizeOrderGraph(synthItems);
-        if (!graph.nodes.length) return [];
+        const synth = synthesizeOrderGraph(synthItems).graph;
 
-        const pos = layoutProcessGraph(graph.nodes.map(n => ({ id: n.id })), graph.edges.map(e => ({ source: e.source, target: e.target })));
-        const preds = new Map<string, string[]>();
-        graph.nodes.forEach(n => preds.set(n.id, []));
-        graph.edges.forEach(e => preds.get(e.target)?.push(e.source));
+        // 1) SNIMLJENI graf (ručne veze iz ProcessGraphModal) je AUTORITATIVAN za gating.
+        //    Npr. kantiranje se otvara ČIM je krojenje (njegov jedini prethodnik) gotovo — a ne
+        //    kad su SVE stavke prve faze gotove (što daje dense sinteza).
+        if (savedGraph && savedGraph.nodes.length) {
+            const out = buildRows(savedGraph.nodes, savedGraph.edges);
+            // Hibrid: procesi na stavkama koje snimljeni graf NE pokriva (dodani nakon zadnjeg snimanja)
+            // → dopuni iz sinteze (među sobom gate-uju po fazama; ne skrivaj rad).
+            const coveredKeys = new Set(out.map(r => r.key));
+            const extraNodes = synth.nodes.filter(n => !coveredKeys.has(norm(n.name)));
+            if (extraNodes.length) {
+                const extraIds = new Set(extraNodes.map(n => n.id));
+                const extraEdges = synth.edges.filter(e => extraIds.has(e.source) && extraIds.has(e.target));
+                out.push(...buildRows(extraNodes, extraEdges));
+            }
+            return out;
+        }
 
-        const ordered = [...graph.nodes].sort((a, b) => {
-            const pa = pos[a.id] || { x: 0, y: 0 }, pb = pos[b.id] || { x: 0, y: 0 };
-            return pa.x - pb.x || pa.y - pb.y;
-        });
-
-        const doneById = new Map<string, boolean>();
-        const base: Omit<Row, 'state'>[] = ordered.map(n => {
-            const covered = n.itemIds.length ? n.itemIds : items.map(i => i.ID);
-            const perItem: PerItem[] = covered.map(itemId => {
-                const it = itemById.get(itemId);
-                const proc = it?.Processes?.find(p => norm(p.Process_Name) === norm(n.name));
-                return {
-                    itemId, itemName: it?.Product_Name || '—',
-                    status: (proc?.Status as string) || 'Na čekanju',
-                    workerName: proc?.Worker_Name, helpers: proc?.Helpers || [], completedAt: proc?.Completed_At,
-                };
-            });
-            const done = perItem.filter(p => p.status === 'Završeno').length;
-            const total = perItem.length;
-            doneById.set(n.id, total > 0 && done === total);
-            const wset = new Map<string, string>();
-            perItem.filter(p => p.status === 'Završeno').forEach(p => {
-                if (p.workerName) wset.set(p.workerName, p.workerName);
-                (p.helpers || []).forEach(h => h.Worker_Name && wset.set(h.Worker_Name, h.Worker_Name));
-            });
-            return { id: n.id, key: norm(n.name), name: n.name, perItem, done, total, workers: Array.from(wset.values()), predIds: preds.get(n.id) || [] };
-        });
-
-        return base.map(r => {
-            const state: Row['state'] = r.total > 0 && r.done === r.total ? 'done'
-                : r.predIds.every(pid => doneById.get(pid)) ? 'active' : 'blocked';
-            return { ...r, state };
-        });
-    }, [items, itemById]);
+        // 2) Fallback: sinteza iz faznih planova (nema snimljenog grafa).
+        return buildRows(synth.nodes, synth.edges);
+    }, [items, itemById, savedGraph]);
 
     const toggleExpand = (row: Row) => {
         if (expanded === row.id) { setExpanded(null); setSel(new Set()); setFormOpen(false); return; }
@@ -190,9 +231,30 @@ export default function OrderProcessBoard({
     };
 
     const openCompleteForm = (row: Row) => {
-        const assigned = new Set<string>();
-        Array.from(sel).forEach(id => (itemById.get(id)?.Assigned_Workers || []).forEach(w => w.Worker_ID && assigned.add(w.Worker_ID)));
-        setForm({ workerIds: Array.from(assigned), date: todayISO(), notes: '' });
+        // Prefill radnika za "Završi za odabrane". Wizard-kreirani nalozi NE postavljaju
+        // Assigned_Workers — radnici žive u Processes[].Worker_ID/Helpers. Zato:
+        //  1) najprije radnici dodijeljeni BAŠ ovom procesu na odabranim stavkama (glavni prvi),
+        //  2) ako ničeg nema → ekipa naloga (Assigned_Workers ∪ svi Processes[].Worker_ID/Helpers).
+        // Redoslijed je bitan: prvi radnik postaje glavni (confirmComplete koristi wIds[0]).
+        const ordered: string[] = [];
+        const add = (id?: string) => { if (id && !ordered.includes(id)) ordered.push(id); };
+        const selIds = Array.from(sel);
+        selIds.forEach(id => {
+            const proc = itemById.get(id)?.Processes?.find(p => norm(p.Process_Name) === norm(row.name));
+            add(proc?.Worker_ID);
+            (proc?.Helpers || []).forEach(h => add(h.Worker_ID));
+        });
+        if (!ordered.length) {
+            selIds.forEach(id => {
+                const it = itemById.get(id);
+                (it?.Assigned_Workers || []).forEach(w => add(w.Worker_ID));
+                (it?.Processes || []).forEach(p => {
+                    add(p.Worker_ID);
+                    (p.Helpers || []).forEach(h => add(h.Worker_ID));
+                });
+            });
+        }
+        setForm({ workerIds: ordered, date: todayISO(), notes: '' });
         setFormOpen(true);
     };
 

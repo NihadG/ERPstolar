@@ -26,6 +26,8 @@ import MaterialSelectModal, { type SelectedMaterial } from '@/components/ui/Mate
 import ProductTimelineModal from '@/components/ui/ProductTimelineModal';
 import ProductProcessPlan from '@/components/ui/ProductProcessPlan';
 import { planToStages } from '@/lib/productProcesses';
+import { naturalCompare } from '@/lib/naturalCompare';
+import { itemMaterialTotal } from '@/lib/materialCost';
 
 import ProjectMaterialsModal from '@/components/ui/ProjectMaterialsModal';
 import { useData } from '@/context/DataContext';
@@ -1436,19 +1438,8 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                                         return weightA - weightB;
                                     }
 
-                                    const extractPoz = (name: string): number => {
-                                        const match = name?.match(/^Poz\s*(\d+(?:\.\d+)?)/i);
-                                        return match ? parseFloat(match[1]) : Infinity;
-                                    };
-
-                                    const pozA = extractPoz(a.Name || '');
-                                    const pozB = extractPoz(b.Name || '');
-
-                                    if (pozA !== pozB) {
-                                        return pozA - pozB;
-                                    }
-
-                                    return (a.Name || '').localeCompare(b.Name || '');
+                                    // Prirodni poredak naziva (Poz 1 < Poz 2 < Poz 10, E1 < E2 < E10)
+                                    return naturalCompare(a.Name, b.Name);
                                 });
                                 const previewProducts = sortedProducts.slice(0, 3);
                                 const moreCount = totalProducts - previewProducts.length;
@@ -1496,7 +1487,10 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                                     // (Product_Value = cijena × količina), bez obzira na status stavke
                                     // (Na čekanju / U toku / Završeno).
                                     if (!woItem || !finalSellingPrice || finalSellingPrice <= 0) return;
-                                    const actualMaterialCost = (product.materials || []).reduce((sum, m) => sum + (m.Total_Price || 0), 0);
+                                    // MATERIJAL × KOLIČINA: Σ product.materials je PO KOMADU, finalSellingPrice
+                                    // (Product_Value) je UKUPAN → množi količinom stavke naloga.
+                                    const materialPerUnit = (product.materials || []).reduce((sum, m) => sum + (m.Total_Price || 0), 0);
+                                    const actualMaterialCost = itemMaterialTotal(materialPerUnit, woItem.Quantity);
                                     // RAD proizvoda = SVE dnevnice po Product_ID kroz SVE naloge (proizvodni + MONTAŽNI).
                                     // Tako montažne dnevnice ulaze u profit proizvoda (montaža je integrisana u cjelinu).
                                     const productLogs = workLogs.filter(wl => wl.Product_ID === product.Product_ID);

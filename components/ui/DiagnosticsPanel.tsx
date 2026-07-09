@@ -3,6 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import type { AppState, Project, Product, WorkOrder, WorkOrderItem } from '@/lib/types';
 import { repairAllProductStatuses } from '@/lib/services';
+import { itemMaterialTotal } from '@/lib/materialCost';
 
 interface DiagnosticIssue {
     category: string;
@@ -86,7 +87,8 @@ export default function DiagnosticsPanel({ appState, onClose }: DiagnosticsPanel
         (appState.workOrders || []).forEach((wo: WorkOrder) => {
             if (wo.Status === 'Završeno') {
                 const calculatedTotalValue = (wo.items || []).reduce((sum: number, i: WorkOrderItem) => sum + (i.Product_Value || 0), 0);
-                const calculatedMaterialCost = (wo.items || []).reduce((sum: number, i: WorkOrderItem) => sum + (i.Material_Cost || 0), 0);
+                // Material_Cost je PO KOMADU → množi količinom (kao prihod Product_Value).
+                const calculatedMaterialCost = (wo.items || []).reduce((sum: number, i: WorkOrderItem) => sum + itemMaterialTotal(i.Material_Cost, i.Quantity), 0);
                 const calculatedTransport = (wo.items || []).reduce((sum: number, i: WorkOrderItem) => sum + ((i as any).Transport_Share || 0), 0);
                 const calculatedServices = (wo.items || []).reduce((sum: number, i: WorkOrderItem) => sum + ((i as any).Services_Total || 0), 0);
                 const calculatedLaborCost = (wo.items || []).reduce((sum: number, i: WorkOrderItem) => sum + (i.Actual_Labor_Cost || 0), 0);

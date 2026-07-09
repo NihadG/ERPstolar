@@ -2009,7 +2009,7 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
                                         <option value="">-- Odaberi projekat --</option>
                                         {projects.map(project => (
                                             <option key={project.Project_ID} value={project.Project_ID}>
-                                                {project.Client_Name} ({project.products?.length || 0} proizvoda)
+                                                {project.Name ? `${project.Name} — ${project.Client_Name}` : project.Client_Name} ({project.products?.length || 0} proizvoda)
                                             </option>
                                         ))}
                                     </select>

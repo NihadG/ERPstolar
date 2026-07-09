@@ -11,6 +11,7 @@
 
 import { COLLECTIONS } from '../shared/collections';
 import { queryByOrg } from '../shared/firestoreClient';
+import { itemMaterialTotal } from '../../materialCost';
 import type { WorkOrderItem, WorkLog, WorkOrder, ProductMaterial, Offer, OfferProduct } from '../../types';
 import {
     aggregateProductRows, aggregateProjects, planVsActual, aggregateWorkers,
@@ -116,12 +117,18 @@ export function computeAnalytics(raw: AnalyticsRaw, opts: AnalyticsOptions = {})
         const rep = items.find(i => i.Status !== 'Završeno') || items[0];
         const wo = woById.get(rep.Work_Order_ID);
         const op = raw.offerProductByProduct.get(productId);
-        const overrides = (rep as { Profit_Overrides?: { Selling_Price?: number; Transport_Share?: number } }).Profit_Overrides;
+        const overrides = (rep as { Profit_Overrides?: { Selling_Price?: number; Transport_Share?: number; Extras_Total?: number } }).Profit_Overrides;
         const selling = (overrides?.Selling_Price ?? rep.Product_Value) || (op ? (op.Selling_Price || op.Total_Price || 0) : 0);
         const transport = overrides?.Transport_Share ?? rep.Transport_Share ?? (op?.Transport_Share || 0);
-        const services = (rep as { Services_Total?: number }).Services_Total
-            ?? (op ? (op.extras || []).reduce((s, e) => s + (e.Total || 0), 0) : 0);
-        const plannedMaterial = op ? (op.Material_Cost || 0) * (op.Quantity || 1) : (rep.Material_Cost || 0);
+        // USLUGE: item.Services_Total je SNAPSHOT upisan pri kreiranju naloga (uvijek definisan broj,
+        // i 0 ako ponuda tada nije imala usluga — vidi ProductionTab.tsx) → `?? ` fallback na živu
+        // ponudu ovdje NIKAD nije okidao (0 nije null/undefined), pa su usluge dodane u ponudu NAKON
+        // kreiranja naloga ostajale nevidljive u analitici. STVARNO (živo) = trenutni extras ponude,
+        // isto kao liveMaterial; eksplicitni ručni override (Profit_Overrides.Extras_Total) ima prednost;
+        // stavke bez vezane ponude (ad-hoc/custom) koriste pohranjenu vrijednost.
+        const liveOfferServices = op ? (op.extras || []).reduce((s, e) => s + (e.Total || 0), 0) : undefined;
+        const services = overrides?.Extras_Total ?? liveOfferServices ?? (rep.Services_Total || 0);
+        const plannedMaterial = op ? (op.Material_Cost || 0) * (op.Quantity || 1) : itemMaterialTotal(rep.Material_Cost, rep.Quantity);
         const plannedLabor = items.reduce((s, it) => s + (it.Planned_Labor_Cost || 0) * (it.Quantity || 1), 0);
 
         inputs.push({
@@ -131,7 +138,10 @@ export function computeAnalytics(raw: AnalyticsRaw, opts: AnalyticsOptions = {})
             woId: rep.Work_Order_ID || '', woNumber: wo?.Work_Order_Number || '', woType: wo?.Work_Order_Type || '',
             status: rep.Status || '',
             selling: selling || 0,
-            liveMaterial: raw.liveMaterialByProduct.get(productId) || 0,
+            // MATERIJAL × KOLIČINA: liveMaterialByProduct je PO KOMADU (Σ product_materials),
+            // a `selling` (rep.Product_Value) je UKUPAN → množi količinom reprezentativne stavke.
+            // Simetrično s `plannedMaterial` (op.Material_Cost × op.Quantity).
+            liveMaterial: itemMaterialTotal(raw.liveMaterialByProduct.get(productId) || 0, rep.Quantity),
             plannedMaterial,
             actualLabor: raw.actualLaborByProduct.get(productId) || 0,
             plannedLabor,

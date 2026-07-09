@@ -76,12 +76,17 @@ function toAutoBookItem(it: WorkOrderItem): AutoBookItem {
 /**
  * Izgradi prijedlog knjiženja za skup upravo snimljenih radnika.
  * @param hasExistingLog (radnik, stavka) → da li već postoji zapis tog dana (manualni ima prednost).
+ * @param yesterdayByWorker (radnik → Work_Order_ID[] knjiženi JUČER) → "kao jučer" fallback prijedlog.
+ *   Teren i danas bez auto-prijedloga (nije na Montaži) dobije jučerašnji nalog kao predabir;
+ *   Prisutan bez ijednog predčekiranog naloga dobije jučerašnje naloge (koji su i danas dostupni).
+ *   Korisnik i dalje POTVRĐUJE — ništa se ne knjiži tiho (garda: ručno knjiženje ima prednost).
  */
 export function buildBookingProposal(
     saved: SavedAttendanceWorker[],
     workOrders: WorkOrder[],
     date: string,
-    hasExistingLog: (workerId: string, itemId: string) => boolean = () => false
+    hasExistingLog: (workerId: string, itemId: string) => boolean = () => false,
+    yesterdayByWorker?: Map<string, string[]>
 ): ProposalRow[] {
     const autoOrders = workOrders.map(toAutoBookOrder);
 
@@ -103,6 +108,12 @@ export function buildBookingProposal(
             autoItemIds.forEach(id => { const o = itemToOrder.get(id); if (o) suggested.add(o); });
             // Plus svaki dodijeljen, aktivan, nepauziran nalog (uklj. Montažu) → koristan default.
             orders.forEach(o => { if (o.assigned && o.status === 'U toku' && !o.paused) suggested.add(o.workOrderId); });
+            // "Kao jučer": ako ništa nije predčekirano, ponudi jučerašnje naloge koji su i danas dostupni.
+            if (suggested.size === 0) {
+                const yList = yesterdayByWorker?.get(w.workerId) || [];
+                const availableIds = new Set(orders.map(o => o.workOrderId));
+                yList.forEach(id => { if (availableIds.has(id)) suggested.add(id); });
+            }
 
             rows.push({
                 kind: 'present',
@@ -119,7 +130,12 @@ export function buildBookingProposal(
             });
             const itemToOrder = new Map<string, string>();
             workOrders.forEach(wo => (wo.items || []).forEach(it => itemToOrder.set(it.ID, wo.Work_Order_ID)));
-            const suggestedWorkOrderId = terenItemIds.length > 0 ? itemToOrder.get(terenItemIds[0]) : undefined;
+            let suggestedWorkOrderId = terenItemIds.length > 0 ? itemToOrder.get(terenItemIds[0]) : undefined;
+            // "Kao jučer": teren bez auto-Montaža prijedloga → predloži nalog na koji je radnik JUČER knjižen.
+            if (!suggestedWorkOrderId) {
+                const yList = yesterdayByWorker?.get(w.workerId);
+                if (yList && yList.length) suggestedWorkOrderId = yList[0];
+            }
             rows.push({ kind: 'teren', workerId: w.workerId, workerName: w.workerName, suggestedWorkOrderId });
         }
         // ostali statusi (Odsutan/Bolovanje/Odmor/Vikend/Praznik) → ne ulaze u upit

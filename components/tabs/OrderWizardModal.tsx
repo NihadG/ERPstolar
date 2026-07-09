@@ -5,6 +5,7 @@ import Modal from '../ui/Modal';
 
 interface Project {
     Project_ID: string;
+    Name?: string;  // Opisni naziv projekta (npr. "šišić vrata")
     Client_Name: string;
     products?: { Product_ID: string; Name: string; Quantity?: number }[];
 }
@@ -502,8 +503,10 @@ export function OrderWizardModal({
                                             {selectedProjectIds.has(project.Project_ID) ? 'check_circle' : 'radio_button_unchecked'}
                                         </span>
                                         <div style={{ flex: 1 }}>
-                                            <div style={{ fontWeight: 600, fontSize: '16px', marginBottom: '4px' }}>{project.Client_Name}</div>
-                                            <div style={{ fontSize: '14px', color: 'var(--text-secondary)' }}>{project.products?.length || 0} proizvoda</div>
+                                            <div style={{ fontWeight: 600, fontSize: '16px', marginBottom: '4px' }}>{project.Name || project.Client_Name}</div>
+                                            <div style={{ fontSize: '14px', color: 'var(--text-secondary)' }}>
+                                                {project.Name ? `${project.Client_Name} · ` : ''}{project.products?.length || 0} proizvoda
+                                            </div>
                                         </div>
                                     </div>
                                 ))}

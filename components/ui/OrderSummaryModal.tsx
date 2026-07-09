@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import type { WorkOrder, ProductionSnapshot, WorkLog } from '@/lib/types';
 import { getProductionSnapshotForWorkOrder, getWorkLogsForWorkOrder } from '@/lib/services';
 import { workOrderDisplayName } from '@/lib/utils';
+import { itemMaterialTotal } from '@/lib/materialCost';
 import Modal from '@/components/ui/Modal';
 import { Receipt, AlertTriangle } from 'lucide-react';
 
@@ -42,19 +43,25 @@ interface SummaryData {
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
 function fromSnapshot(s: ProductionSnapshot): SummaryData {
+    // v2+ snapshot: Total_Material_Cost je već UKUPAN. Legacy (bez verzije): bio je PO KOMADU →
+    // množimo količinom i preračunavamo profit (inače je materijal potcijenjen, profit precijenjen).
+    const isV2 = (s.Snapshot_Version || 1) >= 2;
     const rows: SummaryRow[] = (s.Items || []).map(it => {
         const extras = (it.Extras || []).reduce((sum, e) => sum + (e.Total || 0), 0);
         const other = (it.Transport_Share || 0) + extras;
         const laborCost = (it.Workers_Assigned || []).reduce((sum, w) => sum + (w.Total_Cost || 0), 0);
+        const selling = it.Selling_Price || 0;
+        const material = isV2 ? (it.Total_Material_Cost || 0) : itemMaterialTotal(it.Total_Material_Cost, it.Quantity);
+        const profit = selling - material - laborCost - other;
         return {
             name: it.Product_Name,
             qty: it.Quantity || 1,
-            selling: it.Selling_Price || 0,
-            material: it.Total_Material_Cost || 0,
+            selling,
+            material,
             labor: laborCost,
             other,
-            profit: it.Profit || 0,
-            margin: it.Selling_Price > 0 ? ((it.Profit || 0) / it.Selling_Price) * 100 : null,
+            profit,
+            margin: selling > 0 ? (profit / selling) * 100 : null,
             plannedDays: it.Planned_Labor_Days,
             actualDays: it.Actual_Labor_Days,
         };
@@ -69,11 +76,13 @@ function fromSnapshot(s: ProductionSnapshot): SummaryData {
         wMap.set(w.Worker_ID, cur);
     }));
 
-    const selling = s.Total_Selling_Price || rows.reduce((x, r) => x + r.selling, 0);
-    const material = s.Total_Material_Cost || rows.reduce((x, r) => x + r.material, 0);
-    const labor = s.Actual_Labor_Cost || rows.reduce((x, r) => x + r.labor, 0);
+    // Totali iz redova (koji su već korigovani za količinu) — stored agregati su za legacy
+    // snapshote pogrešni (materijal po komadu), pa im ne vjerujemo bezuslovno.
+    const selling = rows.reduce((x, r) => x + r.selling, 0) || s.Total_Selling_Price || 0;
+    const material = rows.reduce((x, r) => x + r.material, 0);
+    const labor = rows.reduce((x, r) => x + r.labor, 0) || s.Actual_Labor_Cost || 0;
     const other = rows.reduce((x, r) => x + r.other, 0);
-    const profit = s.Net_Profit ?? (selling - material - labor - other);
+    const profit = selling - material - labor - other;
     return {
         source: 'snapshot',
         rows,
@@ -93,7 +102,8 @@ function fromLive(wo: WorkOrder, logs: WorkLog[]): SummaryData {
         const labor = itemLogs.reduce((s, l) => s + (l.Daily_Rate || 0), 0);
         const actualDays = itemLogs.reduce((s, l) => s + (l.Day_Fraction ?? 1), 0);
         const selling = ((item as any).Profit_Overrides?.Selling_Price ?? item.Product_Value) || 0;
-        const material = item.Material_Cost || 0;
+        // MATERIJAL × KOLIČINA: Material_Cost je PO KOMADU, selling (Product_Value) je UKUPAN.
+        const material = itemMaterialTotal(item.Material_Cost, item.Quantity);
         const other = ((item as any).Profit_Overrides?.Transport_Share ?? (item as any).Transport_Share ?? 0) + ((item as any).Services_Total || 0);
         const profit = selling - material - labor - other;
         return {

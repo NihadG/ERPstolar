@@ -13,6 +13,8 @@ import {
 } from 'firebase/firestore';
 import { generateUUID, createWorkLog, workLogExists, getWorkers, createProductionSnapshot, getProductMaterials, deleteWorkLogsForWorkerOnDate } from './database';
 import type { Worker, WorkerAttendance, WorkOrder, WorkOrderItem, WorkLog } from './types';
+import { itemMaterialTotal } from './materialCost';
+import { computeMissingAttendanceDays } from './attendanceHistory';
 
 // Helper: Get Firestore with null check
 function getDb() {
@@ -307,61 +309,49 @@ export async function checkMissingAttendanceHistory(
 
         if (assignedWorkers.size === 0) return { missingDays: 0, details: [] };
         const workerIds = Array.from(assignedWorkers.keys());
+        const startISO = formatLocalDateISO(startDate);
+        const endISO = formatLocalDateISO(endDate);
+        const inRange = (dateStr?: string) => !!dateStr && dateStr >= startISO && dateStr <= endISO;
 
-        // 3. Fetch logs for this WO within the timeframe
-        // This confirms ACTUAL work done
-        const logsQuery = query(
-            collection(firestore, 'work_logs'),
-            where('Work_Order_ID', '==', workOrderId),
-            where('Organization_ID', '==', organizationId)
-        );
-        const logsSnap = await getDocs(logsQuery);
-
-        const workerLogDates = new Set<string>(); // "WorkerID_Date"
-        logsSnap.docs.forEach(d => {
-            const data = d.data();
-            workerLogDates.add(`${data.Worker_ID}_${data.Date}`);
-        });
-
-        // 4. Scan dates and check for missing logs
-        // IMPORTANT: We also need to check if the worker was even present (Attendance).
-        // If they were absent (Sick/Vacation), it's NOT a missing log.
-        // Fetch attendance for these workers in valid range (batch query by month is hard here, so we do simpler check)
-        // Optimization: Fetch all attendance for these workers in range? 
-        // Or assume business days = working days?
-
-        // To be accurate, we'll fetch attendance for the relevant period.
-        // Since period could be long, let's limit to check "Was there attendance but NO log?" or "Was there NO attendance?"
-        // Usually, if no attendance record exists, we assume they were absent or forgot to check in.
-        // If they checked in (Prisutan) but have NO log for this active WO, that's a gap.
-
-        // Let's implement simpler logic for MVP: Business days check.
-        // Ideally we should cross-reference attendance status, but that requires many reads.
-        // We'll proceed with Business Days approach and rely on user to know if they were sick.
-
-        const missingDetails: { date: string; workerName: string }[] = [];
-        const loopDate = new Date(startDate);
-
-        while (loopDate <= endDate) {
-            const day = loopDate.getDay();
-            if (day !== 0 && day !== 6) { // Mon-Fri
-                const dateStr = formatLocalDateISO(new Date(loopDate));
-
-                for (const workerId of workerIds) {
-                    // Check if log exists for this specific WO
-                    if (!workerLogDates.has(`${workerId}_${dateStr}`)) {
-                        // Log is missing.
-                        // Ideally we check if they were present on that day at all.
-                        // But for now, flagging it is safer — user can ignore if they know worker was sick.
-                        missingDetails.push({
-                            date: dateStr,
-                            workerName: assignedWorkers.get(workerId) || 'Unknown'
-                        });
-                    }
+        // 3. Šihtarica (worker_attendance) + SVE dnevnice (bilo koji nalog) za dodijeljene radnike.
+        //    Chunked 'in' upit po Worker_ID (Firestore limit 30); raspon datuma filtriramo klijentski.
+        const presentByWorkerDate = new Set<string>();   // radnik bio Prisutan/Teren u šihtarici
+        const bookedByWorkerDate = new Set<string>();     // radnik ima dnevnicu na BILO kojem nalogu
+        const CHUNK = 30;
+        for (let i = 0; i < workerIds.length; i += CHUNK) {
+            const chunk = workerIds.slice(i, i + CHUNK);
+            const [attSnap, logSnap] = await Promise.all([
+                getDocs(query(
+                    collection(firestore, COLLECTIONS.WORKER_ATTENDANCE),
+                    where('Worker_ID', 'in', chunk),
+                    where('Organization_ID', '==', organizationId),
+                )),
+                getDocs(query(
+                    collection(firestore, 'work_logs'),
+                    where('Worker_ID', 'in', chunk),
+                    where('Organization_ID', '==', organizationId),
+                )),
+            ]);
+            attSnap.docs.forEach(d => {
+                const a = d.data() as WorkerAttendance;
+                if (inRange(a.Date) && (a.Status === 'Prisutan' || a.Status === 'Teren')) {
+                    presentByWorkerDate.add(`${a.Worker_ID}_${a.Date}`);
                 }
-            }
-            loopDate.setDate(loopDate.getDate() + 1);
+            });
+            logSnap.docs.forEach(d => {
+                const l = d.data() as WorkLog;
+                if (inRange(l.Date)) bookedByWorkerDate.add(`${l.Worker_ID}_${l.Date}`);
+            });
         }
+
+        // 4. Prijavi SAMO dane gdje je radnik bio prisutan (šihtarica) a nema dnevnicu nigdje —
+        //    (čista, testirana logika; ne prijavljuje rad na drugom nalogu ni odsustva).
+        const missingDetails = computeMissingAttendanceDays({
+            startISO, endISO,
+            workers: workerIds.map(id => ({ id, name: assignedWorkers.get(id) || 'Unknown' })),
+            presentByWorkerDate,
+            bookedByWorkerDate,
+        });
 
         return {
             missingDays: missingDetails.length,
@@ -414,12 +404,13 @@ export function validateWorkOrderProfitData(workOrder: any): ProfitWarning[] {
             });
         }
 
-        // Active item with no labor cost → Missing attendance
+        // Active item with no labor booked yet → profit still incomplete (NIJE nužno greška prisustva:
+        // rad se možda knjiži na drugi nalog, ili proizvod tek počinje). Poruka opisuje šta zaista znači.
         if (item.Status === 'U toku' && (!item.Actual_Labor_Cost || item.Actual_Labor_Cost <= 0)) {
             warnings.push({
                 type: 'warning',
                 icon: 'person_off',
-                message: `Nema evidentiranog prisustva (trošak rada = 0)`,
+                message: `Proizvod je u toku, a još nema knjiženog rada`,
                 itemName: item.Product_Name,
             });
         }
@@ -3384,7 +3375,9 @@ export async function recalculateWorkOrder(
         for (const r of itemResults) {
             const { item } = r;
             totalValue += r.itemValue;
-            materialCost += r.itemMaterialCost;
+            // MATERIJAL × KOLIČINA: itemMaterialCost je PO KOMADU (Σ product_materials za 1 komad),
+            // a prihod (itemValue) je UKUPAN → agregat naloga mora množiti količinom (bug iz PDF-a).
+            materialCost += itemMaterialTotal(r.itemMaterialCost, item.Quantity);
             transportCost += r.itemTransport;
             servicesCost += r.itemServices;
             plannedLaborCost += r.itemPlannedLabor;
@@ -3392,6 +3385,7 @@ export async function recalculateWorkOrder(
 
             // SYNC: Update item-level Material_Cost, Actual_Labor_Cost i Actual_Labor_Days for consistency
             // (skupljamo izmjene → jedan batch commit poslije petlje)
+            // NB: Material_Cost se ČUVA PO KOMADU (invarijanta) — množenje količinom radi SAMO agregat gore.
             itemUpdates.push({
                 ref: doc(firestore, COLLECTIONS.WORK_ORDER_ITEMS, item.ID),
                 payload: { Material_Cost: r.itemMaterialCost, Actual_Labor_Cost: r.freshItemLaborCost, Actual_Labor_Days: r.freshItemLaborDays },

@@ -143,7 +143,7 @@ export async function updateOrderStatus(
     orderId: string,
     status: string,
     organizationId: string
-): Promise<{ success: boolean; message: string }> {
+): Promise<{ success: boolean; message: string; postCascade?: Promise<void> }> {
     const { updateOrderStatus: _update } = await import('../../database');
     const result = await _update(orderId, status, organizationId);
 
@@ -157,14 +157,16 @@ export async function updateOrderStatus(
 export async function markOrderSent(
     orderId: string,
     organizationId: string
-): Promise<{ success: boolean; message: string }> {
-    return updateOrderStatus(orderId, 'Naručeno', organizationId);
+): Promise<{ success: boolean; message: string; postCascade?: Promise<void> }> {
+    // 'Poslano' je jedini validan "poslano" status narudžbe (ORDER_STATUSES / ALLOWED_ORDER_TRANSITIONS).
+    // Ranije je slalo 'Naručeno' (status MATERIJALA, ne narudžbe) → tranzicija bi pala.
+    return updateOrderStatus(orderId, 'Poslano', organizationId);
 }
 
 export async function markMaterialsReceived(
     orderItemIds: string[],
     organizationId: string
-): Promise<{ success: boolean; message: string }> {
+): Promise<{ success: boolean; message: string; postCascade?: Promise<void> }> {
     const { markMaterialsReceived: _mark } = await import('../../database');
     return _mark(orderItemIds, organizationId);
 }

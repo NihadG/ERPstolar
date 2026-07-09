@@ -204,8 +204,15 @@
     border: 1px solid var(--border-light); background: var(--background);
 }
 .wo-product-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
-.wo-product-name-wrap { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.wo-product-summary { cursor: pointer; border-radius: var(--radius-sm); margin: -4px; padding: 4px; }
+.wo-product-summary:hover { background: var(--surface); }
+.wo-product-name-wrap { display: flex; align-items: center; gap: 8px; min-width: 0; flex-wrap: wrap; }
 .wo-product-name { font-size: 14px; font-weight: 600; color: var(--text-primary); }
+.wo-product-qty { font-size: 12px; font-weight: 600; color: var(--text-tertiary); }
+.wo-product-status-pill {
+    font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em;
+    padding: 1px 7px; border-radius: 999px; border: 1px solid currentColor; background: transparent;
+}
 .wo-pause-tag { font-size: 10px; font-weight: 700; color: #b45309; background: var(--warning-bg); padding: 2px 7px; border-radius: 999px; }
 .wo-warn-tag {
     display: inline-flex; align-items: center; gap: 4px;

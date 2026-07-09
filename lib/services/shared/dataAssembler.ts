@@ -22,6 +22,7 @@ import type {
     WorkOrder,
     WorkOrderItem,
 } from '../../types';
+import { naturalCompare } from '../../naturalCompare';
 
 // ============================================
 // GENERIC MAP BUILDER
@@ -215,7 +216,10 @@ export function assembleProjects(
     offersByProject: Map<string, Offer[]>
 ): void {
     for (const project of projects) {
-        project.products = productsByProject.get(project.Project_ID) || [];
+        // Prirodno sortiranje po nazivu (E1 < E2 < E10) — jedinstveni izvor poretka za sve
+        // potrošače (nalozi, narudžbe, ponude), bez obzira na redoslijed CSV importa.
+        project.products = [...(productsByProject.get(project.Project_ID) || [])]
+            .sort((a, b) => naturalCompare(a.Name, b.Name));
         project.offers = offersByProject.get(project.Project_ID) || [];
     }
 }

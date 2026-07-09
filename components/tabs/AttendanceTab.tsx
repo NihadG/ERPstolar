@@ -293,18 +293,11 @@ export default function AttendanceTab({ workers, workOrders, onRefresh, showToas
             const isPresent = finalStatus === 'Prisutan' || finalStatus === 'Teren';
             if (isPresent) {
                 // Izgradi prijedlog → otvori upit (Prisutan bez kandidata ne otvara upit).
-                const rows = buildBookingProposal(
+                const opened = await openBookingConfirm(
                     [{ workerId: selectedCell.workerId, workerName: selectedCell.workerName, status: finalStatus }],
-                    workOrders,
-                    selectedCell.date
+                    selectedCell.date,
                 );
-                if (rows.length > 0) {
-                    setConfirmRows(rows);
-                    setConfirmDate(selectedCell.date);
-                    setConfirmOpen(true);
-                } else {
-                    showToast('Prisustvo sačuvano', 'success');
-                }
+                if (!opened) showToast('Prisustvo sačuvano', 'success');
             } else if (result.manualKept > 0) {
                 // Odsutan, ali ima RUČNIH dnevnica → zadržane (ne brišemo ručni unos bez potvrde). Rizik #5.
                 showToast(`Prisustvo sačuvano — zadržano ${result.manualKept} ručnih dnevnica (provjeri ručno ako ne treba)`, 'info');
@@ -335,6 +328,38 @@ export default function AttendanceTab({ workers, workOrders, onRefresh, showToas
     // Jučerašnji status radnika (za labelu dugmeta "Kao jučer"; cache-only, brzo)
     function yesterdayStatusOf(workerId: string, dateStr: string): string | undefined {
         return getAttendance(workerId, shiftISO(dateStr, -1))?.Status;
+    }
+
+    // "Kao jučer" izvor za prijedlog u modalu: workerId → Work_Order_ID[] knjiženi JUČER.
+    async function buildYesterdayOrderMap(dateStr: string): Promise<Map<string, string[]>> {
+        const map = new Map<string, string[]>();
+        if (!organizationId) return map;
+        try {
+            const yEntries = await getDailyWorkBooking(shiftISO(dateStr, -1), organizationId);
+            yEntries.forEach(e => {
+                const orderIds: string[] = [];
+                (e.items || []).forEach(bi => { if (bi.workOrderId && !orderIds.includes(bi.workOrderId)) orderIds.push(bi.workOrderId); });
+                if (orderIds.length) map.set(e.workerId, orderIds);
+            });
+        } catch { /* greška u dohvatu nije kritična — samo nema "kao jučer" predabira */ }
+        return map;
+    }
+
+    // Izgradi prijedlog knjiženja s "kao jučer" fallback-om (Teren/Prisutan bez auto-prijedloga) i
+    // otvori upit ako ima redova. Vrati true ako je upit otvoren.
+    async function openBookingConfirm(
+        savedWorkers: { workerId: string; workerName: string; status: string }[],
+        dateStr: string,
+    ): Promise<boolean> {
+        const yMap = await buildYesterdayOrderMap(dateStr);
+        const rows = buildBookingProposal(savedWorkers, workOrders, dateStr, undefined, yMap);
+        if (rows.length > 0) {
+            setConfirmRows(rows);
+            setConfirmDate(dateStr);
+            setConfirmOpen(true);
+            return true;
+        }
+        return false;
     }
 
     // "KAO JUČER": ponovi jučerašnji status + ISTO knjiženje (isti nalozi/stavke, ista prisutnost).
@@ -584,12 +609,7 @@ export default function AttendanceTab({ workers, workOrders, onRefresh, showToas
                 .filter(w => bulkStatuses[w.Worker_ID] === 'Prisutan' || bulkStatuses[w.Worker_ID] === 'Teren')
                 .map(w => ({ workerId: w.Worker_ID, workerName: w.Name, status: bulkStatuses[w.Worker_ID] }));
             if (presentSaved.length > 0) {
-                const rows = buildBookingProposal(presentSaved, workOrders, bulkEditDate.dateStr);
-                if (rows.length > 0) {
-                    setConfirmRows(rows);
-                    setConfirmDate(bulkEditDate.dateStr);
-                    setConfirmOpen(true);
-                }
+                await openBookingConfirm(presentSaved, bulkEditDate.dateStr);
             }
 
             loadMonth(date.getFullYear(), date.getMonth() + 1);
@@ -605,11 +625,13 @@ export default function AttendanceTab({ workers, workOrders, onRefresh, showToas
     // KNJIŽENJE NA POTVRDU (iz upita)
     // ============================================
 
-    // Proknjiži dnevnicu radnika na izabrani nalog: bira dodijeljene (ili sve) nezavršene stavke,
-    // POKRENE PONOVO pauzirane stavke i starta nalog ako je još „Na čekanju". Vrati broj zapisa.
-    async function bookWorkerToOrder(workerId: string, workerName: string, date: string, orgId: string, workOrderId: string, presence: 0.5 | 1 = 1): Promise<number> {
+    // Prikupi CILJNE stavke za radnika na nalogu: bira dodijeljene (ili sve) nezavršene stavke,
+    // POKRENE PONOVO pauzirane stavke i starta nalog ako je još „Na čekanju".
+    // NE knjiži — cijeli dan radnika se knjiži JEDNIM bookWorkerDayItems (jedna renormalizacija),
+    // pa radnik na više naloga ne pokreće renormalizeWorkerDay/getWorkers po svakom nalogu.
+    async function prepareWorkerOrderTargets(workerId: string, orgId: string, workOrderId: string): Promise<{ workOrderId: string; itemId: string; productId?: string }[]> {
         const wo = workOrders.find(w => w.Work_Order_ID === workOrderId);
-        if (!wo) return 0;
+        if (!wo) return [];
         const all = wo.items || [];
         const live = all.filter(it => it.Status !== 'Završeno');
         const base = live.length > 0 ? live : all;   // sve završeno (npr. teren na gotovom nalogu) → ipak knjiži
@@ -617,7 +639,7 @@ export default function AttendanceTab({ workers, workOrders, onRefresh, showToas
             isWorkerAssignedToAutoItem({ ID: it.ID, Assigned_Workers: it.Assigned_Workers, Processes: it.Processes, SubTasks: it.SubTasks }, workerId)
         );
         const chosen = assigned.length > 0 ? assigned : base;
-        if (chosen.length === 0) return 0;
+        if (chosen.length === 0) return [];
 
         // Pokreni ponovo pauzirane stavke koje knjižimo.
         for (const it of chosen) {
@@ -630,9 +652,7 @@ export default function AttendanceTab({ workers, workOrders, onRefresh, showToas
             try { await startWorkOrder(workOrderId, orgId); } catch (e) { console.warn('start failed', workOrderId, e); }
         }
 
-        const targets = chosen.map(it => ({ workOrderId, itemId: it.ID, productId: it.Product_ID }));
-        const res = await bookWorkerDayItems(workerId, workerName, date, orgId, targets, presence);
-        return res.created;
+        return chosen.map(it => ({ workOrderId, itemId: it.ID, productId: it.Product_ID }));
     }
 
     async function commitDecisions(decisions: BookingDecision[]) {
@@ -648,27 +668,42 @@ export default function AttendanceTab({ workers, workOrders, onRefresh, showToas
             affectedOrders.add(orderId);
             if (workOrders.find(w => w.Work_Order_ID === orderId)?.Status === 'Završeno') touchedCompleted.add(orderId);
         };
+
+        // 1) Prikupi ciljeve PO RADNIKU (radnik na više naloga = SVI ciljevi u jednom knjiženju).
+        const perWorker = new Map<string, { workerName: string; presence: 0.5 | 1; targets: { workOrderId: string; itemId: string; productId?: string }[] }>();
         for (const d of decisions) {
-            try {
-                const presence = d.presence === 0.5 ? 0.5 : 1;
-                if (d.kind === 'present') {
-                    for (const orderId of d.orderIds) {
-                        booked += await bookWorkerToOrder(d.workerId, d.workerName, date, orgId, orderId, presence);
-                        noteAffected(orderId);
-                    }
-                } else {
-                    const c = d.choice;
-                    if (c.mode === 'none') continue;
-                    if (c.mode === 'order') {
-                        booked += await bookWorkerToOrder(d.workerId, d.workerName, date, orgId, c.workOrderId, presence);
-                        noteAffected(c.workOrderId);
-                    }
+            const presence: 0.5 | 1 = d.presence === 0.5 ? 0.5 : 1;
+            const orderIds: string[] = d.kind === 'present'
+                ? d.orderIds
+                : (d.choice.mode === 'order' ? [d.choice.workOrderId] : []);
+            if (orderIds.length === 0) continue;
+            const entry = perWorker.get(d.workerId) || { workerName: d.workerName, presence, targets: [] };
+            for (const orderId of orderIds) {
+                try {
+                    const t = await prepareWorkerOrderTargets(d.workerId, orgId, orderId);
+                    entry.targets.push(...t);
+                    noteAffected(orderId);
+                } catch (e) {
+                    console.error(`commitDecisions: priprema za ${d.workerName} (${orderId}) nije uspjela`, e);
+                    if (!failedWorkers.includes(d.workerName)) failedWorkers.push(d.workerName);
                 }
-            } catch (e) {
-                console.error(`commitDecisions: knjiženje za ${d.workerName} nije uspjelo`, e);
-                failedWorkers.push(d.workerName);
             }
+            if (entry.targets.length > 0) perWorker.set(d.workerId, entry);
         }
+
+        // 2) Knjiži PO RADNIKU, PARALELNO — svaki: JEDAN bookWorkerDayItems (→ jedna renormalizacija dana).
+        const results = await Promise.all(Array.from(perWorker.entries()).map(async ([workerId, w]) => {
+            try {
+                const res = await bookWorkerDayItems(workerId, w.workerName, date, orgId, w.targets, w.presence);
+                res.affectedWorkOrderIds.forEach(id => noteAffected(id));
+                return res.created;
+            } catch (e) {
+                console.error(`commitDecisions: knjiženje za ${w.workerName} nije uspjelo`, e);
+                if (!failedWorkers.includes(w.workerName)) failedWorkers.push(w.workerName);
+                return 0;
+            }
+        }));
+        booked = results.reduce((s, n) => s + n, 0);
 
         try {
             // Preračunaj pogođene naloge: osvježi Actual_Labor_Cost/Profit na dokumentu naloga;
@@ -863,22 +898,17 @@ export default function AttendanceTab({ workers, workOrders, onRefresh, showToas
                                                 if (unbooked.length === 0) return null;
                                                 return (
                                                     <div
-                                                        onClick={(e) => {
+                                                        onClick={async (e) => {
                                                             e.stopPropagation();
-                                                            const rows = buildBookingProposal(
+                                                            const opened = await openBookingConfirm(
                                                                 unbooked.map(w => ({
                                                                     workerId: w.Worker_ID,
                                                                     workerName: w.Name,
                                                                     status: getAttendance(w.Worker_ID, dayInfo.dateStr)!.Status,
                                                                 })),
-                                                                workOrders,
-                                                                dayInfo.dateStr
+                                                                dayInfo.dateStr,
                                                             );
-                                                            if (rows.length > 0) {
-                                                                setConfirmRows(rows);
-                                                                setConfirmDate(dayInfo.dateStr);
-                                                                setConfirmOpen(true);
-                                                            } else {
+                                                            if (!opened) {
                                                                 showToast('Nema kandidata za knjiženje (provjeri naloge/dodjele)', 'info');
                                                             }
                                                         }}

@@ -3,7 +3,7 @@
 //
 // MODEL = STVARNO (kao kartica projekta): agregacija PO PROIZVODU (Product_ID),
 //   profit = prodaja − ŽIVI materijal − STVARNI rad − transport − usluge.
-//   • živi materijal = Σ product_materials (trenutno stanje, uklj. naknadno dodano / poskupljenja)
+//   • živi materijal = Σ product_materials × KOLIČINA (trenutno stanje, uklj. naknadno dodano / poskupljenja)
 //   • stvarni rad    = Σ WorkLog.Daily_Rate po Product_ID (kroz sve naloge)
 // Uz to čuvamo PLANIRANO (iz ponude) za poređenje "koliko sam potrefio":
 //   • planirani materijal = OfferProduct.Material_Cost × količina
@@ -22,7 +22,7 @@ export interface ProductInput {
     projectId: string; projectName: string;
     woId: string; woNumber: string; woType: string; status: string;
     selling: number;            // prodajna (override ?? Product_Value ?? ponuda)
-    liveMaterial: number;       // STVARNI materijal (Σ product_materials)
+    liveMaterial: number;       // STVARNI materijal (Σ product_materials × količina)
     plannedMaterial: number;    // PLANIRANI materijal (iz ponude)
     actualLabor: number;        // STVARNI rad (Σ logova po Product_ID)
     plannedLabor: number;       // PLANIRANI rad (Σ Planned_Labor_Cost × kol.)

@@ -54,6 +54,8 @@ import { ALLOWED_ORDER_TRANSITIONS } from './types';
 
 // Shared service modules (architecture upgrade)
 import { assembleProjectGraph, assembleOrders, assembleWorkOrders, groupBy } from './services/shared/dataAssembler';
+import { naturalCompare } from './naturalCompare';
+import { itemMaterialTotal } from './materialCost';
 import {
     generateOfferNumber as _generateOfferNumber,
     generateOrderNumber as _generateOrderNumber,
@@ -504,6 +506,9 @@ export async function getProductsByProject(projectId: string, organizationId: st
         product.materials = materialsByProduct.get(product.Product_ID) || [];
     });
 
+    // Prirodno sortiranje (E1 < E2 < E10) — konzistentno s data-slojem (assembleProjects)
+    products.sort((a, b) => naturalCompare(a.Name, b.Name));
+
     return products;
 }
 
@@ -734,10 +739,17 @@ function extractMaterialIds(item: OrderItem): string[] {
 }
 
 // Batch update material statuses + quantities — much faster than calling updateProductMaterial per material
+//
+// PERF (Faza 3): `costRecalc` upravlja skupom kaskadom preračuna cijena proizvoda/naloga
+// (recalculateProductCost → recalculateWorkOrder). Za ČISTE statusne prelaze narudžbe
+// (Poslano/Primljeno) cijena materijala se NE mijenja pa je preračun de-facto no-op, ali je
+// najskuplji dio poziva. `'background'` ga skida s kritičnog puta (klik reaguje odmah) i vraća
+// `postCascade` koji pozivalac može dočekati prije ciljanog refresha projekata/naloga.
 export async function batchUpdateMaterialStatuses(
     updates: { materialId: string; status: string; orderId: string; orderedQty?: number; receivedQty?: number; onStock?: number; forceResetQty?: boolean }[],
-    organizationId: string
-): Promise<{ success: boolean; message: string }> {
+    organizationId: string,
+    options?: { costRecalc?: 'await' | 'background' }
+): Promise<{ success: boolean; message: string; postCascade?: Promise<void> }> {
     if (!organizationId || updates.length === 0) {
         return { success: true, message: 'Ništa za ažurirati' };
     }
@@ -791,8 +803,17 @@ export async function batchUpdateMaterialStatuses(
         }
 
         // Recalculate product costs once per affected product — paralelno (proizvodi su nezavisni).
-        await Promise.all(Array.from(affectedProductIds).map(productId => recalculateProductCost(productId, organizationId)));
+        const runRecalc = () => Promise.all(
+            Array.from(affectedProductIds).map(productId => recalculateProductCost(productId, organizationId))
+        ).then(() => { });
 
+        if (options?.costRecalc === 'background') {
+            // Ne blokiraj poziv — vrati promise koji pozivalac veže na odgođeni refresh.
+            const postCascade = runRecalc().catch(e => console.warn('batchUpdateMaterialStatuses background recalc:', e));
+            return { success: true, message: 'Statusi materijala ažurirani', postCascade };
+        }
+
+        await runRecalc();
         return { success: true, message: 'Statusi materijala ažurirani' };
     } catch (error) {
         console.error('batchUpdateMaterialStatuses error:', error);
@@ -2295,10 +2316,13 @@ export async function deleteOrder(orderId: string, organizationId: string, mater
     }
 }
 
-export async function updateOrderStatus(orderId: string, status: string, organizationId: string): Promise<{ success: boolean; message: string }> {
+export async function updateOrderStatus(orderId: string, status: string, organizationId: string): Promise<{ success: boolean; message: string; postCascade?: Promise<void> }> {
     if (!organizationId) {
         return { success: false, message: 'Organization ID is required' };
     }
+
+    // Skupa kaskada preračuna cijena ide u pozadinu (Faza 3) — pozivalac je veže na odgođeni refresh.
+    let postCascade: Promise<void> | undefined;
 
     try {
         // Get current order to check previous status
@@ -2349,7 +2373,8 @@ export async function updateOrderStatus(orderId: string, status: string, organiz
                 await updateDoc(docSnap.ref, { Status: 'Na čekanju' });
             }
             if (materialUpdates.length > 0) {
-                await batchUpdateMaterialStatuses(materialUpdates, organizationId);
+                const r = await batchUpdateMaterialStatuses(materialUpdates, organizationId, { costRecalc: 'background' });
+                postCascade = r.postCascade;
             }
         }
 
@@ -2374,10 +2399,13 @@ export async function updateOrderStatus(orderId: string, status: string, organiz
                 if (item.Project_ID) affectedProjects.add(item.Project_ID);
             }
             // Stavke + materijali paralelno (batch, ne jedna-po-jedna)
-            await Promise.all([
+            const [, matResult] = await Promise.all([
                 itemBatch.commit(),
-                materialUpdates.length > 0 ? batchUpdateMaterialStatuses(materialUpdates, organizationId) : Promise.resolve(),
+                materialUpdates.length > 0
+                    ? batchUpdateMaterialStatuses(materialUpdates, organizationId, { costRecalc: 'background' })
+                    : Promise.resolve(undefined),
             ]);
+            postCascade = matResult?.postCascade;
 
             // Cascade paralelno: Product → Materijali naručeni, Project → U proizvodnji
             await Promise.all([
@@ -2413,10 +2441,13 @@ export async function updateOrderStatus(orderId: string, status: string, organiz
                 if (item.Product_ID) affectedProductIds.add(item.Product_ID);
             }
             // Stavke + materijali paralelno (batch)
-            await Promise.all([
+            const [, matResult] = await Promise.all([
                 itemBatch.commit(),
-                materialUpdates.length > 0 ? batchUpdateMaterialStatuses(materialUpdates, organizationId) : Promise.resolve(),
+                materialUpdates.length > 0
+                    ? batchUpdateMaterialStatuses(materialUpdates, organizationId, { costRecalc: 'background' })
+                    : Promise.resolve(undefined),
             ]);
+            postCascade = matResult?.postCascade;
 
             // Cascade paralelno: ako su svi materijali primljeni → Product → Materijali spremni
             await Promise.all(Array.from(affectedProductIds).map(async (productId) => {
@@ -2429,7 +2460,7 @@ export async function updateOrderStatus(orderId: string, status: string, organiz
 
         // Materials are updated individually via markMaterialsReceived
 
-        return { success: true, message: 'Status narudžbe ažuriran' };
+        return { success: true, message: 'Status narudžbe ažuriran', postCascade };
     } catch (error) {
         console.error('updateOrderStatus error:', error);
         return { success: false, message: 'Greška pri ažuriranju statusa' };
@@ -2546,7 +2577,7 @@ export async function markOrderSent(orderId: string, organizationId: string): Pr
     return updateOrderStatus(orderId, 'Poslano', organizationId);
 }
 
-export async function markMaterialsReceived(orderItemIds: string[], organizationId: string): Promise<{ success: boolean; message: string }> {
+export async function markMaterialsReceived(orderItemIds: string[], organizationId: string): Promise<{ success: boolean; message: string; postCascade?: Promise<void> }> {
     if (!organizationId) {
         return { success: false, message: 'Organization ID is required' };
     }
@@ -2559,15 +2590,19 @@ export async function markMaterialsReceived(orderItemIds: string[], organization
         const materialBatchUpdates: { materialId: string; status: string; orderId: string; orderedQty: number; receivedQty: number }[] = [];
 
         const nowIso = new Date().toISOString();
-        // Dohvati SVE stavke paralelno (umjesto getDocs jedna-po-jedna — to je bilo glavno usporenje "Primi sve")
-        const itemDocs = await Promise.all(orderItemIds.map(async (itemId) => {
+        // Dohvati stavke chunked 'in' upitom (30 po upitu) umjesto getDocs jedna-po-jedna —
+        // N pojedinačnih upita je bilo glavno usporenje "Primi sve".
+        const itemDocs: any[] = [];
+        const itemChunkSize = 30;
+        for (let i = 0; i < orderItemIds.length; i += itemChunkSize) {
+            const chunk = orderItemIds.slice(i, i + itemChunkSize);
             const itemSnap = await getDocs(query(
                 collection(db, COLLECTIONS.ORDER_ITEMS),
-                where('ID', '==', itemId),
+                where('ID', 'in', chunk),
                 where('Organization_ID', '==', organizationId)
             ));
-            return itemSnap.empty ? null : itemSnap.docs[0];
-        }));
+            itemSnap.docs.forEach(d => itemDocs.push(d));
+        }
 
         const itemBatch = writeBatch(db);
         let itemUpdates = 0;
@@ -2587,10 +2622,12 @@ export async function markMaterialsReceived(orderItemIds: string[], organization
             if (item.Order_ID) affectedOrderIds.add(item.Order_ID);
         }
 
-        // Stavke + materijali paralelno (batch umjesto N+1)
-        await Promise.all([
+        // Stavke + materijali paralelno (batch umjesto N+1); skupi preračun cijena u pozadinu.
+        const [, matResult] = await Promise.all([
             itemUpdates > 0 ? itemBatch.commit() : Promise.resolve(),
-            materialBatchUpdates.length > 0 ? batchUpdateMaterialStatuses(materialBatchUpdates, organizationId) : Promise.resolve(),
+            materialBatchUpdates.length > 0
+                ? batchUpdateMaterialStatuses(materialBatchUpdates, organizationId, { costRecalc: 'background' })
+                : Promise.resolve(undefined),
         ]);
 
         // Auto-status narudžbe + cascade proizvoda — paralelno (nakon što su stavke/materijali upisani)
@@ -2619,10 +2656,10 @@ export async function markMaterialsReceived(orderItemIds: string[], organization
             }),
         ]);
 
-        // Note: Project status sync is now handled by syncProjectStatus() 
+        // Note: Project status sync is now handled by syncProjectStatus()
         // based on work order item progress, not material receipt
 
-        return { success: true, message: 'Materijali primljeni' };
+        return { success: true, message: 'Materijali primljeni', postCascade: matResult?.postCascade };
     } catch (error) {
         console.error('markMaterialsReceived error:', error);
         return { success: false, message: 'Greška pri primanju materijala' };
@@ -6485,12 +6522,14 @@ export async function createProductionSnapshot(
 
             const hasGlass = materials.some(m => m.glassItems && m.glassItems.length > 0);
             const hasAluDoor = materials.some(m => m.aluDoorItems && m.aluDoorItems.length > 0);
-            const itemMaterialCost = materials.reduce((sum, m) => sum + (m.Total_Price || 0), 0);
+            // Σ product_materials = trošak PO KOMADU; ukupno = × količina (isto kao prihod).
+            const itemMaterialPerUnit = materials.reduce((sum, m) => sum + (m.Total_Price || 0), 0);
+            const itemMaterialTotalCost = itemMaterialTotal(itemMaterialPerUnit, item.Quantity);
 
-            // Calculate material ratios
-            const materialPerM2 = surface > 0 ? itemMaterialCost / surface : 0;
-            const materialPerM3 = volume > 0 ? itemMaterialCost / volume : 0;
-            const materialPerUnit = item.Quantity > 0 ? itemMaterialCost / item.Quantity : 0;
+            // Material ratios su PER-KOMAD (dimenzije H×W×D su za jedan komad).
+            const materialPerM2 = surface > 0 ? itemMaterialPerUnit / surface : 0;
+            const materialPerM3 = volume > 0 ? itemMaterialPerUnit / volume : 0;
+            const materialPerUnit = itemMaterialPerUnit;
 
             // Get workers for this item from work logs
             const itemWorkLogs = workLogs.filter(wl => wl.Work_Order_Item_ID === item.ID);
@@ -6569,7 +6608,8 @@ export async function createProductionSnapshot(
             // STANDARDIZED: Use fresh labor from work logs and include Transport + Services
             const freshItemLaborCost = itemWorkLogs.reduce((sum, wl) => sum + (wl.Daily_Rate || 0), 0);
             const itemServicesTotal = (offerProduct?.extras || []).reduce((s, e) => s + (e.Total || 0), 0);
-            const profit = sellingPrice - itemMaterialCost - transportShare - itemServicesTotal - freshItemLaborCost;
+            // prihod (sellingPrice) je UKUPAN → materijal mora biti UKUPAN (× količina).
+            const profit = sellingPrice - itemMaterialTotalCost - transportShare - itemServicesTotal - freshItemLaborCost;
 
             snapshotItems.push({
                 Product_ID: item.Product_ID,
@@ -6585,7 +6625,7 @@ export async function createProductionSnapshot(
                 Material_Count: materials.length,
                 Has_Glass: hasGlass,
                 Has_Alu_Door: hasAluDoor,
-                Total_Material_Cost: itemMaterialCost,
+                Total_Material_Cost: itemMaterialTotalCost,
                 Material_Per_M2: Math.round(materialPerM2 * 100) / 100,
                 Material_Per_M3: Math.round(materialPerM3 * 100) / 100,
                 Material_Per_Unit: Math.round(materialPerUnit * 100) / 100,
@@ -6605,7 +6645,7 @@ export async function createProductionSnapshot(
                 Margin_Applied: marginPercent // Legacy
             });
 
-            totalMaterialCost += itemMaterialCost;
+            totalMaterialCost += itemMaterialTotalCost;
             totalSellingPrice += sellingPrice;
             totalQuantity += item.Quantity;
             totalSurfaceM2 += surface * item.Quantity;
@@ -6655,6 +6695,7 @@ export async function createProductionSnapshot(
             Work_Order_ID: workOrderId,
             Work_Order_Number: workOrder.Work_Order_Number,
             Created_At: new Date().toISOString(),
+            Snapshot_Version: 2,   // Total_Material_Cost je UKUPAN (po komadu × količina)
 
             Project_ID: project?.Project_ID || '',
             Client_Name: project?.Client_Name || 'Unknown',

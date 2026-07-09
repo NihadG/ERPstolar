@@ -20,6 +20,8 @@ interface OrdersTabProps {
     projects: Project[];
     productMaterials: ProductMaterial[];
     onRefresh: (...collections: string[]) => void;
+    /** Optimistični lokalni patch narudžbe (badge reaguje odmah; usklađivanje ide kroz onRefresh). */
+    onPatchOrder?: (orderId: string, partial: Partial<Order>) => void;
     showToast: (message: string, type: 'success' | 'error' | 'info') => void;
     pendingOrderMaterials?: { materialIds: string[], supplierName: string } | null;
     onClearPendingOrder?: () => void;
@@ -28,7 +30,7 @@ interface OrdersTabProps {
 type GroupBy = 'none' | 'supplier' | 'status' | 'date' | 'project';
 type SortBy = 'date-desc' | 'date-asc' | 'amount-desc' | 'amount-asc' | 'supplier';
 
-export default function OrdersTab({ orders, suppliers, projects, productMaterials, onRefresh, showToast, pendingOrderMaterials, onClearPendingOrder }: OrdersTabProps) {
+export default function OrdersTab({ orders, suppliers, projects, productMaterials, onRefresh, onPatchOrder, showToast, pendingOrderMaterials, onClearPendingOrder }: OrdersTabProps) {
     const { organizationId } = useData();
     const isMobile = useIsMobile();
     const [searchTerm, setSearchTerm] = useState('');
@@ -850,11 +852,17 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
             }
         }
         setStatusDropdownOrderId(null);
+        // Optimistično: badge se mijenja ODMAH; skupa kaskada + refetch projekata idu u pozadinu.
+        onPatchOrder?.(orderId, { Status: newStatus });
         const result = await updateOrderStatus(orderId, newStatus, organizationId!);
         if (result.success) {
             showToast(`Status narudžbe promijenjen u "${newStatus}"`, 'success');
-            onRefresh('orders', 'projects');
+            onRefresh('orders');   // brzo usklađivanje stavki narudžbe
+            // Projekti/nalozi (profit) ovise o preračunu cijena — osvježi ih TEK kad kaskada završi.
+            const after = result.postCascade ?? Promise.resolve();
+            after.finally(() => onRefresh('projects'));
         } else {
+            onPatchOrder?.(orderId, { Status: currentStatus });   // rollback badge-a
             showToast(result.message, 'error');
         }
     }
@@ -892,11 +900,15 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
             showToast('Narudžba nema stavki za slanje', 'error');
             return;
         }
+        const prevStatus = order.Status;
+        onPatchOrder?.(orderId, { Status: 'Poslano' });   // optimistično
         const result = await markOrderSent(orderId, organizationId!);
         if (result.success) {
             showToast('Narudžba poslana', 'success');
-            onRefresh('orders', 'projects');
+            onRefresh('orders');
+            (result.postCascade ?? Promise.resolve()).finally(() => onRefresh('projects'));
         } else {
+            onPatchOrder?.(orderId, { Status: prevStatus });   // rollback
             showToast(result.message, 'error');
         }
     }
@@ -915,7 +927,8 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
         if (result.success) {
             showToast('Materijali primljeni', 'success');
             setSelectedItemIds(new Set());
-            onRefresh('orders', 'projects');
+            onRefresh('orders');   // status stavki/narudžbe se usklađuje odmah
+            (result.postCascade ?? Promise.resolve()).finally(() => onRefresh('projects'));
         } else {
             showToast(result.message, 'error');
         }
@@ -1389,6 +1402,7 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
                     suppliers={suppliers}
                     projects={projects}
                     onRefresh={onRefresh}
+                    onPatchOrder={onPatchOrder}
                     showToast={showToast}
                     onOpenWizard={openWizard}
                     onEditOrder={handleEditOrder}
@@ -1585,11 +1599,21 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
                                             }
                                             // E3: Confirm for Quick Receive All
                                             if (!confirm(`Primiti svih ${unreceivedItems.length} neprimljenih stavki?`)) return;
+                                            // Optimistično: sve stavke primljene → narudžba 'Primljeno' (badge odmah).
+                                            const prevStatus = order.Status;
+                                            const prevItems = order.items;
+                                            const nowIso = new Date().toISOString();
+                                            onPatchOrder?.(order.Order_ID, {
+                                                Status: 'Primljeno',
+                                                items: (order.items || []).map(i => i.Status === 'Primljeno' ? i : { ...i, Status: 'Primljeno', Received_Date: nowIso }),
+                                            });
                                             const result = await markMaterialsReceived(unreceivedItems.map(i => i.ID), organizationId!);
                                             if (result.success) {
                                                 showToast('Sve stavke primljene', 'success');
-                                                onRefresh('orders', 'projects');
+                                                onRefresh('orders');
+                                                (result.postCascade ?? Promise.resolve()).finally(() => onRefresh('projects'));
                                             } else {
+                                                onPatchOrder?.(order.Order_ID, { Status: prevStatus, items: prevItems });
                                                 showToast(result.message, 'error');
                                             }
                                         };

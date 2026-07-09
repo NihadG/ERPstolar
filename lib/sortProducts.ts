@@ -8,6 +8,8 @@
  * Products without a position prefix are sorted alphabetically after positioned ones.
  */
 
+import { naturalCompare } from './naturalCompare';
+
 // Match common position patterns at the start of the name:
 // "poz 1", "poz 1.1", "poz 1.a", "Poz. 2", "POZ 10.2.b", "1.", "1.1", etc.
 const POSITION_REGEX = /^(?:poz\.?\s*)?(\d+(?:\.\s*[\da-zA-ZčćšžđČĆŠŽĐ]+)*)/i;
@@ -99,15 +101,15 @@ export function sortProductsByName<T>(items: T[], getName: (item: T) => string):
         if (posA && posB) {
             const cmp = comparePositions(posA, posB);
             if (cmp !== 0) return cmp;
-            // Same position — compare full names alphabetically
-            return nameA.localeCompare(nameB, 'hr');
+            // Same position — compare full names naturally (E1 < E2 < E10)
+            return naturalCompare(nameA, nameB);
         }
 
         // Only one has a position — positioned items come first
         if (posA && !posB) return -1;
         if (!posA && posB) return 1;
 
-        // Neither has a position — sort alphabetically
-        return nameA.localeCompare(nameB, 'hr');
+        // Neither has a position — sort naturally (E1 < E2 < E10, 1 < 2 < 10)
+        return naturalCompare(nameA, nameB);
     });
 }

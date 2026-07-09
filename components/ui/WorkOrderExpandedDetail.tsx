@@ -12,6 +12,7 @@ import {
     getAllAttendanceByMonth,
 } from '@/lib/services';
 import { workOrderDueDate, buildSaturdayChecker, todayISO, daysUntil, plannedVsActualDays, type AttendanceLite } from '@/lib/planning';
+import { itemMaterialTotal } from '@/lib/materialCost';
 import type { WorkOrder, Worker, WorkOrderItem, WorkLog } from '@/lib/types';
 import ProductTimelineModal from './ProductTimelineModal';
 import WorkOrderWorkLog from './WorkOrderWorkLog';
@@ -55,6 +56,11 @@ export default function WorkOrderExpandedDetail({
     const [nameDraft, setNameDraft] = useState('');
     const [tab, setTab] = useState<'tok' | 'rad'>('tok');
     const [flowOpen, setFlowOpen] = useState(false);   // "Procesi naloga" — collapsed po defaultu (liste znaju biti duge)
+    const [expandedProducts, setExpandedProducts] = useState<Set<string>>(new Set());   // sklopivi proizvodi (collapsed po defaultu)
+    const [graphVersion, setGraphVersion] = useState(0);   // bump nakon zatvaranja grafa → OrderProcessBoard ponovo učita gating
+    const toggleProduct = (id: string) => setExpandedProducts(prev => {
+        const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n;
+    });
 
     const saveName = async () => {
         const v = nameDraft.trim();
@@ -307,7 +313,8 @@ export default function WorkOrderExpandedDetail({
             const itemLogs = workLogs.filter(wl => wl.Work_Order_Item_ID === item.ID);
             const labor = itemLogs.reduce((sum, wl) => sum + (wl.Daily_Rate || 0), 0);
             const value = ((item as any).Profit_Overrides?.Selling_Price ?? item.Product_Value) || 0;
-            const material = item.Material_Cost || 0;
+            // MATERIJAL × KOLIČINA: Material_Cost je PO KOMADU, value (Product_Value) je UKUPAN.
+            const material = itemMaterialTotal(item.Material_Cost, item.Quantity);
             const services = (item as any).Services_Total || 0;
             const transport = (item as any).Profit_Overrides?.Transport_Share ?? (item as any).Transport_Share ?? 0;
             map.set(item.ID, {
@@ -500,21 +507,39 @@ export default function WorkOrderExpandedDetail({
                             organizationId={organizationId || undefined}
                             onChanged={() => { onRefresh?.('workOrders'); reloadWorkLogs(); }}
                             showToast={showToast}
+                            graphReloadKey={graphVersion}
                         />
                     )}
 
-                    <div className="wo-flow-title" style={{ marginTop: 6 }}>Proizvodi</div>
+                    <div className="wo-flow-title" style={{ marginTop: 6, display: 'flex', alignItems: 'center', gap: 8 }}>
+                        Proizvodi
+                        {localItems.length > 0 && <span className="wo-flow-count">{localItems.length}</span>}
+                    </div>
                     {localItems.length > 0 ? localItems.map(item => {
                         const fin = itemFin.get(item.ID) || { value: 0, material: 0, labor: 0, services: 0, transport: 0, profit: 0, missingPrice: true, missingMaterial: true };
                         const status = (item.Status as string) || 'Na čekanju';
                         const isPaused = !!item.Is_Paused;
                         const showWarn = !isMontaza && (fin.missingPrice || fin.missingMaterial);
+                        // Sklopivo: 2+ proizvoda su sklopljeni po defaultu (klik = rasklopi).
+                        // Za jedan proizvod uvijek otvoreno (nema šta sklapati, a Detalji su glavna radnja).
+                        const collapsible = localItems.length > 1;
+                        const isOpen = !collapsible || expandedProducts.has(item.ID);
+                        const statusColor = status === 'Završeno' ? 'var(--success)' : status === 'U toku' ? 'var(--accent)' : 'var(--text-tertiary)';
                         return (
-                            <div key={item.ID} className="wo-product">
-                                {/* Naziv + profit */}
-                                <div className="wo-product-top">
+                            <div key={item.ID} className={`wo-product ${isOpen ? 'open' : ''}`}>
+                                {/* Sažetak (naziv, količina, status, profit) — klik sklapa/rasklapa */}
+                                <div className={`wo-product-top ${collapsible ? 'wo-product-summary' : ''}`}
+                                    role={collapsible ? 'button' : undefined}
+                                    onClick={collapsible ? () => toggleProduct(item.ID) : undefined}>
                                     <div className="wo-product-name-wrap">
+                                        {collapsible && (
+                                            <span className="material-icons-round wo-flow-chevron">{isOpen ? 'expand_more' : 'chevron_right'}</span>
+                                        )}
                                         <span className="wo-product-name">{item.Product_Name}</span>
+                                        <span className="wo-product-qty">× {item.Quantity || 1}</span>
+                                        <span className="wo-product-status-pill" style={{ color: statusColor, borderColor: statusColor }}>
+                                            {status === 'Na čekanju' ? 'Čeka' : status}
+                                        </span>
                                         {isPaused && <span className="wo-pause-tag">PAUZA</span>}
                                         {showWarn && (
                                             <span className="wo-warn-tag" title={fin.missingPrice ? profitWarnTitle : 'Materijali nisu dodati ili nemaju cijenu — profit je nepotpun'}>
@@ -539,30 +564,34 @@ export default function WorkOrderExpandedDetail({
                                     </div>
                                 </div>
 
-                                {/* Status + pauza — per-proizvod kontrole SAMO kad ima 2+ proizvoda.
-                                    Za jedan proizvod životni ciklus vodi status naloga (hero). */}
-                                {localItems.length > 1 && (
-                                    <div className="wo-product-controls">
-                                        <div className="wo-status-seg">
-                                            {(['Na čekanju', 'U toku', 'Završeno'] as const).map(s => (
-                                                <button key={s}
-                                                    className={status === s ? 'active' : ''}
-                                                    disabled={isLoading === item.ID}
-                                                    onClick={() => setItemStatus(item, s)}
-                                                >{s === 'Na čekanju' ? 'Čeka' : s}</button>
-                                            ))}
-                                        </div>
-                                        {status === 'U toku' && (
-                                            <button className="wo-pause" disabled={isLoading === item.ID} onClick={() => pauseItem(item, !isPaused)}>
-                                                {isPaused ? <><Play size={13} /> Nastavi</> : <><Pause size={13} /> Pauza</>}
-                                            </button>
+                                {isOpen && (
+                                    <>
+                                        {/* Status + pauza — per-proizvod kontrole SAMO kad ima 2+ proizvoda.
+                                            Za jedan proizvod životni ciklus vodi status naloga (hero). */}
+                                        {localItems.length > 1 && (
+                                            <div className="wo-product-controls">
+                                                <div className="wo-status-seg">
+                                                    {(['Na čekanju', 'U toku', 'Završeno'] as const).map(s => (
+                                                        <button key={s}
+                                                            className={status === s ? 'active' : ''}
+                                                            disabled={isLoading === item.ID}
+                                                            onClick={() => setItemStatus(item, s)}
+                                                        >{s === 'Na čekanju' ? 'Čeka' : s}</button>
+                                                    ))}
+                                                </div>
+                                                {status === 'U toku' && (
+                                                    <button className="wo-pause" disabled={isLoading === item.ID} onClick={() => pauseItem(item, !isPaused)}>
+                                                        {isPaused ? <><Play size={13} /> Nastavi</> : <><Pause size={13} /> Pauza</>}
+                                                    </button>
+                                                )}
+                                            </div>
                                         )}
-                                    </div>
-                                )}
 
-                                <button className="wo-details" onClick={() => setTimelineItem(item)}>
-                                    Detalji proizvoda (cijena, materijal, rad) →
-                                </button>
+                                        <button className="wo-details" onClick={() => setTimelineItem(item)}>
+                                            Detalji proizvoda (cijena, materijal, rad) →
+                                        </button>
+                                    </>
+                                )}
                             </div>
                         );
                     }) : (
@@ -639,7 +668,7 @@ export default function WorkOrderExpandedDetail({
                     items={(localItems.length ? localItems : (workOrder.items || [])).map(i => ({ ID: i.ID, Product_Name: i.Product_Name, Processes: i.Processes, Process_Stages: i.Process_Stages }))}
                     workLogs={workLogs}
                     organizationId={organizationId || ''}
-                    onClose={() => setProcessOpen(false)}
+                    onClose={() => { setProcessOpen(false); setGraphVersion(v => v + 1); }}
                     showToast={showToast}
                 />
             )}
@@ -654,7 +683,7 @@ export default function WorkOrderExpandedDetail({
                     workOrderItem={timelineItem}
                     workLogs={workLogs.filter(wl => wl.Product_ID === timelineItem.Product_ID)}
                     sellingPrice={timelineItem.Product_Value}
-                    materialCost={timelineItem.Material_Cost}
+                    materialCost={itemMaterialTotal(timelineItem.Material_Cost, timelineItem.Quantity)}
                     laborCost={timelineItem.Actual_Labor_Cost}
                     workers={workers}
                     readOnly
