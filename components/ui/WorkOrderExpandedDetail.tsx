@@ -13,6 +13,7 @@ import {
 } from '@/lib/services';
 import { workOrderDueDate, buildSaturdayChecker, todayISO, daysUntil, plannedVsActualDays, type AttendanceLite } from '@/lib/planning';
 import { itemMaterialTotal } from '@/lib/materialCost';
+import { itemProfitBreakdown, sumBreakdowns, type ProfitBreakdown } from '@/lib/profit';
 import type { WorkOrder, Worker, WorkOrderItem, WorkLog } from '@/lib/types';
 import ProductTimelineModal from './ProductTimelineModal';
 import WorkOrderWorkLog from './WorkOrderWorkLog';
@@ -302,40 +303,29 @@ export default function WorkOrderExpandedDetail({
     const fmt = (n: number) => Math.round(n).toLocaleString('hr-HR');
     const fmtDays = (n: number) => (Number.isInteger(n) ? String(n) : n.toFixed(1));
 
-    // Financije po stavci — ista formula kao ranije; izvor i za per-item red i za hero total.
-    // (P&L: cijena − materijal − rad − usluge − transport = što ostaje.)
+    // Financije po stavci — JEDINSTVENA formula iz lib/profit.ts (isti izvor kao
+    // productivity i analitika); izvor i za per-item red i za hero total.
     const itemFin = useMemo(() => {
-        const map = new Map<string, {
-            value: number; material: number; labor: number; services: number; transport: number;
-            profit: number; missingPrice: boolean; missingMaterial: boolean;
-        }>();
+        const map = new Map<string, ProfitBreakdown>();
         for (const item of localItems) {
             const itemLogs = workLogs.filter(wl => wl.Work_Order_Item_ID === item.ID);
             const labor = itemLogs.reduce((sum, wl) => sum + (wl.Daily_Rate || 0), 0);
-            const value = ((item as any).Profit_Overrides?.Selling_Price ?? item.Product_Value) || 0;
-            // MATERIJAL × KOLIČINA: Material_Cost je PO KOMADU, value (Product_Value) je UKUPAN.
-            const material = itemMaterialTotal(item.Material_Cost, item.Quantity);
-            const services = (item as any).Services_Total || 0;
-            const transport = (item as any).Profit_Overrides?.Transport_Share ?? (item as any).Transport_Share ?? 0;
-            map.set(item.ID, {
-                value, material, labor, services, transport,
-                profit: value - material - labor - services - transport,
-                missingPrice: value <= 0, missingMaterial: material <= 0,
-            });
+            map.set(item.ID, itemProfitBreakdown({
+                productValue: item.Product_Value,
+                sellingOverride: (item as any).Profit_Overrides?.Selling_Price,
+                materialPerUnit: item.Material_Cost,   // PO KOMADU (invarijanta baze)
+                quantity: item.Quantity,
+                laborTotal: labor,
+                servicesTotal: (item as any).Services_Total,
+                transportShare: (item as any).Transport_Share,
+                transportOverride: (item as any).Profit_Overrides?.Transport_Share,
+            }));
         }
         return map;
     }, [localItems, workLogs]);
 
     // Hero total = suma per-item (poklapa se s redovima).
-    const orderFin = useMemo(() => {
-        let value = 0, material = 0, labor = 0, services = 0, transport = 0, missingPrice = false, missingMaterial = false;
-        itemFin.forEach(f => {
-            value += f.value; material += f.material; labor += f.labor; services += f.services; transport += f.transport;
-            if (f.missingPrice) missingPrice = true;
-            if (f.missingMaterial) missingMaterial = true;
-        });
-        return { value, material, labor, services, transport, profit: value - material - labor - services - transport, missingPrice, missingMaterial };
-    }, [itemFin]);
+    const orderFin = useMemo(() => sumBreakdowns(Array.from(itemFin.values())), [itemFin]);
 
     const procProgress = useMemo(() => orderProcessProgress(localItems), [localItems]);
     const bookedDays = useMemo(() => new Set(workLogs.map(l => l.Date)).size, [workLogs]);
@@ -516,7 +506,7 @@ export default function WorkOrderExpandedDetail({
                         {localItems.length > 0 && <span className="wo-flow-count">{localItems.length}</span>}
                     </div>
                     {localItems.length > 0 ? localItems.map(item => {
-                        const fin = itemFin.get(item.ID) || { value: 0, material: 0, labor: 0, services: 0, transport: 0, profit: 0, missingPrice: true, missingMaterial: true };
+                        const fin = itemFin.get(item.ID) || itemProfitBreakdown({});
                         const status = (item.Status as string) || 'Na čekanju';
                         const isPaused = !!item.Is_Paused;
                         const showWarn = !isMontaza && (fin.missingPrice || fin.missingMaterial);

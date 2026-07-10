@@ -35,6 +35,8 @@ export interface ALog {
     Work_Order_Item_ID?: string; Product_ID?: string;
 }
 
+import { profitFromTotals } from './profit';
+
 const r2 = (n: number) => Math.round(n * 100) / 100;
 const inRange = (date: string, range?: DateRange) =>
     (!range?.from || date >= range.from) && (!range?.to || date <= range.to);
@@ -51,24 +53,31 @@ export interface ProductRow {
     nonRevenue: boolean;                                  // montaža/teren (bez prihoda) → samo trošak rada
 }
 
-/** Po proizvodu: stvarni profit (živi materijal + stvarni rad) + planirani profit (ponuda). */
+/**
+ * Po proizvodu: stvarni profit (živi materijal + stvarni rad) + planirani profit (ponuda).
+ * Formula = lib/profit.ts (jedinstvena); ulazi su UKUPNI iznosi (količina uračunata),
+ * pa se koristi profitFromTotals (bez množenja količinom ovdje).
+ */
 export function aggregateProductRows(inputs: ProductInput[]): ProductRow[] {
     return inputs.map(i => {
-        const material = r2(i.liveMaterial);
-        const labor = r2(i.actualLabor);
-        const services = r2(i.services);
-        const transport = r2(i.transport);
-        const profit = r2(i.selling - material - labor - services - transport);
-        const plannedProfit = r2(i.selling - i.plannedMaterial - i.plannedLabor - services - transport);
+        const actual = profitFromTotals({
+            revenue: i.selling, material: i.liveMaterial, labor: i.actualLabor,
+            services: i.services, transport: i.transport,
+        });
+        const planned = profitFromTotals({
+            revenue: i.selling, material: i.plannedMaterial, labor: i.plannedLabor,
+            services: i.services, transport: i.transport,
+        });
         return {
             itemId: i.itemId,
             productId: i.productId, productName: i.productName,
             projectId: i.projectId, projectName: i.projectName,
             woId: i.woId, woNumber: i.woNumber, woType: i.woType, status: i.status,
-            selling: r2(i.selling), material, labor, services, transport,
-            profit, margin: i.selling > 0 ? r2((profit / i.selling) * 100) : 0,
-            plannedMaterial: r2(i.plannedMaterial), plannedLabor: r2(i.plannedLabor),
-            plannedProfit, plannedMargin: i.selling > 0 ? r2((plannedProfit / i.selling) * 100) : 0,
+            selling: actual.revenue, material: actual.material, labor: actual.labor,
+            services: actual.services, transport: actual.transport,
+            profit: actual.profit, margin: actual.margin,
+            plannedMaterial: planned.material, plannedLabor: planned.labor,
+            plannedProfit: planned.profit, plannedMargin: planned.margin,
             // Montaža/teren nalozi nemaju prihod (prihod je na proizvodnom nalogu) → samo trošak rada.
             nonRevenue: i.woType === 'Montaža' || (i.selling === 0 && i.liveMaterial === 0 && i.actualLabor > 0),
         };

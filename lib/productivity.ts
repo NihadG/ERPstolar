@@ -19,7 +19,7 @@ import type {
     WorkerAttendance,
 } from './types';
 import { getProductMaterials } from './database';
-import { itemMaterialTotal } from './materialCost';
+import { itemProfitBreakdown } from './profit';
 
 // ============================================
 // WORKER PRODUCTIVITY
@@ -235,15 +235,7 @@ export async function calculateProductProfitability(
             Cost: data.Cost,
         }));
 
-        // Get values from item
-        let sellingPrice = item.Product_Value || 0;
         const quantity = item.Quantity || 1;
-
-        // FIX #1: Apply Profit_Overrides — matches recalculateWorkOrder
-        const overrides = (item as any).Profit_Overrides;
-        if (overrides?.Selling_Price != null && overrides.Selling_Price > 0) {
-            sellingPrice = overrides.Selling_Price;
-        }
 
         // PROFIT-09 FIX: For completed items, use frozen material cost
         // For active items, fetch fresh prices so profit is accurate during production
@@ -255,27 +247,31 @@ export async function calculateProductProfitability(
             const materials = await getProductMaterials(item.Product_ID, organizationId);
             materialPerUnit = materials.reduce((sum, m) => sum + (m.Total_Price || 0), 0);
         }
-        // MATERIJAL × KOLIČINA: prihod (sellingPrice) je UKUPAN → materijal mora biti UKUPAN.
-        const materialCost = itemMaterialTotal(materialPerUnit, quantity);
 
-        // FIX #1: Apply Profit_Overrides for Transport_Share if present
-        const transportShare = overrides?.Transport_Share != null ? overrides.Transport_Share : (item.Transport_Share || 0);
-        const servicesTotal = item.Services_Total || 0;
         const plannedLaborCost = item.Planned_Labor_Cost || 0;
         const actualLaborCost = workLogs.reduce((sum, log) => sum + (log.Daily_Rate || 0), 0);
+
+        // JEDINSTVENA PROFIT FORMULA (lib/profit.ts) — overrides + materijal × količina
+        // se rješavaju u helperu, ista semantika kao recalculateWorkOrder i itemFin kartice.
+        const overrides = (item as any).Profit_Overrides;
+        const breakdown = itemProfitBreakdown({
+            productValue: item.Product_Value,
+            sellingOverride: overrides?.Selling_Price,
+            materialPerUnit,
+            quantity,
+            laborTotal: actualLaborCost,
+            servicesTotal: item.Services_Total,
+            transportShare: item.Transport_Share,
+            transportOverride: overrides?.Transport_Share,
+        });
+        const netProfit = breakdown.profit;
+        const grossProfit = Math.round((netProfit + breakdown.labor) * 100) / 100;
 
         // Calculate variance
         const laborVariance = plannedLaborCost - actualLaborCost;
         const laborVariancePercent = plannedLaborCost > 0
             ? (laborVariance / plannedLaborCost) * 100
             : 0;
-
-        // UNIFIED PROFIT FORMULA (FIX #17: matches recalculateWorkOrder)
-        // Gross Profit = Selling - Material - Transport - Services
-        // Net Profit = Gross - Labor
-        const grossProfit = sellingPrice - materialCost - transportShare - servicesTotal;
-        const netProfit = grossProfit - actualLaborCost;
-        const profitMargin = sellingPrice > 0 ? (netProfit / sellingPrice) * 100 : 0;
 
         // Calculate duration
         let durationDays: number | undefined;
@@ -289,18 +285,18 @@ export async function calculateProductProfitability(
             Product_ID: item.Product_ID,
             Product_Name: item.Product_Name || 'Unknown',
             Work_Order_Item_ID: workOrderItemId,
-            Selling_Price: sellingPrice,
+            Selling_Price: breakdown.revenue,
             Quantity: quantity,
-            Material_Cost: materialCost,
-            Transport_Share: transportShare,
-            Services_Total: servicesTotal,
+            Material_Cost: breakdown.material,
+            Transport_Share: breakdown.transport,
+            Services_Total: breakdown.services,
             Planned_Labor_Cost: plannedLaborCost,
             Actual_Labor_Cost: actualLaborCost,
             Labor_Variance: laborVariance,
             Labor_Variance_Percent: Math.round(laborVariancePercent * 10) / 10,
             Gross_Profit: grossProfit,
             Net_Profit: netProfit,
-            Profit_Margin: Math.round(profitMargin * 10) / 10,
+            Profit_Margin: Math.round(breakdown.margin * 10) / 10,
             Workers: workers,
             Started_At: item.Started_At,
             Completed_At: item.Completed_At,
