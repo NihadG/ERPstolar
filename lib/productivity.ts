@@ -10,6 +10,7 @@ import {
     query,
     where,
     getDocs,
+    type QueryConstraint,
 } from 'firebase/firestore';
 import type {
     WorkerProductivity,
@@ -20,6 +21,38 @@ import type {
 } from './types';
 import { getProductMaterials } from './database';
 import { itemProfitBreakdown } from './profit';
+
+// ============================================
+// QUERY HELPERS
+// ============================================
+
+/**
+ * Upit s Date-range filterom NA SERVERU (composite indexi u firestore.indexes.json).
+ * Ako index još nije deploy-an (failed-precondition), tiho pada na širi upit +
+ * in-memory filter — staro ponašanje, samo sporije. Bez rušenja UI-ja.
+ */
+async function getDocsInDateRange<T extends { Date: string }>(
+    collectionName: string,
+    baseConstraints: QueryConstraint[],
+    dateFrom: string,
+    dateTo: string
+): Promise<T[]> {
+    try {
+        const snap = await getDocs(query(
+            collection(db, collectionName),
+            ...baseConstraints,
+            where('Date', '>=', dateFrom),
+            where('Date', '<=', dateTo)
+        ));
+        return snap.docs.map(d => d.data() as T);
+    } catch (err) {
+        console.warn(`${collectionName}: date-range upit pao (nedostaje index?), fallback na in-memory filter`, err);
+        const snap = await getDocs(query(collection(db, collectionName), ...baseConstraints));
+        return snap.docs
+            .map(d => d.data() as T)
+            .filter(x => x.Date >= dateFrom && x.Date <= dateTo);
+    }
+}
 
 // ============================================
 // WORKER PRODUCTIVITY
@@ -40,33 +73,16 @@ export async function calculateWorkerProductivity(
     }
 
     try {
-        // Get all work logs for this worker in the period
-        const workLogsQuery = query(
-            collection(db, 'work_logs'),
-            where('Worker_ID', '==', workerId),
-            where('Organization_ID', '==', organizationId)
-        );
-        const workLogsSnapshot = await getDocs(workLogsQuery);
-        const allWorkLogs = workLogsSnapshot.docs.map(doc => doc.data() as WorkLog);
-
-        // Filter by date range
-        const workLogs = allWorkLogs.filter(log =>
-            log.Date >= dateFrom && log.Date <= dateTo
-        );
-
-        // Get attendance records
-        const attendanceQuery = query(
-            collection(db, 'worker_attendance'),
-            where('Worker_ID', '==', workerId),
-            where('Organization_ID', '==', organizationId)
-        );
-        const attendanceSnapshot = await getDocs(attendanceQuery);
-        const allAttendance = attendanceSnapshot.docs.map(doc => doc.data() as WorkerAttendance);
-
-        // Filter by date range
-        const attendance = allAttendance.filter(att =>
-            att.Date >= dateFrom && att.Date <= dateTo
-        );
+        // Dnevnice i šihtarica radnika u periodu — Date-range na serveru (paralelno),
+        // umjesto povlačenja kompletne istorije radnika pa filtriranja u memoriji.
+        const [workLogs, attendance] = await Promise.all([
+            getDocsInDateRange<WorkLog>('work_logs',
+                [where('Worker_ID', '==', workerId), where('Organization_ID', '==', organizationId)],
+                dateFrom, dateTo),
+            getDocsInDateRange<WorkerAttendance>('worker_attendance',
+                [where('Worker_ID', '==', workerId), where('Organization_ID', '==', organizationId)],
+                dateFrom, dateTo),
+        ]);
 
         // Calculate Days_Present (Prisutan + Teren)
         const presentAttendance = attendance.filter(att =>
@@ -116,12 +132,15 @@ export async function calculateWorkerProductivity(
             );
         });
         if (workerFractionByItem.size > 0) {
-            const itemsQuery = query(
-                collection(db, 'work_order_items'),
-                where('Organization_ID', '==', organizationId)
-            );
-            const itemsSnapshot = await getDocs(itemsQuery);
-            const items = itemsSnapshot.docs.map(doc => doc.data() as WorkOrderItem);
+            // Samo stavke koje je radnik dirao, 'in' chunkovima po 10 (paralelno) —
+            // umjesto skena SVIH stavki organizacije.
+            const itemIds = Array.from(workerFractionByItem.keys());
+            const chunks: string[][] = [];
+            for (let i = 0; i < itemIds.length; i += 10) chunks.push(itemIds.slice(i, i + 10));
+            const snaps = await Promise.all(chunks.map(chunk =>
+                getDocs(query(collection(db, 'work_order_items'), where('ID', 'in', chunk)))
+            ));
+            const items = snaps.flatMap(s => s.docs.map(d => d.data() as WorkOrderItem));
 
             items.forEach(item => {
                 const workerFraction = workerFractionByItem.get(item.ID);
@@ -428,18 +447,10 @@ export async function getWorkerEarningsSummary(
     }
 
     try {
-        // Get all work logs in the period
-        const logsQuery = query(
-            collection(db, 'work_logs'),
-            where('Organization_ID', '==', organizationId)
-        );
-        const logsSnapshot = await getDocs(logsQuery);
-        const allLogs = logsSnapshot.docs.map(doc => doc.data() as WorkLog);
-
-        // Filter by date range
-        const logs = allLogs.filter(log =>
-            log.Date >= dateFrom && log.Date <= dateTo
-        );
+        // Dnevnice org-a u periodu — Date-range na serveru (index Organization_ID+Date postoji)
+        const logs = await getDocsInDateRange<WorkLog>('work_logs',
+            [where('Organization_ID', '==', organizationId)],
+            dateFrom, dateTo);
 
         // Group by worker — track unique dates for accurate day counting
         const workerMap = new Map<string, { Name: string; UniqueDates: Set<string>; TotalRate: number }>();

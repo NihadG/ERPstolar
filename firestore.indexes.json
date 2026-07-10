@@ -24,6 +24,24 @@
                 { "fieldPath": "Organization_ID", "order": "ASCENDING" },
                 { "fieldPath": "Date", "order": "ASCENDING" }
             ]
+        },
+        {
+            "collectionGroup": "work_logs",
+            "queryScope": "COLLECTION",
+            "fields": [
+                { "fieldPath": "Worker_ID", "order": "ASCENDING" },
+                { "fieldPath": "Organization_ID", "order": "ASCENDING" },
+                { "fieldPath": "Date", "order": "ASCENDING" }
+            ]
+        },
+        {
+            "collectionGroup": "worker_attendance",
+            "queryScope": "COLLECTION",
+            "fields": [
+                { "fieldPath": "Worker_ID", "order": "ASCENDING" },
+                { "fieldPath": "Organization_ID", "order": "ASCENDING" },
+                { "fieldPath": "Date", "order": "ASCENDING" }
+            ]
         }
     ],
     "fieldOverrides": []
