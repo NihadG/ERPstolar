@@ -199,6 +199,32 @@ export default function WorkOrderWizard({
         }
     }, [activeStep, suggestedDueDate, dueDate, mode]);
 
+    // Finansijski sažetak odabira (isti izvori kao handleCreateWorkOrder) — korisnik
+    // vidi šta kreira PRIJE klika na "Kreiraj"; bez ponude → upozorenje odmah, ne post-hoc toast.
+    // "Ostaje" ovdje oduzima i PLANIRANI rad (procjena), za razliku od početnog WO profita.
+    const wizardFin = useMemo(() => {
+        if (mode === 'montaza' || selectedProducts.length === 0) return null;
+        let value = 0, material = 0, transport = 0, services = 0, plannedLabor = 0;
+        selectedProducts.forEach(p => {
+            const project = projects.find(proj => proj.Project_ID === p.Project_ID);
+            const product = project?.products?.find(prod => prod.Product_ID === p.Product_ID);
+            const offer = project?.offers?.find(o => o.Status === 'Prihvaćeno');
+            const offerProduct = offer?.products?.find(op => op.Product_ID === p.Product_ID);
+            if (offerProduct?.Selling_Price) value += offerProduct.Selling_Price * p.Work_Order_Quantity;
+            transport += offerProduct?.Transport_Share || 0;
+            services += (offerProduct?.extras || []).reduce((s: number, e: any) => s + (e.Total || 0), 0);
+            if (product?.materials) {
+                material += product.materials.reduce((sum, m) => sum + (m.Unit_Price * m.Quantity), 0) * p.Work_Order_Quantity;
+            }
+            plannedLabor += offerProduct
+                ? (offerProduct.Labor_Workers || 1) * (offerProduct.Labor_Days || 0) * (offerProduct.Labor_Daily_Rate || 0)
+                : 0;
+        });
+        const profit = value - material - transport - services - plannedLabor;
+        return { value, material, transport, services, plannedLabor, profit, missingPrice: value <= 0 };
+    }, [mode, selectedProducts, projects]);
+    const fmtKM = (n: number) => `${Math.round(n).toLocaleString('hr-HR')} KM`;
+
     // Reset pri SVAKOM otvaranju: mode-specifični defaulti + eventualna predselekcija
     // proizvoda iz ProjectsTab (tada se preskače korak odabira → pravo na "Radnik & rok").
     useEffect(() => {
@@ -1031,6 +1057,40 @@ export default function WorkOrderWizard({
                                     </label>
                                 )}
 
+                                {/* Finansijski sažetak — šta ovaj nalog nosi PRIJE kreiranja */}
+                                {wizardFin && (
+                                    <div className="wz-fin">
+                                        <div className="wz-fin-item">
+                                            <span>Vrijednost</span>
+                                            <strong>{fmtKM(wizardFin.value)}</strong>
+                                        </div>
+                                        <div className="wz-fin-item">
+                                            <span>Materijal</span>
+                                            <strong>{fmtKM(wizardFin.material)}</strong>
+                                        </div>
+                                        <div className="wz-fin-item">
+                                            <span>Planirani rad{totalPlannedDays > 0 ? ` (${totalPlannedDays} d)` : ''}</span>
+                                            <strong>{fmtKM(wizardFin.plannedLabor)}</strong>
+                                        </div>
+                                        {(wizardFin.transport > 0 || wizardFin.services > 0) && (
+                                            <div className="wz-fin-item">
+                                                <span>Transport + usluge</span>
+                                                <strong>{fmtKM(wizardFin.transport + wizardFin.services)}</strong>
+                                            </div>
+                                        )}
+                                        <div className={`wz-fin-item wz-fin-profit ${wizardFin.profit >= 0 ? 'pos' : 'neg'}`}>
+                                            <span>Procijenjeno ostaje</span>
+                                            <strong>{fmtKM(wizardFin.profit)}</strong>
+                                        </div>
+                                        {wizardFin.missingPrice && (
+                                            <div className="wz-fin-warn">
+                                                <span className="material-icons-round" style={{ fontSize: '16px' }}>warning_amber</span>
+                                                Nema prihvaćene ponude — cijena nije poznata, profit neće biti tačan
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
+
                                 {/* Advisory: bez radnika nalog se kasnije ne može pokrenuti (guard na startu) */}
                                 {selectedProducts.length > 0 && selectedProducts.every(p => Object.values(p.assignments || {}).every(v => !v)) && (
                                     <div style={{
@@ -1562,6 +1622,38 @@ export default function WorkOrderWizard({
                     background: #fff;
                 }
                 
+                /* Finansijski sažetak wizarda */
+                .wz-fin {
+                    flex-shrink: 0;
+                    display: flex;
+                    align-items: center;
+                    flex-wrap: wrap;
+                    gap: 20px;
+                    margin: 10px 0 0;
+                    padding: 12px 18px;
+                    background: white;
+                    border: 1px solid rgba(0,0,0,0.06);
+                    border-radius: 12px;
+                    box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+                }
+                .wz-fin-item { display: flex; flex-direction: column; gap: 2px; }
+                .wz-fin-item span { font-size: 11px; font-weight: 600; color: #64748b; }
+                .wz-fin-item strong { font-size: 15px; font-weight: 700; color: var(--text-primary); }
+                .wz-fin-profit { padding-left: 20px; border-left: 1px solid rgba(0,0,0,0.08); }
+                .wz-fin-profit.pos strong { color: #059669; }
+                .wz-fin-profit.neg strong { color: #dc2626; }
+                .wz-fin-warn {
+                    display: flex;
+                    align-items: center;
+                    gap: 6px;
+                    font-size: 12px;
+                    font-weight: 600;
+                    color: #92400e;
+                    background: #fff4e5;
+                    padding: 6px 10px;
+                    border-radius: 8px;
+                }
+
                 /* Bulk Assignment Bar */
                 .bulk-assign-bar {
                     flex-shrink: 0;

@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, type ReactNode } from 'react';
 import { Calendar, Play, Pause, CheckCircle, Clock, Edit2, AlertTriangle, NotebookPen, GitBranch } from 'lucide-react';
 import { useData } from '@/context/DataContext';
 import {
@@ -15,6 +15,7 @@ import { workOrderDueDate, buildSaturdayChecker, todayISO, daysUntil, plannedVsA
 import { itemMaterialTotal } from '@/lib/materialCost';
 import { itemProfitBreakdown, sumBreakdowns, type ProfitBreakdown } from '@/lib/profit';
 import type { WorkOrder, Worker, WorkOrderItem, WorkLog } from '@/lib/types';
+import Modal from './Modal';
 import ProductTimelineModal from './ProductTimelineModal';
 import WorkOrderWorkLog from './WorkOrderWorkLog';
 import ProcessGraphModal from './ProcessGraphModal';
@@ -59,6 +60,14 @@ export default function WorkOrderExpandedDetail({
     const [flowOpen, setFlowOpen] = useState(false);   // "Procesi naloga" — collapsed po defaultu (liste znaju biti duge)
     const [expandedProducts, setExpandedProducts] = useState<Set<string>>(new Set());   // sklopivi proizvodi (collapsed po defaultu)
     const [graphVersion, setGraphVersion] = useState(0);   // bump nakon zatvaranja grafa → OrderProcessBoard ponovo učita gating
+    // Potvrda "opasnih" akcija kroz stilizovan Modal umjesto sirovog window.confirm
+    // (konzistentno s ostalim dijalozima; pregled ŠTA će se desiti prije klika).
+    const [confirmState, setConfirmState] = useState<{
+        title: string;
+        body: ReactNode;
+        confirmLabel: string;
+        onConfirm: () => void | Promise<void>;
+    } | null>(null);
     const toggleProduct = (id: string) => setExpandedProducts(prev => {
         const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n;
     });
@@ -192,31 +201,45 @@ export default function WorkOrderExpandedDetail({
                 const fallbackWorkerId = (item as any).Assigned_Workers?.[0]?.Worker_ID
                     || item.Processes?.find(p => p.Worker_ID)?.Worker_ID;
                 const fallbackWorker = workers.find(w => w.Worker_ID === fallbackWorkerId);
-                const ok = window.confirm(
-                    `${unfinished.length} ${unfinished.length === 1 ? 'proces nije završen' : 'procesa nije završeno'} (${unfinished.map(p => p.Process_Name).join(', ')}).\n\n` +
-                    `Označiti ih završenim (radnik: ${fallbackWorker?.Name || '—'}, današnji datum) i završiti proizvod?`
-                );
-                if (!ok) return;
-                try {
-                    setIsLoading(item.ID);
-                    const completedAt = new Date(new Date().toISOString().split('T')[0] + 'T12:00:00').toISOString();
-                    for (const p of unfinished) {
-                        await updateItemProcess(workOrder.Work_Order_ID, item.ID, p.Process_Name, {
-                            Status: 'Završeno',
-                            Completed_At: completedAt,
-                            Worker_ID: p.Worker_ID || fallbackWorker?.Worker_ID,
-                            Worker_Name: p.Worker_Name || fallbackWorker?.Name,
-                        });
-                    }
-                    // Eksplicitno završi stavku (procesi ne pomiču status).
-                    await completeWorkOrderItem(workOrder.Work_Order_ID, item.ID);
-                    onRefresh?.('workOrders', 'projects', 'workLogs');
-                } catch (error) {
-                    console.error('Error auto-completing processes:', error);
-                    showToast?.('Greška pri završavanju procesa', 'error');
-                } finally {
-                    setIsLoading(null);
-                }
+                setConfirmState({
+                    title: `Završi proizvod: ${item.Product_Name}`,
+                    confirmLabel: 'Označi i završi',
+                    body: (
+                        <>
+                            <p style={{ margin: '0 0 10px 0', color: 'var(--text-secondary)', fontSize: 14 }}>
+                                {unfinished.length} {unfinished.length === 1 ? 'proces nije završen' : 'procesa nije završeno'}:
+                            </p>
+                            <ul style={{ margin: '0 0 12px 0', paddingLeft: 20, fontSize: 14, color: 'var(--text-primary)' }}>
+                                {unfinished.map(p => <li key={p.Process_Name}>{p.Process_Name}</li>)}
+                            </ul>
+                            <p style={{ margin: 0, color: 'var(--text-secondary)', fontSize: 13 }}>
+                                Označiće se završenim (radnik: <strong>{fallbackWorker?.Name || '—'}</strong>, današnji datum) i proizvod će biti završen.
+                            </p>
+                        </>
+                    ),
+                    onConfirm: async () => {
+                        try {
+                            setIsLoading(item.ID);
+                            const completedAt = new Date(new Date().toISOString().split('T')[0] + 'T12:00:00').toISOString();
+                            for (const p of unfinished) {
+                                await updateItemProcess(workOrder.Work_Order_ID, item.ID, p.Process_Name, {
+                                    Status: 'Završeno',
+                                    Completed_At: completedAt,
+                                    Worker_ID: p.Worker_ID || fallbackWorker?.Worker_ID,
+                                    Worker_Name: p.Worker_Name || fallbackWorker?.Name,
+                                });
+                            }
+                            // Eksplicitno završi stavku (procesi ne pomiču status).
+                            await completeWorkOrderItem(workOrder.Work_Order_ID, item.ID);
+                            onRefresh?.('workOrders', 'projects', 'workLogs');
+                        } catch (error) {
+                            console.error('Error auto-completing processes:', error);
+                            showToast?.('Greška pri završavanju procesa', 'error');
+                        } finally {
+                            setIsLoading(null);
+                        }
+                    },
+                });
                 return;
             }
         }
@@ -255,26 +278,38 @@ export default function WorkOrderExpandedDetail({
     const allPaused = openItems.length > 0 && openItems.every(i => i.Is_Paused);
 
     // Završi cijeli nalog (sve ne-završene stavke). Procesi su odspojeni — status vodi ova akcija.
-    const completeOrder = async () => {
+    const completeOrder = () => {
         if (orderBusy) return;
         const unfinished = localItems.filter(i => (i.Status as string) !== 'Završeno');
         if (unfinished.length === 0) return;
-        const ok = window.confirm(
-            `Završiti cijeli nalog? (${unfinished.length} ${unfinished.length === 1 ? 'stavka' : 'stavki'})`
-        );
-        if (!ok) return;
-        try {
-            setOrderBusy(true);
-            for (const it of unfinished) {
-                await completeWorkOrderItem(workOrder.Work_Order_ID, it.ID);
-            }
-            onRefresh?.('workOrders', 'projects', 'workLogs');
-        } catch (error) {
-            console.error('Error completing order:', error);
-            showToast?.('Greška pri završavanju naloga', 'error');
-        } finally {
-            setOrderBusy(false);
-        }
+        setConfirmState({
+            title: 'Završi cijeli nalog',
+            confirmLabel: 'Završi nalog',
+            body: (
+                <>
+                    <p style={{ margin: '0 0 10px 0', color: 'var(--text-secondary)', fontSize: 14 }}>
+                        Završiće se {unfinished.length} {unfinished.length === 1 ? 'stavka' : 'stavki'}:
+                    </p>
+                    <ul style={{ margin: 0, paddingLeft: 20, fontSize: 14, color: 'var(--text-primary)' }}>
+                        {unfinished.map(i => <li key={i.ID}>{i.Product_Name} × {i.Quantity || 1}</li>)}
+                    </ul>
+                </>
+            ),
+            onConfirm: async () => {
+                try {
+                    setOrderBusy(true);
+                    for (const it of unfinished) {
+                        await completeWorkOrderItem(workOrder.Work_Order_ID, it.ID);
+                    }
+                    onRefresh?.('workOrders', 'projects', 'workLogs');
+                } catch (error) {
+                    console.error('Error completing order:', error);
+                    showToast?.('Greška pri završavanju naloga', 'error');
+                } finally {
+                    setOrderBusy(false);
+                }
+            },
+        });
     };
 
     // Pauza / nastavak cijelog naloga (sve otvorene stavke odjednom).
@@ -661,6 +696,27 @@ export default function WorkOrderExpandedDetail({
                     onClose={() => { setProcessOpen(false); setGraphVersion(v => v + 1); }}
                     showToast={showToast}
                 />
+            )}
+
+            {/* Potvrda akcija (završetak proizvoda/naloga) — stilizovan dijalog umjesto window.confirm */}
+            {confirmState && (
+                <Modal
+                    isOpen={true}
+                    onClose={() => setConfirmState(null)}
+                    title={confirmState.title}
+                    footer={
+                        <>
+                            <button className="btn btn-secondary" onClick={() => setConfirmState(null)}>Odustani</button>
+                            <button className="btn btn-primary" onClick={async () => {
+                                const fn = confirmState.onConfirm;
+                                setConfirmState(null);
+                                await fn();
+                            }}>{confirmState.confirmLabel}</button>
+                        </>
+                    }
+                >
+                    {confirmState.body}
+                </Modal>
             )}
 
             {/* ProductTimelineModal — SAMO PREGLED (uređivanje dnevnica ide kroz tab „Knjiga rada") */}
