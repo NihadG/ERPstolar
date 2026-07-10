@@ -2,7 +2,7 @@
 
 import { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import type { Offer, Project, OfferProduct, Product } from '@/lib/types';
-import { createOfferWithProducts, deleteOffer, updateOfferStatus, saveOffer, updateOfferWithProducts, getOffer } from '@/lib/services';
+import { createOfferWithProducts, deleteOffer, updateOfferStatus, saveOffer, updateOfferWithProducts, getOffer, reviseOffer } from '@/lib/services';
 import { useData } from '@/context/DataContext';
 import { generateOfferPDF, type OfferPDFData } from '@/lib/pdfGenerator';
 import Modal from '@/components/ui/Modal';
@@ -46,9 +46,11 @@ interface OffersTabProps {
     autoEditOfferId?: string | null;
     autoScrollProductId?: string | null;
     onClearAutoEdit?: () => void;
+    /** Prelaz u Proizvodnju s predodabranim proizvodima (isti mehanizam kao iz Projekata). */
+    onCreateWorkOrder?: (projectId: string, projectName: string, products: { productId: string; productName: string; quantity: number }[]) => void;
 }
 
-export default function OffersTab({ offers, projects, onRefresh, showToast, onNavigateToProject, autoEditOfferId, autoScrollProductId, onClearAutoEdit }: OffersTabProps) {
+export default function OffersTab({ offers, projects, onRefresh, showToast, onNavigateToProject, autoEditOfferId, autoScrollProductId, onClearAutoEdit, onCreateWorkOrder }: OffersTabProps) {
     const { organizationId } = useData();
     const isMobile = useIsMobile();
     const [searchTerm, setSearchTerm] = useState('');
@@ -699,6 +701,12 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
                 const updated = await getOffer(offerId, organizationId!);
                 setCurrentOffer(updated);
             }
+            // Prihvaćena ponuda ≠ radni nalog (odvojen ručni korak u Proizvodnji) —
+            // ponudi konverziju odmah da korak ne bude zaboravljen.
+            if (status === 'Prihvaćeno' && onCreateWorkOrder) {
+                const accepted = await getOffer(offerId, organizationId!);
+                if (accepted) setCreateWOPrompt(accepted);
+            }
         } else if (result.conflicts && result.conflicts.length > 0) {
             // Show conflict notification
             showToast(result.message, 'error');
@@ -762,8 +770,30 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
         }
     }
 
+    // Upit "Kreiraj radni nalog?" nakon prihvatanja ponude.
+    const [createWOPrompt, setCreateWOPrompt] = useState<Offer | null>(null);
+
+    // REVIZIJA: kopira ponudu u novu 'Nacrt' (broj -R2/-R3…), original ide u 'Revidirano'.
+    // Izmjene se rade na reviziji — original ostaje kao trag šta je poslano klijentu.
+    async function handleReviseOffer(offer: Offer) {
+        const res = await reviseOffer(offer.Offer_ID, organizationId!);
+        if (!res.success || !res.data) {
+            showToast(res.message, 'error');
+            return;
+        }
+        showToast(res.message, 'success');
+        onRefresh('offers');
+        const revision = await getOffer(res.data.Offer_ID, organizationId!);
+        if (revision) openEditModal(revision);
+    }
+
     // Open edit modal for existing offer
     async function openEditModal(offer: Offer) {
+        // Izmjena PRIHVAĆENE ponude live-sinhronizuje cijene na postojeći radni nalog
+        // (updateOfferWithProducts) — upozori; za novu verziju postoji „Revidiraj".
+        if (offer.Status === 'Prihvaćeno') {
+            showToast('Pažnja: izmjene prihvaćene ponude mijenjaju cijene na radnom nalogu. Za novu verziju koristi „Revidiraj".', 'info');
+        }
         // Open modal immediately with loading state
         setCurrentOffer(offer);
         setIsEditMode(true);
@@ -1882,6 +1912,16 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
                                             >
                                                 <span className="material-icons-round" style={{ fontSize: '20px' }}>edit</span>
                                             </button>
+                                            {(offer.Status === 'Poslano' || offer.Status === 'Prihvaćeno') && (
+                                                <button
+                                                    className="action-icon-btn"
+                                                    onClick={(e) => { e.stopPropagation(); handleReviseOffer(offer); }}
+                                                    title="Revidiraj (nova verzija, original ostaje)"
+                                                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)', padding: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '4px', transition: 'all 0.2s' }}
+                                                >
+                                                    <span className="material-icons-round" style={{ fontSize: '20px' }}>difference</span>
+                                                </button>
+                                            )}
                                             <button
                                                 className="action-icon-btn"
                                                 onClick={(e) => { e.stopPropagation(); handlePrintOffer(offer); }}
@@ -1907,6 +1947,44 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
                 )}
             </div>
                 </div>
+            )}
+
+            {/* Upit "Kreiraj radni nalog?" nakon prihvatanja ponude */}
+            {createWOPrompt && (
+                <Modal
+                    isOpen={!!createWOPrompt}
+                    onClose={() => setCreateWOPrompt(null)}
+                    title={`Ponuda prihvaćena: ${createWOPrompt.Name || createWOPrompt.Offer_Number}`}
+                    footer={
+                        <>
+                            <button className="btn btn-secondary" onClick={() => setCreateWOPrompt(null)}>Ne sada</button>
+                            <button
+                                className="btn btn-primary"
+                                onClick={() => {
+                                    const included = (createWOPrompt.products || []).filter(p => p.Included !== false);
+                                    const project = projects.find(pr => pr.Project_ID === createWOPrompt.Project_ID);
+                                    onCreateWorkOrder?.(
+                                        createWOPrompt.Project_ID,
+                                        project?.Client_Name || createWOPrompt.Client_Name || '',
+                                        included.map(p => ({ productId: p.Product_ID, productName: p.Product_Name, quantity: p.Quantity || 1 }))
+                                    );
+                                    setCreateWOPrompt(null);
+                                }}
+                            >
+                                Kreiraj radni nalog
+                            </button>
+                        </>
+                    }
+                >
+                    <p style={{ margin: '0 0 12px 0', color: 'var(--text-secondary)', fontSize: 14 }}>
+                        Da li želiš odmah kreirati radni nalog za prihvaćene proizvode? Otvoriće se čarobnjak u Proizvodnji s predodabranim proizvodima.
+                    </p>
+                    <ul style={{ margin: 0, paddingLeft: 20, color: 'var(--text-primary)', fontSize: 14, display: 'flex', flexDirection: 'column', gap: 4 }}>
+                        {(createWOPrompt.products || []).filter(p => p.Included !== false).map(p => (
+                            <li key={p.ID}>{p.Product_Name} × {p.Quantity || 1}</li>
+                        ))}
+                    </ul>
+                </Modal>
             )}
 
             {/* Create/Edit Offer Modal */}

@@ -17,6 +17,7 @@ import {
     getBookedWorkerDaysByMonth,
 } from '@/lib/services';
 import { isWorkerAssignedToAutoItem } from '@/lib/autoBook';
+import { workOrderDisplayName } from '@/lib/utils';
 import { buildBookingProposal, type ProposalRow } from '@/lib/attendanceBooking';
 import AttendanceBookingConfirmModal, { type BookingDecision } from '@/components/ui/AttendanceBookingConfirmModal';
 import PayrollModal from '@/components/ui/PayrollModal';
@@ -629,7 +630,10 @@ export default function AttendanceTab({ workers, workOrders, onRefresh, showToas
     // POKRENE PONOVO pauzirane stavke i starta nalog ako je još „Na čekanju".
     // NE knjiži — cijeli dan radnika se knjiži JEDNIM bookWorkerDayItems (jedna renormalizacija),
     // pa radnik na više naloga ne pokreće renormalizeWorkerDay/getWorkers po svakom nalogu.
-    async function prepareWorkerOrderTargets(workerId: string, orgId: string, workOrderId: string): Promise<{ workOrderId: string; itemId: string; productId?: string }[]> {
+    // startWarnings: startWorkOrder vraća {success,message} (ne baca) — neuspjeh starta se
+    // prikuplja i prijavljuje korisniku; dnevnica se IPAK knjiži (trošak nezavisan od statusa),
+    // ali nepokrenut nalog ne bi primao auto-dnevnice narednih dana, pa korisnik mora znati.
+    async function prepareWorkerOrderTargets(workerId: string, orgId: string, workOrderId: string, startWarnings?: string[]): Promise<{ workOrderId: string; itemId: string; productId?: string }[]> {
         const wo = workOrders.find(w => w.Work_Order_ID === workOrderId);
         if (!wo) return [];
         const all = wo.items || [];
@@ -649,7 +653,13 @@ export default function AttendanceTab({ workers, workOrders, onRefresh, showToas
         }
         // Startaj nalog ako još nije pokrenut.
         if (wo.Status === 'Na čekanju') {
-            try { await startWorkOrder(workOrderId, orgId); } catch (e) { console.warn('start failed', workOrderId, e); }
+            try {
+                const res = await startWorkOrder(workOrderId, orgId);
+                if (!res.success) startWarnings?.push(`„${workOrderDisplayName(wo)}" nije pokrenut: ${res.message}`);
+            } catch (e) {
+                console.warn('start failed', workOrderId, e);
+                startWarnings?.push(`„${workOrderDisplayName(wo)}" nije pokrenut (greška pri startu)`);
+            }
         }
 
         return chosen.map(it => ({ workOrderId, itemId: it.ID, productId: it.Product_ID }));
@@ -664,6 +674,9 @@ export default function AttendanceTab({ workers, workOrders, onRefresh, showToas
         // Radnik čije je knjiženje palo u grešku — obrađuje se PO RADNIKU (ne jedan try za sve),
         // da greška kod jednog ne blokira knjiženje ostalih, i da se tačno zna KO nije proknjižen.
         const failedWorkers: string[] = [];
+        // Nalozi 'Na čekanju' koje potvrda pokušava startati, a start odbije (npr. materijal
+        // nije primljen) — dnevnica se knjiži svejedno, ali korisnik mora vidjeti razlog.
+        const startWarnings: string[] = [];
         const noteAffected = (orderId: string) => {
             affectedOrders.add(orderId);
             if (workOrders.find(w => w.Work_Order_ID === orderId)?.Status === 'Završeno') touchedCompleted.add(orderId);
@@ -680,7 +693,7 @@ export default function AttendanceTab({ workers, workOrders, onRefresh, showToas
             const entry = perWorker.get(d.workerId) || { workerName: d.workerName, presence, targets: [] };
             for (const orderId of orderIds) {
                 try {
-                    const t = await prepareWorkerOrderTargets(d.workerId, orgId, orderId);
+                    const t = await prepareWorkerOrderTargets(d.workerId, orgId, orderId, startWarnings);
                     entry.targets.push(...t);
                     noteAffected(orderId);
                 } catch (e) {
@@ -720,6 +733,12 @@ export default function AttendanceTab({ workers, workOrders, onRefresh, showToas
             ));
             if (touchedCompleted.size > 0) {
                 showToast(`Ažurirano ${touchedCompleted.size} završen${touchedCompleted.size > 1 ? 'a naloga' : ' nalog'} — profit preračunat`, 'info');
+            }
+
+            // Neuspjeli auto-start naloga: dnevnice su knjižene, ali nalog je ostao 'Na čekanju'
+            // → neće primati auto-dnevnice narednih dana dok se uzrok ne otkloni.
+            for (const w of Array.from(new Set(startWarnings))) {
+                showToast(w, 'error');
             }
 
             if (failedWorkers.length > 0) {

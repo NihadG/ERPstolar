@@ -495,6 +495,7 @@ export default function Home() {
                                 autoEditOfferId={autoEditOfferId}
                                 autoScrollProductId={autoScrollProductId}
                                 onClearAutoEdit={() => { setAutoEditOfferId(null); setAutoScrollProductId(null); }}
+                                onCreateWorkOrder={handleCreateWorkOrderFromProjects}
                             />
                         </ModuleGuard>
                     )}

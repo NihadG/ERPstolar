@@ -150,6 +150,11 @@
     color: var(--accent);
     border-color: #cfe6ff;
 }
+.abcm-chip--new {
+    background: var(--success-bg, #eafaf0);
+    color: var(--success, #1e7e44);
+    border-color: #cdeeda;
+}
 
 /* ── Teren: opcije ─────────────────────────────────────────── */
 .abcm-options { display: flex; flex-direction: column; gap: 8px; padding: 10px; }

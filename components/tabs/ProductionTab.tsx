@@ -3,7 +3,9 @@
 import { useState, useMemo, useEffect } from 'react';
 import type { WorkOrder, Project, Worker } from '@/lib/types';
 import { createWorkOrder, deleteWorkOrder, startWorkOrder, getWorkOrder, updateWorkOrder, updatePlannedStartDate, autoCreateOrdersForWorkOrder } from '@/lib/services';
-import { validateWorkOrderProfitData, checkMissingAttendanceForActiveOrders, recalculateWorkOrder, assignWorkersToItem, syncProjectStatus } from '@/lib/services';
+import { checkMissingAttendanceForActiveOrders, recalculateWorkOrder, assignWorkersToItem, syncProjectStatus } from '@/lib/services';
+import { getWorkerAttendance, bookWorkerDayItems } from '@/lib/services';
+import { isWorkerAssignedToAutoItem } from '@/lib/autoBook';
 import { repairAllProductStatuses, startWorkOrderItem, completeWorkOrderItem } from '@/lib/services';
 import { workOrderDueDate, todayISO, buildSaturdayChecker, plannedVsActualDays, daysUntil } from '@/lib/planning';
 import { planToStages, flattenStages } from '@/lib/productProcesses';
@@ -46,6 +48,22 @@ interface ProductSelection {
     assignments: Record<string, string>;
     helperAssignments: Record<string, string[]>;
     Source_Work_Order_ID?: string; // For montaža: links to original production order
+}
+
+// Nalog je PAUZIRAN kad su sve otvorene (ne-završene/otkazane) stavke pauzirane —
+// wo.Status i dalje piše 'U toku' (status se ne mijenja pauzom), pa ovo precizira prikaz i sortiranje.
+function isOrderPaused(wo: WorkOrder): boolean {
+    const openItems = (wo.items || []).filter(i => (i.Status as string) !== 'Završeno' && (i.Status as string) !== 'Otkazano');
+    return wo.Status === 'U toku' && openItems.length > 0 && openItems.every(i => i.Is_Paused);
+}
+
+// Sort prioritet: U toku (aktivno) → U toku (pauzirano) → Na čekanju → Završeno → Otkazano
+function statusSortPriority(wo: WorkOrder): number {
+    if (wo.Status === 'U toku') return isOrderPaused(wo) ? 1 : 0;
+    if (wo.Status === 'Na čekanju') return 2;
+    if (wo.Status === 'Završeno') return 3;
+    if (wo.Status === 'Otkazano') return 4;
+    return 99;
 }
 
 export default function ProductionTab({ workOrders, projects, workers, onRefresh, showToast, pendingWorkOrderProducts, onClearPendingWorkOrder }: ProductionTabProps) {
@@ -145,7 +163,7 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
 
     // Grouping State
     type GroupBy = 'none' | 'status' | 'project' | 'date' | 'worker';
-    const [groupBy, setGroupBy] = useState<GroupBy>('none');
+    const [groupBy, setGroupBy] = useState<GroupBy>('project');
     const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
 
     const groupingOptions = [
@@ -164,17 +182,10 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
             return matchesSearch && matchesStatus;
         });
 
-        // Default sort: U toku → Na čekanju → Završeno → Otkazano, then by date desc
-        const statusPriority: Record<string, number> = {
-            'U toku': 0,
-            'Na čekanju': 1,
-            'Završeno': 2,
-            'Otkazano': 3,
-        };
-
+        // Default sort: U toku (aktivno) → U toku (pauzirano) → Na čekanju → Završeno → Otkazano, then by date desc
         return filtered.sort((a, b) => {
-            const priorityA = statusPriority[a.Status] ?? 99;
-            const priorityB = statusPriority[b.Status] ?? 99;
+            const priorityA = statusSortPriority(a);
+            const priorityB = statusSortPriority(b);
             if (priorityA !== priorityB) return priorityA - priorityB;
             // Within same status, newest first
             return new Date(b.Created_Date).getTime() - new Date(a.Created_Date).getTime();
@@ -262,6 +273,12 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
             if (groupBy === 'worker') {
                 // Sort by total value descending (most productive first)
                 return b.totalValue - a.totalValue;
+            }
+            if (groupBy === 'project') {
+                // Projekti poredani prema datumu prvog (najstarijeg) naloga u projektu — najmlađi prvo
+                const firstOrderDate = (items: WorkOrder[]) =>
+                    Math.min(...items.map(i => new Date(i.Created_Date).getTime()));
+                return firstOrderDate(b.items) - firstOrderDate(a.items);
             }
             return a.label.localeCompare(b.label);
         });
@@ -371,6 +388,16 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
         workOrderId: string | null;
         workOrderNumber: string;
     }>({ isOpen: false, workOrderId: null, workOrderNumber: '' });
+
+    // Upit "Proknjiži današnji dan?" nakon pokretanja naloga — pokriva slučaj kad je
+    // šihtarica popunjena PRIJE starta: taj dan inače ostaje neproknjižen na ovom nalogu
+    // (auto-knjiženje se okida samo pri označavanju prisustva, ne pri startu naloga).
+    const [bookTodayModal, setBookTodayModal] = useState<{
+        isOpen: boolean;
+        workOrderId: string | null;
+        workers: { workerId: string; workerName: string }[];
+    }>({ isOpen: false, workOrderId: null, workers: [] });
+    const [bookTodaySaving, setBookTodaySaving] = useState(false);
     // Proizvodi svih kvalifikovanih projekata (sortedProjects već isključuje Završeno/Otkazano
     // i projekte sa svim spremnim proizvodima) — wizard više nema poseban korak izbora projekta.
     const eligibleProducts = useMemo(() => {
@@ -979,6 +1006,37 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
         );
     }
 
+    // Upit knjiženja današnjeg dana nakon "Pokreni nalog" (šihtarica popunjena prije starta).
+    function renderBookTodayModal() {
+        const wo = workOrders.find(w => w.Work_Order_ID === bookTodayModal.workOrderId);
+        const close = () => setBookTodayModal({ isOpen: false, workOrderId: null, workers: [] });
+        return (
+            <Modal
+                isOpen={bookTodayModal.isOpen}
+                onClose={close}
+                title={`Proknjiži današnji dan${wo ? `: ${workOrderDisplayName(wo)}` : ''}`}
+                footer={
+                    <>
+                        <button className="btn btn-secondary" onClick={close} disabled={bookTodaySaving}>Ne sada</button>
+                        <button className="btn btn-primary" onClick={confirmBookToday} disabled={bookTodaySaving}>
+                            {bookTodaySaving ? 'Knjižim…' : `Proknjiži (${bookTodayModal.workers.length})`}
+                        </button>
+                    </>
+                }
+            >
+                <p style={{ margin: '0 0 12px 0', color: 'var(--text-secondary)', fontSize: 14 }}>
+                    Sljedeći dodijeljeni radnici su danas prisutni u šihtarici. Da li da im se današnji dan odmah proknjiži na ovaj nalog?
+                </p>
+                <ul style={{ margin: 0, paddingLeft: 20, color: 'var(--text-primary)', fontSize: 14, display: 'flex', flexDirection: 'column', gap: 4 }}>
+                    {bookTodayModal.workers.map(w => <li key={w.workerId}>{w.workerName}</li>)}
+                </ul>
+                <p style={{ margin: '12px 0 0 0', color: 'var(--text-tertiary)', fontSize: 12 }}>
+                    Već knjiženi dani se preskaču. Odbijanjem se ništa ne knjiži — dnevnice možeš kasnije unijeti kroz Knjigu rada.
+                </p>
+            </Modal>
+        );
+    }
+
     function renderPrintModal() {
         return (
             <Modal
@@ -1099,8 +1157,86 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
         if (res.success) {
             showToast('Nalog pokrenut', 'success');
             onRefresh('workOrders', 'projects');
+            // Šihtarica popunjena prije starta? Ponudi knjiženje današnjeg dana odmah,
+            // umjesto da korisnik mora ponovo snimati prisustvo ili ručno knjižiti.
+            offerBookTodayAfterStart(workOrderId).catch(e => console.warn('offerBookTodayAfterStart failed', e));
         } else {
             showToast(res.message, 'error');
+        }
+    }
+
+    // Nađi dodijeljene radnike naloga koji su DANAS prisutni u šihtarici (Prisutan → proizvodnja,
+    // Teren → montaža; isti raspored kao auto-knjiženje) i otvori upit za knjiženje današnjeg dana.
+    // bookWorkerDayItems je idempotentan (preskače postojeće logove), pa je upit bezopasan.
+    async function offerBookTodayAfterStart(workOrderId: string) {
+        const wo = workOrders.find(w => w.Work_Order_ID === workOrderId);
+        if (!wo) return;
+        const assigned = new Map<string, string>();
+        const note = (id?: string, name?: string) => {
+            if (!id) return;
+            assigned.set(id, name || workers.find(w => w.Worker_ID === id)?.Name || id);
+        };
+        for (const item of wo.items || []) {
+            (item.Assigned_Workers || []).forEach(w => note(w.Worker_ID, w.Worker_Name));
+            (item.Processes || []).forEach(p => {
+                note(p.Worker_ID, p.Worker_Name);
+                (p.Helpers || []).forEach(h => note(h.Worker_ID, h.Worker_Name));
+            });
+            (item.SubTasks || []).forEach(st => {
+                note(st.Worker_ID, st.Worker_Name);
+                (st.Helpers || []).forEach(h => note(h.Worker_ID, h.Worker_Name));
+            });
+        }
+        if (assigned.size === 0) return;
+
+        const today = todayISO();
+        const isMontaza = wo.Work_Order_Type === 'Montaža';
+        const eligible: { workerId: string; workerName: string }[] = [];
+        await Promise.all(Array.from(assigned.entries()).map(async ([workerId, workerName]) => {
+            try {
+                const att = await getWorkerAttendance(workerId, today, organizationId || undefined);
+                if (!att) return;
+                if ((att.Status === 'Prisutan' && !isMontaza) || (att.Status === 'Teren' && isMontaza)) {
+                    eligible.push({ workerId, workerName });
+                }
+            } catch (e) { console.warn('attendance check failed', workerId, e); }
+        }));
+        if (eligible.length === 0) return;
+
+        setBookTodayModal({ isOpen: true, workOrderId, workers: eligible });
+    }
+
+    async function confirmBookToday() {
+        const { workOrderId, workers: toBook } = bookTodayModal;
+        if (!workOrderId) return;
+        setBookTodaySaving(true);
+        try {
+            const wo = workOrders.find(w => w.Work_Order_ID === workOrderId);
+            const today = todayISO();
+            let booked = 0;
+            for (const w of toBook) {
+                const live = (wo?.items || []).filter(it => it.Status !== 'Završeno');
+                const mine = live.filter(it =>
+                    isWorkerAssignedToAutoItem({ ID: it.ID, Assigned_Workers: it.Assigned_Workers, Processes: it.Processes, SubTasks: it.SubTasks }, w.workerId)
+                );
+                const targets = (mine.length > 0 ? mine : live).map(it => ({ workOrderId, itemId: it.ID, productId: it.Product_ID }));
+                if (targets.length === 0) continue;
+                const res = await bookWorkerDayItems(w.workerId, w.workerName, today, organizationId || '', targets, 1);
+                booked += res.created;
+            }
+            if (booked > 0) {
+                await recalculateWorkOrder(workOrderId, { skipMaterialRefresh: true, skipStatusSync: true });
+                showToast(`Proknjiženo ${booked} dnevnica za danas`, 'success');
+                onRefresh('workOrders', 'workers');
+            } else {
+                showToast('Dnevnice za danas već postoje — ništa novo nije knjiženo', 'info');
+            }
+        } catch (e) {
+            console.error('confirmBookToday error', e);
+            showToast('Greška pri knjiženju današnjeg dana', 'error');
+        } finally {
+            setBookTodaySaving(false);
+            setBookTodayModal({ isOpen: false, workOrderId: null, workers: [] });
         }
     }
 
@@ -1143,14 +1279,11 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
             }
         };
 
-        // Nalog je PAUZIRAN kad su sve otvorene (ne-završene/otkazane) stavke pauzirane —
-        // wo.Status i dalje piše 'U toku' (status se ne mijenja pauzom), pa ovdje preciziramo prikaz.
-        const openWoItems = (wo.items || []).filter(i => (i.Status as string) !== 'Završeno' && (i.Status as string) !== 'Otkazano');
-        const isOrderPaused = wo.Status === 'U toku' && openWoItems.length > 0 && openWoItems.every(i => i.Is_Paused);
-        const statusDetails = isOrderPaused
+        const orderPaused = isOrderPaused(wo);
+        const statusDetails = orderPaused
             ? { color: '#eab308', icon: 'pause_circle', bg: 'linear-gradient(135deg, rgba(234, 179, 8, 0.1), rgba(234, 179, 8, 0.2))' }
             : getStatusDetails(wo.Status);
-        const statusLabel = isOrderPaused ? 'Pauzirano' : wo.Status;
+        const statusLabel = orderPaused ? 'Pauzirano' : wo.Status;
 
         const isMontaza = wo.Work_Order_Type === 'Montaža';
 
@@ -1252,31 +1385,6 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                                         );
                                     })()}
 
-                                    {/* GAP-2/5: Profit data quality badge — samo proizvodnja (Montaža/Zadaci nemaju cijene po dizajnu) */}
-                                    {(!wo.Work_Order_Type || wo.Work_Order_Type === 'Proizvodnja') && wo.Status !== 'Otkazano' && (() => {
-                                        const profitWarnings = validateWorkOrderProfitData(wo);
-                                        if (profitWarnings.length === 0) return null;
-                                        const hasError = profitWarnings.some(w => w.type === 'error');
-                                        const title = 'Profit može biti netačan:\n' + profitWarnings
-                                            .map(w => (w.itemName ? `${w.itemName}: ` : '') + w.message)
-                                            .join('\n');
-                                        return (
-                                            <>
-                                                <span style={{ color: '#d1d5db' }}>•</span>
-                                                <span style={{
-                                                    display: 'flex',
-                                                    alignItems: 'center',
-                                                    gap: '4px',
-                                                    fontSize: '12px',
-                                                    fontWeight: 600,
-                                                    color: hasError ? 'var(--error)' : 'var(--warning)',
-                                                }} title={title}>
-                                                    <span className="material-icons-round" style={{ fontSize: '14px' }}>report_problem</span>
-                                                    {profitWarnings.length}
-                                                </span>
-                                            </>
-                                        );
-                                    })()}
                                 </div>
                             </div>
                         </div>
@@ -1479,6 +1587,7 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                 {/* Isti dijaloški modali kao na desktopu — bez ovoga Print/Brisanje/Rezime/Prisustvo
                     tiho ne bi radili na mobitelu (mijenjaju state, ali se nigdje ne prikazuju). */}
                 {renderDeleteConfirmModal()}
+                {renderBookTodayModal()}
                 {renderPrintModal()}
                 {renderAttendanceFixModal()}
                 {renderSummaryModal()}
@@ -3215,6 +3324,9 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
 
             {/* Delete Confirmation Modal */}
             {renderDeleteConfirmModal()}
+
+            {/* Upit knjiženja današnjeg dana nakon pokretanja naloga */}
+            {renderBookTodayModal()}
 
 
             {priceEditWorkOrder && (

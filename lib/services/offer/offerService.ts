@@ -259,6 +259,109 @@ export async function createOfferWithProducts(
 }
 
 // ============================================
+// REVIZIJA
+// ============================================
+
+/**
+ * REVIZIJA ponude: kopira ponudu (s proizvodima i extras) u NOVU 'Nacrt' ponudu s brojem
+ * "<original>-R2" (pa -R3…), a original označi 'Revidirano'. Original ostaje netaknut →
+ * audit trag šta je poslano klijentu i po kojoj cijeni. Izmjene se dalje rade na reviziji,
+ * čime se izbjegava destruktivni edit poslane/prihvaćene ponude (delete+recreate stavki
+ * i tihi live-sync cijena na radne naloge u updateOfferWithProducts).
+ */
+export async function reviseOffer(
+    offerId: string,
+    organizationId: string
+): Promise<{ success: boolean; data?: { Offer_ID: string; Offer_Number: string }; message: string }> {
+    if (!organizationId) return { success: false, message: 'Organization ID is required' };
+
+    try {
+        const db = getDb();
+        const orgFilter = where('Organization_ID', '==', organizationId);
+
+        const offerSnap = await getDocs(query(
+            collection(db, COLLECTIONS.OFFERS), where('Offer_ID', '==', offerId), orgFilter
+        ));
+        if (offerSnap.empty) return { success: false, message: 'Ponuda nije pronađena' };
+        const original = offerSnap.docs[0].data() as Offer;
+
+        // Broj revizije: skini postojeći -R sufiks pa nađi prvi slobodan (R2, R3…).
+        const baseNumber = (original.Offer_Number || '').replace(/-R\d+$/, '');
+        const allSnap = await getDocs(query(collection(db, COLLECTIONS.OFFERS), orgFilter));
+        const existing = new Set(allSnap.docs.map(d => d.data().Offer_Number as string).filter(Boolean));
+        let rev = 2;
+        while (existing.has(`${baseNumber}-R${rev}`)) rev++;
+        const newNumber = `${baseNumber}-R${rev}`;
+
+        const [productsSnap] = await Promise.all([
+            getDocs(query(collection(db, COLLECTIONS.OFFER_PRODUCTS), where('Offer_ID', '==', offerId), orgFilter)),
+        ]);
+        const originalProducts = productsSnap.docs.map(d => d.data() as OfferProduct);
+        const productIds = originalProducts.map(p => p.ID);
+
+        const extrasByProduct = new Map<string, OfferExtra[]>();
+        for (let i = 0; i < productIds.length; i += 30) {
+            const chunk = productIds.slice(i, i + 30);
+            const extrasSnap = await getDocs(query(
+                collection(db, COLLECTIONS.OFFER_EXTRAS), where('Offer_Product_ID', 'in', chunk), orgFilter
+            ));
+            extrasSnap.docs.forEach(d => {
+                const e = d.data() as OfferExtra;
+                const list = extrasByProduct.get(e.Offer_Product_ID) || [];
+                list.push(e);
+                extrasByProduct.set(e.Offer_Product_ID, list);
+            });
+        }
+
+        const newOfferId = uuidv4();
+        const batch = writeBatch(db);
+
+        const newOffer: Offer = {
+            ...original,
+            Offer_ID: newOfferId,
+            Offer_Number: newNumber,
+            Status: 'Nacrt',
+            Created_Date: new Date().toISOString(),
+            Valid_Until: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString(),
+            Accepted_Date: '',
+        };
+        delete (newOffer as any).products;   // ugniježđeni prikazni podaci se ne pišu u dokument
+        batch.set(doc(collection(db, COLLECTIONS.OFFERS)), newOffer);
+
+        for (const p of originalProducts) {
+            const newProductId = uuidv4();
+            const { extras: _drop, ...plain } = p as OfferProduct & { extras?: unknown };
+            batch.set(doc(collection(db, COLLECTIONS.OFFER_PRODUCTS)), {
+                ...plain,
+                ID: newProductId,
+                Offer_ID: newOfferId,
+                Organization_ID: organizationId,
+            });
+            for (const e of extrasByProduct.get(p.ID) || []) {
+                batch.set(doc(collection(db, COLLECTIONS.OFFER_EXTRAS)), {
+                    ...e,
+                    ID: uuidv4(),
+                    Offer_Product_ID: newProductId,
+                    Organization_ID: organizationId,
+                });
+            }
+        }
+
+        // Original → 'Revidirano' (direktno; ne kroz updateOfferStatus da se ne diraju
+        // statusi projekta — revizija ne mijenja stanje projekta).
+        batch.update(offerSnap.docs[0].ref, { Status: 'Revidirano' });
+
+        await batch.commit();
+        eventBus.emit('offer:statusChanged', { offerId, newStatus: 'Revidirano', organizationId });
+
+        return { success: true, data: { Offer_ID: newOfferId, Offer_Number: newNumber }, message: `Revizija ${newNumber} kreirana` };
+    } catch (error) {
+        console.error('reviseOffer error:', error);
+        return { success: false, message: 'Greška pri kreiranju revizije' };
+    }
+}
+
+// ============================================
 // UPDATE
 // ============================================
 

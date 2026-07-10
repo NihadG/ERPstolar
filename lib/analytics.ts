@@ -111,34 +111,50 @@ export function aggregateProjects(rows: ProductRow[]): ProjectRow[] {
         .sort((a, b) => b.profit - a.profit);
 }
 
-export interface PvAMetric { planned: number; actual: number; variance: number; variancePct: number; accuracyPct: number }
+export interface PvAMetric {
+    planned: number;            // Σ plana — SAMO proizvodi koji plan imaju (planned > 0)
+    actual: number;             // Σ stvarnog za TE ISTE (planirane) proizvode
+    variance: number; variancePct: number; accuracyPct: number;
+    unplannedActual: number;    // stvarni trošak proizvoda BEZ plana (ne ulazi u poređenje — nema s čim)
+}
 export interface PvARow { projectId: string; projectName: string; material: PvAMetric; labor: PvAMetric }
 
 /** variance = plan − stvarno (>0 = ušteda / ispod plana). accuracy = 100 − |odstupanje%|. */
-function metric(planned: number, actual: number): PvAMetric {
+function metric(planned: number, actual: number, unplannedActual: number): PvAMetric {
     const variance = r2(planned - actual);
     const variancePct = planned > 0 ? r2(((planned - actual) / planned) * 100) : 0;
     const accuracyPct = planned > 0 ? r2(Math.max(0, 100 - Math.abs((actual - planned) / planned) * 100)) : (actual === 0 ? 100 : 0);
-    return { planned: r2(planned), actual: r2(actual), variance, variancePct, accuracyPct };
+    return { planned: r2(planned), actual: r2(actual), variance, variancePct, accuracyPct, unplannedActual: r2(unplannedActual) };
 }
 
-/** Plan (ponuda) vs Stvarno za MATERIJAL i RAD — ukupno i po projektu. */
+/**
+ * Plan (ponuda) vs Stvarno za MATERIJAL i RAD — ukupno i po projektu.
+ * Poređenje "koliko sam potrefio" je fer SAMO nad proizvodima koji plan IMAJU:
+ * proizvod bez plana (nema prihvaćene ponude / plan = 0) ne može "prekoračiti plan" —
+ * njegov stvarni trošak ide odvojeno u `unplannedActual` (prikaz "van plana"),
+ * umjesto da napuhava prekoračenje (npr. plan 520 vs stvarno 12.957 → "2392%").
+ */
 export function planVsActual(rows: ProductRow[]): { total: PvARow; byProject: PvARow[] } {
-    const m = new Map<string, { projectId: string; projectName: string; pm: number; am: number; pl: number; al: number }>();
-    let pm = 0, am = 0, pl = 0, al = 0;
+    interface Acc { projectId: string; projectName: string; pm: number; am: number; um: number; pl: number; al: number; ul: number }
+    const m = new Map<string, Acc>();
+    const tot: Acc = { projectId: '', projectName: 'Ukupno', pm: 0, am: 0, um: 0, pl: 0, al: 0, ul: 0 };
+    const add = (a: Acc, p: ProductRow) => {
+        if (p.plannedMaterial > 0) { a.pm += p.plannedMaterial; a.am += p.material; } else { a.um += p.material; }
+        if (p.plannedLabor > 0) { a.pl += p.plannedLabor; a.al += p.labor; } else { a.ul += p.labor; }
+    };
     for (const p of rows) {
-        pm += p.plannedMaterial; am += p.material; pl += p.plannedLabor; al += p.labor;
+        add(tot, p);
         const key = p.projectId || p.projectName || '—';
         let row = m.get(key);
-        if (!row) { row = { projectId: p.projectId, projectName: p.projectName || '—', pm: 0, am: 0, pl: 0, al: 0 }; m.set(key, row); }
-        row.pm += p.plannedMaterial; row.am += p.material; row.pl += p.plannedLabor; row.al += p.labor;
+        if (!row) { row = { projectId: p.projectId, projectName: p.projectName || '—', pm: 0, am: 0, um: 0, pl: 0, al: 0, ul: 0 }; m.set(key, row); }
+        add(row, p);
     }
-    const mk = (r: { projectId: string; projectName: string; pm: number; am: number; pl: number; al: number }): PvARow =>
-        ({ projectId: r.projectId, projectName: r.projectName, material: metric(r.pm, r.am), labor: metric(r.pl, r.al) });
+    const mk = (r: Acc): PvARow =>
+        ({ projectId: r.projectId, projectName: r.projectName, material: metric(r.pm, r.am, r.um), labor: metric(r.pl, r.al, r.ul) });
     const byProject = Array.from(m.values())
         .map(mk)
         .sort((a, b) => (Math.abs(b.material.variance) + Math.abs(b.labor.variance)) - (Math.abs(a.material.variance) + Math.abs(a.labor.variance)));
-    return { total: mk({ projectId: '', projectName: 'Ukupno', pm, am, pl, al }), byProject };
+    return { total: mk(tot), byProject };
 }
 
 export interface WorkerRow { workerId: string; name: string; days: number; earnings: number; avgRate: number; products: number }

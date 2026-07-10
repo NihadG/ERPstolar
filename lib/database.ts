@@ -3529,6 +3529,12 @@ export async function updateWorkOrderStatus(workOrderId: string, status: string,
         if (status === 'Završeno') {
             updateData.Completed_Date = new Date().toISOString();
         }
+        // Auto-knjiženje iz šihtarice (isOrderActiveOn) traži Started_At ≤ datum — 'U toku'
+        // bez Started_At je nevidljiv za dnevnice. startWorkOrder ga postavlja, ali ovaj
+        // generički put mora isto, inače status i knjiženje tiho divergiraju.
+        if (status === 'U toku' && !(snapshot.docs[0].data() as WorkOrder).Started_At) {
+            updateData.Started_At = new Date().toISOString();
+        }
 
         await updateDoc(snapshot.docs[0].ref, updateData);
         return { success: true, message: 'Status ažuriran' };
@@ -3969,6 +3975,17 @@ export async function startWorkOrder(workOrderId: string, organizationId: string
             ? new Date(workOrderData.Started_At).toISOString().split('T')[0]
             : now.toISOString().split('T')[0];
 
+        // Fallback roka bez Due_Date: projekcija iz planiranih radnih dana stavki
+        // (ned. preskočena, sub. radna — ista logika kao auto-rok u wizardu), a ne paušalnih +7.
+        let fallbackEndDate = new Date(now.getTime() + 7 * 86400000).toISOString().split('T')[0];
+        if (!workOrderData.Due_Date) {
+            const totalPlannedDays = itemsSnap.docs.reduce((sum, d) => sum + ((d.data() as WorkOrderItem).Planned_Labor_Days || 0), 0);
+            if (totalPlannedDays > 0) {
+                const { workOrderDueDate } = await import('./planning');
+                fallbackEndDate = workOrderDueDate(effectiveStartDate, totalPlannedDays);
+            }
+        }
+
         await updateDoc(snapshot.docs[0].ref, {
             Status: 'U toku',
             Started_At: effectiveStartedAt,
@@ -3976,7 +3993,7 @@ export async function startWorkOrder(workOrderId: string, organizationId: string
             ...(!workOrderData.Is_Scheduled && {
                 Is_Scheduled: true,
                 Planned_Start_Date: effectiveStartDate,
-                Planned_End_Date: workOrderData.Due_Date || new Date(now.getTime() + 7 * 86400000).toISOString().split('T')[0],
+                Planned_End_Date: workOrderData.Due_Date || fallbackEndDate,
                 Scheduled_At: now.toISOString(),
             }),
         });

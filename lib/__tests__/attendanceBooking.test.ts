@@ -72,6 +72,42 @@ describe('buildBookingProposal — Prisutan (izbor naloga)', () => {
         }
     });
 
+    // ── NEPOKRENUTI ('Na čekanju') nalozi: nude se da bi se novi nalog startao i
+    //    proknjižio u JEDNOM prolazu (potvrda ga auto-starta u prepareWorkerOrderTargets) ──
+    test('nepokrenut nalog (dodijeljen) → ponuđen s notStarted=true i PREDČEKIRAN', () => {
+        const rows = present([order('NEW', [item('n1', { Status: 'Na čekanju' })], { Status: 'Na čekanju', Started_At: undefined })]);
+        expect(rows).toHaveLength(1);
+        if (rows[0].kind === 'present') {
+            expect(rows[0].orders.map(o => o.workOrderId)).toEqual(['NEW']);
+            expect(rows[0].orders[0].notStarted).toBe(true);
+            expect(rows[0].suggestedOrderIds).toEqual(['NEW']);
+        }
+    });
+
+    test('nepokrenut nalog (radnik NIJE dodijeljen) → ponuđen, ali NIJE predčekiran (start je nuspojava)', () => {
+        const rows = present([order('NEW', [item('n1', {
+            Status: 'Na čekanju',
+            Assigned_Workers: [{ Worker_ID: 'OTHER', Worker_Name: 'Drugi', Daily_Rate: 80 }],
+        })], { Status: 'Na čekanju', Started_At: undefined })]);
+        expect(rows).toHaveLength(1);
+        if (rows[0].kind === 'present') {
+            expect(rows[0].orders[0].notStarted).toBe(true);
+            expect(rows[0].suggestedOrderIds).toEqual([]);
+        }
+    });
+
+    test('aktivan nalog ima notStarted=false; nepokrenuti se sortiraju iza aktivnih', () => {
+        const rows = present([
+            order('NEW', [item('n1', { Status: 'Na čekanju' })], { Status: 'Na čekanju', Started_At: undefined }),
+            order('ACT', [item('a1')]),
+        ]);
+        if (rows[0].kind === 'present') {
+            expect(rows[0].orders.map(o => o.workOrderId)).toEqual(['ACT', 'NEW']);
+            expect(rows[0].orders[0].notStarted).toBe(false);
+            expect(rows[0].suggestedOrderIds.sort()).toEqual(['ACT', 'NEW']);
+        }
+    });
+
     test('nema nijednog aktivnog/pauziranog naloga (sve završeno/otkazano) → nema reda', () => {
         const rows = present([
             order('DONE', [item('d1', { Status: 'Završeno' })], { Status: 'Završeno' }),

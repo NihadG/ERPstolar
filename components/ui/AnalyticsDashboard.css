@@ -106,6 +106,7 @@
 .ana-pva-foot .red { color: #dc2626; font-weight: 600; }
 .ana-pva-acc-big { color: #64748b; }
 .ana-pva-acc-big b { color: #0f172a; font-size: 14px; }
+.ana-pva-unplanned { margin-top: 6px; font-size: 11.5px; color: #94a3b8; }
 
 /* ── Plan vs Stvarno: paired trake po projektu ── */
 .ana-pp { background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 12px 14px; margin-bottom: 10px; }
@@ -154,6 +155,13 @@
 .ana-table td.amber, .amber { color: #d97706; }
 .ana-wo { font-size: 10px; color: #cbd5e1; }
 .ana-barcol { width: 120px; }
+
+/* Stvarno + "plan" pod-red u ćeliji (Proizvodi tab) */
+.ana-pa { display: inline-flex; flex-direction: column; align-items: flex-end; gap: 1px; }
+.ana-pa-plan { font-size: 10.5px; font-weight: 600; opacity: 0.85; }
+.ana-pa-plan.green { color: #16a34a; }
+.ana-pa-plan.red { color: #dc2626; }
+.ana-pa-plan.muted { color: #94a3b8; }
 
 .ana-link { border: none; background: none; color: #3b82f6; font-size: 12px; font-weight: 600; cursor: pointer; }
 .ana-link:hover { text-decoration: underline; }

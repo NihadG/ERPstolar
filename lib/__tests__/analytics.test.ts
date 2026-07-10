@@ -98,6 +98,31 @@ describe('planVsActual — MATERIJAL i RAD, plan (ponuda) vs stvarno', () => {
         expect(p2.material.variance).toBe(0);
         expect(p2.labor.variance).toBe(235);
     });
+
+    test('REGRESIJA: proizvod BEZ plana ne napuhava prekoračenje — stvarno mu ide u unplannedActual', () => {
+        // Prije: rad plan 520 vs stvarno 12.957 → "prekoračenje 2392%", jer su proizvodi
+        // bez ikakvog plana (bez ponude) ulazili u poređenje s planom 0.
+        const withUnplanned: ProductInput[] = [
+            ...inputs,
+            { itemId: 'IX', productId: 'PX', productName: 'Razni', projectId: 'P3', projectName: 'Razni poslovi', woId: 'WO9', woNumber: '9', woType: '', status: 'U toku',
+                selling: 0, liveMaterial: 400, plannedMaterial: 0, actualLabor: 3700, plannedLabor: 0, services: 0, transport: 0 },
+        ];
+        const { total, byProject } = planVsActual(aggregateProductRows(withUnplanned));
+        // Poređenje NEPROMIJENJENO u odnosu na planirane proizvode:
+        expect(total.labor.planned).toBe(600);
+        expect(total.labor.actual).toBe(360);
+        expect(total.labor.accuracyPct).toBe(60);
+        expect(total.material.planned).toBe(650);
+        expect(total.material.actual).toBe(730);
+        // Trošak bez plana izdvojen:
+        expect(total.labor.unplannedActual).toBe(3700);
+        expect(total.material.unplannedActual).toBe(400);
+        // Projekat bez ijednog plana: planned=0, sve stvarno u unplanned.
+        const p3 = byProject.find(r => r.projectId === 'P3')!;
+        expect(p3.labor.planned).toBe(0);
+        expect(p3.labor.unplannedActual).toBe(3700);
+        expect(p3.material.unplannedActual).toBe(400);
+    });
 });
 
 // ── Radnici / trend (nepromijenjeno) ─────────────────────────────────────────

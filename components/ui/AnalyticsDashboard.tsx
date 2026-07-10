@@ -169,17 +169,34 @@ export default function AnalyticsDashboard({ onClose, showToast, onRefresh }: An
                                 <thead><tr><th>Proizvod</th><th>Projekat</th><th className="r">Cijena</th><th className="r">Materijal</th><th className="r">Rad</th><th className="r">Usluge</th><th className="r">Profit</th><th></th></tr></thead>
                                 <tbody>
                                     {filteredProducts.map(p => {
-                                        const isMontaza = p.woType === 'Montaža';
+                                        // Maskiraj kolone SAMO za stvarno ne-prihodovne redove (čista montaža/teren
+                                        // bez proizvodnog naloga) — ne po tipu naloga reprezentativne stavke.
+                                        const nonRev = p.nonRevenue;
                                         return (
                                             <tr key={p.itemId}>
                                                 <td>{p.productName}</td>
                                                 <td className="muted">{p.projectName} <span className="ana-wo">#{p.woNumber}</span></td>
-                                                <td className="r">{isMontaza ? '—' : fmt(p.selling)}</td>
-                                                <td className="r">{isMontaza ? '—' : fmt(p.material)}</td>
-                                                <td className="r amber">{fmt(p.labor)}</td>
-                                                <td className="r">{isMontaza ? '—' : fmt(p.services)}</td>
-                                                <td className={`r b ${isMontaza ? 'amber' : p.profit >= 0 ? 'green' : 'red'}`}>
-                                                    {isMontaza ? `−${fmt(p.labor)}` : `${fmt(p.profit)} · ${pct(p.margin)}`}
+                                                <td className="r">{nonRev ? '—' : fmt(p.selling)}</td>
+                                                <td className="r">{nonRev ? '—' : (
+                                                    <span className="ana-pa">
+                                                        <span>{fmt(p.material)}</span>
+                                                        {p.plannedMaterial > 0 && <span className={`ana-pa-plan ${p.material > p.plannedMaterial ? 'red' : 'green'}`}>plan {fmt(p.plannedMaterial)}</span>}
+                                                    </span>
+                                                )}</td>
+                                                <td className="r amber">
+                                                    <span className="ana-pa">
+                                                        <span>{fmt(p.labor)}</span>
+                                                        {!nonRev && p.plannedLabor > 0 && <span className={`ana-pa-plan ${p.labor > p.plannedLabor ? 'red' : 'green'}`}>plan {fmt(p.plannedLabor)}</span>}
+                                                    </span>
+                                                </td>
+                                                <td className="r">{nonRev ? '—' : fmt(p.services)}</td>
+                                                <td className={`r b ${nonRev ? 'amber' : p.profit >= 0 ? 'green' : 'red'}`}>
+                                                    {nonRev ? `−${fmt(p.labor)}` : (
+                                                        <span className="ana-pa">
+                                                            <span>{fmt(p.profit)} · {pct(p.margin)}</span>
+                                                            {(p.plannedMaterial > 0 || p.plannedLabor > 0) && <span className="ana-pa-plan muted">plan {fmt(p.plannedProfit)}</span>}
+                                                        </span>
+                                                    )}
                                                 </td>
                                                 <td className="r">
                                                     <button className="ana-link" disabled={loadingTimeline} onClick={() => openTimeline({ itemId: p.itemId, productId: p.productId, productName: p.productName, woId: p.woId, status: p.status, selling: p.selling, material: p.material, labor: p.labor })}>Detalji →</button>
@@ -303,18 +320,42 @@ function TrendChart({ points, color }: { points: { label: string; value: number 
 
 /** Kompaktni plan-vs-stvarno snapshot (klik → tab). */
 function PvASnapshot({ label, m, onClick }: { label: string; m: PvAMetric; onClick: () => void }) {
+    // Bez zadanog plana nema "koliko sam potrefio" — prikaži samo stvarno, bez lažnih procenata.
+    if (m.planned <= 0) {
+        return (
+            <button className="ana-snap" onClick={onClick}>
+                <div className="ana-snap-head"><span>{label}</span><b className="muted">bez plana</b></div>
+                <div className="ana-snap-sub">Plan nije zadan u ponudi · Stvarno {fmt(m.actual + m.unplannedActual)}</div>
+            </button>
+        );
+    }
     const over = m.actual > m.planned;
     return (
         <button className="ana-snap" onClick={onClick}>
             <div className="ana-snap-head"><span>{label}</span><b className={over ? 'red' : 'green'}>potrefio {pct(m.accuracyPct)}</b></div>
             <div className="ana-snap-bar"><div className="ana-snap-fill" style={{ width: `${Math.min(100, Math.max(0, m.accuracyPct))}%`, background: over ? '#ef4444' : '#22c55e' }} /></div>
-            <div className="ana-snap-sub">Plan {fmt(m.planned)} → Stvarno {fmt(m.actual)}</div>
+            <div className="ana-snap-sub">Plan {fmt(m.planned)} → Stvarno {fmt(m.actual)}{m.unplannedActual > 0 ? ` · +${fmt(m.unplannedActual)} van plana` : ''}</div>
         </button>
     );
 }
 
-/** Veliki sažetak plan vs stvarno za metriku (materijal/rad): Plan → Stvarno + traka + "potrefio". */
+/** Veliki sažetak plan vs stvarno za metriku (materijal/rad): Plan → Stvarno + traka + "potrefio".
+ *  Poređenje pokriva SAMO proizvode s planom iz ponude; trošak proizvoda bez plana
+ *  se prikazuje odvojeno ("van plana") — ne napuhava prekoračenje. */
 function PvASummary({ label, m }: { label: string; m: PvAMetric }) {
+    if (m.planned <= 0) {
+        return (
+            <div className="ana-card">
+                <div className="ana-card-title">{label}</div>
+                <div className="ana-pva-big">
+                    <div className="ana-pva-cell"><span className="ana-pva-k">Plan (ponuda)</span><b className="muted">—</b></div>
+                    <span className="ana-pva-arrow">→</span>
+                    <div className="ana-pva-cell"><span className="ana-pva-k">Stvarno</span><b>{fmt(m.actual + m.unplannedActual)}</b></div>
+                </div>
+                <div className="ana-pva-foot"><span className="muted">Plan nije zadan u ponudi — nema poređenja.</span></div>
+            </div>
+        );
+    }
     const delta = Math.round((m.actual - m.planned) * 100) / 100;   // + = potrošeno više
     const over = delta > 0;
     return (
@@ -330,6 +371,9 @@ function PvASummary({ label, m }: { label: string; m: PvAMetric }) {
                 <span className={over ? 'red' : 'green'}>{over ? 'Prekoračenje ' : 'Ušteda '}{fmt(Math.abs(delta))} ({pct(Math.abs(m.variancePct))})</span>
                 <span className="ana-pva-acc-big">potrefio <b>{pct(m.accuracyPct)}</b></span>
             </div>
+            {m.unplannedActual > 0 && (
+                <div className="ana-pva-unplanned">+ {fmt(m.unplannedActual)} na proizvodima bez plana u ponudi (nije u poređenju)</div>
+            )}
         </div>
     );
 }
@@ -600,6 +644,25 @@ function ProjectWorkCalendar({ raw, projectId, projectName, onClose }: { raw: An
 
 // ── Plan vs Stvarno — paired trake (Plan vs Stvarno) po projektu ──────────────
 function PairedMetric({ label, m, max }: { label: string; m: PvAMetric; max: number }) {
+    // Projekat bez plana za ovu metriku (nema prihvaćene ponude / plan = 0):
+    // prikaži samo stvarno, bez lažnog "preko plana 0%".
+    if (m.planned <= 0) {
+        const actual = m.actual + m.unplannedActual;
+        const aw = max > 0 ? (actual / max) * 100 : 0;
+        return (
+            <div className="ana-pm">
+                <div className="ana-pm-label">{label}</div>
+                <div className="ana-pm-bars">
+                    <div className="ana-pm-row">
+                        <span className="ana-pm-tag">Stvarno</span>
+                        <div className="ana-pm-track"><div className="ana-pm-fill" style={{ width: `${aw}%`, background: '#94a3b8' }} /></div>
+                        <span className="ana-pm-val">{fmt(actual)}</span>
+                    </div>
+                </div>
+                <div className="ana-pm-delta muted">plan nije zadan u ponudi</div>
+            </div>
+        );
+    }
     const over = m.actual > m.planned;
     const delta = Math.round((m.actual - m.planned) * 100) / 100;
     const pw = max > 0 ? (m.planned / max) * 100 : 0;
@@ -619,7 +682,10 @@ function PairedMetric({ label, m, max }: { label: string; m: PvAMetric; max: num
                     <span className="ana-pm-val">{fmt(m.actual)}</span>
                 </div>
             </div>
-            <div className={`ana-pm-delta ${over ? 'red' : 'green'}`}>{over ? '+' : ''}{fmt(delta)} · {over ? 'preko plana' : 'ušteda'} {pct(Math.abs(m.variancePct))}</div>
+            <div className={`ana-pm-delta ${over ? 'red' : 'green'}`}>
+                {over ? '+' : ''}{fmt(delta)} · {over ? 'preko plana' : 'ušteda'} {pct(Math.abs(m.variancePct))}
+                {m.unplannedActual > 0 ? <span className="muted"> · +{fmt(m.unplannedActual)} van plana</span> : null}
+            </div>
         </div>
     );
 }
@@ -627,8 +693,8 @@ function PairedMetric({ label, m, max }: { label: string; m: PvAMetric; max: num
 function PlanVsActualTab({ data }: { data: AnalyticsData }) {
     const rows = data.planVsActual.byProject;
     const total = data.planVsActual.total;
-    const maxMat = Math.max(1, ...rows.map(r => Math.max(r.material.planned, r.material.actual)));
-    const maxLab = Math.max(1, ...rows.map(r => Math.max(r.labor.planned, r.labor.actual)));
+    const maxMat = Math.max(1, ...rows.map(r => Math.max(r.material.planned, r.material.actual + r.material.unplannedActual)));
+    const maxLab = Math.max(1, ...rows.map(r => Math.max(r.labor.planned, r.labor.actual + r.labor.unplannedActual)));
     return (
         <div className="ana-section">
             <div className="ana-grid2">

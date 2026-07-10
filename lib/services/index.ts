@@ -92,7 +92,7 @@ export { getMaterialsCatalog, saveMaterial, deleteMaterial, deleteDuplicateMater
 export { getMaterialTemplates, saveMaterialTemplate, deleteMaterialTemplate, applyMaterialTemplate } from './resource/materialCatalogService';
 
 // Offer
-export { getOffers, createOfferWithProducts, saveOffer, updateOfferWithProducts, deleteOffer, updateOfferStatus, updateOfferProduct } from './offer/offerService';
+export { getOffers, createOfferWithProducts, saveOffer, updateOfferWithProducts, deleteOffer, updateOfferStatus, updateOfferProduct, reviseOffer } from './offer/offerService';
 export { getOffer } from '../database';
 
 // Order
@@ -133,7 +133,6 @@ export {
     updateAllItemProcesses,
     assignWorkersToItem, toggleItemPause,
     calculateActualLaborCost, calculateSubTaskLaborCost,
-    validateWorkOrderProfitData,
     updateItemProcess, addProcessToOrderItem, bulkUpdateProcesses,
     createSubTasks, updateSubTask, moveSubTask,
     canWorkerStartProcess, triggerWorkLogReconciliation,

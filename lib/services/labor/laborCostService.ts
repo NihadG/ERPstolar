@@ -350,13 +350,6 @@ export async function calculateSubTaskLaborCost(
     return _calc(subTask, itemQuantity, organizationId, parentItemId);
 }
 
-// ============================================
-// PROFIT VALIDATION
-// ============================================
-
-export { validateWorkOrderProfitData } from '../../attendance';
-export type { ProfitWarning } from '../../attendance';
-
 export async function adjustWorkOrderDates(
     workOrderId: string,
     updates: { Started_At?: string; Completed_At?: string },

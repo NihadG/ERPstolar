@@ -365,111 +365,8 @@ export async function checkMissingAttendanceHistory(
 }
 
 /**
- * PROFIT VALIDATION — GAP-2/5
- * Validates a work order's profit data and returns warnings for the UI.
- * This is called when expanding a work order card to show real-time data quality indicators.
- */
-export interface ProfitWarning {
-    type: 'error' | 'warning' | 'info';
-    icon: string;
-    message: string;
-    itemName?: string;
-}
-
-export function validateWorkOrderProfitData(workOrder: any): ProfitWarning[] {
-    const warnings: ProfitWarning[] = [];
-    const items = workOrder?.items || [];
-
-    if (items.length === 0) return warnings;
-
-    // Check each item
-    for (const item of items) {
-        // Product_Value = 0 → No offer pricing
-        if (!item.Product_Value || item.Product_Value <= 0) {
-            warnings.push({
-                type: 'error',
-                icon: 'money_off',
-                message: `Cijena nije postavljena (nema ponude?)`,
-                itemName: item.Product_Name,
-            });
-        }
-
-        // Material_Cost = 0 → No materials assigned
-        if (!item.Material_Cost || item.Material_Cost <= 0) {
-            warnings.push({
-                type: 'warning',
-                icon: 'inventory_2',
-                message: `Materijali nisu dodati ili nemaju cijenu`,
-                itemName: item.Product_Name,
-            });
-        }
-
-        // Active item with no labor booked yet → profit still incomplete (NIJE nužno greška prisustva:
-        // rad se možda knjiži na drugi nalog, ili proizvod tek počinje). Poruka opisuje šta zaista znači.
-        if (item.Status === 'U toku' && (!item.Actual_Labor_Cost || item.Actual_Labor_Cost <= 0)) {
-            warnings.push({
-                type: 'warning',
-                icon: 'person_off',
-                message: `Proizvod je u toku, a još nema knjiženog rada`,
-                itemName: item.Product_Name,
-            });
-        }
-
-        // Labor budget overrun (>20%)
-        if (item.Planned_Labor_Cost && item.Planned_Labor_Cost > 0 && item.Actual_Labor_Cost) {
-            if (item.Actual_Labor_Cost > item.Planned_Labor_Cost * 1.2) {
-                const overrun = Math.round(((item.Actual_Labor_Cost - item.Planned_Labor_Cost) / item.Planned_Labor_Cost) * 100);
-                warnings.push({
-                    type: 'error',
-                    icon: 'trending_up',
-                    message: `Prekoračen budžet rada za ${overrun}%`,
-                    itemName: item.Product_Name,
-                });
-            }
-        }
-    }
-
-    // Aggregate checks
-    const totalValue = items.reduce((s: number, i: any) => s + (i.Product_Value || 0), 0);
-    const totalMaterial = items.reduce((s: number, i: any) => s + (i.Material_Cost || 0), 0);
-    const totalLabor = items.reduce((s: number, i: any) => s + (i.Actual_Labor_Cost || 0), 0);
-    const totalTransport = items.reduce((s: number, i: any) => s + (i.Transport_Share || 0), 0);
-    const totalServices = items.reduce((s: number, i: any) => s + (i.Services_Total || 0), 0);
-
-    if (totalValue > 0) {
-        const netProfit = totalValue - totalMaterial - totalLabor - totalTransport - totalServices;
-        const margin = (netProfit / totalValue) * 100;
-
-        if (margin < -20) {
-            warnings.push({
-                type: 'error',
-                icon: 'warning',
-                message: `Negativna marža (${Math.round(margin)}%) — provjerite cijene i troškove`,
-            });
-        } else if (margin < 0) {
-            warnings.push({
-                type: 'warning',
-                icon: 'trending_down',
-                message: `Profit u minusu (${Math.round(margin)}%)`,
-            });
-        }
-    }
-
-    // Transport/Services = 0 but offer probably had them
-    if (totalValue > 0 && totalTransport === 0 && totalServices === 0) {
-        warnings.push({
-            type: 'info',
-            icon: 'local_shipping',
-            message: 'Transport i usluge = 0 KM (nalog kreiran bez podataka iz ponude?)',
-        });
-    }
-
-    return warnings;
-}
-
-/**
  * Mark worker attendance and automatically create/cleanup work logs
- * ENHANCED: 
+ * ENHANCED:
  *   - Creates work_logs when status is 'Prisutan' or 'Teren'
  *   - DELETES work_logs when status changes to non-working (Odsutan, Bolovanje, Odmor, Vikend)
  * This ensures proper synchronization between attendance and productivity tracking
@@ -2077,17 +1974,17 @@ export async function triggerWorkLogReconciliation(
             return { created: 0, message: 'Worker not found' };
         }
 
-        if (!worker.Daily_Rate || worker.Daily_Rate <= 0) {
+        const today = formatLocalDateISO(new Date());
+        const todayRate = effectiveDailyRate(worker, today);
+        if (!todayRate || todayRate <= 0) {
             return { created: 0, message: `${worker.Name} ima dnevnicu 0 KM — WorkLog nije kreiran.` };
         }
-
-        const today = formatLocalDateISO(new Date());
 
         // 2. Create/reconcile work logs for today
         const result = await createWorkLogsForAttendance(
             worker.Worker_ID,
             worker.Name,
-            worker.Daily_Rate,
+            todayRate,
             today,
             organizationId
         );
@@ -2102,7 +1999,7 @@ export async function triggerWorkLogReconciliation(
         if (result.created > 0) {
             return {
                 created: result.created,
-                message: `WorkLog kreiran za ${worker.Name} (${worker.Daily_Rate} KM ÷ ${result.created + result.skipped} stavki)`
+                message: `WorkLog kreiran za ${worker.Name} (${todayRate} KM ÷ ${result.created + result.skipped} stavki)`
             };
         } else {
             return {
@@ -2438,7 +2335,9 @@ export async function backfillWorkLogsFromAttendance(
         // Group by worker+date for batch processing
         for (const attendance of validRecords) {
             const worker = workerMap.get(attendance.Worker_ID);
-            const dailyRate = worker?.Daily_Rate || 0;
+            // Efektivna dnevnica NA TAJ DATUM (Daily_Rate_History) — backfill starih dana
+            // ne smije upisati današnju cijenu (ista garda kao živi put knjiženja).
+            const dailyRate = effectiveDailyRate(worker, attendance.Date);
             const workerName = attendance.Worker_Name || worker?.Name || 'Unknown';
 
             const result = await createWorkLogsForAttendance(

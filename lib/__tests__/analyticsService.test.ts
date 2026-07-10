@@ -24,9 +24,9 @@ function baseRaw(overrides: Partial<AnalyticsRaw> = {}): AnalyticsRaw {
     };
 }
 
-const wo = (id: string, status: string = 'U toku'): WorkOrder => ({
+const wo = (id: string, status: string = 'U toku', type: string = 'Proizvodnja'): WorkOrder => ({
     Work_Order_ID: id, Organization_ID: 'org', Work_Order_Number: id, Status: status,
-    Work_Order_Type: 'Proizvodnja', Created_Date: '2026-07-01',
+    Work_Order_Type: type, Created_Date: '2026-07-01',
 } as unknown as WorkOrder);
 
 const item = (opts: Partial<WorkOrderItem> & { ID: string; Product_ID: string; Work_Order_ID: string }): WorkOrderItem => ({
@@ -115,6 +115,106 @@ describe('computeAnalytics — usluge (services) moraju biti ŽIVE iz ponude, ne
         const row = data.products.find(p => p.productId === 'PA')!;
         expect(row.services).toBe(200);
         expect(row.profit).toBe(1000 - 0 - 0 - 200 - 0); // selling - material - labor - services - transport
+    });
+});
+
+describe('computeAnalytics — proizvod s PROIZVODNIM (završenim) i MONTAŽNIM (aktivnim) nalogom', () => {
+    // REGRESIJA (screenshot "Dino Deović"): pod opsegom "Aktivni" bi završeni proizvodni nalog
+    // ispao iz agregacije, pa je aktivna MONTAŽNA stavka (nulirane finansije) predstavljala
+    // proizvod: cijena/materijal "—", planirani rad 0, profit = −rad. Finansije se sada
+    // računaju iz KOMPLETNE slike, a opseg samo bira koji proizvodi ulaze.
+    const rawProdDoneMontActive = () => baseRaw({
+        workOrders: [wo('WOP', 'Završeno'), wo('WOM', 'U toku', 'Montaža')],
+        items: [
+            item({ ID: 'IP', Product_ID: 'PA', Work_Order_ID: 'WOP', Status: 'Završeno', Product_Value: 2000, Quantity: 1, Planned_Labor_Cost: 600, Transport_Share: 50 } as any),
+            // Montažna stavka: finansije nulirane pri kreiranju (ProductionTab isMontazaMode)
+            item({ ID: 'IM', Product_ID: 'PA', Work_Order_ID: 'WOM', Status: 'U toku', Product_Value: 0, Quantity: 1, Planned_Labor_Cost: 0, Transport_Share: 0 } as any),
+        ],
+        liveMaterialByProduct: new Map([['PA', 700]]),
+        actualLaborByProduct: new Map([['PA', 900]]),
+    });
+
+    test('opseg "Aktivni": red proizvoda nosi PUNE finansije proizvodnog naloga, ne nule montaže', () => {
+        const data = computeAnalytics(rawProdDoneMontActive(), { scope: 'active' });
+        const row = data.products.find(p => p.productId === 'PA')!;
+        expect(row).toBeDefined();
+        expect(row.woType).toBe('Proizvodnja');       // reprezentativna = proizvodna stavka
+        expect(row.nonRevenue).toBe(false);
+        expect(row.selling).toBe(2000);
+        expect(row.material).toBe(700);
+        expect(row.labor).toBe(900);                  // rad kroz SVE naloge (uklj. montažu)
+        expect(row.transport).toBe(50);
+        expect(row.plannedLabor).toBe(600);           // plan sa završene proizvodne stavke
+        expect(row.profit).toBe(2000 - 700 - 900 - 0 - 50);
+    });
+
+    test('opseg "Aktivni" i "Svi" daju ISTE finansije proizvoda (opseg bira samo koji proizvodi ulaze)', () => {
+        const a = computeAnalytics(rawProdDoneMontActive(), { scope: 'active' }).products.find(p => p.productId === 'PA')!;
+        const s = computeAnalytics(rawProdDoneMontActive(), { scope: 'all' }).products.find(p => p.productId === 'PA')!;
+        expect(a.selling).toBe(s.selling);
+        expect(a.material).toBe(s.material);
+        expect(a.plannedLabor).toBe(s.plannedLabor);
+        expect(a.profit).toBe(s.profit);
+    });
+
+    test('proizvod SAMO s montažnim nalogom ostaje ne-prihodovni (profit = −rad)', () => {
+        const raw = baseRaw({
+            workOrders: [wo('WOM', 'U toku', 'Montaža')],
+            items: [item({ ID: 'IM', Product_ID: 'PM', Work_Order_ID: 'WOM', Product_Value: 0, Planned_Labor_Cost: 0 } as any)],
+            actualLaborByProduct: new Map([['PM', 250]]),
+        });
+        const row = computeAnalytics(raw, { scope: 'active' }).products.find(p => p.productId === 'PM')!;
+        expect(row.nonRevenue).toBe(true);
+        expect(row.profit).toBe(-250);
+    });
+});
+
+describe('computeAnalytics — planirani rad i prodajna cijena iz ponude', () => {
+    test('REGRESIJA: stavke bez Planned_Labor_Cost → fallback na ponudu (radnici × dani × dnevnica × količina)', () => {
+        const op = offerProductByProductOf(offerProduct({
+            Product_ID: 'PA', Quantity: 2, Labor_Workers: 2, Labor_Days: 3, Labor_Daily_Rate: 65,
+        }));
+        const raw = baseRaw({
+            workOrders: [wo('WO1')],
+            items: [item({ ID: 'I1', Product_ID: 'PA', Work_Order_ID: 'WO1', Quantity: 2 })],  // bez Planned_Labor_Cost
+            offerProductByProduct: op,
+        });
+        const row = computeAnalytics(raw).products.find(p => p.productId === 'PA')!;
+        expect(row.plannedLabor).toBe(2 * 3 * 65 * 2);   // 780
+    });
+
+    test('snapshot sa stavke ima prednost nad fallback-om ponude', () => {
+        const op = offerProductByProductOf(offerProduct({
+            Product_ID: 'PA', Labor_Workers: 5, Labor_Days: 5, Labor_Daily_Rate: 100,
+        }));
+        const raw = baseRaw({
+            workOrders: [wo('WO1')],
+            items: [item({ ID: 'I1', Product_ID: 'PA', Work_Order_ID: 'WO1', Planned_Labor_Cost: 300, Quantity: 1 } as any)],
+            offerProductByProduct: op,
+        });
+        const row = computeAnalytics(raw).products.find(p => p.productId === 'PA')!;
+        expect(row.plannedLabor).toBe(300);
+    });
+
+    test('REGRESIJA: fallback prodajne cijene množi količinom (Selling_Price je PO KOMADU)', () => {
+        const op = offerProductByProductOf(offerProduct({
+            Product_ID: 'PA', Quantity: 3, Selling_Price: 500, Total_Price: 0,   // bez Total_Price snapshot-a
+        }));
+        const raw = baseRaw({
+            workOrders: [wo('WO1')],
+            items: [item({ ID: 'I1', Product_ID: 'PA', Work_Order_ID: 'WO1', Product_Value: 0, Quantity: 3 })],
+            offerProductByProduct: op,
+        });
+        const row = computeAnalytics(raw).products.find(p => p.productId === 'PA')!;
+        expect(row.selling).toBe(1500);
+        // Total_Price (ako postoji) ima prednost:
+        const op2 = offerProductByProductOf(offerProduct({ Product_ID: 'PA', Quantity: 3, Selling_Price: 500, Total_Price: 1450 }));
+        const row2 = computeAnalytics(baseRaw({
+            workOrders: [wo('WO1')],
+            items: [item({ ID: 'I1', Product_ID: 'PA', Work_Order_ID: 'WO1', Product_Value: 0, Quantity: 3 })],
+            offerProductByProduct: op2,
+        })).products.find(p => p.productId === 'PA')!;
+        expect(row2.selling).toBe(1450);
     });
 });
 

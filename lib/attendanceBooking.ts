@@ -3,8 +3,10 @@
 //
 // Kad se u šihtarici radnik označi PRISUTAN/TEREN, UI ne knjiži odmah — gradi PRIJEDLOG i traži
 // potvrdu. Ovdje je sva odluka šta ponuditi:
-//   • Prisutan → lista AKTIVNIH i PAUZIRANIH naloga (bilo kog tipa, ne samo dodijeljenih).
-//     Dodijeljeni aktivni nalozi su predčekirani; pauzirani se mogu „pokrenuti ponovo" na potvrdi.
+//   • Prisutan → lista AKTIVNIH, PAUZIRANIH i NEPOKRENUTIH naloga (bilo kog tipa, ne samo dodijeljenih).
+//     Dodijeljeni aktivni/nepokrenuti nalozi su predčekirani; pauzirani se mogu „pokrenuti ponovo",
+//     a nepokrenuti ('Na čekanju') se auto-STARTAJU na potvrdi (prepareWorkerOrderTargets) — tako
+//     novi nalog + šihtarica idu u JEDNOM prolazu, bez ponovnog snimanja prisustva.
 //   • Teren    → UVIJEK red u upitu (teren je dvosmislen). Predabir = dodijeljeni aktivni Montaža
 //     nalog; korisnik može izabrati BILO koji nalog (aktivan ili neaktivan), novi nalog ili ništa.
 // Knjiženje na potvrdu radi lib/attendance.ts → bookWorkerDayItems (aditivno, idempotentno).
@@ -21,13 +23,14 @@ export interface SavedAttendanceWorker {
     status: string;                      // 'Prisutan' | 'Teren' | ostali (ignorisani)
 }
 
-/** Nalog koji prisutan radnik može izabrati (aktivan ili pauziran). */
+/** Nalog koji prisutan radnik može izabrati (aktivan, pauziran ili nepokrenut). */
 export interface PresentOrderOption {
     workOrderId: string;
     name: string;
     status: string;                      // Status naloga (npr. 'U toku')
     paused: boolean;                     // sav preostali posao je pauziran → „pokreni ponovo"
     assigned: boolean;                   // radnik je dodijeljen nekoj stavci
+    notStarted: boolean;                 // 'Na čekanju' → potvrda knjiženja ga auto-starta
 }
 
 /** Prisutan radnik: ponuda naloga (predčekirani = dodijeljeni aktivni). */
@@ -106,8 +109,10 @@ export function buildBookingProposal(
             workOrders.forEach(wo => (wo.items || []).forEach(it => itemToOrder.set(it.ID, wo.Work_Order_ID)));
             const suggested = new Set<string>();
             autoItemIds.forEach(id => { const o = itemToOrder.get(id); if (o) suggested.add(o); });
-            // Plus svaki dodijeljen, aktivan, nepauziran nalog (uklj. Montažu) → koristan default.
-            orders.forEach(o => { if (o.assigned && o.status === 'U toku' && !o.paused) suggested.add(o.workOrderId); });
+            // Plus svaki dodijeljen, aktivan ILI nepokrenut, nepauziran nalog (uklj. Montažu) →
+            // koristan default. Nepokrenuti se predčekiraju SAMO ako je radnik dodijeljen —
+            // potvrda ih starta, pa tuđi novi nalog ne smije biti default.
+            orders.forEach(o => { if (o.assigned && !o.paused && (o.status === 'U toku' || o.notStarted)) suggested.add(o.workOrderId); });
             // "Kao jučer": ako ništa nije predčekirano, ponudi jučerašnje naloge koji su i danas dostupni.
             if (suggested.size === 0) {
                 const yList = yesterdayByWorker?.get(w.workerId) || [];
@@ -143,17 +148,18 @@ export function buildBookingProposal(
     return rows;
 }
 
-/** Aktivni + pauzirani nalozi (bilo kog tipa) koje prisutan radnik može izabrati. */
+/** Aktivni + pauzirani + nepokrenuti nalozi (bilo kog tipa) koje prisutan radnik može izabrati. */
 function buildPresentOrderOptions(workOrders: WorkOrder[], workerId: string): PresentOrderOption[] {
     const out: PresentOrderOption[] = [];
     for (const wo of workOrders) {
-        // EFIKASNOST: samo 'U toku' nalog može uopšte imati pauziranu (nezavršenu) stavku —
-        // 'Završeno' nalog po definiciji ima SVE stavke završene (vidi recalculateWorkOrder
-        // status derivaciju), pa bi `live` uvijek bio prazan i anyPaused uvijek false.
-        // Preskoči prije skupog skeniranja stavki — bez ovoga se svaki istorijski (davno
-        // završen) nalog skenira pri SVAKOM označavanju prisustva, što s vremenom (mjeseci
-        // rada = stotine naloga) usporava otvaranje upita knjiženja.
-        if (wo.Status !== 'U toku') continue;
+        // 'Na čekanju' se nudi da bi se NOVI nalog pokrenuo i proknjižio u jednom prolazu
+        // (potvrda ga starta u prepareWorkerOrderTargets) — inače nastaje začarani krug:
+        // start traži prisustvo, a upit knjiženja ne nudi nepokrenut nalog.
+        // EFIKASNOST: 'Završeno'/'Otkazano' se i dalje preskaču prije skupog skeniranja
+        // stavki — 'Završeno' po definiciji ima SVE stavke završene (vidi recalculateWorkOrder
+        // status derivaciju), pa bi `live` uvijek bio prazan i anyPaused uvijek false; bez ovoga
+        // se svaki istorijski nalog skenira pri SVAKOM označavanju prisustva (stotine naloga).
+        if (wo.Status !== 'U toku' && wo.Status !== 'Na čekanju') continue;
         const live = (wo.items || []).filter(it => it.Status !== 'Završeno');
         const fullyPaused = live.length > 0 && live.every(it => it.Is_Paused);
         const assigned = live.some(it => isWorkerAssignedToAutoItem(toAutoBookItem(it), workerId));
@@ -163,9 +169,10 @@ function buildPresentOrderOptions(workOrders: WorkOrder[], workerId: string): Pr
             status: wo.Status,
             paused: fullyPaused,
             assigned,
+            notStarted: wo.Status === 'Na čekanju',
         });
     }
-    // dodijeljeni prvi, pa aktivni, pa po nazivu
+    // dodijeljeni prvi, pa aktivni (nepokrenuti iza njih), pa po nazivu
     out.sort((a, b) => {
         if (a.assigned !== b.assigned) return a.assigned ? -1 : 1;
         const aAct = a.status === 'U toku', bAct = b.status === 'U toku';

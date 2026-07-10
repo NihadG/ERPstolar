@@ -7,7 +7,7 @@ import { workOrderDisplayName, formatDate } from '@/lib/utils';
 import Modal from './Modal';
 import CustomTasksModal from './CustomTasksModal';
 import { SearchableSelect } from './SearchableSelect';
-import { CheckCircle2, Car, Plus, Ban, ClipboardList, RotateCcw } from 'lucide-react';
+import { CheckCircle2, Car, Plus, Ban, ClipboardList, RotateCcw, Play } from 'lucide-react';
 import './AttendanceBookingConfirmModal.css';
 
 // ── Odluke koje modal vraća roditelju (AttendanceTab ih izvršava) ──────────────
@@ -277,7 +277,11 @@ export default function AttendanceBookingConfirmModal({ isOpen, onClose, date, r
                                             </span>
                                             {o.paused && on
                                                 ? <span className="abcm-chip abcm-chip--resume"><RotateCcw size={11} /> pokreni ponovo</span>
-                                                : <span className={`abcm-chip${o.paused ? ' abcm-chip--paused' : ''}`}>{o.paused ? 'Pauziran' : o.status}</span>}
+                                                : o.notStarted && on
+                                                    ? <span className="abcm-chip abcm-chip--resume"><Play size={11} /> pokrenuće se</span>
+                                                    : o.notStarted
+                                                        ? <span className="abcm-chip abcm-chip--new">novi — nije pokrenut</span>
+                                                        : <span className={`abcm-chip${o.paused ? ' abcm-chip--paused' : ''}`}>{o.paused ? 'Pauziran' : o.status}</span>}
                                         </label>
                                     );
                                 })}

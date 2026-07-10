@@ -10,9 +10,9 @@
  */
 
 import { COLLECTIONS } from '../shared/collections';
-import { queryByOrg } from '../shared/firestoreClient';
+import { queryByOrg, where } from '../shared/firestoreClient';
 import { itemMaterialTotal } from '../../materialCost';
-import type { WorkOrderItem, WorkLog, WorkOrder, ProductMaterial, Offer, OfferProduct } from '../../types';
+import type { WorkOrderItem, WorkLog, WorkOrder, ProductMaterial, Offer, OfferProduct, OfferExtra } from '../../types';
 import {
     aggregateProductRows, aggregateProjects, planVsActual, aggregateWorkers,
     weeklyLaborTrend, computeKpis,
@@ -50,13 +50,19 @@ export async function getAnalyticsRaw(organizationId: string): Promise<Analytics
     if (!organizationId) {
         return { workOrders: [], items: [], logs: [], liveMaterialByProduct: new Map(), actualLaborByProduct: new Map(), offerProductByProduct: new Map() };
     }
-    const { getOffers } = await import('../offer/offerService');
-    const [workOrders, items, logs, productMaterials, offers] = await Promise.all([
+    // PERF: analitika ranije zvala generički getOffers() — taj dohvaća SVE 4 kolekcije cijele
+    // organizacije (offers, offer_products, offer_extras, PA I projects radi enrichment-a klijenta)
+    // za BAŠ SVAKU ponudu ikad napravljenu (nacrti/odbijene/istekle), iako je analitici trebala
+    // samo Product_ID → uslovi PRIHVAĆENE ponude. Ovdje: direktan upit filtriran na Status='Prihvaćeno'
+    // (server-side, manji rezultat) + BEZ projects fetcha (nepotreban — analitika ne prikazuje klijenta).
+    const [workOrders, items, logs, productMaterials, acceptedOffers, offerProducts, offerExtras] = await Promise.all([
         queryByOrg<WorkOrder>(COLLECTIONS.WORK_ORDERS, organizationId),
         queryByOrg<WorkOrderItem>(COLLECTIONS.WORK_ORDER_ITEMS, organizationId),
         queryByOrg<WorkLog>(COLLECTIONS.WORK_LOGS, organizationId),
         queryByOrg<ProductMaterial>(COLLECTIONS.PRODUCT_MATERIALS, organizationId),
-        getOffers(organizationId),
+        queryByOrg<Offer>(COLLECTIONS.OFFERS, organizationId, where('Status', '==', 'Prihvaćeno')),
+        queryByOrg<OfferProduct>(COLLECTIONS.OFFER_PRODUCTS, organizationId),
+        queryByOrg<OfferExtra>(COLLECTIONS.OFFER_EXTRAS, organizationId),
     ]);
 
     const liveMaterialByProduct = new Map<string, number>();
@@ -69,11 +75,19 @@ export async function getAnalyticsRaw(organizationId: string): Promise<Analytics
         if (!l.Product_ID) continue;
         actualLaborByProduct.set(l.Product_ID, (actualLaborByProduct.get(l.Product_ID) || 0) + (l.Daily_Rate || 0));
     }
+
+    const acceptedOfferIds = new Set(acceptedOffers.map(o => o.Offer_ID));
+    const extrasByOfferProduct = new Map<string, OfferExtra[]>();
+    for (const e of offerExtras) {
+        if (!e.Offer_Product_ID) continue;
+        const arr = extrasByOfferProduct.get(e.Offer_Product_ID) || [];
+        arr.push(e);
+        extrasByOfferProduct.set(e.Offer_Product_ID, arr);
+    }
     const offerProductByProduct = new Map<string, OfferProduct>();
-    for (const offer of offers.filter(o => o.Status === 'Prihvaćeno')) {
-        for (const op of ((offer as Offer & { products?: OfferProduct[] }).products || [])) {
-            if (op.Product_ID && !offerProductByProduct.has(op.Product_ID)) offerProductByProduct.set(op.Product_ID, op);
-        }
+    for (const op of offerProducts) {
+        if (!op.Product_ID || !acceptedOfferIds.has(op.Offer_ID) || offerProductByProduct.has(op.Product_ID)) continue;
+        offerProductByProduct.set(op.Product_ID, { ...op, extras: extrasByOfferProduct.get(op.ID) || [] });
     }
     return { workOrders, items, logs, liveMaterialByProduct, actualLaborByProduct, offerProductByProduct };
 }
@@ -100,25 +114,44 @@ export function computeAnalytics(raw: AnalyticsRaw, opts: AnalyticsOptions = {})
         if (!st || st === 'Otkazano') return false;
         return scope === 'active' ? (st === 'U toku' || st === 'Na čekanju') : true;
     };
+    const notCancelled = (woId: string): boolean => {
+        const st = woById.get(woId)?.Status;
+        return !!st && st !== 'Otkazano';
+    };
+    const isMontazaWo = (woId: string): boolean => woById.get(woId)?.Work_Order_Type === 'Montaža';
 
-    // Grupiši stavke po Product_ID — samo u opsegu I u periodu (nalog aktivan u prozoru).
+    // Grupiši SVE ne-otkazane stavke po Product_ID. Opseg (Aktivni/Svi) i period odlučuju
+    // samo KOJI proizvodi ulaze u izvještaj (bar jedna stavka u opsegu i periodu) —
+    // finansije proizvoda se UVIJEK računaju iz KOMPLETNE slike svih njegovih naloga.
+    // (Ranije: pod "Aktivni" bi završeni PROIZVODNI nalog ispao, pa je aktivna MONTAŽNA
+    // stavka — s nuliranim finansijama — predstavljala proizvod: cijena/materijal/plan = 0.)
     const itemsByProduct = new Map<string, WorkOrderItem[]>();
+    const includedProducts = new Set<string>();
     for (const it of raw.items) {
         if (!it.Product_ID) continue;
-        if (!woAllowed(it.Work_Order_ID)) continue;
-        if (!orderInPeriod(woById.get(it.Work_Order_ID), range.from, range.to)) continue;
+        if (!notCancelled(it.Work_Order_ID)) continue;
         const arr = itemsByProduct.get(it.Product_ID) || [];
         arr.push(it);
         itemsByProduct.set(it.Product_ID, arr);
+        if (woAllowed(it.Work_Order_ID) && orderInPeriod(woById.get(it.Work_Order_ID), range.from, range.to)) {
+            includedProducts.add(it.Product_ID);
+        }
     }
 
     const inputs: ProductInput[] = [];
     for (const [productId, items] of Array.from(itemsByProduct.entries())) {
-        const rep = items.find(i => i.Status !== 'Završeno') || items[0];
+        if (!includedProducts.has(productId)) continue;
+        // Reprezentativna stavka = PROIZVODNI nalog ako postoji (montažne stavke se kreiraju
+        // s nuliranim finansijama — Product_Value/Material_Cost/Transport/Planned_Labor = 0 —
+        // pa ne smiju predstavljati proizvod); unutar toga preferiraj nezavršenu.
+        const production = items.filter(i => !isMontazaWo(i.Work_Order_ID));
+        const pool = production.length ? production : items;
+        const rep = pool.find(i => i.Status !== 'Završeno') || pool[0];
         const wo = woById.get(rep.Work_Order_ID);
         const op = raw.offerProductByProduct.get(productId);
         const overrides = (rep as { Profit_Overrides?: { Selling_Price?: number; Transport_Share?: number; Extras_Total?: number } }).Profit_Overrides;
-        const selling = (overrides?.Selling_Price ?? rep.Product_Value) || (op ? (op.Selling_Price || op.Total_Price || 0) : 0);
+        // Fallback na ponudu: Selling_Price je PO KOMADU → ukupno je Total_Price (ili × količina).
+        const selling = (overrides?.Selling_Price ?? rep.Product_Value) || (op ? (op.Total_Price || (op.Selling_Price || 0) * (op.Quantity || 1)) : 0);
         const transport = overrides?.Transport_Share ?? rep.Transport_Share ?? (op?.Transport_Share || 0);
         // USLUGE: item.Services_Total je SNAPSHOT upisan pri kreiranju naloga (uvijek definisan broj,
         // i 0 ako ponuda tada nije imala usluga — vidi ProductionTab.tsx) → `?? ` fallback na živu
@@ -129,7 +162,13 @@ export function computeAnalytics(raw: AnalyticsRaw, opts: AnalyticsOptions = {})
         const liveOfferServices = op ? (op.extras || []).reduce((s, e) => s + (e.Total || 0), 0) : undefined;
         const services = overrides?.Extras_Total ?? liveOfferServices ?? (rep.Services_Total || 0);
         const plannedMaterial = op ? (op.Material_Cost || 0) * (op.Quantity || 1) : itemMaterialTotal(rep.Material_Cost, rep.Quantity);
-        const plannedLabor = items.reduce((s, it) => s + (it.Planned_Labor_Cost || 0) * (it.Quantity || 1), 0);
+        // Planirani rad: snapshot sa stavki (Planned_Labor_Cost je PO KOMADU, kao u ponudi:
+        // radnici × dani × dnevnica) preko SVIH naloga proizvoda; ako stavke snapshot nemaju
+        // (stariji nalozi / montaža), fallback na živu prihvaćenu ponudu.
+        let plannedLabor = items.reduce((s, it) => s + (it.Planned_Labor_Cost || 0) * (it.Quantity || 1), 0);
+        if (plannedLabor === 0 && op) {
+            plannedLabor = (op.Labor_Workers || 0) * (op.Labor_Days || 0) * (op.Labor_Daily_Rate || 0) * (op.Quantity || 1);
+        }
 
         inputs.push({
             itemId: rep.ID,
@@ -156,7 +195,6 @@ export function computeAnalytics(raw: AnalyticsRaw, opts: AnalyticsOptions = {})
     const pva = planVsActual(products);
 
     // Radnici / trend — filtrirani po periodu (i samo logovi proizvoda u opsegu/periodu).
-    const includedProducts = new Set(inputs.map(i => i.productId));
     const logs: ALog[] = raw.logs
         .filter(l => !l.Product_ID || includedProducts.has(l.Product_ID))
         .map(l => ({

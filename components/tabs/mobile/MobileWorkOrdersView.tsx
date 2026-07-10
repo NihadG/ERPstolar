@@ -5,7 +5,6 @@ import type { WorkOrder, Worker } from '@/lib/types';
 import { WORK_ORDER_STATUSES } from '@/lib/types';
 import { daysUntil } from '@/lib/planning';
 import { workOrderDisplayName, orderProcessProgress } from '@/lib/utils';
-import { validateWorkOrderProfitData } from '@/lib/services';
 import WorkOrderExpandedDetail from '@/components/ui/WorkOrderExpandedDetail';
 
 interface AttendanceWarnings {
@@ -145,11 +144,6 @@ export default function MobileWorkOrdersView({
                     const prog = orderProcessProgress(items);
                     const showProg = prog && prog.total > 1;
 
-                    // Upozorenje o profitu (samo standardna proizvodnja)
-                    const profitWarnings = (!wo.Work_Order_Type || wo.Work_Order_Type === 'Proizvodnja') && wo.Status !== 'Otkazano'
-                        ? validateWorkOrderProfitData(wo) : [];
-                    const hasProfitError = profitWarnings.some((w: any) => w.type === 'error');
-
                     // Rupe u šihtarici za aktivan nalog
                     const attWarningsForOrder = wo.Status === 'U toku' && attendanceWarnings
                         ? attendanceWarnings.warnings.filter(w => w.Work_Order_ID === wo.Work_Order_ID) : [];
@@ -186,12 +180,6 @@ export default function MobileWorkOrdersView({
                                                 <span title={`Završeno ${prog!.done} od ${prog!.total} procesa`}>
                                                     <span className="wo-mini-bar"><span className="wo-mini-bar-fill" style={{ width: `${prog!.pct}%`, background: prog!.pct >= 100 ? 'var(--success)' : 'var(--accent)' }} /></span>
                                                     {prog!.pct}%
-                                                </span>
-                                            )}
-                                            {profitWarnings.length > 0 && (
-                                                <span className="warn" style={{ color: hasProfitError ? 'var(--error)' : 'var(--warning)' }}
-                                                    title={profitWarnings.map((w: any) => (w.itemName ? `${w.itemName}: ` : '') + w.message).join('\n')}>
-                                                    <span className="material-icons-round tiny">report_problem</span>
                                                 </span>
                                             )}
                                             {attWarningsForOrder.length > 0 && (
