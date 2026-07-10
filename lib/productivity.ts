@@ -69,12 +69,19 @@ export async function calculateWorkerProductivity(
         );
 
         // Calculate Days_Present (Prisutan + Teren)
-        const daysPresent = attendance.filter(att =>
+        const presentAttendance = attendance.filter(att =>
             att.Status === 'Prisutan' || att.Status === 'Teren'
-        ).length;
+        );
+        const daysPresent = presentAttendance.length;
 
-        // Calculate working days in period (excluding weekends)
-        const workingDaysInPeriod = await countWorkingDays(dateFrom, dateTo);
+        // Radni dani perioda: pon–pet (bez praznika) + SUBOTE na kojima je radnik po
+        // šihtarici stvarno radio (subotnja rotacija ne smije kažnjavati Attendance_Rate).
+        const saturdaysWorked = new Set(
+            presentAttendance
+                .filter(att => new Date(att.Date + 'T12:00:00').getDay() === 6)
+                .map(att => att.Date)
+        );
+        const workingDaysInPeriod = await countWorkingDays(dateFrom, dateTo, saturdaysWorked);
 
         // Days worked (from work logs - unique dates)
         const uniqueDates = new Set(workLogs.map(log => log.Date));
@@ -96,10 +103,19 @@ export async function calculateWorkerProductivity(
         // Get worker name from first log
         const workerName = workLogs[0]?.Worker_Name || 'Unknown';
 
-        // Get product values for products worked on
+        // Vrijednost koju je radnik "generisao" = Product_Value × NJEGOV UDIO radnik-dana
+        // na stavci (Σ Day_Fraction radnika / Actual_Labor_Days stavke). Ranije je svaki
+        // radnik koji je dotakao proizvod dobijao PUNU vrijednost → duplo brojanje kroz tim.
         let valueGenerated = 0;
-        if (uniqueProducts.size > 0) {
-            // Get work order items to find product values
+        const workerFractionByItem = new Map<string, number>();
+        workLogs.forEach(log => {
+            if (!log.Work_Order_Item_ID) return;
+            workerFractionByItem.set(
+                log.Work_Order_Item_ID,
+                (workerFractionByItem.get(log.Work_Order_Item_ID) || 0) + (log.Day_Fraction ?? 1)
+            );
+        });
+        if (workerFractionByItem.size > 0) {
             const itemsQuery = query(
                 collection(db, 'work_order_items'),
                 where('Organization_ID', '==', organizationId)
@@ -107,13 +123,16 @@ export async function calculateWorkerProductivity(
             const itemsSnapshot = await getDocs(itemsQuery);
             const items = itemsSnapshot.docs.map(doc => doc.data() as WorkOrderItem);
 
-            // Sum product values for products this worker worked on
-            const workerProductIds = Array.from(uniqueProducts);
             items.forEach(item => {
-                if (workerProductIds.includes(item.Product_ID)) {
-                    valueGenerated += item.Product_Value || 0;
-                }
+                const workerFraction = workerFractionByItem.get(item.ID);
+                if (!workerFraction) return;
+                // Actual_Labor_Days sync-uje recalculateWorkOrder (Σ Day_Fraction SVIH radnika);
+                // bez njega (legacy stavka) pripiši punu vrijednost — bolje precijeniti nego 0.
+                const totalDays = item.Actual_Labor_Days || 0;
+                const share = totalDays > 0 ? Math.min(1, workerFraction / totalDays) : 1;
+                valueGenerated += (item.Product_Value || 0) * share;
             });
+            valueGenerated = Math.round(valueGenerated * 100) / 100;
         }
 
         const valuePerDay = daysWorked > 0 ? valueGenerated / daysWorked : 0;
@@ -467,11 +486,17 @@ export async function getWorkerEarningsSummary(
 // HELPER FUNCTIONS
 // ============================================
 
+/** Lokalni YYYY-MM-DD (bez UTC pomaka — toISOString bi oko ponoći promašio dan). */
+function toLocalISO(d: Date): string {
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
 /**
- * Count working days (Monday-Friday, excluding holidays) between two dates
- * Enhanced: Also excludes holidays from the 'holidays' Firestore collection
+ * Radni dani perioda: pon–pet bez praznika (kolekcija 'holidays'), PLUS subote iz
+ * `saturdaysWorked` — subota je radni dan SAMO kad je radnik po šihtarici taj dan
+ * stvarno radio (pravilo radionice; ista logika kao subotnja rotacija u lib/planning.ts).
  */
-async function countWorkingDays(dateFrom: string, dateTo: string): Promise<number> {
+async function countWorkingDays(dateFrom: string, dateTo: string, saturdaysWorked: Set<string>): Promise<number> {
     // PROFIT-10 FIX: Parse as noon to avoid timezone midnight edge cases
     const start = new Date(dateFrom + 'T12:00:00');
     const end = new Date(dateTo + 'T12:00:00');
@@ -494,8 +519,11 @@ async function countWorkingDays(dateFrom: string, dateTo: string): Promise<numbe
     const current = new Date(start);
     while (current <= end) {
         const dayOfWeek = current.getDay();
-        const dateStr = current.toISOString().split('T')[0];
-        if (dayOfWeek !== 0 && dayOfWeek !== 6 && !holidayDates.has(dateStr)) {
+        const dateStr = toLocalISO(current);
+        if (dayOfWeek === 6) {
+            // Subota: broji se samo ako je stvarno odrađena (šihtarica) — praznik nebitan, rad je rad.
+            if (saturdaysWorked.has(dateStr)) count++;
+        } else if (dayOfWeek !== 0 && !holidayDates.has(dateStr)) {
             count++;
         }
         current.setDate(current.getDate() + 1);

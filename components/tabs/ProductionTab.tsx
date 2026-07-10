@@ -50,6 +50,20 @@ interface ProductSelection {
     Source_Work_Order_ID?: string; // For montaža: links to original production order
 }
 
+// Iskorištena količina proizvoda kroz sve NE-OTKAZANE naloge (završeni troše količinu).
+// Jedini kriterij dostupnosti — koriste ga i lista wizarda (eligibleProducts) i guard
+// pri kreiranju, da ponuđeno i dozvoljeno nikad ne odstupe.
+function usedQuantityForProduct(workOrders: WorkOrder[], productId: string): number {
+    let used = 0;
+    workOrders.forEach(wo => {
+        if (wo.Status === 'Otkazano') return;
+        wo.items?.forEach(item => {
+            if (item.Product_ID === productId) used += item.Quantity || 0;
+        });
+    });
+    return used;
+}
+
 // Nalog je PAUZIRAN kad su sve otvorene (ne-završene/otkazane) stavke pauzirane —
 // wo.Status i dalje piše 'U toku' (status se ne mijenja pauzom), pa ovo precizira prikaz i sortiranje.
 function isOrderPaused(wo: WorkOrder): boolean {
@@ -320,6 +334,9 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
     // Sekvencijalno (kao u zahtjevu: 2 proizvoda × 2 dana = 4 dana). Subota se računa,
     // nedjelje se preskaču, A subote uvažavaju ROTACIJU po radniku iz šihtarice (vidi lib/planning.ts).
     const totalPlannedDays = useMemo(() => {
+        // Montaža: stavke se kreiraju s NULIRANIM planiranim danima (isMontazaMode),
+        // pa proizvodni Labor_Days iz ponude NE smiju hraniti prijedlog roka montaže.
+        if (wizardMode === 'montaza') return 0;
         return selectedProducts.reduce((sum, p) => {
             const project = projects.find(pr => pr.Project_ID === p.Project_ID);
             const offer = project?.offers?.find(o => o.Status === 'Prihvaćeno');
@@ -405,16 +422,7 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
         sortedProjects.forEach(project => {
             (project.products || []).forEach(product => {
                 // Calculate quantity already used in work orders
-                let usedQuantity = 0;
-                workOrders.forEach(wo => {
-                    if (wo.Status === 'Otkazano') return; // Skip cancelled orders
-                    wo.items?.forEach(item => {
-                        if (item.Product_ID === product.Product_ID) {
-                            usedQuantity += item.Quantity || 0;
-                        }
-                    });
-                });
-
+                const usedQuantity = usedQuantityForProduct(workOrders, product.Product_ID);
                 const totalQuantity = product.Quantity || 1;
                 const availableQuantity = totalQuantity - usedQuantity;
 
@@ -716,20 +724,39 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
 
     async function handleCreateWorkOrder() {
         if (selectedProducts.length === 0) return;
+        const isMontazaMode = wizardMode === 'montaza';
 
-        // S2.1: Guard against duplicate products already in active work orders
+        // S2.1: Guard po KOLIČINI — ista aritmetika kao eligibleProducts (usedQuantityForProduct),
+        // pa lista i guard ne mogu odstupiti: blokira se SAMO kad tražena količina premašuje
+        // preostalu (ukupno u projektu − iskorišteno u ne-otkazanim nalozima).
+        // Montaža: kandidati su 'Spremno' proizvodi (količina već potrošena u proizvodnji),
+        // pa se provjerava samo da proizvod nije u drugom aktivnom MONTAŽNOM nalogu.
         const duplicates: string[] = [];
         for (const sp of selectedProducts) {
-            const existing = workOrders.find(wo =>
-                wo.Status !== 'Završeno' &&
-                wo.items?.some(item => item.Product_ID === sp.Product_ID)
-            );
-            if (existing) {
-                duplicates.push(`${sp.Product_Name} (nalog ${existing.Work_Order_Number})`);
+            if (isMontazaMode) {
+                const existing = workOrders.find(wo =>
+                    wo.Work_Order_Type === 'Montaža' &&
+                    wo.Status !== 'Završeno' &&
+                    wo.Status !== 'Otkazano' &&
+                    wo.items?.some(item => item.Product_ID === sp.Product_ID)
+                );
+                if (existing) duplicates.push(`${sp.Product_Name} (nalog ${existing.Work_Order_Number})`);
+            } else {
+                const project = projects.find(pr => pr.Project_ID === sp.Project_ID);
+                const totalQuantity = project?.products?.find(p => p.Product_ID === sp.Product_ID)?.Quantity || 1;
+                const remaining = totalQuantity - usedQuantityForProduct(workOrders, sp.Product_ID);
+                if ((sp.Work_Order_Quantity || 1) > remaining) {
+                    duplicates.push(`${sp.Product_Name} (traženo ${sp.Work_Order_Quantity || 1}, dostupno ${Math.max(0, remaining)})`);
+                }
             }
         }
         if (duplicates.length > 0) {
-            showToast(`Proizvodi su već u aktivnim nalozima: ${duplicates.join(', ')}`, 'error');
+            showToast(
+                isMontazaMode
+                    ? `Proizvodi su već u aktivnim montažnim nalozima: ${duplicates.join(', ')}`
+                    : `Nedovoljna preostala količina: ${duplicates.join(', ')}`,
+                'error'
+            );
             return;
         }
 
@@ -739,7 +766,6 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
         let materialCost = 0;
         let totalTransport = 0;
         let totalServices = 0;
-        const isMontazaMode = wizardMode === 'montaza';
 
         if (!isMontazaMode) {
             selectedProducts.forEach(p => {
