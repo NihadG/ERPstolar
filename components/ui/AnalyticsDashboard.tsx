@@ -171,8 +171,17 @@ export default function AnalyticsDashboard({ onClose, showToast, onRefresh }: An
                     ) : tab === 'products' ? (
                         <div className="ana-section">
                             <div className="ana-search"><Search size={16} /><input placeholder="Pretraži proizvode/projekte…" value={search} onChange={e => setSearch(e.target.value)} /></div>
-                            <table className="ana-table">
-                                <thead><tr><th>Proizvod</th><th>Projekat</th><th className="r">Cijena</th><th className="r">Materijal</th><th className="r">Rad</th><th className="r">Usluge</th><th className="r">Profit</th><th></th></tr></thead>
+                            <table className="ana-table ana-table-fixed">
+                                <colgroup>
+                                    <col style={{ width: '28%' }} />
+                                    <col style={{ width: '11%' }} />
+                                    <col style={{ width: '13%' }} />
+                                    <col style={{ width: '11%' }} />
+                                    <col style={{ width: '9%' }} />
+                                    <col style={{ width: '19%' }} />
+                                    <col style={{ width: '9%' }} />
+                                </colgroup>
+                                <thead><tr><th>Proizvod</th><th className="r">Cijena</th><th className="r">Materijal</th><th className="r">Rad</th><th className="r">Usluge</th><th className="r">Profit</th><th></th></tr></thead>
                                 <tbody>
                                     {filteredProducts.map(p => {
                                         // Maskiraj kolone SAMO za stvarno ne-prihodovne redove (čista montaža/teren
@@ -180,23 +189,25 @@ export default function AnalyticsDashboard({ onClose, showToast, onRefresh }: An
                                         const nonRev = p.nonRevenue;
                                         return (
                                             <tr key={p.itemId}>
-                                                <td>{p.productName}</td>
-                                                <td className="muted">{p.projectName} <span className="ana-wo">#{p.woNumber}</span></td>
-                                                <td className="r">{nonRev ? '—' : fmt(p.selling)}</td>
-                                                <td className="r">{nonRev ? '—' : (
+                                                <td>
+                                                    <span className="ana-cell-title" title={p.productName}>{p.productName}</span>
+                                                    <span className="ana-cell-meta" title={`${p.projectName} #${p.woNumber}`}>{p.projectName} <span className="ana-wo">#{p.woNumber}</span></span>
+                                                </td>
+                                                <td className="r money">{nonRev ? '—' : fmt(p.selling)}</td>
+                                                <td className="r money">{nonRev ? '—' : (
                                                     <span className="ana-pa">
                                                         <span>{fmt(p.material)}</span>
                                                         {p.plannedMaterial > 0 && <span className={`ana-pa-plan ${p.material > p.plannedMaterial ? 'red' : 'green'}`}>plan {fmt(p.plannedMaterial)}</span>}
                                                     </span>
                                                 )}</td>
-                                                <td className="r amber">
+                                                <td className="r amber money">
                                                     <span className="ana-pa">
                                                         <span>{fmt(p.labor)}</span>
                                                         {!nonRev && p.plannedLabor > 0 && <span className={`ana-pa-plan ${p.labor > p.plannedLabor ? 'red' : 'green'}`}>plan {fmt(p.plannedLabor)}</span>}
                                                     </span>
                                                 </td>
-                                                <td className="r">{nonRev ? '—' : fmt(p.services)}</td>
-                                                <td className={`r b ${nonRev ? 'amber' : p.profit >= 0 ? 'green' : 'red'}`}>
+                                                <td className="r money">{nonRev ? '—' : fmt(p.services)}</td>
+                                                <td className={`r b money profit-col ${nonRev ? 'amber' : p.profit >= 0 ? 'green' : 'red'}`}>
                                                     {nonRev ? `−${fmt(p.labor)}` : (
                                                         <span className="ana-pa">
                                                             <span>{fmt(p.profit)} · {pct(p.margin)}</span>
