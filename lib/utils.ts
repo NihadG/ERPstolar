@@ -61,6 +61,32 @@ export function orderProcessProgress(items: {
     return { done, total, pct: Math.round((done / total) * 100) };
 }
 
+/**
+ * Nalog je PAUZIRAN kad su sve otvorene (ne-završene/otkazane) stavke pauzirane —
+ * wo.Status i dalje piše 'U toku' (status se ne mijenja pauzom), pa ovo precizira
+ * prikaz i sortiranje. Dijele ga ProductionTab (sort) i WorkOrderCard (prikaz).
+ */
+export function isOrderPaused(wo: {
+    Status?: string;
+    items?: { Status?: string; Is_Paused?: boolean }[];
+}): boolean {
+    const openItems = (wo.items || []).filter(i => i.Status !== 'Završeno' && i.Status !== 'Otkazano');
+    return wo.Status === 'U toku' && openItems.length > 0 && openItems.every(i => i.Is_Paused);
+}
+
+/** Boja/ikona/pozadina statusa naloga — jedan izvor za karticu, mobile view i sl. */
+export function workOrderStatusDetails(status: string): { color: string; icon: string; bg: string } {
+    switch (status) {
+        case 'Završeno': return { color: '#10b981', icon: 'check_circle', bg: 'linear-gradient(135deg, rgba(16, 185, 129, 0.1), rgba(16, 185, 129, 0.2))' };
+        case 'U toku': return { color: '#3b82f6', icon: 'trending_up', bg: 'linear-gradient(135deg, rgba(59, 130, 246, 0.1), rgba(59, 130, 246, 0.2))' };
+        case 'Na čekanju': return { color: '#f59e0b', icon: 'schedule', bg: 'linear-gradient(135deg, rgba(245, 158, 11, 0.1), rgba(245, 158, 11, 0.2))' };
+        case 'Otkazano': return { color: '#ef4444', icon: 'cancel', bg: 'linear-gradient(135deg, rgba(239, 68, 68, 0.1), rgba(239, 68, 68, 0.2))' };
+        case 'Dodijeljeno': return { color: '#8b5cf6', icon: 'assignment_ind', bg: 'linear-gradient(135deg, rgba(139, 92, 246, 0.1), rgba(139, 92, 246, 0.2))' };
+        case 'Pauzirano': return { color: '#eab308', icon: 'pause_circle', bg: 'linear-gradient(135deg, rgba(234, 179, 8, 0.1), rgba(234, 179, 8, 0.2))' };
+        default: return { color: '#9ca3af', icon: 'help_outline', bg: 'linear-gradient(135deg, rgba(156, 163, 175, 0.1), rgba(156, 163, 175, 0.2))' };
+    }
+}
+
 export function formatDate(dateString: string | undefined | null): string {
     if (!dateString) return '-';
     try {
