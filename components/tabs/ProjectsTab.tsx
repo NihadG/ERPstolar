@@ -887,26 +887,28 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
         // 3. U montaži - any montaža step in progress
         // 4. Završeno - fully complete (Spremno for non-montaža, Instalirano for montaža)
 
+        // VAŽNO: status proizvoda dolazi iz naloga — kad nalog krene, startWorkOrder upiše
+        // IME PRVOG PROCESA (Production_Steps[0]), a syncProductStatuses ime aktivnog/zadnjeg
+        // procesa. Ta imena su često iz prilagođenog kataloga i NE mogu se nabrojati unaprijed.
+        // Zato je "U proizvodnji" DEFAULT za sve što nije eksplicitno čekanje / montaža / završeno —
+        // tako status proizvoda uvijek prati nalog (bilo koji proces u toku → U proizvodnji).
         const waitingStatuses = ['Na čekanju', 'Materijali naručeni', 'Materijali spremni'];
-        const inProductionStatuses = ['Rezanje', 'Kantiranje', 'Bušenje', 'Sklapanje', 'U proizvodnji'];
-        const inMontazaStatuses = ['Transport', 'Montaža', 'Čišćenje', 'Primopredaja'];
+        const inMontazaStatuses = ['Transport', 'Montaža', 'Čišćenje', 'Primopredaja', 'U montaži'];
         const completedStatuses = ['Spremno', 'Instalirano', 'Završeno'];
 
         if (waitingStatuses.includes(status)) {
             return 'Na čekanju';
         }
-        if (inProductionStatuses.includes(status)) {
-            return 'U proizvodnji';
+        if (completedStatuses.includes(status)) {
+            return 'Završeno';
         }
         if (inMontazaStatuses.includes(status)) {
             return 'U montaži';
         }
-        if (completedStatuses.includes(status)) {
-            return 'Završeno';
-        }
 
-        // Default fallback
-        return 'Na čekanju';
+        // Sve ostalo (poznati ili prilagođeni naziv procesa, 'U proizvodnji', 'U toku', ...)
+        // = proizvodnja je u toku.
+        return 'U proizvodnji';
     }
 
     const isMobile = useIsMobile();
