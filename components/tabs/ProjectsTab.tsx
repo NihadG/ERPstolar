@@ -1711,14 +1711,12 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                                                             {/* Product Materials — shown when expanded */}
                                                             {expandedProducts.has(product.Product_ID) && (() => {
                                                                 const productMats = product.materials || [];
-                                                                const totalMaterialsCost = productMats.reduce((sum, m) => sum + (m.Total_Price || 0), 0);
 
                                                                 return (
                                                                     <div className="product-materials">
                                                                         <div className="materials-header">
                                                                             <div className="materials-header-left">
                                                                                 <h5>Materijali ({productMats.length})</h5>
-                                                                                <span className="materials-total">Ukupno: {formatCurrency(totalMaterialsCost)}</span>
                                                                             </div>
                                                                             <div className="materials-header-actions">
                                                                                 <button className="btn-add-item" onClick={() => {

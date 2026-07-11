@@ -464,8 +464,8 @@
 #projects-content .product-header {
     display: flex;
     align-items: center;
-    padding: 14px 18px;
-    gap: 14px;
+    padding: 10px 16px;
+    gap: 12px;
     cursor: pointer;
     transition: background 0.15s ease;
     border-radius: 14px;
@@ -479,13 +479,37 @@
     font-weight: 600;
     font-size: 14px;
     color: #1d1d1f;
-    margin-bottom: 2px;
+    margin-bottom: 1px;
     letter-spacing: -0.01em;
 }
 
 #projects-content .product-dims {
     font-size: 12px;
     color: #aeaeb2;
+}
+
+/* Akcije proizvoda — horizontalno u jednom redu.
+   .icon-btn ima display:flex (blok-nivo), pa bez flex kontejnera se dugmad slažu
+   vertikalno i nepotrebno šire/produžuju karticu. */
+#projects-content .product-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+}
+
+/* Badge cijene/vrijednosti materijala — kompaktan, tabularne cifre, poravnat s ostatkom reda. */
+#projects-content .product-cost-badge {
+    display: inline-flex;
+    align-items: center;
+    font-size: 13px;
+    font-weight: 600;
+    color: #1d1d1f;
+    font-feature-settings: "tnum";
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.01em;
+    white-space: nowrap;
+    flex-shrink: 0;
 }
 
 /* ============================================
@@ -701,6 +725,18 @@
     font-size: 13px;
 }
 
+/* Header red dijeli iste .mat-col-* klase kao podaci — bez ovog reseta
+   naslovi Količina/Cijena/Ukupno nasljeđuju 13px umjesto 11px uppercase stila. */
+#projects-content .mat-row.mat-header .mat-col-qty,
+#projects-content .mat-row.mat-header .mat-col-price,
+#projects-content .mat-row.mat-header .mat-col-total {
+    font-size: 11px;
+    font-weight: 600;
+    color: #aeaeb2;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+}
+
 #projects-content .mat-col-total strong {
     color: #1d1d1f;
     font-weight: 600;
@@ -820,31 +856,44 @@
 
 #projects-content .quick-edit-input {
     width: 100%;
-    max-width: 90px;
+    max-width: 96px;
     margin-left: auto;
-    padding: 6px 8px;
-    border: 1.5px solid rgba(0, 113, 227, 0.3);
+    padding: 9px 10px;
+    border: 1px solid #d1d5db;
     border-radius: 8px;
     font-size: 13px;
     font-weight: 500;
     color: #1d1d1f;
     background: #ffffff;
     outline: none;
-    transition: border-color 0.2s ease;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+    transition: border-color 0.2s ease, background 0.2s ease;
     text-align: right;
     font-feature-settings: "tnum";
 }
 
+#projects-content .quick-edit-input:hover {
+    border-color: #9ca3af;
+    background: #fcfcfd;
+}
+
 #projects-content .quick-edit-input:focus {
     border-color: var(--accent);
-    box-shadow: 0 0 0 3px rgba(0, 113, 227, 0.08);
+    background: #ffffff;
+    box-shadow: 0 0 0 4px rgba(0, 113, 227, 0.1);
 }
 
 /* ---- Compact SearchableSelect override — inline "Brzo uređivanje" red ----
    SearchableSelect je stilizovan za modale/forme (veći font/padding);
-   ovdje ga svodimo na kompaktan red da se uklopi s .quick-edit-input i status pill-om. */
+   ovdje ga svodimo na kompaktan red da se uklopi s .quick-edit-input i status pill-om.
+   Padding/border se poklapaju s .quick-edit-input radi jednake visine kućica u redu.
+   max-width sprječava da dropdown razvuče cijelu (široku) kolonu naziva u tanku traku. */
+#projects-content .mat-col-name-select {
+    max-width: 340px;
+}
+
 #projects-content .mat-col-name-select .searchable-select-trigger {
-    padding: 7px 10px;
+    padding: 9px 10px;
     border-radius: 8px;
     min-height: 0;
 }

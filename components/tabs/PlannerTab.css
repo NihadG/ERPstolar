@@ -6,7 +6,19 @@
     display: flex;
     flex-direction: column;
     height: 100%;
+    min-height: 0;
     background: var(--surface);
+}
+
+/* Desktop: fiksiraj visinu Planera na viewport (content-area ima 24px+24px padding),
+   da .gantt-table postane pravi scroll okvir → red datuma se zamrzava (sticky),
+   a backlog/kapacitet unutar .gantt-prehead otklizaju pri skrolanju.
+   Bez ovoga skrola cijela stranica pa sticky zaglavlje nema za šta da se zakači. */
+@media (min-width: 769px) {
+    .planner-container {
+        height: calc(100dvh - 48px);
+        overflow: hidden;
+    }
 }
 
 /* ============================================
@@ -395,12 +407,34 @@
    ============================================ */
 .gantt-table {
     flex: 1;
+    min-height: 0;
     overflow: auto;
     background: var(--background);
     margin: 12px 24px 24px;
     border-radius: var(--radius-md);
     border: 1px solid var(--border-light);
     box-shadow: 0 1px 3px var(--shadow);
+}
+
+/* Backlog + kapacitet: unutar scroll okvira, iznad reda datuma.
+   sticky left:0 → ne pomjeraju se horizontalno pri skrolanju dana; vertikalno otklizaju
+   (nema top), pa su vidljivi samo dok si na vrhu. z-index ispod reda datuma (10). */
+.gantt-prehead {
+    position: sticky;
+    left: 0;
+    z-index: 8;
+    background: var(--background);
+    border-bottom: 1px solid var(--border-light);
+    padding-bottom: 10px;
+}
+
+.gantt-prehead .planner-backlog {
+    border-bottom: none;
+    padding: 10px 16px;
+}
+
+.gantt-prehead .capacity-strip {
+    padding: 10px 16px 0;
 }
 
 .gantt-header-row {

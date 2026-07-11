@@ -3985,6 +3985,9 @@ textarea::placeholder {
 /* Compact product card overrides */
 .offer-project-select {
   margin-bottom: 0 !important;
+  /* Uskladi razmak labela→polje s .offer-name-field (gap 4px) da se kutije
+     poravnaju u istom redu; bez ovoga select sjedi ~4px niže od inputa. */
+  gap: 4px !important;
 }
 
 .offer-project-select select {

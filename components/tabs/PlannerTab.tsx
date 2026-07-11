@@ -707,6 +707,11 @@ export default function PlannerTab({ workOrders, workers, workLogs, onRefresh, s
                 </div>
             </div>
 
+            {/* Gantt: backlog + kapacitet + tabela u JEDNOM scroll okviru, da red datuma
+               ostane zamrznut (sticky top), a backlog/kapacitet otklizaju pri skrolanju. */}
+            <DragDropContext onDragEnd={onDragEnd}>
+                <div className="gantt-table">
+                    <div className="gantt-prehead">
             {/* Backlog */}
             <div className="planner-backlog">
                 <div className="backlog-label">
@@ -759,10 +764,8 @@ export default function PlannerTab({ workOrders, workers, workLogs, onRefresh, s
                     })}
                 </div>
             )}
+                    </div>{/* /gantt-prehead */}
 
-            {/* Gantt Table with Drag-and-Drop */}
-            <DragDropContext onDragEnd={onDragEnd}>
-                <div className="gantt-table">
                     {/* Date Header */}
                     <div className="gantt-header-row">
                         <div className="gantt-worker-header">Radnici</div>
