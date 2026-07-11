@@ -1763,16 +1763,18 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                                                                                         <div className="mat-col-name">
                                                                                             <span className="mobile-label">Materijal:</span>
                                                                                             {isInQuickEdit && !isGlass && !isAluDoor ? (
-                                                                                                <SearchableSelect
-                                                                                                    value={editValues.materialId || material.Material_ID}
-                                                                                                    onChange={(value) => handleQuickEditMaterialChange(material.ID, value)}
-                                                                                                    options={materials.map(m => ({
-                                                                                                        value: m.Material_ID,
-                                                                                                        label: m.Name,
-                                                                                                        subLabel: `${m.Category} • ${m.Unit}`
-                                                                                                    }))}
-                                                                                                    placeholder="Promijeni materijal..."
-                                                                                                />
+                                                                                                <div className="mat-col-name-select">
+                                                                                                    <SearchableSelect
+                                                                                                        value={editValues.materialId || material.Material_ID}
+                                                                                                        onChange={(value) => handleQuickEditMaterialChange(material.ID, value)}
+                                                                                                        options={materials.map(m => ({
+                                                                                                            value: m.Material_ID,
+                                                                                                            label: m.Name,
+                                                                                                            subLabel: `${m.Category} • ${m.Unit}`
+                                                                                                        }))}
+                                                                                                        placeholder="Promijeni materijal..."
+                                                                                                    />
+                                                                                                </div>
                                                                                             ) : (
                                                                                                 <>
                                                                                                     <span className="mat-name">{material.Material_Name}</span>

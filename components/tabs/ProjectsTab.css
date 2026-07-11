@@ -628,7 +628,7 @@
 
 #projects-content .mat-row {
     display: grid;
-    grid-template-columns: 3fr 1fr 1fr 1fr 1.2fr 0.8fr;
+    grid-template-columns: minmax(200px, 2.6fr) minmax(70px, 0.55fr) minmax(70px, 0.55fr) minmax(90px, 0.7fr) minmax(150px, 1fr) 60px;
     gap: 12px;
     align-items: center;
     padding: 10px 4px;
@@ -692,6 +692,9 @@
 #projects-content .mat-col-qty,
 #projects-content .mat-col-price,
 #projects-content .mat-col-total {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
     font-feature-settings: "tnum";
     font-variant-numeric: tabular-nums;
     color: #86868b;
@@ -816,8 +819,10 @@
 }
 
 #projects-content .quick-edit-input {
-    width: 80px;
-    padding: 4px 8px;
+    width: 100%;
+    max-width: 90px;
+    margin-left: auto;
+    padding: 6px 8px;
     border: 1.5px solid rgba(0, 113, 227, 0.3);
     border-radius: 8px;
     font-size: 13px;
@@ -826,13 +831,30 @@
     background: #ffffff;
     outline: none;
     transition: border-color 0.2s ease;
-    text-align: center;
+    text-align: right;
     font-feature-settings: "tnum";
 }
 
 #projects-content .quick-edit-input:focus {
     border-color: var(--accent);
     box-shadow: 0 0 0 3px rgba(0, 113, 227, 0.08);
+}
+
+/* ---- Compact SearchableSelect override — inline "Brzo uređivanje" red ----
+   SearchableSelect je stilizovan za modale/forme (veći font/padding);
+   ovdje ga svodimo na kompaktan red da se uklopi s .quick-edit-input i status pill-om. */
+#projects-content .mat-col-name-select .searchable-select-trigger {
+    padding: 7px 10px;
+    border-radius: 8px;
+    min-height: 0;
+}
+
+#projects-content .mat-col-name-select .trigger-text {
+    font-size: 13px;
+}
+
+#projects-content .mat-col-name-select .trigger-icon {
+    font-size: 16px;
 }
 
 #projects-content .material-row.editing {
