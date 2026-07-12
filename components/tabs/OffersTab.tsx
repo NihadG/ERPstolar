@@ -415,7 +415,7 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
         setOfferProducts(updated);
     }
 
-    // Refresh material cost from latest project product data
+    // Refresh material cost from latest project product data (jedan proizvod)
     function refreshMaterialCost(index: number) {
         const product = offerProducts[index];
         if (!product || !selectedProjectId) return;
@@ -438,7 +438,7 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
     }
 
     // Osvježi cijene materijala SVIH proizvoda u ponudi na trenutne (iz projekta).
-    // Koristi se kad korisnik SVJESNO želi ažurirati zastarjelu ponudu na nove cijene.
+    // Globalno dugme iznad kolone Materijal + akcija "Ažuriraj cijene" u banneru zaključane ponude.
     function refreshAllMaterialCosts() {
         if (!selectedProjectId) return;
         const project = projects.find(p => p.Project_ID === selectedProjectId);
@@ -760,7 +760,13 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
                     setOfferCurrency((fullOffer as any).Currency || 'KM');
                     setOfferLanguage((fullOffer as any).Language || 'bs');
 
-                    const products: OfferProductState[] = (fullOffer.products || []).map((p: OfferProduct) => {
+                    // Isti "smeće red" filter kao u openEditModal: obrisan iz projekta + nikad
+                    // nije bio uključen → tiho izbaci. Uključeni redovi se ne diraju.
+                    const conflictProjectProducts = projects.find(pr => pr.Project_ID === fullOffer.Project_ID)?.products || [];
+                    const products: OfferProductState[] = (fullOffer.products || []).filter((p: OfferProduct) => {
+                        const stillExistsInProject = conflictProjectProducts.some(pp => pp.Product_ID === p.Product_ID);
+                        return stillExistsInProject || p.Included !== false;
+                    }).map((p: OfferProduct) => {
                         return {
                             Product_ID: p.Product_ID,
                             Product_Name: p.Product_Name,
@@ -850,6 +856,11 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
         const seenProductIds = new Set<string>();
         const products: OfferProductState[] = (fullOffer.products || []).filter((p: OfferProduct) => {
             if (seenProductIds.has(p.Product_ID)) return false;
+            // Proizvod obrisan iz projekta A NIJE bio uključen u ponudu — čist "smeće" red
+            // (ne utiče na cijenu/ukupno), tiho ga izbacujemo iz editora. Obrisan proizvod
+            // koji JESTE uključen se NE dira — ne mijenjamo stavke već poslane/prihvaćene ponude.
+            const stillExistsInProject = projectProducts.some(pp => pp.Product_ID === p.Product_ID);
+            if (!stillExistsInProject && p.Included === false) return false;
             seenProductIds.add(p.Product_ID);
             return true;
         }).map((p: OfferProduct) => {
@@ -2335,7 +2346,22 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
                                                 <tr>
                                                     <th style={{ width: '50px', textAlign: 'center' }}>Uklj.</th>
                                                     <th>Naziv proizvoda</th>
-                                                    <th style={{ width: '110px' }}>Materijal</th>
+                                                    <th style={{ width: '110px' }}>
+                                                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                                                            Materijal
+                                                            {isEditMode && !editLocked && (
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={refreshAllMaterialCosts}
+                                                                    title="Osvježi cijene materijala svih proizvoda iz projekta"
+                                                                    className="refresh-btn"
+                                                                    style={{ textTransform: 'none' }}
+                                                                >
+                                                                    <span className="material-icons-round">refresh</span>
+                                                                </button>
+                                                            )}
+                                                        </span>
+                                                    </th>
                                                     <th style={{ width: '100px', textAlign: 'center' }}>Radnici</th>
                                                     <th style={{ width: '100px', textAlign: 'center' }}>Dani</th>
                                                     <th style={{ width: '120px', textAlign: 'right' }}>Dnevnica</th>
@@ -2347,9 +2373,10 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
                                             </thead>
                                             <tbody>
                                                 {offerProducts.map((product, index) => {
+                                                    const materialCost = product.Material_Cost || 0;
                                                     const laborTotal = (product.laborWorkers || 0) * (product.laborDays || 0) * (product.laborDailyRate || 0);
                                                     const extrasTotal = (product.extras || []).reduce((sum, e) => sum + (e.total || 0), 0);
-                                                    const unitPrice = (product.Material_Cost || 0) + (product.margin || 0) + extrasTotal + laborTotal;
+                                                    const unitPrice = materialCost + (product.margin || 0) + extrasTotal + laborTotal;
                                                     
                                                     return (
                                                         <tr key={product.Product_ID} className={product.included ? 'included' : 'excluded'}>
