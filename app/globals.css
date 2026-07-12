@@ -1585,6 +1585,73 @@ textarea::placeholder {
   white-space: nowrap;
 }
 
+/* Oznaka zastarjelih cijena (poslane/prihvaćene ponude) */
+.offer-stale-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border-radius: 20px;
+  padding: 4px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+  background: #fff3e0;
+  color: #b45309;
+  border: 1px solid #fcd9a5;
+  cursor: help;
+}
+
+/* Banner zaključane ponude u editoru */
+.offer-lock-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+  padding: 12px 16px;
+  border-radius: 12px;
+  background: #fff8ec;
+  border: 1px solid #f5d9a8;
+}
+
+.offer-lock-banner-text {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  font-size: 13px;
+  color: var(--text-primary);
+  line-height: 1.45;
+  min-width: 0;
+  flex: 1;
+}
+
+.offer-lock-banner-text > .material-icons-round {
+  font-size: 20px;
+  color: #b45309;
+  flex-shrink: 0;
+}
+
+.offer-lock-stale {
+  color: #b45309;
+  font-weight: 500;
+}
+
+.offer-lock-banner-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  flex-shrink: 0;
+}
+
+.offer-lock-banner-actions .btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
 /* === CUSTOM STATUS BADGE + DROPDOWN === */
 .offer-status-wrapper {
   position: relative;

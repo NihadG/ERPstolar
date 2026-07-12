@@ -8,6 +8,7 @@ import { generateOfferPDF, type OfferPDFData } from '@/lib/pdfGenerator';
 import Modal from '@/components/ui/Modal';
 import { OFFER_STATUSES } from '@/lib/types';
 import { sortProductsByName } from '@/lib/sortProducts';
+import { offerPriceChanges, isOfferStale, flattenProjectProducts } from '@/lib/offerPricing';
 import { useIsMobile } from '@/hooks/useIsMobile';
 import MobileOffersView from './mobile/MobileOffersView';
 
@@ -91,6 +92,12 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
     const [currentOffer, setCurrentOffer] = useState<Offer | null>(null);
     const [isEditMode, setIsEditMode] = useState(false);
     const [modalLoading, setModalLoading] = useState(false);
+    // Zaključavanje uređivanja poslanih/prihvaćenih ponuda (zaštita cijene ka klijentu).
+    // Dok je true: Save i osvježavanje cijena su onemogućeni dok korisnik izričito ne otključa.
+    const [editLocked, setEditLocked] = useState(false);
+
+    // Svi proizvodi iz svih projekata (za detekciju zastarjelih cijena u ponudama).
+    const allProducts = useMemo(() => flattenProjectProducts(projects), [projects]);
 
     // PDV State
     const [includePDV, setIncludePDV] = useState(true);
@@ -317,6 +324,7 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
     // ============================================
 
     function openCreateModal() {
+        setEditLocked(false); // nova ponuda — uvijek otključana
         setSelectedProjectId('');
         setOfferName('');
         setOfferProducts([]);
@@ -427,6 +435,24 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
         updated[index].Material_Cost = freshCost;
         setOfferProducts(updated);
         showToast(`Cijena materijala ažurirana: ${freshCost.toFixed(2)} KM`, 'success');
+    }
+
+    // Osvježi cijene materijala SVIH proizvoda u ponudi na trenutne (iz projekta).
+    // Koristi se kad korisnik SVJESNO želi ažurirati zastarjelu ponudu na nove cijene.
+    function refreshAllMaterialCosts() {
+        if (!selectedProjectId) return;
+        const project = projects.find(p => p.Project_ID === selectedProjectId);
+        if (!project) return;
+        let changed = 0;
+        const updated = offerProducts.map(op => {
+            const pp = (project.products || []).find(p => p.Product_ID === op.Product_ID);
+            if (!pp) return op;
+            const freshCost = (pp.materials || []).reduce((sum, m) => sum + (m.Total_Price || 0), 0);
+            if (Math.round(freshCost * 100) !== Math.round((op.Material_Cost || 0) * 100)) changed++;
+            return { ...op, Material_Cost: freshCost };
+        });
+        setOfferProducts(updated);
+        showToast(changed > 0 ? `Ažurirano ${changed} cijena — provjeri i sačuvaj ponudu.` : 'Cijene su već ažurne.', changed > 0 ? 'success' : 'info');
     }
 
     function calculateProductTotal(product: OfferProductState): number {
@@ -719,6 +745,7 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
                 const fullOffer = await getOffer(offerId, organizationId!);
                 if (fullOffer) {
                     // All monetary values are ALWAYS stored in KM — Currency is only a display flag
+                    setEditLocked(false); // rješavanje konflikata je aktivna izmjena — ne zaključavaj
                     setCurrentOffer(fullOffer);
                     setIsEditMode(true);
                     setSelectedProjectId(fullOffer.Project_ID);
@@ -789,11 +816,10 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
 
     // Open edit modal for existing offer
     async function openEditModal(offer: Offer) {
-        // Izmjena PRIHVAĆENE ponude live-sinhronizuje cijene na postojeći radni nalog
-        // (updateOfferWithProducts) — upozori; za novu verziju postoji „Revidiraj".
-        if (offer.Status === 'Prihvaćeno') {
-            showToast('Pažnja: izmjene prihvaćene ponude mijenjaju cijene na radnom nalogu. Za novu verziju koristi „Revidiraj".', 'info');
-        }
+        // Poslane/prihvaćene ponude otvaraju se ZAKLJUČANO — cijena ka klijentu ne smije
+        // se slučajno promijeniti. Korisnik izričito bira „Otključaj izmjenu" ili „Revidiraj".
+        const locked = offer.Status === 'Poslano' || offer.Status === 'Prihvaćeno';
+        setEditLocked(locked);
         // Open modal immediately with loading state
         setCurrentOffer(offer);
         setIsEditMode(true);
@@ -1878,6 +1904,19 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
                                     <div className="offer-row-right">
                                         <span className="offer-row-amount">{formatPrice(offer.Total || 0, ((offer as any).Currency || 'KM') as 'KM' | 'EUR')}</span>
 
+                                        {/* Oznaka zastarjelih cijena: samo za poslane/prihvaćene ponude čiji se
+                                            snapshot materijala razlikuje od trenutne cijene proizvoda. */}
+                                        {(offer.Status === 'Poslano' || offer.Status === 'Prihvaćeno') && isOfferStale(offer, allProducts) && (
+                                            <span
+                                                className="offer-stale-badge"
+                                                title="Cijene materijala su se promijenile od kad je ponuda napravljena. Otvori ponudu za pregled/ažuriranje."
+                                                onClick={(e) => e.stopPropagation()}
+                                            >
+                                                <span className="material-icons-round" style={{ fontSize: 13 }}>price_change</span>
+                                                Cijene zastarjele
+                                            </span>
+                                        )}
+
                                         {/* Custom status badge with dropdown */}
                                         <div className="offer-status-wrapper" ref={activeStatusDropdown === offer.Offer_ID ? statusDropdownRef : undefined}>
                                             <button
@@ -2049,9 +2088,10 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
                         <button
                             className="glass-btn glass-btn-primary"
                             onClick={handleSaveOffer}
-                            disabled={isSaving || !selectedProjectId || offerProducts.filter(p => p.included).length === 0}
+                            disabled={isSaving || editLocked || !selectedProjectId || offerProducts.filter(p => p.included).length === 0}
+                            title={editLocked ? 'Ponuda je zaključana — otključaj izmjenu u banneru iznad' : undefined}
                         >
-                            {isSaving ? 'Spremanje...' : (isEditMode ? 'Ažuriraj Ponudu' : 'Sačuvaj Ponudu')}
+                            {isSaving ? 'Spremanje...' : editLocked ? '🔒 Zaključano' : (isEditMode ? 'Ažuriraj Ponudu' : 'Sačuvaj Ponudu')}
                         </button>
                     </>
                 }
@@ -2065,6 +2105,44 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
                     </div>
                 ) : (
                     <div className="offer-form">
+                        {/* Zaključana ponuda (poslana/prihvaćena): zaštita cijene ka klijentu.
+                            Save i osvježavanje cijena su onemogućeni dok se izričito ne otključa. */}
+                        {editLocked && currentOffer && (() => {
+                            const changes = offerPriceChanges(currentOffer, allProducts);
+                            const isAccepted = currentOffer.Status === 'Prihvaćeno';
+                            return (
+                                <div className="offer-lock-banner">
+                                    <div className="offer-lock-banner-text">
+                                        <span className="material-icons-round">lock</span>
+                                        <div>
+                                            <strong>Ponuda je {isAccepted ? 'prihvaćena' : 'poslana'} i zaključana.</strong>
+                                            <span> Cijene su zaštićene da se ne bi slučajno promijenile{isAccepted ? ' (izmjena bi uticala i na radni nalog)' : ''}.</span>
+                                            {changes.length > 0 && (
+                                                <span className="offer-lock-stale">
+                                                    {' '}Cijene materijala su se u međuvremenu promijenile za {changes.length} {changes.length === 1 ? 'proizvod' : 'proizvoda'}
+                                                    {' '}(npr. {changes[0].name}: {changes[0].snapshot.toFixed(2)} → {changes[0].current.toFixed(2)} KM).
+                                                </span>
+                                            )}
+                                        </div>
+                                    </div>
+                                    <div className="offer-lock-banner-actions">
+                                        <button type="button" className="btn btn-secondary" onClick={() => setEditLocked(false)} title="Dozvoli izmjenu ove ponude">
+                                            <span className="material-icons-round" style={{ fontSize: 16 }}>lock_open</span> Otključaj izmjenu
+                                        </button>
+                                        {currentOffer && (
+                                            <button type="button" className="btn btn-secondary" onClick={() => { const off = currentOffer; handleCloseOfferModal(); handleReviseOffer(off); }} title="Napravi novu verziju (original ostaje netaknut)">
+                                                <span className="material-icons-round" style={{ fontSize: 16 }}>content_copy</span> Revidiraj
+                                            </button>
+                                        )}
+                                        {changes.length > 0 && (
+                                            <button type="button" className="btn btn-primary" onClick={() => { setEditLocked(false); refreshAllMaterialCosts(); }} title="Otključaj i ažuriraj cijene materijala na trenutne">
+                                                <span className="material-icons-round" style={{ fontSize: 16 }}>price_change</span> Ažuriraj cijene
+                                            </button>
+                                        )}
+                                    </div>
+                                </div>
+                            );
+                        })()}
                         {/* Left Column */}
                         <div className="offer-form-left">
                             {/* Offer Name + Project Selector Row */}
@@ -2310,7 +2388,7 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
                                                             <td className="readonly-cell">
                                                                 <div className="val-flex">
                                                                     <span>{formatCurrency(product.Material_Cost)}</span>
-                                                                    {isEditMode && (
+                                                                    {isEditMode && !editLocked && (
                                                                         <button type="button" onClick={(e) => { e.stopPropagation(); refreshMaterialCost(index); }} title="Osviježi cijenu iz projekta" className="refresh-btn">
                                                                             <span className="material-icons-round">refresh</span>
                                                                         </button>
