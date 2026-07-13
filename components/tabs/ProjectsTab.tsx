@@ -890,8 +890,6 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
         // VAŽNO: status proizvoda dolazi iz naloga — kad nalog krene, startWorkOrder upiše
         // IME PRVOG PROCESA (Production_Steps[0]), a syncProductStatuses ime aktivnog/zadnjeg
         // procesa. Ta imena su često iz prilagođenog kataloga i NE mogu se nabrojati unaprijed.
-        // Zato je "U proizvodnji" DEFAULT za sve što nije eksplicitno čekanje / montaža / završeno —
-        // tako status proizvoda uvijek prati nalog (bilo koji proces u toku → U proizvodnji).
         const waitingStatuses = ['Na čekanju', 'Materijali naručeni', 'Materijali spremni'];
         const inMontazaStatuses = ['Transport', 'Montaža', 'Čišćenje', 'Primopredaja', 'U montaži'];
         const completedStatuses = ['Spremno', 'Instalirano', 'Završeno'];
@@ -906,8 +904,26 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
             return 'U montaži';
         }
 
-        // Sve ostalo (poznati ili prilagođeni naziv procesa, 'U proizvodnji', 'U toku', ...)
-        // = proizvodnja je u toku.
+        // Nepoznat string u Product.Status (npr. uvozni sentinel 'U pripremi', stari/ručni unos) —
+        // NE pretpostavljamo proizvodnju samo zato što se ne poklapa ni sa jednom listom gore.
+        // Status mora potvrditi STVARAN radni nalog: proizvod je "u proizvodnji"/"u montaži"
+        // samo ako ga referencira stavka aktivnog (neotkazanog) naloga koja je 'U toku'.
+        // Bez toga → 'Na čekanju', bez obzira šta piše u zastarjelom/nepoznatom Product.Status.
+        const hasActiveOrderItem = workOrders.some(wo =>
+            wo.Status !== 'Otkazano' &&
+            (wo.items || []).some(it => it.Product_ID === product.Product_ID && it.Status === 'U toku')
+        );
+        if (!hasActiveOrderItem) {
+            return 'Na čekanju';
+        }
+        const activeMontaza = workOrders.some(wo =>
+            wo.Work_Order_Type === 'Montaža' && wo.Status !== 'Otkazano' &&
+            (wo.items || []).some(it => it.Product_ID === product.Product_ID && it.Status === 'U toku')
+        );
+        if (activeMontaza) {
+            return 'U montaži';
+        }
+        // Potvrđeno aktivnim nalogom proizvodnje.
         return 'U proizvodnji';
     }
 

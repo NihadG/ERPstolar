@@ -381,7 +381,9 @@ export default function CSVImportWizard({
                         break;
                     case 'products':
                         // Let DB generate ID
-                        item.Status = 'U pripremi';
+                        // Novoimportovan proizvod nema nalog → 'Na čekanju' (prepoznat status),
+                        // ne izmišljen sentinel koji getProductStatus mora naknadno tumačiti.
+                        item.Status = 'Na čekanju';
                         if (!item.Quantity) item.Quantity = 1;
                         saveResult = await saveProduct(item as Partial<Product>, organizationId);
                         break;
