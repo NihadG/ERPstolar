@@ -2,13 +2,15 @@
 
 import { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import type { Offer, Project, OfferProduct, Product } from '@/lib/types';
-import { createOfferWithProducts, deleteOffer, updateOfferStatus, saveOffer, updateOfferWithProducts, getOffer, reviseOffer } from '@/lib/services';
+import { createOfferWithProducts, deleteOffer, updateOfferStatus, saveOffer, updateOfferWithProducts, getOffer, reviseOffer, getInvoicesForProject } from '@/lib/services';
 import { useData } from '@/context/DataContext';
 import { generateOfferPDF, type OfferPDFData } from '@/lib/pdfGenerator';
 import Modal from '@/components/ui/Modal';
 import { OFFER_STATUSES } from '@/lib/types';
 import { sortProductsByName } from '@/lib/sortProducts';
 import { offerPriceChanges, isOfferStale, flattenProjectProducts } from '@/lib/offerPricing';
+import { isRowLocked } from '@/lib/offerLocking';
+import InvoiceModal from '@/components/ui/InvoiceModal';
 import { useIsMobile } from '@/hooks/useIsMobile';
 import MobileOffersView from './mobile/MobileOffersView';
 
@@ -36,6 +38,8 @@ interface OfferProductState {
     laborWorkers: number;
     laborDays: number;
     laborDailyRate: number;
+    /** Red već ima cijenu u poslanoj/prihvaćenoj ponudi — izmjena samo kroz Revidiraj. */
+    locked: boolean;
 }
 
 interface OffersTabProps {
@@ -92,9 +96,18 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
     const [currentOffer, setCurrentOffer] = useState<Offer | null>(null);
     const [isEditMode, setIsEditMode] = useState(false);
     const [modalLoading, setModalLoading] = useState(false);
-    // Zaključavanje uređivanja poslanih/prihvaćenih ponuda (zaštita cijene ka klijentu).
-    // Dok je true: Save i osvježavanje cijena su onemogućeni dok korisnik izričito ne otključa.
+    // Zaključavanje je PO REDU (OfferProductState.locked, računa se jednom pri učitavanju —
+    // vidi lib/offerLocking.ts). `editLocked` ovdje znači samo "ponuda je Poslano/Prihvaćeno"
+    // (informativni baner) — više NE blokira Save niti se otključava u cjelini.
     const [editLocked, setEditLocked] = useState(false);
+    // Eksplicitni izuzetak od zaključavanja (rješavanje konflikta duplo prihvaćenog proizvoda) —
+    // ti Product_ID-evi ostaju editabilni ovu sesiju i šalju se serveru uz snimanje.
+    const [forceUnlockedIds, setForceUnlockedIds] = useState<Set<string>>(new Set());
+    // Završni račun — otvara se za prihvaćenu ponudu (vidi InvoiceModal).
+    const [invoiceModalOffer, setInvoiceModalOffer] = useState<Offer | null>(null);
+    // Projekat već ima IZDAT završni račun → cijela ponuda se otvara zaključana (svi redovi),
+    // izmjena samo kroz Revidiraj + storniranje računa.
+    const [invoiceIssuedLock, setInvoiceIssuedLock] = useState(false);
 
     // Svi proizvodi iz svih projekata (za detekciju zastarjelih cijena u ponudama).
     const allProducts = useMemo(() => flattenProjectProducts(projects), [projects]);
@@ -191,6 +204,7 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
         setCurrentOffer(null);
         setConfirmCloseModal(false);
         setPendingNavigate(null);
+        setForceUnlockedIds(new Set());
     }
 
     /** Save and then close (or navigate) */
@@ -325,6 +339,7 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
 
     function openCreateModal() {
         setEditLocked(false); // nova ponuda — uvijek otključana
+        setForceUnlockedIds(new Set());
         setSelectedProjectId('');
         setOfferName('');
         setOfferProducts([]);
@@ -397,7 +412,8 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
             extras: [],
             laborWorkers: 0,
             laborDays: 0,
-            laborDailyRate: 0
+            laborDailyRate: 0,
+            locked: false, // nova (Nacrt) ponuda — nijedan red još nema cijenu poslanu klijentu
         }));
 
         setOfferProducts(sortProductsByName(products, p => p.Product_Name));
@@ -418,7 +434,7 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
     // Refresh material cost from latest project product data (jedan proizvod)
     function refreshMaterialCost(index: number) {
         const product = offerProducts[index];
-        if (!product || !selectedProjectId) return;
+        if (!product || !selectedProjectId || product.locked) return;
 
         const project = projects.find(p => p.Project_ID === selectedProjectId);
         if (!project) return;
@@ -445,6 +461,7 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
         if (!project) return;
         let changed = 0;
         const updated = offerProducts.map(op => {
+            if (op.locked) return op; // zaključan red — cijena se ne dira (samo kroz Revidiraj)
             const pp = (project.products || []).find(p => p.Product_ID === op.Product_ID);
             if (!pp) return op;
             const freshCost = (pp.materials || []).reduce((sum, m) => sum + (m.Total_Price || 0), 0);
@@ -627,6 +644,9 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
             PDV_Rate: pdvRate,
             Currency: offerCurrency,
             Language: offerLanguage,
+            // Eksplicitni izuzetak od zaključavanja po redu (rješavanje konflikta) — server ga
+            // koristi u mergeOfferProducts da tretira ove Product_ID-eve kao otključane.
+            unlockProductIds: Array.from(forceUnlockedIds),
             ...clientFields,
             products: offerProducts.map(p => {
                 return {
@@ -746,6 +766,7 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
                 if (fullOffer) {
                     // All monetary values are ALWAYS stored in KM — Currency is only a display flag
                     setEditLocked(false); // rješavanje konflikata je aktivna izmjena — ne zaključavaj
+                    setForceUnlockedIds(conflictIds); // konfliktni redovi ostaju editabilni i pored cijene/statusa
                     setCurrentOffer(fullOffer);
                     setIsEditMode(true);
                     setSelectedProjectId(fullOffer.Project_ID);
@@ -790,7 +811,10 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
                             }),
                             laborWorkers: (p as any).Labor_Workers || (p as any).laborWorkers || 0,
                             laborDays: (p as any).Labor_Days || (p as any).laborDays || 0,
-                            laborDailyRate: (p as any).Labor_Daily_Rate || (p as any).laborDailyRate || 0
+                            laborDailyRate: (p as any).Labor_Daily_Rate || (p as any).laborDailyRate || 0,
+                            // Konfliktni proizvod ostaje editabilan (deselektovan gore) — ostali redovi
+                            // se ponašaju standardno (zaključani ako već imaju cijenu).
+                            locked: isRowLocked(fullOffer.Status, p) && !conflictIds.has(p.Product_ID),
                         };
                     });
 
@@ -822,10 +846,13 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
 
     // Open edit modal for existing offer
     async function openEditModal(offer: Offer) {
-        // Poslane/prihvaćene ponude otvaraju se ZAKLJUČANO — cijena ka klijentu ne smije
-        // se slučajno promijeniti. Korisnik izričito bira „Otključaj izmjenu" ili „Revidiraj".
+        // Poslane/prihvaćene ponude: redovi koji već imaju cijenu se otvaraju ZAKLJUČANO (po redu,
+        // vidi lib/offerLocking.ts) — cijena ka klijentu se ne mijenja slučajno, izmjena samo kroz
+        // „Revidiraj". Prazni (nedefinisani) redovi ostaju editabilni — inkrementalni tok.
         const locked = offer.Status === 'Poslano' || offer.Status === 'Prihvaćeno';
         setEditLocked(locked);
+        setForceUnlockedIds(new Set());
+        setInvoiceIssuedLock(false);
         // Open modal immediately with loading state
         setCurrentOffer(offer);
         setIsEditMode(true);
@@ -833,8 +860,14 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
         setModalLoading(true);
 
         // Load full offer with products
-        const fullOffer = await getOffer(offer.Offer_ID, organizationId!);
+        const [fullOffer, projectInvoices] = await Promise.all([
+            getOffer(offer.Offer_ID, organizationId!),
+            getInvoicesForProject(offer.Project_ID, organizationId!),
+        ]);
         setModalLoading(false);
+        // Izdat završni račun → cijela ponuda zaključana (izmjena samo kroz Revidiraj + storno računa).
+        const invoiceIssued = projectInvoices.some(i => i.Status === 'Izdat');
+        setInvoiceIssuedLock(invoiceIssued);
 
         if (!fullOffer) {
             showToast('Greška pri učitavanju ponude', 'error');
@@ -894,7 +927,8 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
                 }),
                 laborWorkers: (p as any).Labor_Workers || (p as any).laborWorkers || 0,
                 laborDays: (p as any).Labor_Days || (p as any).laborDays || 0,
-                laborDailyRate: laborDailyRate
+                laborDailyRate: laborDailyRate,
+                locked: invoiceIssued || isRowLocked(fullOffer.Status, p),
             };
         });
 
@@ -934,7 +968,8 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
                 extras: [],
                 laborWorkers: 0,
                 laborDays: 0,
-                laborDailyRate: 0
+                laborDailyRate: 0,
+                locked: invoiceIssued, // novi red — editabilan OSIM ako je projekat već fakturisan
             });
         }
 
@@ -1972,6 +2007,16 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
                                                     <span className="material-icons-round" style={{ fontSize: '20px' }}>difference</span>
                                                 </button>
                                             )}
+                                            {offer.Status === 'Prihvaćeno' && (
+                                                <button
+                                                    className="action-icon-btn"
+                                                    onClick={(e) => { e.stopPropagation(); setInvoiceModalOffer(offer); }}
+                                                    title="Završni račun"
+                                                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)', padding: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '4px', transition: 'all 0.2s' }}
+                                                >
+                                                    <span className="material-icons-round" style={{ fontSize: '20px' }}>receipt_long</span>
+                                                </button>
+                                            )}
                                             <button
                                                 className="action-icon-btn"
                                                 onClick={(e) => { e.stopPropagation(); handlePrintOffer(offer); }}
@@ -2037,6 +2082,22 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
                 </Modal>
             )}
 
+            {/* Završni račun */}
+            {invoiceModalOffer && organizationId && (() => {
+                const project = projects.find(pr => pr.Project_ID === invoiceModalOffer.Project_ID);
+                if (!project) return null;
+                return (
+                    <InvoiceModal
+                        project={project}
+                        offer={invoiceModalOffer}
+                        organizationId={organizationId}
+                        onClose={() => setInvoiceModalOffer(null)}
+                        showToast={showToast}
+                        onRefresh={onRefresh}
+                    />
+                );
+            })()}
+
             {/* Create/Edit Offer Modal */}
             <Modal
                 isOpen={createModal}
@@ -2099,10 +2160,10 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
                         <button
                             className="glass-btn glass-btn-primary"
                             onClick={handleSaveOffer}
-                            disabled={isSaving || editLocked || !selectedProjectId || offerProducts.filter(p => p.included).length === 0}
-                            title={editLocked ? 'Ponuda je zaključana — otključaj izmjenu u banneru iznad' : undefined}
+                            disabled={isSaving || !selectedProjectId || offerProducts.filter(p => p.included).length === 0 || invoiceIssuedLock}
+                            title={invoiceIssuedLock ? 'Izdat je završni račun — izmjena samo kroz storniranje ili Revidiraj' : undefined}
                         >
-                            {isSaving ? 'Spremanje...' : editLocked ? '🔒 Zaključano' : (isEditMode ? 'Ažuriraj Ponudu' : 'Sačuvaj Ponudu')}
+                            {isSaving ? 'Spremanje...' : invoiceIssuedLock ? '🔒 Fakturisano' : (isEditMode ? (offerProducts.some(p => p.locked) ? 'Sačuvaj (otključane stavke)' : 'Ažuriraj Ponudu') : 'Sačuvaj Ponudu')}
                         </button>
                     </>
                 }
@@ -2116,18 +2177,28 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
                     </div>
                 ) : (
                     <div className="offer-form">
-                        {/* Zaključana ponuda (poslana/prihvaćena): zaštita cijene ka klijentu.
-                            Save i osvježavanje cijena su onemogućeni dok se izričito ne otključa. */}
-                        {editLocked && currentOffer && (() => {
+                        {/* Zaključana ponuda (poslana/prihvaćena): informativni baner o zaključanim
+                            redovima (zaštita cijene ka klijentu). Zaključavanje je PO REDU — prazni
+                            (nedefinisani) redovi se i dalje mogu dopuniti i sačuvati bez otključavanja. */}
+                        {editLocked && currentOffer && offerProducts.some(p => p.locked) && (() => {
                             const changes = offerPriceChanges(currentOffer, allProducts);
                             const isAccepted = currentOffer.Status === 'Prihvaćeno';
+                            const lockedCount = offerProducts.filter(p => p.locked).length;
+                            const unlockedCount = offerProducts.length - lockedCount;
                             return (
                                 <div className="offer-lock-banner">
                                     <div className="offer-lock-banner-text">
                                         <span className="material-icons-round">lock</span>
                                         <div>
-                                            <strong>Ponuda je {isAccepted ? 'prihvaćena' : 'poslana'} i zaključana.</strong>
-                                            <span> Cijene su zaštićene da se ne bi slučajno promijenile{isAccepted ? ' (izmjena bi uticala i na radni nalog)' : ''}.</span>
+                                            {invoiceIssuedLock ? (
+                                                <strong>Izdat je završni račun — cijela ponuda je zaključana.</strong>
+                                            ) : (
+                                                <strong>Ponuda je {isAccepted ? 'prihvaćena' : 'poslana'} — {lockedCount} {lockedCount === 1 ? 'stavka' : 'stavke/i'} zaključano.</strong>
+                                            )}
+                                            <span> {invoiceIssuedLock
+                                                ? 'Izmjene samo kroz storniranje računa ili „Revidiraj".'
+                                                : `Cijene poslane klijentu se ne mijenjaju slučajno — izmjena samo kroz „Revidiraj".${unlockedCount > 0 ? ` Preostalih ${unlockedCount} ${unlockedCount === 1 ? 'stavka se' : 'stavke/i se'} može slobodno dopuniti i sačuvati.` : ''}`}
+                                            </span>
                                             {changes.length > 0 && (
                                                 <span className="offer-lock-stale">
                                                     {' '}Cijene materijala su se u međuvremenu promijenile za {changes.length} {changes.length === 1 ? 'proizvod' : 'proizvoda'}
@@ -2137,16 +2208,13 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
                                         </div>
                                     </div>
                                     <div className="offer-lock-banner-actions">
-                                        <button type="button" className="btn btn-secondary" onClick={() => setEditLocked(false)} title="Dozvoli izmjenu ove ponude">
-                                            <span className="material-icons-round" style={{ fontSize: 16 }}>lock_open</span> Otključaj izmjenu
-                                        </button>
                                         {currentOffer && (
-                                            <button type="button" className="btn btn-secondary" onClick={() => { const off = currentOffer; handleCloseOfferModal(); handleReviseOffer(off); }} title="Napravi novu verziju (original ostaje netaknut)">
+                                            <button type="button" className="btn btn-secondary" onClick={() => { const off = currentOffer; handleCloseOfferModal(); handleReviseOffer(off); }} title="Napravi novu verziju (original ostaje netaknut) — jedini način da se zaključane cijene promijene">
                                                 <span className="material-icons-round" style={{ fontSize: 16 }}>content_copy</span> Revidiraj
                                             </button>
                                         )}
                                         {changes.length > 0 && (
-                                            <button type="button" className="btn btn-primary" onClick={() => { setEditLocked(false); refreshAllMaterialCosts(); }} title="Otključaj i ažuriraj cijene materijala na trenutne">
+                                            <button type="button" className="btn btn-primary" onClick={refreshAllMaterialCosts} title="Ažuriraj cijene materijala na trenutne (samo za otključane stavke)">
                                                 <span className="material-icons-round" style={{ fontSize: 16 }}>price_change</span> Ažuriraj cijene
                                             </button>
                                         )}
@@ -2349,11 +2417,11 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
                                                     <th style={{ width: '110px' }}>
                                                         <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
                                                             Materijal
-                                                            {isEditMode && !editLocked && (
+                                                            {isEditMode && (
                                                                 <button
                                                                     type="button"
                                                                     onClick={refreshAllMaterialCosts}
-                                                                    title="Osvježi cijene materijala svih proizvoda iz projekta"
+                                                                    title="Osvježi cijene materijala otključanih proizvoda iz projekta"
                                                                     className="refresh-btn"
                                                                     style={{ textTransform: 'none' }}
                                                                 >
@@ -2379,18 +2447,22 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
                                                     const unitPrice = materialCost + (product.margin || 0) + extrasTotal + laborTotal;
                                                     
                                                     return (
-                                                        <tr key={product.Product_ID} className={product.included ? 'included' : 'excluded'}>
+                                                        <tr key={product.Product_ID} className={`${product.included ? 'included' : 'excluded'}${product.locked ? ' offer-row-locked' : ''}`}>
                                                             <td className="text-center" style={{ textAlign: 'center' }}>
                                                                 <input
                                                                     type="checkbox"
                                                                     checked={product.included}
                                                                     onChange={(e) => toggleProductIncluded(index, e.target.checked)}
+                                                                    disabled={product.locked}
                                                                     className="modern-checkbox"
                                                                 />
                                                             </td>
                                                             <td>
                                                                 <div className="product-name-cell">
                                                                     <div className="p-title-row">
+                                                                        {product.locked && (
+                                                                            <span className="material-icons-round" style={{ fontSize: 15, color: 'var(--text-secondary, #64748b)' }} title="Stavka ima cijenu u poslanoj/prihvaćenoj ponudi — izmjena samo kroz Revidiraj">lock</span>
+                                                                        )}
                                                                         <span className="p-name">{product.Product_Name}</span>
                                                                         {onNavigateToProject && selectedProjectId && (
                                                                             <button
@@ -2415,7 +2487,7 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
                                                             <td className="readonly-cell">
                                                                 <div className="val-flex">
                                                                     <span>{formatCurrency(product.Material_Cost)}</span>
-                                                                    {isEditMode && !editLocked && (
+                                                                    {isEditMode && !product.locked && (
                                                                         <button type="button" onClick={(e) => { e.stopPropagation(); refreshMaterialCost(index); }} title="Osviježi cijenu iz projekta" className="refresh-btn">
                                                                             <span className="material-icons-round">refresh</span>
                                                                         </button>
@@ -2434,7 +2506,7 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
                                                                         setOfferProducts(updated);
                                                                     }}
                                                                     min="0"
-                                                                    disabled={!product.included}
+                                                                    disabled={!product.included || product.locked}
                                                                     placeholder="0"
                                                                 />
                                                             </td>
@@ -2450,7 +2522,7 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
                                                                         setOfferProducts(updated);
                                                                     }}
                                                                     min="0"
-                                                                    disabled={!product.included}
+                                                                    disabled={!product.included || product.locked}
                                                                     placeholder="0"
                                                                 />
                                                             </td>
@@ -2466,16 +2538,16 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
                                                                         setOfferProducts(updated);
                                                                     }}
                                                                     min="0" step="10"
-                                                                    disabled={!product.included}
+                                                                    disabled={!product.included || product.locked}
                                                                     placeholder="0"
                                                                 />
                                                             </td>
                                                             <td className="btn-cell">
-                                                                <button 
-                                                                    type="button" 
+                                                                <button
+                                                                    type="button"
                                                                     className="sheet-btn"
                                                                     onClick={() => openExtrasListOrAdd(index)}
-                                                                    disabled={!product.included}
+                                                                    disabled={!product.included || product.locked}
                                                                 >
                                                                     {product.extras && product.extras.length > 0 ? (
                                                                         <>
@@ -2496,7 +2568,7 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
                                                                         value={product.margin || ''}
                                                                         onChange={(e) => updateProductMargin(index, parseFloat(e.target.value) || 0)}
                                                                         min="0" step="10"
-                                                                        disabled={!product.included}
+                                                                        disabled={!product.included || product.locked}
                                                                         placeholder="0"
                                                                     />
                                                                     <span className="suffix">KM</span>

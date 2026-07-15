@@ -11,7 +11,7 @@ import {
     toggleItemPause,
     getAllAttendanceByMonth,
 } from '@/lib/services';
-import { workOrderDueDate, buildSaturdayChecker, todayISO, daysUntil, plannedVsActualDays, type AttendanceLite } from '@/lib/planning';
+import { workOrderDueDate, buildSaturdayChecker, todayISO, daysUntil, plannedVsActualDays, itemsWithoutPlannedDays, type AttendanceLite } from '@/lib/planning';
 import { itemMaterialTotal } from '@/lib/materialCost';
 import { itemProfitBreakdown, sumBreakdowns, type ProfitBreakdown } from '@/lib/profit';
 import type { WorkOrder, Worker, WorkOrderItem, WorkLog } from '@/lib/types';
@@ -383,6 +383,10 @@ export default function WorkOrderExpandedDetail({
         ? 'Prodajna cijena nije postavljena (nema prihvaćene ponude?) — profit je nepotpun'
         : 'Materijali nisu dodati ili nemaju cijenu — profit je nepotpun';
 
+    // Rok advisory: stavke bez planiranih dana (ponuda nedopunjena) potcjenjuju auto-rok.
+    const missingDaysCount = useMemo(() => (!isMontaza && woActive ? itemsWithoutPlannedDays(localItems) : 0), [localItems, isMontaza, woActive]);
+    const rokWarnTitle = `${missingDaysCount} ${missingDaysCount === 1 ? 'stavka nema' : 'stavke/i nemaju'} planirane dane u ponudi — rok je potcijenjen`;
+
     return (
         <div className="wo-detail">
             {/* ═══ HERO: metrike (naziv/status/rok su već vidljivi u zaglavlju iznad) ═══ */}
@@ -428,7 +432,10 @@ export default function WorkOrderExpandedDetail({
                     <div className={`wo-metric clickable ${rokState}`}
                         title="Klikni za izmjenu roka"
                         onClick={() => { const i = document.getElementById(`wo-due-${workOrder.Work_Order_ID}`) as HTMLInputElement; i?.showPicker?.(); }}>
-                        <span className="wo-metric-label"><Clock size={11} /> Rok</span>
+                        <span className="wo-metric-label" title={missingDaysCount > 0 ? rokWarnTitle : undefined}>
+                            <Clock size={11} /> Rok
+                            {missingDaysCount > 0 && <AlertTriangle size={11} className="wo-metric-warnicon" />}
+                        </span>
                         <span className="wo-metric-value">{formatDate(workOrder.Due_Date)}</span>
                         {rokSub && <span className="wo-metric-sub">{rokSub}</span>}
                         <input id={`wo-due-${workOrder.Work_Order_ID}`} type="date" className="wo-hidden-date"

@@ -285,5 +285,21 @@ service cloud.firestore {
       allow create: if hasValidOrgId();
       allow update, delete: if isOrgMember();
     }
+
+    // ============================================
+    // ZAVRŠNI RAČUNI (Multi-tenancy enabled)
+    // ============================================
+
+    match /invoices/{invoiceId} {
+      allow read: if isOrgMember();
+      allow create: if hasValidOrgId();
+      allow update, delete: if isOrgMember();
+    }
+
+    match /invoice_items/{invoiceItemId} {
+      allow read: if isOrgMember();
+      allow create: if hasValidOrgId();
+      allow update, delete: if isOrgMember();
+    }
   }
 }

@@ -5,7 +5,7 @@ import { createPortal } from 'react-dom';
 import { DragDropContext, Droppable, Draggable, DropResult } from '@hello-pangea/dnd';
 import type { WorkOrder, Worker, WorkOrderItem, WorkerConflict, WorkLog } from '@/lib/types';
 import { scheduleWorkOrder, unscheduleWorkOrder, startWorkOrder, checkWorkerConflicts, rescheduleWorkOrder, updateDueDate, updatePlannedStartDate, getAllAttendanceByMonth, formatLocalDateISO } from '@/lib/services';
-import { weeklyCapacity, plannedVsActualDays, todayISO, type AttendanceLite, type CapacityOrderInput } from '@/lib/planning';
+import { weeklyCapacity, plannedVsActualDays, itemsWithoutPlannedDays, todayISO, type AttendanceLite, type CapacityOrderInput } from '@/lib/planning';
 import { buildWorkTimeline, type WorkTimelineDay, type WorkDayType, type PausePeriodLite } from '@/lib/workOrderTimeline';
 import { useAuth } from '@/context/AuthContext';
 import {
@@ -216,6 +216,16 @@ export default function PlannerTab({ workOrders, workers, workLogs, onRefresh, s
             .filter(o => o.remainingWorkerDays > 0);
         return weeklyCapacity(formatDateKey(viewStart), Math.max(1, Math.ceil(days / 7)), activeWorkerIds, attLite, capOrders);
     }, [workOrders, workers, workLogs, attLite, viewStart, days]);
+
+    // Advisory: aktivni/zakazani proizvodni nalozi sa stavkama bez planiranih dana (nedopunjena
+    // ponuda) potcjenjuju gornji kapacitet — montaža se isključuje (ona namjerno nema planirane dane).
+    const capacityGapOrders = useMemo(() => {
+        return workOrders.filter(wo =>
+            wo.Work_Order_Type !== 'Montaža' &&
+            (wo.Status === 'U toku' || (wo.Status === 'Na čekanju' && wo.Is_Scheduled)) &&
+            itemsWithoutPlannedDays(wo.items || []) > 0
+        ).length;
+    }, [workOrders]);
 
     // Auto-forward: For 'Na čekanju' orders whose planned start is in the past,
     // shift both start and end dates forward so the bar starts from today.
@@ -739,6 +749,16 @@ export default function PlannerTab({ workOrders, workers, workLogs, onRefresh, s
             {/* Sedmični kapacitet: planirani vs raspoloživi radnik-dani */}
             {capacityWeeks.length > 0 && (
                 <div className="capacity-strip">
+                    {capacityGapOrders > 0 && (
+                        <div
+                            className="capacity-gap-note"
+                            title={`${capacityGapOrders} ${capacityGapOrders === 1 ? 'nalog nema' : 'naloga nemaju'} planirane dane na dijelu stavki (ponuda nedopunjena) — opterećenje ispod je potcijenjeno`}
+                            style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: '#92400e', padding: '2px 6px' }}
+                        >
+                            <AlertTriangle size={12} />
+                            {capacityGapOrders} {capacityGapOrders === 1 ? 'nalog' : 'naloga'} bez planiranih dana — kapacitet potcijenjen
+                        </div>
+                    )}
                     {capacityWeeks.map(wk => {
                         const over = wk.ratio !== null && wk.ratio > 1;
                         const tight = wk.ratio !== null && wk.ratio > 0.85 && wk.ratio <= 1;

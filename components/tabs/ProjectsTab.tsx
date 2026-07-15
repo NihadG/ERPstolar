@@ -27,9 +27,10 @@ import ProductTimelineModal from '@/components/ui/ProductTimelineModal';
 import ProductProcessPlan from '@/components/ui/ProductProcessPlan';
 import { planToStages } from '@/lib/productProcesses';
 import { naturalCompare } from '@/lib/naturalCompare';
-import { itemMaterialTotal } from '@/lib/materialCost';
+import { projectProfitBreakdown } from '@/lib/projectProfit';
 
 import ProjectMaterialsModal from '@/components/ui/ProjectMaterialsModal';
+import InvoiceModal from '@/components/ui/InvoiceModal';
 import { useData } from '@/context/DataContext';
 import { syncAllProjectData, overrideWorkLogs } from '@/lib/services';
 import { PROJECT_STATUSES, PRODUCTION_STEPS, MATERIAL_CATEGORIES } from '@/lib/types';
@@ -69,6 +70,8 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
     const [expandedStatusGroups, setExpandedStatusGroups] = useState<Set<string>>(new Set(['Nacrt', 'Ponuđeno', 'Odobreno', 'U proizvodnji', 'Završeno', 'Otkazano']));
     const [showMaterialsSummary, setShowMaterialsSummary] = useState<Set<string>>(new Set());
     const [materialsOverviewProject, setMaterialsOverviewProject] = useState<Project | null>(null);
+    // Završni račun — otvara se za projekat koji ima prihvaćenu ponudu (vidi InvoiceModal).
+    const [invoiceModalProject, setInvoiceModalProject] = useState<Project | null>(null);
     // Samo ID — proizvod se svaki put izvodi svjež iz `projects` (onChanged→onRefresh mora odmah ažurirati modal)
     const [processPlanProductId, setProcessPlanProductId] = useState<string | null>(null);
     const processPlanProduct = processPlanProductId
@@ -1462,66 +1465,19 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                                 const previewProducts = sortedProducts.slice(0, 3);
                                 const moreCount = totalProducts - previewProducts.length;
 
-                                // Calculate project profit
-                                let projectProfit = 0;
-                                let projectSellingTotal = 0;
-                                let totalServicesCost = 0;
-                                let hasAnyProfit = false;
-                                (project.products || []).forEach(product => {
-                                    let sellingPrice: number | undefined;
-                                    let originalTransport = 0;
-                                    let originalServices = 0;
-                                    const acceptedOffers = offers.filter(o => o.Status === 'Prihvaćeno');
-                                    for (const offer of acceptedOffers) {
-                                        const offerProduct = (offer.products || []).find(op => op.Product_ID === product.Product_ID);
-                                        if (offerProduct) {
-                                            sellingPrice = offerProduct.Selling_Price || offerProduct.Total_Price;
-                                            originalServices = ((offerProduct as any).extras || []).reduce((s: number, e: any) => s + (e.Total || 0), 0);
-                                            if (offer && sellingPrice) {
-                                                const offerSubtotal = offer.Subtotal || 0;
-                                                if (offerSubtotal > 0) {
-                                                    originalTransport = (offer.Transport_Cost || 0) * (sellingPrice / offerSubtotal);
-                                                }
-                                            }
-                                            break;
-                                        }
-                                    }
-                                    let woItem: any;
-                                    let woItemFallback: any;
-                                    for (const wo of workOrders) {
-                                        const item = (wo.items || []).find(i => i.Product_ID === product.Product_ID);
-                                        if (item) {
-                                            if (item.Status !== 'Završeno') { woItem = item; break; }
-                                            else if (!woItemFallback) { woItemFallback = item; }
-                                        }
-                                    }
-                                    if (!woItem) woItem = woItemFallback;
-                                    const woSellingPrice = woItem?.Product_Value || 0;
-                                    const finalSellingPrice = woItem?.Profit_Overrides?.Selling_Price ?? (woSellingPrice > 0 ? woSellingPrice : sellingPrice);
-                                    const transportShare = woItem?.Profit_Overrides?.Transport_Share ?? originalTransport;
-                                    const servicesTotal = woItem?.Services_Total || originalServices;
-                                    totalServicesCost += servicesTotal;
-                                    // SVI proizvodi u nalogu ulaze u profit projekta po PUNOJ cijeni iz ponude
-                                    // (Product_Value = cijena × količina), bez obzira na status stavke
-                                    // (Na čekanju / U toku / Završeno).
-                                    if (!woItem || !finalSellingPrice || finalSellingPrice <= 0) return;
-                                    // MATERIJAL × KOLIČINA: Σ product.materials je PO KOMADU, finalSellingPrice
-                                    // (Product_Value) je UKUPAN → množi količinom stavke naloga.
-                                    const materialPerUnit = (product.materials || []).reduce((sum, m) => sum + (m.Total_Price || 0), 0);
-                                    const actualMaterialCost = itemMaterialTotal(materialPerUnit, woItem.Quantity);
-                                    // RAD proizvoda = SVE dnevnice po Product_ID kroz SVE naloge (proizvodni + MONTAŽNI).
-                                    // Tako montažne dnevnice ulaze u profit proizvoda (montaža je integrisana u cjelinu).
-                                    const productLogs = workLogs.filter(wl => wl.Product_ID === product.Product_ID);
-                                    const actualLabor = Math.round(productLogs.reduce((sum, wl) => sum + (wl.Daily_Rate || 0), 0));
-                                    // STVARNI PROFIT: rad = stvarno evidentirano (Σ dnevnice po Product_ID kroz sve naloge).
-                                    // Poređenje "planirano (ponuda) vs stvarno" za rad i materijal je u Analitici (Profiti → Plan vs Stvarno).
-                                    const laborCost = actualLabor;
-                                    projectProfit += finalSellingPrice - actualMaterialCost - laborCost - transportShare - servicesTotal;
-                                    projectSellingTotal += finalSellingPrice;
-                                    hasAnyProfit = true;
+                                // Profit projekta = Σ profita svih njegovih naloga (isti izvor/formula kao
+                                // WorkOrderExpandedDetail — vidi lib/projectProfit.ts). Bez preskoka stavki
+                                // bez cijene: rad uložen u nedefinisan proizvod je vidljiv gubitak.
+                                const projectFin = projectProfitBreakdown({
+                                    projectId: project.Project_ID,
+                                    workOrders,
+                                    workLogs,
                                 });
-                                projectProfit = Math.round(projectProfit);
-                                const projectMargin = Math.round(projectSellingTotal > 0 ? (projectProfit / projectSellingTotal) * 100 : 0);
+                                const projectProfit = Math.round(projectFin.profit);
+                                const projectMargin = Math.round(projectFin.margin);
+                                const totalServicesCost = projectFin.services;
+                                const hasAnyProfit = projectFin.itemCount > 0;
+                                const projectProfitIncomplete = projectFin.missingPrice;
 
                                 return (
                                     <div key={project.Project_ID} className={`project-card ${getBorderClass(project.Status)}`}>
@@ -1557,12 +1513,15 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                                                             projectMargin >= 30 ? 'chip-profit-good' :
                                                             projectMargin >= 15 ? 'chip-profit-mid' : 'chip-profit-bad'
                                                         }`}
-                                                            title={`Profit: ${projectProfit.toLocaleString('hr-HR')} KM (${projectMargin}%)`}
+                                                            title={`Profit: ${projectProfit.toLocaleString('hr-HR')} KM (${projectMargin}%)${projectProfitIncomplete ? ' — neki proizvodi nemaju cijenu, profit je nepotpun' : ''}`}
                                                         >
                                                             <span className="material-icons-round">
                                                                 {projectMargin >= 30 ? 'trending_up' : projectMargin >= 15 ? 'trending_flat' : 'trending_down'}
                                                             </span>
                                                             {projectProfit.toLocaleString('hr-HR')} KM ({projectMargin}%)
+                                                            {projectProfitIncomplete && (
+                                                                <span className="material-icons-round" style={{ fontSize: '14px', marginLeft: '2px' }}>warning_amber</span>
+                                                            )}
                                                         </span>
                                                     )}
                                                 </div>
@@ -1590,6 +1549,11 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                                                     <button className="icon-btn" onClick={() => setMaterialsOverviewProject(project)} title="Pregled materijala">
                                                         <span className="material-icons-round">inventory</span>
                                                     </button>
+                                                    {offers.some(o => o.Project_ID === project.Project_ID && o.Status === 'Prihvaćeno') && (
+                                                        <button className="icon-btn" onClick={() => setInvoiceModalProject(project)} title="Završni račun">
+                                                            <span className="material-icons-round">receipt_long</span>
+                                                        </button>
+                                                    )}
                                                     {onNavigateToTasks && (
                                                         <button className="icon-btn" onClick={() => onNavigateToTasks(project.Project_ID)} title="Zadaci">
                                                             <span className="material-icons-round">task_alt</span>
@@ -2139,6 +2103,25 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                         project={materialsOverviewProject}
                     />
                 )
+            }
+
+            {/* Završni račun */}
+            {
+                invoiceModalProject && organizationId && (() => {
+                    const acceptedOffer = offers.find(o => o.Project_ID === invoiceModalProject.Project_ID && o.Status === 'Prihvaćeno');
+                    if (!acceptedOffer) return null;
+                    return (
+                        <InvoiceModal
+                            project={invoiceModalProject}
+                            offer={acceptedOffer}
+                            organizationId={organizationId}
+                            workOrders={workOrders}
+                            onClose={() => setInvoiceModalProject(null)}
+                            showToast={showToast}
+                            onRefresh={onRefresh}
+                        />
+                    );
+                })()
             }
 
             {/* Project Modal */}

@@ -1,4 +1,4 @@
-import { isWorkingDay, workOrderDueDate, workerWorksSaturday, buildSaturdayChecker, plannedVsActualDays, weeklyCapacity } from '../planning';
+import { isWorkingDay, workOrderDueDate, workerWorksSaturday, buildSaturdayChecker, plannedVsActualDays, weeklyCapacity, itemsWithoutPlannedDays } from '../planning';
 
 // Kalendarski sidro (potvrđeno iz aplikacije): 2026-06-22 = ponedjeljak, 21 = nedjelja, 20 = subota.
 describe('isWorkingDay', () => {
@@ -157,5 +157,23 @@ describe('weeklyCapacity — raspoloživo vs planirano po sedmici', () => {
         expect(wk.available).toBe(6);
         expect(wk.planned).toBe(9);
         expect(wk.ratio).toBe(1.5);
+    });
+});
+
+describe('itemsWithoutPlannedDays — advisory za nedopunjenu ponudu (inkrementalni tok)', () => {
+    test('broji stavke sa Planned_Labor_Days <= 0', () => {
+        const items = [
+            { Planned_Labor_Days: 2 },
+            { Planned_Labor_Days: 0 },
+            { Planned_Labor_Days: undefined },
+            { Planned_Labor_Days: -1 },
+        ];
+        expect(itemsWithoutPlannedDays(items)).toBe(3);
+    });
+    test('sve stavke definisane → 0', () => {
+        expect(itemsWithoutPlannedDays([{ Planned_Labor_Days: 1 }, { Planned_Labor_Days: 3 }])).toBe(0);
+    });
+    test('prazna lista → 0', () => {
+        expect(itemsWithoutPlannedDays([])).toBe(0);
     });
 });

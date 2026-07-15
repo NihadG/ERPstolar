@@ -225,6 +225,19 @@ export default function WorkOrderWizard({
     }, [mode, selectedProducts, projects]);
     const fmtKM = (n: number) => `${Math.round(n).toLocaleString('hr-HR')} KM`;
 
+    // Per-product advisory: proizvod bez cijene i/ili planiranih dana u prihvaćenoj ponudi.
+    // Inkrementalni tok (dopunjavanje ponude proizvod-po-proizvod) je namjerno dozvoljen —
+    // ovo je samo neblokirajuće upozorenje da će rok/profit za TAJ proizvod biti potcijenjeni.
+    const undefinedProducts = useMemo(() => {
+        if (mode === 'montaza' || selectedProducts.length === 0) return [];
+        return selectedProducts.filter(p => {
+            const project = projects.find(pr => pr.Project_ID === p.Project_ID);
+            const offer = project?.offers?.find(o => o.Status === 'Prihvaćeno');
+            const op = offer?.products?.find(x => x.Product_ID === p.Product_ID);
+            return !op || !((op.Selling_Price || 0) > 0) || !((op.Labor_Days || 0) > 0);
+        }).map(p => p.Product_Name);
+    }, [mode, selectedProducts, projects]);
+
     // Reset pri SVAKOM otvaranju: mode-specifični defaulti + eventualna predselekcija
     // proizvoda iz ProjectsTab (tada se preskače korak odabira → pravo na "Radnik & rok").
     useEffect(() => {
@@ -637,6 +650,8 @@ export default function WorkOrderWizard({
         // GAP-2: Warn if no offer pricing exists
         if (totalValue === 0) {
             showToast('⚠️ Nema prihvaćene ponude — cijena proizvoda nije poznata. Profit neće biti tačan dok ručno ne unesete cijenu.', 'error');
+        } else if (!isMontazaMode && undefinedProducts.length > 0) {
+            showToast(`⚠️ Nedefinisani proizvodi (cijena/rok): ${undefinedProducts.join(', ')} — rok i profit će biti potcijenjeni dok se ponuda ne dopuni.`, 'error');
         }
 
         // Calculate initial profit — now includes Transport + Services (GAP-1 fix)
@@ -1088,6 +1103,21 @@ export default function WorkOrderWizard({
                                                 Nema prihvaćene ponude — cijena nije poznata, profit neće biti tačan
                                             </div>
                                         )}
+                                    </div>
+                                )}
+
+                                {/* Advisory: pojedini odabrani proizvodi nemaju cijenu/rok u ponudi (inkrementalni tok) */}
+                                {undefinedProducts.length > 0 && (
+                                    <div style={{
+                                        display: 'flex', alignItems: 'flex-start', gap: '8px',
+                                        padding: '10px 14px', margin: '10px 0 0',
+                                        background: 'var(--warning-bg, #fff4e5)', border: '1px solid #fde68a',
+                                        borderRadius: '10px', fontSize: '13px', color: '#92400e',
+                                    }}>
+                                        <span className="material-icons-round" style={{ fontSize: '18px' }}>warning_amber</span>
+                                        <span>
+                                            Nedefinisani proizvodi (cijena/rok): {undefinedProducts.join(', ')} — rok i profit će biti potcijenjeni dok se ponuda ne dopuni.
+                                        </span>
                                     </div>
                                 )}
 

@@ -51,6 +51,7 @@ import type {
     ProcessStageTemplate,
 } from './types';
 import { ALLOWED_ORDER_TRANSITIONS } from './types';
+import { mergeOfferProducts } from './offerLocking';
 
 // Shared service modules (architecture upgrade)
 import { assembleProjectGraph, assembleOrders, assembleWorkOrders, groupBy } from './services/shared/dataAssembler';
@@ -1768,23 +1769,22 @@ export async function updateOfferWithProducts(offerData: any, organizationId: st
             return { success: false, message: 'Ponuda nije pronađena' };
         }
 
-        const products = offerData.products || [];
-        const includedProducts = products.filter((p: any) => p.Included);
+        const products: any[] = offerData.products || [];
 
-        // Calculate subtotal including extras and labor
-        let subtotal = 0;
-        includedProducts.forEach((p: any) => {
+        // Izračunaj cijenu/ukupno reda iz sirovih editor polja (ista formula kao OffersTab
+        // calculateProductTotal — jedini izvor za Selling_Price/Total_Price pri snimanju).
+        const computeOfferProductFields = (p: any) => {
             const materialCost = parseFloat(p.Material_Cost) || 0;
             const margin = parseFloat(p.Margin) || 0;
             const extrasTotal = (p.Extras || []).reduce((sum: number, e: any) => sum + (parseFloat(e.total) || 0), 0);
             const laborTotal = (parseFloat(p.Labor_Workers) || 0) * (parseFloat(p.Labor_Days) || 0) * (parseFloat(p.Labor_Daily_Rate) || 0);
             const quantity = parseFloat(p.Quantity) || 1;
-            subtotal += (materialCost + margin + extrasTotal + laborTotal) * quantity;
-        });
+            const sellingPrice = materialCost + margin + extrasTotal + laborTotal;
+            return { materialCost, margin, extrasTotal, laborTotal, quantity, sellingPrice, totalPrice: sellingPrice * quantity };
+        };
 
         const transportCost = parseFloat(offerData.Transport_Cost) || 0;
         const discount = offerData.Onsite_Assembly ? (parseFloat(offerData.Onsite_Discount) || 0) : 0;
-        const total = subtotal + transportCost - discount;
 
         // Parse valid until date
         let validUntil = offerData.Valid_Until;
@@ -1792,8 +1792,40 @@ export async function updateOfferWithProducts(offerData: any, organizationId: st
             validUntil = new Date(validUntil).toISOString();
         }
 
-        // ATOMIC: Delete old products/extras + create new ones in a single batch
-        // Prevents data loss if a write fails mid-update
+        // ZAKLJUČAVANJE PO REDU: red koji već ima cijenu u poslanoj/prihvaćenoj ponudi je
+        // zaključan — merge ga ostavlja NETAKNUTIM (ni podaci ni extras ni doc ID se ne diraju),
+        // bez obzira šta klijent pošalje za taj Product_ID. `unlockProductIds` je eksplicitni
+        // izuzetak (rješavanje konflikta duplo prihvaćenog proizvoda — vidi handleUpdateStatus).
+        const currentOfferStatus = offerSnap.docs[0].data().Status;
+        const existingProductsQ = query(
+            collection(db, COLLECTIONS.OFFER_PRODUCTS),
+            where('Offer_ID', '==', offerId),
+            where('Organization_ID', '==', organizationId)
+        );
+        const existingProductsSnap = await getDocs(existingProductsQ);
+        const existingRefById = new Map(existingProductsSnap.docs.map(d => [d.data().ID as string, d.ref]));
+        const existingProducts = existingProductsSnap.docs.map(d => d.data() as OfferProduct & { Organization_ID: string });
+        const unlockProductIds = Array.isArray(offerData.unlockProductIds) && offerData.unlockProductIds.length > 0
+            ? new Set<string>(offerData.unlockProductIds)
+            : undefined;
+
+        const merge = mergeOfferProducts(existingProducts, products, currentOfferStatus, { unlockProductIds });
+
+        // Subtotal iz SPOJENOG stanja: zaključani redovi doprinose POSTOJEĆIM Total_Price
+        // (nepromijenjen), otključani/novi redovi doprinose SVJEŽE izračunatim.
+        let subtotal = 0;
+        for (const ex of merge.toKeep) {
+            if (ex.Included !== false) subtotal += ex.Total_Price || 0;
+        }
+        for (const { incoming: p } of merge.toUpdate) {
+            if (p.Included) subtotal += computeOfferProductFields(p).totalPrice;
+        }
+        for (const p of merge.toCreate) {
+            if (p.Included) subtotal += computeOfferProductFields(p).totalPrice;
+        }
+        const total = subtotal + transportCost - discount;
+
+        // ATOMIC: sve izmjene u jednom batch-u — prevents data loss if a write fails mid-update
         const batch = writeBatch(db);
 
         // Step 1: Update offer document
@@ -1820,51 +1852,65 @@ export async function updateOfferWithProducts(offerData: any, organizationId: st
             Client_PDV_Number: offerData.Client_PDV_Number || '',
         });
 
-        // Step 2: Queue deletion of existing offer products and their extras
-        const productsQ = query(
-            collection(db, COLLECTIONS.OFFER_PRODUCTS),
-            where('Offer_ID', '==', offerId),
-            where('Organization_ID', '==', organizationId)
-        );
-        const productsSnap = await getDocs(productsQ);
+        // Step 2: toKeep (zaključani) — NIŠTA se ne diraju (ni podaci ni extras).
 
-        for (const productDoc of productsSnap.docs) {
-            const productData = productDoc.data();
-            // Queue deletion of extras for this product
+        // Step 3: toUpdate (postojeći, otključani) — update-in-place (isti doc ID),
+        // extras se zamjenjuju SAMO za taj red.
+        for (const { existingId, incoming: p } of merge.toUpdate) {
+            const ref = existingRefById.get(existingId);
+            if (!ref) continue;
+            const fields = computeOfferProductFields(p);
+            batch.update(ref, {
+                Product_Name: p.Product_Name,
+                Quantity: fields.quantity,
+                Included: p.Included === true,
+                Material_Cost: fields.materialCost,
+                Margin: fields.margin,
+                Margin_Type: 'Fixed',
+                Selling_Price: fields.sellingPrice,
+                Total_Price: fields.totalPrice,
+                Labor_Workers: parseFloat(p.Labor_Workers) || 0,
+                Labor_Days: parseFloat(p.Labor_Days) || 0,
+                Labor_Daily_Rate: parseFloat(p.Labor_Daily_Rate) || 0,
+            });
+
             const extrasQ = query(
                 collection(db, COLLECTIONS.OFFER_EXTRAS),
-                where('Offer_Product_ID', '==', productData.ID),
+                where('Offer_Product_ID', '==', existingId),
                 where('Organization_ID', '==', organizationId)
             );
             const extrasSnap = await getDocs(extrasQ);
-            for (const extraDoc of extrasSnap.docs) {
-                batch.delete(extraDoc.ref);
+            for (const extraDoc of extrasSnap.docs) batch.delete(extraDoc.ref);
+            for (const extra of p.Extras || []) {
+                const extraData: OfferExtra & { Organization_ID: string } = {
+                    ID: generateUUID(),
+                    Organization_ID: organizationId,
+                    Offer_Product_ID: existingId,
+                    Name: extra.name,
+                    Quantity: parseFloat(extra.qty) || 1,
+                    Unit: extra.unit || 'kom',
+                    Unit_Price: parseFloat(extra.price) || 0,
+                    Total: parseFloat(extra.total) || 0,
+                };
+                batch.set(doc(collection(db, COLLECTIONS.OFFER_EXTRAS)), extraData);
             }
-            // Queue deletion of the product
-            batch.delete(productDoc.ref);
         }
 
-        // Step 3: Queue creation of new products with calculations
-        for (const product of products) {
+        // Step 4: toCreate (novi redovi)
+        for (const product of merge.toCreate) {
             const productId = generateUUID();
-            const materialCost = parseFloat(product.Material_Cost) || 0;
-            const margin = parseFloat(product.Margin) || 0;
-            const extrasTotal = (product.Extras || []).reduce((sum: number, e: any) => sum + (parseFloat(e.total) || 0), 0);
-            const laborTotal = (parseFloat(product.Labor_Workers) || 0) * (parseFloat(product.Labor_Days) || 0) * (parseFloat(product.Labor_Daily_Rate) || 0);
-            const quantity = parseFloat(product.Quantity) || 1;
-            const sellingPrice = materialCost + margin + extrasTotal + laborTotal;
-            const totalPrice = sellingPrice * quantity;
+            const fields = computeOfferProductFields(product);
 
             const offerProduct: OfferProduct & { Organization_ID: string } = {
                 ID: productId,
                 Organization_ID: organizationId,
                 Offer_ID: offerId,
-                Product_ID: product.Product_ID,
-                Product_Name: product.Product_Name,
-                Quantity: quantity,
-                Included: product.Included === true,
-                Material_Cost: materialCost,
-                Margin: margin,
+                Product_ID: (product as any).Product_ID,
+                Product_Name: (product as any).Product_Name,
+                Quantity: fields.quantity,
+                Included: (product as any).Included === true,
+                Material_Cost: fields.materialCost,
+                Margin: fields.margin,
                 Margin_Type: 'Fixed',
                 LED_Meters: 0,
                 LED_Price: 0,
@@ -1875,18 +1921,16 @@ export async function updateOfferWithProducts(offerData: any, organizationId: st
                 Sink_Faucet_Price: 0,
                 Transport_Share: 0,
                 Discount_Share: 0,
-                Selling_Price: sellingPrice,
-                Total_Price: totalPrice,
-                Labor_Workers: parseFloat(product.Labor_Workers) || 0,
-                Labor_Days: parseFloat(product.Labor_Days) || 0,
-                Labor_Daily_Rate: parseFloat(product.Labor_Daily_Rate) || 0,
+                Selling_Price: fields.sellingPrice,
+                Total_Price: fields.totalPrice,
+                Labor_Workers: parseFloat((product as any).Labor_Workers) || 0,
+                Labor_Days: parseFloat((product as any).Labor_Days) || 0,
+                Labor_Daily_Rate: parseFloat((product as any).Labor_Daily_Rate) || 0,
             };
 
-            const prodRef = doc(collection(db, COLLECTIONS.OFFER_PRODUCTS));
-            batch.set(prodRef, offerProduct);
+            batch.set(doc(collection(db, COLLECTIONS.OFFER_PRODUCTS)), offerProduct);
 
-            // Queue creation of extras for this product
-            for (const extra of product.Extras || []) {
+            for (const extra of (product as any).Extras || []) {
                 const extraData: OfferExtra & { Organization_ID: string } = {
                     ID: generateUUID(),
                     Organization_ID: organizationId,
@@ -1897,39 +1941,26 @@ export async function updateOfferWithProducts(offerData: any, organizationId: st
                     Unit_Price: parseFloat(extra.price) || 0,
                     Total: parseFloat(extra.total) || 0,
                 };
-
-                const extraRef = doc(collection(db, COLLECTIONS.OFFER_EXTRAS));
-                batch.set(extraRef, extraData);
+                batch.set(doc(collection(db, COLLECTIONS.OFFER_EXTRAS)), extraData);
             }
+        }
+
+        // Step 5: toDeleteIds (postojeći redovi uklonjeni u editoru, samo ako su bili otključani)
+        for (const id of merge.toDeleteIds) {
+            const ref = existingRefById.get(id);
+            if (!ref) continue;
+            const extrasQ = query(
+                collection(db, COLLECTIONS.OFFER_EXTRAS),
+                where('Offer_Product_ID', '==', id),
+                where('Organization_ID', '==', organizationId)
+            );
+            const extrasSnap = await getDocs(extrasQ);
+            for (const extraDoc of extrasSnap.docs) batch.delete(extraDoc.ref);
+            batch.delete(ref);
         }
 
         // Commit all changes atomically
         await batch.commit();
-
-        // SYNC: If offer is accepted, propagate updated prices to WO items
-        const currentOfferStatus = offerSnap.docs[0].data().Status || offerData.Status;
-        if (currentOfferStatus === 'Prihvaćeno') {
-            try {
-                for (const product of includedProducts) {
-                    const sellingPrice = parseFloat(product.Selling_Price) || parseFloat(product.Total_Price) || 0;
-                    if (sellingPrice > 0 && product.Product_ID) {
-                        const woItemsQ = query(
-                            collection(db, COLLECTIONS.WORK_ORDER_ITEMS),
-                            where('Product_ID', '==', product.Product_ID),
-                            where('Organization_ID', '==', organizationId)
-                        );
-                        const woItemsSnap = await getDocs(woItemsQ);
-                        for (const woItemDoc of woItemsSnap.docs) {
-                            const qty = woItemDoc.data().Quantity || 1;
-                            await updateDoc(woItemDoc.ref, { Product_Value: sellingPrice * qty });
-                        }
-                    }
-                }
-                console.log('Synced offer prices to WO items');
-            } catch (syncErr) {
-                console.warn('Failed to sync offer prices to WO items (non-critical):', syncErr);
-            }
-        }
 
         return { success: true, message: 'Ponuda ažurirana' };
     } catch (error) {

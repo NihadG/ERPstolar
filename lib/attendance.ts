@@ -3092,7 +3092,8 @@ export async function calculateActualLaborCost(item: any, organizationId?: strin
  * options (za labor-only puteve, da bude brzo):
  *   skipSnapshot       — ne pravi AI production snapshot (samo na završetku naloga treba)
  *   skipStatusSync     — ne dira statuse proizvoda/projekata (labor ne mijenja status)
- *   skipMaterialRefresh— ne dohvaća svjež materijal po stavci (koristi spremljeni Material_Cost)
+ *   skipMaterialRefresh— ne dohvaća svjež materijal NI usluge po stavci (koristi spremljene
+ *                        Material_Cost/Services_Total; oba su "živi izvor iz ponude" refreshevi)
  */
 export async function recalculateWorkOrder(
     workOrderId: string,
@@ -3141,10 +3142,16 @@ export async function recalculateWorkOrder(
         // nezavisna Firestore čitanja (offer backfill, services backfill, materijali), pa je
         // sekvencijalni for-of preko N stavki bio glavni uzrok sporog preračuna (N × round-trip).
         // Agregacija u zajedničke akumulatore (totalValue itd.) ostaje SINHRONA nakon Promise.all.
+        // Montaža nalozi namjerno nose Product_Value/Services_Total/Material_Cost = 0 (samo rad je trošak) —
+        // backfillovi ispod ne smiju "oživjeti" prihod/materijal na takvim nalozima.
+        const isMontaza = workOrder.Work_Order_Type === 'Montaža';
+
         const itemResults = await Promise.all(workOrder.items.map(async (item) => {
             // BACKFILL: If Product_Value is 0, recover from accepted offer (one-time self-healing)
-            let itemValue = item.Product_Value || 0;
-            if (itemValue <= 0 && item.Product_ID && item.Project_ID && workOrder.Organization_ID) {
+            // Montaža stavke NIKAD ne nose prihod — forsiraj 0 (liječi i staru korupciju iz perioda
+            // prije ovog guarda, kad je backfill mogao upisati Product_Value na montaža stavku).
+            let itemValue = isMontaza ? 0 : (item.Product_Value || 0);
+            if (!isMontaza && itemValue <= 0 && item.Product_ID && item.Project_ID && workOrder.Organization_ID) {
                 try {
                     // Find accepted offer for this project
                     const offerQuery = query(
@@ -3184,8 +3191,17 @@ export async function recalculateWorkOrder(
                 }
             }
 
-            // BACKFILL: Services_Total (usluge = trošak) iz ponude ako nije postavljeno — one-time self-healing
-            if ((item as any).Services_Total === undefined && item.Product_ID && item.Project_ID && workOrder.Organization_ID) {
+            // SERVICES SYNC: usluge (extras) prihvaćene ponude se osvježavaju na SVAKI recalc za
+            // aktivne, ne-zamrznute, ne-montaža stavke (isto pravilo zamrzavanja kao materijal —
+            // Završeno/Completed_At) — bez ovoga usluge dodane u ponudu NAKON kreiranja naloga
+            // ostaju nevidljive (stari bug, sada popravljen na IZVORU umjesto u svakom potrošaču
+            // posebno — vidi lib/services/profit/analyticsService.ts, koji sada čita SAMO snapshot).
+            // Ručni override (Profit_Overrides.Extras_Total) TRAJNO zamrzava vrijednost — on se
+            // mirroruje direktno u Services_Total pri snimanju (saveProfitOverrides), pa ponovni
+            // fetch ovdje ne smije prepisati korisnikov ručni unos.
+            const itemFrozenForServices = item.Status === 'Završeno' || !!item.Completed_At;
+            const servicesManualOverride = (item as any).Profit_Overrides?.Extras_Total != null;
+            if (!isMontaza && !skipMaterialRefresh && !itemFrozenForServices && !servicesManualOverride && item.Product_ID && item.Project_ID && workOrder.Organization_ID) {
                 try {
                     const offSnap = await getDocs(query(
                         collection(firestore, COLLECTIONS.OFFERS),
@@ -3211,21 +3227,24 @@ export async function recalculateWorkOrder(
                                 ));
                                 services = exSnap.docs.reduce((s, d) => s + (d.data().Total || 0), 0);
                             }
-                            const itemRef = doc(firestore, COLLECTIONS.WORK_ORDER_ITEMS, item.ID);
-                            await updateDoc(itemRef, { Services_Total: services });
+                            if (services !== ((item as any).Services_Total || 0)) {
+                                const itemRef = doc(firestore, COLLECTIONS.WORK_ORDER_ITEMS, item.ID);
+                                await updateDoc(itemRef, { Services_Total: services });
+                                console.log(`Services_Total sinhronizovan=${services} za stavku ${item.Product_Name}`);
+                            }
                             (item as any).Services_Total = services;  // za tekuću agregaciju
-                            console.log(`Backfilled Services_Total=${services} for item ${item.Product_Name}`);
                         }
                     }
                 } catch (svcErr) {
-                    console.warn('Services_Total backfill failed (non-critical):', svcErr);
+                    console.warn('Services_Total sync failed (non-critical):', svcErr);
                 }
             }
 
             // FIX #1: Apply Profit_Overrides — user can override selling price per item
             // This ensures recalculateWorkOrder matches the profit modal badge
+            // (montaža stavke nemaju prihod pa override ne primjenjujemo na njih)
             const overrides = (item as any).Profit_Overrides;
-            if (overrides?.Selling_Price != null && overrides.Selling_Price > 0) {
+            if (!isMontaza && overrides?.Selling_Price != null && overrides.Selling_Price > 0) {
                 itemValue = overrides.Selling_Price;
             }
 
@@ -3238,7 +3257,10 @@ export async function recalculateWorkOrder(
             // Rizik #3: materijal je ZAMRZNUT za stavku koja je ikad završena (ima Completed_At) —
             // ostaje zamrznut i ako se status privremeno vrati na 'U toku' (naknadno knjiženje).
             const matFrozen = item.Status === 'Završeno' || !!item.Completed_At;
-            if (matFrozen && (item.Material_Cost || 0) > 0) {
+            if (isMontaza) {
+                // Montaža nalog ne nosi materijal — spriječi da fresh fetch "uskrsne" trošak.
+                itemMaterialCost = 0;
+            } else if (matFrozen && (item.Material_Cost || 0) > 0) {
                 // Završeno/zamrznuto: koristi pohranjeni trošak
                 itemMaterialCost = item.Material_Cost || 0;
             } else if ((item as any).Material_Cost_Source === 'manual' && (item.Material_Cost || 0) > 0) {
@@ -3285,9 +3307,14 @@ export async function recalculateWorkOrder(
             // SYNC: Update item-level Material_Cost, Actual_Labor_Cost i Actual_Labor_Days for consistency
             // (skupljamo izmjene → jedan batch commit poslije petlje)
             // NB: Material_Cost se ČUVA PO KOMADU (invarijanta) — množenje količinom radi SAMO agregat gore.
+            const syncPayload: Record<string, any> = { Material_Cost: r.itemMaterialCost, Actual_Labor_Cost: r.freshItemLaborCost, Actual_Labor_Days: r.freshItemLaborDays };
+            // Self-heal: montaža stavka korumpirana starim backfillom (Product_Value>0) — vrati na 0.
+            if (isMontaza && (item.Product_Value || 0) !== 0) {
+                syncPayload.Product_Value = 0;
+            }
             itemUpdates.push({
                 ref: doc(firestore, COLLECTIONS.WORK_ORDER_ITEMS, item.ID),
-                payload: { Material_Cost: r.itemMaterialCost, Actual_Labor_Cost: r.freshItemLaborCost, Actual_Labor_Days: r.freshItemLaborDays },
+                payload: syncPayload,
             });
 
             if (item.Started_At) {

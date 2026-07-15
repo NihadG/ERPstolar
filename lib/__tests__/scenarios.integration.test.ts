@@ -16,6 +16,8 @@
 import { splitDnevnicaExact, normalizePresence } from '../laborSplit';
 import { workOrderDueDate, isWorkingDay, buildSaturdayChecker, type AttendanceLite } from '../planning';
 import { itemMaterialTotal, isItemMaterialFrozen } from '../materialCost';
+import { projectProfitBreakdown } from '../projectProfit';
+import { distributeAmountByQuantity } from '../invoicePricing';
 
 // ── helpers ─────────────────────────────────────────────────────────────────
 const round2 = (n: number) => Math.round(n * 100) / 100;
@@ -364,5 +366,133 @@ describe('Scenarij 6 — trošak materijala se množi količinom (itemMaterialTo
         expect(isItemMaterialFrozen({ Status: 'U toku' })).toBe(false);
         // frozen ili ne — ukupno je uvijek po komadu × qty
         expect(itemMaterialTotal(255, 15)).toBe(3825);
+    });
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// SCENARIJ — Montaža nalog nikad ne nosi prihod/materijal (WS-0 guard)
+// Vjeran mirror lib/attendance.ts recalculateWorkOrder montaža grane (:3144-3254):
+// bez obzira na stanje stavke (stari backfill prije guarda, override, sačuvan
+// materijal), montaža stavka mora agregirati na 0 prihoda/materijala — samo rad
+// ulazi u trošak. Self-heal: korumpirani Product_Value > 0 vraća se na 0.
+// ════════════════════════════════════════════════════════════════════════════
+interface MontazaAwareItem {
+    Product_Value?: number;
+    Material_Cost?: number;
+    Profit_Overrides?: { Selling_Price?: number };
+}
+/** Mirror attendance.ts:3144-3254 (isMontaza grana). */
+function recalcItemValueAndMaterial(item: MontazaAwareItem, isMontaza: boolean): { itemValue: number; itemMaterialCost: number } {
+    if (isMontaza) return { itemValue: 0, itemMaterialCost: 0 };
+    let itemValue = item.Product_Value || 0;
+    if (item.Profit_Overrides?.Selling_Price != null && item.Profit_Overrides.Selling_Price > 0) {
+        itemValue = item.Profit_Overrides.Selling_Price;
+    }
+    return { itemValue, itemMaterialCost: item.Material_Cost || 0 };
+}
+/** Mirror self-heal payload iz batch sync-a (attendance.ts ~3298-3301). */
+function selfHealMontazaProductValue(item: MontazaAwareItem, isMontaza: boolean): number | undefined {
+    return isMontaza && (item.Product_Value || 0) !== 0 ? 0 : undefined;
+}
+
+describe('Scenarij — montaža nalog ne nosi prihod/materijal (WS-0 guard)', () => {
+    test('montaža stavka korumpirana starim backfillom → agregat je 0 bez obzira na stored/override', () => {
+        const corrupted: MontazaAwareItem = { Product_Value: 500, Material_Cost: 120, Profit_Overrides: { Selling_Price: 999 } };
+        const r = recalcItemValueAndMaterial(corrupted, true);
+        expect(r.itemValue).toBe(0);
+        expect(r.itemMaterialCost).toBe(0);
+    });
+    test('proizvodna (ne-montaža) stavka i dalje poštuje override i sačuvan materijal', () => {
+        const item: MontazaAwareItem = { Product_Value: 500, Material_Cost: 120, Profit_Overrides: { Selling_Price: 600 } };
+        const r = recalcItemValueAndMaterial(item, false);
+        expect(r.itemValue).toBe(600);
+        expect(r.itemMaterialCost).toBe(120);
+    });
+    test('self-heal: korumpirana montaža stavka dobija Product_Value:0 u sync payloadu', () => {
+        expect(selfHealMontazaProductValue({ Product_Value: 500 }, true)).toBe(0);
+        expect(selfHealMontazaProductValue({ Product_Value: 0 }, true)).toBeUndefined();
+        expect(selfHealMontazaProductValue({ Product_Value: 500 }, false)).toBeUndefined();
+    });
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// SCENARIJ — Završni račun: izdavanje mijenja profit projekta, storno ga vraća
+// Koristi STVARNE produkcijske funkcije (projectProfitBreakdown, distributeAmountByQuantity)
+// — ne mirror — jer je invoiceService.ts Firestore-ovisan (batch writes); ovdje se
+// provjerava da OBLIK upisa koji issueInvoice/cancelInvoice rade (Profit_Overrides.Selling_Price
+// + Product_Value mirror; brisanje override-a + restauracija iz ponude) zaista mijenja/vraća
+// profit projekta preko istog izvora kao kartica/nalozi.
+// ════════════════════════════════════════════════════════════════════════════
+describe('Scenarij — Završni račun mijenja i vraća profit projekta (issueInvoice/cancelInvoice oblik upisa)', () => {
+    // Ponuda: PA (400/kom × 2 = 800), PB (500/kom × 1 = 500). Materijal: PA 100/kom, PB 50/kom.
+    const offerSellingPerUnitPA = 400;
+    const baseItems = () => [
+        { ID: 'A1', Project_ID: 'P1', Product_ID: 'PA', Product_Value: 800, Material_Cost: 100, Quantity: 2 },
+        { ID: 'A2', Project_ID: 'P1', Product_ID: 'PB', Product_Value: 500, Material_Cost: 50, Quantity: 1 },
+    ];
+    const workOrders = (items: ReturnType<typeof baseItems>) => [
+        { Work_Order_ID: 'WO1', Status: 'U toku' as const, Work_Order_Type: 'Proizvodnja', items },
+    ];
+
+    test('prije fakturisanja: profit projekta = Σ Product_Value ponude', () => {
+        const before = projectProfitBreakdown({ projectId: 'P1', workOrders: workOrders(baseItems()), workLogs: [] });
+        expect(before.revenue).toBe(1300); // 800 + 500
+        expect(before.material).toBe(250); // 100×2 + 50×1
+        expect(before.profit).toBe(1050);
+    });
+
+    test('izdavanje računa (nova cijena samo za PA=900) → revenue projekta se mijenja SAMO za PA', () => {
+        const items = baseItems();
+        // issueInvoice: raspodijeli Final_Total (900) na stavke proizvoda PA po količini (ovdje 1 stavka).
+        const distribution = distributeAmountByQuantity(900, [{ id: 'A1', qty: items[0].Quantity }]);
+        expect(distribution).toEqual([{ id: 'A1', amount: 900 }]);
+        // Isti oblik upisa kao issueInvoice: Profit_Overrides.Selling_Price + Product_Value mirror.
+        const invoiced = items.map(it => it.ID === 'A1'
+            ? { ...it, Profit_Overrides: { Selling_Price: 900 }, Product_Value: 900 }
+            : it);
+
+        const after = projectProfitBreakdown({ projectId: 'P1', workOrders: workOrders(invoiced), workLogs: [] });
+        expect(after.revenue).toBe(1400); // 900 (fakturisano) + 500 (nepromijenjeno)
+        expect(after.material).toBe(250); // materijal se ne mijenja izdavanjem
+        expect(after.profit).toBe(1150);
+    });
+
+    test('storno: brisanje override-a + restauracija Product_Value iz ponude (Selling_Price × qty) vraća profit na pretfakturisano stanje', () => {
+        const items = baseItems();
+        const invoiced = items.map(it => it.ID === 'A1'
+            ? { ...it, Profit_Overrides: { Selling_Price: 900 }, Product_Value: 900 }
+            : it);
+
+        // cancelInvoice: Profit_Overrides:{} (brisanje) + Product_Value = offerSellingPerUnit × qty (EKSPLICITNO, ne backfill).
+        const restored = invoiced.map(it => it.ID === 'A1'
+            ? { ...it, Profit_Overrides: {}, Product_Value: offerSellingPerUnitPA * it.Quantity }
+            : it);
+
+        const afterCancel = projectProfitBreakdown({ projectId: 'P1', workOrders: workOrders(restored), workLogs: [] });
+        const before = projectProfitBreakdown({ projectId: 'P1', workOrders: workOrders(items), workLogs: [] });
+        expect(afterCancel.revenue).toBe(before.revenue); // 1300 — potpuno vraćeno
+        expect(afterCancel.profit).toBe(before.profit);
+    });
+
+    test('proizvod podijeljen na 2 stavke (2 naloga): distributeAmountByQuantity + projectProfitBreakdown daju Σ == fakturisani total', () => {
+        // PA podijeljen 2+1 komada kroz dva proizvodna naloga.
+        const split = [
+            { ID: 'S1', Project_ID: 'P1', Product_ID: 'PA', Product_Value: 800, Material_Cost: 100, Quantity: 2 },
+            { ID: 'S2', Project_ID: 'P1', Product_ID: 'PA', Material_Cost: 100, Quantity: 1, Product_Value: 400 },
+        ];
+        const distribution = distributeAmountByQuantity(1500, [
+            { id: 'S1', qty: split[0].Quantity },
+            { id: 'S2', qty: split[1].Quantity },
+        ]);
+        // Σ raspodjele == fakturisani total, bez drifta
+        expect(distribution.reduce((s, d) => s + d.amount, 0)).toBe(1500);
+
+        const invoicedSplit = split.map(it => {
+            const d = distribution.find(x => x.id === it.ID)!;
+            return { ...it, Profit_Overrides: { Selling_Price: d.amount }, Product_Value: d.amount };
+        });
+        const wo = [{ Work_Order_ID: 'WOA', Status: 'U toku' as const, Work_Order_Type: 'Proizvodnja', items: invoicedSplit }];
+        const result = projectProfitBreakdown({ projectId: 'P1', workOrders: wo, workLogs: [] });
+        expect(result.revenue).toBe(1500);
     });
 });

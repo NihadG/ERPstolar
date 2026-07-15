@@ -1,7 +1,13 @@
 /**
  * analyticsService.ts — Jedinstvena analitika (Profiti → full-screen).
  *
- * MODEL = STVARNO (kao kartica projekta), agregacija PO PROIZVODU.
+ * MODEL = STVARNO (isti izvor kao WorkOrderExpandedDetail / lib/projectProfit.ts):
+ * agregacija PO PROIZVODU, ali finansije se sabiraju preko SVIH stavki proizvoda
+ * (snapshot Material_Cost/Services_Total/Transport_Share po stavci, override važi
+ * kao u lib/profit.ts) — BEZ "reprezentativne stavke" i BEZ žive ponude kao izvora
+ * STVARNOG prihoda/materijala/usluga (živi materijal/usluge se garantuju write-time
+ * u lib/attendance.ts recalculateWorkOrder, ne ovdje). PLAN kolone (iz ponude) su
+ * odvojene i i dalje koriste najbolju dostupnu procjenu (offerProductByProduct fallback).
  *
  * Efikasnost: dohvat (getAnalyticsRaw) se radi JEDNOM (otvaranje / Osvježi);
  * promjena perioda/opsega je čista IN-MEMORY agregacija (computeAnalytics) — bez novog upita.
@@ -12,7 +18,7 @@
 import { COLLECTIONS } from '../shared/collections';
 import { queryByOrg, where } from '../shared/firestoreClient';
 import { itemMaterialTotal } from '../../materialCost';
-import type { WorkOrderItem, WorkLog, WorkOrder, ProductMaterial, Offer, OfferProduct, OfferExtra } from '../../types';
+import type { WorkOrderItem, WorkLog, WorkOrder, Offer, OfferProduct } from '../../types';
 import {
     aggregateProductRows, aggregateProjects, planVsActual, aggregateWorkers,
     weeklyLaborTrend, computeKpis,
@@ -39,7 +45,6 @@ export interface AnalyticsRaw {
     workOrders: WorkOrder[];
     items: WorkOrderItem[];
     logs: WorkLog[];
-    liveMaterialByProduct: Map<string, number>;
     actualLaborByProduct: Map<string, number>;
     offerProductByProduct: Map<string, OfferProduct>;
 }
@@ -48,28 +53,23 @@ const dOnly = (iso?: string | null) => (iso ? iso.split('T')[0] : '');
 
 export async function getAnalyticsRaw(organizationId: string): Promise<AnalyticsRaw> {
     if (!organizationId) {
-        return { workOrders: [], items: [], logs: [], liveMaterialByProduct: new Map(), actualLaborByProduct: new Map(), offerProductByProduct: new Map() };
+        return { workOrders: [], items: [], logs: [], actualLaborByProduct: new Map(), offerProductByProduct: new Map() };
     }
     // PERF: analitika ranije zvala generički getOffers() — taj dohvaća SVE 4 kolekcije cijele
     // organizacije (offers, offer_products, offer_extras, PA I projects radi enrichment-a klijenta)
     // za BAŠ SVAKU ponudu ikad napravljenu (nacrti/odbijene/istekle), iako je analitici trebala
     // samo Product_ID → uslovi PRIHVAĆENE ponude. Ovdje: direktan upit filtriran na Status='Prihvaćeno'
     // (server-side, manji rezultat) + BEZ projects fetcha (nepotreban — analitika ne prikazuje klijenta).
-    const [workOrders, items, logs, productMaterials, acceptedOffers, offerProducts, offerExtras] = await Promise.all([
+    // BEZ product_materials/offer_extras upita: STVARNI materijal/usluge sada dolaze iz snapshot-a
+    // na stavci (Material_Cost/Services_Total), ne iz žive ponude/kataloga (parity sa karticom projekta).
+    const [workOrders, items, logs, acceptedOffers, offerProducts] = await Promise.all([
         queryByOrg<WorkOrder>(COLLECTIONS.WORK_ORDERS, organizationId),
         queryByOrg<WorkOrderItem>(COLLECTIONS.WORK_ORDER_ITEMS, organizationId),
         queryByOrg<WorkLog>(COLLECTIONS.WORK_LOGS, organizationId),
-        queryByOrg<ProductMaterial>(COLLECTIONS.PRODUCT_MATERIALS, organizationId),
         queryByOrg<Offer>(COLLECTIONS.OFFERS, organizationId, where('Status', '==', 'Prihvaćeno')),
         queryByOrg<OfferProduct>(COLLECTIONS.OFFER_PRODUCTS, organizationId),
-        queryByOrg<OfferExtra>(COLLECTIONS.OFFER_EXTRAS, organizationId),
     ]);
 
-    const liveMaterialByProduct = new Map<string, number>();
-    for (const m of productMaterials) {
-        if (!m.Product_ID) continue;
-        liveMaterialByProduct.set(m.Product_ID, (liveMaterialByProduct.get(m.Product_ID) || 0) + (m.Total_Price || 0));
-    }
     const actualLaborByProduct = new Map<string, number>();
     for (const l of logs) {
         if (!l.Product_ID) continue;
@@ -77,19 +77,12 @@ export async function getAnalyticsRaw(organizationId: string): Promise<Analytics
     }
 
     const acceptedOfferIds = new Set(acceptedOffers.map(o => o.Offer_ID));
-    const extrasByOfferProduct = new Map<string, OfferExtra[]>();
-    for (const e of offerExtras) {
-        if (!e.Offer_Product_ID) continue;
-        const arr = extrasByOfferProduct.get(e.Offer_Product_ID) || [];
-        arr.push(e);
-        extrasByOfferProduct.set(e.Offer_Product_ID, arr);
-    }
     const offerProductByProduct = new Map<string, OfferProduct>();
     for (const op of offerProducts) {
         if (!op.Product_ID || !acceptedOfferIds.has(op.Offer_ID) || offerProductByProduct.has(op.Product_ID)) continue;
-        offerProductByProduct.set(op.Product_ID, { ...op, extras: extrasByOfferProduct.get(op.ID) || [] });
+        offerProductByProduct.set(op.Product_ID, op);
     }
-    return { workOrders, items, logs, liveMaterialByProduct, actualLaborByProduct, offerProductByProduct };
+    return { workOrders, items, logs, actualLaborByProduct, offerProductByProduct };
 }
 
 /** Da li je nalog AKTIVAN u vremenskom prozoru [from,to] (preklapanje intervala). */
@@ -141,26 +134,34 @@ export function computeAnalytics(raw: AnalyticsRaw, opts: AnalyticsOptions = {})
     const inputs: ProductInput[] = [];
     for (const [productId, items] of Array.from(itemsByProduct.entries())) {
         if (!includedProducts.has(productId)) continue;
-        // Reprezentativna stavka = PROIZVODNI nalog ako postoji (montažne stavke se kreiraju
-        // s nuliranim finansijama — Product_Value/Material_Cost/Transport/Planned_Labor = 0 —
-        // pa ne smiju predstavljati proizvod); unutar toga preferiraj nezavršenu.
+        // Reprezentativna stavka: SAMO za META polja (naziv/projekat/nalog za drill-in) —
+        // finansije NIKAD ne dolaze samo iz ove jedne stavke (vidi STVARNO ispod). Preferiraj
+        // proizvodnu (montaža nema svoj naziv/nalog kontekst za prikaz) i nezavršenu.
         const production = items.filter(i => !isMontazaWo(i.Work_Order_ID));
         const pool = production.length ? production : items;
         const rep = pool.find(i => i.Status !== 'Završeno') || pool[0];
         const wo = woById.get(rep.Work_Order_ID);
         const op = raw.offerProductByProduct.get(productId);
-        const overrides = (rep as { Profit_Overrides?: { Selling_Price?: number; Transport_Share?: number; Extras_Total?: number } }).Profit_Overrides;
-        // Fallback na ponudu: Selling_Price je PO KOMADU → ukupno je Total_Price (ili × količina).
-        const selling = (overrides?.Selling_Price ?? rep.Product_Value) || (op ? (op.Total_Price || (op.Selling_Price || 0) * (op.Quantity || 1)) : 0);
-        const transport = overrides?.Transport_Share ?? rep.Transport_Share ?? (op?.Transport_Share || 0);
-        // USLUGE: item.Services_Total je SNAPSHOT upisan pri kreiranju naloga (uvijek definisan broj,
-        // i 0 ako ponuda tada nije imala usluga — vidi ProductionTab.tsx) → `?? ` fallback na živu
-        // ponudu ovdje NIKAD nije okidao (0 nije null/undefined), pa su usluge dodane u ponudu NAKON
-        // kreiranja naloga ostajale nevidljive u analitici. STVARNO (živo) = trenutni extras ponude,
-        // isto kao liveMaterial; eksplicitni ručni override (Profit_Overrides.Extras_Total) ima prednost;
-        // stavke bez vezane ponude (ad-hoc/custom) koriste pohranjenu vrijednost.
-        const liveOfferServices = op ? (op.extras || []).reduce((s, e) => s + (e.Total || 0), 0) : undefined;
-        const services = overrides?.Extras_Total ?? liveOfferServices ?? (rep.Services_Total || 0);
+
+        // STVARNO (snapshot, parity sa WorkOrderExpandedDetail/lib/projectProfit.ts): Σ preko
+        // SVIH ne-otkazanih stavki proizvoda — BEZ reprezentativne stavke, BEZ žive ponude kao
+        // izvora (Product_Value=0 dok se ponuda ne backfilluje ostaje 0, ne "pada" na ponudu —
+        // isto kao kartica projekta/nalog). Montaža stavke ne nose prihod/materijal/usluge/transport.
+        let selling = 0, liveMaterial = 0, services = 0, transport = 0;
+        for (const it of items) {
+            if (isMontazaWo(it.Work_Order_ID)) continue;
+            const ov = (it as { Profit_Overrides?: { Selling_Price?: number; Transport_Share?: number } }).Profit_Overrides;
+            selling += (ov?.Selling_Price != null && ov.Selling_Price > 0) ? ov.Selling_Price : (it.Product_Value || 0);
+            liveMaterial += itemMaterialTotal(it.Material_Cost, it.Quantity);
+            // Services_Total nema poseban override sloj (za razliku od Selling_Price/Transport_Share):
+            // saveProfitOverrides mirroruje Extras_Total DIREKTNO u Services_Total pri snimanju, pa se
+            // snapshot uvijek čita kao ovdje — isto kao lib/profit.ts (bez servicesOverride parametra).
+            services += it.Services_Total || 0;
+            transport += (ov?.Transport_Share != null ? ov.Transport_Share : (it.Transport_Share || 0));
+        }
+
+        // PLAN (iz ponude) — nezavisna kolona, i dalje najbolja dostupna procjena bez obzira
+        // da li je WO item još backfillovan; fallback ostaje netaknut.
         const plannedMaterial = op ? (op.Material_Cost || 0) * (op.Quantity || 1) : itemMaterialTotal(rep.Material_Cost, rep.Quantity);
         // Planirani rad: snapshot sa stavki (Planned_Labor_Cost je PO KOMADU, kao u ponudi:
         // radnici × dani × dnevnica) preko SVIH naloga proizvoda; ako stavke snapshot nemaju
@@ -176,16 +177,13 @@ export function computeAnalytics(raw: AnalyticsRaw, opts: AnalyticsOptions = {})
             projectId: rep.Project_ID || '', projectName: rep.Project_Name || '—',
             woId: rep.Work_Order_ID || '', woNumber: wo?.Work_Order_Number || '', woType: wo?.Work_Order_Type || '',
             status: rep.Status || '',
-            selling: selling || 0,
-            // MATERIJAL × KOLIČINA: liveMaterialByProduct je PO KOMADU (Σ product_materials),
-            // a `selling` (rep.Product_Value) je UKUPAN → množi količinom reprezentativne stavke.
-            // Simetrično s `plannedMaterial` (op.Material_Cost × op.Quantity).
-            liveMaterial: itemMaterialTotal(raw.liveMaterialByProduct.get(productId) || 0, rep.Quantity),
+            selling,
+            liveMaterial,
             plannedMaterial,
             actualLabor: raw.actualLaborByProduct.get(productId) || 0,
             plannedLabor,
-            transport: transport || 0,
-            services: services || 0,
+            transport,
+            services,
         });
     }
 

@@ -1,11 +1,13 @@
 /**
- * Regresija: "Usluge" u Analitici pokazivalo 0 KM iako je ponuda imala stvarne usluge.
+ * MODEL = STVARNO (snapshot, parity sa karticom projekta / WorkOrderExpandedDetail).
  *
- * Uzrok: WorkOrderItem.Services_Total se upisuje JEDNOM pri kreiranju naloga (uvijek definisan
- * broj, 0 ako ponuda tada nije imala usluga — ProductionTab.tsx). Stari `??` fallback na živu
- * ponudu NIKAD nije okidao jer 0 nije null/undefined → usluge dodane u ponudu NAKON kreiranja
- * naloga su ostajale nevidljive u analitici (kartica projekta ih je i dalje ispravno prikazivala,
- * jer čita drugi izvor — ovo je bio bug specifičan za analyticsService.computeAnalytics).
+ * Analitika više NE čita živu ponudu ni katalog materijala za STVARNI prihod/materijal/usluge —
+ * to su snapshot polja na WorkOrderItem (Product_Value, Material_Cost, Services_Total,
+ * Transport_Share), sabrana preko SVIH ne-otkazanih stavki proizvoda (bez "reprezentativne
+ * stavke"). Svježina tih snapshot-a se garantuje WRITE-TIME u lib/attendance.ts
+ * recalculateWorkOrder (materijal/usluge se osvježe pri svakom recalc-u za aktivne,
+ * ne-zamrznute, ne-montaža stavke), ne ovdje. PLAN kolone (iz ponude) su nezavisne i
+ * i dalje padaju na živu ponudu kad WO item nema svoj planirani snapshot.
  */
 
 // computeAnalytics je čista (in-memory) funkcija, ali živi u istom modulu kao getAnalyticsRaw,
@@ -19,7 +21,7 @@ import type { WorkOrder, WorkOrderItem, Offer, OfferProduct } from '../types';
 function baseRaw(overrides: Partial<AnalyticsRaw> = {}): AnalyticsRaw {
     return {
         workOrders: [], items: [], logs: [],
-        liveMaterialByProduct: new Map(), actualLaborByProduct: new Map(), offerProductByProduct: new Map(),
+        actualLaborByProduct: new Map(), offerProductByProduct: new Map(),
         ...overrides,
     };
 }
@@ -44,21 +46,21 @@ const offerProduct = (opts: Partial<OfferProduct> & { Product_ID: string }): Off
     ...opts,
 } as unknown as OfferProduct);
 
-describe('computeAnalytics — usluge (services) moraju biti ŽIVE iz ponude, ne zamrznuti snapshot', () => {
-    test('REGRESIJA: usluge dodane u ponudu NAKON kreiranja naloga se vide u analitici (ranije 0)', () => {
+describe('computeAnalytics — usluge (services) = snapshot item.Services_Total (STVARNO model)', () => {
+    test('usluge NE padaju na živu ponudu — samo pohranjeni item.Services_Total (svježina je write-time posao recalculateWorkOrder)', () => {
         const op = offerProductByProductOf(offerProduct({
             Product_ID: 'PA',
             extras: [{ ID: 'e1', Offer_Product_ID: 'op1', Name: 'Ugradnja', Quantity: 1, Unit: 'kom', Unit_Price: 850, Total: 850 }],
         }));
         const raw = baseRaw({
             workOrders: [wo('WO1')],
-            // Services_Total = 0 (snapshot iz trenutka kad ponuda još nije imala usluge — GLAVNI slučaj bug-a)
+            // Services_Total = 0 na stavci — analitika više NE gleda op.extras (850) da je "popravi"
             items: [item({ ID: 'I1', Product_ID: 'PA', Work_Order_ID: 'WO1', Services_Total: 0 })],
             offerProductByProduct: op,
         });
         const data = computeAnalytics(raw);
         const row = data.products.find(p => p.productId === 'PA')!;
-        expect(row.services).toBe(850);
+        expect(row.services).toBe(0);
     });
 
     test('bez vezane ponude (ad-hoc/custom stavka) → koristi pohranjeni item.Services_Total', () => {
@@ -71,45 +73,26 @@ describe('computeAnalytics — usluge (services) moraju biti ŽIVE iz ponude, ne
         expect(row.services).toBe(120);
     });
 
-    test('eksplicitni ručni override (Profit_Overrides.Extras_Total) ima prednost nad živom ponudom', () => {
-        const op = offerProductByProductOf(offerProduct({
-            Product_ID: 'PA',
-            extras: [{ ID: 'e1', Offer_Product_ID: 'op1', Name: 'Ugradnja', Quantity: 1, Unit: 'kom', Unit_Price: 850, Total: 850 }],
-        }));
+    test('Profit_Overrides.Extras_Total nema poseban read-time efekat (već mirrorovan u Services_Total pri snimanju — saveProfitOverrides)', () => {
+        // Services_Total=850 je "istinita" vrijednost (kao da je override 300 već primijenjen ranije
+        // pa PA nakon toga izmijenjena na 850 nekim drugim putem) — Profit_Overrides.Extras_Total sam
+        // za sebe ne mijenja agregaciju, jer nema servicesOverride parametar u lib/profit.ts.
         const raw = baseRaw({
             workOrders: [wo('WO1')],
             items: [item({
                 ID: 'I1', Product_ID: 'PA', Work_Order_ID: 'WO1', Services_Total: 850,
                 Profit_Overrides: { Extras_Total: 300, Updated_At: '2026-07-05T00:00:00Z' },
             } as any)],
-            offerProductByProduct: op,
         });
         const data = computeAnalytics(raw);
         const row = data.products.find(p => p.productId === 'PA')!;
-        expect(row.services).toBe(300);
+        expect(row.services).toBe(850);
     });
 
-    test('ponuda uklonila usluge (extras prazno) → analitika prati NULU, ne zaostalu stavku', () => {
-        const op = offerProductByProductOf(offerProduct({ Product_ID: 'PA', extras: [] }));
+    test('profit u analitici ispravno oduzima usluge iz snapshot-a stavke', () => {
         const raw = baseRaw({
             workOrders: [wo('WO1')],
-            items: [item({ ID: 'I1', Product_ID: 'PA', Work_Order_ID: 'WO1', Services_Total: 500 })],
-            offerProductByProduct: op,
-        });
-        const data = computeAnalytics(raw);
-        const row = data.products.find(p => p.productId === 'PA')!;
-        expect(row.services).toBe(0);
-    });
-
-    test('profit u analitici ispravno oduzima žive usluge (ne samo prikaz kolone)', () => {
-        const op = offerProductByProductOf(offerProduct({
-            Product_ID: 'PA',
-            extras: [{ ID: 'e1', Offer_Product_ID: 'op1', Name: 'Montaža', Quantity: 1, Unit: 'kom', Unit_Price: 200, Total: 200 }],
-        }));
-        const raw = baseRaw({
-            workOrders: [wo('WO1')],
-            items: [item({ ID: 'I1', Product_ID: 'PA', Work_Order_ID: 'WO1', Product_Value: 1000, Services_Total: 0 })],
-            offerProductByProduct: op,
+            items: [item({ ID: 'I1', Product_ID: 'PA', Work_Order_ID: 'WO1', Product_Value: 1000, Services_Total: 200 })],
         });
         const data = computeAnalytics(raw);
         const row = data.products.find(p => p.productId === 'PA')!;
@@ -126,11 +109,10 @@ describe('computeAnalytics — proizvod s PROIZVODNIM (završenim) i MONTAŽNIM 
     const rawProdDoneMontActive = () => baseRaw({
         workOrders: [wo('WOP', 'Završeno'), wo('WOM', 'U toku', 'Montaža')],
         items: [
-            item({ ID: 'IP', Product_ID: 'PA', Work_Order_ID: 'WOP', Status: 'Završeno', Product_Value: 2000, Quantity: 1, Planned_Labor_Cost: 600, Transport_Share: 50 } as any),
+            item({ ID: 'IP', Product_ID: 'PA', Work_Order_ID: 'WOP', Status: 'Završeno', Product_Value: 2000, Quantity: 1, Material_Cost: 700, Planned_Labor_Cost: 600, Transport_Share: 50 } as any),
             // Montažna stavka: finansije nulirane pri kreiranju (ProductionTab isMontazaMode)
-            item({ ID: 'IM', Product_ID: 'PA', Work_Order_ID: 'WOM', Status: 'U toku', Product_Value: 0, Quantity: 1, Planned_Labor_Cost: 0, Transport_Share: 0 } as any),
+            item({ ID: 'IM', Product_ID: 'PA', Work_Order_ID: 'WOM', Status: 'U toku', Product_Value: 0, Quantity: 1, Material_Cost: 0, Planned_Labor_Cost: 0, Transport_Share: 0 } as any),
         ],
-        liveMaterialByProduct: new Map([['PA', 700]]),
         actualLaborByProduct: new Map([['PA', 900]]),
     });
 
@@ -196,9 +178,12 @@ describe('computeAnalytics — planirani rad i prodajna cijena iz ponude', () =>
         expect(row.plannedLabor).toBe(300);
     });
 
-    test('REGRESIJA: fallback prodajne cijene množi količinom (Selling_Price je PO KOMADU)', () => {
+    test('STVARNI prihod NE pada na živu ponudu: Product_Value=0 (ponuda još nije backfillovana na stavku) → selling je 0', () => {
+        // Parity sa karticom projekta/WorkOrderExpandedDetail: dok recalculateWorkOrder ne
+        // backfilluje Product_Value iz prihvaćene ponude na stavku, STVARNI prihod je 0 —
+        // analitika ga ne "glumi" iz žive ponude (to bi sakrilo da backfill još nije prošao).
         const op = offerProductByProductOf(offerProduct({
-            Product_ID: 'PA', Quantity: 3, Selling_Price: 500, Total_Price: 0,   // bez Total_Price snapshot-a
+            Product_ID: 'PA', Quantity: 3, Selling_Price: 500, Total_Price: 1500,
         }));
         const raw = baseRaw({
             workOrders: [wo('WO1')],
@@ -206,15 +191,16 @@ describe('computeAnalytics — planirani rad i prodajna cijena iz ponude', () =>
             offerProductByProduct: op,
         });
         const row = computeAnalytics(raw).products.find(p => p.productId === 'PA')!;
-        expect(row.selling).toBe(1500);
-        // Total_Price (ako postoji) ima prednost:
-        const op2 = offerProductByProductOf(offerProduct({ Product_ID: 'PA', Quantity: 3, Selling_Price: 500, Total_Price: 1450 }));
-        const row2 = computeAnalytics(baseRaw({
+        expect(row.selling).toBe(0);
+    });
+
+    test('Product_Value postavljen na stavci (nakon backfilla) → STVARNI prihod ga direktno koristi', () => {
+        const raw = baseRaw({
             workOrders: [wo('WO1')],
-            items: [item({ ID: 'I1', Product_ID: 'PA', Work_Order_ID: 'WO1', Product_Value: 0, Quantity: 3 })],
-            offerProductByProduct: op2,
-        })).products.find(p => p.productId === 'PA')!;
-        expect(row2.selling).toBe(1450);
+            items: [item({ ID: 'I1', Product_ID: 'PA', Work_Order_ID: 'WO1', Product_Value: 1500, Quantity: 3 })],
+        });
+        const row = computeAnalytics(raw).products.find(p => p.productId === 'PA')!;
+        expect(row.selling).toBe(1500);
     });
 });
 

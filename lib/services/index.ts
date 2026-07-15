@@ -48,6 +48,7 @@ import * as workerService from './resource/workerService';
 import * as supplierService from './resource/supplierService';
 import * as materialCatalogService from './resource/materialCatalogService';
 import * as offerService from './offer/offerService';
+import * as invoiceService from './invoice/invoiceService';
 import * as orderService from './order/orderService';
 import * as workOrderService from './workOrder/workOrderService';
 import * as laborCostService from './labor/laborCostService';
@@ -62,6 +63,7 @@ export {
     supplierService,
     materialCatalogService,
     offerService,
+    invoiceService,
     orderService,
     workOrderService,
     laborCostService,
@@ -94,6 +96,10 @@ export { getMaterialTemplates, saveMaterialTemplate, deleteMaterialTemplate, app
 // Offer
 export { getOffers, createOfferWithProducts, saveOffer, updateOfferWithProducts, deleteOffer, updateOfferStatus, updateOfferProduct, reviseOffer } from './offer/offerService';
 export { getOffer } from '../database';
+
+// Invoice (Završni račun)
+export { getInvoicesForProject, saveInvoiceDraft, deleteInvoice, issueInvoice, cancelInvoice } from './invoice/invoiceService';
+export type { InvoiceDraftInput } from './invoice/invoiceService';
 
 // Order
 export { getOrders, getOrder, getOrderItems, createOrder, saveOrder, deleteOrder, updateOrderStatus, markOrderSent, markMaterialsReceived, deleteOrderItemsByIds, updateOrderItem, recalculateOrderTotal, batchUpdateMaterialStatuses } from './order/orderService';

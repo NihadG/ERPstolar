@@ -2087,6 +2087,15 @@ textarea::placeholder {
   opacity: 0.6;
 }
 
+.offer-spreadsheet tr.offer-row-locked td {
+  background: rgba(100, 116, 139, 0.05);
+}
+
+.offer-spreadsheet tr.offer-row-locked input,
+.offer-spreadsheet tr.offer-row-locked .sheet-btn {
+  cursor: not-allowed;
+}
+
 .offer-spreadsheet tr:hover td {
   background: #f1f5f9;
 }

@@ -42,6 +42,31 @@ export function generateOfferNumber(existingOfferNumbers?: string[]): string {
 }
 
 /**
+ * Generate a sequential invoice (završni račun) number.
+ * Format: ZR-YYYY/NN (e.g. ZR-2026/01, ZR-2026/02, ...) — isti šablon kao generateOfferNumber.
+ */
+export function generateInvoiceNumber(existingInvoiceNumbers?: string[]): string {
+    const now = new Date();
+    const year = now.getFullYear();
+    const prefix = `ZR-${year}/`;
+
+    let maxSeq = 0;
+    if (existingInvoiceNumbers && existingInvoiceNumbers.length > 0) {
+        for (const num of existingInvoiceNumbers) {
+            if (num.startsWith(prefix)) {
+                const seqPart = parseInt(num.substring(prefix.length), 10);
+                if (!isNaN(seqPart) && seqPart > maxSeq) {
+                    maxSeq = seqPart;
+                }
+            }
+        }
+    }
+
+    const nextSeq = String(maxSeq + 1).padStart(2, '0');
+    return `${prefix}${nextSeq}`;
+}
+
+/**
  * Generate a collision-safe order number.
  * Format: N-YYYYMMDD-HHMMSS-RRR
  */

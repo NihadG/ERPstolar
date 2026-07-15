@@ -270,3 +270,13 @@ export function plannedVsActualDays(items: DaysProgressItem[], workLogs?: DaysPr
         ratio: planned > 0 ? round2(actual / planned) : null,
     };
 }
+
+/**
+ * Broj stavki bez planiranih dana (Planned_Labor_Days<=0) — takve stavke doprinose 0 danu
+ * auto-roku (workOrderDueDate) i 0 opterećenja planeru (weeklyCapacity), pa i rok i planer
+ * mogu biti potcijenjeni dok se ponuda ne dopuni (inkrementalni tok popunjavanja proizvoda).
+ * Samo advisory — ne mijenja nikakvu schedule/kalkulacionu logiku.
+ */
+export function itemsWithoutPlannedDays(items: Pick<DaysProgressItem, 'Planned_Labor_Days'>[]): number {
+    return items.reduce((n, it) => n + ((it.Planned_Labor_Days || 0) <= 0 ? 1 : 0), 0);
+}

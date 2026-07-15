@@ -209,6 +209,50 @@ export interface OfferExtra {
     Total: number;
 }
 
+// ════════════════════════════════════════════════════════════════════
+// ZAVRŠNI RAČUN (interni obračun, v1 — bez PDF/print dokumenta)
+// Rješava sukob između "cijene prihvaćene ponude" i "cijene po trenutnim
+// materijalima" u trenutku fakturisanja: po proizvodu se bira ponuda / svježe
+// preračunata / ručna cijena. Izdavanjem, izabrane cijene postaju ZVANIČNI
+// prihod — upisuju se kao Profit_Overrides.Selling_Price na WorkOrderItem
+// (isti mehanizam kao ručna korekcija profita), pa ih SVI prikazi profita
+// (kartica projekta, nalozi, analitika) odmah koriste. Vidi lib/invoicePricing.ts.
+// ════════════════════════════════════════════════════════════════════
+export const INVOICE_STATUSES = ['Nacrt', 'Izdat', 'Storniran'] as const;
+export type InvoiceStatus = (typeof INVOICE_STATUSES)[number];
+
+export interface Invoice {
+    Invoice_ID: string;
+    Organization_ID: string;
+    Project_ID: string;
+    Offer_ID?: string;          // prihvaćena ponuda na kojoj se zasniva (informativno)
+    Invoice_Number: string;
+    Status: InvoiceStatus;
+    Created_Date: string;
+    Issued_Date?: string;
+    Notes?: string;
+    Subtotal: number;
+    Total: number;
+    items?: InvoiceItem[];
+}
+
+export type InvoicePriceSource = 'offer' | 'recalculated' | 'manual';
+
+export interface InvoiceItem {
+    ID: string;
+    Invoice_ID: string;
+    Product_ID: string;
+    Product_Name: string;
+    Quantity: number;
+    Offer_Unit_Price: number;          // snapshot cijene iz prihvaćene ponude (po komadu)
+    Recalculated_Unit_Price: number;   // svježe preračunata cijena (trenutni materijal + ista marža/rad/usluge)
+    Final_Unit_Price: number;          // izabrana/ručna konačna cijena (po komadu) — ova se fakturiše
+    Final_Total: number;               // Final_Unit_Price × Quantity
+    Price_Source: InvoicePriceSource;
+    /** WorkOrderItem.ID-evi na koje je Final_Total raspodijeljen (audit + storno). */
+    Work_Order_Item_IDs?: string[];
+}
+
 export interface Order {
     Order_ID: string;
     Organization_ID: string;  // Multi-tenancy: isolate data by organization

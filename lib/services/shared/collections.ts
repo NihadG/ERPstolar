@@ -32,6 +32,8 @@ export const COLLECTIONS = {
     ORG_SETTINGS: 'org_settings',
     SERVICE_DEFINITIONS: 'service_definitions',
     DAILY_PROFIT_ENTRIES: 'daily_profit_entries',
+    INVOICES: 'invoices',
+    INVOICE_ITEMS: 'invoice_items',
 } as const;
 
 export type CollectionKey = keyof typeof COLLECTIONS;

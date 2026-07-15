@@ -1,10 +1,11 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import type { WorkOrder, ProductionSnapshot, WorkLog } from '@/lib/types';
+import type { WorkOrder, WorkOrderItem, ProductionSnapshot, WorkLog } from '@/lib/types';
 import { getProductionSnapshotForWorkOrder, getWorkLogsForWorkOrder } from '@/lib/services';
 import { workOrderDisplayName } from '@/lib/utils';
 import { itemMaterialTotal } from '@/lib/materialCost';
+import { itemProfitBreakdown, sumBreakdowns, type ProfitBreakdown } from '@/lib/profit';
 import Modal from '@/components/ui/Modal';
 import { Receipt, AlertTriangle } from 'lucide-react';
 
@@ -95,26 +96,41 @@ function fromSnapshot(s: ProductionSnapshot): SummaryData {
     };
 }
 
-// Fallback za stare naloge bez snapshota — ista formula kao P&L u detalju naloga
+// Fallback za stare naloge bez snapshota — JEDINSTVENA formula iz lib/profit.ts
+// (isti izvor kao WorkOrderExpandedDetail itemFin/orderFin — ne inline formula).
 function fromLive(wo: WorkOrder, logs: WorkLog[]): SummaryData {
-    const rows: SummaryRow[] = (wo.items || []).map(item => {
+    const isMontaza = wo.Work_Order_Type === 'Montaža';
+    const itemFins: { item: WorkOrderItem; actualDays: number; fin: ProfitBreakdown }[] = (wo.items || []).map(item => {
         const itemLogs = logs.filter(l => l.Work_Order_Item_ID === item.ID);
         const labor = itemLogs.reduce((s, l) => s + (l.Daily_Rate || 0), 0);
-        const actualDays = itemLogs.reduce((s, l) => s + (l.Day_Fraction ?? 1), 0);
-        const selling = ((item as any).Profit_Overrides?.Selling_Price ?? item.Product_Value) || 0;
-        // MATERIJAL × KOLIČINA: Material_Cost je PO KOMADU, selling (Product_Value) je UKUPAN.
-        const material = itemMaterialTotal(item.Material_Cost, item.Quantity);
-        const other = ((item as any).Profit_Overrides?.Transport_Share ?? (item as any).Transport_Share ?? 0) + ((item as any).Services_Total || 0);
-        const profit = selling - material - labor - other;
-        return {
-            name: item.Product_Name,
-            qty: item.Quantity || 1,
-            selling, material, labor: round2(labor), other, profit: round2(profit),
-            margin: selling > 0 ? (profit / selling) * 100 : null,
-            plannedDays: item.Planned_Labor_Days,
-            actualDays: round2(actualDays),
-        };
+        const actualDays = round2(itemLogs.reduce((s, l) => s + (l.Day_Fraction ?? 1), 0));
+        const fin = isMontaza
+            ? itemProfitBreakdown({ laborTotal: labor })
+            : itemProfitBreakdown({
+                productValue: item.Product_Value,
+                sellingOverride: (item as any).Profit_Overrides?.Selling_Price,
+                materialPerUnit: item.Material_Cost,
+                quantity: item.Quantity,
+                laborTotal: labor,
+                servicesTotal: (item as any).Services_Total,
+                transportShare: (item as any).Transport_Share,
+                transportOverride: (item as any).Profit_Overrides?.Transport_Share,
+            });
+        return { item, actualDays, fin };
     });
+
+    const rows: SummaryRow[] = itemFins.map(({ item, actualDays, fin }) => ({
+        name: item.Product_Name,
+        qty: item.Quantity || 1,
+        selling: fin.revenue,
+        material: fin.material,
+        labor: fin.labor,
+        other: round2(fin.services + fin.transport),
+        profit: fin.profit,
+        margin: fin.revenue > 0 ? fin.margin : null,
+        plannedDays: item.Planned_Labor_Days,
+        actualDays,
+    }));
 
     const wMap = new Map<string, SummaryWorker>();
     logs.forEach(l => {
@@ -124,15 +140,17 @@ function fromLive(wo: WorkOrder, logs: WorkLog[]): SummaryData {
         wMap.set(l.Worker_ID, cur);
     });
 
-    const t = rows.reduce((acc, r) => ({
-        selling: acc.selling + r.selling, material: acc.material + r.material,
-        labor: acc.labor + r.labor, other: acc.other + r.other, profit: acc.profit + r.profit,
-    }), { selling: 0, material: 0, labor: 0, other: 0, profit: 0 });
+    // Ukupno = sumBreakdowns preko istih per-item breakdowns (invarijanta Σ redova == ukupno).
+    const total = sumBreakdowns(itemFins.map(x => x.fin));
     return {
         source: 'live',
         rows,
         workers: Array.from(wMap.values()).map(w => ({ ...w, days: round2(w.days), cost: round2(w.cost) })).sort((a, b) => b.cost - a.cost),
-        totals: { ...t, selling: round2(t.selling), material: round2(t.material), labor: round2(t.labor), other: round2(t.other), profit: round2(t.profit), margin: t.selling > 0 ? round2((t.profit / t.selling) * 100) : null },
+        totals: {
+            selling: total.revenue, material: total.material, labor: total.labor,
+            other: round2(total.services + total.transport), profit: total.profit,
+            margin: total.revenue > 0 ? total.margin : null,
+        },
     };
 }
 
