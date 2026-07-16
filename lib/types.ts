@@ -44,8 +44,9 @@ export interface Product {
     // Legacy/ravni oblik (flatten faza po redu) — čita se kao fallback, piše se radi kompatibilnosti.
     Process_Plan?: string[];
     // 'auto' = izveden iz pravila materijal→proces (smije se preračunati pri izmjeni materijala);
+    // 'ai'   = AI prijedlog iz naziva (kad nema sastavnice) — auto GA SMIJE prebrisati kad se pojave materijali/pravila;
     // 'manual' = korisnik uredio → auto ga NE dira.
-    Process_Plan_Source?: 'auto' | 'manual';
+    Process_Plan_Source?: 'auto' | 'manual' | 'ai';
 }
 
 export interface Material {
@@ -476,12 +477,18 @@ export interface ProcessCatalogItem {
 }
 
 // Pravilo materijal→procesi koje korisnik sam definiše (bez hardkodovanih mapiranja):
-// kategorija materijala jednaka / naziv sadrži → dodijeli procese planu proizvoda.
+//  • 'category'            — kategorija materijala jednaka Match_Value
+//  • 'name_contains'       — naziv materijala sadrži Match_Value (substring)
+//  • 'material_type'       — TIP izveden iz naziva (materialTypeFromName) == Match_Value
+//                            (rješava "Iveral U702" → tip 'iveral'; kategorije kataloga su preširoke)
+//  • 'material_type_combo' — SVI tipovi iz Match_Types prisutni u sastavnici (npr. furnir+mdf →
+//                            procesi koji nastaju TEK iz kombinacije, kao presovanje/srezivanje)
 export interface ProcessMaterialRule {
     ID: string;
     Organization_ID: string;
-    Match_Kind: 'category' | 'name_contains';
-    Match_Value: string;
+    Match_Kind: 'category' | 'name_contains' | 'material_type' | 'material_type_combo';
+    Match_Value: string;        // za category/name_contains/material_type; za combo se ne koristi
+    Match_Types?: string[];     // za 'material_type_combo' — svi tipovi moraju biti prisutni
     Processes: string[];
     Created_At?: string;
 }
@@ -492,6 +499,9 @@ export interface ProcessStageTemplate {
     Organization_ID: string;
     Name: string;
     Stages: { processes: string[] }[];
+    // Kombinacija TIPOVA materijala za koju šablon važi (npr. ['iveral','furnir','lak']) —
+    // auto-plan bira šablon po najvećem poklapanju s tipovima materijala proizvoda (pickTemplateForTypes).
+    Material_Types?: string[];
     Created_At: string;
 }
 
@@ -654,6 +664,12 @@ export interface WorkLog {
     Work_Order_Item_ID: string;      // Koji proizvod u radnom nalogu
     Product_ID: string;              // Referenca na originalni proizvod
     SubTask_ID?: string;             // Ako je split, koja grupa
+
+    // POVEZANI "RAZNI POSLOVI": kad je custom zadatak povezan s proizvodom, trošak (ovaj log)
+    // se upisuje na povezani proizvod (Work_Order_*/Product_ID gore = proizvod), a ova polja
+    // čuvaju IZVORNI zadatak — da Knjiga rada izvornog naloga može očistiti/urediti te logove.
+    Source_Work_Order_ID?: string;       // Zadaci-nalog iz kojeg potiče (ako je preusmjeren)
+    Source_Work_Order_Item_ID?: string;  // ID custom zadatka iz kojeg potiče
 
     // Proces na kojem je radnik radio
     Process_Name?: string;           // Rezanje, Kantiranje, etc. (legacy/single + naziv povezanog zadatka)

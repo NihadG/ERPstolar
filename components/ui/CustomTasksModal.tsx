@@ -23,14 +23,14 @@ interface CustomTasksModalProps {
 interface TaskRow {
     id: string;
     text: string;
-    workerId?: string;
+    workerIds: string[];     // više radnika po zadatku (prvi = glavni, ostali = pomoćnici)
     linkedItemId?: string;  // WorkOrderItem ID of a real product (optional)
 }
 
 const uid = () => (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `id-${Date.now()}-${Math.random()}`);
 
 export default function CustomTasksModal({ isOpen, onClose, workOrders, workers, organizationId, onCreated, showToast, zIndex, initialWorkerId, onOrderCreated }: CustomTasksModalProps) {
-    const [rows, setRows] = useState<TaskRow[]>([{ id: uid(), text: '', workerId: initialWorkerId }]);
+    const [rows, setRows] = useState<TaskRow[]>([{ id: uid(), text: '', workerIds: initialWorkerId ? [initialWorkerId] : [] }]);
     const [notes, setNotes] = useState('');
     const [dueDate, setDueDate] = useState('');
     const [saving, setSaving] = useState(false);
@@ -39,7 +39,7 @@ export default function CustomTasksModal({ isOpen, onClose, workOrders, workers,
     // re-seed a clean, pre-filled state every time it actually opens.
     useEffect(() => {
         if (isOpen) {
-            setRows([{ id: uid(), text: '', workerId: initialWorkerId }]);
+            setRows([{ id: uid(), text: '', workerIds: initialWorkerId ? [initialWorkerId] : [] }]);
             setNotes('');
             setDueDate('');
         }
@@ -79,13 +79,19 @@ export default function CustomTasksModal({ isOpen, onClose, workOrders, workers,
         return m;
     }, [linkOptions]);
 
-    const addRow = () => setRows(prev => [...prev, { id: uid(), text: '' }]);
+    const addRow = () => setRows(prev => [...prev, { id: uid(), text: '', workerIds: [] }]);
     const removeRow = (id: string) => setRows(prev => prev.filter(r => r.id !== id));
     const updateRow = (id: string, patch: Partial<TaskRow>) => setRows(prev => prev.map(r => r.id === id ? { ...r, ...patch } : r));
+    const addWorker = (id: string, workerId: string) => setRows(prev => prev.map(r =>
+        r.id === id && workerId && !r.workerIds.includes(workerId) ? { ...r, workerIds: [...r.workerIds, workerId] } : r
+    ));
+    const removeWorker = (id: string, workerId: string) => setRows(prev => prev.map(r =>
+        r.id === id ? { ...r, workerIds: r.workerIds.filter(w => w !== workerId) } : r
+    ));
 
     const validRows = rows.filter(r => r.text.trim().length > 0);
-    const hasAnyWorker = validRows.some(r => r.workerId);
-    const reset = () => { setRows([{ id: uid(), text: '' }]); setNotes(''); setDueDate(''); };
+    const hasAnyWorker = validRows.some(r => r.workerIds.length > 0);
+    const reset = () => { setRows([{ id: uid(), text: '', workerIds: [] }]); setNotes(''); setDueDate(''); };
 
     const handleCreate = async () => {
         if (!organizationId || saving) return;
@@ -94,7 +100,8 @@ export default function CustomTasksModal({ isOpen, onClose, workOrders, workers,
         try {
             const items = validRows.map(r => {
                 const link = r.linkedItemId ? linkLookup.get(r.linkedItemId) : undefined;
-                const worker = r.workerId ? workerLookup.get(r.workerId) : undefined;
+                const chosen = r.workerIds.map(id => workerLookup.get(id)).filter((w): w is Worker => !!w);
+                const [main, ...helpers] = chosen;
                 return {
                     Product_ID: `custom-${uid()}`,
                     Product_Name: r.text.trim(),
@@ -102,10 +109,15 @@ export default function CustomTasksModal({ isOpen, onClose, workOrders, workers,
                     Project_Name: 'Razni poslovi',
                     Quantity: 1,
                     Item_Type: 'custom' as const,
-                    // Implicitni proces "Rad" sa radnikom → nalog se može pokrenuti
-                    ...(worker ? {
-                        Processes: [{ Process_Name: 'Rad', Status: 'Na čekanju', Worker_ID: worker.Worker_ID, Worker_Name: worker.Name }],
-                        Assigned_Workers: [{ Worker_ID: worker.Worker_ID, Worker_Name: worker.Name, Daily_Rate: worker.Daily_Rate || 0 }],
+                    // Implicitni proces "Rad": prvi radnik = glavni, ostali = pomoćnici. Svi u
+                    // Assigned_Workers (izvor za auto-knjiženje iz šihtarice za SVAKOG radnika).
+                    ...(chosen.length > 0 ? {
+                        Processes: [{
+                            Process_Name: 'Rad', Status: 'Na čekanju',
+                            Worker_ID: main.Worker_ID, Worker_Name: main.Name,
+                            ...(helpers.length > 0 ? { Helpers: helpers.map(h => ({ Worker_ID: h.Worker_ID, Worker_Name: h.Name })) } : {}),
+                        }],
+                        Assigned_Workers: chosen.map(w => ({ Worker_ID: w.Worker_ID, Worker_Name: w.Name, Daily_Rate: w.Daily_Rate || 0 })),
                     } : {}),
                     ...(r.linkedItemId && link ? {
                         Linked_Item_ID: r.linkedItemId,
@@ -144,8 +156,9 @@ export default function CustomTasksModal({ isOpen, onClose, workOrders, workers,
         <Modal isOpen={isOpen} onClose={onClose} title="Razni poslovi — nalog sa zadacima" size="large" footer={null} zIndex={zIndex}>
             <div className="ctm">
                 <p className="ctm-intro">
-                    Zadaci koji nisu proizvodi iz baze (izrada paleta, čišćenje pogona…). Dodijeli radnika da
-                    nalog možeš pokrenuti, a zadatak možeš opciono povezati s proizvodom — tada se trošak rada dodaje tom proizvodu.
+                    Zadaci koji nisu proizvodi iz baze (izrada paleta, čišćenje pogona…). Dodijeli jednog ili više
+                    radnika da nalog možeš pokrenuti, a zadatak možeš povezati s bilo kojim proizvodom (i završenim) —
+                    tada se sav rad na ovom zadatku uračuna u trošak tog proizvoda.
                 </p>
 
                 <section className="ctm-section">
@@ -170,17 +183,31 @@ export default function CustomTasksModal({ isOpen, onClose, workOrders, workers,
                                     )}
                                 </div>
                                 <div className="ctm-task-fields">
-                                    <label className="ctm-field">
-                                        <span>Radnik</span>
+                                    <div className="ctm-field">
+                                        <span>Radnici <em>(prvi = glavni)</em></span>
+                                        {row.workerIds.length > 0 && (
+                                            <div className="ctm-chips">
+                                                {row.workerIds.map((wid, i) => {
+                                                    const w = workerLookup.get(wid);
+                                                    return (
+                                                        <span key={wid} className={`ctm-chip${i === 0 ? ' ctm-chip-main' : ''}`}>
+                                                            {i === 0 && <span className="ctm-chip-tag">glavni</span>}
+                                                            {w?.Name || 'Nepoznat'}
+                                                            <button type="button" className="ctm-chip-x" onClick={() => removeWorker(row.id, wid)} aria-label="Ukloni radnika"><X size={12} /></button>
+                                                        </span>
+                                                    );
+                                                })}
+                                            </div>
+                                        )}
                                         <SearchableSelect
-                                            options={workerOptions}
-                                            value={row.workerId || ''}
-                                            onChange={v => updateRow(row.id, { workerId: v || undefined })}
-                                            placeholder="Izaberi radnika…"
+                                            options={workerOptions.filter(o => !row.workerIds.includes(o.value))}
+                                            value=""
+                                            onChange={v => addWorker(row.id, v)}
+                                            placeholder={row.workerIds.length > 0 ? 'Dodaj još radnika…' : 'Izaberi radnika…'}
                                         />
-                                    </label>
+                                    </div>
                                     <label className="ctm-field">
-                                        <span>Poveži s proizvodom <em>(opciono)</em></span>
+                                        <span>Poveži s proizvodom <em>(bilo koji — trošak rada ide tom proizvodu)</em></span>
                                         <SearchableSelect
                                             options={linkOptions}
                                             value={row.linkedItemId || ''}
@@ -281,6 +308,24 @@ export default function CustomTasksModal({ isOpen, onClose, workOrders, workers,
                    .modal label text-transform:uppercase rule that was inherited
                    all the way down into the SearchableSelect trigger text. */
                 .ctm-field { display: flex; flex-direction: column; gap: 6px; min-width: 0; text-transform: none; }
+                .ctm-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+                .ctm-chip {
+                    display: inline-flex; align-items: center; gap: 6px;
+                    padding: 4px 6px 4px 10px; border-radius: 999px;
+                    background: var(--surface); border: 1px solid var(--border);
+                    font-size: 12px; font-weight: 600; color: var(--text-primary);
+                }
+                .ctm-chip-main { border-color: var(--accent); background: var(--accent-light); }
+                .ctm-chip-tag {
+                    font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em;
+                    color: var(--accent); background: var(--background); padding: 1px 5px; border-radius: 999px;
+                }
+                .ctm-chip-x {
+                    display: inline-flex; align-items: center; justify-content: center;
+                    width: 18px; height: 18px; border: none; background: transparent;
+                    color: var(--text-tertiary); border-radius: 999px; cursor: pointer;
+                }
+                .ctm-chip-x:hover { color: var(--error); background: var(--error-bg); }
                 .ctm-field > span { font-size: 13px; color: var(--text-secondary); font-weight: 600; text-transform: none; letter-spacing: normal; }
                 .ctm-field > span em { font-style: normal; color: var(--text-tertiary); font-weight: 400; }
                 .ctm-field > input {

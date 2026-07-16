@@ -29,6 +29,7 @@ const todayISO = () => new Date().toISOString().split('T')[0];
 type PerItem = {
     itemId: string;
     itemName: string;
+    procName: string;               // TAČNO ime procesa na stavci (za updateItemProcess)
     status: string;                 // Na čekanju | U toku | Završeno | Odloženo
     workerName?: string;
     helpers: { Worker_ID: string; Worker_Name: string }[];
@@ -160,6 +161,9 @@ export default function OrderProcessBoard({
                     const proc = it?.Processes?.find(p => nodeMatchesProcess({ name: n.name, aliases: n.aliases }, p.Process_Name));
                     return {
                         itemId, itemName: it?.Product_Name || '—',
+                        // TAČNO pohranjeno ime procesa stavke (alias može biti različit od kanonskog n.name) —
+                        // updateItemProcess matchuje po tačnom imenu i UPSERT-uje na promašaj (dup-bug).
+                        procName: proc?.Process_Name || n.name,
                         status: (proc?.Status as string) || 'Na čekanju',
                         workerName: proc?.Worker_Name, helpers: proc?.Helpers || [], completedAt: proc?.Completed_At,
                     };
@@ -218,11 +222,15 @@ export default function OrderProcessBoard({
         const n = new Set(prev); n.has(itemId) ? n.delete(itemId) : n.add(itemId); return n;
     });
 
-    const runUpdates = async (procName: string, itemIds: string[], updates: Partial<ItemProcessStatus>) => {
+    const runUpdates = async (row: Row, itemIds: string[], updates: Partial<ItemProcessStatus>) => {
         if (!itemIds.length || busy) return;
         setBusy(true);
         try {
-            for (const itemId of itemIds) await updateItemProcess(workOrderId, itemId, procName, updates);   // serijski: svaki recalc-uje nalog
+            // Po stavci: koristi NJENO pohranjeno ime procesa (alias-safe; izbjegava upsert dup).
+            for (const itemId of itemIds) {
+                const procName = row.perItem.find(p => p.itemId === itemId)?.procName || row.name;
+                await updateItemProcess(workOrderId, itemId, procName, updates);   // serijski: svaki recalc-uje nalog
+            }
             onChanged?.();
         } catch (e) {
             console.error('OrderProcessBoard update', e);
@@ -264,7 +272,7 @@ export default function OrderProcessBoard({
         if (!ids.length || !wIds.length) return;
         const first = workers.find(w => w.Worker_ID === wIds[0]);
         const helpers = wIds.slice(1).map(id => ({ Worker_ID: id, Worker_Name: workerName(id) }));
-        await runUpdates(row.name, ids, {
+        await runUpdates(row, ids, {
             Status: 'Završeno',
             Completed_At: new Date(form.date + 'T12:00:00').toISOString(),
             Worker_ID: first?.Worker_ID,
@@ -280,7 +288,7 @@ export default function OrderProcessBoard({
         const updates: Partial<ItemProcessStatus> = { Status: status };
         if (status === 'U toku') updates.Started_At = new Date().toISOString();
         if (status === 'Na čekanju') updates.Completed_At = '';   // vrati iz završenog
-        await runUpdates(row.name, ids, updates);
+        await runUpdates(row, ids, updates);
     };
 
     const doAdd = async () => {

@@ -608,19 +608,34 @@ export async function bookWorkerDayItems(
 
         // Stavke ciljeva (Product_ID fallback + item.Processes za auto-pripis tekućeg procesa).
         const itemMap = await fetchWorkOrderItemsByIds(targets.map(t => t.itemId).filter(Boolean), organizationId);
+        // POVEZANI "razni poslovi": dohvati i povezane iteme da trošak ide na povezani proizvod.
+        const linkedIds = Array.from(new Set(
+            Array.from(itemMap.values())
+                .filter(it => it.Item_Type === 'custom' && it.Linked_Item_ID)
+                .map(it => it.Linked_Item_ID as string)
+        )).filter(id => !itemMap.has(id));
+        if (linkedIds.length > 0) {
+            const linkedMap = await fetchWorkOrderItemsByIds(linkedIds, organizationId);
+            linkedMap.forEach((v, k) => itemMap.set(k, v));
+        }
 
         // AUTO-PRIPIS PROCESA: graf naloga (jedan read po distinct nalogu) + tekući proces stavke
         // (prvi nezavršen u checklisti) → Process_Node_ID/Process_Name na logu. Ručni unos u Knjizi
         // rada i dalje ima prednost (ovaj put piše samo NOVE logove; postojeći se preskaču).
+        // Uključi i naloge POVEZANIH proizvoda (na njih pada preusmjeren trošak).
         const graphByWO = new Map<string, import('./types').ProcessGraph>();
         try {
             const { getProcessGraph } = await import('./database');
-            const distinctWOs = Array.from(new Set(targets.map(t => t.workOrderId).filter(Boolean)));
+            const distinctWOs = Array.from(new Set([
+                ...targets.map(t => t.workOrderId),
+                ...Array.from(itemMap.values()).map(it => it.Work_Order_ID),
+            ].filter(Boolean)));
             await Promise.all(distinctWOs.map(async woId => {
                 graphByWO.set(woId, await getProcessGraph(woId, organizationId));
             }));
         } catch (e) { console.warn('process graph load for auto-pripis failed (non-critical):', e); }
         const { resolveAutoProcessNode } = await import('./productProcesses');
+        const { resolveLaborCostTarget } = await import('./laborTarget');
 
         const workers = await getWorkers(organizationId);
         // Cijena VAŽEĆA na datum knjiženja (efektivno-datirana istorija) — ne trenutna (rizik #2).
@@ -633,24 +648,35 @@ export async function bookWorkerDayItems(
         let created = 0;
         for (const t of targets) {
             if (!t.itemId || !t.workOrderId) continue;
-            if (seen.has(t.itemId)) continue;              // dedupe unutar poziva
-            seen.add(t.itemId);
-            if (loggedItemIds.has(t.itemId)) continue;     // već ima zapis → preskoči (manualni ima prednost)
-            const item = itemMap.get(t.itemId);
-            const productId = t.productId || item?.Product_ID;
-            const autoNode = resolveAutoProcessNode(graphByWO.get(t.workOrderId), t.itemId, item?.Processes);
+            const booked = itemMap.get(t.itemId);
+            // Preusmjeri trošak povezanog "raznog posla" na povezani proizvod (kroz čisti helper).
+            const { target, redirected, source } = booked
+                ? resolveLaborCostTarget(booked, itemMap)
+                : { target: undefined as (typeof booked), redirected: false, source: undefined };
+            const targetItemId = target?.ID || t.itemId;
+            const targetWoId = target?.Work_Order_ID || t.workOrderId;
+            if (seen.has(targetItemId)) continue;              // dedupe unutar poziva (po CILJU)
+            seen.add(targetItemId);
+            if (loggedItemIds.has(targetItemId)) continue;     // cilj već ima zapis → preskoči (manualni ima prednost)
+            const productId = target?.Product_ID || t.productId || booked?.Product_ID;
+            // Preusmjeren log: Process_Name = naziv zadatka (šta je rađeno); inače auto-pripis tekućeg procesa.
+            const autoNode = redirected ? null : resolveAutoProcessNode(graphByWO.get(targetWoId), targetItemId, target?.Processes);
             const log: Record<string, unknown> = {
                 WorkLog_ID: generateUUID(), Organization_ID: organizationId, Date: date,
                 Worker_ID: workerId, Worker_Name: workerName, Daily_Rate: dailyRate, Original_Daily_Rate: dailyRate,
                 Day_Fraction: norm, Presence: norm, Split_Factor: 1, Hours_Worked: 8 * norm,
                 Booking_Source: 'attendance', Is_From_Attendance: true,
-                Work_Order_ID: t.workOrderId, Work_Order_Item_ID: t.itemId, Product_ID: productId,
-                ...(autoNode && { Process_Node_ID: autoNode.id, Process_Name: autoNode.name }),
+                Work_Order_ID: targetWoId, Work_Order_Item_ID: targetItemId, Product_ID: productId,
+                ...(redirected && source ? {
+                    Source_Work_Order_ID: source.Work_Order_ID,
+                    Source_Work_Order_Item_ID: source.ID,
+                    Process_Name: source.Product_Name,
+                } : (autoNode ? { Process_Node_ID: autoNode.id, Process_Name: autoNode.name } : {})),
                 Created_At: new Date().toISOString(),
             };
             Object.keys(log).forEach(k => log[k] === undefined && delete log[k]);
             batch.set(doc(collection(fs, 'work_logs')), log);
-            affected.add(t.workOrderId);
+            affected.add(targetWoId);
             created++;
         }
         if (created === 0) return { created: 0, affectedWorkOrderIds: [] };
@@ -1097,6 +1123,8 @@ export async function saveDailyWorkBooking(
                         Work_Order_ID: target.Work_Order_ID,
                         Work_Order_Item_ID: target.ID,
                         Product_ID: target.Product_ID,
+                        // Preusmjeren povezani "razni posao" → žig izvornog zadatka (za clean-slate izvornog naloga).
+                        ...(linked ? { Source_Work_Order_ID: booked.Work_Order_ID, Source_Work_Order_Item_ID: booked.ID } : {}),
                         Process_Name: processName,
                         Process_Tags: processTags.length > 0 ? processTags : undefined,
                         Process_Node_ID: item.processNodeId,
@@ -1191,42 +1219,81 @@ export async function saveWorkOrderDayBooking(
             });
         } catch (e) { console.warn('saveWorkOrderDayBooking attendance lookup failed:', e); }
 
-        // CLEAN-SLATE SCOPED: obriši SVE logove OVOG naloga za taj dan (kompletno stanje dolazi iz `entries`).
-        // Logovi drugih naloga (isti radnik, isti dan) se NE diraju.
-        const toDelete: import('firebase/firestore').DocumentReference[] = [];
+        // CLEAN-SLATE SCOPED: obriši logove OVOG naloga za taj dan (kompletno stanje dolazi iz `entries`).
+        // Logovi drugih naloga se NE diraju. Poseban slučaj: povezani "razni poslovi" — trošak ovog
+        // (Zadaci) naloga fizički živi na nalogu POVEZANOG proizvoda (Work_Order_ID = proizvodni nalog),
+        // ali nosi Source_Work_Order_ID = ovaj nalog. Zato:
+        //   • query po Work_Order_ID: briši SAMO vlastite direktne logove (bez Source, ili Source==ovaj);
+        //     STRANE preusmjerene logove (Source==drugi nalog) koji su sletjeli ovdje NE diramo;
+        //   • query po Source_Work_Order_ID: briši preusmjerene logove OVOG naloga (žive na tuđim nalozima).
+        const toDeleteMap = new Map<string, import('firebase/firestore').DocumentReference>();
         // ISTORIJA ATRIBUCIJE: sačuvaj proces sa STARIH logova (workerId|itemId → node/name) —
         // retroaktivna izmjena prošlog dana NE smije pre-atribuirati rad na DANAŠNJI tekući proces.
         const oldAttr = new Map<string, { nodeId?: string; name?: string }>();
+        const noteDelete = (d: import('firebase/firestore').QueryDocumentSnapshot) => {
+            toDeleteMap.set(d.ref.path, d.ref);
+            const x = d.data();
+            if (x.Worker_ID) affectedWorkers.add(x.Worker_ID);      // i uklonjeni radnici se renormalizuju
+            if (x.Work_Order_ID) affected.add(x.Work_Order_ID);     // vacated proizvodni nalog se preračunava
+            const attrKey = `${x.Worker_ID}|${x.Source_Work_Order_Item_ID || x.Work_Order_Item_ID}`;
+            if (!oldAttr.has(attrKey) && (x.Process_Node_ID || x.Process_Name)) {
+                oldAttr.set(attrKey, { nodeId: x.Process_Node_ID, name: x.Process_Name });
+            }
+        };
         try {
-            const daySnap = await getDocs(query(
-                collection(fs, 'work_logs'),
-                where('Work_Order_ID', '==', workOrderId),
-                where('Date', '==', date),
-                where('Organization_ID', '==', organizationId)
-            ));
-            daySnap.docs.forEach(d => {
-                toDelete.push(d.ref);
-                const x = d.data();
-                if (x.Worker_ID) affectedWorkers.add(x.Worker_ID);     // i uklonjeni radnici se renormalizuju
-                const attrKey = `${x.Worker_ID}|${x.Work_Order_Item_ID}`;
-                if (!oldAttr.has(attrKey) && (x.Process_Node_ID || x.Process_Name)) {
-                    oldAttr.set(attrKey, { nodeId: x.Process_Node_ID, name: x.Process_Name });
-                }
+            const [byOrder, bySource] = await Promise.all([
+                getDocs(query(
+                    collection(fs, 'work_logs'),
+                    where('Work_Order_ID', '==', workOrderId),
+                    where('Date', '==', date),
+                    where('Organization_ID', '==', organizationId)
+                )),
+                getDocs(query(
+                    collection(fs, 'work_logs'),
+                    where('Source_Work_Order_ID', '==', workOrderId),
+                    where('Date', '==', date),
+                    where('Organization_ID', '==', organizationId)
+                )),
+            ]);
+            byOrder.docs.forEach(d => {
+                const src = d.data().Source_Work_Order_ID;
+                if (src && src !== workOrderId) return;   // strani preusmjeren log sletio ovdje — ne diraj
+                noteDelete(d);
             });
+            bySource.docs.forEach(noteDelete);
         } catch (e) { console.warn('saveWorkOrderDayBooking day-logs lookup failed:', e); }
+        const toDelete = Array.from(toDeleteMap.values());
 
         // Proizvodi ovog naloga (validacija + Product_ID po stavci)
         const itemIds = Array.from(new Set(entries.flatMap(e => e.itemIds)));
         const itemMap = await fetchWorkOrderItemsByIds(itemIds, organizationId);
+        // POVEZANI "razni poslovi": dohvati povezane iteme (trošak ide na povezani proizvod).
+        const wlbLinkedIds = Array.from(new Set(
+            Array.from(itemMap.values())
+                .filter(it => it.Item_Type === 'custom' && it.Linked_Item_ID)
+                .map(it => it.Linked_Item_ID as string)
+        )).filter(id => !itemMap.has(id));
+        if (wlbLinkedIds.length > 0) {
+            const linkedMap = await fetchWorkOrderItemsByIds(wlbLinkedIds, organizationId);
+            linkedMap.forEach((v, k) => itemMap.set(k, v));
+        }
 
         // AUTO-PRIPIS PROCESA: graf naloga + tekući proces stavke (prvi nezavršen u checklisti)
         // → Process_Node_ID/Process_Name na logu (odgovor na "koji proces, koji dan, koji radnik").
-        let orderGraph: import('./types').ProcessGraph | undefined;
+        // Uključi i grafove naloga POVEZANIH proizvoda (na njih pada preusmjeren trošak).
+        const graphByWO = new Map<string, import('./types').ProcessGraph | undefined>();
         try {
             const { getProcessGraph } = await import('./database');
-            orderGraph = await getProcessGraph(workOrderId, organizationId);
+            const distinctWOs = Array.from(new Set([
+                workOrderId,
+                ...Array.from(itemMap.values()).map(it => it.Work_Order_ID),
+            ].filter(Boolean)));
+            await Promise.all(distinctWOs.map(async woId => {
+                graphByWO.set(woId, await getProcessGraph(woId, organizationId));
+            }));
         } catch (e) { console.warn('process graph load for auto-pripis failed (non-critical):', e); }
         const { resolveAutoProcessNode } = await import('./productProcesses');
+        const { resolveLaborCostTarget } = await import('./laborTarget');
 
         // Bazni logovi (puna dnevnica + presence; TAČAN iznos postavlja renormalizeWorkerDay)
         const newLogs: Record<string, unknown>[] = [];
@@ -1244,13 +1311,21 @@ export async function saveWorkOrderDayBooking(
 
             for (const itemId of validItemIds) {
                 const booked = itemMap.get(itemId)!;
-                // PROŠLI dan + postojeći (radnik,stavka) par → zadrži ISTORIJSKU atribuciju procesa;
-                // auto-pripis (tekući proces) važi za danas i za nove parove.
-                const carried = date < formatLocalDateISO(new Date()) ? oldAttr.get(`${entry.workerId}|${itemId}`) : undefined;
-                const autoNode = carried ? null : resolveAutoProcessNode(orderGraph, itemId, booked.Processes);
-                const attr = carried
-                    ? { ...(carried.nodeId && { Process_Node_ID: carried.nodeId }), ...(carried.name && { Process_Name: carried.name }) }
-                    : (autoNode ? { Process_Node_ID: autoNode.id, Process_Name: autoNode.name } : {});
+                // Preusmjeri trošak povezanog "raznog posla" na povezani proizvod (kroz čisti helper).
+                const { target, redirected, source } = resolveLaborCostTarget(booked, itemMap);
+                const targetItemId = target.ID;
+                // PROŠLI dan + postojeći (radnik,ciljna-stavka) par → zadrži ISTORIJSKU atribuciju procesa;
+                // auto-pripis (tekući proces) važi za danas i za nove parove. (Ključ = izvorni zadatak
+                // za preusmjerene — poklapa se s oldAttr koji čita Source_Work_Order_Item_ID.)
+                const attrKey = `${entry.workerId}|${redirected && source ? source.ID : targetItemId}`;
+                const carried = date < formatLocalDateISO(new Date()) ? oldAttr.get(attrKey) : undefined;
+                const autoNode = (carried || redirected) ? null : resolveAutoProcessNode(graphByWO.get(target.Work_Order_ID || workOrderId), targetItemId, target.Processes);
+                // Preusmjeren log: Process_Name = naziv zadatka; inače carried/auto-pripis.
+                const attr = redirected && source
+                    ? { Process_Name: source.Product_Name, Source_Work_Order_ID: source.Work_Order_ID, Source_Work_Order_Item_ID: source.ID }
+                    : (carried
+                        ? { ...(carried.nodeId && { Process_Node_ID: carried.nodeId }), ...(carried.name && { Process_Name: carried.name }) }
+                        : (autoNode ? { Process_Node_ID: autoNode.id, Process_Name: autoNode.name } : {}));
                 const log: Record<string, unknown> = {
                     WorkLog_ID: generateUUID(),
                     Organization_ID: organizationId,
@@ -1265,16 +1340,16 @@ export async function saveWorkOrderDayBooking(
                     Hours_Worked: 8 * presence,
                     Booking_Source: 'manual',
                     Is_From_Attendance: false,
-                    Work_Order_ID: booked.Work_Order_ID || workOrderId,
-                    Work_Order_Item_ID: booked.ID,
-                    Product_ID: booked.Product_ID,
+                    Work_Order_ID: target.Work_Order_ID || workOrderId,
+                    Work_Order_Item_ID: targetItemId,
+                    Product_ID: target.Product_ID,
                     ...attr,
                     Created_At: new Date().toISOString(),
                 };
                 Object.keys(log).forEach(k => log[k] === undefined && delete log[k]);
                 newLogs.push(log);
                 logsCreated++;
-                if (booked.Work_Order_ID) affected.add(booked.Work_Order_ID);
+                if (target.Work_Order_ID) affected.add(target.Work_Order_ID);
             }
         }
 
@@ -4083,7 +4158,7 @@ export async function addProcessToOrderItem(
                     : planToStages((it as any).Process_Stages, (it.Processes || []).map(p => p.Process_Name).filter(Boolean) as string[]);
                 return { itemId: it.ID, stages };
             }).filter(pi => pi.stages.length > 0);
-            const { graph, columns } = synthesizeOrderGraph(planItems, undefined, { includeEdges: false });
+            const { graph, columns } = synthesizeOrderGraph(planItems, undefined, { includeEdges: true });
             if (graph.nodes.length > 0) {
                 const pos = layoutColumns(columns);
                 graph.nodes.forEach(n => { n.position = pos[n.id] || { x: 24, y: 24 }; });

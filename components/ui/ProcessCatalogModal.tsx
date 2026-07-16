@@ -8,8 +8,11 @@ import {
     deleteProcessCatalogItem, reorderProcessCatalog,
     getProcessMaterialRules, saveProcessMaterialRule, deleteProcessMaterialRule,
 } from '@/lib/services';
+import { MATERIAL_TYPES, SUGGESTED_RULES } from '@/lib/processAutoPlan';
 import Modal from '@/components/ui/Modal';
-import { ArrowUp, ArrowDown, Trash2, Plus, Pencil, Check, ListOrdered, Wand2 } from 'lucide-react';
+import { ArrowUp, ArrowDown, Trash2, Plus, Pencil, Check, ListOrdered, Wand2, Sparkles } from 'lucide-react';
+
+const typeLabel = (key: string) => MATERIAL_TYPES.find(t => t.key === key)?.label || key;
 
 interface ProcessCatalogModalProps {
     organizationId: string;
@@ -36,9 +39,15 @@ export default function ProcessCatalogModal({ organizationId, onClose, onChanged
     const [editName, setEditName] = useState('');
 
     // Pravila state (novi red)
-    const [ruleKind, setRuleKind] = useState<'category' | 'name_contains'>('category');
-    const [ruleValue, setRuleValue] = useState(MATERIAL_CATEGORIES[0]);
+    const [ruleKind, setRuleKind] = useState<'material_type' | 'material_type_combo' | 'category' | 'name_contains'>('material_type');
+    const [ruleValue, setRuleValue] = useState(MATERIAL_TYPES[0].key);
+    const [ruleTypes, setRuleTypes] = useState<string[]>([]);   // za kombinaciju tipova
     const [ruleProcesses, setRuleProcesses] = useState<string[]>([]);
+
+    // Seeding predloženih pravila
+    const [seedOpen, setSeedOpen] = useState(false);
+    const [seedSel, setSeedSel] = useState<Record<number, boolean>>({});
+    const [seedProcs, setSeedProcs] = useState<Record<number, string[]>>({});
 
     const load = async () => {
         setLoading(true);
@@ -92,14 +101,20 @@ export default function ProcessCatalogModal({ organizationId, onClose, onChanged
     }
 
     async function addRule() {
-        if (!ruleValue.trim() || ruleProcesses.length === 0) {
-            showToast('Pravilo mora imati vrijednost i bar jedan proces', 'error');
+        const isCombo = ruleKind === 'material_type_combo';
+        if (ruleProcesses.length === 0 || (isCombo ? ruleTypes.length === 0 : !ruleValue.trim())) {
+            showToast('Pravilo mora imati vrijednost/tipove i bar jedan proces', 'error');
             return;
         }
-        const res = await saveProcessMaterialRule({ Match_Kind: ruleKind, Match_Value: ruleValue, Processes: ruleProcesses, Organization_ID: organizationId }, organizationId);
+        const res = await saveProcessMaterialRule({
+            Match_Kind: ruleKind,
+            Match_Value: isCombo ? '' : ruleValue,
+            ...(isCombo ? { Match_Types: ruleTypes } : {}),
+            Processes: ruleProcesses, Organization_ID: organizationId,
+        }, organizationId);
         if (res.success) {
-            setRuleProcesses([]);
-            setRuleValue(ruleKind === 'category' ? MATERIAL_CATEGORIES[0] : '');
+            setRuleProcesses([]); setRuleTypes([]);
+            setRuleValue(ruleKind === 'category' ? MATERIAL_CATEGORIES[0] : ruleKind === 'material_type' ? MATERIAL_TYPES[0].key : '');
             await load(); notifyChanged();
         } else showToast(res.message, 'error');
     }
@@ -108,6 +123,37 @@ export default function ProcessCatalogModal({ organizationId, onClose, onChanged
         const res = await deleteProcessMaterialRule(id, organizationId);
         if (res.success) { await load(); notifyChanged(); }
         else showToast(res.message, 'error');
+    }
+
+    // ── Seeding: predloži pravila iz stvarnog vokabulara materijala ──
+    const catalogHas = (name: string) => catalog.some(c => c.Name.trim().toLowerCase() === name.trim().toLowerCase());
+    function openSeed() {
+        const existing = new Set(rules.map(r => `${r.Match_Kind}|${r.Match_Value}|${(r.Match_Types || []).join(',')}`));
+        const sel: Record<number, boolean> = {}; const procs: Record<number, string[]> = {};
+        SUGGESTED_RULES.forEach((r, i) => {
+            const key = `${r.Match_Kind}|${r.Match_Value}|${(r.Match_Types || []).join(',')}`;
+            // Predčekiraj samo one koji imaju procese (u katalogu) i ne postoje već.
+            const usable = r.Processes.filter(catalogHas);
+            sel[i] = usable.length > 0 && !existing.has(key);
+            procs[i] = usable;
+        });
+        setSeedSel(sel); setSeedProcs(procs); setSeedOpen(true);
+    }
+    async function confirmSeed() {
+        const chosen = SUGGESTED_RULES.map((r, i) => ({ r, i })).filter(({ i }) => seedSel[i] && (seedProcs[i] || []).length > 0);
+        if (!chosen.length) { setSeedOpen(false); return; }
+        let ok = 0;
+        for (const { r, i } of chosen) {
+            const res = await saveProcessMaterialRule({
+                Match_Kind: r.Match_Kind, Match_Value: r.Match_Kind === 'material_type_combo' ? '' : r.Match_Value,
+                ...(r.Match_Kind === 'material_type_combo' ? { Match_Types: r.Match_Types } : {}),
+                Processes: seedProcs[i], Organization_ID: organizationId,
+            }, organizationId);
+            if (res.success) ok++;
+        }
+        setSeedOpen(false);
+        showToast(`Dodano ${ok} pravila`, ok > 0 ? 'success' : 'info');
+        await load(); notifyChanged();
     }
 
     const tabBtn = (active: boolean): React.CSSProperties => ({
@@ -199,24 +245,69 @@ export default function ProcessCatalogModal({ organizationId, onClose, onChanged
 
             {!loading && tab === 'rules' && (
                 <div>
-                    <div style={{ fontSize: '12px', color: '#64748b', marginBottom: '10px' }}>
-                        Kad proizvod ima materijal koji odgovara pravilu, plan procesa se automatski popuni (dok ga ručno ne izmijeniš).
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '10px' }}>
+                        <div style={{ fontSize: '12px', color: '#64748b', flex: 1 }}>
+                            Kad proizvod ima materijal(e) koji odgovaraju pravilu, plan procesa se automatski popuni. TIP se čita iz naziva ("Iveral U702" → iveral); kombinacija = svi tipovi prisutni (npr. furnir + MDF → srezivanje iz prese).
+                        </div>
+                        <button className="glass-btn" onClick={openSeed} style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', whiteSpace: 'nowrap' }}>
+                            <Sparkles size={15} /> Predloži pravila
+                        </button>
                     </div>
+
+                    {/* Seeding panel */}
+                    {seedOpen && (
+                        <div style={{ border: '1px solid var(--accent, #0071e3)', borderRadius: '10px', padding: '12px', marginBottom: '14px', background: 'var(--accent-light, #e8f1fd)' }}>
+                            <div style={{ fontSize: '12px', fontWeight: 700, color: '#0f172a', marginBottom: '8px' }}>Predložena pravila (uredi procese pa potvrdi)</div>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: '46vh', overflow: 'auto' }}>
+                                {SUGGESTED_RULES.map((r, i) => {
+                                    const label = r.Match_Kind === 'material_type_combo' ? (r.Match_Types || []).map(typeLabel).join(' + ') : typeLabel(r.Match_Value);
+                                    return (
+                                        <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: '8px', padding: '8px', borderRadius: '8px', background: 'white' }}>
+                                            <input type="checkbox" checked={!!seedSel[i]} onChange={e => setSeedSel(s => ({ ...s, [i]: e.target.checked }))} style={{ marginTop: 3 }} />
+                                            <div style={{ flex: 1 }}>
+                                                <div style={{ fontSize: '13px', fontWeight: 600 }}>{label}{r.note ? <span style={{ fontWeight: 400, color: '#94a3b8' }}> · {r.note}</span> : ''}</div>
+                                                <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', marginTop: '6px' }}>
+                                                    {catalog.map(c => {
+                                                        const on = (seedProcs[i] || []).includes(c.Name);
+                                                        return (
+                                                            <button key={c.ID} onClick={() => setSeedProcs(sp => ({ ...sp, [i]: on ? (sp[i] || []).filter(p => p !== c.Name) : [...(sp[i] || []), c.Name] }))}
+                                                                style={{ fontSize: '11px', padding: '2px 8px', borderRadius: '999px', cursor: 'pointer', border: `1px solid ${on ? 'var(--accent, #0071e3)' : '#cbd5e1'}`, background: on ? 'var(--accent-light, #e8f1fd)' : 'white', color: on ? 'var(--accent, #0071e3)' : '#64748b', fontWeight: on ? 700 : 500 }}>
+                                                                {on ? '✓ ' : ''}{c.Name}
+                                                            </button>
+                                                        );
+                                                    })}
+                                                    {catalog.length === 0 && <span style={{ fontSize: '11px', color: '#94a3b8' }}>Katalog prazan — dodaj procese u tabu Katalog.</span>}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                            <div style={{ display: 'flex', gap: '8px', marginTop: '10px', justifyContent: 'flex-end' }}>
+                                <button className="btn btn-secondary" onClick={() => setSeedOpen(false)}>Otkaži</button>
+                                <button className="glass-btn" onClick={confirmSeed}>Potvrdi odabrana</button>
+                            </div>
+                        </div>
+                    )}
 
                     {/* Postojeća pravila */}
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '14px' }}>
-                        {rules.length === 0 && <div style={{ padding: '14px', textAlign: 'center', color: '#94a3b8', fontSize: '13px', border: '1px dashed #e2e8f0', borderRadius: '10px' }}>Nema pravila — dodaj prvo ispod.</div>}
-                        {rules.map(r => (
-                            <div key={r.ID} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px 12px', border: '1px solid #e2e8f0', borderRadius: '10px', fontSize: '13px' }}>
-                                <span style={{ fontSize: '11px', fontWeight: 700, color: '#475569', background: '#f1f5f9', padding: '2px 8px', borderRadius: '999px', whiteSpace: 'nowrap' }}>
-                                    {r.Match_Kind === 'category' ? 'Kategorija' : 'Naziv sadrži'}
-                                </span>
-                                <strong>{r.Match_Value}</strong>
-                                <span style={{ color: '#94a3b8' }}>→</span>
-                                <span style={{ flex: 1, color: '#0f172a' }}>{r.Processes.join(' → ')}</span>
-                                <button className="icon-btn danger" onClick={() => removeRule(r.ID)} title="Obriši pravilo"><Trash2 size={14} /></button>
-                            </div>
-                        ))}
+                        {rules.length === 0 && <div style={{ padding: '14px', textAlign: 'center', color: '#94a3b8', fontSize: '13px', border: '1px dashed #e2e8f0', borderRadius: '10px' }}>Nema pravila — klikni „Predloži pravila" ili dodaj ispod.</div>}
+                        {rules.map(r => {
+                            const kindLabel = r.Match_Kind === 'category' ? 'Kategorija' : r.Match_Kind === 'name_contains' ? 'Naziv sadrži'
+                                : r.Match_Kind === 'material_type_combo' ? 'Kombinacija tipova' : 'Tip materijala';
+                            const value = r.Match_Kind === 'material_type_combo' ? (r.Match_Types || []).map(typeLabel).join(' + ')
+                                : r.Match_Kind === 'material_type' ? typeLabel(r.Match_Value) : r.Match_Value;
+                            return (
+                                <div key={r.ID} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px 12px', border: '1px solid #e2e8f0', borderRadius: '10px', fontSize: '13px' }}>
+                                    <span style={{ fontSize: '11px', fontWeight: 700, color: '#475569', background: '#f1f5f9', padding: '2px 8px', borderRadius: '999px', whiteSpace: 'nowrap' }}>{kindLabel}</span>
+                                    <strong>{value}</strong>
+                                    <span style={{ color: '#94a3b8' }}>→</span>
+                                    <span style={{ flex: 1, color: '#0f172a' }}>{r.Processes.join(' → ')}</span>
+                                    <button className="icon-btn danger" onClick={() => removeRule(r.ID)} title="Obriši pravilo"><Trash2 size={14} /></button>
+                                </div>
+                            );
+                        })}
                     </div>
 
                     {/* Novo pravilo */}
@@ -224,14 +315,33 @@ export default function ProcessCatalogModal({ organizationId, onClose, onChanged
                         <div style={{ fontSize: '12px', fontWeight: 700, color: '#475569', marginBottom: '10px' }}>+ Novo pravilo</div>
                         <div style={{ display: 'flex', gap: '8px', marginBottom: '10px', flexWrap: 'wrap' }}>
                             <select value={ruleKind} onChange={e => {
-                                const k = e.target.value as 'category' | 'name_contains';
+                                const k = e.target.value as typeof ruleKind;
                                 setRuleKind(k);
-                                setRuleValue(k === 'category' ? MATERIAL_CATEGORIES[0] : '');
+                                setRuleValue(k === 'category' ? MATERIAL_CATEGORIES[0] : k === 'material_type' ? MATERIAL_TYPES[0].key : '');
+                                setRuleTypes([]);
                             }} style={{ padding: '7px 10px', borderRadius: '8px', border: '1px solid #e2e8f0', fontSize: '13px' }}>
+                                <option value="material_type">Tip materijala (iz naziva)</option>
+                                <option value="material_type_combo">Kombinacija tipova (svi prisutni)</option>
                                 <option value="category">Kategorija materijala</option>
                                 <option value="name_contains">Naziv materijala sadrži</option>
                             </select>
-                            {ruleKind === 'category' ? (
+                            {ruleKind === 'material_type' ? (
+                                <select value={ruleValue} onChange={e => setRuleValue(e.target.value)} style={{ padding: '7px 10px', borderRadius: '8px', border: '1px solid #e2e8f0', fontSize: '13px', flex: 1, minWidth: '160px' }}>
+                                    {MATERIAL_TYPES.map(t => <option key={t.key} value={t.key}>{t.label}</option>)}
+                                </select>
+                            ) : ruleKind === 'material_type_combo' ? (
+                                <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', flex: 1, minWidth: '160px', alignItems: 'center' }}>
+                                    {MATERIAL_TYPES.map(t => {
+                                        const on = ruleTypes.includes(t.key);
+                                        return (
+                                            <button key={t.key} onClick={() => setRuleTypes(prev => on ? prev.filter(x => x !== t.key) : [...prev, t.key])}
+                                                style={{ fontSize: '11px', padding: '3px 9px', borderRadius: '999px', cursor: 'pointer', border: `1px solid ${on ? 'var(--accent, #0071e3)' : '#cbd5e1'}`, background: on ? 'var(--accent-light, #e8f1fd)' : 'white', color: on ? 'var(--accent, #0071e3)' : '#64748b', fontWeight: on ? 700 : 500 }}>
+                                                {on ? '✓ ' : ''}{t.label}
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+                            ) : ruleKind === 'category' ? (
                                 <select value={ruleValue} onChange={e => setRuleValue(e.target.value)} style={{ padding: '7px 10px', borderRadius: '8px', border: '1px solid #e2e8f0', fontSize: '13px', flex: 1, minWidth: '160px' }}>
                                     {MATERIAL_CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
                                 </select>
@@ -258,7 +368,7 @@ export default function ProcessCatalogModal({ organizationId, onClose, onChanged
                                 );
                             })}
                         </div>
-                        <button className="glass-btn" onClick={addRule} disabled={!ruleValue.trim() || ruleProcesses.length === 0}
+                        <button className="glass-btn" onClick={addRule} disabled={ruleProcesses.length === 0 || (ruleKind === 'material_type_combo' ? ruleTypes.length === 0 : !ruleValue.trim())}
                             style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontWeight: 600 }}>
                             <Plus size={15} /> Dodaj pravilo
                         </button>

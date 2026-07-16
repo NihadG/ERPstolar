@@ -18,6 +18,7 @@ import { workOrderDueDate, isWorkingDay, buildSaturdayChecker, type AttendanceLi
 import { itemMaterialTotal, isItemMaterialFrozen } from '../materialCost';
 import { projectProfitBreakdown } from '../projectProfit';
 import { distributeAmountByQuantity } from '../invoicePricing';
+import { resolveLaborCostTarget, type LaborTargetItem } from '../laborTarget';
 
 // ── helpers ─────────────────────────────────────────────────────────────────
 const round2 = (n: number) => Math.round(n * 100) / 100;
@@ -431,7 +432,7 @@ describe('Scenarij — Završni račun mijenja i vraća profit projekta (issueIn
         { ID: 'A2', Project_ID: 'P1', Product_ID: 'PB', Product_Value: 500, Material_Cost: 50, Quantity: 1 },
     ];
     const workOrders = (items: ReturnType<typeof baseItems>) => [
-        { Work_Order_ID: 'WO1', Status: 'U toku' as const, Work_Order_Type: 'Proizvodnja', items },
+        { Work_Order_ID: 'WO1', Status: 'U toku' as const, Work_Order_Type: 'Proizvodnja' as const, items },
     ];
 
     test('prije fakturisanja: profit projekta = Σ Product_Value ponude', () => {
@@ -491,8 +492,58 @@ describe('Scenarij — Završni račun mijenja i vraća profit projekta (issueIn
             const d = distribution.find(x => x.id === it.ID)!;
             return { ...it, Profit_Overrides: { Selling_Price: d.amount }, Product_Value: d.amount };
         });
-        const wo = [{ Work_Order_ID: 'WOA', Status: 'U toku' as const, Work_Order_Type: 'Proizvodnja', items: invoicedSplit }];
+        const wo = [{ Work_Order_ID: 'WOA', Status: 'U toku' as const, Work_Order_Type: 'Proizvodnja' as const, items: invoicedSplit }];
         const result = projectProfitBreakdown({ projectId: 'P1', workOrders: wo, workLogs: [] });
         expect(result.revenue).toBe(1500);
+    });
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// SCENARIJ — Povezani "razni poslovi": rad se preusmjerava na proizvod i ULAZI
+// u njegov profit projekta. Mirror onoga što bookWorkerDayItems/saveWorkOrderDayBooking
+// rade pri upisu (resolveLaborCostTarget → log na povezanu stavku), pa se provjeri
+// da projectProfitBreakdown (stvarna funkcija) taj rad uračuna u trošak proizvoda.
+// ════════════════════════════════════════════════════════════════════════════
+describe('Scenarij — povezani razni posao uračunava rad u trošak proizvoda', () => {
+    // Proizvod P1 u proizvodnom nalogu (projekat PRJ), prihod 1000, materijal 0 (jednostavno).
+    const product: LaborTargetItem & { Project_ID: string; Product_Value: number; Material_Cost: number; Quantity: number } =
+        { ID: 'P1', Work_Order_ID: 'WO-prod', Product_ID: 'prod-1', Product_Name: 'Ormar', Item_Type: 'product', Project_ID: 'PRJ', Product_Value: 1000, Material_Cost: 0, Quantity: 1 };
+    // Custom zadatak "Montaža vrata" u Zadaci-nalogu, povezan s P1, prazan Project_ID (kao u praksi).
+    const customTask: LaborTargetItem & { Project_ID: string; Quantity: number } =
+        { ID: 'C1', Work_Order_ID: 'WO-zad', Product_ID: 'custom-x', Product_Name: 'Montaža vrata', Item_Type: 'custom', Linked_Item_ID: 'P1', Project_ID: '', Quantity: 1 };
+    const byId = new Map<string, LaborTargetItem>([[product.ID, product], [customTask.ID, customTask]]);
+
+    // Radnik knjiži 130 KM na custom zadatak → helper preusmjerava log na P1.
+    const { target, redirected } = resolveLaborCostTarget(customTask, byId);
+    const retargetedLog = { Work_Order_Item_ID: target.ID, Daily_Rate: 130 };
+
+    test('helper preusmjeri log s custom zadatka na povezanu stavku proizvoda', () => {
+        expect(redirected).toBe(true);
+        expect(retargetedLog.Work_Order_Item_ID).toBe('P1');
+    });
+
+    test('projectProfitBreakdown uračuna preusmjereni rad u trošak proizvoda (profit = 1000 − 130)', () => {
+        const workOrders = [
+            { Work_Order_ID: 'WO-prod', Status: 'U toku' as const, Work_Order_Type: 'Proizvodnja' as const, items: [product] },
+            // Zadaci-nalog: custom stavka ostaje, ali njen rad je fizički na P1 (nije ovdje) →
+            // Zadaci-nalog ne nosi trošak; proizvod ga nosi.
+            { Work_Order_ID: 'WO-zad', Status: 'U toku' as const, Work_Order_Type: 'Zadaci' as unknown as 'Proizvodnja', items: [customTask] },
+        ];
+        const r = projectProfitBreakdown({ projectId: 'PRJ', workOrders, workLogs: [retargetedLog] });
+        expect(r.labor).toBe(130);
+        expect(r.revenue).toBe(1000);
+        expect(r.profit).toBe(870);
+    });
+
+    test('bez preusmjeravanja (da log ostane na custom stavci) rad bi se IZGUBIO iz profita projekta', () => {
+        // Kontra-primjer: log na custom stavci (Project_ID prazan) → projectProfitBreakdown ga preskače.
+        const lostLog = { Work_Order_Item_ID: 'C1', Daily_Rate: 130 };
+        const workOrders = [
+            { Work_Order_ID: 'WO-prod', Status: 'U toku' as const, Work_Order_Type: 'Proizvodnja' as const, items: [product] },
+            { Work_Order_ID: 'WO-zad', Status: 'U toku' as const, Work_Order_Type: 'Zadaci' as unknown as 'Proizvodnja', items: [customTask] },
+        ];
+        const r = projectProfitBreakdown({ projectId: 'PRJ', workOrders, workLogs: [lostLog] });
+        expect(r.labor).toBe(0);            // rad se izgubio — upravo problem koji preusmjeravanje rješava
+        expect(r.profit).toBe(1000);
     });
 });

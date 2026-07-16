@@ -1,0 +1,128 @@
+/* ═══ PROCESI TAB — pregled procesa preko svih naloga ═══ */
+.pt-wrap { display: flex; flex-direction: column; gap: 16px; padding: 4px; }
+
+.pt-header { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.pt-title { font-size: 20px; font-weight: 800; color: var(--text-primary); margin: 0; }
+.pt-header-spacer { flex: 1; }
+
+/* Segmented control (grupacije) */
+.pt-seg { display: inline-flex; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 3px; }
+.pt-seg button {
+    border: none; background: transparent; cursor: pointer; padding: 7px 14px; border-radius: 8px;
+    font-size: 13px; font-weight: 600; color: var(--text-secondary); display: inline-flex; align-items: center; gap: 6px;
+    transition: all 0.15s;
+}
+.pt-seg button.active { background: var(--accent); color: #fff; }
+
+.pt-search { position: relative; display: inline-flex; align-items: center; }
+.pt-search input {
+    height: 38px; padding: 0 12px 0 34px; border: 1px solid var(--border); border-radius: 10px;
+    background: var(--background); font-size: 13px; color: var(--text-primary); min-width: 220px;
+}
+.pt-search .material-icons-round { position: absolute; left: 10px; font-size: 18px; color: var(--text-tertiary); }
+
+.pt-toggle {
+    display: inline-flex; align-items: center; gap: 6px; height: 38px; padding: 0 12px;
+    border: 1px solid var(--border); border-radius: 10px; background: var(--background);
+    font-size: 13px; font-weight: 600; color: var(--text-secondary); cursor: pointer;
+}
+.pt-toggle.on { border-color: var(--accent); color: var(--accent); background: var(--accent-light); }
+
+.pt-btn {
+    display: inline-flex; align-items: center; gap: 6px; height: 38px; padding: 0 14px;
+    border: 1px solid var(--border); border-radius: 10px; background: var(--background);
+    font-size: 13px; font-weight: 600; color: var(--text-primary); cursor: pointer;
+}
+.pt-btn:hover { background: var(--surface-hover); }
+
+/* Kartice */
+.pt-list { display: flex; flex-direction: column; gap: 12px; }
+.pt-card {
+    border: 1px solid var(--border-light); border-radius: 14px; background: var(--background);
+    overflow: hidden;
+}
+.pt-card-head {
+    display: flex; align-items: center; gap: 12px; padding: 14px 16px; cursor: pointer;
+    border-left: 4px solid var(--accent);
+}
+.pt-card-title { font-size: 15px; font-weight: 700; color: var(--text-primary); }
+.pt-card-sub { font-size: 12px; color: var(--text-secondary); }
+.pt-card-spacer { flex: 1; }
+
+.pt-crew { display: inline-flex; gap: 4px; flex-wrap: wrap; }
+.pt-crew-chip {
+    display: inline-flex; align-items: center; gap: 4px; padding: 3px 8px; border-radius: 999px;
+    background: var(--surface); font-size: 11px; font-weight: 600; color: var(--text-secondary);
+}
+.pt-crew-chip.main { background: var(--accent-light); color: var(--accent); }
+
+/* Fazni stepper */
+.pt-stepper { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; padding: 0 16px 14px; }
+.pt-phase {
+    display: inline-flex; align-items: center; gap: 6px; padding: 6px 10px; border-radius: 8px;
+    font-size: 12px; font-weight: 600; border: 1px solid var(--border-light);
+}
+.pt-phase.done { background: #ecfdf5; border-color: #a7f3d0; color: #065f46; }
+.pt-phase.current { background: var(--accent-light); border-color: var(--accent); color: var(--accent); }
+.pt-phase.future { background: var(--surface); color: var(--text-tertiary); }
+.pt-phase-arrow { color: var(--text-tertiary); font-size: 16px; }
+
+/* Progress bar */
+.pt-progress { height: 6px; border-radius: 999px; background: var(--surface); overflow: hidden; min-width: 90px; flex: 0 0 90px; }
+.pt-progress-fill { height: 100%; background: var(--accent); border-radius: 999px; }
+
+/* Badge */
+.pt-badge { display: inline-flex; align-items: center; gap: 4px; padding: 3px 9px; border-radius: 999px; font-size: 11px; font-weight: 700; }
+.pt-badge.active { background: var(--accent-light); color: var(--accent); }
+.pt-badge.blocked { background: var(--surface); color: var(--text-tertiary); }
+.pt-badge.logged { background: #fff4e5; color: #b45309; }
+.pt-badge.legacy { background: #f1f5f9; color: #64748b; }
+
+/* Ćelije (nalog×proizvod×proces) */
+.pt-cells { display: flex; flex-direction: column; gap: 6px; padding: 0 16px 14px; }
+.pt-cell {
+    display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 10px;
+    background: var(--surface); border: 1px solid transparent;
+}
+.pt-cell.sel { border-color: var(--accent); background: var(--accent-light); }
+.pt-cell-check { width: 18px; height: 18px; accent-color: var(--accent); cursor: pointer; }
+.pt-cell-main { flex: 1; min-width: 0; }
+.pt-cell-proc { font-size: 13px; font-weight: 600; color: var(--text-primary); }
+.pt-cell-ctx { font-size: 11px; color: var(--text-secondary); }
+.pt-cell-done { color: #059669; }
+
+.pt-section-label {
+    font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em;
+    color: var(--text-tertiary); padding: 4px 16px 0;
+}
+
+.pt-empty { text-align: center; padding: 48px 16px; color: var(--text-secondary); }
+.pt-empty .material-icons-round { font-size: 44px; color: var(--text-tertiary); }
+
+/* Floating action bar */
+.pt-actionbar {
+    position: sticky; bottom: 12px; z-index: 5;
+    display: flex; align-items: center; gap: 12px; margin: 0 auto; width: fit-content;
+    padding: 10px 16px; border-radius: 999px;
+    background: var(--text-primary); color: #fff; box-shadow: 0 8px 30px rgba(0,0,0,0.25);
+}
+.pt-actionbar button {
+    border: none; cursor: pointer; padding: 8px 16px; border-radius: 999px; font-size: 13px; font-weight: 700;
+}
+.pt-actionbar .primary { background: #fff; color: var(--text-primary); }
+.pt-actionbar .ghost { background: rgba(255,255,255,0.15); color: #fff; }
+
+/* Completion form */
+.pt-form-field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; }
+.pt-form-field > label { font-size: 13px; font-weight: 600; color: var(--text-secondary); }
+.pt-form-field input, .pt-form-field textarea {
+    border: 1px solid var(--border); border-radius: 8px; padding: 9px 12px; font-size: 14px;
+    background: var(--background); color: var(--text-primary);
+}
+.pt-worker-pick { display: flex; flex-wrap: wrap; gap: 6px; }
+.pt-worker-opt {
+    display: inline-flex; align-items: center; gap: 5px; padding: 5px 10px; border-radius: 999px;
+    border: 1px solid var(--border); background: var(--background); font-size: 12px; font-weight: 600;
+    color: var(--text-secondary); cursor: pointer;
+}
+.pt-worker-opt.on { border-color: var(--accent); background: var(--accent-light); color: var(--accent); }

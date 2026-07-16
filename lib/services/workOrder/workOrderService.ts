@@ -5,7 +5,7 @@
  * startWorkOrder, updateWorkOrderStatus, updateWorkOrderItemStatus, completeWorkOrderItem,
  * deleteWorkOrder, updateWorkOrder, updateDueDate, assignWorkerToItem,
  * scheduleWorkOrder, rescheduleWorkOrder, unscheduleWorkOrder, getScheduledWorkOrders,
- * checkWorkerConflicts, autoCreateOrdersForWorkOrder, updateAllItemProcesses)
+ * checkWorkerConflicts, autoCreateOrdersForWorkOrder)
  */
 
 import { COLLECTIONS } from '../shared/collections';

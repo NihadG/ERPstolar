@@ -30,6 +30,9 @@ interface ProductionTabProps {
     showToast: (message: string, type: 'success' | 'error' | 'info') => void;
     pendingWorkOrderProducts?: { projectId: string; projectName: string; products: { productId: string; productName: string; quantity: number }[] } | null;
     onClearPendingWorkOrder?: () => void;
+    /** Otvori (proširi) određeni nalog pri dolasku (npr. iz taba Procesi). */
+    autoExpandWorkOrderId?: string | null;
+    onClearAutoExpand?: () => void;
 }
 
 // Sort prioritet: U toku (aktivno) → U toku (pauzirano) → Na čekanju → Završeno → Otkazano
@@ -41,7 +44,7 @@ function statusSortPriority(wo: WorkOrder): number {
     return 99;
 }
 
-export default function ProductionTab({ workOrders, projects, workers, onRefresh, showToast, pendingWorkOrderProducts, onClearPendingWorkOrder }: ProductionTabProps) {
+export default function ProductionTab({ workOrders, projects, workers, onRefresh, showToast, pendingWorkOrderProducts, onClearPendingWorkOrder, autoExpandWorkOrderId, onClearAutoExpand }: ProductionTabProps) {
     const { organizationId } = useData();
     const [searchTerm, setSearchTerm] = useState('');
     const [statusFilter, setStatusFilter] = useState('');
@@ -243,6 +246,10 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
 
     // Expansion State
     const [expandedOrderId, setExpandedOrderId] = useState<string | null>(null);
+    // Dolazak iz taba Procesi → proširi traženi nalog jednom.
+    useEffect(() => {
+        if (autoExpandWorkOrderId) { setExpandedOrderId(autoExpandWorkOrderId); onClearAutoExpand?.(); }
+    }, [autoExpandWorkOrderId, onClearAutoExpand]);
     const [currentWorkOrderForPrint, setCurrentWorkOrderForPrint] = useState<WorkOrder | null>(null);
     // Rezime završenog naloga (finalni P&L iz snapshota)
     const [summaryOrder, setSummaryOrder] = useState<WorkOrder | null>(null);

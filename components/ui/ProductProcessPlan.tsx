@@ -190,9 +190,9 @@ export default function ProductProcessPlan({ product, organizationId, onChanged,
                     <div className="ppp-toolbar-info">
                         {stages.length > 0 && (
                             <span className={`ppp-source-badge ${source === 'manual' ? 'is-manual' : 'is-auto'}`}
-                                title={source === 'manual' ? 'Ručno uređen — automatika ga ne mijenja' : 'Izveden iz pravila materijal→proces; mijenja se s materijalima'}>
+                                title={source === 'manual' ? 'Ručno uređen — automatika ga ne mijenja' : source === 'ai' ? 'AI prijedlog iz naziva — provjeri i po potrebi uredi' : 'Izveden iz pravila materijal→proces; mijenja se s materijalima'}>
                                 {source === 'manual' ? <Lock size={11} /> : <Sparkles size={11} />}
-                                {source === 'manual' ? 'Ručno' : 'Auto iz materijala'}
+                                {source === 'manual' ? 'Ručno' : source === 'ai' ? 'AI prijedlog' : 'Auto iz materijala'}
                             </span>
                         )}
                         <span className="ppp-hint">ista kolona = paralelno · prevuci za raspored</span>

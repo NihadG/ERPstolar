@@ -23,6 +23,7 @@ import AttendanceTab from '@/components/tabs/AttendanceTab';
 import TasksTab from '@/components/tabs/TasksTab';
 import MobileTasksTab from '@/components/tabs/MobileTasksTab';
 import PlannerTab from '@/components/tabs/PlannerTab';
+import ProcessesTab from '@/components/tabs/ProcessesTab';
 import Toast from '@/components/ui/Toast';
 import LoadingOverlay from '@/components/ui/LoadingOverlay';
 import ModuleGuard from '@/components/auth/ModuleGuard';
@@ -67,6 +68,8 @@ export default function Home() {
     // Work order creation from ProjectsTab
     const [pendingWorkOrderProducts, setPendingWorkOrderProducts] = useState<{ projectId: string; projectName: string; products: { productId: string; productName: string; quantity: number }[] } | null>(null);
 
+    // Procesi → Nalozi navigacija (proširi traženi nalog)
+    const [autoExpandWorkOrderId, setAutoExpandWorkOrderId] = useState<string | null>(null);
     // Quote-to-Project navigation state
     const [autoExpandProjectId, setAutoExpandProjectId] = useState<string | null>(null);
     const [autoExpandProductId, setAutoExpandProductId] = useState<string | null>(null);
@@ -525,6 +528,19 @@ export default function Home() {
                             showToast={showToast}
                             pendingWorkOrderProducts={pendingWorkOrderProducts}
                             onClearPendingWorkOrder={clearPendingWorkOrder}
+                            autoExpandWorkOrderId={autoExpandWorkOrderId}
+                            onClearAutoExpand={() => setAutoExpandWorkOrderId(null)}
+                        />
+                    )}
+
+                    {activeTab === 'procesi' && (
+                        <ProcessesTab
+                            workOrders={appState.workOrders}
+                            workers={appState.workers}
+                            workLogs={appState.workLogs}
+                            onRefresh={refreshCollections}
+                            showToast={showToast}
+                            onNavigateToOrder={(woId) => { setAutoExpandWorkOrderId(woId); setActiveTab('production'); }}
                         />
                     )}
 

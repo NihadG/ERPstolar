@@ -300,15 +300,6 @@ export async function checkMissingAttendanceHistory(
 // PROCESS MANAGEMENT
 // ============================================
 
-export async function updateAllItemProcesses(
-    workOrderId: string,
-    itemId: string,
-    processes: any[]
-): Promise<void> {
-    const { updateAllItemProcesses: _update } = await import('../../attendance');
-    return _update(workOrderId, itemId, processes);
-}
-
 export async function assignWorkersToItem(
     workOrderId: string,
     itemId: string,
@@ -382,16 +373,6 @@ export async function addProcessToOrderItem(
 ): Promise<{ success: boolean; message: string }> {
     const { addProcessToOrderItem: _fn } = await import('../../attendance');
     return _fn(workOrderId, itemId, processName, organizationId, opts);
-}
-
-export async function bulkUpdateProcesses(
-    workOrderId: string,
-    itemIds: string[],
-    processName: string | 'all',
-    updates: any
-): Promise<void> {
-    const { bulkUpdateProcesses: _fn } = await import('../../attendance');
-    return _fn(workOrderId, itemIds, processName, updates);
 }
 
 export async function createSubTasks(

@@ -26,6 +26,7 @@ import {
     ClipboardList,
     CalendarDays,
     Shield,
+    Workflow,
 } from 'lucide-react';
 import NotificationCenter from './NotificationCenter';
 import './Sidebar.css';
@@ -159,6 +160,7 @@ const Sidebar: React.FC<SidebarProps> = ({ activeTab, onTabChange, isOpen, onClo
             icon: Factory,
             items: [
                 { id: 'production', icon: ClipboardList, label: 'Nalozi' },
+                { id: 'procesi', icon: Workflow, label: 'Procesi' },
                 { id: 'attendance', icon: CalendarDays, label: 'Šihtarica' },
                 { id: 'planer', icon: GanttChart, label: 'Planer' },
             ]

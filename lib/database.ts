@@ -3514,11 +3514,12 @@ export async function createWorkOrder(data: {
         }
 
         // Graf procesa odmah pri kreiranju (čvorovi za auto-knjiženje) + Production_Steps = unija (print).
-        // BEZ auto-veza (korisnik ih ručno povezuje u editoru) — fazni raspored kolona kao u planu proizvoda.
+        // SA auto-vezama izvedenim iz FAZA planova proizvoda (gating radi bez ručnog žičenja);
+        // korisnik ivice može ručno dopuniti/obrisati u editoru — fazni raspored kolona kao u planu.
         try {
             const { synthesizeOrderGraph } = await import('./productProcesses');
             const { layoutColumns } = await import('./processLayout');
-            const { graph, columns } = synthesizeOrderGraph(planItems, undefined, { includeEdges: false });
+            const { graph, columns } = synthesizeOrderGraph(planItems, undefined, { includeEdges: true });
             if (graph.nodes.length > 0) {
                 const pos = layoutColumns(columns);
                 graph.nodes.forEach(n => { n.position = pos[n.id] || { x: 24, y: 24 }; });
@@ -5327,9 +5328,16 @@ export async function saveProcessMaterialRule(
     rule: Omit<ProcessMaterialRule, 'ID' | 'Created_At'> & { ID?: string },
     organizationId: string
 ): Promise<{ success: boolean; message: string }> {
-    if (!organizationId || !(rule.Match_Value || '').trim() || !(rule.Processes || []).length) {
-        return { success: false, message: 'Pravilo mora imati vrijednost i bar jedan proces' };
+    const isCombo = rule.Match_Kind === 'material_type_combo';
+    const comboTypes = (rule.Match_Types || []).filter(Boolean);
+    const hasMatch = isCombo ? comboTypes.length > 0 : !!(rule.Match_Value || '').trim();
+    if (!organizationId || !hasMatch || !(rule.Processes || []).length) {
+        return { success: false, message: 'Pravilo mora imati vrijednost/tipove i bar jedan proces' };
     }
+    // Firestore odbija undefined — combo nosi Match_Types (Match_Value prazan), ostali obrnuto.
+    const matchFields = isCombo
+        ? { Match_Value: '', Match_Types: comboTypes }
+        : { Match_Value: (rule.Match_Value || '').trim() };
     try {
         const db = getDb();
         if (rule.ID) {
@@ -5337,7 +5345,7 @@ export async function saveProcessMaterialRule(
             if (snap.empty) return { success: false, message: 'Pravilo nije pronađeno' };
             await updateDoc(snap.docs[0].ref, {
                 Match_Kind: rule.Match_Kind,
-                Match_Value: rule.Match_Value.trim(),
+                ...matchFields,
                 Processes: rule.Processes,
             });
             return { success: true, message: 'Pravilo ažurirano' };
@@ -5346,7 +5354,7 @@ export async function saveProcessMaterialRule(
             ID: generateUUID(),
             Organization_ID: organizationId,
             Match_Kind: rule.Match_Kind,
-            Match_Value: rule.Match_Value.trim(),
+            ...matchFields,
             Processes: rule.Processes,
             Created_At: new Date().toISOString(),
         };
@@ -5374,7 +5382,7 @@ export async function deleteProcessMaterialRule(id: string, organizationId: stri
 export async function applyAutoProcessPlan(
     productId: string,
     organizationId: string,
-    opts?: { force?: boolean }
+    opts?: { force?: boolean; templateId?: string }
 ): Promise<{ success: boolean; plan?: string[]; message: string }> {
     if (!productId || !organizationId) return { success: false, message: 'Nedostaje proizvod/organizacija' };
     try {
@@ -5387,11 +5395,12 @@ export async function applyAutoProcessPlan(
             return { success: true, plan: prod.Process_Plan, message: 'Plan je ručno uređen — auto preskočen' };
         }
 
-        const [materials, rules, catalog, materialCatalog] = await Promise.all([
+        const [materials, rules, catalog, materialCatalog, templates] = await Promise.all([
             getProductMaterials(productId, organizationId),
             getProcessMaterialRules(organizationId),
             getProcessCatalog(organizationId),
             getMaterialsCatalog(organizationId),
+            getProcessStageTemplates(organizationId),
         ]);
         // Kategorija materijala živi na katalogu materijala — join po Material_ID
         const catById = new Map(materialCatalog.map(m => [m.Material_ID, m.Category]));
@@ -5399,15 +5408,19 @@ export async function applyAutoProcessPlan(
             Material_Name: m.Material_Name,
             Category: catById.get(m.Material_ID) || '',
         }));
-        const { suggestProcessesFromMaterials } = await import('./productProcesses');
-        const plan = suggestProcessesFromMaterials(lite, rules, catalog);
-        // Auto = sekvencijalne faze (svaki proces svoja); paralelu korisnik pravi prevlačenjem u istu fazu.
+        const { buildAutoPlan } = await import('./processAutoPlan');
+        const { flattenStages } = await import('./productProcesses');
+        // buildAutoPlan: skup procesa (pravila+tipovi+kombinacije) → FAZE odabranog šablona
+        // (šablon biran po kombinaciji tipova); opts.templateId ako je zadat.
+        const chosen = opts?.templateId ? templates.filter(t => t.Template_ID === opts.templateId) : templates;
+        const result = buildAutoPlan(lite, rules, catalog, chosen);
+        const flat = flattenStages(result.stages);
         await updateDoc(prodRef, {
-            Process_Stages: plan.map(p => ({ processes: [p] })),
-            Process_Plan: plan,
+            Process_Stages: result.stages.map(s => ({ processes: s })),
+            Process_Plan: flat,
             Process_Plan_Source: 'auto',
         });
-        return { success: true, plan, message: plan.length ? `Plan procesa: ${plan.join(' → ')}` : 'Nema pravila za materijale proizvoda' };
+        return { success: true, plan: flat, message: flat.length ? `Plan procesa: ${flat.join(' → ')}${result.templateName ? ` (šablon: ${result.templateName})` : ''}` : 'Nema pravila za materijale proizvoda' };
     } catch (e) { console.error('applyAutoProcessPlan error:', e); return { success: false, message: 'Greška pri auto-planu procesa' }; }
 }
 
@@ -5419,7 +5432,7 @@ export async function saveProductProcessStages(
     productId: string,
     stages: { processes: string[] }[],
     organizationId: string,
-    source: 'auto' | 'manual' = 'manual'
+    source: 'auto' | 'manual' | 'ai' = 'manual'
 ): Promise<{ success: boolean; message: string }> {
     if (!productId || !organizationId) return { success: false, message: 'Nedostaje proizvod/organizacija' };
     try {
@@ -5435,6 +5448,47 @@ export async function saveProductProcessStages(
         });
         return { success: true, message: 'Plan procesa spremljen' };
     } catch (e) { console.error('saveProductProcessStages error:', e); return { success: false, message: 'Greška pri spremanju plana' }; }
+}
+
+/**
+ * BULK: spremi fazne planove za VIŠE proizvoda jednog projekta odjednom (batch).
+ * Koristi se iz "Generiši planove procesa" (BulkProcessPlanModal) — keyword/auto + AI prijedlozi.
+ * Jedan upit proizvoda projekta → writeBatch (chunk 450, kao reorderProcessCatalog).
+ */
+export async function bulkSaveProductProcessStages(
+    projectId: string,
+    updates: { productId: string; stages: { processes: string[] }[]; source: 'auto' | 'ai' }[],
+    organizationId: string
+): Promise<{ success: boolean; applied: number; message: string }> {
+    if (!projectId || !organizationId) return { success: false, applied: 0, message: 'Nedostaje projekat/organizacija' };
+    if (!updates.length) return { success: true, applied: 0, message: 'Nema planova za primjenu' };
+    try {
+        const db = getDb();
+        const snap = await getDocs(query(
+            collection(db, COLLECTIONS.PRODUCTS),
+            where('Project_ID', '==', projectId),
+            where('Organization_ID', '==', organizationId),
+        ));
+        const refByProduct = new Map(snap.docs.map(d => [(d.data() as Product).Product_ID, d.ref]));
+        const { planToStages, flattenStages } = await import('./productProcesses');
+        const valid = updates.filter(u => refByProduct.has(u.productId));
+        let applied = 0;
+        for (let i = 0; i < valid.length; i += 450) {
+            const batch = writeBatch(db);
+            for (const u of valid.slice(i, i + 450)) {
+                const clean = planToStages(u.stages, null).map(s => ({ processes: s }));
+                if (clean.length === 0) continue;
+                batch.update(refByProduct.get(u.productId)!, {
+                    Process_Stages: clean,
+                    Process_Plan: flattenStages(clean.map(s => s.processes)),
+                    Process_Plan_Source: u.source,
+                });
+                applied++;
+            }
+            await batch.commit();
+        }
+        return { success: true, applied, message: `Planovi primijenjeni: ${applied}` };
+    } catch (e) { console.error('bulkSaveProductProcessStages error:', e); return { success: false, applied: 0, message: 'Greška pri spremanju planova' }; }
 }
 
 // ============================================
@@ -5457,7 +5511,8 @@ export async function getProcessStageTemplates(organizationId: string): Promise<
 export async function saveProcessStageTemplate(
     name: string,
     stages: { processes: string[] }[],
-    organizationId: string
+    organizationId: string,
+    materialTypes?: string[]
 ): Promise<{ success: boolean; message: string }> {
     const trimmed = (name || '').trim();
     if (!organizationId || !trimmed) return { success: false, message: 'Nedostaje naziv/organizacija' };
@@ -5470,6 +5525,8 @@ export async function saveProcessStageTemplate(
             Organization_ID: organizationId,
             Name: trimmed,
             Stages: clean,
+            // Kombinacija tipova materijala za koju šablon važi (auto-plan bira šablon po njoj).
+            ...(materialTypes && materialTypes.length ? { Material_Types: materialTypes } : {}),
             Created_At: new Date().toISOString(),
         };
         await addDoc(collection(db, PROCESS_STAGE_TEMPLATES), JSON.parse(JSON.stringify(tpl)));
@@ -5619,20 +5676,33 @@ export async function getWorkLogs(organizationId: string): Promise<WorkLog[]> {
 }
 
 /**
- * Get all work logs for an entire work order
+ * Get all work logs for an entire work order — UKLJUČUJE i logove POVEZANIH "raznih poslova"
+ * čiji je trošak preusmjeren na proizvod u OVOM nalogu (Source_Work_Order_ID = ovaj nalog),
+ * tako da izvorni Zadaci-nalog i dalje može prikazati (informativno) da je rad urađen i gdje
+ * je uračunat — bez da taj trošak duplo ulazi u P&L OVOG naloga (vidi WorkOrderExpandedDetail:
+ * echo se računa odvojeno od itemFin, koji i dalje broji SAMO direktne Work_Order_Item_ID logove).
  */
 export async function getWorkLogsForWorkOrder(workOrderId: string, organizationId: string): Promise<WorkLog[]> {
     if (!organizationId) return [];
 
     try {
         const firestore = getDb();
-        const q = query(
-            collection(firestore, COLLECTIONS.WORK_LOGS),
-            where('Work_Order_ID', '==', workOrderId),
-            where('Organization_ID', '==', organizationId)
-        );
-        const snapshot = await getDocs(q);
-        return snapshot.docs.map(doc => doc.data() as WorkLog);
+        const [direct, redirected] = await Promise.all([
+            getDocs(query(
+                collection(firestore, COLLECTIONS.WORK_LOGS),
+                where('Work_Order_ID', '==', workOrderId),
+                where('Organization_ID', '==', organizationId)
+            )),
+            getDocs(query(
+                collection(firestore, COLLECTIONS.WORK_LOGS),
+                where('Source_Work_Order_ID', '==', workOrderId),
+                where('Organization_ID', '==', organizationId)
+            )),
+        ]);
+        const byId = new Map<string, WorkLog>();
+        direct.docs.forEach(d => byId.set(d.id, d.data() as WorkLog));
+        redirected.docs.forEach(d => byId.set(d.id, d.data() as WorkLog));
+        return Array.from(byId.values());
     } catch (error) {
         console.error('getWorkLogsForWorkOrder error:', error);
         return [];

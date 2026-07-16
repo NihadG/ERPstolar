@@ -362,6 +362,22 @@ export default function WorkOrderExpandedDetail({
     // Hero total = suma per-item (poklapa se s redovima).
     const orderFin = useMemo(() => sumBreakdowns(Array.from(itemFin.values())), [itemFin]);
 
+    // Preusmjeren rad povezanih "raznih poslova" — SAMO INFORMATIVNO (namjerno NE ulazi u
+    // itemFin/orderFin iznad): taj trošak je već uračunat u profit POVEZANOG proizvoda
+    // (lib/laborTarget.ts resolveLaborCostTarget). Ovdje se prikazuje da rad nije "nestao"
+    // s ovog naloga — vidljivo na oba mjesta, brojano samo jednom (kod proizvoda).
+    const redirectedLaborByItem = useMemo(() => {
+        const map = new Map<string, number>();
+        for (const item of localItems) {
+            if (item.Item_Type !== 'custom' || !item.Linked_Item_ID) continue;
+            const total = workLogs
+                .filter(wl => wl.Source_Work_Order_Item_ID === item.ID)
+                .reduce((sum, wl) => sum + (wl.Daily_Rate || 0), 0);
+            if (total > 0) map.set(item.ID, total);
+        }
+        return map;
+    }, [localItems, workLogs]);
+
     const procProgress = useMemo(() => orderProcessProgress(localItems), [localItems]);
     const bookedDays = useMemo(() => new Set(workLogs.map(l => l.Date)).size, [workLogs]);
 
@@ -580,7 +596,14 @@ export default function WorkOrderExpandedDetail({
                                         )}
                                     </div>
                                     <div className="wo-product-money">
-                                        {isMontaza ? (
+                                        {redirectedLaborByItem.has(item.ID) ? (
+                                            <>
+                                                <div className="wo-product-money-value">{fmt(redirectedLaborByItem.get(item.ID)!)} KM</div>
+                                                <div className="wo-product-money-label" title="Rad je uračunat u profit povezanog proizvoda — ovdje samo informativno">
+                                                    preusmjereno{item.Linked_Product_Name ? ` → ${item.Linked_Product_Name}` : ''}
+                                                </div>
+                                            </>
+                                        ) : isMontaza ? (
                                             <>
                                                 <div className="wo-product-money-value">{fmt(fin.labor)} KM</div>
                                                 <div className="wo-product-money-label">trošak montaže</div>

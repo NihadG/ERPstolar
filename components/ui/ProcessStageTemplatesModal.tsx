@@ -72,6 +72,14 @@ export default function ProcessStageTemplatesModal({
         onClose();
     }
 
+    // Dodaj faze šablona NA KRAJ postojećeg plana (spajanje više šablona) — NE zatvara modal,
+    // pa se može dodati još šablona; procesi koji već postoje se preskaču.
+    async function handleAppend(t: ProcessStageTemplate) {
+        const { appendStagesTemplate } = await import('@/lib/productProcesses');
+        onApply(appendStagesTemplate(currentStages, t.Stages.map(s => s.processes)));
+        showToast(`Dodano: ${t.Name}`, 'success');
+    }
+
     async function handleDelete(t: ProcessStageTemplate) {
         if (!confirm(`Obrisati templejt "${t.Name}"?`)) return;
         setBusyId(t.Template_ID);
@@ -174,13 +182,24 @@ export default function ProcessStageTemplatesModal({
                                     </div>
                                 </div>
                                 <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+                                    {hasCurrentPlan && (
+                                        <button
+                                            className="btn btn-sm btn-secondary"
+                                            disabled={busyId === t.Template_ID}
+                                            onClick={() => handleAppend(t)}
+                                            title="Dodaj faze ovog šablona na kraj postojećeg plana (spajanje više šablona)"
+                                            style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+                                        >
+                                            <Plus size={14} /> Dodaj u plan
+                                        </button>
+                                    )}
                                     <button
                                         className="btn btn-sm btn-primary"
                                         disabled={busyId === t.Template_ID}
                                         onClick={() => handleApply(t)}
                                         style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
                                     >
-                                        <Download size={14} /> Primijeni
+                                        <Download size={14} /> {hasCurrentPlan ? 'Zamijeni' : 'Primijeni'}
                                     </button>
                                     <button style={iconBtn} title="Preimenuj" onClick={() => { setEditingId(t.Template_ID); setEditName(t.Name); }}>
                                         <Pencil size={14} />

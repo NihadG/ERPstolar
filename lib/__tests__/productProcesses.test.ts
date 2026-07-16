@@ -12,6 +12,9 @@ import {
     nextProcessNames,
     deriveItemStatus,
     computeProcessGating,
+    mergeSynthesizedGraph,
+    appendStagesTemplate,
+    mergeFlowTemplateIntoGraph,
 } from '../productProcesses';
 
 const catalog = [
@@ -59,6 +62,92 @@ describe('computeProcessGating — per-čvor gating iz veza grafa (P4 iz PDF-a)'
     test('prihvata i Map i Record kao izvor doneByNodeId', () => {
         const asMap = new Map<string, boolean>([['krojenje', true]]);
         expect(computeProcessGating(ids, edges, asMap).get('kantiranje')).toBe('active');
+    });
+});
+
+describe('mergeSynthesizedGraph — sinhronizacija bez brisanja ručnog rada', () => {
+    // prev: ručni graf (ručna ivica kantiranje→bušenje, pozicija na krojenju)
+    const prev = {
+        nodes: [
+            { id: 'PREV-kroj', name: 'Krojenje iverala', itemIds: ['i1'], aliases: ['Krojenje iverala'], position: { x: 100, y: 200 } },
+            { id: 'PREV-kant', name: 'Kantiranje', itemIds: ['i1'], position: { x: 300, y: 200 } },
+            { id: 'PREV-rucni', name: 'Ručni pregled', itemIds: [], position: { x: 500, y: 200 } },  // van planova
+        ],
+        edges: [{ id: 'e-manual', source: 'PREV-kant', target: 'PREV-rucni' }],  // ručna ivica
+    };
+    // synth iz faza: krojenje → kantiranje (+ novi čvor Farbanje)
+    const synth = synthesizeOrderGraph([
+        { itemId: 'i1', stages: [['Krojenje iverala'], ['Kantiranje'], ['Farbanje']] },
+        { itemId: 'i2', stages: [['Krojenje iverala']] },
+    ], undefined, { includeEdges: true }).graph;
+
+    const r = mergeSynthesizedGraph(prev, synth);
+    const byName = (n: string) => r.graph.nodes.find(x => x.name.toLowerCase() === n.toLowerCase())!;
+
+    test('čuva ID i poziciju postojećih istoimenih čvorova (WorkLog.Process_Node_ID ne puca)', () => {
+        expect(byName('Krojenje iverala').id).toBe('PREV-kroj');
+        expect(byName('Krojenje iverala').position).toEqual({ x: 100, y: 200 });
+        expect(byName('Kantiranje').id).toBe('PREV-kant');
+    });
+    test('osvježava itemIds iz sinteze (i2 dodan na krojenje)', () => {
+        expect(byName('Krojenje iverala').itemIds.sort()).toEqual(['i1', 'i2']);
+    });
+    test('ručna ivica se ČUVA', () => {
+        expect(r.graph.edges.some(e => e.source === 'PREV-kant' && e.target === 'PREV-rucni')).toBe(true);
+    });
+    test('synth ivica se dodaje remapovana na preživjele ID-eve (krojenje→kantiranje)', () => {
+        expect(r.graph.edges.some(e => e.source === 'PREV-kroj' && e.target === 'PREV-kant')).toBe(true);
+    });
+    test('novi čvor iz sinteze se dodaje i prijavljuje', () => {
+        expect(byName('Farbanje')).toBeTruthy();
+        expect(r.addedNodeNames).toContain('Farbanje');
+    });
+    test('čvor van planova (ručni) se zadržava i prijavljuje kao stale', () => {
+        expect(byName('Ručni pregled')).toBeTruthy();
+        expect(r.staleNodeNames).toContain('Ručni pregled');
+    });
+    test('nema dupliranih ivica', () => {
+        const keys = r.graph.edges.map(e => `${e.source}→${e.target}`);
+        expect(new Set(keys).size).toBe(keys.length);
+    });
+});
+
+describe('appendStagesTemplate — slaganje više šablona u plan', () => {
+    test('dodaje faze na kraj; procesi koji već postoje se preskaču; prazne faze ispadaju', () => {
+        const current = [['Krojenje iverala'], ['Kantiranje']];
+        const tpl = [['Kantiranje', 'Bušenje'], [], ['Farbanje']];   // Kantiranje već postoji
+        expect(appendStagesTemplate(current, tpl)).toEqual([
+            ['Krojenje iverala'], ['Kantiranje'], ['Bušenje'], ['Farbanje'],
+        ]);
+    });
+    test('prazan trenutni plan → čisti template', () => {
+        expect(appendStagesTemplate([], [['A'], ['B']])).toEqual([['A'], ['B']]);
+    });
+});
+
+describe('mergeFlowTemplateIntoGraph — aditivni import flow šablona u graf', () => {
+    const graph = {
+        nodes: [{ id: 'G1', name: 'Krojenje iverala', itemIds: ['i1'], position: { x: 0, y: 0 } }],
+        edges: [] as { id: string; source: string; target: string }[],
+    };
+    const template = {
+        nodes: [
+            { id: 'T1', name: 'Krojenje iverala', position: { x: 10, y: 10 } },  // već postoji
+            { id: 'T2', name: 'Lakiranje', position: { x: 200, y: 10 } },        // novi
+        ],
+        edges: [{ id: 'te', source: 'T1', target: 'T2' }],
+    };
+    const r = mergeFlowTemplateIntoGraph(graph, template);
+    test('čvor šablona s postojećim imenom se NE duplira (koristi postojeći ID kao endpoint)', () => {
+        expect(r.graph.nodes.filter(n => n.name.toLowerCase() === 'krojenje iverala').length).toBe(1);
+        // ivica T1→T2 remapovana na postojeći G1 → novi Lakiranje
+        const lak = r.graph.nodes.find(n => n.name === 'Lakiranje')!;
+        expect(r.graph.edges.some(e => e.source === 'G1' && e.target === lak.id)).toBe(true);
+    });
+    test('novi čvor je offsetovan ispod postojećeg sadržaja i prijavljen', () => {
+        const lak = r.graph.nodes.find(n => n.name === 'Lakiranje')!;
+        expect(lak.position!.y).toBeGreaterThan(0);
+        expect(r.addedNodeNames).toEqual(['Lakiranje']);
     });
 });
 

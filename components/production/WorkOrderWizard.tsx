@@ -578,12 +578,44 @@ export default function WorkOrderWizard({
             });
         }
 
+        // AUTO-PLAN PROCESA: proizvod bez plana + ima materijale → izvedi fazni plan iz materijala
+        // (pravila+tipovi+kombinacije, mapirano na šablon) da nalog ne krene s generičkim 'Rad'.
+        // Fire-and-forget snimimo plan na proizvod (za buduće naloge). Rezultat: autoPlanByProduct.
+        const autoPlanByProduct = new Map<string, string[][]>();
+        if (!isMontazaMode && organizationId) {
+            const needing = selectedProducts.filter(p => {
+                const product = projects.find(proj => proj.Project_ID === p.Project_ID)?.products?.find(pr => pr.Product_ID === p.Product_ID);
+                const has = planToStages(product?.Process_Stages, product?.Process_Plan).length > 0;
+                return !has && (product?.materials?.length || 0) > 0;
+            });
+            if (needing.length) {
+                try {
+                    const { getProcessMaterialRules, getProcessCatalog, getProcessStageTemplates } = await import('@/lib/services');
+                    const { buildAutoPlan } = await import('@/lib/processAutoPlan');
+                    const [rules, catalog, templates] = await Promise.all([
+                        getProcessMaterialRules(organizationId), getProcessCatalog(organizationId), getProcessStageTemplates(organizationId),
+                    ]);
+                    for (const p of needing) {
+                        const product = projects.find(proj => proj.Project_ID === p.Project_ID)?.products?.find(pr => pr.Product_ID === p.Product_ID);
+                        const lite = (product?.materials || []).map(m => ({ Material_Name: m.Material_Name }));
+                        const r = buildAutoPlan(lite, rules, catalog, templates);
+                        if (r.stages.length) autoPlanByProduct.set(p.Product_ID, r.stages);
+                    }
+                } catch (e) { console.warn('auto-plan procesa (wizard) preskočen:', e); }
+            }
+        }
+
         const items = selectedProducts.map(p => {
             // Get offer product for Product_Value
             const project = projects.find(proj => proj.Project_ID === p.Project_ID);
             const offer = project?.offers?.find(o => o.Status === 'Prihvaćeno');
             const offerProduct = offer?.products?.find(op => op.Product_ID === p.Product_ID);
             const product = project?.products?.find(prod => prod.Product_ID === p.Product_ID);
+            // Plan proizvoda; ako ga nema → auto-plan izveden gore iz materijala.
+            const productStages = (() => {
+                const s = planToStages(product?.Process_Stages, product?.Process_Plan);
+                return s.length ? s : (autoPlanByProduct.get(p.Product_ID) || []);
+            })();
 
             // Trošak materijala stavke = PO KOMADU (invarijanta baze; agregacija × količina radi drugdje).
             let itemMaterialCost = 0;
@@ -615,7 +647,7 @@ export default function WorkOrderWizard({
                 // NJEGOVIM procesima (ekipa naloga radi sve procese, pa se glavni radnik + pomoćnici iz
                 // dodjele vežu na svaki proces). Bez plana / montaža → dosadašnji selectedProcesses put.
                 Processes: (() => {
-                    const stages = !isMontazaMode ? planToStages(product?.Process_Stages, product?.Process_Plan) : [];
+                    const stages = !isMontazaMode ? productStages : [];
                     const flatPlan = stages.length ? flattenStages(stages) : null;
                     const buildFor = (procNames: string[], assignKey: (name: string) => string) => procNames.map(name => {
                         const key = assignKey(name);
@@ -639,8 +671,7 @@ export default function WorkOrderWizard({
                 // Fazni plan za sintezu grafa naloga (paralelno unutar faze; isti proces = jedan čvor)
                 Process_Stages: (() => {
                     if (isMontazaMode) return undefined;
-                    const stages = planToStages(product?.Process_Stages, product?.Process_Plan);
-                    return stages.length ? stages.map(s => ({ processes: s })) : undefined;
+                    return productStages.length ? productStages.map(s => ({ processes: s })) : undefined;
                 })(),
                 // Montaža: link back to source production work order
                 ...(p.Source_Work_Order_ID && { Source_Work_Order_ID: p.Source_Work_Order_ID }),
@@ -674,6 +705,24 @@ export default function WorkOrderWizard({
 
         if (result.success) {
             showToast(`Radni nalog ${result.data?.Work_Order_Number} kreiran`, 'success');
+
+            // Fire-and-forget: snimi izvedene auto-planove na proizvode (za buduće naloge).
+            if (autoPlanByProduct.size && organizationId) {
+                import('@/lib/services').then(({ saveProductProcessStages }) => {
+                    autoPlanByProduct.forEach((stages, productId) => {
+                        saveProductProcessStages(productId, stages.map(s => ({ processes: s })), organizationId, 'auto').catch(() => { });
+                    });
+                }).catch(() => { });
+            }
+            // Advisory: proizvodi bez plana i bez materijala → ostali na generičkom 'Rad'.
+            if (!isMontazaMode) {
+                const noPlan = selectedProducts.filter(p => {
+                    const product = projects.find(proj => proj.Project_ID === p.Project_ID)?.products?.find(pr => pr.Product_ID === p.Product_ID);
+                    const has = planToStages(product?.Process_Stages, product?.Process_Plan).length > 0 || autoPlanByProduct.has(p.Product_ID);
+                    return !has;
+                }).map(p => p.Product_Name);
+                if (noPlan.length) showToast(`Bez plana procesa (generički 'Rad'): ${noPlan.join(', ')} — dodaj pravila materijal→proces ili materijale`, 'info');
+            }
             onClose();
 
             // Odmah naruči nedostajuće materijale (isti put kao iz Planera) — bez posebnog odlaska.
