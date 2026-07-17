@@ -5,6 +5,11 @@ import { useRouter } from 'next/navigation';
 import { useAuth } from '@/context/AuthContext';
 import { useData } from '@/context/DataContext';
 import { saveOrgSettings, getOrgSettings } from '@/lib/services';
+import type { GoogleIntegrationSettings } from '@/lib/types';
+import { connect as googleConnect, disconnect as googleDisconnect, fetchConnectedEmail } from '@/lib/google/googleAuth';
+import { isGoogleConfigured } from '@/lib/google/config';
+import { pickExistingFolder, createRealDriveClient, folderLink } from '@/lib/google/driveClient';
+import Toast from '@/components/ui/Toast';
 import Link from 'next/link';
 
 const PLAN_NAMES: Record<string, { name: string; color: string; icon: string }> = {
@@ -68,7 +73,7 @@ const DEFAULT_SETTINGS: AppSettings = {
 
 export default function SettingsPage() {
     const router = useRouter();
-    const { user, loading: authLoading, firebaseUser, organization, signOut } = useAuth();
+    const { user, loading: authLoading, firebaseUser, organization, signOut, hasModule } = useAuth();
     const { refreshOrgSettings } = useData();
     const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -80,6 +85,8 @@ export default function SettingsPage() {
     const [saving, setSaving] = useState(false);
     const [message, setMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
     const [activeSection, setActiveSection] = useState('company');
+    const [googleSettings, setGoogleSettings] = useState<GoogleIntegrationSettings>({});
+    const [googleBusy, setGoogleBusy] = useState(false);
 
     // Load settings from Firestore (with localStorage fallback)
     useEffect(() => {
@@ -125,6 +132,18 @@ export default function SettingsPage() {
         loadSettings();
     }, [organization?.Organization_ID]);
 
+    // Load Google integration settings
+    useEffect(() => {
+        async function loadGoogle() {
+            if (!organization?.Organization_ID) return;
+            try {
+                const s = await getOrgSettings(organization.Organization_ID);
+                if (s?.googleIntegration) setGoogleSettings(s.googleIntegration);
+            } catch { /* ignore */ }
+        }
+        loadGoogle();
+    }, [organization?.Organization_ID]);
+
     // Redirect to login if not authenticated
     useEffect(() => {
         if (!authLoading && !firebaseUser) {
@@ -167,6 +186,65 @@ export default function SettingsPage() {
             showMessage('Greška pri čuvanju postavki', 'error');
         }
         setSaving(false);
+    }
+
+    // ── Google integracija ────────────────────────────────────────────
+    async function persistGoogle(next: GoogleIntegrationSettings) {
+        if (!organization?.Organization_ID) return;
+        setGoogleSettings(next);
+        await saveOrgSettings(organization.Organization_ID, { googleIntegration: next });
+        await refreshOrgSettings();
+    }
+
+    async function handleGoogleConnect() {
+        setGoogleBusy(true);
+        try {
+            await googleConnect();
+            const email = await fetchConnectedEmail();
+            await persistGoogle({ ...googleSettings, connectedEmail: email || 'povezano' });
+            showMessage('Google račun povezan', 'success');
+        } catch (e: any) {
+            showMessage('Greška pri povezivanju: ' + (e?.message || ''), 'error');
+        }
+        setGoogleBusy(false);
+    }
+
+    async function handlePickRoot() {
+        setGoogleBusy(true);
+        try {
+            const folder = await pickExistingFolder();
+            if (folder) {
+                await persistGoogle({ ...googleSettings, rootFolderID: folder.id, rootFolderName: folder.name, rootFolderURL: folder.url });
+                showMessage('Root folder postavljen: ' + folder.name, 'success');
+            }
+        } catch (e: any) {
+            showMessage('Greška pri odabiru foldera: ' + (e?.message || ''), 'error');
+        }
+        setGoogleBusy(false);
+    }
+
+    async function handleCreateRoot() {
+        const name = (window.prompt('Naziv root foldera za projekte:', 'ERP Projekti') || '').trim();
+        if (!name) return;
+        setGoogleBusy(true);
+        try {
+            const created = await createRealDriveClient().createFolder(name, 'root');
+            await persistGoogle({ ...googleSettings, rootFolderID: created.id, rootFolderName: created.name, rootFolderURL: created.webViewLink || folderLink(created.id) });
+            showMessage('Root folder kreiran: ' + created.name, 'success');
+        } catch (e: any) {
+            showMessage('Greška pri kreiranju foldera: ' + (e?.message || ''), 'error');
+        }
+        setGoogleBusy(false);
+    }
+
+    async function handleGoogleDisconnect() {
+        googleDisconnect();
+        await persistGoogle({});
+        showMessage('Google račun odspojen', 'success');
+    }
+
+    async function toggleGoogleFlag(key: 'autoCreateProjectFolders' | 'autoCalendarTasks', value: boolean) {
+        await persistGoogle({ ...googleSettings, [key]: value });
     }
 
     function addBankAccount() {
@@ -232,110 +310,77 @@ export default function SettingsPage() {
         return null;
     }
 
+    // Sekcije koje koriste glavno dugme "Sačuvaj postavke". Integracije se čuvaju
+    // odmah po akciji (Poveži/Odaberi folder/toggle), pa tu prikazujemo napomenu umjesto dugmeta.
+    const usesGlobalSave = activeSection !== 'integracije';
+
     return (
         <div className="settings-page">
-            <nav className="settings-nav">
-                <Link
-                    href="/"
-                    className="back-button"
-                    style={{
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        gap: '10px',
-                        color: 'var(--text-primary)',
-                        textDecoration: 'none',
-                        fontSize: '14px',
-                        fontWeight: '600',
-                        padding: '10px 18px',
-                        borderRadius: '50px',
-                        background: 'rgba(0, 0, 0, 0.05)',
-                        border: '1px solid transparent',
-                        transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)'
-                    }}
-                >
-                    <span className="material-icons-round" style={{ fontSize: '20px' }}>arrow_back</span>
+            <header className="settings-topbar">
+                <Link href="/" className="settings-back">
+                    <span className="material-icons-round">arrow_back</span>
                     <span>Nazad na aplikaciju</span>
                 </Link>
                 <h1>Postavke</h1>
-            </nav>
+            </header>
 
-            {message && (
-                <div className={`settings-message ${message.type}`}>
-                    <span className="material-icons-round">
-                        {message.type === 'success' ? 'check_circle' : 'error'}
-                    </span>
-                    {message.text}
-                </div>
-            )}
+            {message && <Toast message={message.text} type={message.type} />}
 
-            <div className="settings-layout">
+            <div className="settings-shell">
                 {/* Sidebar */}
                 <aside className="settings-sidebar">
-                    {/* Plan Card */}
                     <div className="plan-card">
-                        <div className="plan-header">
-                            <div className="plan-icon">
+                        <div className="plan-card-top">
+                            <div className="plan-card-icon">
                                 <span className="material-icons-round">{planInfo.icon}</span>
                             </div>
-                            <div className="plan-meta">
-                                <span className="plan-label">AKTIVNI PLAN</span>
-                                <span className="plan-name">{planInfo.name}</span>
+                            <div className="plan-card-body">
+                                <span className="plan-card-eyebrow">Aktivni plan</span>
+                                <span className="plan-card-name">{planInfo.name}</span>
                             </div>
                         </div>
-                        <Link
-                            href="/pricing"
-                            className="plan-button"
-                            style={{
-                                display: 'flex',
-                                alignItems: 'center',
-                                justifyContent: 'space-between',
-                                padding: '12px 18px',
-                                background: 'white',
-                                borderRadius: '14px',
-                                color: '#4a4a4e',
-                                textDecoration: 'none',
-                                fontSize: '13px',
-                                fontWeight: '600',
-                                transition: 'all 0.2s ease',
-                                border: '1px solid rgba(0, 0, 0, 0.05)',
-                                boxShadow: '0 2px 8px rgba(0, 0, 0, 0.04)'
-                            }}
-                        >
-                            <span>Upravljanje pretplatom</span>
-                            <span className="material-icons-round" style={{ fontSize: '16px' }}>arrow_forward</span>
+                        <Link href="/pricing" className="plan-card-link">
+                            <span>Upravljaj pretplatom</span>
+                            <span className="material-icons-round">arrow_forward</span>
                         </Link>
                     </div>
 
-                    <div className="sidebar-divider"></div>
+                    <nav className="settings-nav-list">
+                        <span className="nav-eyebrow">Opšte</span>
+                        <button
+                            className={`sidebar-item ${activeSection === 'company' ? 'active' : ''}`}
+                            onClick={() => setActiveSection('company')}
+                        >
+                            <span className="material-icons-round">business</span>
+                            <span className="sidebar-item-label">Podaci firme</span>
+                        </button>
+                        <button
+                            className={`sidebar-item ${activeSection === 'documents' ? 'active' : ''}`}
+                            onClick={() => setActiveSection('documents')}
+                        >
+                            <span className="material-icons-round">description</span>
+                            <span className="sidebar-item-label">Dokumenti</span>
+                        </button>
+                        <button
+                            className={`sidebar-item ${activeSection === 'profit' ? 'active' : ''}`}
+                            onClick={() => setActiveSection('profit')}
+                        >
+                            <span className="material-icons-round">trending_up</span>
+                            <span className="sidebar-item-label">Profit</span>
+                        </button>
 
-                    <button
-                        className={`sidebar-item ${activeSection === 'company' ? 'active' : ''}`}
-                        onClick={() => setActiveSection('company')}
-                    >
-                        <span className="material-icons-round">business</span>
-                        Podaci firme
-                    </button>
-                    <button
-                        className={`sidebar-item ${activeSection === 'documents' ? 'active' : ''}`}
-                        onClick={() => setActiveSection('documents')}
-                    >
-                        <span className="material-icons-round">description</span>
-                        Dokumenti
-                    </button>
-                    <button
-                        className={`sidebar-item ${activeSection === 'profit' ? 'active' : ''}`}
-                        onClick={() => setActiveSection('profit')}
-                    >
-                        <span className="material-icons-round">trending_up</span>
-                        Profit
-                    </button>
+                        <span className="nav-eyebrow">Integracije</span>
+                        <button
+                            className={`sidebar-item ${activeSection === 'integracije' ? 'active' : ''}`}
+                            onClick={() => setActiveSection('integracije')}
+                        >
+                            <span className="material-icons-round">cloud</span>
+                            <span className="sidebar-item-label">Google integracija</span>
+                            {!hasModule('google_integration') && <span className="nav-pro-badge">PRO</span>}
+                        </button>
+                    </nav>
 
-                    <div className="sidebar-divider"></div>
-
-                    <button
-                        className="sidebar-item danger"
-                        onClick={() => signOut()}
-                    >
+                    <button className="settings-signout" onClick={() => signOut()}>
                         <span className="material-icons-round">logout</span>
                         Odjavi se
                     </button>
@@ -379,7 +424,7 @@ export default function SettingsPage() {
                                         {companyInfo.logoBase64 ? 'Promijeni logo' : 'Upload logo'}
                                     </button>
                                     {companyInfo.logoBase64 && (
-                                        <button className="btn btn-ghost" onClick={removeLogo}>
+                                        <button className="btn btn-ghost btn-ghost--danger" onClick={removeLogo}>
                                             <span className="material-icons-round">delete</span>
                                             Ukloni
                                         </button>
@@ -479,8 +524,8 @@ export default function SettingsPage() {
                                         <h3>Bankovni računi</h3>
                                         <p>Podaci o bankovnim računima koji se prikazuju na ponudama.</p>
                                     </div>
-                                    <button className="btn btn-secondary btn-small" onClick={addBankAccount}>
-                                        <span className="material-icons-round" style={{ fontSize: '16px' }}>add</span>
+                                    <button className="btn btn-secondary btn-sm" onClick={addBankAccount}>
+                                        <span className="material-icons-round">add</span>
                                         Dodaj račun
                                     </button>
                                 </div>
@@ -512,8 +557,8 @@ export default function SettingsPage() {
                                                 />
                                             </div>
                                         </div>
-                                        <button className="btn btn-ghost btn-icon" onClick={() => removeBankAccount(index)} title="Ukloni">
-                                            <span className="material-icons-round" style={{ fontSize: '18px', color: '#ef4444' }}>delete</span>
+                                        <button className="btn btn-ghost btn-ghost--danger btn-icon" onClick={() => removeBankAccount(index)} title="Ukloni">
+                                            <span className="material-icons-round">delete</span>
                                         </button>
                                     </div>
                                 ))}
@@ -594,66 +639,226 @@ export default function SettingsPage() {
                                 <p>Konfiguriši notifikacije za dnevno praćenje profita po nalozima.</p>
                             </div>
 
-                            <div className="form-grid">
-                                <div className="form-group full-width">
-                                    <label className="toggle-label" style={{ display: 'flex', alignItems: 'center', gap: '12px', cursor: 'pointer' }}>
-                                        <input
-                                            type="checkbox"
-                                            checked={appSettings.profitNotificationsEnabled}
-                                            onChange={(e) => setAppSettings({ ...appSettings, profitNotificationsEnabled: e.target.checked })}
-                                            style={{ width: '20px', height: '20px' }}
-                                        />
-                                        <span>Uključi dnevne profit notifikacije</span>
-                                    </label>
-                                    <span className="form-hint">Primaš obavijest u notifikacijski centar u definirano vrijeme da uneseš profit za otvorene naloge.</span>
+                            <div className="settings-card">
+                                <div className="settings-row">
+                                    <div className="settings-row-label">
+                                        <strong>Dnevne profit notifikacije</strong>
+                                        <span>Primaš obavijest u notifikacijski centar u definirano vrijeme da uneseš profit za otvorene naloge.</span>
+                                    </div>
+                                    <div className="settings-row-control">
+                                        <label className="switch">
+                                            <input
+                                                type="checkbox"
+                                                checked={appSettings.profitNotificationsEnabled}
+                                                onChange={(e) => setAppSettings({ ...appSettings, profitNotificationsEnabled: e.target.checked })}
+                                            />
+                                            <span className="switch-track"></span>
+                                            <span className="switch-thumb"></span>
+                                        </label>
+                                    </div>
                                 </div>
 
-                                <div className="form-group">
-                                    <label>Vrijeme notifikacije</label>
-                                    <input
-                                        type="time"
-                                        value={appSettings.profitNotificationTime}
-                                        onChange={(e) => setAppSettings({ ...appSettings, profitNotificationTime: e.target.value })}
-                                        disabled={!appSettings.profitNotificationsEnabled}
-                                    />
-                                    <span className="form-hint">Svaki dan u ovo vrijeme dobijaš podsjetnik.</span>
+                                <div className="settings-row">
+                                    <div className="settings-row-label">
+                                        <strong>Vrijeme notifikacije</strong>
+                                        <span>Svaki dan u ovo vrijeme dobijaš podsjetnik.</span>
+                                    </div>
+                                    <div className="settings-row-control">
+                                        <input
+                                            type="time"
+                                            className="settings-time-input"
+                                            value={appSettings.profitNotificationTime}
+                                            onChange={(e) => setAppSettings({ ...appSettings, profitNotificationTime: e.target.value })}
+                                            disabled={!appSettings.profitNotificationsEnabled}
+                                        />
+                                    </div>
                                 </div>
                             </div>
 
-                            <div style={{ marginTop: '24px', padding: '16px', background: 'rgba(102, 126, 234, 0.06)', borderRadius: '12px', border: '1px solid rgba(102, 126, 234, 0.12)' }}>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
-                                    <span className="material-icons-round" style={{ fontSize: '18px', color: 'var(--accent)' }}>info</span>
-                                    <strong style={{ fontSize: '14px' }}>Kako funkcioniše</strong>
+                            <div className="settings-banner settings-banner--info settings-banner--compact">
+                                <span className="material-icons-round">info</span>
+                                <div>
+                                    <strong>Kako funkcioniše</strong>
+                                    <p>
+                                        Profit se sada unosi ručno za svaki nalog. Otvori profit modal iz Projekata ili Naloga,
+                                        unesi dnevne troškove i prihode, i sistem će pratiti kumulativni profit.
+                                        Notifikacija te podsjeća da to uradiš svaki dan.
+                                    </p>
                                 </div>
-                                <p style={{ fontSize: '13px', color: 'var(--text-secondary)', margin: 0, lineHeight: 1.5 }}>
-                                    Profit se sada unosi ručno za svaki nalog. Otvori profit modal iz Projekata ili Naloga,
-                                    unesi dnevne troškove i prihode, i sistem će pratiti kumulativni profit.
-                                    Notifikacija te podsjeća da to uradiš svaki dan.
-                                </p>
                             </div>
                         </section>
                     )}
 
-                    {/* Save Button */}
-                    <div className="settings-actions">
-                        <button
-                            className="btn btn-primary btn-large"
-                            onClick={handleSave}
-                            disabled={saving}
-                        >
-                            {saving ? (
-                                <>
-                                    <div className="loading-spinner small"></div>
-                                    Čuvanje...
-                                </>
+                    {activeSection === 'integracije' && (
+                        <section className="settings-section">
+                            <div className="section-header">
+                                <h2>Google integracija</h2>
+                                <p>Poveži Google Drive i Kalendar — folderi projekata, ponude/narudžbe na klik, zadaci u kalendaru.</p>
+                            </div>
+
+                            {!isGoogleConfigured() ? (
+                                <div className="settings-banner settings-banner--warning">
+                                    <span className="material-icons-round">warning_amber</span>
+                                    <div>
+                                        <strong>Integracija nije konfigurisana</strong>
+                                        <p>
+                                            Postavi <code>NEXT_PUBLIC_GOOGLE_OAUTH_CLIENT_ID</code> i <code>NEXT_PUBLIC_GOOGLE_API_KEY</code> u
+                                            okruženju (Google Cloud OAuth klijent + Picker API ključ).
+                                        </p>
+                                    </div>
+                                </div>
+                            ) : !hasModule('google_integration') ? (
+                                <div className="settings-banner settings-banner--locked">
+                                    <span className="material-icons-round">lock</span>
+                                    <div>
+                                        <strong>Google integracija je dodatni paket</strong>
+                                        <p>Automatski folderi projekata, arhiviranje ponuda/narudžbi na Drive i zadaci u Google kalendaru.</p>
+                                        <Link href="/pricing" className="btn btn-primary btn-sm">Nadogradi paket</Link>
+                                    </div>
+                                </div>
                             ) : (
                                 <>
-                                    <span className="material-icons-round">save</span>
-                                    Sačuvaj postavke
+                                    <div className="settings-card">
+                                        <div className="settings-row">
+                                            <div className="settings-row-label">
+                                                <strong>Google račun</strong>
+                                                <span>Račun koji se koristi za pristup Drive-u i Kalendaru.</span>
+                                            </div>
+                                            <div className="settings-row-control">
+                                                {googleSettings.connectedEmail ? (
+                                                    <>
+                                                        <span className="status-pill status-pill--success">
+                                                            <span className="material-icons-round">check_circle</span>
+                                                            {googleSettings.connectedEmail}
+                                                        </span>
+                                                        <button className="btn btn-ghost btn-sm" onClick={handleGoogleDisconnect} disabled={googleBusy}>Odspoji</button>
+                                                    </>
+                                                ) : (
+                                                    <button className="btn btn-primary btn-sm" onClick={handleGoogleConnect} disabled={googleBusy}>
+                                                        <span className="material-icons-round">link</span>
+                                                        {googleBusy ? 'Povezivanje...' : 'Poveži Google'}
+                                                    </button>
+                                                )}
+                                            </div>
+                                        </div>
+
+                                        {googleSettings.connectedEmail && (
+                                            <>
+                                                <div className="settings-row">
+                                                    <div className="settings-row-label">
+                                                        <strong>Root folder za projekte</strong>
+                                                        <span>Folderi novih projekata se prave unutar ovog foldera.</span>
+                                                    </div>
+                                                    <div className="settings-row-control">
+                                                        {googleSettings.rootFolderID ? (
+                                                            <>
+                                                                <a
+                                                                    className="folder-chip"
+                                                                    href={googleSettings.rootFolderURL || folderLink(googleSettings.rootFolderID)}
+                                                                    target="_blank"
+                                                                    rel="noopener noreferrer"
+                                                                >
+                                                                    <span className="material-icons-round">folder</span>
+                                                                    <span className="folder-chip-name">{googleSettings.rootFolderName || 'Otvori folder'}</span>
+                                                                </a>
+                                                                <button className="btn btn-secondary btn-sm" onClick={handlePickRoot} disabled={googleBusy}>Promijeni</button>
+                                                            </>
+                                                        ) : (
+                                                            <>
+                                                                <button className="btn btn-secondary btn-sm" onClick={handleCreateRoot} disabled={googleBusy}>
+                                                                    <span className="material-icons-round">create_new_folder</span>
+                                                                    Napravi novi
+                                                                </button>
+                                                                <button className="btn btn-secondary btn-sm" onClick={handlePickRoot} disabled={googleBusy}>
+                                                                    <span className="material-icons-round">folder_open</span>
+                                                                    Odaberi postojeći
+                                                                </button>
+                                                            </>
+                                                        )}
+                                                    </div>
+                                                </div>
+
+                                                <div className="settings-row">
+                                                    <div className="settings-row-label">
+                                                        <strong>Auto-folder za nove projekte</strong>
+                                                        <span>Automatski napravi Drive folder pri kreiranju novog projekta.</span>
+                                                    </div>
+                                                    <div className="settings-row-control">
+                                                        <label className="switch">
+                                                            <input
+                                                                type="checkbox"
+                                                                checked={googleSettings.autoCreateProjectFolders !== false}
+                                                                onChange={(e) => toggleGoogleFlag('autoCreateProjectFolders', e.target.checked)}
+                                                            />
+                                                            <span className="switch-track"></span>
+                                                            <span className="switch-thumb"></span>
+                                                        </label>
+                                                    </div>
+                                                </div>
+
+                                                <div className="settings-row">
+                                                    <div className="settings-row-label">
+                                                        <strong>Zadaci u Google kalendaru</strong>
+                                                        <span>Dodaj zadatke s rokom u Google Kalendar.</span>
+                                                    </div>
+                                                    <div className="settings-row-control">
+                                                        <label className="switch">
+                                                            <input
+                                                                type="checkbox"
+                                                                checked={googleSettings.autoCalendarTasks !== false}
+                                                                onChange={(e) => toggleGoogleFlag('autoCalendarTasks', e.target.checked)}
+                                                            />
+                                                            <span className="switch-track"></span>
+                                                            <span className="switch-thumb"></span>
+                                                        </label>
+                                                    </div>
+                                                </div>
+                                            </>
+                                        )}
+                                    </div>
+
+                                    <div className="settings-banner settings-banner--info settings-banner--compact">
+                                        <span className="material-icons-round">verified_user</span>
+                                        <div>
+                                            <strong>Privatnost</strong>
+                                            <p>
+                                                Aplikacija koristi samo <code>drive.file</code> pristup — vidi isključivo foldere i fajlove koje sama
+                                                kreira ili koje odabereš kroz Picker. Ne pristupa ostatku tvog Drive-a.
+                                            </p>
+                                        </div>
+                                    </div>
                                 </>
                             )}
-                        </button>
-                    </div>
+                        </section>
+                    )}
+
+                    {/* Save Button / instant-save note */}
+                    {usesGlobalSave ? (
+                        <div className="settings-actions">
+                            <button
+                                className="btn btn-primary btn-large"
+                                onClick={handleSave}
+                                disabled={saving}
+                            >
+                                {saving ? (
+                                    <>
+                                        <div className="loading-spinner small"></div>
+                                        Čuvanje...
+                                    </>
+                                ) : (
+                                    <>
+                                        <span className="material-icons-round">save</span>
+                                        Sačuvaj postavke
+                                    </>
+                                )}
+                            </button>
+                        </div>
+                    ) : (
+                        <div className="settings-actions settings-actions--note">
+                            <span className="material-icons-round">bolt</span>
+                            Promjene na ovoj stranici se čuvaju odmah, bez posebnog dugmeta.
+                        </div>
+                    )}
                 </main>
             </div>
 
@@ -663,144 +868,166 @@ export default function SettingsPage() {
                     background: var(--surface);
                 }
 
-                .settings-nav {
+                /* ── Topbar ────────────────────────────────────────── */
+                .settings-topbar {
                     display: flex;
                     align-items: center;
-                    gap: 32px;
-                    padding: 24px 32px;
+                    gap: 24px;
+                    padding: 20px 32px;
                     background: var(--background);
                     border-bottom: 1px solid var(--border-light);
                 }
 
-                .back-button {
+                .settings-back {
                     display: inline-flex;
                     align-items: center;
-                    gap: 10px;
+                    gap: 8px;
+                    padding: 8px 14px;
+                    border-radius: var(--radius-md);
+                    background: var(--surface);
                     color: var(--text-primary);
-                    text-decoration: none !important;
-                    font-size: 14px;
+                    text-decoration: none;
+                    font-size: 13px;
                     font-weight: 600;
-                    padding: 10px 18px;
-                    border-radius: 50px;
-                    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-                    background: rgba(0, 0, 0, 0.05);
-                    border: 1px solid transparent;
+                    transition: var(--transition);
                 }
 
-                .back-button:hover,
-                a.back-button:hover {
-                    background: rgba(0, 0, 0, 0.08);
-                    transform: translateX(-2px);
+                .settings-back:hover {
+                    background: var(--surface-hover);
                 }
 
-                .back-button .material-icons-round {
+                .settings-back .material-icons-round {
+                    font-size: 18px;
+                }
+
+                .settings-topbar h1 {
                     font-size: 20px;
-                }
-
-                .settings-nav h1 {
-                    font-size: 24px;
                     font-weight: 700;
-                    letter-spacing: -0.5px;
+                    letter-spacing: -0.2px;
+                    color: var(--text-primary);
                 }
 
-                .settings-layout {
+                /* ── Shell / layout ────────────────────────────────── */
+                .settings-shell {
                     display: flex;
-                    max-width: 1300px;
+                    align-items: flex-start;
+                    max-width: 1200px;
                     margin: 0 auto;
                     padding: 32px;
-                    gap: 48px;
+                    gap: 40px;
                 }
 
                 .settings-sidebar {
-                    width: 280px;
+                    width: 260px;
                     flex-shrink: 0;
                     display: flex;
                     flex-direction: column;
-                    gap: 8px;
+                    gap: 20px;
                 }
 
+                .settings-content {
+                    flex: 1;
+                    min-width: 0;
+                    display: flex;
+                    flex-direction: column;
+                    gap: 24px;
+                }
+
+                /* ── Plan card ─────────────────────────────────────── */
                 .plan-card {
-                    background: linear-gradient(135deg, #f8f9ff 0%, #f0f2ff 100%);
-                    border-radius: 20px;
-                    padding: 24px;
-                    border: 1px solid rgba(102, 126, 234, 0.15);
-                    margin-bottom: 16px;
-                    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.02);
+                    display: flex;
+                    flex-direction: column;
+                    gap: 14px;
+                    padding: 18px;
+                    background: var(--background);
+                    border: 1px solid var(--border-light);
+                    border-radius: var(--radius-lg);
                 }
 
-                .plan-header {
+                .plan-card-top {
                     display: flex;
                     align-items: center;
-                    gap: 16px;
-                    margin-bottom: 20px;
+                    gap: 12px;
                 }
 
-                .plan-icon {
-                    width: 48px;
-                    height: 48px;
-                    background: white;
-                    border-radius: 14px;
+                .plan-card-icon {
+                    width: 40px;
+                    height: 40px;
+                    flex-shrink: 0;
+                    border-radius: var(--radius-md);
+                    background: var(--accent-light);
                     display: flex;
                     align-items: center;
                     justify-content: center;
-                    box-shadow: 0 8px 20px rgba(102, 126, 234, 0.12);
                 }
 
-                .plan-icon .material-icons-round {
-                    font-size: 28px;
-                    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-                    -webkit-background-clip: text;
-                    -webkit-text-fill-color: transparent;
+                .plan-card-icon .material-icons-round {
+                    font-size: 22px;
+                    color: var(--accent);
                 }
 
-                .plan-meta {
+                .plan-card-body {
+                    display: flex;
+                    flex-direction: column;
+                    gap: 2px;
+                    min-width: 0;
+                }
+
+                .plan-card-eyebrow {
+                    font-size: 10px;
+                    font-weight: 700;
+                    letter-spacing: 0.06em;
+                    text-transform: uppercase;
+                    color: var(--text-tertiary);
+                }
+
+                .plan-card-name {
+                    font-size: 16px;
+                    font-weight: 700;
+                    color: var(--text-primary);
+                }
+
+                .plan-card-link {
+                    display: flex;
+                    align-items: center;
+                    justify-content: space-between;
+                    padding: 10px 12px;
+                    background: var(--surface);
+                    border-radius: var(--radius-md);
+                    color: var(--text-primary);
+                    text-decoration: none;
+                    font-size: 13px;
+                    font-weight: 600;
+                    transition: var(--transition);
+                }
+
+                .plan-card-link:hover {
+                    background: var(--accent-light);
+                    color: var(--accent);
+                }
+
+                .plan-card-link .material-icons-round {
+                    font-size: 16px;
+                }
+
+                /* ── Sidebar nav ───────────────────────────────────── */
+                .settings-nav-list {
                     display: flex;
                     flex-direction: column;
                     gap: 2px;
                 }
 
-                .plan-label {
-                    font-size: 10px;
-                    font-weight: 800;
-                    color: #7c7c8c;
-                    letter-spacing: 1px;
-                }
-
-                .plan-name {
-                    font-size: 18px;
+                .nav-eyebrow {
+                    font-size: 11px;
                     font-weight: 700;
-                    color: #1d1d1f;
+                    letter-spacing: 0.06em;
+                    text-transform: uppercase;
+                    color: var(--text-tertiary);
+                    padding: 16px 12px 6px;
                 }
 
-                .plan-button {
-                    display: flex;
-                    align-items: center;
-                    justify-content: space-between;
-                    padding: 12px 18px;
-                    background: white;
-                    border-radius: 14px;
-                    color: #4a4a4e;
-                    text-decoration: none !important;
-                    font-size: 13px;
-                    font-weight: 600;
-                    transition: all 0.2s ease;
-                    border: 1px solid rgba(0, 0, 0, 0.05);
-                    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
-                }
-
-                .plan-button:hover,
-                a.plan-button:hover {
-                    background: #fdfdff;
-                    border-color: rgba(102, 126, 234, 0.2);
-                    color: var(--accent);
-                    box-shadow: 0 4px 12px rgba(102, 126, 234, 0.1);
-                }
-
-                .sidebar-divider {
-                    height: 1px;
-                    background: var(--border-light);
-                    margin: 8px 12px 16px;
-                    opacity: 0.6;
+                .nav-eyebrow:first-child {
+                    padding-top: 4px;
                 }
 
                 .sidebar-item {
@@ -808,20 +1035,21 @@ export default function SettingsPage() {
                     align-items: center;
                     gap: 12px;
                     width: 100%;
-                    padding: 12px 16px;
+                    height: 40px;
+                    padding: 0 12px;
                     border: none;
                     background: transparent;
-                    border-radius: 12px;
-                    font-size: 15px;
+                    border-radius: var(--radius-md);
+                    font-size: 14px;
                     font-weight: 500;
                     color: var(--text-secondary);
                     cursor: pointer;
-                    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+                    transition: var(--transition);
                     text-align: left;
                 }
 
                 .sidebar-item:hover {
-                    background: rgba(0, 0, 0, 0.03);
+                    background: var(--surface);
                     color: var(--text-primary);
                 }
 
@@ -831,66 +1059,412 @@ export default function SettingsPage() {
                     font-weight: 600;
                 }
 
-                .sidebar-item.danger {
-                    color: var(--error);
-                    margin-top: auto;
-                }
-
-                .sidebar-item.danger:hover {
-                    background: var(--error-bg);
-                    color: var(--error);
-                }
-
                 .sidebar-item .material-icons-round {
-                    font-size: 22px;
-                    opacity: 0.8;
+                    font-size: 20px;
+                    width: 20px;
+                    flex-shrink: 0;
+                    text-align: center;
+                    opacity: 0.85;
                 }
 
                 .sidebar-item.active .material-icons-round {
                     opacity: 1;
                 }
 
-                .settings-content {
+                .sidebar-item-label {
                     flex: 1;
                     min-width: 0;
+                    overflow: hidden;
+                    text-overflow: ellipsis;
+                    white-space: nowrap;
                 }
 
+                .nav-pro-badge {
+                    font-size: 10px;
+                    font-weight: 700;
+                    letter-spacing: 0.03em;
+                    color: var(--accent);
+                    background: var(--accent-light);
+                    padding: 2px 6px;
+                    border-radius: 999px;
+                    flex-shrink: 0;
+                }
+
+                .settings-signout {
+                    display: flex;
+                    align-items: center;
+                    gap: 12px;
+                    height: 40px;
+                    padding: 0 12px;
+                    margin-top: auto;
+                    border: none;
+                    background: transparent;
+                    border-radius: var(--radius-md);
+                    font-size: 14px;
+                    font-weight: 500;
+                    color: var(--error);
+                    cursor: pointer;
+                    transition: var(--transition);
+                }
+
+                .settings-signout:hover {
+                    background: var(--error-bg);
+                }
+
+                .settings-signout .material-icons-round {
+                    font-size: 20px;
+                }
+
+                /* ── Section card ──────────────────────────────────── */
                 .settings-section {
                     background: var(--background);
-                    border-radius: 16px;
-                    padding: 32px;
-                    margin-bottom: 24px;
+                    border: 1px solid var(--border-light);
+                    border-radius: var(--radius-lg);
+                    padding: 28px 32px;
                 }
 
                 .section-header {
-                    margin-bottom: 32px;
+                    margin-bottom: 24px;
                 }
 
                 .section-header h2 {
-                    font-size: 18px;
+                    font-size: 17px;
                     font-weight: 600;
-                    margin-bottom: 8px;
+                    color: var(--text-primary);
+                    margin-bottom: 4px;
                 }
 
                 .section-header p {
                     font-size: 14px;
                     color: var(--text-secondary);
+                    line-height: 1.5;
                 }
 
+                /* ── Form grid ─────────────────────────────────────── */
+                .form-grid {
+                    display: grid;
+                    grid-template-columns: 1fr 1fr;
+                    gap: 20px;
+                }
+
+                .form-group {
+                    display: flex;
+                    flex-direction: column;
+                    gap: 6px;
+                }
+
+                .form-group.full-width {
+                    grid-column: 1 / -1;
+                }
+
+                .form-group label {
+                    font-size: 13px;
+                    font-weight: 600;
+                    color: var(--text-primary);
+                }
+
+                .form-group input,
+                .form-group select,
+                .form-group textarea {
+                    padding: 10px 14px;
+                    border: 1px solid var(--border);
+                    border-radius: var(--radius-md);
+                    font-size: 14px;
+                    font-family: inherit;
+                    color: var(--text-primary);
+                    background: var(--surface);
+                    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+                }
+
+                .form-group input:focus,
+                .form-group select:focus,
+                .form-group textarea:focus {
+                    outline: none;
+                    border-color: var(--accent);
+                    box-shadow: 0 0 0 3px var(--accent-light);
+                }
+
+                .form-group textarea {
+                    resize: vertical;
+                    min-height: 80px;
+                    line-height: 1.5;
+                }
+
+                .form-hint {
+                    font-size: 12px;
+                    color: var(--text-tertiary);
+                    line-height: 1.4;
+                }
+
+                /* ── Settings card / row (Profit, Integracije) ─────── */
+                .settings-card {
+                    background: var(--surface);
+                    border: 1px solid var(--border-light);
+                    border-radius: var(--radius-md);
+                    padding: 4px 20px;
+                }
+
+                .settings-row {
+                    display: flex;
+                    align-items: center;
+                    justify-content: space-between;
+                    gap: 20px;
+                    padding: 16px 0;
+                }
+
+                .settings-row + .settings-row {
+                    border-top: 1px solid var(--border-light);
+                }
+
+                .settings-row-label {
+                    display: flex;
+                    flex-direction: column;
+                    gap: 3px;
+                    min-width: 0;
+                }
+
+                .settings-row-label strong {
+                    font-size: 14px;
+                    font-weight: 600;
+                    color: var(--text-primary);
+                }
+
+                .settings-row-label span {
+                    font-size: 13px;
+                    color: var(--text-secondary);
+                    line-height: 1.4;
+                }
+
+                .settings-row-control {
+                    display: flex;
+                    align-items: center;
+                    gap: 10px;
+                    flex-shrink: 0;
+                    flex-wrap: wrap;
+                    justify-content: flex-end;
+                }
+
+                .settings-time-input {
+                    padding: 8px 12px;
+                    border: 1px solid var(--border);
+                    border-radius: var(--radius-md);
+                    font-size: 14px;
+                    font-family: inherit;
+                    background: var(--background);
+                    color: var(--text-primary);
+                    width: 130px;
+                }
+
+                .settings-time-input:disabled {
+                    opacity: 0.5;
+                }
+
+                /* ── Switch ────────────────────────────────────────── */
+                .switch {
+                    position: relative;
+                    display: inline-flex;
+                    align-items: center;
+                    width: 42px;
+                    height: 24px;
+                    flex-shrink: 0;
+                    cursor: pointer;
+                }
+
+                .switch input {
+                    position: absolute;
+                    inset: 0;
+                    opacity: 0;
+                    margin: 0;
+                    cursor: pointer;
+                    z-index: 1;
+                }
+
+                .switch-track {
+                    position: absolute;
+                    inset: 0;
+                    background: var(--border);
+                    border-radius: 999px;
+                    transition: background 0.2s ease;
+                }
+
+                .switch-thumb {
+                    position: absolute;
+                    top: 2px;
+                    left: 2px;
+                    width: 20px;
+                    height: 20px;
+                    background: #ffffff;
+                    border-radius: 50%;
+                    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+                    transition: transform 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+                }
+
+                .switch input:checked ~ .switch-track {
+                    background: var(--accent);
+                }
+
+                .switch input:checked ~ .switch-thumb {
+                    transform: translateX(18px);
+                }
+
+                .switch input:disabled ~ .switch-track {
+                    opacity: 0.5;
+                }
+
+                .switch input:disabled {
+                    cursor: not-allowed;
+                }
+
+                /* ── Status pill / folder chip (Integracije) ───────── */
+                .status-pill {
+                    display: inline-flex;
+                    align-items: center;
+                    gap: 6px;
+                    padding: 6px 12px;
+                    border-radius: 999px;
+                    font-size: 13px;
+                    font-weight: 600;
+                }
+
+                .status-pill--success {
+                    background: var(--success-bg);
+                    color: #1a7f37;
+                }
+
+                .status-pill .material-icons-round {
+                    font-size: 16px;
+                }
+
+                .folder-chip {
+                    display: inline-flex;
+                    align-items: center;
+                    gap: 8px;
+                    padding: 8px 14px;
+                    background: var(--background);
+                    border: 1px solid var(--border);
+                    border-radius: var(--radius-md);
+                    color: var(--text-primary);
+                    text-decoration: none;
+                    font-size: 13px;
+                    font-weight: 600;
+                    transition: var(--transition);
+                    max-width: 260px;
+                }
+
+                .folder-chip:hover {
+                    border-color: var(--accent);
+                    color: var(--accent);
+                }
+
+                .folder-chip .material-icons-round {
+                    font-size: 16px;
+                    color: var(--warning);
+                    flex-shrink: 0;
+                }
+
+                .folder-chip-name {
+                    overflow: hidden;
+                    text-overflow: ellipsis;
+                    white-space: nowrap;
+                }
+
+                /* ── Banners (info / warning / locked) ─────────────── */
+                .settings-banner {
+                    display: flex;
+                    gap: 12px;
+                    padding: 16px 18px;
+                    border-radius: var(--radius-md);
+                    border: 1px solid transparent;
+                }
+
+                .settings-banner .material-icons-round {
+                    font-size: 20px;
+                    flex-shrink: 0;
+                    margin-top: 1px;
+                }
+
+                .settings-banner strong {
+                    display: block;
+                    font-size: 14px;
+                    font-weight: 600;
+                    margin-bottom: 4px;
+                    color: var(--text-primary);
+                }
+
+                .settings-banner p {
+                    font-size: 13px;
+                    line-height: 1.5;
+                    color: var(--text-secondary);
+                }
+
+                .settings-banner code {
+                    background: rgba(0, 0, 0, 0.06);
+                    padding: 1px 5px;
+                    border-radius: 4px;
+                    font-size: 12px;
+                    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+                }
+
+                .settings-banner :global(.btn) {
+                    margin-top: 10px;
+                }
+
+                .settings-banner--warning {
+                    background: var(--warning-bg);
+                    border-color: rgba(255, 149, 0, 0.25);
+                }
+
+                .settings-banner--warning .material-icons-round {
+                    color: var(--warning);
+                }
+
+                .settings-banner--locked {
+                    background: var(--accent-light);
+                    border-color: rgba(0, 113, 227, 0.2);
+                }
+
+                .settings-banner--locked .material-icons-round {
+                    color: var(--accent);
+                }
+
+                .settings-banner--info {
+                    background: var(--surface);
+                    border-color: var(--border-light);
+                }
+
+                .settings-banner--info .material-icons-round {
+                    color: var(--text-secondary);
+                }
+
+                .settings-banner--compact {
+                    padding: 14px 16px;
+                }
+
+                .settings-banner--compact strong {
+                    font-size: 13px;
+                }
+
+                .settings-banner--compact p {
+                    font-size: 13px;
+                }
+
+                /* ── Logo section ──────────────────────────────────── */
                 .logo-section {
                     display: flex;
                     align-items: center;
                     gap: 24px;
-                    padding: 24px;
+                    padding: 20px;
                     background: var(--surface);
-                    border-radius: 12px;
-                    margin-bottom: 32px;
+                    border-radius: var(--radius-md);
+                    margin-bottom: 28px;
+                    flex-wrap: wrap;
                 }
 
                 .logo-preview {
                     width: 120px;
                     height: 80px;
-                    border-radius: 10px;
+                    flex-shrink: 0;
+                    border-radius: var(--radius-sm);
                     overflow: hidden;
                     background: var(--background);
                     border: 2px dashed var(--border);
@@ -915,7 +1489,7 @@ export default function SettingsPage() {
                 }
 
                 .logo-placeholder .material-icons-round {
-                    font-size: 28px;
+                    font-size: 26px;
                 }
 
                 .logo-actions {
@@ -932,8 +1506,8 @@ export default function SettingsPage() {
 
                 .logo-option {
                     width: 100%;
-                    margin-top: 12px;
-                    padding-top: 12px;
+                    margin-top: 4px;
+                    padding-top: 14px;
                     border-top: 1px solid var(--border-light);
                 }
 
@@ -946,92 +1520,80 @@ export default function SettingsPage() {
                     color: var(--text-secondary);
                 }
 
-                .toggle-label input[type="checkbox"] {
-                    width: 18px;
-                    height: 18px;
+                .toggle-label input[type='checkbox'] {
+                    width: 17px;
+                    height: 17px;
                     accent-color: var(--accent);
                     cursor: pointer;
                 }
 
-                .form-grid {
-                    display: grid;
-                    grid-template-columns: 1fr 1fr;
-                    gap: 20px;
-                }
-
-                .form-group {
-                    display: flex;
-                    flex-direction: column;
-                    gap: 8px;
-                }
-
-                .form-group.full-width {
-                    grid-column: 1 / -1;
-                }
-
-                .form-group label {
-                    font-size: 13px;
-                    font-weight: 500;
-                    color: var(--text-secondary);
-                }
-
-                .form-group input,
-                .form-group select,
-                .form-group textarea {
-                    padding: 12px 14px;
-                    border: 1px solid var(--border);
-                    border-radius: 10px;
-                    font-size: 14px;
-                    background: var(--surface);
-                    transition: border-color 0.2s, box-shadow 0.2s;
-                }
-
-                .form-group input:focus,
-                .form-group select:focus,
-                .form-group textarea:focus {
-                    outline: none;
-                    border-color: var(--accent);
-                    box-shadow: 0 0 0 3px var(--accent-light);
-                }
-
-                .form-group textarea {
-                    resize: vertical;
-                    min-height: 80px;
-                }
-
-                .form-hint {
-                    font-size: 12px;
-                    color: var(--text-tertiary);
-                    margin-top: 4px;
-                }
-
+                /* ── Buttons (local additions/overrides) ───────────── */
                 .settings-actions {
                     display: flex;
                     justify-content: flex-end;
-                    padding-top: 8px;
+                    padding-top: 4px;
+                }
+
+                .settings-actions--note {
+                    justify-content: flex-start;
+                    align-items: center;
+                    gap: 8px;
+                    padding: 12px 16px;
+                    background: var(--background);
+                    border: 1px solid var(--border-light);
+                    border-radius: var(--radius-md);
+                    color: var(--text-secondary);
+                    font-size: 13px;
+                }
+
+                .settings-actions--note .material-icons-round {
+                    font-size: 16px;
+                    color: var(--accent);
                 }
 
                 .btn-large {
-                    padding: 14px 28px;
+                    padding: 13px 26px;
                     font-size: 15px;
                 }
 
                 .btn-ghost {
-                    background: none;
-                    border: none;
-                    color: var(--error);
-                    padding: 8px 12px;
-                    border-radius: 8px;
-                    cursor: pointer;
-                    display: flex;
+                    display: inline-flex;
                     align-items: center;
                     gap: 6px;
+                    padding: 8px 14px;
+                    background: none;
+                    border: none;
+                    border-radius: var(--radius-md);
+                    color: var(--text-secondary);
                     font-size: 13px;
-                    transition: background 0.2s;
+                    font-weight: 500;
+                    cursor: pointer;
+                    transition: var(--transition);
                 }
 
                 .btn-ghost:hover {
+                    background: var(--surface-hover);
+                    color: var(--text-primary);
+                }
+
+                .btn-ghost:disabled {
+                    opacity: 0.5;
+                    cursor: not-allowed;
+                }
+
+                .btn-ghost--danger {
+                    color: var(--error);
+                }
+
+                .btn-ghost--danger:hover {
                     background: var(--error-bg);
+                    color: var(--error);
+                }
+
+                .btn-icon {
+                    padding: 8px;
+                    border-radius: var(--radius-sm);
+                    flex-shrink: 0;
                 }
 
                 .loading-spinner.small {
@@ -1040,9 +1602,10 @@ export default function SettingsPage() {
                     border-width: 2px;
                 }
 
+                /* ── Bank accounts ─────────────────────────────────── */
                 .bank-accounts-section {
-                    margin-top: 32px;
-                    padding-top: 32px;
+                    margin-top: 28px;
+                    padding-top: 28px;
                     border-top: 1px solid var(--border-light);
                 }
 
@@ -1050,13 +1613,16 @@ export default function SettingsPage() {
                     display: flex;
                     align-items: flex-start;
                     justify-content: space-between;
-                    margin-bottom: 20px;
+                    gap: 12px;
+                    margin-bottom: 18px;
+                    flex-wrap: wrap;
                 }
 
                 .bank-accounts-header h3 {
-                    font-size: 16px;
+                    font-size: 15px;
                     font-weight: 600;
-                    margin-bottom: 4px;
+                    color: var(--text-primary);
+                    margin-bottom: 3px;
                 }
 
                 .bank-accounts-header p {
@@ -1064,80 +1630,92 @@ export default function SettingsPage() {
                     color: var(--text-tertiary);
                 }
 
-                .btn-small {
-                    padding: 8px 14px;
-                    font-size: 13px;
-                }
-
                 .bank-empty {
                     display: flex;
                     flex-direction: column;
                     align-items: center;
                     gap: 8px;
-                    padding: 32px;
-                    border-radius: 12px;
+                    padding: 28px;
+                    border-radius: var(--radius-md);
                     background: var(--surface);
                     border: 1px dashed var(--border);
                     color: var(--text-tertiary);
                 }
 
                 .bank-empty .material-icons-round {
-                    font-size: 32px;
+                    font-size: 30px;
                     opacity: 0.5;
+                }
+
+                .bank-empty p {
+                    font-size: 13px;
                 }
 
                 .bank-row {
                     display: flex;
                     align-items: flex-end;
                     gap: 12px;
-                    margin-bottom: 12px;
-                    padding: 16px;
-                    border-radius: 12px;
+                    margin-bottom: 10px;
+                    padding: 14px;
+                    border-radius: var(--radius-md);
                     background: var(--surface);
                     border: 1px solid var(--border-light);
+                }
+
+                .bank-row:last-child {
+                    margin-bottom: 0;
                 }
 
                 .bank-fields {
                     display: grid;
                     grid-template-columns: 1fr 1fr;
-                    gap: 16px;
+                    gap: 14px;
                     flex: 1;
                 }
 
-                .btn-icon {
-                    padding: 8px;
-                    border-radius: 8px;
-                    flex-shrink: 0;
-                    margin-bottom: 4px;
-                }
-
+                /* ── Responsive ────────────────────────────────────── */
                 @media (max-width: 900px) {
-                    .settings-layout {
+                    .settings-shell {
                         flex-direction: column;
-                        padding: 16px;
+                        padding: 20px 16px;
+                        gap: 20px;
                     }
 
                     .settings-sidebar {
                         width: 100%;
-                        display: flex;
+                        flex-direction: row;
                         flex-wrap: wrap;
-                        gap: 8px;
-                        padding-bottom: 8px;
+                        align-items: stretch;
+                        gap: 12px;
                     }
 
                     .plan-card {
                         width: 100%;
-                        flex-shrink: 0;
-                        margin-bottom: 4px;
                     }
 
-                    .sidebar-divider {
+                    .settings-nav-list {
+                        flex-direction: row;
+                        flex-wrap: wrap;
+                        flex: 1;
+                        gap: 6px;
+                    }
+
+                    .nav-eyebrow {
                         display: none;
                     }
 
                     .sidebar-item {
+                        width: auto;
                         white-space: nowrap;
-                        padding: 10px 14px;
+                        padding: 0 14px;
+                    }
+
+                    .settings-signout {
+                        margin-top: 0;
+                    }
+
+                    .settings-section {
+                        padding: 22px 20px;
                     }
 
                     .form-grid {
@@ -1147,6 +1725,40 @@ export default function SettingsPage() {
                     .logo-section {
                         flex-direction: column;
                         text-align: center;
+                    }
+
+                    .settings-card {
+                        padding: 4px 16px;
+                    }
+
+                    .settings-row {
+                        flex-direction: column;
+                        align-items: flex-start;
+                        gap: 10px;
+                    }
+
+                    .settings-row-control {
+                        width: 100%;
+                        justify-content: flex-start;
+                    }
+
+                    .bank-fields {
+                        grid-template-columns: 1fr;
+                    }
+                }
+
+                @media (max-width: 640px) {
+                    .settings-topbar {
+                        padding: 16px 20px;
+                        gap: 16px;
+                    }
+
+                    .settings-topbar h1 {
+                        font-size: 18px;
+                    }
+
+                    .settings-back span:last-child {
+                        display: none;
                     }
                 }
             `}</style>

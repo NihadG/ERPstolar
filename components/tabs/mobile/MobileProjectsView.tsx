@@ -4,6 +4,7 @@ import React, { useState, useMemo } from 'react';
 import type { Project, Material, WorkOrder, Offer, WorkLog, Product, ProductMaterial } from '@/lib/types';
 import { PROJECT_STATUSES } from '@/lib/types';
 import { sortProductsByName } from '@/lib/sortProducts';
+import { summarizeNotes, summarizeProjectNotes } from '@/lib/productNotes';
 
 interface MobileProjectsViewProps {
     projects: Project[];
@@ -22,6 +23,8 @@ interface MobileProjectsViewProps {
     // Product & Material Handlers
     onOpenProductModal: (projectId: string, product?: Product) => void;
     onDeleteProduct: (productId: string) => void;
+    /** Pitanja/napomene — bez productId = sva pitanja projekta, s productId = skrol na proizvod. */
+    onOpenNotes?: (projectId: string, productId?: string) => void;
     onOpenMaterialModal: (productId: string) => void;
     onDeleteMaterial: (materialId: string) => void;
     onEditMaterial: (material: ProductMaterial) => void;
@@ -39,6 +42,7 @@ export default function MobileProjectsView({
     onDeleteProject,
     onOpenProductModal,
     onDeleteProduct,
+    onOpenNotes,
     onOpenMaterialModal,
     onDeleteMaterial,
     onEditMaterial,
@@ -349,6 +353,22 @@ export default function MobileProjectsView({
                                                                 <span className="mpp-qty">x{product.Quantity}</span>
                                                             </div>
                                                             <div className="mp-prod-buttons">
+                                                                {onOpenNotes && (() => {
+                                                                    const ns = summarizeNotes(product.Questions);
+                                                                    return (
+                                                                        <button
+                                                                            className={`mini-btn notes${ns.unresolved > 0 ? ' has-open' : ''}`}
+                                                                            onClick={(e) => {
+                                                                                e.stopPropagation();
+                                                                                onOpenNotes(project.Project_ID, product.Product_ID);
+                                                                            }}
+                                                                            title="Pitanja i napomene"
+                                                                        >
+                                                                            <span className="material-icons-round">forum</span>
+                                                                            {ns.unresolved > 0 && <span className="mini-badge">{ns.unresolved}</span>}
+                                                                        </button>
+                                                                    );
+                                                                })()}
                                                                 <button
                                                                     className="mini-btn"
                                                                     onClick={(e) => {
@@ -515,6 +535,16 @@ export default function MobileProjectsView({
                             )}
 
                             <div className="mp-actions" onClick={(e) => e.stopPropagation()}>
+                                {onOpenNotes && (() => {
+                                    const ns = summarizeProjectNotes(project.products || []);
+                                    return (
+                                        <button className={`mp-action-btn notes${ns.unresolved > 0 ? ' has-open' : ''}`}
+                                            onClick={() => onOpenNotes(project.Project_ID)} title="Pitanja i napomene">
+                                            <span className="material-icons-round">forum</span>
+                                            {ns.unresolved > 0 && <span className="mp-badge">{ns.unresolved}</span>}
+                                        </button>
+                                    );
+                                })()}
                                 {onNavigateToTasks && (
                                     <button className="mp-action-btn" onClick={() => onNavigateToTasks(project.Project_ID)}>
                                         <span className="material-icons-round">task_alt</span>
@@ -910,6 +940,17 @@ export default function MobileProjectsView({
                     font-size: 18px;
                 }
 
+                /* Pitanja/napomene po proizvodu — badge s brojem otvorenih */
+                .mini-btn.notes { position: relative; overflow: visible; }
+                .mini-btn.notes.has-open { color: #2563eb; background: #eff6ff; }
+                .mini-badge {
+                    position: absolute; top: -5px; right: -5px;
+                    min-width: 16px; height: 16px; padding: 0 4px;
+                    border-radius: 999px; background: #ef4444; color: #fff;
+                    font-size: 10px; font-weight: 800; line-height: 16px; text-align: center;
+                    box-shadow: 0 0 0 2px #fff;
+                }
+
                 .mpp-name {
                     display: block;
                     font-weight: 700;
@@ -1051,6 +1092,16 @@ export default function MobileProjectsView({
                 .mp-action-btn:active {
                     transform: scale(0.92);
                     background: #e5e5ea;
+                }
+
+                .mp-action-btn.notes { position: relative; overflow: visible; }
+                .mp-action-btn.notes.has-open { background: #eff6ff; color: #2563eb; }
+                .mp-badge {
+                    position: absolute; top: -3px; right: -3px;
+                    min-width: 18px; height: 18px; padding: 0 5px;
+                    border-radius: 999px; background: #ef4444; color: #fff;
+                    font-size: 11px; font-weight: 800; line-height: 18px; text-align: center;
+                    box-shadow: 0 0 0 2px #fff;
                 }
 
                 .mp-action-btn.primary {

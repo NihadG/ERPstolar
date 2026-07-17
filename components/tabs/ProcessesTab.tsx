@@ -1,21 +1,31 @@
 'use client';
 
 // ════════════════════════════════════════════════════════════════════
-// PROCESI — RADNI RED, ne tabela.
+// PROCESI — TABLA STANICA (kanban), pa dvije liste kao pomoćne leće.
 //
-// Tab odgovara na JEDNO pitanje čim se otvori: „šta je sada na redu i šta
-// mogu čekirati". Sve ostalo (blokirano, završeno) je sklopljeno iza brojača.
+// ZAŠTO TABLA: ovo su poslovi × faze proizvodnje. Standard za taj oblik
+// podatka u proizvodnji je kanban tabla: KOLONA = stanica (proces),
+// KARTICA = nalog na toj stanici. Tako radi i sam pogon — komad fizički
+// putuje od stanice do stanice — pa tabla preslikava ono što majstor već
+// ima u glavi. Lista to ne može: ona odgovara „šta ima na ovom nalogu",
+// a pitanje na ekranu je „gdje je šta sada i gdje se gomila".
+// (Druga polovina standarda je „dispatch list" — red čekanja po stanici;
+// to je ovdje sadržaj kolone.)
+//
+// Tri leće nad ISTIM podacima:
+//   • Tabla        — gdje je šta sada (default; kolone = katalog redoslijed)
+//   • Po nalozima  — napredak jedne ekipe kroz njen tok
+//   • Po procesima — dugačak red čekanja jedne stanice
 //
 // PRAVILA LAYOUTA (zašto izgleda ovako):
-//  1. NA REDU je jedini istaknut blok — ostalo je tiho. Nalog ima 30+ procesa,
+//  1. NA REDU je jedino istaknuto — ostalo je tiho. Nalog ima 30+ procesa,
 //     ali u datom trenutku radiš 2-3; prikazati svih 30 znači ne prikazati ništa.
-//  2. Glagol je VIDLJIV: svaki red ima dugme „Završi". Checkbox je SAMO za
-//     grupni odabir (i nosi natpis), jer checkbox pored procesa inače laže —
-//     svako ga pročita kao „gotovo je", a on je selektovao.
-//  3. Jedna stvar po nivou: naslov = nalog, red = proces, sve ostalo prigušeno.
+//  2. Glagol je VIDLJIV: svaka kartica/red ima dugme „Završi". Checkbox je
+//     SAMO za grupni odabir, jer checkbox pored procesa inače laže — svako ga
+//     pročita kao „gotovo je", a on je selektovao.
 //
 // JEDINICA RADA = ZADATAK (nalog × proces) — „Priprema masive" za 3 proizvoda
-// je JEDAN red i JEDAN klik; strelica ga rastavi na proizvode kad treba dio.
+// je JEDNA kartica i JEDAN klik; strelica je rastavi na proizvode kad treba dio.
 //
 // Čista logika + gating: lib/processBoard.ts.
 // ════════════════════════════════════════════════════════════════════
@@ -43,7 +53,7 @@ interface Props {
     onNavigateToOrder?: (workOrderId: string) => void;
 }
 
-type GroupMode = 'order' | 'process';
+type GroupMode = 'board' | 'order' | 'process';
 const cellKey = (c: ProcessCell) => `${c.workOrderId}|${c.itemId}|${c.itemProcessName}`;
 const todayISO = () => new Date().toISOString().split('T')[0];
 const fmtDate = (iso?: string) => (iso ? new Date(iso).toLocaleDateString('hr-HR', { day: '2-digit', month: '2-digit' }) : '');
@@ -65,7 +75,7 @@ const partition = (tasks: ProcessTask[]) => ({
 
 export default function ProcessesTab({ workOrders, workers, workLogs, onRefresh, showToast, onNavigateToOrder }: Props) {
     const { organizationId } = useData();
-    const [groupMode, setGroupMode] = useState<GroupMode>('order');
+    const [groupMode, setGroupMode] = useState<GroupMode>('board');
     const [search, setSearch] = useState('');
     const [includeWaiting, setIncludeWaiting] = useState(false);
     const [catalog, setCatalog] = useState<ProcessCatalogItem[]>([]);
@@ -80,7 +90,7 @@ export default function ProcessesTab({ workOrders, workers, workLogs, onRefresh,
 
     useEffect(() => {
         const saved = typeof window !== 'undefined' ? window.localStorage.getItem('pt-group') : null;
-        if (saved === 'order' || saved === 'process') setGroupMode(saved);
+        if (saved === 'board' || saved === 'order' || saved === 'process') setGroupMode(saved);
     }, []);
     const changeGroup = (m: GroupMode) => {
         setGroupMode(m); setSel(new Set()); setExpanded(new Set()); setOpenSec(new Set());
@@ -149,13 +159,22 @@ export default function ProcessesTab({ workOrders, workers, workLogs, onRefresh,
     const orderGroups = useMemo(() => groupByOrder(filteredCells), [filteredCells]);
     const processGroups = useMemo(() => groupByProcess(filteredCells), [filteredCells]);
 
-    /** Orijentacija na vrhu — oblik dana u jednoj rečenici. */
+    /**
+     * Orijentacija na vrhu — oblik dana u jednoj rečenici.
+     * SVI brojevi se računaju nad ISTIM skupom (ordersInScope), inače rezime laže:
+     * „3 naloga · 5 pauzirano" je nemoguće, a nastajalo je jer su nalozi brojani po
+     * karticama (samo oni s procesima) a pauze po cijelom opsegu.
+     */
     const summary = useMemo(() => {
         const nowCount = orderGroups.reduce((n, g) => n + g.tasks.filter(isNow).length, 0);
-        const paused = Array.from(orderFlags.values()).filter(f => f.paused).length;
-        const today = Array.from(orderFlags.values()).filter(f => f.today).length;
-        return { orders: orderGroups.length, nowCount, paused, today };
-    }, [orderGroups, orderFlags]);
+        const flags = Array.from(orderFlags.values());
+        return {
+            orders: ordersInScope.length,
+            nowCount,
+            paused: flags.filter(f => f.paused).length,
+            today: flags.filter(f => f.today).length,
+        };
+    }, [orderGroups, orderFlags, ordersInScope]);
 
     // ── ODABIR ──────────────────────────────────────────────────────────
     const toggleCell = (c: ProcessCell) => setSel(prev => {
@@ -323,6 +342,72 @@ export default function ProcessesTab({ workOrders, workers, workLogs, onRefresh,
         );
     };
 
+    /**
+     * Kartica na tabli = jedan nalog na jednoj stanici (zadatak).
+     * Tri stanja nose cijelu čitljivost kolone:
+     *   now  — bijela, akcenat lijevo, ima „Završi"  (radi se / može odmah)
+     *   wait — prigušena, isprekidana ivica          (čeka prethodni proces)
+     *   done — utihnula, kvačica                     (odrađeno na ovoj stanici)
+     */
+    const BoardCard = ({ t }: { t: ProcessTask }) => {
+        const done = isDone(t);
+        const now = isNow(t);
+        const canAct = selectableOf(t).length > 0;
+        const f = orderFlags.get(t.workOrderId);
+        const multi = t.totalCount > 1;
+        const tone = done ? 'is-done' : now ? 'is-now' : 'is-wait';
+
+        return (
+            <div className={`pt-bcard ${tone}`} style={now && t.orderColor ? { borderLeftColor: t.orderColor } : undefined}>
+                <div className="pt-bcard-top">
+                    <button className="pt-bcard-id" onClick={() => onNavigateToOrder?.(t.workOrderId)} disabled={!onNavigateToOrder}
+                        title={onNavigateToOrder ? 'Otvori nalog' : undefined}>
+                        {t.orderLabel}
+                    </button>
+                    {done && <span className="material-icons-round pt-bcard-check">check_circle</span>}
+                </div>
+
+                <button className="pt-bcard-sub" onClick={() => multi && setExpanded(s => toggleIn(s, t.key))} disabled={!multi}
+                    title={multi ? 'Prikaži proizvode' : undefined}>
+                    {multi ? plural(t.totalCount, 'proizvod', 'proizvoda') : t.itemNames[0]}
+                    {multi && <span className="material-icons-round pt-bcard-caret">{expanded.has(t.key) ? 'expand_less' : 'expand_more'}</span>}
+                </button>
+
+                {expanded.has(t.key) && multi && (
+                    <div className="pt-bcard-items">
+                        {t.cells.map(c => (
+                            <div key={cellKey(c)} className={`pt-bcard-item ${c.status === 'Završeno' ? 'is-done' : ''}`}>
+                                <span className="pt-bcard-item-name">{c.itemName}</span>
+                                {c.status !== 'Završeno' && (t.gate === 'active' || c.status === 'U toku') && (
+                                    <button className="pt-do sm" disabled={busy} onClick={() => openCompleteForm([c])} title={`Završi samo ${c.itemName}`}>
+                                        <span className="material-icons-round">check</span>
+                                    </button>
+                                )}
+                            </div>
+                        ))}
+                    </div>
+                )}
+
+                <div className="pt-bcard-foot">
+                    <span className="pt-bcard-tags">
+                        {f?.today && <span className="pt-badge today" title="Danas je knjižen rad na ovom nalogu">danas</span>}
+                        {f?.paused && <span className="pt-badge paused" title="Nalog je pauziran — dnevnice ne teku">pauza</span>}
+                        {f?.waiting && <span className="pt-badge waiting">na čekanju</span>}
+                        {t.status === 'U toku' && <span className="pt-badge running">u toku</span>}
+                        {t.status === 'Djelimično' && <span className="pt-badge partial">{t.doneCount}/{t.totalCount}</span>}
+                        {done && t.completedAt && <span className="pt-bcard-meta">{fmtDate(t.completedAt)}</span>}
+                    </span>
+                    {now && canAct && (
+                        <button className="pt-do" disabled={busy} onClick={() => openCompleteForm(selectableOf(t))}
+                            title={multi ? `Završi za svih ${t.totalCount} proizvoda` : 'Završi ovaj proces'}>
+                            <span className="material-icons-round">check</span> Završi
+                        </button>
+                    )}
+                </div>
+            </div>
+        );
+    };
+
     /** Sklopiva sekcija (Čeka / Završeno) — dostupno na jedan klik, ali ne zauzima ekran. */
     const Section = ({ id, label, tasks, lens }: { id: string; label: string; tasks: ProcessTask[]; lens: 'order' | 'process' }) => {
         if (tasks.length === 0) return null;
@@ -359,10 +444,16 @@ export default function ProcessesTab({ workOrders, workers, workLogs, onRefresh,
                 </div>
                 <div className="pt-header-spacer" />
                 <div className="pt-seg">
-                    <button className={groupMode === 'order' ? 'active' : ''} onClick={() => changeGroup('order')}>
+                    <button className={groupMode === 'board' ? 'active' : ''} onClick={() => changeGroup('board')}
+                        title="Tabla stanica — kolona je proces, kartica je nalog na toj stanici">
+                        <span className="material-icons-round">view_kanban</span> Tabla
+                    </button>
+                    <button className={groupMode === 'order' ? 'active' : ''} onClick={() => changeGroup('order')}
+                        title="Napredak jednog naloga kroz njegov tok">
                         <span className="material-icons-round">assignment</span> Po nalozima
                     </button>
-                    <button className={groupMode === 'process' ? 'active' : ''} onClick={() => changeGroup('process')}>
+                    <button className={groupMode === 'process' ? 'active' : ''} onClick={() => changeGroup('process')}
+                        title="Red čekanja po stanici, u punoj listi">
                         <span className="material-icons-round">account_tree</span> Po procesima
                     </button>
                 </div>
@@ -386,7 +477,54 @@ export default function ProcessesTab({ workOrders, workers, workLogs, onRefresh,
                     <span className="material-icons-round">inbox</span>
                     <p>Nema aktivnih procesa{includeWaiting ? '' : ' — probaj „Na čekanju"'}.</p>
                 </div>
-            ) : isEmpty ? null : groupMode === 'order' ? (
+            ) : isEmpty ? null : groupMode === 'board' ? (
+                /* ── TABLA: kolona = stanica (proces), kartica = nalog na njoj ──
+                   Kolone idu KANONSKIM redoslijedom iz kataloga (Order), pa se tabla
+                   čita lijevo→desno kao stvarni tok kroz pogon. */
+                <div className="pt-board">
+                    {processGroups.map(g => {
+                        const p = partition(g.tasks);
+                        const doneKey = `board|${g.key}|d`;
+                        const doneOpen = openSec.has(doneKey);
+                        const pct = g.totalCount ? Math.round((g.doneCount / g.totalCount) * 100) : 0;
+                        return (
+                            <div key={g.key} className={`pt-col ${p.now.length === 0 ? 'is-quiet' : ''}`}>
+                                <div className="pt-col-head">
+                                    <div className="pt-col-title-row">
+                                        <span className="pt-col-title" title={g.name}>{g.name}</span>
+                                        {p.now.length > 0 && <span className="pt-col-now">{p.now.length}</span>}
+                                    </div>
+                                    <div className="pt-col-meta">
+                                        <span className="pt-bar-track"><span className={`pt-bar-fill ${pct >= 100 ? 'full' : ''}`} style={{ width: `${pct}%` }} /></span>
+                                        <span className="pt-col-count">{g.doneCount}/{g.totalCount}</span>
+                                        {g.catalogOrder === null && <span className="pt-badge legacy" title="Proces nije u katalogu">van kataloga</span>}
+                                    </div>
+                                </div>
+
+                                <div className="pt-col-body">
+                                    {p.now.map(t => <BoardCard key={t.key} t={t} />)}
+                                    {p.waiting.map(t => <BoardCard key={t.key} t={t} />)}
+
+                                    {p.now.length === 0 && p.waiting.length === 0 && (
+                                        <div className="pt-col-empty">{p.done.length > 0 ? 'Sve odrađeno' : 'Prazno'}</div>
+                                    )}
+
+                                    {/* Završeno je sklopljeno: stanica pokazuje šta JOŠ ima da radi. */}
+                                    {p.done.length > 0 && (
+                                        <>
+                                            <button className="pt-col-done-toggle" onClick={() => setOpenSec(s => toggleIn(s, doneKey))} aria-expanded={doneOpen}>
+                                                <span className="material-icons-round">{doneOpen ? 'expand_more' : 'chevron_right'}</span>
+                                                {plural(p.done.length, 'završen', 'završeno')}
+                                            </button>
+                                            {doneOpen && p.done.map(t => <BoardCard key={t.key} t={t} />)}
+                                        </>
+                                    )}
+                                </div>
+                            </div>
+                        );
+                    })}
+                </div>
+            ) : groupMode === 'order' ? (
                 <div className="pt-list">
                     {orderGroups.map(og => {
                         const f = orderFlags.get(og.workOrderId);

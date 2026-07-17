@@ -1,0 +1,204 @@
+/* ═══════════════════════════════════════════════════════════════════
+   Pitanja i napomene (ProjectNotesModal) — tokeni iz globals.css.
+
+   Princip: JEDNA boja nosi pažnju (var(--accent)); primalac je sitna tačka +
+   neutralan tekst, ne obojena pilula — pet boja odjednom (plava/žuta/ljubičasta/
+   siva/crvena) je bio glavni razlog "razbacanog" utiska. Status je isto tako
+   tačka, ne teška obojena traka. Odgovor je mjehurić poruke (Apple Messages),
+   ne dugme koje se ne razlikuje od ostalih kontrola.
+   ═══════════════════════════════════════════════════════════════════ */
+
+.pnm-title { display: flex; flex-direction: column; gap: 2px; }
+.pnm-title-sub { font-size: 12.5px; font-weight: 500; color: var(--text-tertiary); }
+
+.pnm { display: flex; flex-direction: column; gap: 16px; }
+
+/* ── Filteri: dva tintirana segmenta, jedan red svaki ── */
+.pnm-filters { display: flex; flex-direction: column; gap: 8px; }
+.pnm-seg { display: inline-flex; flex-wrap: wrap; gap: 4px; }
+.pnm-seg-opt {
+    border: none; background: transparent; color: var(--text-secondary);
+    font-size: 12.5px; font-weight: 600; padding: 6px 12px; border-radius: 999px; cursor: pointer;
+    transition: all var(--transition);
+}
+.pnm-seg-opt:hover:not(.active) { background: var(--surface); color: var(--text-primary); }
+/* Aktivan = blaga tintirana pozadina bojom primaoca (ne solid fill — mirnije za oko) */
+.pnm-seg-opt.active { background: var(--surface-active); color: var(--text-primary); }
+.pnm-seg-opt.active.aud-client    { background: #e5f2ff; color: var(--accent); }
+.pnm-seg-opt.active.aud-supplier  { background: #fff4e5; color: #b45309; }
+.pnm-seg-opt.active.aud-colleague { background: #f3e8ff; color: #7c3aed; }
+.pnm-seg-opt.active.aud-other     { background: var(--surface); color: var(--text-secondary); }
+
+/* Sakrij prazne proizvode — tanak, tih toggle-link, ne chip */
+.pnm-showempty {
+    align-self: center; border: none; background: none; cursor: pointer;
+    font-size: 12.5px; font-weight: 600; color: var(--text-tertiary); padding: 4px 10px;
+    border-radius: 999px; transition: all var(--transition);
+}
+.pnm-showempty:hover { color: var(--accent); background: var(--accent-light); }
+
+/* ── Obojena tačka primaoca — jedini nosilac boje po primaocu ── */
+.pnm-dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; flex-shrink: 0; }
+.pnm-dot.aud-client    { background: var(--accent); }
+.pnm-dot.aud-supplier  { background: var(--warning); }
+.pnm-dot.aud-colleague { background: #8b5cf6; }
+.pnm-dot.aud-other     { background: var(--text-tertiary); }
+
+/* ── Izbor primaoca: nativan <select>, oblika malog bordiranog dugmeta
+   s ručno iscrtanom strelicom — ne "lažna pilula" bez konteksta. ── */
+.pnm-audpick {
+    display: inline-flex; align-items: center; gap: 6px; position: relative;
+    height: 28px; padding: 0 22px 0 10px;
+    border: 1px solid var(--border-light); border-radius: 999px; background: var(--surface);
+}
+.pnm-audpick-select {
+    position: absolute; inset: 0; width: 100%; height: 100%;
+    appearance: none; -webkit-appearance: none; border: none; background: transparent;
+    padding: 0 22px 0 20px; font-size: 12px; font-weight: 600; color: var(--text-primary); cursor: pointer;
+}
+.pnm-audpick-select:focus { outline: none; }
+.pnm-audpick:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-light); }
+.pnm-audpick-chevron { color: var(--text-tertiary); pointer-events: none; flex-shrink: 0; margin-left: -2px; }
+/* Dot ostaje IZNAD select-a (koji je position:absolute preko cijele kućice) */
+.pnm-audpick .pnm-dot { position: relative; z-index: 1; }
+
+/* ── Grupe po proizvodu (project-scope) ── */
+.pnm-groups { display: flex; flex-direction: column; gap: 18px; }
+.pnm-group { display: flex; flex-direction: column; }
+.pnm-group-head {
+    display: flex; align-items: center; gap: 9px;
+    padding: 0 2px 10px; border-bottom: 1px solid var(--border-light); margin-bottom: 4px;
+}
+.pnm-select {
+    width: 17px; height: 17px; flex-shrink: 0;
+    border: 1.5px solid var(--border); border-radius: 5px; background: var(--background);
+    display: flex; align-items: center; justify-content: center; color: #fff; cursor: pointer;
+    transition: all var(--transition);
+}
+.pnm-select:hover { border-color: var(--accent); }
+.pnm-select.on { background: var(--accent); border-color: var(--accent); }
+.pnm-group-name { font-size: 15px; font-weight: 700; color: var(--text-primary); flex: 1; min-width: 0; letter-spacing: -0.01em; }
+.pnm-group-qty { font-size: 12px; font-weight: 600; color: var(--text-tertiary); }
+.pnm-group-count { font-size: 12px; font-weight: 600; color: var(--text-tertiary); font-variant-numeric: tabular-nums; }
+
+/* Product-scope: bez kartice/zaglavlja — direktno lista + composer */
+.pnm-solo { display: flex; flex-direction: column; gap: 2px; }
+.pnm-empty-inline { margin: 4px 2px 8px; font-size: 13px; color: var(--text-tertiary); }
+
+/* ── Pitanja ── */
+.pnm-notes { display: flex; flex-direction: column; }
+.pnm-note {
+    display: flex; align-items: flex-start; gap: 11px;
+    padding: 12px 2px; border-top: 1px solid var(--border-light);
+}
+.pnm-notes .pnm-note:first-child { border-top: none; }
+.pnm-note.st-resolved { opacity: 0.55; }
+
+.pnm-check {
+    width: 21px; height: 21px; flex-shrink: 0; margin-top: 1px;
+    border: 1.75px solid var(--border); border-radius: 50%; background: var(--background);
+    display: flex; align-items: center; justify-content: center; color: #fff; cursor: pointer;
+    transition: all var(--transition);
+}
+.pnm-check:hover:not(:disabled) { border-color: var(--success); }
+.pnm-check.on { background: var(--success); border-color: var(--success); }
+.pnm-check:disabled { cursor: default; }
+
+.pnm-note-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 7px; }
+.pnm-note-top { display: flex; align-items: flex-start; gap: 8px; }
+
+.pnm-note-text {
+    flex: 1; min-width: 0; font-size: 14.5px; font-weight: 500; color: var(--text-primary);
+    line-height: 1.4; overflow-wrap: anywhere; cursor: text; padding-top: 1px;
+}
+.pnm-note-text.done { color: var(--text-tertiary); text-decoration: line-through; }
+.pnm-edit-input {
+    flex: 1; min-width: 0; height: 32px; box-sizing: border-box;
+    border: 1px solid var(--accent); border-radius: var(--radius-sm); padding: 0 10px;
+    font-size: 14px; color: var(--text-primary); background: var(--background);
+}
+.pnm-edit-input:focus { outline: none; box-shadow: 0 0 0 3px var(--accent-light); }
+
+.pnm-note-actions { display: inline-flex; gap: 1px; flex-shrink: 0; opacity: 0; transition: opacity var(--transition); }
+.pnm-note:hover .pnm-note-actions { opacity: 1; }
+.pnm-icon {
+    width: 26px; height: 26px; border: none; background: transparent; color: var(--text-tertiary);
+    border-radius: 6px; cursor: pointer; display: inline-flex; align-items: center; justify-content: center;
+    transition: all var(--transition);
+}
+.pnm-icon:hover:not(:disabled) { background: var(--surface-hover); color: var(--text-primary); }
+.pnm-icon.danger:hover:not(:disabled) { background: var(--error-bg); color: var(--error); }
+.pnm-icon:disabled { cursor: default; opacity: 0.5; }
+
+.pnm-note-meta { display: flex; align-items: center; }
+
+/* ── Odgovor — mjehurić poruke, uvučen ispod pitanja ── */
+.pnm-answer {
+    display: inline-flex; align-items: flex-start; gap: 6px; align-self: flex-start; max-width: 92%;
+    border: none; background: var(--surface); cursor: pointer; padding: 8px 12px; border-radius: 12px 12px 12px 3px;
+    text-align: left; font-size: 13.5px; line-height: 1.45; color: var(--text-secondary);
+    transition: background var(--transition);
+}
+.pnm-answer:hover { background: var(--surface-hover); }
+.pnm-answer-icon { color: var(--text-tertiary); flex-shrink: 0; margin-top: 2px; }
+.pnm-answer-text { overflow-wrap: anywhere; color: var(--text-primary); }
+
+.pnm-answer-add {
+    display: inline-flex; align-items: center; gap: 5px; align-self: flex-start;
+    border: none; background: none; cursor: pointer; padding: 2px 4px; border-radius: 6px;
+    font-size: 12.5px; font-weight: 600; color: var(--text-tertiary);
+}
+.pnm-answer-add:hover { color: var(--accent); }
+
+.pnm-answer-edit { display: flex; align-items: center; gap: 7px; }
+.pnm-answer-input {
+    flex: 1; min-width: 0; height: 34px; box-sizing: border-box;
+    border: 1px solid var(--border); border-radius: 999px; padding: 0 14px;
+    font-size: 13.5px; color: var(--text-primary); background: var(--surface);
+}
+.pnm-answer-input:focus { outline: none; border-color: var(--accent); background: var(--background); box-shadow: 0 0 0 3px var(--accent-light); }
+.pnm-answer-save {
+    flex-shrink: 0; border: none; background: var(--accent); color: #fff;
+    font-size: 12.5px; font-weight: 700; padding: 8px 14px; border-radius: 999px; cursor: pointer;
+}
+.pnm-answer-save:hover { background: var(--accent-hover); }
+
+/* ── Dodavanje pitanja — traka za sastavljanje, kao poruka ── */
+.pnm-add {
+    display: flex; align-items: center; gap: 8px;
+    margin-top: 8px; padding-top: 10px;
+}
+.pnm-notes ~ .pnm-add { border-top: 1px dashed var(--border-light); }
+.pnm-add-input {
+    flex: 1; min-width: 0; height: 38px; box-sizing: border-box;
+    border: 1px solid var(--border); border-radius: 999px; padding: 0 15px;
+    font-size: 13.5px; color: var(--text-primary); background: var(--background);
+    transition: border-color var(--transition), box-shadow var(--transition);
+}
+.pnm-add-input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-light); }
+.pnm-add-btn {
+    flex-shrink: 0; width: 38px; height: 38px; display: inline-flex; align-items: center; justify-content: center;
+    border: none; background: var(--accent); color: #fff;
+    border-radius: 50%; cursor: pointer; transition: background var(--transition);
+}
+.pnm-add-btn:hover:not(:disabled) { background: var(--accent-hover); }
+.pnm-add-btn:disabled { opacity: 0.4; cursor: default; }
+
+.pnm-empty {
+    text-align: center; color: var(--text-tertiary); font-size: 13.5px; line-height: 1.7;
+    padding: 44px 20px;
+}
+
+/* ── Footer ── */
+.pnm-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; flex-wrap: wrap; }
+.pnm-foot-sum { display: inline-flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--text-secondary); font-weight: 600; }
+.pnm-foot-btns { display: inline-flex; gap: 10px; margin-left: auto; }
+.pnm-spin { animation: pnm-spin 0.8s linear infinite; color: var(--text-tertiary); }
+@keyframes pnm-spin { to { transform: rotate(360deg); } }
+
+@media (max-width: 640px) {
+    .pnm-note-actions { opacity: 1; }
+    .pnm-foot-btns { width: 100%; }
+    .pnm-foot-btns .btn { flex: 1; }
+    .pnm-answer, .pnm-answer-add { max-width: 100%; }
+}

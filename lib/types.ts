@@ -18,6 +18,13 @@ export interface Project {
     Created_Date: string;
     Deadline: string;
     Hidden?: boolean;                       // Soft-hide from main list
+
+    // GOOGLE DRIVE (Faza 1 integracije) — folder dosjea projekta na Drive-u.
+    // Popunjava se SAMO za nove projekte kad je Google integracija aktivna.
+    Drive_Folder_ID?: string;               // ID glavnog foldera projekta
+    Drive_Folder_URL?: string;              // webViewLink glavnog foldera
+    Drive_Subfolders?: Record<string, string>;  // naziv podfoldera → Drive folder ID
+
     products?: Product[];
     offers?: Offer[];
 }
@@ -35,6 +42,11 @@ export interface Product {
     Work_Order_Quantity?: number;  // Quantity already in work orders
     Material_Cost: number;
     Notes: string;
+    // OTVORENA PITANJA / NAPOMENE po proizvodu — checklista pitanja koja se
+    // postavljaju klijentu, dobavljaču ili kolegama, sa opcionim odgovorom.
+    // Razlikuje se od Notes (slobodan opis): ovo je struktuiran Q&A koji se
+    // prati, odgovara i printa. Vidi lib/productNotes.ts.
+    Questions?: ProductNote[];
     materials?: ProductMaterial[];
     // PLAN PROCESA po proizvodu u FAZAMA: procesi u ISTOJ fazi teku PARALELNO
     // (npr. izrada nogu ∥ krojenje furnira), sljedeća faza čeka prethodnu (sklapanje → lakiranje).
@@ -53,6 +65,34 @@ export interface Product {
     // 'manual' = korisnik uredio → auto ga NE dira.
     Process_Plan_Source?: 'auto' | 'manual' | 'ai';
 }
+
+// ════════════════════════════════════════════════════════════════════
+// OTVORENA PITANJA / NAPOMENE PO PROIZVODU
+// Kome je pitanje upućeno (klijent/dobavljač/kolega/ostalo) određuje boju i
+// grupisanje; odgovor se dodaje naknadno (kad stigne), a „Riješeno" (checkbox)
+// je odvojeno od odgovora — pitanje može biti odgovoreno a još otvoreno, ili
+// riješeno bez zapisanog odgovora. Vidi lib/productNotes.ts.
+// ════════════════════════════════════════════════════════════════════
+export type ProductNoteAudience = 'client' | 'supplier' | 'colleague' | 'other';
+
+export interface ProductNote {
+    id: string;
+    Text: string;                    // pitanje / napomena
+    Audience: ProductNoteAudience;   // kome je upućeno
+    Answer?: string;                 // odgovor (kad stigne)
+    Answered_At?: string;            // ISO — kad je odgovor upisan
+    Resolved: boolean;               // riješeno (checkbox, odvojeno od odgovora)
+    Created_At: string;
+    Updated_At?: string;
+}
+
+export const PRODUCT_NOTE_AUDIENCES: ProductNoteAudience[] = ['client', 'supplier', 'colleague', 'other'];
+export const PRODUCT_NOTE_AUDIENCE_LABELS: Record<ProductNoteAudience, string> = {
+    client: 'Klijent',
+    supplier: 'Dobavljač',
+    colleague: 'Kolega',
+    other: 'Ostalo',
+};
 
 export interface Material {
     Material_ID: string;
@@ -175,6 +215,11 @@ export interface Offer {
     Client_Type?: 'fizicko' | 'pravno';
     Client_ID_Number?: string;
     Client_PDV_Number?: string;
+
+    // GOOGLE DRIVE — arhivirani PDF ponude u podfolderu „Ponude" projekta.
+    Drive_File_ID?: string;
+    Drive_File_URL?: string;
+
     products?: OfferProduct[];
 }
 
@@ -271,6 +316,11 @@ export interface Order {
     Expected_Delivery: string;
     Total_Amount: number;
     Notes: string;
+
+    // GOOGLE DRIVE — arhivirani PDF narudžbe u podfolderu „Narudžbe" projekta.
+    Drive_File_ID?: string;
+    Drive_File_URL?: string;
+
     items?: OrderItem[];
 }
 
@@ -380,6 +430,9 @@ export interface Task {
 
     // Checklist items for sub-tasks
     Checklist?: ChecklistItem[];
+
+    // GOOGLE CALENDAR (Faza 1) — ID događaja kreiranog iz roka zadatka (Due_Date).
+    Calendar_Event_ID?: string;
 }
 
 export interface TaskProfile {
@@ -812,6 +865,7 @@ export interface ModuleAccess {
     orders: boolean;
     reports: boolean;
     api_access: boolean;
+    google_integration?: boolean;  // Plaćeni paket: Google Drive + Kalendar integracija
 }
 
 export interface User {
@@ -1120,5 +1174,32 @@ export interface ProductionSnapshot {
     // Material Price Accuracy
     Materials_Snapshot_Time: string; // Timestamp kada su cijene materijala zabilježene
     Materials_Are_Final: boolean;    // true = finalne cijene pri završetku naloga
+}
+
+// ============================================
+// GOOGLE INTEGRACIJA (Faza 1) — Drive dosje + Kalendar zadataka
+// ============================================
+
+// Kanonska struktura podfoldera unutar foldera projekta na Drive-u.
+// „Ponude"/„Narudžbe" app puni na klik; ostale (Dokumenti od klijenta,
+// Slike sa terena, Priprema) korisnik puni ručno.
+export const PROJECT_DRIVE_SUBFOLDERS = [
+    'Dokumenti od klijenta',
+    'Ponude',
+    'Narudžbe',
+    'Slike sa terena',
+    'Priprema',
+] as const;
+export type ProjectDriveSubfolder = (typeof PROJECT_DRIVE_SUBFOLDERS)[number];
+
+// Po-organizaciji stanje Google veze — čuva se u org_settings.googleIntegration.
+export interface GoogleIntegrationSettings {
+    connectedEmail?: string;             // Google račun koji je povezan
+    rootFolderID?: string;               // ID root foldera u koji idu folderi projekata
+    rootFolderName?: string;             // prikazni naziv root foldera
+    rootFolderURL?: string;              // webViewLink root foldera
+    calendarID?: string;                 // kalendar za zadatke (default 'primary')
+    autoCreateProjectFolders?: boolean;  // auto-kreiraj folder pri kreiranju novog projekta
+    autoCalendarTasks?: boolean;         // auto-dodaj zadatke s rokom u kalendar
 }
 

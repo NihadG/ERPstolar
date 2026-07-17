@@ -5240,12 +5240,14 @@ async function reconcileItemsToGraph(
     const batch = writeBatch(db);
     let writes = 0;
 
+    // Poklapanje po NAZIVU kroz CIJELI graf, namjerno bez itemIds pokrivenosti: brisanje
+    // je destruktivno, a itemIds su krhki (čvor može pokrivati stavku koja mu nije u listi).
+    // Uklanja se samo ono što u grafu VIŠE NE POSTOJI ni pod jednim čvorom — tj. ono što je
+    // korisnik stvarno obrisao. Uže pravilo = manja šteta ako se ID-evi raziđu.
+    const inGraph = (name: string) => nodes.some(n => nodeMatchesProcess(n, name));
+
     for (const d of snap.docs) {
         const item = d.data() as WorkOrderItem;
-        // Čvorovi koji pokrivaju OVU stavku (prazan itemIds = vrijedi za sve proizvode naloga).
-        const covering = nodes.filter(n => !(n.itemIds || []).length || n.itemIds.includes(item.ID));
-        const inGraph = (name: string) => covering.some(n => nodeMatchesProcess(n, name));
-
         const prev = item.Processes || [];
         const kept = prev.filter(p => inGraph(p.Process_Name));
         if (kept.length === prev.length) continue;   // ništa uklonjeno za ovu stavku
@@ -7435,7 +7437,7 @@ export async function getProductionSnapshotForWorkOrder(
 
 export async function saveOrgSettings(
     organizationId: string,
-    data: { companyInfo: any; appSettings: any }
+    data: { companyInfo?: any; appSettings?: any; googleIntegration?: any }
 ): Promise<{ success: boolean; message: string }> {
     if (!organizationId) {
         return { success: false, message: 'Organization ID is required' };
@@ -7443,11 +7445,12 @@ export async function saveOrgSettings(
 
     try {
         const firestore = getDb();
-        await setDoc(doc(firestore, 'org_settings', organizationId), {
-            companyInfo: data.companyInfo,
-            appSettings: data.appSettings,
-            Updated_At: new Date().toISOString(),
-        }, { merge: true });
+        // Uključi samo prisutne ključeve (merge:true čuva ostalo; izbjegava undefined).
+        const payload: Record<string, unknown> = { Updated_At: new Date().toISOString() };
+        if (data.companyInfo !== undefined) payload.companyInfo = data.companyInfo;
+        if (data.appSettings !== undefined) payload.appSettings = data.appSettings;
+        if (data.googleIntegration !== undefined) payload.googleIntegration = data.googleIntegration;
+        await setDoc(doc(firestore, 'org_settings', organizationId), payload, { merge: true });
 
         return { success: true, message: 'Settings saved' };
     } catch (error) {
@@ -7458,7 +7461,7 @@ export async function saveOrgSettings(
 
 export async function getOrgSettings(
     organizationId: string
-): Promise<{ companyInfo: any; appSettings: any } | null> {
+): Promise<{ companyInfo: any; appSettings: any; googleIntegration: any } | null> {
     if (!organizationId) return null;
 
     try {
@@ -7469,6 +7472,7 @@ export async function getOrgSettings(
             return {
                 companyInfo: data.companyInfo || null,
                 appSettings: data.appSettings || null,
+                googleIntegration: data.googleIntegration || null,
             };
         }
         return null;

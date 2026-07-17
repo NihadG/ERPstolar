@@ -74,22 +74,29 @@ export function isOrderPaused(items: { Status?: string; Is_Paused?: boolean }[])
 }
 
 /**
- * Redoslijed naloga: ono na čemu se DANAS radi je na vrhu, pa najsvježiji nalozi.
- *   1) U toku → pauzirani → na čekanju   (završeni/otkazani ni ne ulaze u opseg)
- *   2) unutar toga: nalog s DANAŠNJOM dnevnicom prvi (radnik je danas na njemu)
- *   3) pa najnoviji (Created_Date opadajuće; ISO string → leksikografski = hronološki)
- * Stabilno: jednaki nalozi zadržavaju ulazni redoslijed.
+ * Rang naloga — DOSLOVNO korisnikov redoslijed, četiri nivoa:
+ *   0) u toku, s DANAS proknjiženim radnicima   ← ovdje se upravo radi
+ *   1) u toku, bez današnjih dnevnica
+ *   2) pauzirani
+ *   3) ostali (na čekanju)                      ← završeni/otkazani ni ne ulaze u opseg
+ * Pauza je JAČA od „danas": pauziran nalog ne ide u vrh ni ako je danas nešto knjiženo.
+ */
+export function orderBoardRank<T extends BoardOrderRank>(order: T, workedTodayOrderIds: Set<string>): 0 | 1 | 2 | 3 {
+    if (order.workOrder.Status === 'Na čekanju') return 3;
+    if (isOrderPaused(order.items)) return 2;
+    return workedTodayOrderIds.has(order.workOrder.Work_Order_ID) ? 0 : 1;
+}
+
+/**
+ * Redoslijed naloga: rang (gore), pa najnoviji (Created_Date opadajuće; ISO string →
+ * leksikografski = hronološki). Stabilno: jednaki nalozi zadržavaju ulazni redoslijed.
  */
 export function sortOrdersForBoard<T extends BoardOrderRank>(orders: T[], workedTodayOrderIds: Set<string>): T[] {
-    const bucket = (o: T) => o.workOrder.Status === 'Na čekanju' ? 2 : (isOrderPaused(o.items) ? 1 : 0);
     return orders
         .map((o, i) => ({ o, i }))
         .sort((a, b) => {
-            const bucketDiff = bucket(a.o) - bucket(b.o);
-            if (bucketDiff) return bucketDiff;
-            const todayA = workedTodayOrderIds.has(a.o.workOrder.Work_Order_ID) ? 0 : 1;
-            const todayB = workedTodayOrderIds.has(b.o.workOrder.Work_Order_ID) ? 0 : 1;
-            if (todayA !== todayB) return todayA - todayB;
+            const rankDiff = orderBoardRank(a.o, workedTodayOrderIds) - orderBoardRank(b.o, workedTodayOrderIds);
+            if (rankDiff) return rankDiff;
             const byNewest = (b.o.workOrder.Created_Date || '').localeCompare(a.o.workOrder.Created_Date || '');
             return byNewest || a.i - b.i;
         })
@@ -170,26 +177,23 @@ function resolveOrderGraph(order: ProcessBoardOrderInput): {
 const PLACEHOLDER_PROCESS = 'rad';
 
 /**
- * Je li stavka „bez plana" maskirana u proces? Stari wizard je proizvodu BEZ plana
- * procesa upisivao jedan generički proces „Rad". To NIJE proces nego ODSUTNOST plana:
- * ne kaže ništa („nalog ima posla" — pa naravno), ne može se gatati, i korisnik ga ne
- * može smisleno završiti. Tabla ga zato ignoriše i nalog ispada u „Bez definisanih
- * procesa", gdje mu je i mjesto — umjesto da korisnik ručno briše „Rad" iz svakog
- * starog naloga kroz graf.
+ * Je li ovo generički „Rad" — placeholder starog wizarda, a ne stvaran proces?
  *
- * Uslovi su namjerno USKI (da ne pojede stvaran rad):
- *   • to je JEDINI proces stavke, i
- *   • ne postoji u katalogu procesa (ako ga korisnik doda u katalog, „Rad" postaje
- *     legitiman proces i prikazuje se normalno).
- * Podatak se NE dira — auto-knjiženje dnevnica i dalje čita item.Processes.
+ * Stari wizard je proizvodu BEZ plana upisivao jedan generički proces „Rad". To NIJE
+ * proces nego ODSUTNOST plana: ne kaže ništa („nalog ima posla" — pa naravno), ne može
+ * se gatati, i korisnik ga ne može smisleno završiti. Tabla ga zato nigdje ne prikazuje
+ * kao korak toka; nalog kojem je to jedini „proces" ispada u „Bez definisanih procesa".
+ *
+ * Escape hatch: ako korisnik doda „Rad" u KATALOG procesa, on postaje legitiman proces
+ * i prikazuje se normalno. Katalog je vokabular firme — to je mjesto gdje se odlučuje.
+ *
+ * Filtrira se na nivou ČVORA/PROCESA, nikad stavke: stavka može imati legacy „Rad" u
+ * item.Processes dok PRAVE procese nosi graf naloga (tako je nastao bug gdje je nalog
+ * s punim grafom prikazan kao „bez procesa"). Podatak se NE dira — auto-knjiženje
+ * dnevnica i dalje čita item.Processes.
  */
-export function isPlaceholderOnlyItem(
-    item: { Processes?: { Process_Name: string }[] },
-    catalogKeys: Set<string>,
-): boolean {
-    const named = (item.Processes || []).filter(p => (p.Process_Name || '').trim());
-    if (named.length !== 1) return false;
-    const k = norm(named[0].Process_Name);
+export function isPlaceholderProcess(name: string, catalogKeys: Set<string>): boolean {
+    const k = norm(name);
     return k === PLACEHOLDER_PROCESS && !catalogKeys.has(k);
 }
 
@@ -208,19 +212,18 @@ export function buildProcessCells(
     }
 
     const cells: ProcessCell[] = [];
-    for (const rawOrder of orders) {
-        // Stavke s generičkim „Rad" ispadaju PRIJE svega ostalog — i iz sinteze grafa i iz
-        // pokrivenosti čvorova; nalog kojem ostane 0 stavki nema plan i preskače se u cjelini.
-        const order: ProcessBoardOrderInput = {
-            ...rawOrder,
-            items: rawOrder.items.filter(it => !isPlaceholderOnlyItem(it, catalogKeys)),
-        };
-        if (order.items.length === 0) continue;
+    for (const order of orders) {
         const woId = order.workOrder.Work_Order_ID;
         const orderLogs = logsByOrder.get(woId) || [];
         const crew = crewOfOrder(order.items, orderLogs);
         const itemById = new Map(order.items.map(it => [it.ID, it]));
-        const { nodes, edges, phaseByName } = resolveOrderGraph(order);
+        const resolved = resolveOrderGraph(order);
+        const { edges, phaseByName } = resolved;
+        // Generički „Rad" ispada OVDJE (na nivou čvora) — bilo da dolazi iz snimljenog grafa
+        // ili iz sinteze sa stavki. Nalog kojem ostane 0 čvorova nema plan → „Bez definisanih
+        // procesa". Stavke se NE diraju: legacy „Rad" u item.Processes smije koegzistirati s
+        // pravim procesima iz grafa.
+        const nodes = resolved.nodes.filter(n => !isPlaceholderProcess(n.name, catalogKeys));
 
         // doneByNodeId: čvor "done" ako je za SVE pokrivene stavke pripadajući proces Završen.
         const doneById = new Map<string, boolean>();
@@ -354,13 +357,24 @@ export interface OrderGroup {
     productCount: number;
 }
 
-/** PO NALOGU (default): ekipa + svi procesi naloga u redoslijedu toka. */
+/**
+ * PO NALOGU (default): ekipa + svi procesi naloga u redoslijedu toka.
+ *
+ * REDOSLIJED NALOGA = redoslijed pojave u `cells`, tj. onaj koji je pozivalac već
+ * odredio (sortOrdersForBoard). NE smije se izvoditi iz buildProcessTasks: on sortira
+ * zadatke po TOKU (faza → katalog) GLOBALNO preko svih naloga, pa bi karticama redoslijed
+ * određivalo to koji nalog slučajno ima proces s najmanjom fazom — a ne rang naloga.
+ * (Baš tako je pauziran nalog završio iznad onog na kojem se danas radi.)
+ */
 export function groupByOrder(cells: ProcessCell[]): OrderGroup[] {
-    const tasks = buildProcessTasks(cells);
-    const byOrder = new Map<string, ProcessTask[]>();
     const order: string[] = [];
-    for (const t of tasks) {
-        if (!byOrder.has(t.workOrderId)) { byOrder.set(t.workOrderId, []); order.push(t.workOrderId); }
+    const seen = new Set<string>();
+    for (const c of cells) {
+        if (!seen.has(c.workOrderId)) { seen.add(c.workOrderId); order.push(c.workOrderId); }
+    }
+    const byOrder = new Map<string, ProcessTask[]>();
+    for (const t of buildProcessTasks(cells)) {   // zadaci ostaju u redoslijedu toka UNUTAR naloga
+        if (!byOrder.has(t.workOrderId)) byOrder.set(t.workOrderId, []);
         byOrder.get(t.workOrderId)!.push(t);
     }
     return order.map(woId => {
@@ -393,8 +407,16 @@ export interface ProcessGroup {
     hasLoggedWork: boolean;
 }
 
-/** PO PROCESU (stanice): katalog redoslijed; procesi van kataloga na kraj. */
+/**
+ * PO PROCESU (stanice): katalog redoslijed; procesi van kataloga na kraj.
+ * Unutar procesa nalozi idu ISTIM rangom kao u leći „po nalozima" (redoslijed pojave u
+ * `cells`) — a ne po fazi, koja se za isti proces razlikuje od naloga do naloga.
+ */
 export function groupByProcess(cells: ProcessCell[]): ProcessGroup[] {
+    const orderIndex = new Map<string, number>();
+    for (const c of cells) if (!orderIndex.has(c.workOrderId)) orderIndex.set(c.workOrderId, orderIndex.size);
+    const rankOf = (t: ProcessTask) => orderIndex.get(t.workOrderId) ?? Number.MAX_SAFE_INTEGER;
+
     const byKey = new Map<string, ProcessTask[]>();
     for (const t of buildProcessTasks(cells)) {
         const key = norm(t.processName);
@@ -403,6 +425,7 @@ export function groupByProcess(cells: ProcessCell[]): ProcessGroup[] {
     }
     const groups: ProcessGroup[] = [];
     byKey.forEach((list, key) => {
+        list.sort((a, b) => rankOf(a) - rankOf(b));
         groups.push({
             key, name: list[0].processName, catalogOrder: list[0].catalogOrder,
             tasks: list,

@@ -233,18 +233,19 @@ export default function ProcessGraphModal({
         setNodes(ns => ns.map(n => pos[n.id] ? { ...n, position: pos[n.id] } : n));
     }, [nodes, edges, setNodes]);
 
-    // Procesi koji postoje na stavkama, a NEMA ih više u grafu → spremanje će ih ukloniti
-    // iz naloga (graf je autoritet). Odvojeno se broje završeni, jer se s njima gubi i evidencija.
+    // Procesi koji postoje na stavkama, a NEMA ih više NIGDJE u grafu → spremanje će ih
+    // ukloniti iz naloga (graf je autoritet). Poklapanje po nazivu kroz cijeli graf — isto
+    // pravilo kao reconcileItemsToGraph; itemIds se namjerno ne gledaju (vidi tamo).
+    // Završeni se broje odvojeno, jer se s njima gubi i evidencija ko/kad je završio.
     const pendingRemovals = useMemo(() => {
-        const covered = (name: string, itemId: string) => nodes.some(n => {
+        const inGraph = (name: string) => nodes.some(n => {
             const d = n.data as ProcData;
-            return (!(d.itemIds || []).length || d.itemIds.includes(itemId))
-                && nodeMatchesProcess({ name: d.name, aliases: d.aliases }, name);
+            return nodeMatchesProcess({ name: d.name, aliases: d.aliases }, name);
         });
         const names = new Map<string, boolean>();   // naziv → ima završenih
         for (const it of items) {
             for (const p of it.Processes || []) {
-                if (!p.Process_Name || covered(p.Process_Name, it.ID)) continue;
+                if (!p.Process_Name || inGraph(p.Process_Name)) continue;
                 names.set(p.Process_Name, (names.get(p.Process_Name) || false) || p.Status === 'Završeno');
             }
         }

@@ -4,7 +4,9 @@ import { useState, useMemo, useEffect } from 'react';
 import type { Order, Supplier, Project, ProductMaterial, OrderItem } from '@/lib/types';
 import { createOrder, saveOrder, deleteOrder, updateOrderStatus, markOrderSent, markMaterialsReceived, getOrder, deleteOrderItemsByIds, updateOrderItem, recalculateOrderTotal } from '@/lib/services';
 import { useData } from '@/context/DataContext';
-import { generateOrderPDF, generatePDFFromHTML, type OrderPDFData } from '@/lib/pdfGenerator';
+import { generateOrderPDF, generatePDFFromHTML, generatePDFBlobFromHTML, type OrderPDFData } from '@/lib/pdfGenerator';
+import { useGoogleIntegration } from '@/lib/google/useGoogleIntegration';
+import { fileToSubfolder } from '@/lib/google/projectDrive';
 import { DropdownMenu } from '@/components/ui/DropdownMenu';
 import Modal from '@/components/ui/Modal';
 import { OrderWizardModal } from './OrderWizardModal';
@@ -32,6 +34,7 @@ type SortBy = 'date-desc' | 'date-asc' | 'amount-desc' | 'amount-asc' | 'supplie
 
 export default function OrdersTab({ orders, suppliers, projects, productMaterials, onRefresh, onPatchOrder, showToast, pendingOrderMaterials, onClearPendingOrder }: OrdersTabProps) {
     const { organizationId } = useData();
+    const gi = useGoogleIntegration();
     const isMobile = useIsMobile();
     const [searchTerm, setSearchTerm] = useState('');
     const [statusFilter, setStatusFilter] = useState('');
@@ -1321,44 +1324,48 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
     }
 
     // Download order as PDF
+    // Sastavi HTML narudžbe (dijeli download i „spremi na Drive").
+    function buildOrderHtml(order: Order): string {
+        const supplier = suppliers.find(s => s.Supplier_ID === order.Supplier_ID);
+
+        // Re-use logic for grouped items to ensure consistency
+        const regularItems: OrderItem[] = [];
+        const glassItems: { item: OrderItem; pieces: any[] }[] = [];
+        const aluDoorItems: { item: OrderItem; doors: any[] }[] = [];
+
+        (order.items || []).sort((a, b) => (a.Material_Name || '').localeCompare(b.Material_Name || '', 'hr')).forEach(item => {
+            let foundGlass = false;
+            let foundAluDoor = false;
+
+            for (const project of projects) {
+                for (const product of (project.products || [])) {
+                    const pm = product.materials?.find(m => m.ID === item.Product_Material_ID);
+                    if (pm?.glassItems && pm.glassItems.length > 0) {
+                        glassItems.push({ item, pieces: pm.glassItems });
+                        foundGlass = true;
+                        break;
+                    }
+                    if (pm?.aluDoorItems && pm.aluDoorItems.length > 0) {
+                        aluDoorItems.push({ item, doors: pm.aluDoorItems });
+                        foundAluDoor = true;
+                        break;
+                    }
+                }
+                if (foundGlass || foundAluDoor) break;
+            }
+
+            if (!foundGlass && !foundAluDoor) {
+                regularItems.push(item);
+            }
+        });
+
+        // Re-use the EXACT same HTML generator as print
+        return generateOrderHtml(order, supplier, regularItems, glassItems, aluDoorItems);
+    }
+
     async function downloadOrderPDF(order: Order) {
         try {
-            const supplier = suppliers.find(s => s.Supplier_ID === order.Supplier_ID);
-
-            // Re-use logic for grouped items to ensure consistency
-            const regularItems: OrderItem[] = [];
-            const glassItems: { item: OrderItem; pieces: any[] }[] = [];
-            const aluDoorItems: { item: OrderItem; doors: any[] }[] = [];
-
-            (order.items || []).sort((a, b) => (a.Material_Name || '').localeCompare(b.Material_Name || '', 'hr')).forEach(item => {
-                let foundGlass = false;
-                let foundAluDoor = false;
-
-                for (const project of projects) {
-                    for (const product of (project.products || [])) {
-                        const pm = product.materials?.find(m => m.ID === item.Product_Material_ID);
-                        if (pm?.glassItems && pm.glassItems.length > 0) {
-                            glassItems.push({ item, pieces: pm.glassItems });
-                            foundGlass = true;
-                            break;
-                        }
-                        if (pm?.aluDoorItems && pm.aluDoorItems.length > 0) {
-                            aluDoorItems.push({ item, doors: pm.aluDoorItems });
-                            foundAluDoor = true;
-                            break;
-                        }
-                    }
-                    if (foundGlass || foundAluDoor) break;
-                }
-
-                if (!foundGlass && !foundAluDoor) {
-                    regularItems.push(item);
-                }
-            });
-
-            // Re-use the EXACT same HTML generator as print
-            const html = generateOrderHtml(order, supplier, regularItems, glassItems, aluDoorItems);
-
+            const html = buildOrderHtml(order);
             await generatePDFFromHTML(html, `Narudzba_${order.Order_Number}`, {
                 width: 794 // A4 width at 96 DPI
             });
@@ -1366,6 +1373,37 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
         } catch (error) {
             console.error('Error generating PDF:', error);
             showToast('Greška pri generiranju PDF-a', 'error');
+        }
+    }
+
+    // GOOGLE DRIVE — spremi PDF narudžbe u podfolder „Narudžbe" svakog vezanog projekta.
+    async function handleFileOrderToDrive(order: Order) {
+        if (!organizationId) return;
+        const projectIds = Array.from(new Set((order.items || []).map(i => i.Project_ID).filter(Boolean)));
+        const targets = projectIds
+            .map(pid => projects.find(p => p.Project_ID === pid))
+            .filter((p): p is Project => !!p && !!p.Drive_Subfolders?.['Narudžbe']);
+        if (targets.length === 0) {
+            showToast('Nijedan projekat iz narudžbe nema Drive folder. Kreiraj folder projekta prvo.', 'error');
+            return;
+        }
+        try {
+            showToast('Šaljem narudžbu na Drive...', 'info');
+            const html = buildOrderHtml(order);
+            const blob = await generatePDFBlobFromHTML(html, { width: 794 });
+            let firstFiled: { id: string; webViewLink?: string } | null = null;
+            for (const project of targets) {
+                const subId = project.Drive_Subfolders!['Narudžbe'];
+                const filed = await fileToSubfolder(subId, blob, `Narudzba_${order.Order_Number}.pdf`);
+                if (!firstFiled) firstFiled = filed;
+            }
+            if (firstFiled) {
+                await saveOrder({ Order_ID: order.Order_ID, Drive_File_ID: firstFiled.id, Drive_File_URL: firstFiled.webViewLink }, organizationId);
+            }
+            showToast(targets.length > 1 ? `Narudžba spremljena u ${targets.length} projekta` : 'Narudžba spremljena na Drive', 'success');
+            onRefresh('orders');
+        } catch (e: any) {
+            showToast('Greška pri slanju na Drive: ' + (e?.message || ''), 'error');
         }
     }
 
@@ -1720,6 +1758,13 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
                                                                 <span className="material-icons-round" style={{ fontSize: 18 }}>picture_as_pdf</span>
                                                                 Preuzmi PDF
                                                             </div>
+
+                                                            {gi.moduleActive && (
+                                                                <div className="dropdown-item" onClick={() => handleFileOrderToDrive(order)}>
+                                                                    <span className="material-icons-round" style={{ fontSize: 18 }}>{order.Drive_File_ID ? 'cloud_done' : 'cloud_upload'}</span>
+                                                                    {order.Drive_File_ID ? 'Ponovo na Drive' : 'Spremi na Drive'}
+                                                                </div>
+                                                            )}
 
                                                             <div className="dropdown-item" onClick={() => {
                                                                 setExpandedOrderId(order.Order_ID);

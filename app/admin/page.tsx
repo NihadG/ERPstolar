@@ -35,10 +35,10 @@ const PLANS: { value: Organization['Subscription_Plan']; label: string; color: s
 ];
 
 const DEFAULT_MODULES: Record<Organization['Subscription_Plan'], ModuleAccess> = {
-    free: { offers: false, orders: false, reports: false, api_access: false },
-    basic: { offers: true, orders: false, reports: false, api_access: false },
-    professional: { offers: true, orders: true, reports: true, api_access: false },
-    enterprise: { offers: true, orders: true, reports: true, api_access: true },
+    free: { offers: false, orders: false, reports: false, api_access: false, google_integration: false },
+    basic: { offers: true, orders: false, reports: false, api_access: false, google_integration: false },
+    professional: { offers: true, orders: true, reports: true, api_access: false, google_integration: true },
+    enterprise: { offers: true, orders: true, reports: true, api_access: true, google_integration: true },
 };
 
 // ============================================
@@ -268,6 +268,7 @@ export default function AdminPage() {
                                         {org.Modules.orders && <span className="module-badge">Narudžbe</span>}
                                         {org.Modules.reports && <span className="module-badge">Izvještaji</span>}
                                         {org.Modules.api_access && <span className="module-badge api">API</span>}
+                                        {org.Modules.google_integration && <span className="module-badge">Google</span>}
                                     </div>
                                 </td>
                                 <td>

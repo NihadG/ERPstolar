@@ -1,7 +1,7 @@
 'use client';
 
 import React, { createContext, useContext, useState, useCallback, useEffect, ReactNode, useRef } from 'react';
-import type { AppState, Project, Material, Offer, Order, Supplier, Worker, WorkOrder, Task } from '@/lib/types';
+import type { AppState, Project, Material, Offer, Order, Supplier, Worker, WorkOrder, Task, GoogleIntegrationSettings } from '@/lib/types';
 import {
     getProjects,
     getMaterialsCatalog,
@@ -72,6 +72,7 @@ interface DataContextType {
     organizationId: string | null;
     companyInfo: CompanyInfo;
     appSettings: OrgAppSettings;
+    googleIntegration: GoogleIntegrationSettings | null;
 
     // Actions
     loadTabData: (tabName: string) => Promise<void>;
@@ -160,6 +161,7 @@ export function DataProvider({ children }: DataProviderProps) {
     const [loadedCollections, setLoadedCollections] = useState<Set<CollectionName>>(new Set());
     const [companyInfo, setCompanyInfo] = useState<CompanyInfo>(DEFAULT_COMPANY);
     const [appSettings, setAppSettings] = useState<OrgAppSettings>(DEFAULT_APP_SETTINGS);
+    const [googleIntegration, setGoogleIntegration] = useState<GoogleIntegrationSettings | null>(null);
 
     // Track which tabs have been "visited" for UI purposes
     const loadedTabs = useRef<Set<string>>(new Set());
@@ -306,6 +308,7 @@ export function DataProvider({ children }: DataProviderProps) {
                 setAppSettings(merged);
                 localStorage.setItem(`appSettings_${organizationId}`, JSON.stringify(merged));
             }
+            setGoogleIntegration(data?.googleIntegration || null);
         } catch (e) {
             console.warn('Failed to load org settings from Firestore, using localStorage fallback', e);
             // Fallback to localStorage
@@ -332,6 +335,7 @@ export function DataProvider({ children }: DataProviderProps) {
         organizationId,
         companyInfo,
         appSettings,
+        googleIntegration,
         loadTabData,
         loadAllData,
         refreshData,

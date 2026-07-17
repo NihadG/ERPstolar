@@ -1,6 +1,6 @@
 import {
     buildProcessCells, buildProcessTasks, groupByOrder, groupByProcess,
-    isOrderPaused, sortOrdersForBoard, isPlaceholderOnlyItem,
+    isOrderPaused, sortOrdersForBoard, isPlaceholderProcess, orderBoardRank,
     type ProcessBoardOrderInput,
 } from '../processBoard';
 import type { WorkOrderItem } from '../types';
@@ -287,25 +287,19 @@ describe('sortOrdersForBoard — u toku → pauzirani → na čekanju', () => {
 // ════════════════════════════════════════════════════════════════════
 const catalogKeys = new Set(catalog.map(c => c.Name.trim().toLowerCase()));
 
-describe('isPlaceholderOnlyItem — usko pravilo, da ne pojede stvaran rad', () => {
-    test('jedini proces „Rad" i nije u katalogu → placeholder', () => {
-        expect(isPlaceholderOnlyItem({ Processes: [{ Process_Name: 'Rad' }] }, catalogKeys)).toBe(true);
+describe('isPlaceholderProcess — „Rad" van kataloga nije proces', () => {
+    test('„Rad" van kataloga → placeholder', () => {
+        expect(isPlaceholderProcess('Rad', catalogKeys)).toBe(true);
     });
     test('case/razmaci ne varaju', () => {
-        expect(isPlaceholderOnlyItem({ Processes: [{ Process_Name: '  rAd ' }] }, catalogKeys)).toBe(true);
+        expect(isPlaceholderProcess('  rAd ', catalogKeys)).toBe(true);
     });
-    test('„Rad" uz stvarne procese NIJE placeholder (neko ga je namjerno dodao)', () => {
-        expect(isPlaceholderOnlyItem({ Processes: [{ Process_Name: 'Rad' }, { Process_Name: 'Kantiranje' }] }, catalogKeys)).toBe(false);
+    test('„Rad" IZ KATALOGA je legitiman proces (escape hatch)', () => {
+        expect(isPlaceholderProcess('Rad', new Set([...Array.from(catalogKeys), 'rad']))).toBe(false);
     });
-    test('„Rad" IZ KATALOGA je legitiman proces → nije placeholder', () => {
-        expect(isPlaceholderOnlyItem({ Processes: [{ Process_Name: 'Rad' }] }, new Set([...Array.from(catalogKeys), 'rad']))).toBe(false);
-    });
-    test('jedini proces koji nije „Rad" → nije placeholder', () => {
-        expect(isPlaceholderOnlyItem({ Processes: [{ Process_Name: 'Kantiranje' }] }, catalogKeys)).toBe(false);
-    });
-    test('stavka bez procesa → nije placeholder (nema šta ignorisati)', () => {
-        expect(isPlaceholderOnlyItem({ Processes: [] }, catalogKeys)).toBe(false);
-        expect(isPlaceholderOnlyItem({}, catalogKeys)).toBe(false);
+    test('stvaran proces nije placeholder', () => {
+        expect(isPlaceholderProcess('Kantiranje', catalogKeys)).toBe(false);
+        expect(isPlaceholderProcess('Radijalna pila', catalogKeys)).toBe(false);   // ne hvata po prefiksu
     });
 });
 
@@ -323,7 +317,33 @@ describe('buildProcessCells — nalog s generičkim „Rad" ne daje ćelije', ()
         expect(cells.some(c => c.processName === 'Rad')).toBe(true);
     });
 
-    test('mješovit nalog: placeholder stavka ispada, stavka s planom ostaje', () => {
+    // REGRESIJA: stavka nosi legacy „Rad" u item.Processes, a PRAVE procese nosi graf naloga.
+    // Raniji filter je izbacivao cijelu STAVKU → nalog s punim grafom je prikazan kao
+    // „bez definisanih procesa", dok su ga kartica i graf (čitaju graf direktno) prikazivali.
+    test('legacy „Rad" na stavci NE smije sakriti prave procese iz grafa', () => {
+        const graphOrder: ProcessBoardOrderInput = {
+            orderLabel: 'Umivaonici Muvekita',
+            workOrder: {
+                Work_Order_ID: 'WOU', Work_Order_Type: 'Proizvodnja', Status: 'U toku',
+                Process_Graph: {
+                    nodes: [
+                        { id: 'n1', name: 'Krojenje Iverala', itemIds: ['U1'] },
+                        { id: 'n2', name: 'Kantiranje', itemIds: ['U1'] },
+                        { id: 'n3', name: 'Rad', itemIds: ['U1'] },        // zaostali placeholder u grafu
+                    ],
+                    edges: [{ id: 'e1', source: 'n1', target: 'n2' }],
+                },
+            },
+            // item.Processes je JOŠ UVIJEK samo legacy „Rad" (ništa nije čekirano)
+            items: [item({ ID: 'U1', Product_Name: 'Poz 1', Work_Order_ID: 'WOU', Processes: [{ Process_Name: 'Rad', Status: 'Na čekanju' }] } as any)],
+        };
+        const cells = buildProcessCells([graphOrder], catalog, []);
+        expect(cells.map(c => c.processName)).toEqual(['Krojenje Iverala', 'Kantiranje']);
+        expect(cells.some(c => c.processName === 'Rad')).toBe(false);
+        expect(cells.every(c => c.itemName === 'Poz 1')).toBe(true);
+    });
+
+    test('mješovit nalog: stavka bez plana ne daje red, stavka s planom daje', () => {
         const mixed: ProcessBoardOrderInput = {
             orderLabel: 'Nalog M',
             workOrder: { Work_Order_ID: 'WOM', Work_Order_Type: 'Proizvodnja', Status: 'U toku' },
@@ -350,5 +370,106 @@ describe('buildProcessCells — nalog s generičkim „Rad" ne daje ćelije', ()
             items: [item({ ID: 'R1', Product_Name: 'Sto', Work_Order_ID: 'WOR', Processes: [{ Process_Name: 'Rad', Status: 'Na čekanju' }] } as any)],
         };
         expect(buildProcessCells([savedRad], catalog, [])).toEqual([]);
+    });
+});
+
+describe('orderBoardRank — doslovan redoslijed koji je korisnik tražio', () => {
+    const o = (id: string, opts: { status?: string; paused?: boolean } = {}) => ({
+        workOrder: { Work_Order_ID: id, Status: opts.status || 'U toku' },
+        items: [{ Status: 'U toku', Is_Paused: !!opts.paused }],
+    });
+    const today = new Set(['danas']);
+
+    test('0 = u toku s danas proknjiženim radnicima', () => {
+        expect(orderBoardRank(o('danas'), today)).toBe(0);
+    });
+    test('1 = u toku bez današnjih dnevnica', () => {
+        expect(orderBoardRank(o('bez'), today)).toBe(1);
+    });
+    test('2 = pauziran (pauza je jača od „danas")', () => {
+        expect(orderBoardRank(o('danas', { paused: true }), today)).toBe(2);
+    });
+    test('3 = ostali (na čekanju)', () => {
+        expect(orderBoardRank(o('danas', { status: 'Na čekanju' }), today)).toBe(3);
+    });
+    test('sve četiri grupe se slažu tim redom', () => {
+        const out = sortOrdersForBoard(
+            [o('cekanje', { status: 'Na čekanju' }), o('pauza', { paused: true }), o('bez'), o('danas')],
+            today,
+        );
+        expect(out.map(x => x.workOrder.Work_Order_ID)).toEqual(['danas', 'bez', 'pauza', 'cekanje']);
+    });
+});
+
+// ════════════════════════════════════════════════════════════════════
+// REGRESIJA: redoslijed KARTICA mora poštovati rang naloga, a ne to koji nalog
+// slučajno ima proces s najmanjom fazom. (Pauzirani su se penjali iznad „danas".)
+// ════════════════════════════════════════════════════════════════════
+describe('groupByOrder — čuva redoslijed naloga koji je zadao pozivalac', () => {
+    // Pauziran nalog ima proces RANO u katalogu (Krojenje, Order 6);
+    // nalog „danas" ima proces KASNO (Farbanje, Order 16) → globalni sort po toku bi
+    // pauzirani gurnuo na vrh. Rang naloga mora pobijediti.
+    const pauziran: ProcessBoardOrderInput = {
+        orderLabel: 'Uzeir Komoda',
+        workOrder: { Work_Order_ID: 'PAUZA', Work_Order_Type: 'Proizvodnja', Status: 'U toku', Created_Date: '2026-07-10T08:00:00.000Z' },
+        items: [item({
+            ID: 'P1', Product_Name: 'Poz 2', Work_Order_ID: 'PAUZA', Is_Paused: true,
+            Process_Stages: [{ processes: ['Krojenje Iverala'] }],
+            Processes: [{ Process_Name: 'Krojenje Iverala', Status: 'Na čekanju' }],
+        } as any)],
+    };
+    const danas: ProcessBoardOrderInput = {
+        orderLabel: 'Umivaonici Muvekita',
+        workOrder: { Work_Order_ID: 'DANAS', Work_Order_Type: 'Proizvodnja', Status: 'U toku', Created_Date: '2026-07-01T08:00:00.000Z' },
+        items: [item({
+            ID: 'D1', Product_Name: 'Poz 1', Work_Order_ID: 'DANAS', Is_Paused: false,
+            Process_Stages: [{ processes: ['Farbanje i lakiranje'] }],
+            Processes: [{ Process_Name: 'Farbanje i lakiranje', Status: 'Na čekanju' }],
+        } as any)],
+    };
+
+    test('cijeli lanac: „danas" ide iznad pauziranog, iako mu proces dolazi kasnije u toku', () => {
+        const sorted = sortOrdersForBoard([pauziran, danas], new Set(['DANAS']));
+        const groups = groupByOrder(buildProcessCells(sorted, catalog, []));
+        expect(groups.map(g => g.orderLabel)).toEqual(['Umivaonici Muvekita', 'Uzeir Komoda']);
+    });
+
+    test('groupByOrder ne presortira naloge sam od sebe (poštuje ulaz)', () => {
+        // Namjerno „pogrešan" ulaz: pauzirani prvi → groupByOrder ga mora ostaviti prvog.
+        const groups = groupByOrder(buildProcessCells([pauziran, danas], catalog, []));
+        expect(groups.map(g => g.orderLabel)).toEqual(['Uzeir Komoda', 'Umivaonici Muvekita']);
+    });
+
+    test('zadaci UNUTAR naloga ostaju u redoslijedu toka', () => {
+        const groups = groupByOrder(buildProcessCells([orderA], catalog, []));
+        expect(groups[0].tasks.map(t => t.processName)).toEqual(['Krojenje Iverala', 'Kantiranje', 'Farbanje i lakiranje']);
+    });
+});
+
+describe('groupByProcess — nalozi unutar procesa idu rangom naloga, ne fazom', () => {
+    // Isti proces „Kantiranje", ali u nalogu X je faza 1, u nalogu Y faza 0.
+    // Sort po fazi bi Y gurnuo iznad X; mora pobijediti redoslijed naloga (ulaz).
+    const mk = (id: string, label: string, stages: string[][]): ProcessBoardOrderInput => ({
+        orderLabel: label,
+        workOrder: { Work_Order_ID: id, Work_Order_Type: 'Proizvodnja', Status: 'U toku' },
+        items: [item({
+            ID: `${id}-1`, Product_Name: 'Poz', Work_Order_ID: id,
+            Process_Stages: stages.map(s => ({ processes: s })),
+            Processes: stages.flat().map(p => ({ Process_Name: p, Status: 'Na čekanju' })),
+        } as any)],
+    });
+    const x = mk('X', 'Nalog X', [['Krojenje Iverala'], ['Kantiranje']]);   // Kantiranje = faza 1
+    const y = mk('Y', 'Nalog Y', [['Kantiranje']]);                          // Kantiranje = faza 0
+
+    test('redoslijed unutar „Kantiranje" prati ulazni redoslijed naloga', () => {
+        const g = groupByProcess(buildProcessCells([x, y], catalog, []));
+        const kant = g.find(gr => gr.name === 'Kantiranje')!;
+        expect(kant.tasks.map(t => t.orderLabel)).toEqual(['Nalog X', 'Nalog Y']);
+    });
+
+    test('obrnut ulaz → obrnut redoslijed (poštuje pozivaoca, ne fazu)', () => {
+        const g = groupByProcess(buildProcessCells([y, x], catalog, []));
+        const kant = g.find(gr => gr.name === 'Kantiranje')!;
+        expect(kant.tasks.map(t => t.orderLabel)).toEqual(['Nalog Y', 'Nalog X']);
     });
 });

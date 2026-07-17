@@ -11,19 +11,7 @@ import type { AppState, Project, Product, Material, Offer, Order, Supplier, Work
 import { PROJECT_STATUSES, PRODUCT_STATUSES, MATERIAL_CATEGORIES } from '@/lib/types';
 
 // Components
-import ProjectsTab from '@/components/tabs/ProjectsTab';
-
-import OffersTab from '@/components/tabs/OffersTab';
-import OrdersTab from '@/components/tabs/OrdersTab';
-import ProductionTab from '@/components/tabs/ProductionTab';
-import MaterialsTab from '@/components/tabs/MaterialsTab';
-import WorkersTab from '@/components/tabs/WorkersTab';
-import SuppliersTab from '@/components/tabs/SuppliersTab';
-import AttendanceTab from '@/components/tabs/AttendanceTab';
-import TasksTab from '@/components/tabs/TasksTab';
-import MobileTasksTab from '@/components/tabs/MobileTasksTab';
-import PlannerTab from '@/components/tabs/PlannerTab';
-import ProcessesTab from '@/components/tabs/ProcessesTab';
+import nextDynamic from 'next/dynamic';
 import Toast from '@/components/ui/Toast';
 import LoadingOverlay from '@/components/ui/LoadingOverlay';
 import ModuleGuard from '@/components/auth/ModuleGuard';
@@ -32,6 +20,27 @@ import CommandPalette, { type CommandPaletteItem } from '@/components/ui/Command
 import CSVImportWizard from '@/components/CSVImportWizard';
 
 export const dynamic = 'force-dynamic';
+
+// ── Lijeno učitavanje tabova (next/dynamic) ───────────────────────────
+// Svaki tab ide u svoj chunk i učitava se TEK kad postane aktivan. Ranije su
+// svi tabovi bili eager → dev bundle app/page.js je bio ~26MB (i minutima se
+// kompajlirao). Ovim se početni bundle drastično smanji. Alias `nextDynamic`
+// jer je `dynamic` već zauzet route-config exportom iznad.
+const TabLoading = () => (
+    <div style={{ padding: '60px', textAlign: 'center', color: 'var(--text-secondary)' }}>Učitavanje…</div>
+);
+const ProjectsTab = nextDynamic(() => import('@/components/tabs/ProjectsTab'), { loading: TabLoading });
+const OffersTab = nextDynamic(() => import('@/components/tabs/OffersTab'), { loading: TabLoading });
+const OrdersTab = nextDynamic(() => import('@/components/tabs/OrdersTab'), { loading: TabLoading });
+const ProductionTab = nextDynamic(() => import('@/components/tabs/ProductionTab'), { loading: TabLoading });
+const MaterialsTab = nextDynamic(() => import('@/components/tabs/MaterialsTab'), { loading: TabLoading });
+const WorkersTab = nextDynamic(() => import('@/components/tabs/WorkersTab'), { loading: TabLoading });
+const SuppliersTab = nextDynamic(() => import('@/components/tabs/SuppliersTab'), { loading: TabLoading });
+const AttendanceTab = nextDynamic(() => import('@/components/tabs/AttendanceTab'), { loading: TabLoading });
+const TasksTab = nextDynamic(() => import('@/components/tabs/TasksTab'), { loading: TabLoading });
+const MobileTasksTab = nextDynamic(() => import('@/components/tabs/MobileTasksTab'), { loading: TabLoading });
+const PlannerTab = nextDynamic(() => import('@/components/tabs/PlannerTab'), { loading: TabLoading });
+const ProcessesTab = nextDynamic(() => import('@/components/tabs/ProcessesTab'), { loading: TabLoading });
 
 export default function Home() {
     const router = useRouter();

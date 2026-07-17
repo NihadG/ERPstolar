@@ -22,7 +22,7 @@ import {
 } from '../shared/firestoreClient';
 import { eventBus } from '../eventBus';
 import { v4 as uuidv4 } from 'uuid';
-import type { Product, ProductMaterial } from '../../types';
+import type { Product, ProductMaterial, ProductNote } from '../../types';
 
 // ============================================
 // HELPERS
@@ -241,6 +241,31 @@ export async function updateProductStatus(
     } catch (error) {
         console.error('updateProductStatus error:', error);
         return { success: false, message: 'Greška pri ažuriranju statusa' };
+    }
+}
+
+/**
+ * Upiši SAMO listu pitanja/napomena proizvoda (Product.Questions) — ne dira
+ * ostatak dokumenta. Pozivalac drži cijeli niz (čista logika iz lib/productNotes.ts)
+ * i predaje ga cijelog; ovdje se samo perzistira, pa se dva istovremena uređivanja
+ * ne mogu djelimično pregaziti kao kod polja-po-polje.
+ */
+export async function updateProductNotes(
+    productId: string,
+    notes: ProductNote[],
+    organizationId: string,
+): Promise<{ success: boolean; message: string }> {
+    if (!organizationId) {
+        return { success: false, message: 'Organization ID is required' };
+    }
+    try {
+        const ref = await findRef(COLLECTIONS.PRODUCTS, 'Product_ID', productId, organizationId);
+        if (!ref) return { success: false, message: 'Proizvod nije pronađen' };
+        await updateDocByRef(ref, { Questions: notes });
+        return { success: true, message: 'Napomene ažurirane' };
+    } catch (error) {
+        console.error('updateProductNotes error:', error);
+        return { success: false, message: 'Greška pri spremanju napomena' };
     }
 }
 

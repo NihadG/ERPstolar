@@ -53,6 +53,8 @@ import {
     UserPlus
 } from 'lucide-react';
 import { useData } from '@/context/DataContext';
+import { useGoogleIntegration } from '@/lib/google/useGoogleIntegration';
+import { upsertTaskEvent, deleteTaskEvent } from '@/lib/google/calendarClient';
 import VoiceInput, { ExtractedTaskData } from '@/components/VoiceInput';
 
 // ============================================
@@ -114,6 +116,7 @@ const categoryIcons: Record<TaskCategory, React.ReactNode> = {
 
 export default function TasksTab({ tasks, projects, workers, materials, workOrders = [], orders = [], taskProfiles = [], onRefresh, showToast, projectFilter, onClearFilter }: TasksTabProps) {
     const { organizationId } = useData();
+    const gi = useGoogleIntegration();
 
     // Profile state
     const [selectedProfileId, setSelectedProfileId] = useState<string>('__all__');
@@ -529,10 +532,41 @@ export default function TasksTab({ tasks, projects, workers, materials, workOrde
             showToast(result.message, 'success');
             onRefresh('tasks');
             setIsModalOpen(false);
+
+            // GOOGLE CALENDAR — sync zadatka s rokom (kreira/ažurira/briše događaj)
+            const existing = taskData.Task_ID ? localTasks.find(t => t.Task_ID === taskData.Task_ID) : undefined;
+            const fullTask = {
+                Status: 'pending', Priority: 'medium', Category: 'general',
+                ...existing,
+                ...taskData,
+                Task_ID: result.data?.Task_ID || taskData.Task_ID!,
+                Calendar_Event_ID: taskData.Calendar_Event_ID ?? existing?.Calendar_Event_ID,
+            } as Task;
+            await syncTaskCalendarAfterSave(fullTask);
         } else {
             showToast(result.message, 'error');
         }
     };
+
+    // GOOGLE CALENDAR — kreiraj/ažuriraj/obriši događaj za zadatak nakon spremanja.
+    async function syncTaskCalendarAfterSave(task: Task) {
+        if (!gi.calendarReady) return;
+        try {
+            if (task.Due_Date && gi.autoCalendarTasks) {
+                const eventId = await upsertTaskEvent(task, gi.calendarId);
+                if (eventId && eventId !== task.Calendar_Event_ID) {
+                    await saveTask({ Task_ID: task.Task_ID, Calendar_Event_ID: eventId }, organizationId!);
+                    onRefresh('tasks');
+                }
+            } else if (!task.Due_Date && task.Calendar_Event_ID) {
+                await deleteTaskEvent(task.Calendar_Event_ID, gi.calendarId);
+                await saveTask({ Task_ID: task.Task_ID, Calendar_Event_ID: '' }, organizationId!);
+                onRefresh('tasks');
+            }
+        } catch (e: any) {
+            showToast('Google Kalendar: ' + (e?.message || 'greška'), 'error');
+        }
+    }
 
     // Profile management handlers
     const handleCreateProfile = async () => {
@@ -565,10 +599,15 @@ export default function TasksTab({ tasks, projects, workers, materials, workOrde
 
     const handleDeleteTask = async (taskId: string) => {
         if (!confirm('Da li ste sigurni da želite obrisati ovaj zadatak?')) return;
+        const taskToDelete = localTasks.find(t => t.Task_ID === taskId);
         const result = await deleteTask(taskId, organizationId!);
         if (result.success) {
             showToast(result.message, 'success');
             onRefresh('tasks');
+            // GOOGLE CALENDAR — obriši povezani događaj
+            if (gi.calendarReady && taskToDelete?.Calendar_Event_ID) {
+                try { await deleteTaskEvent(taskToDelete.Calendar_Event_ID, gi.calendarId); } catch { /* ignore */ }
+            }
         } else {
             showToast(result.message, 'error');
         }
@@ -586,6 +625,11 @@ export default function TasksTab({ tasks, projects, workers, materials, workOrde
         if (result.success) {
             // Success - refresh data in background (silent sync)
             onRefresh('tasks');
+            // GOOGLE CALENDAR — ako zadatak već ima događaj, ažuriraj ga (npr. ✓ kad je gotov)
+            const prev = previousTasks.find(t => t.Task_ID === taskId);
+            if (gi.calendarReady && prev?.Calendar_Event_ID) {
+                try { await upsertTaskEvent({ ...prev, Status: status }, gi.calendarId); } catch { /* ignore */ }
+            }
         } else {
             // Revert on failure
             setLocalTasks(previousTasks);

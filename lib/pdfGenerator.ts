@@ -14,15 +14,17 @@ import { sortProductsByName } from './sortProducts';
  * @param filename - The filename for the PDF (without .pdf extension)
  * @param options - Optional configuration
  */
-export async function generatePDFFromElement(
-    element: HTMLElement,
-    filename: string,
-    options?: {
-        orientation?: 'portrait' | 'landscape';
-        format?: 'a4' | 'letter';
-        margin?: number;
-    }
-): Promise<void> {
+type PDFElementOptions = {
+    orientation?: 'portrait' | 'landscape';
+    format?: 'a4' | 'letter';
+    margin?: number;
+};
+
+/**
+ * Render an HTML element into a jsPDF document (shared logic).
+ * Returns the jsPDF instance so callers can save() or output('blob').
+ */
+async function buildPDFFromElement(element: HTMLElement, options?: PDFElementOptions): Promise<jsPDF> {
     const { orientation = 'portrait', format = 'a4', margin = 10 } = options || {};
 
     // Create canvas from HTML element
@@ -66,8 +68,29 @@ export async function generatePDFFromElement(
         page++;
     }
 
+    return pdf;
+}
+
+export async function generatePDFFromElement(
+    element: HTMLElement,
+    filename: string,
+    options?: PDFElementOptions
+): Promise<void> {
+    const pdf = await buildPDFFromElement(element, options);
     // Download the PDF
     pdf.save(`${filename}.pdf`);
+}
+
+/**
+ * Isto kao generatePDFFromElement, ali vraća PDF kao Blob (za upload na Google Drive)
+ * umjesto da ga skida u browser.
+ */
+export async function generatePDFBlob(
+    element: HTMLElement,
+    options?: PDFElementOptions
+): Promise<Blob> {
+    const pdf = await buildPDFFromElement(element, options);
+    return pdf.output('blob');
 }
 
 /**
@@ -100,6 +123,36 @@ export async function generatePDFFromHTML(
         await generatePDFFromElement(container, filename, options);
     } finally {
         // Clean up
+        document.body.removeChild(container);
+    }
+}
+
+/**
+ * Kao generatePDFFromHTML, ali vraća PDF kao Blob (za upload na Google Drive).
+ */
+export async function generatePDFBlobFromHTML(
+    htmlContent: string,
+    options?: {
+        orientation?: 'portrait' | 'landscape';
+        format?: 'a4' | 'letter';
+        margin?: number;
+        width?: number;
+    }
+): Promise<Blob> {
+    const { width = 800 } = options || {};
+
+    const container = document.createElement('div');
+    container.style.position = 'absolute';
+    container.style.left = '-9999px';
+    container.style.top = '0';
+    container.style.width = `${width}px`;
+    container.style.background = '#ffffff';
+    container.innerHTML = htmlContent;
+    document.body.appendChild(container);
+
+    try {
+        return await generatePDFBlob(container, options);
+    } finally {
         document.body.removeChild(container);
     }
 }
@@ -148,6 +201,17 @@ export async function generateOfferPDF(data: OfferPDFData): Promise<void> {
         format: 'a4',
         margin: 10,
         width: 794, // A4 width at 96 DPI
+    });
+}
+
+/** Isti PDF ponude, ali kao Blob (za upload na Google Drive). */
+export async function generateOfferPDFBlob(data: OfferPDFData): Promise<Blob> {
+    const html = createOfferHTML(data);
+    return generatePDFBlobFromHTML(html, {
+        orientation: 'portrait',
+        format: 'a4',
+        margin: 10,
+        width: 794,
     });
 }
 
@@ -436,6 +500,17 @@ export interface OrderPDFData {
 export async function generateOrderPDF(data: OrderPDFData): Promise<void> {
     const html = createOrderHTML(data);
     await generatePDFFromHTML(html, `Narudzba_${data.orderNumber}`, {
+        orientation: 'portrait',
+        format: 'a4',
+        margin: 10,
+        width: 794,
+    });
+}
+
+/** Isti PDF narudžbe, ali kao Blob (za upload na Google Drive). */
+export async function generateOrderPDFBlob(data: OrderPDFData): Promise<Blob> {
+    const html = createOrderHTML(data);
+    return generatePDFBlobFromHTML(html, {
         orientation: 'portrait',
         format: 'a4',
         margin: 10,

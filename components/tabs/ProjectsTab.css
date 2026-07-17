@@ -386,6 +386,36 @@
     box-shadow: 0 4px 10px rgba(239, 68, 68, 0.15);
 }
 
+/* Pitanja/napomene — dugme s brojem otvorenih pitanja. Dok ima otvorenih,
+   nosi diskretnu plavu boju da se vidi „ovdje nešto visi" bez galame. */
+#projects-content .notes-icon-btn { position: relative; overflow: visible; }
+#projects-content .notes-icon-btn.has-open {
+    color: #2563eb;
+    background: #eff6ff;
+    border-color: #bfdbfe;
+}
+#projects-content .notes-icon-btn.has-open:hover {
+    color: #1d4ed8;
+    background: #dbeafe;
+    border-color: #93c5fd;
+}
+#projects-content .notes-badge {
+    position: absolute;
+    top: -5px;
+    right: -5px;
+    min-width: 16px;
+    height: 16px;
+    padding: 0 4px;
+    border-radius: 999px;
+    background: #ef4444;
+    color: #fff;
+    font-size: 10px;
+    font-weight: 800;
+    line-height: 16px;
+    text-align: center;
+    box-shadow: 0 0 0 2px #fff;
+}
+
 /* Keep actions always visible inside expanded project */
 #projects-content .project-products .project-actions {
     opacity: 1;

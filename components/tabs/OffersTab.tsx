@@ -4,7 +4,7 @@ import { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import type { Offer, Project, OfferProduct, Product } from '@/lib/types';
 import { createOfferWithProducts, deleteOffer, updateOfferStatus, saveOffer, updateOfferWithProducts, getOffer, reviseOffer, getInvoicesForProject } from '@/lib/services';
 import { useData } from '@/context/DataContext';
-import { generateOfferPDF, type OfferPDFData } from '@/lib/pdfGenerator';
+import { generateOfferPDF, generateOfferPDFBlob, type OfferPDFData } from '@/lib/pdfGenerator';
 import Modal from '@/components/ui/Modal';
 import { OFFER_STATUSES } from '@/lib/types';
 import { sortProductsByName } from '@/lib/sortProducts';
@@ -13,6 +13,8 @@ import { isRowLocked } from '@/lib/offerLocking';
 import InvoiceModal from '@/components/ui/InvoiceModal';
 import { useIsMobile } from '@/hooks/useIsMobile';
 import MobileOffersView from './mobile/MobileOffersView';
+import { useGoogleIntegration } from '@/lib/google/useGoogleIntegration';
+import { fileToSubfolder } from '@/lib/google/projectDrive';
 
 interface Extra {
     name: string;
@@ -57,6 +59,7 @@ interface OffersTabProps {
 
 export default function OffersTab({ offers, projects, onRefresh, showToast, onNavigateToProject, autoEditOfferId, autoScrollProductId, onClearAutoEdit, onCreateWorkOrder }: OffersTabProps) {
     const { organizationId } = useData();
+    const gi = useGoogleIntegration();
     const isMobile = useIsMobile();
     const [searchTerm, setSearchTerm] = useState('');
     const [statusFilter, setStatusFilter] = useState('');
@@ -1738,73 +1741,99 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
     // DOWNLOAD PDF
     // ============================================
 
+    // Sastavi podatke za PDF ponude (dijeli download i „spremi na Drive").
+    function buildOfferPdfData(offer: Offer): OfferPDFData {
+        // Find the project for dimension lookup
+        const pdfProject = projects.find(p => p.Project_ID === offer.Project_ID);
+
+        // Use stored prices from database
+        const productsWithPrices = sortProductsByName(
+            (offer.products || []).filter(p => p.Included !== false).map(p => {
+                const laborWorkers = (p as any).Labor_Workers || 0;
+                const laborDays = (p as any).Labor_Days || 0;
+                const laborRate = (p as any).Labor_Daily_Rate || 0;
+                const laborTotal = laborWorkers * laborDays * laborRate;
+
+                // Get dimensions from project product
+                const projProduct = pdfProject?.products?.find((pp: any) => pp.Product_ID === p.Product_ID);
+                const dimensions = projProduct && projProduct.Width && projProduct.Height && projProduct.Depth
+                    ? `${projProduct.Width} × ${projProduct.Height} × ${projProduct.Depth} mm`
+                    : undefined;
+
+                return {
+                    name: p.Product_Name,
+                    quantity: p.Quantity || 1,
+                    dimensions: dimensions,
+                    materialCost: p.Material_Cost || 0,
+                    laborCost: laborTotal,
+                    extras: (p.extras || []).map((e: any) => ({
+                        name: e.name || e.Name,
+                        total: e.total || e.Total || 0
+                    })),
+                    sellingPrice: p.Selling_Price || 0,
+                    totalPrice: p.Total_Price || 0
+                };
+            }),
+            p => p.name
+        );
+
+        const subtotal = offer.Subtotal || productsWithPrices.reduce((sum, p) => sum + p.totalPrice, 0);
+        const transport = offer.Transport_Cost || 0;
+        const discount = offer.Onsite_Assembly ? (offer.Onsite_Discount || 0) : 0;
+        const total = subtotal + transport - discount;
+
+        return {
+            offerNumber: offer.Offer_Number,
+            clientName: offer.Client_Name || 'Nepoznat klijent',
+            clientAddress: (offer as any).Client_Address,
+            clientPhone: offer.Client_Phone,
+            clientEmail: offer.Client_Email,
+            createdDate: offer.Created_Date,
+            validUntil: offer.Valid_Until,
+            products: productsWithPrices,
+            subtotal: subtotal,
+            transportCost: transport,
+            discount: discount,
+            total: total,
+            notes: offer.Notes,
+            companyName: companyInfo.name,
+            companyAddress: companyInfo.address,
+            companyPhone: companyInfo.phone,
+            companyEmail: companyInfo.email,
+            bankAccounts: companyInfo.bankAccounts || []
+        };
+    }
+
     async function handleDownloadPDF(offer: Offer) {
         try {
-            // Find the project for dimension lookup
-            const pdfProject = projects.find(p => p.Project_ID === offer.Project_ID);
-
-            // Use stored prices from database
-            const productsWithPrices = sortProductsByName(
-                (offer.products || []).filter(p => p.Included !== false).map(p => {
-                    const laborWorkers = (p as any).Labor_Workers || 0;
-                    const laborDays = (p as any).Labor_Days || 0;
-                    const laborRate = (p as any).Labor_Daily_Rate || 0;
-                    const laborTotal = laborWorkers * laborDays * laborRate;
-
-                    // Get dimensions from project product
-                    const projProduct = pdfProject?.products?.find((pp: any) => pp.Product_ID === p.Product_ID);
-                    const dimensions = projProduct && projProduct.Width && projProduct.Height && projProduct.Depth
-                        ? `${projProduct.Width} × ${projProduct.Height} × ${projProduct.Depth} mm`
-                        : undefined;
-
-                    return {
-                        name: p.Product_Name,
-                        quantity: p.Quantity || 1,
-                        dimensions: dimensions,
-                        materialCost: p.Material_Cost || 0,
-                        laborCost: laborTotal,
-                        extras: (p.extras || []).map((e: any) => ({
-                            name: e.name || e.Name,
-                            total: e.total || e.Total || 0
-                        })),
-                        sellingPrice: p.Selling_Price || 0,
-                        totalPrice: p.Total_Price || 0
-                    };
-                }),
-                p => p.name
-            );
-
-            const subtotal = offer.Subtotal || productsWithPrices.reduce((sum, p) => sum + p.totalPrice, 0);
-            const transport = offer.Transport_Cost || 0;
-            const discount = offer.Onsite_Assembly ? (offer.Onsite_Discount || 0) : 0;
-            const total = subtotal + transport - discount;
-
-            const pdfData: OfferPDFData = {
-                offerNumber: offer.Offer_Number,
-                clientName: offer.Client_Name || 'Nepoznat klijent',
-                clientAddress: (offer as any).Client_Address,
-                clientPhone: offer.Client_Phone,
-                clientEmail: offer.Client_Email,
-                createdDate: offer.Created_Date,
-                validUntil: offer.Valid_Until,
-                products: productsWithPrices,
-                subtotal: subtotal,
-                transportCost: transport,
-                discount: discount,
-                total: total,
-                notes: offer.Notes,
-                companyName: companyInfo.name,
-                companyAddress: companyInfo.address,
-                companyPhone: companyInfo.phone,
-                companyEmail: companyInfo.email,
-                bankAccounts: companyInfo.bankAccounts || []
-            };
-
+            const pdfData = buildOfferPdfData(offer);
             await generateOfferPDF(pdfData);
             showToast('PDF ponude preuzet', 'success');
         } catch (error) {
             console.error('Error generating PDF:', error);
             showToast('Greška pri generiranju PDF-a', 'error');
+        }
+    }
+
+    // GOOGLE DRIVE — spremi PDF ponude u podfolder „Ponude" projekta.
+    async function handleFileOfferToDrive(offer: Offer) {
+        if (!organizationId) return;
+        const project = projects.find(p => p.Project_ID === offer.Project_ID);
+        const subId = project?.Drive_Subfolders?.['Ponude'];
+        if (!subId) {
+            showToast('Projekat nema Drive folder. Kreiraj folder projekta prvo (kartica projekta → Drive).', 'error');
+            return;
+        }
+        try {
+            showToast('Šaljem ponudu na Drive...', 'info');
+            const pdfData = buildOfferPdfData(offer);
+            const blob = await generateOfferPDFBlob(pdfData);
+            const filed = await fileToSubfolder(subId, blob, `Ponuda_${offer.Offer_Number}.pdf`);
+            await saveOffer({ Offer_ID: offer.Offer_ID, Drive_File_ID: filed.id, Drive_File_URL: filed.webViewLink }, organizationId);
+            showToast('Ponuda spremljena na Drive', 'success');
+            onRefresh('offers');
+        } catch (e: any) {
+            showToast('Greška pri slanju na Drive: ' + (e?.message || ''), 'error');
         }
     }
 
@@ -2025,6 +2054,16 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
                                             >
                                                 <span className="material-icons-round" style={{ fontSize: '20px' }}>print</span>
                                             </button>
+                                            {gi.moduleActive && (
+                                                <button
+                                                    className="action-icon-btn"
+                                                    onClick={(e) => { e.stopPropagation(); handleFileOfferToDrive(offer); }}
+                                                    title={offer.Drive_File_ID ? 'Ponovo spremi ponudu na Drive' : 'Spremi ponudu na Drive'}
+                                                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: offer.Drive_File_ID ? '#1a7f37' : 'var(--text-secondary)', padding: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '4px', transition: 'all 0.2s' }}
+                                                >
+                                                    <span className="material-icons-round" style={{ fontSize: '20px' }}>{offer.Drive_File_ID ? 'cloud_done' : 'cloud_upload'}</span>
+                                                </button>
+                                            )}
                                             <button
                                                 className="action-icon-btn danger"
                                                 onClick={(e) => { e.stopPropagation(); handleDeleteOffer(offer.Offer_ID); }}

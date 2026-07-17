@@ -80,7 +80,7 @@ export {
 export { getProjects, getProject, saveProject, deleteProject, updateProjectStatus } from './project/projectService';
 
 // Product
-export { getProductsByProject, getProduct, saveProduct, deleteProduct, updateProductStatus, recalculateProductCost } from './product/productService';
+export { getProductsByProject, getProduct, saveProduct, deleteProduct, updateProductStatus, recalculateProductCost, updateProductNotes } from './product/productService';
 export { addMaterialToProduct, deleteProductMaterial, updateProductMaterial, addGlassMaterialToProduct, updateGlassMaterial, addAluDoorMaterialToProduct, updateAluDoorMaterial, generateUUID } from '../database';
 
 // Worker

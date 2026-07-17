@@ -117,10 +117,6 @@
 
 .wo-metric-warnicon { color: var(--warning); cursor: help; }
 
-.wo-metric-bar { width: 56px; height: 5px; border-radius: 3px; background: var(--border-light); overflow: hidden; margin-top: 3px; }
-.wo-metric-bar-fill { display: block; height: 100%; border-radius: 3px; background: var(--accent); }
-.wo-metric-bar-fill.full { background: var(--success); }
-
 .wo-hidden-date { position: absolute; bottom: 0; left: 0; width: 0; height: 0; opacity: 0; overflow: hidden; pointer-events: none; }
 
 /* Advisory rok — sitni inline prijedlog (ne baner) */
@@ -173,27 +169,34 @@
 .wo-seg-count.late,
 .wo-seg button.active .wo-seg-count.late { background: var(--error-bg); color: var(--error); }
 
-/* ── TOK (proizvodi + procesi) ────────────────────────────────────── */
+/* ── TOK (procesi + proizvodi) ────────────────────────────────────── */
 .wo-flow { display: flex; flex-direction: column; gap: 10px; }
-.wo-flow-head {
-    display: flex; align-items: center; justify-content: space-between; gap: 10px;
-}
-.wo-flow-title {
-    font-size: 12px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-tertiary);
-}
-.wo-flow-toggle {
-    display: flex; align-items: center; gap: 4px;
-    border: none; background: none; padding: 4px 4px 4px 0; margin: -4px 0 -4px -4px; cursor: pointer;
+
+/* Sklopiva sekcija — JEDNO zaglavlje za „Procesi naloga" i „Proizvodi".
+   Obje su isti rang, pa moraju izgledati isto (ranije: jedno dugme, jedna labela). */
+.wo-sec { display: flex; flex-direction: column; gap: 10px; }
+.wo-sec-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.wo-sec-toggle {
+    display: flex; align-items: center; gap: 6px; min-width: 0;
+    border: none; background: none; cursor: pointer;
+    padding: 5px 8px 5px 4px; margin-left: -4px;
     border-radius: var(--radius-sm);
+    transition: background var(--transition);
 }
-.wo-flow-toggle:hover { background: var(--surface); }
-.wo-flow-toggle:hover .wo-flow-title { color: var(--text-primary); }
-.wo-flow-chevron { font-size: 18px; color: var(--text-tertiary); }
-.wo-flow-count {
+.wo-sec-toggle:hover { background: var(--surface); }
+.wo-sec-title {
+    font-size: 12px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase;
+    color: var(--text-tertiary); transition: color var(--transition);
+}
+.wo-sec-toggle:hover .wo-sec-title { color: var(--text-primary); }
+.wo-sec-chevron { font-size: 18px; color: var(--text-tertiary); flex-shrink: 0; }
+.wo-sec-count {
     font-size: 11px; font-weight: 700; color: var(--text-secondary);
     background: var(--surface); border: 1px solid var(--border-light);
-    padding: 1px 7px; border-radius: 999px;
+    padding: 1px 7px; border-radius: 999px; flex-shrink: 0;
 }
+/* Sklopljena sekcija ne smije sakriti razlog zbog kojeg se otvara. */
+.wo-sec-summary { font-size: 12.5px; font-weight: 700; color: var(--text-secondary); flex-shrink: 0; }
 .wo-graf-btn {
     display: inline-flex; align-items: center; gap: 6px;
     border: 1px solid var(--border); background: var(--background); color: var(--text-primary);
@@ -209,6 +212,7 @@
 .wo-product-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
 .wo-product-summary { cursor: pointer; border-radius: var(--radius-sm); margin: -4px; padding: 4px; }
 .wo-product-summary:hover { background: var(--surface); }
+.wo-product-chevron { font-size: 18px; color: var(--text-tertiary); flex-shrink: 0; }
 .wo-product-name-wrap { display: flex; align-items: center; gap: 8px; min-width: 0; flex-wrap: wrap; }
 .wo-product-name { font-size: 14px; font-weight: 600; color: var(--text-primary); }
 .wo-product-qty { font-size: 12px; font-weight: 600; color: var(--text-tertiary); }

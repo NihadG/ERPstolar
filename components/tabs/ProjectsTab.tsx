@@ -31,6 +31,8 @@ import { projectProfitBreakdown } from '@/lib/projectProfit';
 
 import ProjectMaterialsModal from '@/components/ui/ProjectMaterialsModal';
 import InvoiceModal from '@/components/ui/InvoiceModal';
+import ProjectNotesModal from '@/components/ui/ProjectNotesModal';
+import { summarizeNotes, summarizeProjectNotes } from '@/lib/productNotes';
 import { useData } from '@/context/DataContext';
 import { syncAllProjectData, overrideWorkLogs } from '@/lib/services';
 import { PROJECT_STATUSES, PRODUCTION_STEPS, MATERIAL_CATEGORIES } from '@/lib/types';
@@ -41,6 +43,9 @@ import MobileProjectModal from './mobile/MobileProjectModal';
 import MobileProductModal from './mobile/MobileProductModal';
 import MobileMaterialAddModal from './mobile/MobileMaterialAddModal';
 import SketchUpImportModal from '@/components/SketchUpImportModal';
+import { useGoogleIntegration } from '@/lib/google/useGoogleIntegration';
+import { ensureProjectFolderTree, shouldAutoCreateFolder } from '@/lib/google/projectDrive';
+import { folderLink } from '@/lib/google/driveClient';
 import './ProjectsTab.css';
 
 interface ProjectsTabProps {
@@ -62,6 +67,7 @@ interface ProjectsTabProps {
 
 export default function ProjectsTab({ projects, materials, workOrders = [], offers = [], workLogs = [], onRefresh, showToast, onNavigateToTasks, onCreateWorkOrder, autoExpandProjectId, autoExpandProductId, returnToOfferId, onReturnToOffer, onClearAutoExpand }: ProjectsTabProps) {
     const { organizationId, appState } = useData();
+    const gi = useGoogleIntegration();
     const allWorkers = appState.workers || [];
     const [searchTerm, setSearchTerm] = useState('');
     const [statusFilter, setStatusFilter] = useState('');
@@ -70,6 +76,8 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
     const [expandedStatusGroups, setExpandedStatusGroups] = useState<Set<string>>(new Set(['Nacrt', 'Ponuđeno', 'Odobreno', 'U proizvodnji', 'Završeno', 'Otkazano']));
     const [showMaterialsSummary, setShowMaterialsSummary] = useState<Set<string>>(new Set());
     const [materialsOverviewProject, setMaterialsOverviewProject] = useState<Project | null>(null);
+    // Pitanja i napomene — jedan modal, ulaz s kartice projekta (sva) ili proizvoda (skrol na njega).
+    const [notesModal, setNotesModal] = useState<{ project: Project; productId?: string } | null>(null);
     // Završni račun — otvara se za projekat koji ima prihvaćenu ponudu (vidi InvoiceModal).
     const [invoiceModalProject, setInvoiceModalProject] = useState<Project | null>(null);
     // Generiši planove procesa — batch auto/AI plan za sve proizvode projekta.
@@ -286,13 +294,56 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
             return;
         }
 
+        const isNew = !dataToSave.Project_ID;
         const result = await saveProject(dataToSave, organizationId);
         if (result.success) {
             showToast(result.message, 'success');
             setProjectModal(false);
+
+            // GOOGLE DRIVE — auto-kreiraj folder dosjea SAMO za novi projekat
+            if (isNew && result.data?.Project_ID) {
+                await maybeCreateProjectDriveFolder({ ...dataToSave, Project_ID: result.data.Project_ID } as Project);
+            }
+
             onRefresh('projects');
         } else {
             showToast(result.message, 'error');
+        }
+    }
+
+    // Auto-kreiranje Drive foldera: samo novi projekat, modul aktivan, veza + root + toggle.
+    async function maybeCreateProjectDriveFolder(project: Project) {
+        if (!shouldAutoCreateFolder({
+            isNew: true,
+            moduleActive: gi.moduleActive,
+            connected: gi.connected,
+            autoCreate: gi.autoCreateFolders,
+            existingFolderId: project.Drive_Folder_ID,
+        })) return;
+        if (!gi.rootFolderId) return;
+        await createProjectDriveFolder(project, true);
+    }
+
+    // Ručno/auto kreiranje Drive foldera projekta (dugme na kartici ili auto).
+    async function createProjectDriveFolder(project: Project, silent = false) {
+        if (!organizationId) return;
+        if (!gi.driveReady) {
+            showToast('Poveži Google Drive i odaberi root folder u Postavkama.', 'error');
+            return;
+        }
+        try {
+            if (!silent) showToast('Kreiram Drive folder projekta...', 'info');
+            const tree = await ensureProjectFolderTree(project, gi.rootFolderId);
+            await saveProject({
+                Project_ID: project.Project_ID,
+                Drive_Folder_ID: tree.folderId,
+                Drive_Folder_URL: tree.folderUrl,
+                Drive_Subfolders: tree.subfolders,
+            }, organizationId);
+            showToast('Drive folder projekta kreiran', 'success');
+            onRefresh('projects');
+        } catch (e: any) {
+            showToast('Drive folder nije kreiran: ' + (e?.message || ''), 'error');
         }
     }
 
@@ -949,6 +1000,10 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                     onDeleteProject={handleDeleteProject}
                     onOpenProductModal={openProductModal}
                     onDeleteProduct={handleDeleteProduct}
+                    onOpenNotes={(projectId, productId) => {
+                        const proj = projects.find(p => p.Project_ID === projectId);
+                        if (proj) setNotesModal({ project: proj, productId });
+                    }}
                     onOpenMaterialModal={openMaterialModal}
                     onDeleteMaterial={handleDeleteMaterial}
                     onEditMaterial={openEditMaterialModal}
@@ -1309,6 +1364,22 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                     />
                 )}
 
+                {/* Pitanja i napomene (mobitel) — isti modal kao desktop, responsive */}
+                {notesModal && organizationId && (() => {
+                    const fresh = projects.find(p => p.Project_ID === notesModal.project.Project_ID) || notesModal.project;
+                    return (
+                        <ProjectNotesModal
+                            isOpen={true}
+                            onClose={() => setNotesModal(null)}
+                            projectName={fresh.Name || fresh.Client_Name}
+                            products={fresh.products || []}
+                            organizationId={organizationId}
+                            onRefresh={onRefresh}
+                            showToast={showToast}
+                            initialProductId={notesModal.productId}
+                        />
+                    );
+                })()}
 
             </>
         );
@@ -1547,6 +1618,17 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                                                     {project.Status}
                                                 </span>
                                                 <div className="project-actions" onClick={(e) => e.stopPropagation()}>
+                                                    {(() => {
+                                                        const ns = summarizeProjectNotes(project.products || []);
+                                                        return (
+                                                            <button className={`icon-btn notes-icon-btn${ns.unresolved > 0 ? ' has-open' : ''}`}
+                                                                onClick={() => setNotesModal({ project })}
+                                                                title={ns.total === 0 ? 'Pitanja i napomene' : `Pitanja i napomene — ${ns.unresolved} otvoreno, ${ns.resolved} riješeno`}>
+                                                                <span className="material-icons-round">forum</span>
+                                                                {ns.unresolved > 0 && <span className="notes-badge">{ns.unresolved}</span>}
+                                                            </button>
+                                                        );
+                                                    })()}
                                                     <button className="icon-btn" onClick={() => setMaterialsOverviewProject(project)} title="Pregled materijala">
                                                         <span className="material-icons-round">inventory</span>
                                                     </button>
@@ -1559,6 +1641,17 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                                                         <button className="icon-btn" onClick={() => onNavigateToTasks(project.Project_ID)} title="Zadaci">
                                                             <span className="material-icons-round">task_alt</span>
                                                         </button>
+                                                    )}
+                                                    {gi.moduleActive && (
+                                                        project.Drive_Folder_ID ? (
+                                                            <a className="icon-btn" href={project.Drive_Folder_URL || folderLink(project.Drive_Folder_ID)} target="_blank" rel="noopener noreferrer" title="Otvori u Google Drive">
+                                                                <span className="material-icons-round">folder_open</span>
+                                                            </a>
+                                                        ) : (
+                                                            <button className="icon-btn" onClick={() => createProjectDriveFolder(project)} title="Kreiraj Drive folder">
+                                                                <span className="material-icons-round">create_new_folder</span>
+                                                            </button>
+                                                        )
                                                     )}
                                                     <button className="icon-btn" onClick={() => openProjectModal(project)} title="Uredi projekat">
                                                         <span className="material-icons-round">edit</span>
@@ -1679,6 +1772,17 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                                                                     );
                                                                 })()}
                                                                 <div className="product-actions" onClick={(e) => e.stopPropagation()}>
+                                                                    {(() => {
+                                                                        const ns = summarizeNotes(product.Questions);
+                                                                        return (
+                                                                            <button className={`icon-btn notes-icon-btn${ns.unresolved > 0 ? ' has-open' : ''}`}
+                                                                                onClick={() => setNotesModal({ project, productId: product.Product_ID })}
+                                                                                title={ns.total === 0 ? 'Dodaj pitanje/napomenu' : `Pitanja — ${ns.unresolved} otvoreno, ${ns.resolved} riješeno`}>
+                                                                                <span className="material-icons-round">forum</span>
+                                                                                {ns.unresolved > 0 && <span className="notes-badge">{ns.unresolved}</span>}
+                                                                            </button>
+                                                                        );
+                                                                    })()}
                                                                     <button className="icon-btn" onClick={() => setProcessPlanProductId(product.Product_ID)} title="Plan procesa">
                                                                         <span className="material-icons-round">account_tree</span>
                                                                     </button>
@@ -2104,6 +2208,26 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                         project={materialsOverviewProject}
                     />
                 )
+            }
+
+            {/* Pitanja i napomene — proizvodi se čitaju SVJEŽI iz `projects` (ne iz
+                zarobljenog notesModal.project), da modal odražava stanje poslije upisa. */}
+            {
+                notesModal && organizationId && (() => {
+                    const fresh = projects.find(p => p.Project_ID === notesModal.project.Project_ID) || notesModal.project;
+                    return (
+                        <ProjectNotesModal
+                            isOpen={true}
+                            onClose={() => setNotesModal(null)}
+                            projectName={fresh.Name || fresh.Client_Name}
+                            products={fresh.products || []}
+                            organizationId={organizationId}
+                            onRefresh={onRefresh}
+                            showToast={showToast}
+                            initialProductId={notesModal.productId}
+                        />
+                    );
+                })()
             }
 
             {/* Završni račun */}

@@ -11,7 +11,7 @@ import {
     toggleItemPause,
     getAllAttendanceByMonth,
 } from '@/lib/services';
-import { workOrderDueDate, buildSaturdayChecker, todayISO, daysUntil, plannedVsActualDays, itemsWithoutPlannedDays, type AttendanceLite } from '@/lib/planning';
+import { workOrderDueDate, buildSaturdayChecker, todayISO, daysUntil, itemsWithoutPlannedDays, type AttendanceLite } from '@/lib/planning';
 import { itemMaterialTotal } from '@/lib/materialCost';
 import { itemProfitBreakdown, sumBreakdowns, type ProfitBreakdown } from '@/lib/profit';
 import type { WorkOrder, Worker, WorkOrderItem, WorkLog, Task } from '@/lib/types';
@@ -63,6 +63,7 @@ export default function WorkOrderExpandedDetail({
     const [nameDraft, setNameDraft] = useState('');
     const [tab, setTab] = useState<'tok' | 'rad' | 'zadaci'>('tok');
     const [flowOpen, setFlowOpen] = useState(false);   // "Procesi naloga" — collapsed po defaultu (liste znaju biti duge)
+    const [productsOpen, setProductsOpen] = useState(true);   // "Proizvodi" — glavni sadržaj, otvoren po defaultu
     const [expandedProducts, setExpandedProducts] = useState<Set<string>>(new Set());   // sklopivi proizvodi (collapsed po defaultu)
     const [graphVersion, setGraphVersion] = useState(0);   // bump nakon zatvaranja grafa → OrderProcessBoard ponovo učita gating
     // Potvrda "opasnih" akcija kroz stilizovan Modal umjesto sirovog window.confirm
@@ -152,9 +153,6 @@ export default function WorkOrderExpandedDetail({
         if (suggested === currentDue) return null;
         return { suggested, totalDays, startISO };
     }, [workOrder, attLite]);
-
-    // Prekoračenje planiranih radnik-dana (živ signal erozije profita)
-    const daysProgress = useMemo(() => plannedVsActualDays(localItems, workLogs), [localItems, workLogs]);
 
     const applySuggestedDue = async () => {
         if (!dueSuggestion) return;
@@ -356,7 +354,6 @@ export default function WorkOrderExpandedDetail({
     // ── Izvedene vrijednosti za hero + tok ──────────────────────────────
     const isMontaza = workOrder.Work_Order_Type === 'Montaža';
     const fmt = (n: number) => Math.round(n).toLocaleString('hr-HR');
-    const fmtDays = (n: number) => (Number.isInteger(n) ? String(n) : n.toFixed(1));
 
     // Financije po stavci — JEDINSTVENA formula iz lib/profit.ts (isti izvor kao
     // productivity i analitika); izvor i za per-item red i za hero total.
@@ -427,7 +424,6 @@ export default function WorkOrderExpandedDetail({
         else { rokSub = `za ${dueDays} ${dueDays === 1 ? 'dan' : 'dana'}`; if (dueDays <= 2) rokState = 'is-warn'; }
     }
 
-    const daniState = daysProgress.ratio === null ? '' : daysProgress.ratio > 1 ? 'is-error' : daysProgress.ratio >= 0.8 ? 'is-warn' : '';
     const profitWarn = !isMontaza && (orderFin.missingPrice || orderFin.missingMaterial);
     const profitWarnTitle = orderFin.missingPrice
         ? 'Prodajna cijena nije postavljena (nema prihvaćene ponude?) — profit je nepotpun'
@@ -531,22 +527,10 @@ export default function WorkOrderExpandedDetail({
                         </span>
                     </div>
 
-                    {/* Radni dani (potrošeno / plan) */}
-                    {daysProgress.planned > 0 && (
-                        <div className={`wo-metric ${daniState}`} title="Potrošeni / planirani radnik-dani">
-                            <span className="wo-metric-label"><span className="material-icons-round" style={{ fontSize: 12 }}>hourglass_bottom</span> Radni dani</span>
-                            <span className="wo-metric-value">{fmtDays(daysProgress.actual)}/{fmtDays(daysProgress.planned)}</span>
-                        </div>
-                    )}
-
-                    {/* Procesi */}
-                    {procProgress && procProgress.total > 0 && (
-                        <div className="wo-metric" title={`Završeno ${procProgress.done} od ${procProgress.total} procesa`}>
-                            <span className="wo-metric-label"><GitBranch size={11} /> Procesi</span>
-                            <span className="wo-metric-value">{procProgress.done}/{procProgress.total}</span>
-                            <span className="wo-metric-bar"><span className={`wo-metric-bar-fill ${procProgress.pct >= 100 ? 'full' : ''}`} style={{ width: `${procProgress.pct}%` }} /></span>
-                        </div>
-                    )}
+                    {/* „Radni dani" i „Procesi" NISU ovdje namjerno: procesi već stoje kao
+                        brojač na sekciji „Procesi naloga" ispod, a radni dani su plan-vs-stvarno
+                        koje se čita u Knjizi rada. Hero nosi samo tri odgovora koja se traže na
+                        prvi pogled: dokad, otkad, koliko ostaje. */}
 
                     {/* Prisustvo (rupe u šihtarici) */}
                     {missingAttendance && (
@@ -590,39 +574,57 @@ export default function WorkOrderExpandedDetail({
                 </button>
             </div>
 
-            {/* ═══ TOK: proizvodi + procesi (kičma) ═══ */}
+            {/* ═══ TOK: procesi + proizvodi ═══
+                Dvije sklopive sekcije s ISTIM zaglavljem (chevron + naslov + brojač).
+                Ranije je „Procesi naloga" bio dugme, a „Proizvodi" gola labela — dvije
+                stvari istog ranga izgledale su kao dvije različite vrste stvari. */}
             {tab === 'tok' && (
                 <div className="wo-flow">
-                    <div className="wo-flow-head">
-                        <button className="wo-flow-toggle" onClick={() => setFlowOpen(o => !o)}>
-                            <span className="material-icons-round wo-flow-chevron">{flowOpen ? 'expand_more' : 'chevron_right'}</span>
-                            <span className="wo-flow-title">Procesi naloga</span>
-                            {procProgress && procProgress.total > 0 && (
-                                <span className="wo-flow-count">{procProgress.done}/{procProgress.total}</span>
-                            )}
-                        </button>
-                        <button className="wo-graf-btn" onClick={() => setProcessOpen(true)}>
-                            <GitBranch size={15} /> Graf procesa
-                        </button>
-                    </div>
-                    {flowOpen && (
-                        <OrderProcessBoard
-                            workOrderId={workOrder.Work_Order_ID}
-                            items={localItems.length ? localItems : (workOrder.items || [])}
-                            workers={workers}
-                            workLogs={workLogs}
-                            organizationId={organizationId || undefined}
-                            onChanged={() => { onRefresh?.('workOrders'); reloadWorkLogs(); }}
-                            showToast={showToast}
-                            graphReloadKey={graphVersion}
-                        />
-                    )}
+                    <section className="wo-sec">
+                        <div className="wo-sec-head">
+                            <button className="wo-sec-toggle" onClick={() => setFlowOpen(o => !o)} aria-expanded={flowOpen}>
+                                <span className="material-icons-round wo-sec-chevron">{flowOpen ? 'expand_more' : 'chevron_right'}</span>
+                                <span className="wo-sec-title">Procesi naloga</span>
+                                {procProgress && procProgress.total > 0 && (
+                                    <span className="wo-sec-count">{procProgress.done}/{procProgress.total}</span>
+                                )}
+                            </button>
+                            <button className="wo-graf-btn" onClick={() => setProcessOpen(true)}>
+                                <GitBranch size={15} /> Graf procesa
+                            </button>
+                        </div>
+                        {flowOpen && (
+                            <OrderProcessBoard
+                                workOrderId={workOrder.Work_Order_ID}
+                                items={localItems.length ? localItems : (workOrder.items || [])}
+                                workers={workers}
+                                workLogs={workLogs}
+                                organizationId={organizationId || undefined}
+                                onChanged={() => { onRefresh?.('workOrders'); reloadWorkLogs(); }}
+                                showToast={showToast}
+                                graphReloadKey={graphVersion}
+                            />
+                        )}
+                    </section>
 
-                    <div className="wo-flow-title" style={{ marginTop: 6, display: 'flex', alignItems: 'center', gap: 8 }}>
-                        Proizvodi
-                        {localItems.length > 0 && <span className="wo-flow-count">{localItems.length}</span>}
-                    </div>
-                    {localItems.length > 0 ? localItems.map(item => {
+                    <section className="wo-sec">
+                        <div className="wo-sec-head">
+                            <button className="wo-sec-toggle" onClick={() => setProductsOpen(o => !o)} aria-expanded={productsOpen}>
+                                <span className="material-icons-round wo-sec-chevron">{productsOpen ? 'expand_more' : 'chevron_right'}</span>
+                                <span className="wo-sec-title">Proizvodi</span>
+                                {localItems.length > 0 && <span className="wo-sec-count">{localItems.length}</span>}
+                            </button>
+                            {/* Sažetak kad je sklopljeno — da sklapanje ne sakrije ono zbog čega se gleda */}
+                            {!productsOpen && localItems.length > 0 && (
+                                <span className="wo-sec-summary">
+                                    {isMontaza
+                                        ? `${fmt(orderFin.labor)} KM trošak`
+                                        : `${orderFin.profit < 0 ? '−' : ''}${fmt(Math.abs(orderFin.profit))} KM ostaje`}
+                                </span>
+                            )}
+                        </div>
+
+                    {productsOpen && (localItems.length > 0 ? localItems.map(item => {
                         const fin = itemFin.get(item.ID) || itemProfitBreakdown({});
                         const status = (item.Status as string) || 'Na čekanju';
                         const isPaused = !!item.Is_Paused;
@@ -640,7 +642,7 @@ export default function WorkOrderExpandedDetail({
                                     onClick={collapsible ? () => toggleProduct(item.ID) : undefined}>
                                     <div className="wo-product-name-wrap">
                                         {collapsible && (
-                                            <span className="material-icons-round wo-flow-chevron">{isOpen ? 'expand_more' : 'chevron_right'}</span>
+                                            <span className="material-icons-round wo-product-chevron">{isOpen ? 'expand_more' : 'chevron_right'}</span>
                                         )}
                                         <span className="wo-product-name">{item.Product_Name}</span>
                                         <span className="wo-product-qty">× {item.Quantity || 1}</span>
@@ -710,7 +712,8 @@ export default function WorkOrderExpandedDetail({
                         );
                     }) : (
                         <div className="wo-empty">Nema proizvoda u ovom nalogu.</div>
-                    )}
+                    ))}
+                    </section>
                 </div>
             )}
 
