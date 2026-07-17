@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, type ReactNode } from 'react';
-import { Calendar, Play, Pause, CheckCircle, Clock, Edit2, AlertTriangle, NotebookPen, GitBranch } from 'lucide-react';
+import { Play, Pause, CheckCircle, Clock, Edit2, AlertTriangle, NotebookPen, GitBranch, ListTodo, Hammer } from 'lucide-react';
 import { useData } from '@/context/DataContext';
 import {
     checkMissingAttendanceHistory,
@@ -14,18 +14,22 @@ import {
 import { workOrderDueDate, buildSaturdayChecker, todayISO, daysUntil, plannedVsActualDays, itemsWithoutPlannedDays, type AttendanceLite } from '@/lib/planning';
 import { itemMaterialTotal } from '@/lib/materialCost';
 import { itemProfitBreakdown, sumBreakdowns, type ProfitBreakdown } from '@/lib/profit';
-import type { WorkOrder, Worker, WorkOrderItem, WorkLog } from '@/lib/types';
+import type { WorkOrder, Worker, WorkOrderItem, WorkLog, Task } from '@/lib/types';
 import Modal from './Modal';
 import ProductTimelineModal from './ProductTimelineModal';
 import WorkOrderWorkLog from './WorkOrderWorkLog';
 import ProcessGraphModal from './ProcessGraphModal';
 import OrderProcessBoard from './OrderProcessBoard';
+import WorkOrderTasksPanel from './WorkOrderTasksPanel';
+import { tasksForWorkOrder, taskProgress, firstBookingDate } from '@/lib/workOrderTasks';
 import { workOrderDisplayName, orderProcessProgress } from '@/lib/utils';
 import './WorkOrderExpandedDetail.css';
 
 interface WorkOrderExpandedDetailProps {
     workOrder: WorkOrder;
     workers: Worker[];
+    /** Svi zadaci organizacije — tab „Zadaci" ih filtrira po Task.Links. */
+    tasks?: Task[];
     onUpdate: (workOrderId: string, updates: any) => Promise<void>;
     onPrint: (workOrder: WorkOrder) => void;
     onDelete: (workOrderId: string) => Promise<void>;
@@ -37,6 +41,7 @@ interface WorkOrderExpandedDetailProps {
 export default function WorkOrderExpandedDetail({
     workOrder,
     workers,
+    tasks = [],
     onUpdate,
     onStart,
     onRefresh,
@@ -56,7 +61,7 @@ export default function WorkOrderExpandedDetail({
     const [processOpen, setProcessOpen] = useState(false);
     const [editingName, setEditingName] = useState(false);
     const [nameDraft, setNameDraft] = useState('');
-    const [tab, setTab] = useState<'tok' | 'rad'>('tok');
+    const [tab, setTab] = useState<'tok' | 'rad' | 'zadaci'>('tok');
     const [flowOpen, setFlowOpen] = useState(false);   // "Procesi naloga" — collapsed po defaultu (liste znaju biti duge)
     const [expandedProducts, setExpandedProducts] = useState<Set<string>>(new Set());   // sklopivi proizvodi (collapsed po defaultu)
     const [graphVersion, setGraphVersion] = useState(0);   // bump nakon zatvaranja grafa → OrderProcessBoard ponovo učita gating
@@ -77,6 +82,21 @@ export default function WorkOrderExpandedDetail({
         setEditingName(false);
         if (v !== (workOrder.Name || '')) {
             await onUpdate(workOrder.Work_Order_ID, { Name: v });
+            // Vezani zadaci nose zapamćen naziv naloga (TaskLink.Entity_Name) — bez ovoga
+            // bi tab Zadaci pokazivao stari naziv i poslije preimenovanja.
+            if (organizationId) {
+                try {
+                    const { syncWorkOrderNameOnTasks } = await import('@/lib/services');
+                    const res = await syncWorkOrderNameOnTasks(
+                        workOrder.Work_Order_ID,
+                        workOrderDisplayName({ ...workOrder, Name: v }),
+                        organizationId
+                    );
+                    if (res.updatedCount > 0) onRefresh?.('tasks');
+                } catch (e) {
+                    console.warn('sync naziva naloga na zadacima preskočen:', e);
+                }
+            }
             onRefresh?.('workOrders');
         }
     };
@@ -381,6 +401,20 @@ export default function WorkOrderExpandedDetail({
     const procProgress = useMemo(() => orderProcessProgress(localItems), [localItems]);
     const bookedDays = useMemo(() => new Set(workLogs.map(l => l.Date)).size, [workLogs]);
 
+    // Zadaci ovog naloga (žive iz Task.Links — isti dokument koji vidi tab Zadaci)
+    const orderTasks = useMemo(() => tasksForWorkOrder(tasks, workOrder.Work_Order_ID), [tasks, workOrder.Work_Order_ID]);
+    const taskStats = useMemo(() => taskProgress(orderTasks, todayISO()), [orderTasks]);
+
+    // PRVI RAD: kad je radnik prvi put knjižen na nalog. Started_At je samo
+    // pritisnuto dugme (zna se postaviti i automatski), a ovo je dokaz da je
+    // neko stvarno stao na posao — zato ide u metrike, ne u fusnotu.
+    const firstWork = useMemo(() => firstBookingDate(workLogs), [workLogs]);
+    const firstWorkDaysAgo = useMemo(() => {
+        if (!firstWork) return null;
+        const d = daysUntil(firstWork);
+        return d === null ? null : -d;
+    }, [firstWork]);
+
     // Rok + odbrojavanje (živa boja metrike zamjenjuje baner)
     const dueDays = daysUntil(workOrder.Due_Date);
     const woActive = workOrder.Status !== 'Završeno' && workOrder.Status !== 'Otkazano';
@@ -468,6 +502,22 @@ export default function WorkOrderExpandedDetail({
                             }} />
                     </div>
 
+                    {/* Prvi rad — datum prvog knjiženja radnika (stvarni početak) */}
+                    <div className="wo-metric" title={firstWork
+                        ? `Prvi put je radnik knjižen na ovaj nalog ${formatDate(firstWork)} — stvarni početak rada`
+                        : 'Nijedan radnik još nije knjižen na ovaj nalog'}>
+                        <span className="wo-metric-label"><Hammer size={11} /> Prvi rad</span>
+                        <span className="wo-metric-value">{firstWork ? formatDate(firstWork) : '—'}</span>
+                        {firstWorkDaysAgo !== null && (
+                            <span className="wo-metric-sub">
+                                {firstWorkDaysAgo === 0 ? 'danas'
+                                    : firstWorkDaysAgo === 1 ? 'jučer'
+                                        : `prije ${firstWorkDaysAgo} dana`}
+                            </span>
+                        )}
+                        {!firstWork && <span className="wo-metric-sub">nije počeo</span>}
+                    </div>
+
                     {/* Profit / Trošak montaže */}
                     <div className={`wo-metric ${isMontaza ? '' : orderFin.profit >= 0 ? 'is-good' : 'is-error'}`}>
                         <span className="wo-metric-label" title={profitWarn ? profitWarnTitle : undefined}>
@@ -521,13 +571,22 @@ export default function WorkOrderExpandedDetail({
                 )}
             </div>
 
-            {/* ═══ SEGMENTED: Tok / Knjiga rada ═══ */}
+            {/* ═══ SEGMENTED: Tok / Knjiga rada / Zadaci ═══ */}
             <div className="wo-seg">
                 <button className={tab === 'tok' ? 'active' : ''} onClick={() => setTab('tok')}>
                     Tok proizvodnje {localItems.length > 0 && <span className="wo-seg-count">{localItems.length}</span>}
                 </button>
                 <button className={tab === 'rad' ? 'active' : ''} onClick={() => setTab('rad')}>
                     <NotebookPen size={14} /> Knjiga rada {bookedDays > 0 && <span className="wo-seg-count">{bookedDays}</span>}
+                </button>
+                <button className={tab === 'zadaci' ? 'active' : ''} onClick={() => setTab('zadaci')}
+                    title={taskStats.overdue > 0 ? `${taskStats.overdue} zadataka kasni` : undefined}>
+                    <ListTodo size={14} /> Zadaci
+                    {taskStats.total > 0 && (
+                        <span className={`wo-seg-count${taskStats.overdue > 0 ? ' late' : ''}`}>
+                            {taskStats.done}/{taskStats.total}
+                        </span>
+                    )}
                 </button>
             </div>
 
@@ -655,50 +714,13 @@ export default function WorkOrderExpandedDetail({
                 </div>
             )}
 
-            {/* ═══ KNJIGA RADA: vremenska linija + dnevni tracker ═══ */}
+            {/* ═══ KNJIGA RADA: samo dnevni tracker ═══
+                Traka datuma (Kreiran/Početak/Prvi rad/Rok) je uklonjena — rok i prvi rad
+                stoje u hero metrikama iznad, pa se ovdje samo ponavljalo. Ispravka
+                Started_At/Completed_At (adjustWorkOrderDates) je išla kroz tu traku:
+                sad se datumi mijenjaju knjiženjem dana ispod, što je i izvor istine. */}
             {tab === 'rad' && (
                 <div className="wo-rad">
-                    <div className="wo-timeline">
-                        <span className="wo-date"><Calendar size={14} /> Kreiran <strong>{formatDate(workOrder.Created_Date)}</strong></span>
-                        <span className={`wo-date ${workOrder.Started_At ? 'clickable' : ''}`}
-                            onClick={() => { if (!workOrder.Started_At) return; const i = document.getElementById(`wo-start-${workOrder.Work_Order_ID}`) as HTMLInputElement; i?.showPicker?.(); }}>
-                            <Play size={14} /> Početak <strong>{formatDate(workOrder.Started_At)}</strong>
-                            {workOrder.Started_At && <Edit2 size={10} style={{ color: 'var(--text-tertiary)' }} />}
-                            <input id={`wo-start-${workOrder.Work_Order_ID}`} type="date" className="wo-hidden-date"
-                                value={workOrder.Started_At?.split('T')[0] || ''}
-                                onClick={e => e.stopPropagation()}
-                                onChange={async (e) => {
-                                    const v = e.target.value; if (!v) return;
-                                    try {
-                                        const { adjustWorkOrderDates } = await import('@/lib/services');
-                                        const res = await adjustWorkOrderDates(workOrder.Work_Order_ID, { Started_At: v }, workOrder.Organization_ID);
-                                        if (res.success) { showToast?.('Datum početka ažuriran', 'success'); onRefresh?.('workOrders', 'projects'); }
-                                        else showToast?.(res.message, 'error');
-                                    } catch { showToast?.('Greška pri ažuriranju datuma', 'error'); }
-                                }} />
-                        </span>
-                        {workOrder.Completed_At && (
-                            <span className="wo-date clickable"
-                                onClick={() => { const i = document.getElementById(`wo-comp-${workOrder.Work_Order_ID}`) as HTMLInputElement; i?.showPicker?.(); }}>
-                                <CheckCircle size={14} /> Završeno <strong>{formatDate(workOrder.Completed_At)}</strong>
-                                <Edit2 size={10} style={{ color: 'var(--text-tertiary)' }} />
-                                <input id={`wo-comp-${workOrder.Work_Order_ID}`} type="date" className="wo-hidden-date"
-                                    value={workOrder.Completed_At?.split('T')[0] || ''}
-                                    onClick={e => e.stopPropagation()}
-                                    onChange={async (e) => {
-                                        const v = e.target.value; if (!v) return;
-                                        try {
-                                            const { adjustWorkOrderDates } = await import('@/lib/services');
-                                            const res = await adjustWorkOrderDates(workOrder.Work_Order_ID, { Completed_At: v }, workOrder.Organization_ID);
-                                            if (res.success) { showToast?.('Datum završetka ažuriran', 'success'); onRefresh?.('workOrders', 'projects'); }
-                                            else showToast?.(res.message, 'error');
-                                        } catch { showToast?.('Greška pri ažuriranju datuma', 'error'); }
-                                    }} />
-                            </span>
-                        )}
-                        <span className="wo-date deadline"><Clock size={14} /> Rok <strong>{formatDate(workOrder.Due_Date)}</strong></span>
-                    </div>
-
                     <div>
                         <div className="wo-rad-head"><NotebookPen size={15} /> Knjiga rada naloga</div>
                         <WorkOrderWorkLog
@@ -712,6 +734,18 @@ export default function WorkOrderExpandedDetail({
                         />
                     </div>
                 </div>
+            )}
+
+            {/* ═══ ZADACI: pregled i čekiranje bez odlaska u tab Zadaci ═══ */}
+            {tab === 'zadaci' && (
+                <WorkOrderTasksPanel
+                    workOrder={workOrder}
+                    tasks={tasks}
+                    workers={workers}
+                    organizationId={organizationId || ''}
+                    onRefresh={onRefresh || (() => { })}
+                    showToast={showToast || (() => { })}
+                />
             )}
 
             {/* Graf procesa naloga */}

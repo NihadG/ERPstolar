@@ -1,20 +1,37 @@
 'use client';
 
 // ════════════════════════════════════════════════════════════════════
-// PROCESI — pregled procesa preko SVIH naloga s prebacivim grupacijama
-// (po nalozima / po procesima / po radnicima). Zanatske ekipe nose nalog
-// kroz faze; ovdje se jednim klikom završava proces za odabrane stavke.
-// Čista logika + gating: lib/processBoard.ts (buildProcessCells/groupBy*).
+// PROCESI — RADNI RED, ne tabela.
+//
+// Tab odgovara na JEDNO pitanje čim se otvori: „šta je sada na redu i šta
+// mogu čekirati". Sve ostalo (blokirano, završeno) je sklopljeno iza brojača.
+//
+// PRAVILA LAYOUTA (zašto izgleda ovako):
+//  1. NA REDU je jedini istaknut blok — ostalo je tiho. Nalog ima 30+ procesa,
+//     ali u datom trenutku radiš 2-3; prikazati svih 30 znači ne prikazati ništa.
+//  2. Glagol je VIDLJIV: svaki red ima dugme „Završi". Checkbox je SAMO za
+//     grupni odabir (i nosi natpis), jer checkbox pored procesa inače laže —
+//     svako ga pročita kao „gotovo je", a on je selektovao.
+//  3. Jedna stvar po nivou: naslov = nalog, red = proces, sve ostalo prigušeno.
+//
+// JEDINICA RADA = ZADATAK (nalog × proces) — „Priprema masive" za 3 proizvoda
+// je JEDAN red i JEDAN klik; strelica ga rastavi na proizvode kad treba dio.
+//
+// Čista logika + gating: lib/processBoard.ts.
 // ════════════════════════════════════════════════════════════════════
 
 import { useState, useMemo, useEffect, useCallback } from 'react';
 import type { WorkOrder, Worker, WorkLog, ProcessCatalogItem, ItemProcessStatus } from '@/lib/types';
 import { useData } from '@/context/DataContext';
 import { getProcessCatalog, updateItemProcess } from '@/lib/services';
-import { buildProcessCells, groupByOrder, groupByProcess, groupByWorker, type ProcessCell } from '@/lib/processBoard';
+import {
+    buildProcessCells, groupByOrder, groupByProcess, sortOrdersForBoard, isOrderPaused,
+    type ProcessCell, type ProcessTask,
+} from '@/lib/processBoard';
 import { workOrderDisplayName } from '@/lib/utils';
 import Modal from '@/components/ui/Modal';
 import ProcessCatalogModal from '@/components/ui/ProcessCatalogModal';
+import ProcessGraphModal from '@/components/ui/ProcessGraphModal';
 import './ProcessesTab.css';
 
 interface Props {
@@ -26,9 +43,25 @@ interface Props {
     onNavigateToOrder?: (workOrderId: string) => void;
 }
 
-type GroupMode = 'order' | 'process' | 'worker';
+type GroupMode = 'order' | 'process';
 const cellKey = (c: ProcessCell) => `${c.workOrderId}|${c.itemId}|${c.itemProcessName}`;
 const todayISO = () => new Date().toISOString().split('T')[0];
+const fmtDate = (iso?: string) => (iso ? new Date(iso).toLocaleDateString('hr-HR', { day: '2-digit', month: '2-digit' }) : '');
+const plural = (n: number, one: string, few: string) => `${n} ${n === 1 ? one : few}`;
+
+/** Ćelije koje se SMIJU mijenjati: nezavršene, i proces im je na redu (ili već pokrenut). */
+const selectableOf = (t: ProcessTask) =>
+    t.cells.filter(c => c.status !== 'Završeno' && (t.gate === 'active' || c.status === 'U toku'));
+
+/** NA REDU = radi se sada ili može odmah početi. Ostalo: čeka prethodni / završeno. */
+const isNow = (t: ProcessTask) =>
+    t.status !== 'Završeno' && (t.gate === 'active' || t.status === 'U toku' || t.status === 'Djelimično');
+const isDone = (t: ProcessTask) => t.status === 'Završeno';
+const partition = (tasks: ProcessTask[]) => ({
+    now: tasks.filter(isNow),
+    waiting: tasks.filter(t => !isNow(t) && !isDone(t)),
+    done: tasks.filter(isDone),
+});
 
 export default function ProcessesTab({ workOrders, workers, workLogs, onRefresh, showToast, onNavigateToOrder }: Props) {
     const { organizationId } = useData();
@@ -37,17 +70,22 @@ export default function ProcessesTab({ workOrders, workers, workLogs, onRefresh,
     const [includeWaiting, setIncludeWaiting] = useState(false);
     const [catalog, setCatalog] = useState<ProcessCatalogItem[]>([]);
     const [catalogModal, setCatalogModal] = useState(false);
+    const [graphOrderId, setGraphOrderId] = useState<string | null>(null);
     const [sel, setSel] = useState<Set<string>>(new Set());
+    const [expanded, setExpanded] = useState<Set<string>>(new Set());   // zadatak → proizvodi
+    const [openSec, setOpenSec] = useState<Set<string>>(new Set());     // sklopive sekcije (čeka/završeno)
     const [formOpen, setFormOpen] = useState(false);
     const [form, setForm] = useState<{ workerIds: string[]; date: string; notes: string }>({ workerIds: [], date: todayISO(), notes: '' });
     const [busy, setBusy] = useState(false);
 
-    // Persist izbor grupacije.
     useEffect(() => {
         const saved = typeof window !== 'undefined' ? window.localStorage.getItem('pt-group') : null;
-        if (saved === 'order' || saved === 'process' || saved === 'worker') setGroupMode(saved);
+        if (saved === 'order' || saved === 'process') setGroupMode(saved);
     }, []);
-    const changeGroup = (m: GroupMode) => { setGroupMode(m); setSel(new Set()); if (typeof window !== 'undefined') window.localStorage.setItem('pt-group', m); };
+    const changeGroup = (m: GroupMode) => {
+        setGroupMode(m); setSel(new Set()); setExpanded(new Set()); setOpenSec(new Set());
+        if (typeof window !== 'undefined') window.localStorage.setItem('pt-group', m);
+    };
 
     useEffect(() => {
         if (!organizationId) return;
@@ -58,31 +96,100 @@ export default function ProcessesTab({ workOrders, workers, workLogs, onRefresh,
 
     const workerName = useCallback((id: string) => workers.find(w => w.Worker_ID === id)?.Name || 'Nepoznat', [workers]);
 
-    // Nalozi u opsegu: U toku (default) + Na čekanju (toggle); nikad Otkazano/Završeno; ne Montaža (nema procese).
-    const cells = useMemo(() => {
-        const orders = workOrders
-            .filter(wo => wo.Work_Order_Type !== 'Montaža')
+    /** Nalozi na kojima se DANAS knjižio rad — najjači signal „ovo je danas u pogonu". */
+    const workedTodayOrderIds = useMemo(() => {
+        const t = todayISO();
+        const ids = new Set<string>();
+        for (const l of workLogs) if (l.Date === t && l.Work_Order_ID) ids.add(l.Work_Order_ID);
+        return ids;
+    }, [workLogs]);
+
+    // Opseg: SAMO proizvodnja. „Montaža" ima fiksne korake, a „Zadaci" (Razni poslovi) su
+    // ad-hoc rad bez plana procesa — njihov jedini „proces" je generički „Rad" koji ovdje ne
+    // znači ništa (prate se kroz šihtaricu/dnevnice). Legacy nalozi bez tipa = proizvodnja.
+    // Status: U toku (default) + Na čekanju (toggle); nikad Otkazano/Završeno.
+    // Redoslijed: u toku → pauzirani → na čekanju; unutar toga današnji rad prvi, pa najnoviji.
+    const ordersInScope = useMemo(() => sortOrdersForBoard(
+        workOrders
+            .filter(wo => (wo.Work_Order_Type || 'Proizvodnja') === 'Proizvodnja')
             .filter(wo => wo.Status === 'U toku' || (includeWaiting && wo.Status === 'Na čekanju'))
-            .map(wo => ({ workOrder: wo, items: wo.items || [], orderLabel: workOrderDisplayName(wo) }));
-        return buildProcessCells(orders, catalog, workLogs);
-    }, [workOrders, catalog, workLogs, includeWaiting]);
+            .map(wo => ({ workOrder: wo, items: wo.items || [], orderLabel: workOrderDisplayName(wo) })),
+        workedTodayOrderIds,
+    ), [workOrders, includeWaiting, workedTodayOrderIds]);
+
+    const orderFlags = useMemo(() => {
+        const m = new Map<string, { paused: boolean; today: boolean; waiting: boolean }>();
+        for (const o of ordersInScope) {
+            m.set(o.workOrder.Work_Order_ID, {
+                paused: isOrderPaused(o.items),
+                today: workedTodayOrderIds.has(o.workOrder.Work_Order_ID),
+                waiting: o.workOrder.Status === 'Na čekanju',
+            });
+        }
+        return m;
+    }, [ordersInScope, workedTodayOrderIds]);
+
+    const cells = useMemo(() => buildProcessCells(ordersInScope, catalog, workLogs), [ordersInScope, catalog, workLogs]);
+
+    const ordersWithoutProcesses = useMemo(() => {
+        const withCells = new Set(cells.map(c => c.workOrderId));
+        return ordersInScope.filter(o => !withCells.has(o.workOrder.Work_Order_ID));
+    }, [ordersInScope, cells]);
+
+    const graphOrder = graphOrderId ? workOrders.find(wo => wo.Work_Order_ID === graphOrderId) : null;
 
     const q = search.trim().toLowerCase();
-    const matchesSearch = (c: ProcessCell) => !q ||
-        c.orderLabel.toLowerCase().includes(q) || c.itemName.toLowerCase().includes(q) || c.processName.toLowerCase().includes(q);
-    const filteredCells = useMemo(() => q ? cells.filter(matchesSearch) : cells, [cells, q]);
+    const filteredCells = useMemo(() => !q ? cells : cells.filter(c =>
+        c.orderLabel.toLowerCase().includes(q) || c.itemName.toLowerCase().includes(q) || c.processName.toLowerCase().includes(q)
+    ), [cells, q]);
 
     const cellByKey = useMemo(() => new Map(cells.map(c => [cellKey(c), c])), [cells]);
-    const toggleSel = (c: ProcessCell) => setSel(prev => { const n = new Set(prev); const k = cellKey(c); n.has(k) ? n.delete(k) : n.add(k); return n; });
     const selectedCells = useMemo(() => Array.from(sel).map(k => cellByKey.get(k)).filter(Boolean) as ProcessCell[], [sel, cellByKey]);
 
+    const orderGroups = useMemo(() => groupByOrder(filteredCells), [filteredCells]);
+    const processGroups = useMemo(() => groupByProcess(filteredCells), [filteredCells]);
+
+    /** Orijentacija na vrhu — oblik dana u jednoj rečenici. */
+    const summary = useMemo(() => {
+        const nowCount = orderGroups.reduce((n, g) => n + g.tasks.filter(isNow).length, 0);
+        const paused = Array.from(orderFlags.values()).filter(f => f.paused).length;
+        const today = Array.from(orderFlags.values()).filter(f => f.today).length;
+        return { orders: orderGroups.length, nowCount, paused, today };
+    }, [orderGroups, orderFlags]);
+
+    // ── ODABIR ──────────────────────────────────────────────────────────
+    const toggleCell = (c: ProcessCell) => setSel(prev => {
+        const n = new Set(prev); const k = cellKey(c);
+        n.has(k) ? n.delete(k) : n.add(k);
+        return n;
+    });
+    const toggleTask = (t: ProcessTask) => {
+        const keys = selectableOf(t).map(cellKey);
+        if (!keys.length) return;
+        const allOn = keys.every(k => sel.has(k));
+        setSel(prev => {
+            const n = new Set(prev);
+            keys.forEach(k => allOn ? n.delete(k) : n.add(k));
+            return n;
+        });
+    };
+    const taskCheck = (t: ProcessTask): 'on' | 'off' | 'partial' => {
+        const keys = selectableOf(t).map(cellKey);
+        if (!keys.length) return 'off';
+        const on = keys.filter(k => sel.has(k)).length;
+        return on === 0 ? 'off' : on === keys.length ? 'on' : 'partial';
+    };
+    const toggleIn = (set: Set<string>, key: string) => {
+        const n = new Set(set); n.has(key) ? n.delete(key) : n.add(key); return n;
+    };
+
     // ── AKCIJE ──────────────────────────────────────────────────────────
-    const runUpdate = async (updates: (c: ProcessCell) => Partial<ItemProcessStatus>) => {
-        if (!selectedCells.length || busy) return;
+    const runUpdate = async (cellsToUpdate: ProcessCell[], updates: Partial<ItemProcessStatus>) => {
+        if (!cellsToUpdate.length || busy) return;
         setBusy(true);
         try {
             // Serijski: svaki updateItemProcess recalc-uje svoj nalog (namjerno, status-decoupled).
-            for (const c of selectedCells) await updateItemProcess(c.workOrderId, c.itemId, c.itemProcessName, updates(c));
+            for (const c of cellsToUpdate) await updateItemProcess(c.workOrderId, c.itemId, c.itemProcessName, updates);
             onRefresh('workOrders');
             setSel(new Set()); setFormOpen(false);
             showToast('Procesi ažurirani', 'success');
@@ -92,203 +199,325 @@ export default function ProcessesTab({ workOrders, workers, workLogs, onRefresh,
         } finally { setBusy(false); }
     };
 
-    const openCompleteForm = () => {
-        // Prefill radnika = unija ekipa odabranih naloga (glavni prvi po redoslijedu pojave).
+    /** Otvori formu završetka za DATE ćelije (radnici se prefilluju iz ekipe naloga). */
+    const openCompleteForm = (target: ProcessCell[]) => {
+        if (!target.length) return;
         const ordered: string[] = [];
-        selectedCells.forEach(c => c.crewWorkerIds.forEach(id => { if (!ordered.includes(id)) ordered.push(id); }));
+        target.forEach(c => c.crewWorkerIds.forEach(id => { if (!ordered.includes(id)) ordered.push(id); }));
+        setSel(new Set(target.map(cellKey)));   // forma radi nad odabirom → poravnaj ga s ciljem
         setForm({ workerIds: ordered, date: todayISO(), notes: '' });
         setFormOpen(true);
     };
+
     const confirmComplete = () => {
         const wIds = form.workerIds.filter(Boolean);
         const first = wIds[0] ? workers.find(w => w.Worker_ID === wIds[0]) : undefined;
         const helpers = wIds.slice(1).map(id => ({ Worker_ID: id, Worker_Name: workerName(id) }));
-        return runUpdate(() => ({
+        return runUpdate(selectedCells, {
             Status: 'Završeno',
             Completed_At: new Date(form.date + 'T12:00:00').toISOString(),
             Worker_ID: first?.Worker_ID, Worker_Name: first?.Name,
             Helpers: helpers, Notes: form.notes.trim() || undefined,
-        }));
+        });
     };
-    const startSelected = () => runUpdate(() => ({ Status: 'U toku', Started_At: new Date().toISOString() }));
+    const startSelected = () => runUpdate(selectedCells, { Status: 'U toku', Started_At: new Date().toISOString() });
 
-    // ── RENDER HELPERI ──────────────────────────────────────────────────
-    const CrewChips = ({ ids }: { ids: string[] }) => (
-        <span className="pt-crew">
-            {ids.length === 0 && <span className="pt-crew-chip">bez ekipe</span>}
-            {ids.map((id, i) => <span key={id} className={`pt-crew-chip ${i === 0 ? 'main' : ''}`}>{workerName(id)}</span>)}
-        </span>
-    );
-    const Cell = ({ c, showOrder }: { c: ProcessCell; showOrder?: boolean }) => {
-        const done = c.status === 'Završeno';
-        const selectable = !done && (c.gate === 'active' || c.status === 'U toku');
-        const k = cellKey(c);
+    // ── RENDER ──────────────────────────────────────────────────────────
+    /** Traka napretka — čitljivija od prstena i ne otima pažnju naslovu. */
+    const Bar = ({ done, total }: { done: number; total: number }) => {
+        const pct = total ? Math.round((done / total) * 100) : 0;
         return (
-            <div className={`pt-cell ${sel.has(k) ? 'sel' : ''}`}>
-                {selectable ? (
-                    <input type="checkbox" className="pt-cell-check" checked={sel.has(k)} onChange={() => toggleSel(c)} />
-                ) : <span style={{ width: 18 }} />}
-                <div className="pt-cell-main">
-                    <div className="pt-cell-proc">
-                        {c.processName}
-                        {done && <span className="pt-cell-done"> · završeno{c.completedAt ? ` ${new Date(c.completedAt).toLocaleDateString('hr-HR')}` : ''}</span>}
-                    </div>
-                    <div className="pt-cell-ctx">
-                        {showOrder ? `${c.orderLabel} · ` : ''}{c.itemName}
-                        {c.status === 'U toku' && ' · u toku'}
-                    </div>
+            <span className="pt-bar" title={`${done}/${total} procesa završeno`}>
+                <span className="pt-bar-track"><span className={`pt-bar-fill ${pct >= 100 ? 'full' : ''}`} style={{ width: `${pct}%` }} /></span>
+                <span className="pt-bar-txt">{done}/{total}</span>
+            </span>
+        );
+    };
+
+    /**
+     * Red zadatka. `lens` bira nosioca: proces (po nalozima) ili nalog+proizvodi (po procesima).
+     * `tone`: 'now' = akcijski (dugme Završi), 'quiet' = u sklopljenoj sekciji (samo pregled).
+     */
+    const TaskRow = ({ t, lens, tone }: { t: ProcessTask; lens: 'order' | 'process'; tone: 'now' | 'quiet' }) => {
+        const check = taskCheck(t);
+        const canAct = selectableOf(t).length > 0;
+        const isOpen = expanded.has(t.key);
+        const multi = t.totalCount > 1;
+        const title = lens === 'order' ? t.processName : t.orderLabel;
+        const sub = lens === 'order'
+            ? (multi ? plural(t.totalCount, 'proizvod', 'proizvoda') : t.itemNames[0])
+            : t.itemNames.join(' · ');
+
+        return (
+            <div className={`pt-task ${tone} ${check !== 'off' ? 'sel' : ''} ${isDone(t) ? 'is-done' : ''}`}>
+                <div className="pt-task-head">
+                    {canAct && tone === 'now' ? (
+                        <input type="checkbox" className="pt-check" checked={check === 'on'}
+                            ref={el => { if (el) el.indeterminate = check === 'partial'; }}
+                            onChange={() => toggleTask(t)} disabled={busy}
+                            aria-label={`Odaberi ${title}`}
+                            title={multi ? `Odaberi za svih ${t.totalCount} proizvoda` : 'Odaberi'} />
+                    ) : (
+                        <span className={`pt-dot ${isDone(t) ? 'done' : 'wait'}`}>
+                            {isDone(t) && <span className="material-icons-round">check</span>}
+                        </span>
+                    )}
+
+                    <button className="pt-task-main" onClick={() => multi && setExpanded(s => toggleIn(s, t.key))} disabled={!multi}
+                        title={multi ? 'Prikaži proizvode' : undefined}>
+                        <span className="pt-task-title">{title}</span>
+                        <span className="pt-task-sub">
+                            {sub}
+                            {multi && <span className="pt-task-caret material-icons-round">{isOpen ? 'expand_less' : 'expand_more'}</span>}
+                        </span>
+                    </button>
+
+                    {t.status === 'Djelimično' && <span className="pt-badge partial">{t.doneCount}/{t.totalCount}</span>}
+                    {t.status === 'U toku' && <span className="pt-badge running">u toku</span>}
+                    {t.hasLoggedWork && !isDone(t) && <span className="pt-badge logged" title="Ima knjižen rad">knjižen rad</span>}
+                    {isDone(t) && (
+                        <span className="pt-done-meta">
+                            {t.completedAt ? fmtDate(t.completedAt) : ''}{t.workerNames.length ? ` · ${t.workerNames.join(', ')}` : ''}
+                        </span>
+                    )}
+
+                    {/* GLAGOL JE VIDLJIV — bez ovoga checkbox „laže" da je označavanje = završetak */}
+                    {tone === 'now' && canAct && (
+                        <button className="pt-do" disabled={busy} onClick={() => openCompleteForm(selectableOf(t))}
+                            title={multi ? `Završi za svih ${t.totalCount} proizvoda` : 'Završi ovaj proces'}>
+                            <span className="material-icons-round">check</span> Završi
+                        </button>
+                    )}
                 </div>
-                {c.hasLoggedWork && !done && <span className="pt-badge logged" title="Ima knjižen rad">knjižen rad</span>}
-                {!done && c.gate === 'blocked' && <span className="pt-badge blocked">čeka prethodni</span>}
-                {!done && c.gate === 'active' && <span className="pt-badge active">na redu</span>}
+
+                {isOpen && (
+                    <div className="pt-subs">
+                        {t.cells.map(c => {
+                            const k = cellKey(c);
+                            const done = c.status === 'Završeno';
+                            const sub2 = !done && (t.gate === 'active' || c.status === 'U toku');
+                            return (
+                                <div key={k} className={`pt-sub ${sel.has(k) ? 'sel' : ''} ${done ? 'is-done' : ''}`}>
+                                    {sub2 ? (
+                                        <input type="checkbox" className="pt-check sm" checked={sel.has(k)} onChange={() => toggleCell(c)} disabled={busy}
+                                            aria-label={`Odaberi ${c.itemName}`} />
+                                    ) : (
+                                        <span className={`pt-dot sm ${done ? 'done' : 'wait'}`}>
+                                            {done && <span className="material-icons-round">check</span>}
+                                        </span>
+                                    )}
+                                    <span className="pt-sub-name">{c.itemName}</span>
+                                    {done && <span className="pt-sub-meta">{c.completedAt ? fmtDate(c.completedAt) : ''}{c.workerName ? ` · ${c.workerName}` : ''}</span>}
+                                    {!done && c.status === 'U toku' && <span className="pt-sub-meta">u toku</span>}
+                                    {sub2 && (
+                                        <button className="pt-do sm" disabled={busy} onClick={() => openCompleteForm([c])} title={`Završi samo ${c.itemName}`}>
+                                            <span className="material-icons-round">check</span>
+                                        </button>
+                                    )}
+                                </div>
+                            );
+                        })}
+                    </div>
+                )}
             </div>
         );
     };
-    const Progress = ({ done, total }: { done: number; total: number }) => (
-        <div className="pt-progress" title={`${done}/${total} završeno`}>
-            <div className="pt-progress-fill" style={{ width: `${total ? (100 * done / total) : 0}%` }} />
-        </div>
-    );
 
-    // ── GRUPACIJE ───────────────────────────────────────────────────────
-    const orderGroups = useMemo(() => groupByOrder(filteredCells), [filteredCells]);
-    const processGroups = useMemo(() => groupByProcess(filteredCells), [filteredCells]);
-    const workerGroups = useMemo(() => groupByWorker(filteredCells, workers), [filteredCells, workers]);
+    /** Sklopiva sekcija (Čeka / Završeno) — dostupno na jedan klik, ali ne zauzima ekran. */
+    const Section = ({ id, label, tasks, lens }: { id: string; label: string; tasks: ProcessTask[]; lens: 'order' | 'process' }) => {
+        if (tasks.length === 0) return null;
+        const open = openSec.has(id);
+        return (
+            <div className={`pt-sec ${open ? 'open' : ''}`}>
+                <button className="pt-sec-head" onClick={() => setOpenSec(s => toggleIn(s, id))} aria-expanded={open}>
+                    <span className="material-icons-round">{open ? 'expand_more' : 'chevron_right'}</span>
+                    {label} <span className="pt-sec-count">{tasks.length}</span>
+                </button>
+                {open && <div className="pt-sec-body">{tasks.map(t => <TaskRow key={t.key} t={t} lens={lens} tone="quiet" />)}</div>}
+            </div>
+        );
+    };
 
     const isEmpty = filteredCells.length === 0;
 
     return (
         <div className="pt-wrap">
+            {/* ── Header: naslov + orijentacija lijevo, alati desno ── */}
             <div className="pt-header">
-                <h1 className="pt-title">Procesi</h1>
-                <div className="pt-seg">
-                    <button className={groupMode === 'order' ? 'active' : ''} onClick={() => changeGroup('order')}><span className="material-icons-round" style={{ fontSize: 16 }}>assignment</span> Po nalozima</button>
-                    <button className={groupMode === 'process' ? 'active' : ''} onClick={() => changeGroup('process')}><span className="material-icons-round" style={{ fontSize: 16 }}>account_tree</span> Po procesima</button>
-                    <button className={groupMode === 'worker' ? 'active' : ''} onClick={() => changeGroup('worker')}><span className="material-icons-round" style={{ fontSize: 16 }}>engineering</span> Po radnicima</button>
+                <div className="pt-head-id">
+                    <h1 className="pt-title">Procesi</h1>
+                    <p className="pt-summary">
+                        {summary.orders === 0
+                            ? 'Nema naloga u pogonu'
+                            : <>
+                                <strong>{plural(summary.nowCount, 'proces', 'procesa')} na redu</strong>
+                                {' · '}{plural(summary.orders, 'nalog', 'naloga')}
+                                {summary.today > 0 && <> · <span className="pt-sum-today">{summary.today} danas u pogonu</span></>}
+                                {summary.paused > 0 && <> · {summary.paused} pauzirano</>}
+                            </>}
+                    </p>
                 </div>
                 <div className="pt-header-spacer" />
+                <div className="pt-seg">
+                    <button className={groupMode === 'order' ? 'active' : ''} onClick={() => changeGroup('order')}>
+                        <span className="material-icons-round">assignment</span> Po nalozima
+                    </button>
+                    <button className={groupMode === 'process' ? 'active' : ''} onClick={() => changeGroup('process')}>
+                        <span className="material-icons-round">account_tree</span> Po procesima
+                    </button>
+                </div>
                 <div className="pt-search">
                     <span className="material-icons-round">search</span>
                     <input placeholder="Traži nalog / proizvod / proces…" value={search} onChange={e => setSearch(e.target.value)} />
                 </div>
                 <button className={`pt-toggle ${includeWaiting ? 'on' : ''}`} onClick={() => setIncludeWaiting(v => !v)} title="Uključi i naloge Na čekanju">
-                    <span className="material-icons-round" style={{ fontSize: 16 }}>{includeWaiting ? 'check_box' : 'check_box_outline_blank'}</span> + Na čekanju
+                    <span className="material-icons-round">{includeWaiting ? 'check_box' : 'check_box_outline_blank'}</span> Na čekanju
                 </button>
-                <button className="pt-btn" onClick={() => setCatalogModal(true)}><span className="material-icons-round" style={{ fontSize: 16 }}>tune</span> Katalog i pravila</button>
-                <button className="pt-btn" onClick={() => onRefresh('workOrders')} title="Osvježi"><span className="material-icons-round" style={{ fontSize: 16 }}>refresh</span></button>
+                <button className="pt-icon" onClick={() => setCatalogModal(true)} title="Katalog procesa i pravila">
+                    <span className="material-icons-round">tune</span>
+                </button>
+                <button className="pt-icon" onClick={() => onRefresh('workOrders')} title="Osvježi">
+                    <span className="material-icons-round">refresh</span>
+                </button>
             </div>
 
-            {isEmpty ? (
+            {isEmpty && ordersWithoutProcesses.length === 0 ? (
                 <div className="pt-empty">
                     <span className="material-icons-round">inbox</span>
-                    <p>Nema aktivnih procesa{includeWaiting ? '' : ' — probaj „+ Na čekanju"'}.</p>
+                    <p>Nema aktivnih procesa{includeWaiting ? '' : ' — probaj „Na čekanju"'}.</p>
                 </div>
-            ) : groupMode === 'order' ? (
+            ) : isEmpty ? null : groupMode === 'order' ? (
                 <div className="pt-list">
-                    {orderGroups.map(og => (
-                        <div key={og.workOrderId} className="pt-card">
-                            <div className="pt-card-head" style={{ borderLeftColor: og.orderColor || 'var(--accent)' }}
-                                onClick={() => onNavigateToOrder?.(og.workOrderId)} role={onNavigateToOrder ? 'button' : undefined}>
-                                <div>
-                                    <div className="pt-card-title">{og.orderLabel}</div>
-                                    <div className="pt-card-sub">{og.doneCount}/{og.totalCount} procesa · {og.currentPhaseIndex < 0 ? 'sve faze gotove' : `faza ${og.currentPhaseIndex + 1}/${og.phases.length}`}</div>
-                                </div>
-                                <div className="pt-card-spacer" />
-                                <CrewChips ids={og.crewWorkerIds} />
-                                <Progress done={og.doneCount} total={og.totalCount} />
-                            </div>
-                            {/* Fazni stepper */}
-                            <div className="pt-stepper">
-                                {og.phases.map((p, i) => (
-                                    <span key={p.phaseIndex} style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                                        {i > 0 && <span className="material-icons-round pt-phase-arrow">chevron_right</span>}
-                                        <span className={`pt-phase ${p.allDone ? 'done' : i === og.currentPhaseIndex ? 'current' : 'future'}`}
-                                            title={p.cells.map(c => c.processName).filter((v, idx, a) => a.indexOf(v) === idx).join(', ')}>
-                                            {p.allDone && <span className="material-icons-round" style={{ fontSize: 14 }}>check</span>}
-                                            {Array.from(new Set(p.cells.map(c => c.processName))).join(' + ')}
+                    {orderGroups.map(og => {
+                        const f = orderFlags.get(og.workOrderId);
+                        const p = partition(og.tasks);
+                        return (
+                            <div key={og.workOrderId} className={`pt-card ${f?.paused ? 'is-paused' : ''}`}>
+                                <div className="pt-card-head" style={{ borderLeftColor: og.orderColor || 'var(--accent)' }}>
+                                    <button className="pt-card-id" onClick={() => onNavigateToOrder?.(og.workOrderId)} disabled={!onNavigateToOrder}>
+                                        <span className="pt-card-title">
+                                            {og.orderLabel}
+                                            {f?.today && <span className="pt-badge today" title="Danas je knjižen rad na ovom nalogu">danas</span>}
+                                            {f?.paused && <span className="pt-badge paused" title="Nalog je pauziran — dnevnice ne teku">pauza</span>}
+                                            {f?.waiting && <span className="pt-badge waiting">na čekanju</span>}
                                         </span>
-                                    </span>
-                                ))}
-                            </div>
-                            {/* Na redu (tekuća faza) */}
-                            {og.activeCells.length > 0 && (
-                                <div className="pt-cells">
-                                    <div className="pt-section-label">Na redu</div>
-                                    {og.activeCells.map(c => <Cell key={cellKey(c)} c={c} />)}
-                                </div>
-                            )}
-                        </div>
-                    ))}
-                </div>
-            ) : groupMode === 'process' ? (
-                <div className="pt-list">
-                    {(() => {
-                        const catalogGroups = processGroups.filter(g => g.catalogOrder !== null);
-                        const legacyGroups = processGroups.filter(g => g.catalogOrder === null);
-                        const renderGroup = (g: typeof processGroups[number]) => (
-                            <div key={g.key} className="pt-card">
-                                <div className="pt-card-head">
-                                    <div>
-                                        <div className="pt-card-title">{g.name} {g.catalogOrder === null && <span className="pt-badge legacy">van kataloga</span>}</div>
-                                        <div className="pt-card-sub">{g.active.length} na redu · {g.blockedCount} čeka · {g.doneCount}/{g.totalCount} završeno</div>
-                                    </div>
+                                        <span className="pt-card-sub">
+                                            {plural(og.productCount, 'proizvod', 'proizvoda')}
+                                            {og.crewWorkerIds.length > 0 && ` · ${og.crewWorkerIds.map(workerName).join(', ')}`}
+                                        </span>
+                                    </button>
                                     <div className="pt-card-spacer" />
-                                    {g.hasLoggedWork && <span className="pt-badge logged">knjižen rad</span>}
-                                    <Progress done={g.doneCount} total={g.totalCount} />
+                                    <Bar done={og.doneCount} total={og.totalCount} />
+                                    <button className="pt-btn" onClick={() => setGraphOrderId(og.workOrderId)}
+                                        title="Graf procesa naloga — uredi tok, dodaj ili ukloni procese">
+                                        <span className="material-icons-round">account_tree</span> Graf
+                                    </button>
                                 </div>
-                                {g.active.length > 0 && (
-                                    <div className="pt-cells">
-                                        {g.active.map(c => <Cell key={cellKey(c)} c={c} showOrder />)}
+
+                                <div className="pt-body">
+                                    {p.now.length > 0 ? (
+                                        <div className="pt-now">
+                                            <div className="pt-now-label">Na redu</div>
+                                            {p.now.map(t => <TaskRow key={t.key} t={t} lens="order" tone="now" />)}
+                                        </div>
+                                    ) : (
+                                        <div className="pt-note">
+                                            {p.done.length === og.tasks.length
+                                                ? 'Svi procesi završeni — nalog se može zatvoriti.'
+                                                : 'Ništa nije na redu — svi sljedeći procesi čekaju prethodne.'}
+                                        </div>
+                                    )}
+                                    <div className="pt-secs">
+                                        <Section id={`${og.workOrderId}|w`} label="Čeka" tasks={p.waiting} lens="order" />
+                                        <Section id={`${og.workOrderId}|d`} label="Završeno" tasks={p.done} lens="order" />
                                     </div>
-                                )}
+                                </div>
                             </div>
                         );
+                    })}
+                </div>
+            ) : (
+                <div className="pt-list">
+                    {(() => {
+                        const render = (g: typeof processGroups[number]) => {
+                            const p = partition(g.tasks);
+                            return (
+                                <div key={g.key} className={`pt-card ${p.now.length === 0 ? 'is-quiet' : ''}`}>
+                                    <div className="pt-card-head plain">
+                                        <div className="pt-card-id">
+                                            <span className="pt-card-title">
+                                                {g.name}
+                                                {g.catalogOrder === null && <span className="pt-badge legacy">van kataloga</span>}
+                                            </span>
+                                            <span className="pt-card-sub">
+                                                {p.now.length > 0 ? `${plural(p.now.length, 'nalog', 'naloga')} na redu` : 'ništa na redu'}
+                                            </span>
+                                        </div>
+                                        <div className="pt-card-spacer" />
+                                        {g.hasLoggedWork && <span className="pt-badge logged">knjižen rad</span>}
+                                        <Bar done={g.doneCount} total={g.totalCount} />
+                                    </div>
+                                    <div className="pt-body">
+                                        {p.now.length > 0 && (
+                                            <div className="pt-now">
+                                                {p.now.map(t => <TaskRow key={t.key} t={t} lens="process" tone="now" />)}
+                                            </div>
+                                        )}
+                                        <div className="pt-secs">
+                                            <Section id={`${g.key}|w`} label="Čeka" tasks={p.waiting} lens="process" />
+                                            <Section id={`${g.key}|d`} label="Završeno" tasks={p.done} lens="process" />
+                                        </div>
+                                    </div>
+                                </div>
+                            );
+                        };
+                        const inCatalog = processGroups.filter(g => g.catalogOrder !== null);
+                        const legacy = processGroups.filter(g => g.catalogOrder === null);
                         return (
                             <>
-                                {catalogGroups.map(renderGroup)}
-                                {legacyGroups.length > 0 && <div className="pt-section-label" style={{ marginTop: 8 }}>Ostali procesi (van kataloga)</div>}
-                                {legacyGroups.map(renderGroup)}
+                                {inCatalog.map(render)}
+                                {legacy.length > 0 && <div className="pt-section-label">Ostali procesi (van kataloga)</div>}
+                                {legacy.map(render)}
                             </>
                         );
                     })()}
                 </div>
-            ) : (
+            )}
+
+            {/* Nalozi bez ijednog procesa — odavde se procesi POSTAVE */}
+            {ordersWithoutProcesses.length > 0 && (
                 <div className="pt-list">
-                    {workerGroups.map(wg => (
-                        <div key={wg.workerId} className="pt-card">
-                            <div className="pt-card-head">
-                                <div>
-                                    <div className="pt-card-title">{wg.workerName}</div>
-                                    <div className="pt-card-sub">{wg.orders.length} {wg.orders.length === 1 ? 'nalog' : 'naloga'} · {wg.activeCount} na redu</div>
+                    <div className="pt-section-label">Bez definisanih procesa ({ordersWithoutProcesses.length})</div>
+                    {ordersWithoutProcesses.map(o => (
+                        <div key={o.workOrder.Work_Order_ID} className="pt-card">
+                            <div className="pt-card-head" style={{ borderLeftColor: o.workOrder.Color_Code || 'var(--border)' }}>
+                                <div className="pt-card-id">
+                                    <span className="pt-card-title">{o.orderLabel}</span>
+                                    <span className="pt-card-sub">{plural(o.items.length, 'proizvod', 'proizvoda')} · procesi nisu postavljeni</span>
                                 </div>
-                            </div>
-                            <div className="pt-cells">
-                                {wg.orders.map(o => (
-                                    <div key={o.workOrderId}>
-                                        <div className="pt-section-label" style={{ padding: '4px 0' }}>{o.orderLabel}</div>
-                                        {o.activeCells.length === 0 ? <div className="pt-cell-ctx" style={{ padding: '0 12px 6px' }}>nema procesa na redu</div>
-                                            : o.activeCells.map(c => <Cell key={cellKey(c)} c={c} />)}
-                                    </div>
-                                ))}
+                                <div className="pt-card-spacer" />
+                                <button className="pt-btn primary" onClick={() => setGraphOrderId(o.workOrder.Work_Order_ID)}
+                                    title="Postavi procese: iz plana proizvoda, šablon ili ručno">
+                                    <span className="material-icons-round">account_tree</span> Postavi procese
+                                </button>
                             </div>
                         </div>
                     ))}
                 </div>
             )}
 
-            {/* Floating action bar */}
-            {selectedCells.length > 0 && (
+            {/* Traka grupnog odabira — samo kad je nešto označeno */}
+            {selectedCells.length > 0 && !formOpen && (
                 <div className="pt-actionbar">
-                    <span>{selectedCells.length} {selectedCells.length === 1 ? 'proces' : 'procesa'} odabrano</span>
+                    <span>{plural(selectedCells.length, 'stavka označena', 'stavki označeno')}</span>
                     <button className="ghost" disabled={busy} onClick={startSelected}>Pokreni</button>
-                    <button className="primary" disabled={busy} onClick={openCompleteForm}>Završi…</button>
+                    <button className="primary" disabled={busy} onClick={() => openCompleteForm(selectedCells)}>Završi…</button>
                     <button className="ghost" onClick={() => setSel(new Set())}>Odustani</button>
                 </div>
             )}
 
-            {/* Completion form */}
             {formOpen && (
-                <Modal isOpen onClose={() => setFormOpen(false)} title={`Završi ${selectedCells.length} ${selectedCells.length === 1 ? 'proces' : 'procesa'}`}
+                <Modal isOpen onClose={() => setFormOpen(false)} title={`Završi ${plural(selectedCells.length, 'stavku', 'stavki')}`}
                     footer={<>
                         <button className="btn btn-secondary" onClick={() => setFormOpen(false)}>Otkaži</button>
                         <button className="btn btn-primary" disabled={busy} onClick={confirmComplete}>{busy ? 'Spremanje…' : 'Potvrdi završetak'}</button>
@@ -321,7 +550,23 @@ export default function ProcessesTab({ workOrders, workers, workLogs, onRefresh,
 
             {catalogModal && organizationId && (
                 <ProcessCatalogModal organizationId={organizationId} onClose={() => setCatalogModal(false)}
-                    onChanged={() => { getProcessCatalog(organizationId).then(setCatalog).catch(() => { }); }} showToast={showToast} />
+                    onChanged={() => { getProcessCatalog(organizationId).then(setCatalog).catch(() => { }); onRefresh('workOrders'); }} showToast={showToast} />
+            )}
+
+            {graphOrder && organizationId && (
+                <ProcessGraphModal
+                    workOrderId={graphOrder.Work_Order_ID}
+                    workOrderNumber={graphOrder.Work_Order_Number}
+                    workOrderName={workOrderDisplayName(graphOrder)}
+                    items={(graphOrder.items || []).map(i => ({
+                        ID: i.ID, Product_Name: i.Product_Name,
+                        Processes: i.Processes, Process_Stages: i.Process_Stages,
+                    }))}
+                    workLogs={workLogs}
+                    organizationId={organizationId}
+                    onClose={() => { setGraphOrderId(null); onRefresh('workOrders'); }}
+                    showToast={showToast}
+                />
             )}
         </div>
     );

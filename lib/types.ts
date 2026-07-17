@@ -43,6 +43,11 @@ export interface Product {
     Process_Stages?: { processes: string[] }[];
     // Legacy/ravni oblik (flatten faza po redu) — čita se kao fallback, piše se radi kompatibilnosti.
     Process_Plan?: string[];
+    // GRAF plana proizvoda (isti oblik kao na nalogu) — IZVOR ISTINE za tok:
+    // paralelne grane po materijalu (iveral ∥ MDF+furnir) koje se spajaju na
+    // zajedničkim procesima. Process_Stages/Process_Plan su topološki DERIVAT
+    // (stagesFromGraph) radi kompatibilnosti (stepper, šihtarica, board).
+    Process_Graph?: ProcessGraph;
     // 'auto' = izveden iz pravila materijal→proces (smije se preračunati pri izmjeni materijala);
     // 'ai'   = AI prijedlog iz naziva (kad nema sastavnice) — auto GA SMIJE prebrisati kad se pojave materijali/pravila;
     // 'manual' = korisnik uredio → auto ga NE dira.
@@ -569,6 +574,10 @@ export interface WorkOrderItem {
     // Snapshot FAZA plana proizvoda pri kreiranju naloga (paralelno unutar faze) —
     // izvor za "Sinhronizuj iz proizvoda" u grafu bez dodatnih upita.
     Process_Stages?: { processes: string[] }[];
+    // Snapshot GRAFA plana proizvoda pri kreiranju naloga — sinteza grafa naloga
+    // spaja OVE grafove (mergeProductGraphs: paralelne grane ostaju paralelne);
+    // fallback za starije stavke bez grafa: sinteza iz Process_Stages.
+    Process_Graph?: ProcessGraph;
 
     // SUB-TASKS - Za split proizvoda po količini
     SubTasks?: SubTask[];

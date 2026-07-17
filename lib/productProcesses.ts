@@ -8,6 +8,7 @@
 // ════════════════════════════════════════════════════════════════════
 
 import type { ProcessGraph, ProcessNode, ProcessEdge, ProcessCatalogItem, ProcessMaterialRule } from './types';
+import { computeGraphDepths } from './processLayout';
 
 const norm = (s: string) => (s || '').trim().toLowerCase();
 
@@ -42,13 +43,15 @@ export const MATERIAL_TYPES: MaterialType[] = [
     { key: 'masiv', label: 'Masiv', patterns: ['masiv'] },
     { key: 'lak', label: 'Lak / boja', patterns: ['lak', 'farb', 'boja'] },
     { key: 'vodilice', label: 'Vodilice', patterns: ['vodilic'] },
-    { key: 'sarke', label: 'Šarke', patterns: ['šark', 'sark'] },
+    // "baglama" = uobičajen bosanski naziv za šarku (korisnikovi materijali: "Baglama ravna/paralelna")
+    { key: 'sarke', label: 'Šarke', patterns: ['šark', 'sark', 'baglam'] },
     { key: 'rucke', label: 'Ručke', patterns: ['ručk', 'ruck'] },
     { key: 'staklo', label: 'Staklo', patterns: ['staklo', 'plexi'] },
     { key: 'ogledalo', label: 'Ogledalo', patterns: ['ogledal'] },
     { key: 'led', label: 'LED', patterns: ['led'] },
-    { key: 'kant', label: 'Kant traka', patterns: ['kant', 'abs'] },
-    { key: 'hdf', label: 'HDF / lesonit', patterns: ['hdf', 'lesonit'] },
+    // "KT / Textil…" = kant traka skraćeno; pattern s razmakom/kosom da ne hvata "projekt" i sl.
+    { key: 'kant', label: 'Kant traka', patterns: ['kant', 'abs', 'kt ', 'kt/'] },
+    { key: 'hdf', label: 'HDF / lesonit', patterns: ['hdf', 'lesonit', 'lesomal'] },
     { key: 'alu', label: 'Alu', patterns: ['alu'] },
 ];
 
@@ -454,6 +457,220 @@ export function mergeFlowTemplateIntoGraph(
         if (s && t) pushEdge(s, t);
     }
     return { graph: { nodes, edges }, addedNodeNames, staleNodeNames: [] };
+}
+
+// ════════════════════════════════════════════════════════════════════
+// GRAF IZ PRAVILA — pravilo je LANAC (redoslijed procesa u pravilu = redoslijed
+// izvršavanja te GRANE). Različita pravila = paralelne grane; grane se spajaju
+// na ISTOIMENIM procesima (npr. obje vode u "Sklapanje" → jedan čvor).
+// Time iveral (krojenje→kantiranje→sklapanje) i furnir+MDF (krojenje MDF-a→
+// furniranje→srezivanje→brušenje) teku paralelno i sastaju se tek na sklapanju.
+// ════════════════════════════════════════════════════════════════════
+
+export interface RuleGraphResult {
+    graph: ProcessGraph;
+    warnings: string[];
+    /** Pogođena pravila s lancima — za prikaz grana u UI ("Iveral: A → B → C"). */
+    branches: { label: string; processes: string[] }[];
+}
+
+/** Prikazna oznaka pravila (za grane): tip/kombinacija/kategorija/naziv. */
+export function ruleLabel(
+    rule: Pick<ProcessMaterialRule, 'Match_Kind' | 'Match_Value' | 'Match_Types'>,
+    typeLabelOf: (key: string) => string = k => k
+): string {
+    if (rule.Match_Kind === 'material_type_combo') return (rule.Match_Types || []).map(typeLabelOf).join(' + ');
+    if (rule.Match_Kind === 'material_type') return typeLabelOf(rule.Match_Value);
+    if (rule.Match_Kind === 'category') return `Kategorija: ${rule.Match_Value}`;
+    return `Naziv sadrži „${rule.Match_Value}"`;
+}
+
+/** Da li pravilo okida za skup materijala (ista semantika kao suggestProcessesFromMaterials). */
+export function ruleMatches(
+    rule: Pick<ProcessMaterialRule, 'Match_Kind' | 'Match_Value' | 'Match_Types'>,
+    materials: RuleMaterialLite[],
+    presentTypes: Set<string>
+): boolean {
+    if (rule.Match_Kind === 'material_type_combo') {
+        const types = (rule.Match_Types || []).filter(Boolean);
+        return types.length > 0 && types.every(t => presentTypes.has(t));
+    }
+    if (rule.Match_Kind === 'material_type') return presentTypes.has(rule.Match_Value);
+    const mv = norm(rule.Match_Value);
+    if (!mv) return false;
+    return materials.some(m => rule.Match_Kind === 'category'
+        ? norm(m.Category || '') === mv
+        : norm(m.Material_Name || '').includes(mv));
+}
+
+/**
+ * Izgradi GRAF plana proizvoda iz pravila: svako pogođeno pravilo = lanac čvorova
+ * (redoslijed IZ PRAVILA), čvor po normalizovanom imenu (grane se spajaju na
+ * istoimenim procesima). Ivica koja bi zatvorila ciklus se ispušta uz upozorenje.
+ * Bez pogodaka → prazan graf.
+ */
+export function buildGraphFromRules(
+    materials: RuleMaterialLite[],
+    rules: Pick<ProcessMaterialRule, 'Match_Kind' | 'Match_Value' | 'Match_Types' | 'Processes'>[],
+    typeLabelOf?: (key: string) => string
+): RuleGraphResult {
+    const warnings: string[] = [];
+    const branches: { label: string; processes: string[] }[] = [];
+    const nodeByKey = new Map<string, ProcessNode>();
+    let seq = 0;
+    const nodeFor = (name: string): ProcessNode => {
+        const k = norm(name);
+        let n = nodeByKey.get(k);
+        if (!n) {
+            n = { id: `n-${++seq}-${k.replace(/[^a-z0-9]+/g, '-')}`, name: name.trim(), itemIds: [], aliases: [name.trim()] };
+            nodeByKey.set(k, n);
+        }
+        return n;
+    };
+
+    const presentTypes = new Set(presentMaterialTypes(materials));
+    const edgeKeys = new Set<string>();
+    const adj = new Map<string, Set<string>>();
+    const reaches = (from: string, to: string): boolean => {
+        if (from === to) return true;
+        const seen = new Set<string>([from]);
+        const stack = [from];
+        while (stack.length) {
+            const cur = stack.pop()!;
+            for (const nxt of Array.from(adj.get(cur) || [])) {
+                if (nxt === to) return true;
+                if (!seen.has(nxt)) { seen.add(nxt); stack.push(nxt); }
+            }
+        }
+        return false;
+    };
+    const edges: ProcessEdge[] = [];
+    const pushEdge = (a: ProcessNode, b: ProcessNode) => {
+        if (a.id === b.id) return;
+        const ek = `${a.id}→${b.id}`;
+        if (edgeKeys.has(ek)) return;
+        if (reaches(b.id, a.id)) {
+            warnings.push(`Preskočena veza "${a.name}" → "${b.name}" (pravila bi napravila kružni tok)`);
+            return;
+        }
+        edgeKeys.add(ek);
+        if (!adj.has(a.id)) adj.set(a.id, new Set());
+        adj.get(a.id)!.add(b.id);
+        edges.push({ id: `e-${a.id}-${b.id}`, source: a.id, target: b.id });
+    };
+
+    if (materials.length && rules.length) {
+        for (const rule of rules) {
+            if (!ruleMatches(rule, materials, presentTypes)) continue;
+            const chain = (rule.Processes || []).map(p => (p || '').trim()).filter(Boolean);
+            if (!chain.length) continue;
+            branches.push({ label: ruleLabel(rule as ProcessMaterialRule, typeLabelOf), processes: chain });
+            for (let i = 0; i < chain.length; i++) {
+                const cur = nodeFor(chain[i]);
+                if (i > 0) pushEdge(nodeFor(chain[i - 1]), cur);
+            }
+        }
+    }
+    return { graph: { nodes: Array.from(nodeByKey.values()), edges }, warnings, branches };
+}
+
+/**
+ * FAZE iz grafa (topološki, longest-path): kolona = faza, unutar kolone paralelno.
+ * Derivat za Process_Stages/Process_Plan kompatibilnost (stepper, šihtarica, board).
+ */
+export function stagesFromGraph(graph: ProcessGraph | undefined | null): string[][] {
+    const nodes = graph?.nodes || [];
+    if (!nodes.length) return [];
+    const depth = computeGraphDepths(nodes, graph?.edges || []);
+    const byDepth = new Map<number, string[]>();
+    const seen = new Set<string>();
+    for (const n of nodes) {
+        const nm = (n.name || '').trim();
+        const k = norm(nm);
+        if (!k || seen.has(k)) continue;
+        seen.add(k);
+        const d = depth.get(n.id) || 0;
+        if (!byDepth.has(d)) byDepth.set(d, []);
+        byDepth.get(d)!.push(nm);
+    }
+    return Array.from(byDepth.keys()).sort((a, b) => a - b).map(k => byDepth.get(k)!);
+}
+
+/**
+ * SPOJI GRAFOVE PROIZVODA u graf naloga: čvor po normalizovanom imenu preko svih
+ * proizvoda (itemIds = koji proizvodi ga imaju; aliases = svi originalni nazivi),
+ * ivice se remapuju po imenu, dedupe, cycle-guard. columns = topološke faze
+ * spojenog grafa (za layoutColumns). Proizvodi bez grafa se preskaču (pozivalac
+ * za njih koristi fallback iz faza).
+ */
+export function mergeProductGraphs(items: { itemId: string; graph: ProcessGraph }[]): SynthesisResult {
+    const warnings: string[] = [];
+    const nodeByKey = new Map<string, ProcessNode>();
+    let seq = 0;
+    const nodeFor = (name: string): ProcessNode => {
+        const k = norm(name);
+        let n = nodeByKey.get(k);
+        if (!n) {
+            n = { id: `n-${++seq}-${k.replace(/[^a-z0-9]+/g, '-')}`, name: name.trim(), itemIds: [], aliases: [] };
+            nodeByKey.set(k, n);
+        }
+        return n;
+    };
+    const edgeKeys = new Set<string>();
+    const adj = new Map<string, Set<string>>();
+    const reaches = (from: string, to: string): boolean => {
+        if (from === to) return true;
+        const seen = new Set<string>([from]);
+        const stack = [from];
+        while (stack.length) {
+            const cur = stack.pop()!;
+            for (const nxt of Array.from(adj.get(cur) || [])) {
+                if (nxt === to) return true;
+                if (!seen.has(nxt)) { seen.add(nxt); stack.push(nxt); }
+            }
+        }
+        return false;
+    };
+    const edges: ProcessEdge[] = [];
+
+    for (const it of items) {
+        const g = it.graph;
+        if (!g?.nodes?.length) continue;
+        const localIdToNode = new Map<string, ProcessNode>();
+        for (const n of g.nodes) {
+            if (!norm(n.name)) continue;
+            const merged = nodeFor(n.name);
+            if (!merged.itemIds.includes(it.itemId)) merged.itemIds.push(it.itemId);
+            const aliasSet = new Map<string, string>();
+            [...(merged.aliases || []), ...(n.aliases || [n.name])].forEach(a => {
+                const ak = norm(a); if (ak && !aliasSet.has(ak)) aliasSet.set(ak, a.trim());
+            });
+            merged.aliases = Array.from(aliasSet.values());
+            localIdToNode.set(n.id, merged);
+        }
+        for (const e of g.edges || []) {
+            const a = localIdToNode.get(e.source);
+            const b = localIdToNode.get(e.target);
+            if (!a || !b || a.id === b.id) continue;
+            const ek = `${a.id}→${b.id}`;
+            if (edgeKeys.has(ek)) continue;
+            if (reaches(b.id, a.id)) {
+                warnings.push(`Preskočena veza "${a.name}" → "${b.name}" (kružni redoslijed među proizvodima)`);
+                continue;
+            }
+            edgeKeys.add(ek);
+            if (!adj.has(a.id)) adj.set(a.id, new Set());
+            adj.get(a.id)!.add(b.id);
+            edges.push({ id: `e-${a.id}-${b.id}`, source: a.id, target: b.id });
+        }
+    }
+
+    const graph: ProcessGraph = { nodes: Array.from(nodeByKey.values()), edges };
+    // Kolone = topološke faze spojenog grafa (nazivi → ID-evi).
+    const stageNames = stagesFromGraph(graph);
+    const idByName = new Map(graph.nodes.map(n => [norm(n.name), n.id]));
+    const columns = stageNames.map(col => col.map(nm => idByName.get(norm(nm))!).filter(Boolean));
+    return { graph, warnings, columns };
 }
 
 export interface ItemProcessLite {

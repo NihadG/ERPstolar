@@ -6,7 +6,7 @@
 // radnik-dani, napredak procesa, radnici) + akcije + prošireni detalj.
 // ════════════════════════════════════════════════════════════════════
 
-import type { WorkOrder, Project, Worker } from '@/lib/types';
+import type { WorkOrder, Project, Worker, Task } from '@/lib/types';
 import { updatePlannedStartDate } from '@/lib/services';
 import { daysUntil, plannedVsActualDays } from '@/lib/planning';
 import { workOrderDisplayName, orderProcessProgress, isOrderPaused, workOrderStatusDetails } from '@/lib/utils';
@@ -25,6 +25,9 @@ interface WorkOrderCardProps {
     workOrder: WorkOrder;
     projects: Project[];
     workers: Worker[];
+    tasks?: Task[];
+    /** Datum prvog knjiženja radnika (YYYY-MM-DD) — stvarni početak rada. */
+    firstWorkDate?: string;
     isExpanded: boolean;
     attendanceWarnings?: AttendanceWarningLite[];  // upozorenja SVIH naloga; kartica filtrira svoja
     organizationId: string | null;
@@ -43,6 +46,8 @@ export default function WorkOrderCard({
     workOrder: wo,
     projects,
     workers,
+    tasks = [],
+    firstWorkDate,
     isExpanded,
     attendanceWarnings,
     organizationId,
@@ -212,6 +217,14 @@ export default function WorkOrderCard({
                                     {wo.Due_Date ? formatDate(wo.Due_Date) : '-'}
                                     {dueCountdown && <span style={{ opacity: 0.85 }}>· {dueCountdown}</span>}
                                 </span>
+                                {/* Prvi rad — kad je radnik prvi put knjižen. Bez ovoga se iz liste
+                                    ne vidi je li nalog uopšte krenuo (rok sam po sebi to ne kaže). */}
+                                {firstWorkDate && (
+                                    <span className="summary-item" title={`Prvi rad na nalogu: ${formatDate(firstWorkDate)}`}>
+                                        <span className="material-icons-round">handyman</span>
+                                        od {formatDate(firstWorkDate)}
+                                    </span>
+                                )}
                                 {/* Planirano vs potrošeno radnik-dana (Actual_Labor_Days sync-uje recalculateWorkOrder) */}
                                 {wo.Status !== 'Otkazano' && (() => {
                                     const dp = plannedVsActualDays(wo.items || []);
@@ -352,6 +365,7 @@ export default function WorkOrderCard({
                     <WorkOrderExpandedDetail
                         workOrder={wo}
                         workers={workers}
+                        tasks={tasks}
                         onUpdate={onUpdate}
                         onPrint={onPrint}
                         onDelete={onDelete}

@@ -12,6 +12,8 @@
  * approach is the right tradeoff for a furniture ERP.
  */
 
+import { nextWorkOrderNumber } from '../../workOrderNumber';
+
 /**
  * Generate a sequential offer number.
  * Format: P-YYYY/NN (e.g. P-2026/01, P-2026/02, ...)
@@ -83,19 +85,15 @@ export function generateOrderNumber(): string {
 }
 
 /**
- * Generate a collision-safe work order number.
- * Format: RN-YYYYMMDD-HHMMSS-RRR (Proizvodnja)
- *         MN-YYYYMMDD-HHMMSS-RRR (Montaža)
+ * Broj radnog naloga: GODINA-MJESEC/SLOVO+BROJ (npr. 2026-07/R1).
+ * Traži sljedeći slobodan redni broj iz postojećih brojeva iste kante
+ * (mjesec + slovo) — isti obrazac kao generateOfferNumber gore.
+ *
+ * Format i parsiranje žive u lib/workOrderNumber.ts (jedan izvor, testiran).
  */
-export function generateWorkOrderNumber(type?: 'Proizvodnja' | 'Montaža' | 'Zadaci'): string {
-    const now = new Date();
-    const year = now.getFullYear();
-    const month = String(now.getMonth() + 1).padStart(2, '0');
-    const day = String(now.getDate()).padStart(2, '0');
-    const hours = String(now.getHours()).padStart(2, '0');
-    const minutes = String(now.getMinutes()).padStart(2, '0');
-    const seconds = String(now.getSeconds()).padStart(2, '0');
-    const random = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
-    const prefix = type === 'Montaža' ? 'MN' : type === 'Zadaci' ? 'ZN' : 'RN';
-    return `${prefix}-${year}${month}${day}-${hours}${minutes}${seconds}-${random}`;
+export function generateWorkOrderNumber(
+    type?: 'Proizvodnja' | 'Montaža' | 'Zadaci',
+    existingWorkOrderNumbers?: (string | undefined | null)[]
+): string {
+    return nextWorkOrderNumber(existingWorkOrderNumbers || [], type);
 }

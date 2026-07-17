@@ -7,7 +7,6 @@ import {
     SUGGESTED_RULES,
     pickTemplateForTypes,
     buildAutoPlan,
-    validateAiStages,
 } from '../processAutoPlan';
 import type { ProcessMaterialRule } from '../types';
 
@@ -166,20 +165,5 @@ describe('buildAutoPlan — mapiranje na faze šablona + fallback', () => {
         const r = buildAutoPlan([{ Material_Name: 'Nepoznato' }], rules, catalog, [template]);
         expect(r.source).toBe('none');
         expect(r.stages).toEqual([]);
-    });
-});
-
-describe('validateAiStages — mapiranje na katalog, izbacivanje halucinacija', () => {
-    test('halucinirani naziv se odbacuje, case-mapiranje na kanonski', () => {
-        const out = validateAiStages([['krojenje iverala', 'IZMISLJENI PROCES'], ['kantiranje']], catalog);
-        expect(out).toEqual([['Krojenje Iverala'], ['Kantiranje']]);
-    });
-    test('prazne faze i duplikati ispadaju', () => {
-        const out = validateAiStages([['Kantiranje'], [], ['kantiranje'], ['halucinacija']], catalog);
-        expect(out).toEqual([['Kantiranje']]);
-    });
-    test('garbage → []', () => {
-        expect(validateAiStages('nije niz', catalog)).toEqual([]);
-        expect(validateAiStages([{ x: 1 }, 'y'], catalog)).toEqual([]);
     });
 });

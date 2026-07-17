@@ -1,7 +1,10 @@
 'use client';
 
 import { useState, useMemo, useEffect } from 'react';
-import type { WorkOrder, Project, Worker } from '@/lib/types';
+import type { WorkOrder, Project, Worker, Task, WorkLog } from '@/lib/types';
+import { firstBookingByOrder } from '@/lib/workOrderTasks';
+import { isNewFormatWorkOrderNumber } from '@/lib/workOrderNumber';
+import RenumberWorkOrdersModal from '@/components/ui/RenumberWorkOrdersModal';
 import { deleteWorkOrder, startWorkOrder, updateWorkOrder } from '@/lib/services';
 import { checkMissingAttendanceForActiveOrders, recalculateWorkOrder } from '@/lib/services';
 import { getWorkerAttendance, bookWorkerDayItems } from '@/lib/services';
@@ -26,6 +29,10 @@ interface ProductionTabProps {
     workOrders: WorkOrder[];
     projects: Project[];
     workers: Worker[];
+    /** Svi zadaci organizacije — kartica naloga ih filtrira po Task.Links. */
+    tasks: Task[];
+    /** Dnevnice — izvor datuma prvog rada po nalogu (firstBookingByOrder). */
+    workLogs: WorkLog[];
     onRefresh: (...collections: string[]) => void;
     showToast: (message: string, type: 'success' | 'error' | 'info') => void;
     pendingWorkOrderProducts?: { projectId: string; projectName: string; products: { productId: string; productName: string; quantity: number }[] } | null;
@@ -44,8 +51,10 @@ function statusSortPriority(wo: WorkOrder): number {
     return 99;
 }
 
-export default function ProductionTab({ workOrders, projects, workers, onRefresh, showToast, pendingWorkOrderProducts, onClearPendingWorkOrder, autoExpandWorkOrderId, onClearAutoExpand }: ProductionTabProps) {
+export default function ProductionTab({ workOrders, projects, workers, tasks, workLogs, onRefresh, showToast, pendingWorkOrderProducts, onClearPendingWorkOrder, autoExpandWorkOrderId, onClearAutoExpand }: ProductionTabProps) {
     const { organizationId } = useData();
+    // Datum prvog rada po nalogu — jedan prolaz kroz dnevnice za cijelu listu.
+    const firstWorkByOrder = useMemo(() => firstBookingByOrder(workLogs), [workLogs]);
     const [searchTerm, setSearchTerm] = useState('');
     const [statusFilter, setStatusFilter] = useState('');
 
@@ -57,6 +66,13 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
         totalAssigned: number;
     } | null>(null);
     const [attendanceBannerDismissed, setAttendanceBannerDismissed] = useState(false);
+    // Prenumeracija starih brojeva (jednokratno) — ponudi se samo dok ima šta prebrojati.
+    const [renumberOpen, setRenumberOpen] = useState(false);
+    const [renumberBannerDismissed, setRenumberBannerDismissed] = useState(false);
+    const legacyNumberedCount = useMemo(
+        () => workOrders.filter(w => !isNewFormatWorkOrderNumber(w.Work_Order_Number)).length,
+        [workOrders]
+    );
     const [priceEditWorkOrder, setPriceEditWorkOrder] = useState<WorkOrder | null>(null);
     const [attendanceFixWorkOrder, setAttendanceFixWorkOrder] = useState<WorkOrder | null>(null);
     const [profitDashboardOpen, setProfitDashboardOpen] = useState(false);
@@ -441,7 +457,7 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                 size="xl"
                 footer={<button className="btn btn-secondary" onClick={() => setPrintModal(false)}>Zatvori</button>}
             >
-                {currentWorkOrderForPrint && <WorkOrderPrintTemplate workOrder={currentWorkOrderForPrint} />}
+                {currentWorkOrderForPrint && <WorkOrderPrintTemplate workOrder={currentWorkOrderForPrint} tasks={tasks} />}
             </Modal>
         );
     }
@@ -642,6 +658,8 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
             workOrder={wo}
             projects={projects}
             workers={workers}
+            tasks={tasks}
+            firstWorkDate={firstWorkByOrder.get(wo.Work_Order_ID)}
             isExpanded={expandedOrderId === wo.Work_Order_ID}
             attendanceWarnings={attendanceWarnings?.warnings}
             organizationId={organizationId}
@@ -674,6 +692,8 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                 <MobileWorkOrdersView
                     workOrders={workOrders}
                     workers={workers}
+                    tasks={tasks}
+                    firstWorkByOrder={firstWorkByOrder}
                     onRefresh={onRefresh}
                     showToast={showToast}
                     onCreate={openCreateModal}
@@ -810,6 +830,24 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                     </button>
                 </div>
             </div>
+
+            {/* Stari brojevi naloga — baner nestaje sam čim se prenumeracija odradi
+                (nema više naloga starog formata), pa se ne mora nigdje gasiti. */}
+            {legacyNumberedCount > 0 && !renumberBannerDismissed && (
+                <div className="pt-renumber-banner">
+                    <span className="material-icons-round pt-renumber-icon">tag</span>
+                    <div className="pt-renumber-text">
+                        <strong>
+                            {legacyNumberedCount} {legacyNumberedCount === 1 ? 'nalog ima' : 'naloga ima'} stari, dugi broj
+                        </strong>
+                        <span>Novi format je kraći i čitljiv: <code>2026-07/R1</code> — godina-mjesec, slovo tipa, redni broj u mjesecu.</span>
+                    </div>
+                    <div className="pt-renumber-actions">
+                        <button className="pt-renumber-btn" onClick={() => setRenumberOpen(true)}>Pregledaj i uredi</button>
+                        <button className="pt-renumber-btn ghost" onClick={() => setRenumberBannerDismissed(true)}>Kasnije</button>
+                    </div>
+                </div>
+            )}
 
             {/* S16: Proactive Attendance Notification Banner */}
             {attendanceWarnings && attendanceWarnings.missingCount > 0 && !attendanceBannerDismissed && (
@@ -982,8 +1020,48 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
             <style jsx>{`
                 .orders-list { display: flex; flex-direction: column; gap: 12px; }
 
+                /* Baner prenumeracije — informativan, ne alarmantan (ništa nije pokvareno,
+                   samo su brojevi ružni), pa ide u plavu, a ne u žutu kao upozorenja. */
+                .pt-renumber-banner {
+                    margin: 0 24px 16px;
+                    padding: 13px 16px;
+                    background: var(--accent-light);
+                    border: 1px solid #bfdcff;
+                    border-radius: 12px;
+                    display: flex;
+                    align-items: center;
+                    gap: 12px;
+                    flex-wrap: wrap;
+                }
+                .pt-renumber-icon { color: var(--accent); font-size: 20px; }
+                .pt-renumber-text { display: flex; flex-direction: column; gap: 3px; min-width: 0; flex: 1; }
+                .pt-renumber-text strong { font-size: 13px; color: #1e40af; }
+                .pt-renumber-text span { font-size: 12px; color: #1e40af; opacity: 0.85; line-height: 1.5; }
+                .pt-renumber-text code {
+                    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+                    background: rgba(255, 255, 255, 0.7);
+                    padding: 1px 5px;
+                    border-radius: 4px;
+                }
+                .pt-renumber-actions { display: inline-flex; gap: 6px; flex-shrink: 0; }
+                .pt-renumber-btn {
+                    border: none;
+                    background: none;
+                    cursor: pointer;
+                    font-size: 12px;
+                    font-weight: 700;
+                    color: var(--accent);
+                    padding: 6px 10px;
+                    border-radius: 6px;
+                }
+                .pt-renumber-btn:hover { background: rgba(255, 255, 255, 0.6); }
+                .pt-renumber-btn.ghost { color: #1e40af; font-weight: 600; opacity: 0.7; }
+
                 @media (max-width: 767px) {
                     .content-header { flex-direction: column; align-items: stretch; gap: 12px; }
+                    .pt-renumber-banner { margin: 0 0 16px; }
+                    .pt-renumber-actions { width: 100%; }
+                    .pt-renumber-actions .pt-renumber-btn { flex: 1; }
                 }
             `}</style>
 
@@ -994,6 +1072,7 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                 workOrders={workOrders}
                 projects={projects}
                 workers={workers}
+                tasks={tasks}
                 organizationId={organizationId}
                 initialProducts={wizardInitialProducts}
                 onClose={() => setWizardOpen(false)}
@@ -1037,8 +1116,19 @@ export default function ProductionTab({ workOrders, projects, workers, onRefresh
                 onClose={() => setTasksModal(false)}
                 workOrders={workOrders}
                 workers={workers}
+                tasks={tasks}
                 organizationId={organizationId || ''}
                 onCreated={onRefresh}
+                showToast={showToast}
+            />
+
+            {/* Prenumeracija starih brojeva (pregled → potvrda) */}
+            <RenumberWorkOrdersModal
+                isOpen={renumberOpen}
+                onClose={() => setRenumberOpen(false)}
+                workOrders={workOrders}
+                organizationId={organizationId || ''}
+                onDone={onRefresh}
                 showToast={showToast}
             />
         </div >

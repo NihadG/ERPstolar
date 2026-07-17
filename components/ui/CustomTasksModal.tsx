@@ -4,14 +4,18 @@ import { useState, useMemo, useEffect } from 'react';
 import { Plus, X, Loader2, ClipboardList, AlertTriangle } from 'lucide-react';
 import Modal from './Modal';
 import { SearchableSelect } from './SearchableSelect';
+import TaskAttachEditor from './TaskAttachEditor';
 import { createWorkOrder } from '@/lib/services';
-import type { WorkOrder, Worker } from '@/lib/types';
+import { emptyTaskSelection, taskSelectionCount, type TaskAttachSelection } from '@/lib/workOrderTasks';
+import type { WorkOrder, Worker, Task } from '@/lib/types';
 
 interface CustomTasksModalProps {
     isOpen: boolean;
     onClose: () => void;
     workOrders: WorkOrder[];
     workers: Worker[];
+    /** Svi zadaci organizacije — za „Poveži postojeći" na ovom nalogu. */
+    tasks?: Task[];
     organizationId: string;
     onCreated: (...collections: string[]) => void;
     showToast: (message: string, type: 'success' | 'error' | 'info') => void;
@@ -29,11 +33,14 @@ interface TaskRow {
 
 const uid = () => (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `id-${Date.now()}-${Math.random()}`);
 
-export default function CustomTasksModal({ isOpen, onClose, workOrders, workers, organizationId, onCreated, showToast, zIndex, initialWorkerId, onOrderCreated }: CustomTasksModalProps) {
+export default function CustomTasksModal({ isOpen, onClose, workOrders, workers, tasks = [], organizationId, onCreated, showToast, zIndex, initialWorkerId, onOrderCreated }: CustomTasksModalProps) {
     const [rows, setRows] = useState<TaskRow[]>([{ id: uid(), text: '', workerIds: initialWorkerId ? [initialWorkerId] : [] }]);
     const [notes, setNotes] = useState('');
     const [dueDate, setDueDate] = useState('');
     const [saving, setSaving] = useState(false);
+    // Zadaci iz taba Zadaci (evidencija/praćenje) — ODVOJENO od poslova gore,
+    // koji su stavke naloga i nose trošak rada. Vidi .ctm-note ispod.
+    const [taskSelection, setTaskSelection] = useState<TaskAttachSelection>(emptyTaskSelection);
 
     // Component may stay mounted across opens (parent toggles `isOpen`), so
     // re-seed a clean, pre-filled state every time it actually opens.
@@ -42,6 +49,7 @@ export default function CustomTasksModal({ isOpen, onClose, workOrders, workers,
             setRows([{ id: uid(), text: '', workerIds: initialWorkerId ? [initialWorkerId] : [] }]);
             setNotes('');
             setDueDate('');
+            setTaskSelection(emptyTaskSelection());
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [isOpen]);
@@ -91,7 +99,7 @@ export default function CustomTasksModal({ isOpen, onClose, workOrders, workers,
 
     const validRows = rows.filter(r => r.text.trim().length > 0);
     const hasAnyWorker = validRows.some(r => r.workerIds.length > 0);
-    const reset = () => { setRows([{ id: uid(), text: '', workerIds: [] }]); setNotes(''); setDueDate(''); };
+    const reset = () => { setRows([{ id: uid(), text: '', workerIds: [] }]); setNotes(''); setDueDate(''); setTaskSelection(emptyTaskSelection()); };
 
     const handleCreate = async () => {
         if (!organizationId || saving) return;
@@ -136,8 +144,29 @@ export default function CustomTasksModal({ isOpen, onClose, workOrders, workers,
             }, organizationId);
 
             if (res.success) {
-                showToast(`Nalog "Razni poslovi" kreiran (${items.length} zadataka)`, 'success');
-                onCreated('workOrders');
+                showToast(`Nalog "Razni poslovi" kreiran (${items.length} ${items.length === 1 ? 'posao' : 'poslova'})`, 'success');
+
+                // Zadaci iz taba Zadaci — vežu se tek sada (nalog postoji). Greška
+                // ne ruši nalog: mogu se dodati i kasnije na kartici.
+                let tasksAttached = false;
+                if (taskSelectionCount(taskSelection) > 0 && res.data?.Work_Order_ID) {
+                    try {
+                        const { attachTasksToWorkOrder } = await import('@/lib/services');
+                        const r = await attachTasksToWorkOrder(
+                            taskSelection,
+                            { Work_Order_ID: res.data.Work_Order_ID, displayName: notes.trim() || res.data.Work_Order_Number },
+                            [],   // „Razni poslovi" nemaju proizvode iz baze — veza ide na nalog
+                            organizationId
+                        );
+                        if (r.success) tasksAttached = true;
+                        else showToast(r.message, 'error');
+                    } catch (e) {
+                        console.error('attach tasks to custom work order failed', e);
+                        showToast('Nalog kreiran, ali zadaci nisu vezani — dodaj ih na kartici naloga', 'error');
+                    }
+                }
+
+                onCreated(...(tasksAttached ? ['workOrders', 'tasks'] : ['workOrders']));
                 if (res.data) onOrderCreated?.(res.data.Work_Order_ID, res.data.Work_Order_Number);
                 reset();
                 onClose();
@@ -153,18 +182,19 @@ export default function CustomTasksModal({ isOpen, onClose, workOrders, workers,
     };
 
     return (
-        <Modal isOpen={isOpen} onClose={onClose} title="Razni poslovi — nalog sa zadacima" size="large" footer={null} zIndex={zIndex}>
+        <Modal isOpen={isOpen} onClose={onClose} title="Razni poslovi — nalog bez proizvoda" size="large" footer={null} zIndex={zIndex}>
             <div className="ctm">
                 <p className="ctm-intro">
-                    Zadaci koji nisu proizvodi iz baze (izrada paleta, čišćenje pogona…). Dodijeli jednog ili više
-                    radnika da nalog možeš pokrenuti, a zadatak možeš povezati s bilo kojim proizvodom (i završenim) —
-                    tada se sav rad na ovom zadatku uračuna u trošak tog proizvoda.
+                    Poslovi koji nisu proizvodi iz baze (izrada paleta, čišćenje pogona…). Dodijeli jednog ili više
+                    radnika da nalog možeš pokrenuti, a posao možeš povezati s bilo kojim proizvodom (i završenim) —
+                    tada se sav rad na ovom poslu uračuna u trošak tog proizvoda.
                 </p>
 
                 <section className="ctm-section">
                     <div className="ctm-section-head">
-                        <span>Zadaci</span>
+                        <span>Poslovi</span>
                         <span className="ctm-count">{validRows.length}</span>
+                        <em className="ctm-section-note">stavke naloga — nose trošak rada</em>
                     </div>
 
                     <div className="ctm-tasks">
@@ -220,7 +250,20 @@ export default function CustomTasksModal({ isOpen, onClose, workOrders, workers,
                         ))}
                     </div>
 
-                    <button className="ctm-add" onClick={addRow}><Plus size={16} /> Dodaj zadatak</button>
+                    <button className="ctm-add" onClick={addRow}><Plus size={16} /> Dodaj posao</button>
+                </section>
+
+                {/* Zadaci iz taba Zadaci — evidencija/podsjetnici, NE stavke naloga:
+                    ne nose trošak rada i ne utiču na profit. */}
+                <section className="ctm-section">
+                    <TaskAttachEditor
+                        value={taskSelection}
+                        onChange={setTaskSelection}
+                        tasks={tasks}
+                        workers={workers}
+                        products={[]}
+                        pickerZIndex={(zIndex || 1000) + 100}
+                    />
                 </section>
 
                 <section className="ctm-section">
@@ -272,6 +315,9 @@ export default function CustomTasksModal({ isOpen, onClose, workOrders, workers,
                     display: inline-flex; align-items: center; justify-content: center; min-width: 20px; height: 20px; padding: 0 6px;
                     font-size: 11px; font-weight: 700; color: var(--accent); background: var(--accent-light); border-radius: 999px;
                 }
+                /* Razlika između „Poslovi" (stavke naloga, nose trošak) i „Zadaci"
+                   (podsjetnici iz taba Zadaci) — bez ovoga se dvije liste čitaju kao ista stvar. */
+                .ctm-section-note { font-style: normal; font-size: 12px; font-weight: 400; color: var(--text-tertiary); }
 
                 .ctm-tasks { display: flex; flex-direction: column; gap: 12px; }
                 .ctm-task {

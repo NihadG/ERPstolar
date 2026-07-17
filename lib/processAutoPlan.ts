@@ -4,7 +4,7 @@
 // Cilj: definisanje plana procesa gotovo besplatno. Iz materijala proizvoda
 // (preko korisnikovih pravila + izvedenih TIPOVA materijala) predloži skup
 // procesa, pa ih rasporedi na FAZE odabranog šablona (kombinacija tipova bira
-// šablon). Fallback: sekvencijalno po katalogu. AI odgovor se validira ovdje.
+// šablon). Fallback: sekvencijalno po katalogu.
 //
 // jest: lib/__tests__/processAutoPlan.test.ts
 // ════════════════════════════════════════════════════════════════════
@@ -136,27 +136,3 @@ export function buildAutoPlan(
     };
 }
 
-// ════════════════════════════════════════════════════════════════════
-// VALIDACIJA AI ODGOVORA — mapiraj na kanonska imena kataloga, izbaci
-// halucinacije/prazne faze. Dijele ga API ruta (server) i UI (preview).
-// ════════════════════════════════════════════════════════════════════
-export function validateAiStages(
-    raw: unknown,
-    catalog: Pick<ProcessCatalogItem, 'Name'>[]
-): string[][] {
-    if (!Array.isArray(raw)) return [];
-    const canonical = new Map<string, string>(catalog.map(c => [norm(c.Name), c.Name]));
-    const out: string[][] = [];
-    const usedKeys = new Set<string>();
-    for (const stage of raw) {
-        if (!Array.isArray(stage)) continue;
-        const kept: string[] = [];
-        for (const p of stage) {
-            if (typeof p !== 'string') continue;
-            const name = canonical.get(norm(p));   // samo procesi iz kataloga (odbaci halucinacije)
-            if (name && !usedKeys.has(norm(name))) { usedKeys.add(norm(name)); kept.push(name); }
-        }
-        if (kept.length > 0) out.push(kept);
-    }
-    return out;
-}

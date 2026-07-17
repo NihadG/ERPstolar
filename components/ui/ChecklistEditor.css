@@ -1,0 +1,161 @@
+/* ═══════════════════════════════════════════════════════════════════
+   Koraci zadatka (ChecklistEditor) — tokeni iz globals.css.
+
+   Cijela lista živi UNUTAR jedne kartice (.cle): to je namjerna razlika
+   od prve verzije, koja je crtala gole redove preko pune širine roditelja
+   i na širokoj kartici naloga izgledala razvučeno/bez oblika. Kartica daje
+   koracima vidljivu granicu; redovi unutra se dijele TANKOM linijom
+   (border-top), ne punim okvirom po stavci — to bi ponovo "usjeckalo" listu.
+   ═══════════════════════════════════════════════════════════════════ */
+
+.cle {
+    display: flex;
+    flex-direction: column;
+    background: var(--surface);
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius-md);
+    padding: 10px 12px;
+}
+
+.cle-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding-bottom: 9px;
+    margin-bottom: 2px;
+    border-bottom: 1px solid var(--border-light);
+}
+.cle-head-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-tertiary);
+    flex-shrink: 0;
+}
+/* Traka ispuni prostor između naslova i brojača — mjerač napretka, ne ukras. */
+.cle-head-bar { flex: 1; height: 4px; border-radius: 2px; background: var(--border-light); overflow: hidden; min-width: 24px; }
+.cle-head-fill { display: block; height: 100%; border-radius: 2px; background: var(--accent); transition: width var(--transition); }
+.cle-head-fill.full { background: var(--success); }
+/* margin-left:auto je oslonac kad NEMA trake (nacrt bez štikliranja) — bez
+   nje bi brojač sjeo odmah uz naslov umjesto da ostane uz desnu ivicu. */
+.cle-head-count { margin-left: auto; font-size: 11px; font-weight: 700; color: var(--text-secondary); flex-shrink: 0; font-variant-numeric: tabular-nums; }
+
+.cle-empty {
+    margin: 2px 0 8px;
+    font-size: 12px;
+    color: var(--text-tertiary);
+    line-height: 1.5;
+}
+
+.cle-items { display: flex; flex-direction: column; }
+
+.cle-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 8px 6px;
+    border-radius: 6px;
+    border-top: 1px solid var(--border-light);
+}
+.cle-item:first-child { border-top: none; }
+.cle-item:hover { background: var(--background); }
+/* Ukloni se vidi tek na hover/fokus — lista koraka ostaje mirna dok se čita. */
+.cle-item .cle-remove { opacity: 0; }
+.cle-item:hover .cle-remove,
+.cle-item .cle-remove:focus-visible { opacity: 1; }
+
+.cle-box {
+    flex-shrink: 0;
+    width: 18px;
+    height: 18px;
+    margin-top: 1px;
+    border: 1.75px solid var(--border);
+    border-radius: 5px;
+    background: var(--background);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #fff;
+    cursor: pointer;
+    padding: 0;
+    transition: background var(--transition), border-color var(--transition), box-shadow var(--transition), transform 0.1s ease;
+}
+.cle-box:hover:not(:disabled) { border-color: var(--accent); }
+.cle-box:active:not(:disabled) { transform: scale(0.88); }
+/* Prsten oko štiklirane kućice — mala "nagrada" za završen korak (isti jezik kao wot-check). */
+.cle-box.on { background: var(--success); border-color: var(--success); box-shadow: 0 0 0 3px var(--success-bg); }
+.cle-box:disabled { opacity: 0.6; cursor: default; }
+/* Nacrt (wizard) i red za unos: kućica je samo poravnanje, ne dugme. */
+.cle-box.static { cursor: default; pointer-events: none; border-style: dashed; }
+
+.cle-text { flex: 1; min-width: 0; padding-top: 1px; font-size: 13px; color: var(--text-primary); line-height: 1.5; overflow-wrap: anywhere; }
+.cle-item.done .cle-text { color: var(--text-tertiary); text-decoration: line-through; }
+
+.cle-remove {
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    border: none;
+    background: transparent;
+    color: var(--text-tertiary);
+    border-radius: 6px;
+    cursor: pointer;
+    transition: color var(--transition), background var(--transition), opacity var(--transition);
+}
+.cle-remove:hover:not(:disabled) { color: var(--error); background: var(--error-bg); }
+.cle-remove:disabled { opacity: 0.4; cursor: default; }
+
+/* Razdvojnik SAMO kad postoje koraci iznad (.cle-items ne postoji u DOM-u
+   kad je lista prazna — :empty ovdje ne bi nikad pogodio, jer prazna lista
+   se uopšte ne renderuje). */
+.cle-items + .cle-add-row,
+.cle-items + .cle-add { border-top: 1px solid var(--border-light); padding-top: 9px; margin-top: 2px; }
+
+.cle-add-row { display: flex; align-items: center; gap: 10px; padding: 8px 6px; }
+.cle-input {
+    flex: 1;
+    min-width: 0;
+    border: none;
+    border-bottom: 1.5px solid var(--accent);
+    background: transparent;
+    padding: 2px 0 3px;
+    font-size: 13px;
+    color: var(--text-primary);
+}
+.cle-input:focus { outline: none; }
+.cle-input:disabled { opacity: 0.6; }
+
+.cle-add {
+    align-self: flex-start;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    border: none;
+    background: none;
+    /* Poravnato s tekstom koraka (kućica 18px + razmak 10px). */
+    padding: 7px 8px 7px 6px;
+    margin-top: 1px;
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--accent);
+    cursor: pointer;
+    border-radius: 6px;
+}
+.cle-add:hover:not(:disabled) { background: var(--background); }
+.cle-add:disabled { opacity: 0.5; cursor: default; }
+
+/* Na dodir nema hovera — dugme „ukloni" mora biti stalno vidljivo i dovoljno veliko. */
+@media (hover: none) {
+    .cle-item .cle-remove { opacity: 1; }
+    .cle-item { padding: 9px 6px; }
+    .cle-box { width: 19px; height: 19px; }
+    .cle-remove { width: 30px; height: 30px; }
+    .cle-add-row { padding: 9px 6px; }
+}

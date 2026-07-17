@@ -8,12 +8,14 @@
 // ════════════════════════════════════════════════════════════════════
 
 import { useState, useMemo, useEffect } from 'react';
-import type { WorkOrder, Project, Worker } from '@/lib/types';
+import type { WorkOrder, Project, Worker, Task } from '@/lib/types';
 import { MONTAZA_STEPS } from '@/lib/types';
 import { createWorkOrder, autoCreateOrdersForWorkOrder, getAllAttendanceByMonth } from '@/lib/services';
 import { workOrderDueDate, todayISO, buildSaturdayChecker } from '@/lib/planning';
 import { planToStages, flattenStages } from '@/lib/productProcesses';
+import { emptyTaskSelection, taskSelectionCount, taskProductIds, isTaskOpen, type TaskAttachSelection } from '@/lib/workOrderTasks';
 import Modal from '@/components/ui/Modal';
+import TaskAttachEditor from '@/components/ui/TaskAttachEditor';
 
 export type WizardMode = 'production' | 'montaza';
 
@@ -39,6 +41,13 @@ interface ProductSelection {
     Source_Work_Order_ID?: string; // For montaža: links to original production order
 }
 
+// Ključ dodjele ekipe u PROIZVODNJI: jedan radnik (+pomoćnici) važi za SVE procese
+// plana proizvoda. NIJE naziv procesa i nikad ne smije završiti u item.Processes —
+// procesi proizvodnog naloga dolaze ISKLJUČIVO iz plana procesa proizvoda. (Ranije je
+// ovdje stajao generički 'Rad', pa se proizvod bez plana kreirao s procesom „Rad".)
+const CREW_KEY = '__crew__';
+const procLabel = (proc: string) => (proc === CREW_KEY ? 'Radnik / ekipa' : proc);
+
 // Iskorištena količina proizvoda kroz sve NE-OTKAZANE naloge (završeni troše količinu).
 // Jedini kriterij dostupnosti — koriste ga i lista wizarda (eligibleProducts) i guard
 // pri kreiranju, da ponuđeno i dozvoljeno nikad ne odstupe.
@@ -59,6 +68,8 @@ interface WorkOrderWizardProps {
     workOrders: WorkOrder[];
     projects: Project[];
     workers: Worker[];
+    /** Svi zadaci organizacije — za „Poveži postojeći" pri kreiranju. */
+    tasks?: Task[];
     organizationId: string | null;
     initialProducts?: WizardInitialProducts | null;
     onClose: () => void;
@@ -72,6 +83,7 @@ export default function WorkOrderWizard({
     workOrders,
     projects,
     workers,
+    tasks = [],
     organizationId,
     initialProducts,
     onClose,
@@ -142,6 +154,18 @@ export default function WorkOrderWizard({
     const [workerSearch, setWorkerSearch] = useState('');
     // Odmah kreiraj narudžbe za nedostajuće materijale (uklanja poseban odlazak u Planer/narudžbe)
     const [createMaterialOrders, setCreateMaterialOrders] = useState(true);
+
+    // ── ZADACI: skupljaju se ovdje, vezuju se TEK kad nalog nastane ──
+    const [taskSelection, setTaskSelection] = useState<TaskAttachSelection>(emptyTaskSelection);
+    // Otvoreni zadaci koji se već tiču nekog od odabranih proizvoda — istaknu se
+    // u izborniku, da se ono što stoji u tabu Zadaci ne izgubi pri kreiranju naloga.
+    const suggestedTaskIds = useMemo(() => {
+        const chosen = new Set(selectedProducts.map(p => p.Product_ID));
+        if (chosen.size === 0) return [];
+        return tasks
+            .filter(t => isTaskOpen(t) && taskProductIds(t).some(id => chosen.has(id)))
+            .map(t => t.Task_ID);
+    }, [tasks, selectedProducts]);
 
     // ── AUTO-ROK: rok = danas + Σ planiranih radnih dana po proizvodu (iz ponude) ──
     // Sekvencijalno (kao u zahtjevu: 2 proizvoda × 2 dana = 4 dana). Subota se računa,
@@ -243,7 +267,7 @@ export default function WorkOrderWizard({
     useEffect(() => {
         if (!isOpen) return;
         setActiveStep(0);
-        setSelectedProcesses(mode === 'montaza' ? [...MONTAZA_STEPS] : ['Rad']);
+        setSelectedProcesses(mode === 'montaza' ? [...MONTAZA_STEPS] : [CREW_KEY]);
         setDueDate('');
         setStartDate(todayISO());
         setWorkOrderName('');
@@ -253,6 +277,7 @@ export default function WorkOrderWizard({
         setCreateMaterialOrders(true);
         setOpenDropdown(null);
         setWorkerSearch('');
+        setTaskSelection(emptyTaskSelection());
         if (mode === 'production' && initialProducts) {
             const { projectId, projectName, products: pendingProducts } = initialProducts;
             setSelectedProducts(pendingProducts.map(p => ({
@@ -263,8 +288,8 @@ export default function WorkOrderWizard({
                 Quantity: p.quantity,
                 Work_Order_Quantity: p.quantity,
                 Status: '',
-                assignments: { 'Rad': '' },
-                helperAssignments: { 'Rad': [] },
+                assignments: { [CREW_KEY]: '' },
+                helperAssignments: { [CREW_KEY]: [] },
             })));
             setActiveStep(1);
         } else {
@@ -296,6 +321,7 @@ export default function WorkOrderWizard({
                         Status: product.Status,
                         Process_Plan: product.Process_Plan,       // legacy fallback
                         Process_Stages: product.Process_Stages,   // fazni plan (preview + sinteza grafa)
+                        Process_Graph: product.Process_Graph,     // GRAF plana (grane) — primarni izvor sinteze naloga
                     });
                 }
             });
@@ -579,7 +605,7 @@ export default function WorkOrderWizard({
         }
 
         // AUTO-PLAN PROCESA: proizvod bez plana + ima materijale → izvedi fazni plan iz materijala
-        // (pravila+tipovi+kombinacije, mapirano na šablon) da nalog ne krene s generičkim 'Rad'.
+        // (pravila+tipovi+kombinacije, mapirano na šablon) da nalog ne krene bez ijednog procesa.
         // Fire-and-forget snimimo plan na proizvod (za buduće naloge). Rezultat: autoPlanByProduct.
         const autoPlanByProduct = new Map<string, string[][]>();
         if (!isMontazaMode && organizationId) {
@@ -643,12 +669,13 @@ export default function WorkOrderWizard({
                 Planned_Labor_Days: isMontazaMode ? 0 : (offerProduct?.Labor_Days || undefined),
                 Planned_Labor_Workers: isMontazaMode ? 0 : (offerProduct?.Labor_Workers || undefined),
                 Planned_Labor_Rate: isMontazaMode ? 0 : (offerProduct?.Labor_Daily_Rate || undefined),
-                // PLAN PROCESA PROIZVODA (FAZE): proizvodnja s definisanim planom → checklist/graf po
-                // NJEGOVIM procesima (ekipa naloga radi sve procese, pa se glavni radnik + pomoćnici iz
-                // dodjele vežu na svaki proces). Bez plana / montaža → dosadašnji selectedProcesses put.
+                // PROCESI STAVKE:
+                //  • proizvodnja → ISKLJUČIVO iz plana procesa proizvoda (ekipa naloga radi sve
+                //    procese, pa se radnik + pomoćnici iz jedne dodjele (CREW_KEY) vežu na svaki).
+                //    Proizvod bez plana → [] (procesi se postave kasnije kroz graf/Procesi tab);
+                //    NIKAD generički placeholder proces.
+                //  • montaža → fiksni koraci (selectedProcesses), dodjela po koraku.
                 Processes: (() => {
-                    const stages = !isMontazaMode ? productStages : [];
-                    const flatPlan = stages.length ? flattenStages(stages) : null;
                     const buildFor = (procNames: string[], assignKey: (name: string) => string) => procNames.map(name => {
                         const key = assignKey(name);
                         const workerId = p.assignments[key];
@@ -664,15 +691,16 @@ export default function WorkOrderWizard({
                             })
                         };
                     });
-                    return flatPlan
-                        ? buildFor(flatPlan, () => selectedProcesses[0] || 'Rad')  // dodjela s 'Rad' važi za sve procese plana
-                        : buildFor(selectedProcesses, name => name);
+                    if (isMontazaMode) return buildFor(selectedProcesses, name => name);
+                    return productStages.length ? buildFor(flattenStages(productStages), () => CREW_KEY) : [];
                 })(),
                 // Fazni plan za sintezu grafa naloga (paralelno unutar faze; isti proces = jedan čvor)
                 Process_Stages: (() => {
                     if (isMontazaMode) return undefined;
                     return productStages.length ? productStages.map(s => ({ processes: s })) : undefined;
                 })(),
+                // GRAF plana proizvoda (grane po materijalu) — primarni izvor objedinjavanja u nalogu
+                Process_Graph: (!isMontazaMode && (p as any).Process_Graph?.nodes?.length) ? (p as any).Process_Graph : undefined,
                 // Montaža: link back to source production work order
                 ...(p.Source_Work_Order_ID && { Source_Work_Order_ID: p.Source_Work_Order_ID }),
             };
@@ -691,7 +719,9 @@ export default function WorkOrderWizard({
 
         const result = await createWorkOrder({
             Work_Order_Type: mode === 'montaza' ? 'Montaža' : 'Proizvodnja',
-            Production_Steps: selectedProcesses,
+            // Proizvodnja: koraci naloga = unija procesa iz planova proizvoda — createWorkOrder ih
+            // izvodi iz sintetisanog grafa. CREW_KEY je ključ dodjele, ne proces, i ne smije procuriti.
+            Production_Steps: isMontazaMode ? selectedProcesses : [],
             Name: workOrderName.trim() || undefined,
             Due_Date: dueDate,
             Planned_Start_Date: startDate || undefined,
@@ -706,6 +736,27 @@ export default function WorkOrderWizard({
         if (result.success) {
             showToast(`Radni nalog ${result.data?.Work_Order_Number} kreiran`, 'success');
 
+            // Zadaci — sada nalog postoji, pa se veza može upisati. Greška ovdje
+            // NE ruši nalog (već je kreiran): javi se i nastavi, zadaci se mogu
+            // dodati i kasnije kroz tab „Zadaci" na kartici.
+            if (taskSelectionCount(taskSelection) > 0 && result.data?.Work_Order_ID && organizationId) {
+                try {
+                    const { attachTasksToWorkOrder, getWorkOrder } = await import('@/lib/services');
+                    const created = await getWorkOrder(result.data.Work_Order_ID, organizationId);
+                    const res = await attachTasksToWorkOrder(
+                        taskSelection,
+                        { Work_Order_ID: result.data.Work_Order_ID, displayName: workOrderName.trim() || result.data.Work_Order_Number },
+                        (created?.items || []).map(i => ({ Product_ID: i.Product_ID, Product_Name: i.Product_Name })),
+                        organizationId
+                    );
+                    if (res.success) { showToast(res.message, 'success'); onRefresh('tasks'); }
+                    else showToast(res.message, 'error');
+                } catch (e) {
+                    console.error('attach tasks to new work order failed', e);
+                    showToast('Nalog kreiran, ali zadaci nisu vezani — dodaj ih na kartici naloga', 'error');
+                }
+            }
+
             // Fire-and-forget: snimi izvedene auto-planove na proizvode (za buduće naloge).
             if (autoPlanByProduct.size && organizationId) {
                 import('@/lib/services').then(({ saveProductProcessStages }) => {
@@ -714,14 +765,14 @@ export default function WorkOrderWizard({
                     });
                 }).catch(() => { });
             }
-            // Advisory: proizvodi bez plana i bez materijala → ostali na generičkom 'Rad'.
+            // Advisory: proizvodi bez plana i bez materijala → kreirani BEZ procesa (postave se naknadno).
             if (!isMontazaMode) {
                 const noPlan = selectedProducts.filter(p => {
                     const product = projects.find(proj => proj.Project_ID === p.Project_ID)?.products?.find(pr => pr.Product_ID === p.Product_ID);
                     const has = planToStages(product?.Process_Stages, product?.Process_Plan).length > 0 || autoPlanByProduct.has(p.Product_ID);
                     return !has;
                 }).map(p => p.Product_Name);
-                if (noPlan.length) showToast(`Bez plana procesa (generički 'Rad'): ${noPlan.join(', ')} — dodaj pravila materijal→proces ili materijale`, 'info');
+                if (noPlan.length) showToast(`Bez plana procesa: ${noPlan.join(', ')} — postavi procese u tabu Procesi ili dodaj pravila materijal→proces`, 'info');
             }
             onClose();
 
@@ -1099,6 +1150,19 @@ export default function WorkOrderWizard({
                                     </div>
                                 </div>
 
+                                {/* Zadaci uz nalog — vežu se čim nalog nastane */}
+                                <div className="wizard-tasks">
+                                    <TaskAttachEditor
+                                        value={taskSelection}
+                                        onChange={setTaskSelection}
+                                        tasks={tasks}
+                                        workers={workers}
+                                        products={selectedProducts.map(p => ({ Product_ID: p.Product_ID, Product_Name: p.Product_Name }))}
+                                        suggestedIds={suggestedTaskIds}
+                                        pickerZIndex={2000}
+                                    />
+                                </div>
+
                                 {/* Odmah naruči nedostajuće materijale (samo proizvodnja) */}
                                 {mode === 'production' && (
                                     <label style={{
@@ -1265,7 +1329,7 @@ export default function WorkOrderWizard({
                                         <div className="m-col product">Proizvod</div>
                                         {selectedProcesses.map(proc => (
                                             <div key={proc} className="m-col process">
-                                                <span className="process-header-title">{proc}</span>
+                                                <span className="process-header-title">{procLabel(proc)}</span>
                                                 {/* Per-process bulk assign */}
                                                 <div className="wdd" style={{ position: 'relative', width: '100%' }}>
                                                     <button type="button" className="wdd-trigger compact" onClick={() => { setOpenDropdown(openDropdown === `hdr-${proc}` ? null : `hdr-${proc}`); setWorkerSearch(''); }}>

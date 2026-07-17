@@ -524,6 +524,8 @@ export default function Home() {
                             workOrders={appState.workOrders}
                             projects={appState.projects}
                             workers={appState.workers}
+                            tasks={appState.tasks}
+                            workLogs={appState.workLogs}
                             onRefresh={refreshCollections}
                             showToast={showToast}
                             pendingWorkOrderProducts={pendingWorkOrderProducts}

@@ -112,20 +112,25 @@ export {
     scheduleWorkOrder, rescheduleWorkOrder, unscheduleWorkOrder, getScheduledWorkOrders,
     updateDueDate, updatePlannedStartDate, checkWorkerConflicts, autoCreateOrdersForWorkOrder,
     getWorkLogs, getWorkLogsForItem, getWorkLogsForWorkOrder, createWorkLog,
+    planWorkOrderRenumbering, applyWorkOrderRenumbering,
 } from './workOrder/workOrderService';
 
 // Graf procesa (po nalogu) + templejti toka
 export { getProcessGraph, saveProcessGraph, listProcessTemplates, saveProcessTemplate, deleteProcessTemplate } from '../database';
+export { getProductMaterials } from '../database';
 
 // Katalog procesa (org) + pravila materijal→proces + plan procesa proizvoda
 export {
     getProcessCatalog, saveProcessCatalogItem, renameProcessCatalogItem,
     deleteProcessCatalogItem, reorderProcessCatalog,
     getProcessMaterialRules, saveProcessMaterialRule, deleteProcessMaterialRule,
-    applyAutoProcessPlan, saveProductProcessStages, bulkSaveProductProcessStages,
-    getProcessStageTemplates, saveProcessStageTemplate,
+    applyAutoProcessPlan, saveProductProcessStages,
+    saveProductProcessGraph,
+    getProcessStageTemplates, saveProcessStageTemplate, updateProcessStageTemplate,
     renameProcessStageTemplate, deleteProcessStageTemplate,
+    getProcessUsageData, applyProcessConsolidation,
 } from '../database';
+export type { ProcessUsageData, ConsolidationStats } from '../database';
 
 // Labor / Attendance
 export {
@@ -179,6 +184,8 @@ export {
     batchUpdateTasks, batchDeleteTasks, subscribeToTasks,
     getTodaysTasks, getOverdueTasks,
     getTaskProfiles, saveTaskProfile, deleteTaskProfile,
+    linkTasksToWorkOrder, unlinkTaskFromWorkOrder, setTaskProductInOrder, attachTasksToWorkOrder,
+    syncWorkOrderNameOnTasks,
 } from './task/taskService';
 
 // Settings

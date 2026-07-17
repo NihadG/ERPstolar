@@ -169,6 +169,9 @@
 .wo-seg button.active { background: var(--background); color: var(--text-primary); box-shadow: 0 1px 2px var(--shadow-md); }
 .wo-seg-count { font-size: 11px; font-weight: 700; background: var(--border-light); color: var(--text-secondary); border-radius: 8px; padding: 0 6px; }
 .wo-seg button.active .wo-seg-count { background: var(--accent-light); color: var(--accent); }
+/* Zakašnjeli zadaci se vide i kad tab nije otvoren (zato i na neaktivnom dugmetu). */
+.wo-seg-count.late,
+.wo-seg button.active .wo-seg-count.late { background: var(--error-bg); color: var(--error); }
 
 /* ── TOK (proizvodi + procesi) ────────────────────────────────────── */
 .wo-flow { display: flex; flex-direction: column; gap: 10px; }
@@ -255,18 +258,8 @@
     padding: 28px; border: 1px dashed var(--border-light); border-radius: var(--radius-md);
 }
 
-/* ── KNJIGA RADA (dnevni tracker + vremenska linija) ──────────────── */
+/* ── KNJIGA RADA (dnevni tracker) ─────────────────────────────────── */
 .wo-rad { display: flex; flex-direction: column; gap: 14px; }
-.wo-timeline {
-    display: flex; align-items: center; flex-wrap: wrap; gap: 18px;
-    padding: 12px 16px; background: var(--background);
-    border: 1px solid var(--border-light); border-radius: var(--radius-md);
-}
-.wo-date { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-secondary); position: relative; }
-.wo-date strong { color: var(--text-primary); font-weight: 600; }
-.wo-date.deadline strong { color: var(--warning); }
-.wo-date.clickable { cursor: pointer; }
-.wo-date.clickable:hover strong { color: var(--accent); }
 
 .wo-rad-head {
     display: flex; align-items: center; gap: 8px;

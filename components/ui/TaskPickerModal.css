@@ -1,0 +1,128 @@
+/* ═══════════════════════════════════════════════════════════════════
+   Izbor postojećih zadataka (TaskPickerModal) — tokeni iz globals.css.
+   ═══════════════════════════════════════════════════════════════════ */
+
+.tpick { display: flex; flex-direction: column; gap: 14px; }
+
+.tpick-search {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    padding: 0 13px;
+    height: 42px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--background);
+    color: var(--text-tertiary);
+    transition: border-color var(--transition), box-shadow var(--transition);
+}
+.tpick-search:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-light); }
+.tpick-search input {
+    flex: 1;
+    min-width: 0;
+    border: none;
+    outline: none;
+    background: transparent;
+    font-size: 14px;
+    color: var(--text-primary);
+}
+
+.tpick-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    max-height: 48vh;
+    overflow-y: auto;
+    /* Prostor da fokus-prsten zadnjeg reda ne bude odsječen skrolom. */
+    padding: 2px;
+    margin: -2px;
+}
+
+.tpick-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 11px;
+    width: 100%;
+    text-align: left;
+    padding: 11px 13px;
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius-sm);
+    background: var(--background);
+    cursor: pointer;
+    transition: border-color var(--transition), background var(--transition);
+}
+.tpick-row:hover { border-color: var(--border); background: var(--surface); }
+.tpick-row.picked { border-color: var(--accent); background: var(--accent-light); }
+
+.tpick-check {
+    flex-shrink: 0;
+    width: 18px;
+    height: 18px;
+    margin-top: 1px;
+    border: 1.5px solid var(--border);
+    border-radius: 5px;
+    background: var(--background);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #fff;
+    transition: background var(--transition), border-color var(--transition);
+}
+.tpick-check.on { background: var(--accent); border-color: var(--accent); }
+
+.tpick-body { display: flex; flex-direction: column; gap: 3px; min-width: 0; flex: 1; }
+
+.tpick-title-row { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+.tpick-title { font-size: 13.5px; font-weight: 600; color: var(--text-primary); }
+
+.tpick-suggest {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    font-size: 9.5px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    color: var(--accent);
+    background: var(--background);
+    border: 1px solid var(--accent);
+    padding: 1px 6px;
+    border-radius: 999px;
+}
+
+/* Ispunjen pil — ista paleta kao PrioritySelect/WorkOrderTasksPanel/TaskAttachEditor. */
+.tpick-prio {
+    font-size: 9.5px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    padding: 2px 7px;
+    border-radius: 999px;
+}
+.tpick-prio.p-urgent { color: var(--error); background: var(--error-bg); }
+.tpick-prio.p-high   { color: #b45309; background: var(--warning-bg); }
+.tpick-prio.p-medium { color: var(--accent); background: var(--accent-light); }
+.tpick-prio.p-low    { color: var(--text-secondary); background: var(--surface); }
+
+.tpick-meta {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+    font-size: 11.5px;
+    color: var(--text-tertiary);
+}
+.tpick-meta > span + span::before { content: '·'; margin-right: 6px; }
+.tpick-meta .is-overdue { color: var(--error); font-weight: 600; }
+/* Ikona koraka mora ostati uz svoj broj — inline-flex, inače je separator „·" razbije. */
+.tpick-steps { display: inline-flex; align-items: center; gap: 4px; }
+
+.tpick-empty {
+    text-align: center;
+    color: var(--text-tertiary);
+    font-size: 13px;
+    line-height: 1.6;
+    padding: 32px 20px;
+    border: 1px dashed var(--border-light);
+    border-radius: var(--radius-md);
+}

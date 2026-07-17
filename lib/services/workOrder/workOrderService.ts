@@ -23,7 +23,9 @@ import {
 } from '../shared/firestoreClient';
 import { assembleWorkOrders } from '../shared/dataAssembler';
 import { eventBus } from '../eventBus';
-import type { WorkOrder, WorkOrderItem } from '../../types';
+import { planWorkOrderRenumber, type RenumberAssignment, type RenumberInput } from '../../workOrderNumber';
+import { firstBookingDate } from '../../workOrderTasks';
+import type { WorkOrder, WorkOrderItem, WorkLog } from '../../types';
 
 // ============================================
 // READ
@@ -51,6 +53,91 @@ export async function getWorkOrders(organizationId: string): Promise<WorkOrder[]
 export async function getWorkOrder(workOrderId: string, organizationId: string): Promise<WorkOrder | null> {
     const { getWorkOrder: _get } = await import('../../database');
     return _get(workOrderId, organizationId);
+}
+
+// ════════════════════════════════════════════════════════════════════
+// MIGRACIJA BROJEVA (jednokratno) — stari RN-20260713-075307-241 → 2026-07/R1
+//
+// Namjerno DVA koraka (plan → primjena): korisnik prvo vidi tačan spisak
+// „staro → novo", pa tek onda potvrdi. Broj naloga je ono što ljudi
+// izgovaraju i traže, pa se ne mijenja bez pogleda.
+//
+// Broj naloga je SAMO PRIKAZ — sve veze u bazi (stavke, dnevnice, narudžbe,
+// snapshoti) drže Work_Order_ID, koji se ovdje ne dira. Zato prenumeracija
+// ne može „raskinuti" ništa; jedino stare ODŠTAMPANE naloge više ne poklapa.
+// ════════════════════════════════════════════════════════════════════
+
+/** Spisak izmjena koje bi prenumeracija napravila. Ništa se ne piše. */
+export async function planWorkOrderRenumbering(organizationId: string): Promise<RenumberAssignment[]> {
+    if (!organizationId) return [];
+
+    const db = getDb();
+    const orgFilter = where('Organization_ID', '==', organizationId);
+    const [woSnap, logSnap] = await Promise.all([
+        getDocs(query(collection(db, COLLECTIONS.WORK_ORDERS), orgFilter)),
+        getDocs(query(collection(db, COLLECTIONS.WORK_LOGS), orgFilter)),
+    ]);
+
+    // Prvo knjiženje po nalogu — kad je radnik STVARNO stao na taj posao.
+    const logsByOrder = new Map<string, WorkLog[]>();
+    logSnap.docs.forEach(d => {
+        const log = d.data() as WorkLog;
+        if (!log.Work_Order_ID) return;
+        const list = logsByOrder.get(log.Work_Order_ID);
+        if (list) list.push(log);
+        else logsByOrder.set(log.Work_Order_ID, [log]);
+    });
+
+    const input: RenumberInput[] = woSnap.docs.map(d => {
+        const wo = d.data() as WorkOrder;
+        return {
+            Work_Order_ID: wo.Work_Order_ID,
+            Work_Order_Number: wo.Work_Order_Number,
+            Work_Order_Type: wo.Work_Order_Type,
+            Created_Date: wo.Created_Date,
+            Started_At: wo.Started_At,
+            First_Booking_Date: firstBookingDate(logsByOrder.get(wo.Work_Order_ID) || []),
+        };
+    });
+
+    return planWorkOrderRenumber(input);
+}
+
+/** Upiši plan (samo polje Work_Order_Number). */
+export async function applyWorkOrderRenumbering(
+    assignments: RenumberAssignment[],
+    organizationId: string
+): Promise<{ success: boolean; updatedCount: number; message: string }> {
+    if (!organizationId) return { success: false, updatedCount: 0, message: 'Organization ID is required' };
+    if (assignments.length === 0) return { success: true, updatedCount: 0, message: 'Svi nalozi već imaju uredan broj' };
+
+    try {
+        const db = getDb();
+        const byId = new Map(assignments.map(a => [a.Work_Order_ID, a.to]));
+
+        const snap = await getDocs(query(
+            collection(db, COLLECTIONS.WORK_ORDERS),
+            where('Organization_ID', '==', organizationId)
+        ));
+
+        let updatedCount = 0;
+        const targets = snap.docs.filter(d => byId.has((d.data() as WorkOrder).Work_Order_ID));
+
+        const batchSize = 400;   // Firestore batch limit je 500
+        for (let i = 0; i < targets.length; i += batchSize) {
+            const batch = writeBatch(db);
+            for (const d of targets.slice(i, i + batchSize)) {
+                batch.update(d.ref, { Work_Order_Number: byId.get((d.data() as WorkOrder).Work_Order_ID) });
+                updatedCount++;
+            }
+            await batch.commit();
+        }
+
+        return { success: true, updatedCount, message: `${updatedCount} naloga prenumerisano` };
+    } catch (error) {
+        console.error('applyWorkOrderRenumbering error:', error);
+        return { success: false, updatedCount: 0, message: 'Greška pri prenumeraciji naloga' };
+    }
 }
 
 // ============================================

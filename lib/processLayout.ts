@@ -14,17 +14,16 @@ const X0 = 24;
 const Y0 = 24;
 
 /**
- * Vrati poziciju ({x,y}) za svaki čvor po ID-u.
- * - depth (kolona) = najduži put od korijena (čvor bez ulaznih veza)
- * - red unutar kolone = barycenter (prosjek redova prethodnika) → manje preklapanja
- * - ciklusi: defenzivno, „višak" čvorova ide u kolonu nakon maksimalne dubine
+ * Topološka dubina svakog čvora (longest path od korijena; Kahn obilazak).
+ * Kolona/faza = dubina. Ciklusi defenzivno idu u kolonu nakon maksimalne dubine.
+ * Koriste je layoutProcessGraph (pozicije) i „Faze" pogled grafa naloga.
  */
-export function layoutProcessGraph(
+export function computeGraphDepths(
     nodes: { id: string }[],
     edges: { source: string; target: string }[]
-): Record<string, XY> {
-    const pos: Record<string, XY> = {};
-    if (nodes.length === 0) return pos;
+): Map<string, number> {
+    const depth = new Map<string, number>();
+    if (nodes.length === 0) return depth;
 
     const ids = new Set(nodes.map(n => n.id));
     const validEdges = edges.filter(e => ids.has(e.source) && ids.has(e.target) && e.source !== e.target);
@@ -34,9 +33,7 @@ export function layoutProcessGraph(
     nodes.forEach(n => { incoming.set(n.id, []); outgoing.set(n.id, []); });
     validEdges.forEach(e => { outgoing.get(e.source)!.push(e.target); incoming.get(e.target)!.push(e.source); });
 
-    // dubina = longest path (Kahn topološki obilazak)
     const indeg = new Map<string, number>();
-    const depth = new Map<string, number>();
     nodes.forEach(n => { indeg.set(n.id, incoming.get(n.id)!.length); depth.set(n.id, 0); });
     const queue: string[] = nodes.filter(n => indeg.get(n.id) === 0).map(n => n.id);
     let processed = 0;
@@ -54,6 +51,30 @@ export function layoutProcessGraph(
         let maxD = 0; depth.forEach(d => { if (d > maxD) maxD = d; });
         nodes.forEach(n => { if (indeg.get(n.id)! > 0) depth.set(n.id, maxD + 1); });
     }
+    return depth;
+}
+
+/**
+ * Vrati poziciju ({x,y}) za svaki čvor po ID-u.
+ * - depth (kolona) = najduži put od korijena (čvor bez ulaznih veza)
+ * - red unutar kolone = barycenter (prosjek redova prethodnika) → manje preklapanja
+ * - ciklusi: defenzivno, „višak" čvorova ide u kolonu nakon maksimalne dubine
+ */
+export function layoutProcessGraph(
+    nodes: { id: string }[],
+    edges: { source: string; target: string }[]
+): Record<string, XY> {
+    const pos: Record<string, XY> = {};
+    if (nodes.length === 0) return pos;
+
+    const ids = new Set(nodes.map(n => n.id));
+    const validEdges = edges.filter(e => ids.has(e.source) && ids.has(e.target) && e.source !== e.target);
+
+    const incoming = new Map<string, string[]>();
+    nodes.forEach(n => { incoming.set(n.id, []); });
+    validEdges.forEach(e => { incoming.get(e.target)!.push(e.source); });
+
+    const depth = computeGraphDepths(nodes, validEdges);
 
     // grupiši po koloni
     const columns = new Map<number, string[]>();

@@ -1,0 +1,24 @@
+/* ═══════════════════════════════════════════════════════════════════
+   Segmentirani izbor prioriteta (PrioritySelect) — tokeni iz globals.css.
+   ═══════════════════════════════════════════════════════════════════ */
+
+.prio-select { display: inline-flex; flex-wrap: wrap; gap: 6px; }
+
+.prio-opt {
+    border: 1px solid var(--border);
+    background: var(--background);
+    color: var(--text-secondary);
+    font-size: 12px;
+    font-weight: 600;
+    padding: 7px 13px;
+    border-radius: 999px;
+    cursor: pointer;
+    transition: background var(--transition), border-color var(--transition), color var(--transition);
+}
+.prio-opt:hover:not(:disabled):not(.active) { border-color: var(--text-tertiary); color: var(--text-primary); }
+.prio-opt:disabled { opacity: 0.5; cursor: default; }
+
+.prio-opt.active.p-urgent { background: var(--error-bg); border-color: var(--error); color: var(--error); }
+.prio-opt.active.p-high   { background: var(--warning-bg); border-color: var(--warning); color: #b45309; }
+.prio-opt.active.p-medium { background: var(--accent-light); border-color: var(--accent); color: var(--accent); }
+.prio-opt.active.p-low    { background: var(--surface); border-color: var(--text-tertiary); color: var(--text-primary); }

@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useMemo } from 'react';
-import type { WorkOrder, Worker } from '@/lib/types';
+import type { WorkOrder, Worker, Task } from '@/lib/types';
 import { WORK_ORDER_STATUSES } from '@/lib/types';
 import { daysUntil } from '@/lib/planning';
 import { workOrderDisplayName, orderProcessProgress } from '@/lib/utils';
@@ -16,6 +16,9 @@ interface AttendanceWarnings {
 interface MobileWorkOrdersViewProps {
     workOrders: WorkOrder[];
     workers: Worker[];
+    tasks?: Task[];
+    /** Work_Order_ID → datum prvog knjiženja radnika (firstBookingByOrder). */
+    firstWorkByOrder?: Map<string, string>;
     onRefresh: (...collections: string[]) => void;
     showToast: (message: string, type: 'success' | 'error' | 'info') => void;
 
@@ -33,6 +36,8 @@ interface MobileWorkOrdersViewProps {
 export default function MobileWorkOrdersView({
     workOrders,
     workers,
+    tasks = [],
+    firstWorkByOrder,
     onRefresh,
     showToast,
     onCreate,
@@ -176,6 +181,13 @@ export default function MobileWorkOrdersView({
                                                 <span className="material-icons-round tiny">inventory_2</span>
                                                 {items.length || 0}
                                             </span>
+                                            {/* Prvi rad — bez ovoga se iz liste ne vidi je li nalog krenuo */}
+                                            {firstWorkByOrder?.get(wo.Work_Order_ID) && (
+                                                <span title={`Prvi rad na nalogu: ${formatDate(firstWorkByOrder.get(wo.Work_Order_ID))}`}>
+                                                    <span className="material-icons-round tiny">handyman</span>
+                                                    od {formatDate(firstWorkByOrder.get(wo.Work_Order_ID))}
+                                                </span>
+                                            )}
                                             {showProg && (
                                                 <span title={`Završeno ${prog!.done} od ${prog!.total} procesa`}>
                                                     <span className="wo-mini-bar"><span className="wo-mini-bar-fill" style={{ width: `${prog!.pct}%`, background: prog!.pct >= 100 ? 'var(--success)' : 'var(--accent)' }} /></span>
@@ -229,6 +241,7 @@ export default function MobileWorkOrdersView({
                                     <WorkOrderExpandedDetail
                                         workOrder={wo}
                                         workers={workers}
+                                        tasks={tasks}
                                         onUpdate={onUpdate}
                                         onPrint={onPrint}
                                         onDelete={async (id) => onDelete(id)}

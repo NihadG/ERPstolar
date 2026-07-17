@@ -1,0 +1,334 @@
+/* ═══════════════════════════════════════════════════════════════════
+   Zadaci naloga (tab „Zadaci" na kartici) — tokeni iz globals.css.
+   Isti jezik kao WorkOrderExpandedDetail.css (pilovi, tanke linije),
+   plus: lijeva traka boje prioriteta na kartici zadatka i ispunjene
+   (ne samo obrisom) oznake prioriteta — bolje se prepoznaju na prvi pogled
+   na širokoj kartici naloga.
+   ═══════════════════════════════════════════════════════════════════ */
+
+.wot { display: flex; flex-direction: column; gap: 12px; }
+
+/* ── Traka: napredak + akcije — kartica, ne goli red ─────────────────── */
+.wot-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 14px;
+    flex-wrap: wrap;
+    padding: 12px 14px;
+    background: var(--surface);
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius-md);
+}
+
+.wot-summary { display: flex; align-items: center; gap: 10px; min-width: 0; flex: 1; }
+.wot-summary-count { font-size: 16px; font-weight: 700; color: var(--text-primary); font-variant-numeric: tabular-nums; }
+.wot-summary-label {
+    font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em;
+    color: var(--text-tertiary);
+}
+.wot-summary-empty { font-size: 12.5px; color: var(--text-tertiary); }
+.wot-bar-track { flex: 1; min-width: 40px; max-width: 160px; height: 6px; border-radius: 3px; background: var(--border-light); overflow: hidden; }
+.wot-bar-fill { display: block; height: 100%; border-radius: 3px; background: var(--accent); transition: width var(--transition); }
+.wot-bar-fill.full { background: var(--success); }
+.wot-summary-overdue {
+    font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em;
+    color: var(--error); background: var(--error-bg); padding: 3px 9px; border-radius: 999px;
+    flex-shrink: 0;
+}
+
+.wot-actions { display: inline-flex; gap: 8px; margin-left: auto; flex-shrink: 0; }
+.wot-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    border: 1px solid var(--border);
+    background: var(--background);
+    color: var(--text-primary);
+    font-size: 12.5px;
+    font-weight: 600;
+    padding: 8px 14px;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: background var(--transition), border-color var(--transition), color var(--transition);
+}
+.wot-btn:hover:not(:disabled) { background: var(--background); border-color: var(--accent); color: var(--accent); }
+.wot-btn:disabled { opacity: 0.5; cursor: default; }
+.wot-btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.wot-btn.primary:hover:not(:disabled) { background: var(--accent-hover); border-color: var(--accent-hover); color: #fff; }
+
+.wot-spin { animation: wot-spin 0.8s linear infinite; }
+@keyframes wot-spin { to { transform: rotate(360deg); } }
+
+/* ── Nacrt novog zadatka ──────────────────────────────────────────── */
+.wot-create {
+    display: flex;
+    flex-direction: column;
+    gap: 13px;
+    padding: 16px;
+    border: 1px solid var(--accent);
+    border-radius: var(--radius-md);
+    background: var(--background);
+    box-shadow: 0 4px 16px var(--shadow-md);
+}
+.wot-create-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.wot-create-head-title {
+    display: inline-flex; align-items: center; gap: 7px;
+    font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em;
+    color: var(--accent);
+}
+.wot-create-close {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 26px; height: 26px; flex-shrink: 0;
+    border: none; background: transparent; color: var(--text-tertiary);
+    border-radius: var(--radius-sm); cursor: pointer;
+    transition: color var(--transition), background var(--transition);
+}
+.wot-create-close:hover { color: var(--text-primary); background: var(--surface); }
+
+.wot-create-title {
+    height: 42px;
+    box-sizing: border-box;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 0 14px;
+    font-size: 14.5px;
+    font-weight: 600;
+    color: var(--text-primary);
+    background: var(--background);
+    transition: border-color var(--transition), box-shadow var(--transition);
+}
+.wot-create-title:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-light); }
+
+.wot-create-priority { display: flex; flex-direction: column; gap: 7px; text-transform: none; }
+.wot-create-priority > span {
+    font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em;
+    color: var(--text-tertiary);
+}
+
+.wot-create-fields {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 10px;
+}
+.wot-create-fields label { display: flex; flex-direction: column; gap: 5px; min-width: 0; text-transform: none; }
+.wot-create-fields label > span {
+    font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em;
+    color: var(--text-tertiary);
+}
+.wot-create-fields select,
+.wot-create-fields input {
+    height: 36px;
+    box-sizing: border-box;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 0 10px;
+    font-size: 13px;
+    color: var(--text-primary);
+    background: var(--background);
+}
+.wot-create-fields select:focus,
+.wot-create-fields input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-light); }
+
+.wot-create-foot { display: flex; justify-content: flex-end; gap: 8px; padding-top: 2px; }
+
+/* Koraci u nacrtu — vlastita kartica (ChecklistEditor), odvojena razmakom umjesto linije. */
+.wot-create-checklist { margin-top: 1px; }
+
+/* ── Prijedlozi ───────────────────────────────────────────────────── */
+.wot-suggest {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    flex-wrap: wrap;
+    padding: 10px 14px;
+    background: var(--accent-light);
+    border: 1px solid #bfdcff;
+    border-radius: var(--radius-md);
+    font-size: 12.5px;
+    color: #1e40af;
+    line-height: 1.5;
+}
+.wot-suggest > svg { flex-shrink: 0; }
+.wot-suggest-btn {
+    margin-left: auto;
+    border: none;
+    background: var(--background);
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--accent);
+    padding: 5px 12px;
+    border-radius: 999px;
+    flex-shrink: 0;
+}
+.wot-suggest-btn:hover:not(:disabled) { background: #fff; box-shadow: 0 1px 3px var(--shadow); }
+.wot-suggest-btn:disabled { opacity: 0.5; cursor: default; }
+
+/* ── Lista ────────────────────────────────────────────────────────── */
+.wot-list { display: flex; flex-direction: column; gap: 8px; }
+
+/* Kartica zadatka: tanka traka boje prioriteta lijevo (::before) — prioritet
+   se prepoznaje po boji prije nego što se pročita pil. overflow:hidden joj
+   drži rubove zaobljene zajedno s karticom. */
+.wot-task {
+    position: relative;
+    overflow: hidden;
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius-md);
+    background: var(--background);
+    transition: border-color var(--transition), box-shadow var(--transition);
+}
+.wot-task::before {
+    content: '';
+    position: absolute;
+    left: 0; top: 0; bottom: 0;
+    width: 3px;
+    background: var(--border);
+}
+.wot-task.p-urgent::before { background: var(--error); }
+.wot-task.p-high::before   { background: var(--warning); }
+.wot-task.p-medium::before { background: var(--accent); }
+.wot-task.p-low::before    { background: var(--text-tertiary); }
+.wot-task:hover { border-color: var(--border); box-shadow: 0 3px 10px var(--shadow); }
+.wot-task.done { background: var(--surface); }
+.wot-task.done .wot-task-title { color: var(--text-tertiary); text-decoration: line-through; }
+.wot-task.cancelled .wot-task-title { color: var(--text-tertiary); text-decoration: line-through; }
+
+.wot-task-main { display: flex; align-items: flex-start; gap: 12px; padding: 13px 14px 13px 16px; }
+
+.wot-check {
+    flex-shrink: 0;
+    width: 20px;
+    height: 20px;
+    margin-top: 1px;
+    border: 1.75px solid var(--border);
+    border-radius: 6px;
+    background: var(--background);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #fff;
+    cursor: pointer;
+    transition: background var(--transition), border-color var(--transition), box-shadow var(--transition), transform 0.1s ease;
+}
+.wot-check:hover:not(:disabled) { border-color: var(--accent); }
+.wot-check:active:not(:disabled) { transform: scale(0.9); }
+.wot-check.on { background: var(--success); border-color: var(--success); box-shadow: 0 0 0 3px var(--success-bg); }
+.wot-check:disabled { opacity: 0.6; cursor: default; }
+
+.wot-task-body { display: flex; flex-direction: column; gap: 5px; min-width: 0; flex: 1; padding-top: 1px; }
+
+.wot-task-title-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.wot-task-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-primary);
+    text-align: left;
+}
+.wot-task-title.as-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    border: none;
+    background: none;
+    padding: 0;
+    cursor: pointer;
+}
+.wot-task-title.as-toggle:hover { color: var(--accent); }
+.wot-chev { color: var(--text-tertiary); transition: transform var(--transition); flex-shrink: 0; }
+.wot-chev.open { transform: rotate(90deg); }
+
+/* Ispunjen pil (bg + text), ne samo oboden — čita se brže na širokoj kartici.
+   Ista paleta kao lijeva traka gore i kao PrioritySelect (jedan jezik boja
+   za prioritet kroz cijelu aplikaciju: wot/tae/tpick/PrioritySelect). */
+.wot-prio {
+    font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em;
+    padding: 2px 8px; border-radius: 999px;
+}
+.wot-prio.p-urgent { color: var(--error); background: var(--error-bg); }
+.wot-prio.p-high   { color: #b45309; background: var(--warning-bg); }
+.wot-prio.p-medium { color: var(--accent); background: var(--accent-light); }
+.wot-prio.p-low    { color: var(--text-secondary); background: var(--surface); }
+
+.wot-tag {
+    font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em;
+    padding: 2px 8px; border-radius: 999px;
+}
+.wot-tag.progress  { color: var(--accent); background: var(--accent-light); }
+.wot-tag.cancelled { color: var(--text-tertiary); background: var(--surface); }
+
+.wot-task-meta {
+    display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+    font-size: 12px; color: var(--text-tertiary);
+}
+.wot-task-meta > span { display: inline-flex; align-items: center; gap: 4px; }
+.wot-task-meta .is-overdue { color: var(--error); font-weight: 600; }
+/* Kategorija je "tip" zadatka → čip, dok su datum/radnik/koraci činjenice → ikona+tekst. */
+.wot-cat {
+    font-size: 10.5px; font-weight: 600; color: var(--text-secondary);
+    background: var(--surface); padding: 2px 8px; border-radius: 999px;
+}
+
+.wot-task-side { display: flex; align-items: center; gap: 6px; flex-shrink: 0; padding-top: 1px; }
+.wot-prod-select {
+    max-width: 150px;
+    height: 30px;
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius-sm);
+    background: var(--background);
+    color: var(--text-secondary);
+    font-size: 11.5px;
+    padding: 0 6px;
+    cursor: pointer;
+}
+.wot-prod-select:hover { border-color: var(--accent); }
+.wot-prod-select:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-light); }
+
+.wot-unlink {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 28px; height: 28px;
+    border: none; background: transparent;
+    color: var(--text-tertiary);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: color var(--transition), background var(--transition);
+}
+.wot-unlink:hover:not(:disabled) { color: var(--error); background: var(--error-bg); }
+.wot-unlink:disabled { opacity: 0.5; cursor: default; }
+
+/* ── Detalj (opis, koraci, napomena) ──────────────────────────────── */
+/* Uvučeno tačno ispod naslova: lijeva margina prati wot-task-main (16px), a
+   unutrašnji padding prati kućicu+razmak (20px + 12px) — zbir (48px) mora
+   pasti tačno ispod prvog slova naslova, ne "približno". */
+.wot-task-detail {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin: 0 14px 14px 16px;
+    padding: 12px 0 0 32px;
+    border-top: 1px solid var(--border-light);
+}
+.wot-desc { margin: 0; font-size: 12.5px; color: var(--text-secondary); line-height: 1.6; white-space: pre-wrap; }
+.wot-notes { margin: 0; font-size: 12px; color: var(--text-secondary); line-height: 1.6; }
+.wot-notes strong { color: var(--text-primary); }
+
+.wot-empty {
+    text-align: center; color: var(--text-tertiary); font-size: 13px; line-height: 1.7;
+    padding: 32px 20px;
+    border: 1px dashed var(--border-light);
+    border-radius: var(--radius-md);
+}
+
+/* ── Responsive ───────────────────────────────────────────────────── */
+@media (max-width: 768px) {
+    .wot-bar { padding: 12px; }
+    .wot-bar-track { max-width: none; }
+    .wot-actions { width: 100%; margin-left: 0; }
+    .wot-actions .wot-btn { flex: 1; justify-content: center; }
+    /* Padajući izbornik proizvoda pod tekst (ne stiska naslov na uskom ekranu). */
+    .wot-task-main { flex-wrap: wrap; }
+    .wot-task-side { width: 100%; padding-left: 32px; }
+    .wot-prod-select { flex: 1; max-width: none; }
+    .wot-task-detail { padding-left: 14px; }
+}

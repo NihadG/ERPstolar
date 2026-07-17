@@ -21,7 +21,13 @@ import {
     onSnapshot,
 } from '../shared/firestoreClient';
 import { v4 as uuidv4 } from 'uuid';
-import type { Task, TaskProfile, ChecklistItem } from '../../types';
+import {
+    withWorkOrderLink,
+    withoutWorkOrderLink,
+    withProductLinkInOrder,
+    type TaskAttachSelection,
+} from '../../workOrderTasks';
+import type { Task, TaskProfile, ChecklistItem, TaskLink, WorkOrderItem } from '../../types';
 
 // ============================================
 // TASK CRUD
@@ -205,6 +211,215 @@ export async function removeChecklistItem(
     } catch (error) {
         console.error('removeChecklistItem error:', error);
         return { success: false, message: 'Greška pri uklanjanju stavke' };
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════
+// VEZA SA RADNIM NALOGOM
+//
+// Piše se ISKLJUČIVO u Task.Links — nalog ne drži svoju kopiju zadataka.
+// Zato su tab Zadaci i kartica naloga automatski u sinhronu (oba čitaju
+// isti dokument), i nema stanja koje bi se moglo razići. Vidi lib/workOrderTasks.ts.
+// ════════════════════════════════════════════════════════════════════
+
+/** Veži jedan ili više postojećih zadataka na nalog (idempotentno). */
+export async function linkTasksToWorkOrder(
+    taskIds: string[],
+    workOrder: { Work_Order_ID: string; displayName: string },
+    organizationId: string
+): Promise<{ success: boolean; linkedCount: number; message: string }> {
+    if (!organizationId) return { success: false, linkedCount: 0, message: 'Organization ID is required' };
+    if (taskIds.length === 0) return { success: true, linkedCount: 0, message: 'Ništa za vezati' };
+
+    try {
+        const db = getDb();
+        let linkedCount = 0;
+        const chunkSize = 30;   // Firestore 'in' limit
+
+        for (let i = 0; i < taskIds.length; i += chunkSize) {
+            const chunk = taskIds.slice(i, i + chunkSize);
+            const snap = await getDocs(query(
+                collection(db, COLLECTIONS.TASKS),
+                where('Task_ID', 'in', chunk),
+                where('Organization_ID', '==', organizationId)
+            ));
+            if (snap.empty) continue;
+
+            const batch = writeBatch(db);
+            snap.docs.forEach(d => {
+                const task = d.data() as Task;
+                batch.update(d.ref, { Links: withWorkOrderLink(task.Links, workOrder) });
+                linkedCount++;
+            });
+            await batch.commit();
+        }
+
+        return {
+            success: true,
+            linkedCount,
+            message: linkedCount === 1 ? 'Zadatak dodan na nalog' : `${linkedCount} zadataka dodano na nalog`,
+        };
+    } catch (error) {
+        console.error('linkTasksToWorkOrder error:', error);
+        return { success: false, linkedCount: 0, message: 'Greška pri vezivanju zadataka' };
+    }
+}
+
+/**
+ * Skini zadatak s naloga. Zadatak OSTAJE u tabu Zadaci — skida se samo veza.
+ * Eventualna veza na proizvod se NE dira: zadatak se i dalje tiče tog proizvoda.
+ */
+export async function unlinkTaskFromWorkOrder(
+    taskId: string,
+    workOrderId: string,
+    organizationId: string
+): Promise<{ success: boolean; message: string }> {
+    if (!organizationId) return { success: false, message: 'Organization ID is required' };
+
+    try {
+        const result = await findByIdAndOrg<Task>(COLLECTIONS.TASKS, 'Task_ID', taskId, organizationId);
+        if (!result.data || !result.ref) return { success: false, message: 'Zadatak nije pronađen' };
+
+        await updateDocByRef(result.ref, { Links: withoutWorkOrderLink(result.data.Links, workOrderId) });
+        return { success: true, message: 'Zadatak skinut s naloga' };
+    } catch (error) {
+        console.error('unlinkTaskFromWorkOrder error:', error);
+        return { success: false, message: 'Greška pri skidanju zadatka s naloga' };
+    }
+}
+
+/**
+ * Veži izbor zadataka (postojeći + novi nacrti) na nalog — jedan poziv za
+ * oba puta kojima zadaci dolaze na nalog: wizard (nalog tek nastao) i
+ * kartica (nalog odavno postoji). Zato oba mjesta daju isti rezultat.
+ */
+export async function attachTasksToWorkOrder(
+    selection: TaskAttachSelection,
+    workOrder: { Work_Order_ID: string; displayName: string },
+    orderItems: Pick<WorkOrderItem, 'Product_ID' | 'Product_Name'>[],
+    organizationId: string
+): Promise<{ success: boolean; created: number; linked: number; message: string }> {
+    if (!organizationId) return { success: false, created: 0, linked: 0, message: 'Organization ID is required' };
+
+    const drafts = selection.newTasks.filter(d => d.Title.trim());
+    let created = 0;
+
+    try {
+        for (const draft of drafts) {
+            // Veza na nalog je obavezna; veza na proizvod ide samo ako je izabran
+            // i ako taj proizvod stvarno postoji u nalogu (withProductLinkInOrder to čuva).
+            let links: TaskLink[] = withWorkOrderLink([], workOrder);
+            if (draft.productId) links = withProductLinkInOrder(links, orderItems, draft.productId);
+
+            // Prazni koraci se odbacuju ovdje (a ne u UI-u): nacrt smije imati
+            // poluupisan red, zadatak u bazi ne smije.
+            const steps = (draft.checklist || []).map(t => t.trim()).filter(Boolean);
+
+            const res = await saveTask({
+                Title: draft.Title.trim(),
+                Description: draft.Description?.trim() || '',
+                Priority: draft.Priority,
+                Category: draft.Category,
+                Status: 'pending',
+                ...(draft.Due_Date ? { Due_Date: draft.Due_Date } : {}),
+                ...(draft.Assigned_Worker_ID ? { Assigned_Worker_ID: draft.Assigned_Worker_ID } : {}),
+                ...(steps.length > 0 ? {
+                    Checklist: steps.map(text => ({ id: uuidv4(), text, completed: false })),
+                } : {}),
+                Links: links,
+            }, organizationId);
+            if (res.success) created++;
+        }
+
+        const linkRes = await linkTasksToWorkOrder(selection.existingTaskIds, workOrder, organizationId);
+        const linked = linkRes.linkedCount;
+        const total = created + linked;
+
+        return {
+            success: true,
+            created,
+            linked,
+            message: total === 0
+                ? 'Nema zadataka za dodati'
+                : total === 1 ? '1 zadatak dodan na nalog' : `${total} zadataka dodano na nalog`,
+        };
+    } catch (error) {
+        console.error('attachTasksToWorkOrder error:', error);
+        return { success: false, created, linked: 0, message: 'Greška pri dodavanju zadataka na nalog' };
+    }
+}
+
+/**
+ * Osvježi zapamćeni naziv naloga u svim vezanim zadacima (poslije preimenovanja).
+ *
+ * TaskLink.Entity_Name je snimljen naziv iz trenutka vezivanja. Kartica naloga
+ * ga ne koristi (ona zna svoj nalog), ali tab Zadaci prikazuje baš njega — bez
+ * ovoga bi tamo zauvijek stajao stari naziv.
+ *
+ * Tiho (bez poruke): preimenovanje ne smije pasti zbog zadataka.
+ */
+export async function syncWorkOrderNameOnTasks(
+    workOrderId: string,
+    displayName: string,
+    organizationId: string
+): Promise<{ success: boolean; updatedCount: number }> {
+    if (!organizationId || !workOrderId) return { success: false, updatedCount: 0 };
+
+    try {
+        const db = getDb();
+        // Firestore ne može upitati unutar niza objekata (Links) → dovuci zadatke
+        // organizacije i filtriraj lokalno. Zadataka je malo; radi se samo pri preimenovanju.
+        const snap = await getDocs(query(
+            collection(db, COLLECTIONS.TASKS),
+            where('Organization_ID', '==', organizationId)
+        ));
+
+        const stale = snap.docs.filter(d => {
+            const links = (d.data() as Task).Links || [];
+            return links.some(l =>
+                l.Entity_Type === 'work_order' &&
+                l.Entity_ID === workOrderId &&
+                l.Entity_Name !== displayName
+            );
+        });
+        if (stale.length === 0) return { success: true, updatedCount: 0 };
+
+        const batch = writeBatch(db);
+        stale.forEach(d => {
+            const links = ((d.data() as Task).Links || []).map(l =>
+                l.Entity_Type === 'work_order' && l.Entity_ID === workOrderId
+                    ? { ...l, Entity_Name: displayName }
+                    : l
+            );
+            batch.update(d.ref, { Links: links });
+        });
+        await batch.commit();
+
+        return { success: true, updatedCount: stale.length };
+    } catch (error) {
+        console.error('syncWorkOrderNameOnTasks error:', error);
+        return { success: false, updatedCount: 0 };
+    }
+}
+
+/** Postavi (ili skini, productId=null) proizvod zadatka unutar naloga. */
+export async function setTaskProductInOrder(
+    taskId: string,
+    orderItems: Pick<WorkOrderItem, 'Product_ID' | 'Product_Name'>[],
+    productId: string | null,
+    organizationId: string
+): Promise<{ success: boolean; message: string }> {
+    if (!organizationId) return { success: false, message: 'Organization ID is required' };
+
+    try {
+        const result = await findByIdAndOrg<Task>(COLLECTIONS.TASKS, 'Task_ID', taskId, organizationId);
+        if (!result.data || !result.ref) return { success: false, message: 'Zadatak nije pronađen' };
+
+        await updateDocByRef(result.ref, { Links: withProductLinkInOrder(result.data.Links, orderItems, productId) });
+        return { success: true, message: productId ? 'Proizvod povezan' : 'Veza s proizvodom uklonjena' };
+    } catch (error) {
+        console.error('setTaskProductInOrder error:', error);
+        return { success: false, message: 'Greška pri povezivanju proizvoda' };
     }
 }
 

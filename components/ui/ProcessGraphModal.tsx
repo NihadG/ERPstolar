@@ -8,11 +8,13 @@ import {
 import type { Node, Edge, Connection, NodeProps } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import Modal from './Modal';
-import { Plus, GitBranch, Wand2, Save, Trash2, Loader2, List, Network, BookmarkPlus, RefreshCw, Combine } from 'lucide-react';
+import { Plus, GitBranch, Wand2, Save, Trash2, Loader2, List, Network, BookmarkPlus, RefreshCw, Combine, Layers } from 'lucide-react';
 import { COMMON_PROCESSES } from '@/lib/types';
 import type { WorkLog, ProcessGraph, ProcessFlowTemplate } from '@/lib/types';
-import { getProcessGraph, saveProcessGraph, generateUUID, listProcessTemplates, saveProcessTemplate } from '@/lib/services';
-import { layoutProcessGraph, layoutColumns, NODE_W, NODE_H } from '@/lib/processLayout';
+import {
+    getProcessGraph, saveProcessGraph, generateUUID, listProcessTemplates, saveProcessTemplate,
+} from '@/lib/services';
+import { layoutProcessGraph, layoutColumns, computeGraphDepths, NODE_W, NODE_H } from '@/lib/processLayout';
 import { nodeMatchesProcess, type Consolidation } from '@/lib/productProcesses';
 import OrderProcessWizard from './OrderProcessWizard';
 
@@ -101,7 +103,7 @@ export default function ProcessGraphModal({
     const [selectedId, setSelectedId] = useState<string | null>(null);
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
-    const [view, setView] = useState<'graph' | 'list'>('graph');
+    const [view, setView] = useState<'graph' | 'stages' | 'list'>('graph');
     const [templates, setTemplates] = useState<ProcessFlowTemplate[]>([]);
     const [wizardOpen, setWizardOpen] = useState(false);
 
@@ -231,7 +233,34 @@ export default function ProcessGraphModal({
         setNodes(ns => ns.map(n => pos[n.id] ? { ...n, position: pos[n.id] } : n));
     }, [nodes, edges, setNodes]);
 
+    // Procesi koji postoje na stavkama, a NEMA ih više u grafu → spremanje će ih ukloniti
+    // iz naloga (graf je autoritet). Odvojeno se broje završeni, jer se s njima gubi i evidencija.
+    const pendingRemovals = useMemo(() => {
+        const covered = (name: string, itemId: string) => nodes.some(n => {
+            const d = n.data as ProcData;
+            return (!(d.itemIds || []).length || d.itemIds.includes(itemId))
+                && nodeMatchesProcess({ name: d.name, aliases: d.aliases }, name);
+        });
+        const names = new Map<string, boolean>();   // naziv → ima završenih
+        for (const it of items) {
+            for (const p of it.Processes || []) {
+                if (!p.Process_Name || covered(p.Process_Name, it.ID)) continue;
+                names.set(p.Process_Name, (names.get(p.Process_Name) || false) || p.Status === 'Završeno');
+            }
+        }
+        return Array.from(names.entries()).map(([name, hasDone]) => ({ name, hasDone }));
+    }, [nodes, items]);
+
     const handleSave = useCallback(async () => {
+        if (pendingRemovals.length && typeof window !== 'undefined') {
+            const done = pendingRemovals.filter(r => r.hasDone).map(r => r.name);
+            const ok = window.confirm(
+                `Iz naloga će biti UKLONJENI procesi: ${pendingRemovals.map(r => r.name).join(', ')}.\n` +
+                (done.length ? `\nPažnja — završeni su (gubi se ko/kad je završio): ${done.join(', ')}.\n` : '') +
+                `\nNastaviti?`
+            );
+            if (!ok) return;
+        }
         setSaving(true);
         const graph: ProcessGraph = {
             nodes: nodes.map(n => ({ id: n.id, name: (n.data as ProcData).name || '', itemIds: (n.data as ProcData).itemIds || [], aliases: (n.data as ProcData).aliases, position: n.position })),
@@ -241,7 +270,7 @@ export default function ProcessGraphModal({
         showToast?.(res.message, res.success ? 'success' : 'error');
         setSaving(false);
         if (res.success) onClose();
-    }, [nodes, edges, workOrderId, organizationId, onClose, showToast]);
+    }, [nodes, edges, pendingRemovals, workOrderId, organizationId, onClose, showToast]);
 
     const applyTemplate = useCallback(async (tpl: ProcessFlowTemplate) => {
         // Kad graf ima čvorove: OK = DODAJ šablon u postojeći graf (spoji), Odustani = ZAMIJENI.
@@ -373,6 +402,20 @@ export default function ProcessGraphModal({
         return { id: n.id, name: d.name || 'Proces', preds: preds.join(', ') || '—', prods, status: st.label, workers: workersStr };
     }), [nodes, edges, status, itemName, workLogs, completers]);
 
+    // FAZE: kolone iz topologije TRENUTNOG canvasa (longest-path dubina) —
+    // isti mentalni model kao fazni plan proizvoda (kolona = faza, unutar kolone paralelno).
+    const stageColumns = useMemo(() => {
+        if (view !== 'stages' || nodes.length === 0) return [] as Node<ProcData>[][];
+        const depths = computeGraphDepths(nodes.map(n => ({ id: n.id })), edges.map(e => ({ source: e.source, target: e.target })));
+        const byDepth = new Map<number, Node<ProcData>[]>();
+        nodes.forEach(n => {
+            const d = depths.get(n.id) ?? 0;
+            if (!byDepth.has(d)) byDepth.set(d, []);
+            byDepth.get(d)!.push(n);
+        });
+        return Array.from(byDepth.keys()).sort((a, b) => a - b).map(k => byDepth.get(k)!);
+    }, [view, nodes, edges]);
+
     const btn: React.CSSProperties = { display: 'inline-flex', alignItems: 'center', gap: 6, padding: '8px 14px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-light)', background: 'var(--background)', fontSize: 13, fontWeight: 600, cursor: 'pointer', color: 'var(--text-primary)', transition: 'var(--transition)' };
     const tab: React.CSSProperties = { display: 'inline-flex', alignItems: 'center', gap: 5, padding: '5px 10px', borderRadius: 6, border: 'none', background: 'transparent', fontSize: 13, fontWeight: 600, cursor: 'pointer', color: 'var(--text-secondary)' };
     const tabActive: React.CSSProperties = { background: 'var(--background)', color: 'var(--text-primary)', boxShadow: '0 1px 2px var(--shadow-md)' };
@@ -386,6 +429,7 @@ export default function ProcessGraphModal({
                 <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
                     <div style={{ display: 'flex', gap: 4, background: 'var(--surface)', borderRadius: 8, padding: 3 }}>
                         <button style={{ ...tab, ...(view === 'graph' ? tabActive : {}) }} onClick={() => setView('graph')}><Network size={14} /> Graf</button>
+                        <button style={{ ...tab, ...(view === 'stages' ? tabActive : {}) }} onClick={() => setView('stages')} title="Faze toka — isti pregled kao plan procesa proizvoda"><Layers size={14} /> Faze</button>
                         <button style={{ ...tab, ...(view === 'list' ? tabActive : {}) }} onClick={() => setView('list')}><List size={14} /> Lista</button>
                     </div>
                     {view === 'graph' && <>
@@ -436,7 +480,7 @@ export default function ProcessGraphModal({
                                 {nodes.length === 0 && (
                                     <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: 'var(--text-tertiary)', pointerEvents: 'none', gap: 6 }}>
                                         <GitBranch size={28} />
-                                        <div style={{ fontSize: 13 }}>Nema procesa. Klikni „+ Proces" za početak.</div>
+                                        <div style={{ fontSize: 13 }}>Nema procesa. Klikni „Sinhronizuj iz proizvoda" ili „+ Proces".</div>
                                     </div>
                                 )}
                             </GraphCtx.Provider>
@@ -487,6 +531,57 @@ export default function ProcessGraphModal({
                         </div>
                     )}
                 </div>
+                )}
+
+                {view === 'stages' && (
+                    <div style={{ flex: 1, overflow: 'auto', border: '1px solid var(--border-light)', borderRadius: 12, padding: 14, background: 'var(--surface)' }}>
+                        {stageColumns.length === 0 ? (
+                            <div style={{ padding: 24, color: 'var(--text-tertiary)', fontSize: 13 }}>Nema procesa. Dodaj ih u „Graf" prikazu.</div>
+                        ) : (
+                            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 0, overflowX: 'auto', paddingBottom: 6 }}>
+                                {stageColumns.map((col, ci) => (
+                                    <div key={ci} style={{ display: 'flex', alignItems: 'center', flexShrink: 0 }}>
+                                        <div style={{ width: 200, background: 'var(--background)', border: '1px solid var(--border-light)', borderRadius: 'var(--radius-md)', overflow: 'hidden' }}>
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '9px 12px 5px' }}>
+                                                <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 16, height: 16, borderRadius: '50%', background: 'var(--accent-light)', color: 'var(--accent)', fontSize: 10, fontWeight: 700 }}>{ci + 1}</span>
+                                                <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Faza {ci + 1}</span>
+                                                {col.length > 1 && <span style={{ fontSize: 10, color: 'var(--text-tertiary)', marginLeft: 'auto' }}>{col.length} paralelno</span>}
+                                            </div>
+                                            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: '4px 8px 10px' }}>
+                                                {col.map(n => {
+                                                    const d = n.data as ProcData;
+                                                    const st = status(n.id, d.itemIds || [], d.name, d.aliases);
+                                                    return (
+                                                        <div key={n.id} style={{ border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', overflow: 'hidden', background: 'var(--background)' }}>
+                                                            <div style={{ height: 4, background: st.color }} />
+                                                            <div style={{ padding: '6px 9px' }}>
+                                                                <div style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--text-primary)' }}>{d.name || 'Proces'}</div>
+                                                                <div style={{ fontSize: 10.5, color: 'var(--text-secondary)', marginTop: 1 }}>{st.label}</div>
+                                                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 3, marginTop: 5 }}>
+                                                                    {(d.itemIds || []).length === 0
+                                                                        ? <span style={badgeAll}>svi proizvodi</span>
+                                                                        : d.itemIds.slice(0, 3).map(iid => <span key={iid} style={badge}>{itemName(iid)}</span>)}
+                                                                    {(d.itemIds || []).length > 3 && <span style={badge}>+{d.itemIds.length - 3}</span>}
+                                                                </div>
+                                                            </div>
+                                                        </div>
+                                                    );
+                                                })}
+                                            </div>
+                                        </div>
+                                        {ci < stageColumns.length - 1 && (
+                                            <span style={{ color: 'var(--border)', margin: '0 6px', display: 'flex', flexShrink: 0 }}>
+                                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M5 12h14M13 6l6 6-6 6" /></svg>
+                                            </span>
+                                        )}
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                        <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 10 }}>
+                            Faze su izvedene iz veza grafa (kolona = faza; unutar kolone paralelno) — isti pregled kao plan procesa proizvoda. Veze i procese uređuješ u „Graf" prikazu.
+                        </div>
+                    </div>
                 )}
 
                 {view === 'list' && (

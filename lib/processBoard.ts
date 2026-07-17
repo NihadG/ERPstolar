@@ -2,17 +2,20 @@
 // PROCESI PREKO SVIH NALOGA — čista logika (bez Firebase), pokrivena testovima.
 //
 // Model proizvodnje: zanatske EKIPE (majstor+pomoćnik) nose cijeli nalog kroz
-// sve procese; više ekipa paralelno. Zato je primarna leća "po nalozima"
-// (napredak ekipe kroz faze), a sekundarne "po procesima" (red čekanja po
-// stanici) i "po radnicima".
+// sve procese; više ekipa paralelno. Dvije leće: "po nalozima" (napredak ekipe
+// kroz tok) i "po procesima" (red čekanja po stanici).
 //
-// buildProcessCells → JEDAN skup ćelija (nalog×proizvod×proces) s gatingom;
-// groupByOrder/Process/Worker su čiste projekcije nad istim ćelijama.
+// SLOJEVI:
+//   buildProcessCells → ćelija = nalog×proizvod×proces (najsitniji zapis, gating)
+//   buildProcessTasks → ZADATAK = nalog×proces preko SVIH pokrivenih proizvoda.
+//     Zadatak je JEDINICA RADA i JEDAN KLIK: „priprema masive" za 3 proizvoda
+//     jednog naloga radi se odjednom, pa se i čekira odjednom (ranije 3 klika).
+//   groupByOrder/groupByProcess → čiste projekcije nad zadacima.
 // jest: lib/__tests__/processBoard.test.ts
 // ════════════════════════════════════════════════════════════════════
 
 import type {
-    WorkOrder, WorkOrderItem, WorkLog, Worker, ProcessCatalogItem, ProcessGraph,
+    WorkOrder, WorkOrderItem, WorkLog, ProcessCatalogItem, ProcessGraph,
 } from './types';
 import {
     planToStages, synthesizeOrderGraph, nodeMatchesProcess, computeProcessGating,
@@ -41,9 +44,56 @@ export interface ProcessCell {
 }
 
 export interface ProcessBoardOrderInput {
-    workOrder: Pick<WorkOrder, 'Work_Order_ID' | 'Work_Order_Type' | 'Status' | 'Color_Code'> & { Process_Graph?: ProcessGraph };
+    workOrder: Pick<WorkOrder, 'Work_Order_ID' | 'Work_Order_Type' | 'Status' | 'Color_Code'>
+    & { Process_Graph?: ProcessGraph; Created_Date?: string };
     items: WorkOrderItem[];
     orderLabel: string;         // unaprijed izračunat (workOrderDisplayName) — modul ostaje čist
+}
+
+// ════════════════════════════════════════════════════════════════════
+// PRIORITET NALOGA NA TABLI — šta majstor treba vidjeti prvo.
+// ════════════════════════════════════════════════════════════════════
+
+/** Minimum za rangiranje — namjerno labav da ga zadovolji i ProcessBoardOrderInput. */
+export interface BoardOrderRank {
+    workOrder: { Work_Order_ID: string; Status: string; Created_Date?: string };
+    items: { Status?: string; Is_Paused?: boolean }[];
+}
+
+/**
+ * Nalog je PAUZIRAN kad su SVE njegove otvorene stavke pauzirane — isto pravilo
+ * kao dugme Pauza/Nastavi u kartici naloga (WorkOrderExpandedDetail.allPaused),
+ * da tabla i kartica nikad ne tvrde suprotno.
+ */
+export function isOrderPaused(items: { Status?: string; Is_Paused?: boolean }[]): boolean {
+    const open = (items || []).filter(i => {
+        const s = i.Status || 'Na čekanju';
+        return s !== 'Završeno' && s !== 'Otkazano';
+    });
+    return open.length > 0 && open.every(i => !!i.Is_Paused);
+}
+
+/**
+ * Redoslijed naloga: ono na čemu se DANAS radi je na vrhu, pa najsvježiji nalozi.
+ *   1) U toku → pauzirani → na čekanju   (završeni/otkazani ni ne ulaze u opseg)
+ *   2) unutar toga: nalog s DANAŠNJOM dnevnicom prvi (radnik je danas na njemu)
+ *   3) pa najnoviji (Created_Date opadajuće; ISO string → leksikografski = hronološki)
+ * Stabilno: jednaki nalozi zadržavaju ulazni redoslijed.
+ */
+export function sortOrdersForBoard<T extends BoardOrderRank>(orders: T[], workedTodayOrderIds: Set<string>): T[] {
+    const bucket = (o: T) => o.workOrder.Status === 'Na čekanju' ? 2 : (isOrderPaused(o.items) ? 1 : 0);
+    return orders
+        .map((o, i) => ({ o, i }))
+        .sort((a, b) => {
+            const bucketDiff = bucket(a.o) - bucket(b.o);
+            if (bucketDiff) return bucketDiff;
+            const todayA = workedTodayOrderIds.has(a.o.workOrder.Work_Order_ID) ? 0 : 1;
+            const todayB = workedTodayOrderIds.has(b.o.workOrder.Work_Order_ID) ? 0 : 1;
+            if (todayA !== todayB) return todayA - todayB;
+            const byNewest = (b.o.workOrder.Created_Date || '').localeCompare(a.o.workOrder.Created_Date || '');
+            return byNewest || a.i - b.i;
+        })
+        .map(x => x.o);
 }
 
 /** Ekipa naloga: dodijeljeni (Assigned_Workers/Processes/Helpers) ∪ radnici sa NAJNOVIJEG knjiženog datuma. */
@@ -116,12 +166,40 @@ function resolveOrderGraph(order: ProcessBoardOrderInput): {
     return { nodes: synth.graph.nodes, edges: synth.graph.edges, phaseByName };
 }
 
+/** Naziv generičkog placeholdera koji je STARI wizard upisivao proizvodu bez plana. */
+const PLACEHOLDER_PROCESS = 'rad';
+
+/**
+ * Je li stavka „bez plana" maskirana u proces? Stari wizard je proizvodu BEZ plana
+ * procesa upisivao jedan generički proces „Rad". To NIJE proces nego ODSUTNOST plana:
+ * ne kaže ništa („nalog ima posla" — pa naravno), ne može se gatati, i korisnik ga ne
+ * može smisleno završiti. Tabla ga zato ignoriše i nalog ispada u „Bez definisanih
+ * procesa", gdje mu je i mjesto — umjesto da korisnik ručno briše „Rad" iz svakog
+ * starog naloga kroz graf.
+ *
+ * Uslovi su namjerno USKI (da ne pojede stvaran rad):
+ *   • to je JEDINI proces stavke, i
+ *   • ne postoji u katalogu procesa (ako ga korisnik doda u katalog, „Rad" postaje
+ *     legitiman proces i prikazuje se normalno).
+ * Podatak se NE dira — auto-knjiženje dnevnica i dalje čita item.Processes.
+ */
+export function isPlaceholderOnlyItem(
+    item: { Processes?: { Process_Name: string }[] },
+    catalogKeys: Set<string>,
+): boolean {
+    const named = (item.Processes || []).filter(p => (p.Process_Name || '').trim());
+    if (named.length !== 1) return false;
+    const k = norm(named[0].Process_Name);
+    return k === PLACEHOLDER_PROCESS && !catalogKeys.has(k);
+}
+
 export function buildProcessCells(
     orders: ProcessBoardOrderInput[],
     catalog: Pick<ProcessCatalogItem, 'Name' | 'Order'>[],
     workLogs: Pick<WorkLog, 'Work_Order_ID' | 'Work_Order_Item_ID' | 'Worker_ID' | 'Process_Name' | 'Process_Node_ID' | 'Date'>[],
 ): ProcessCell[] {
     const catalogOrderByName = new Map(catalog.map(c => [norm(c.Name), c.Order]));
+    const catalogKeys = new Set(catalogOrderByName.keys());
     const logsByOrder = new Map<string, typeof workLogs>();
     for (const l of workLogs) {
         if (!l.Work_Order_ID) continue;
@@ -130,7 +208,14 @@ export function buildProcessCells(
     }
 
     const cells: ProcessCell[] = [];
-    for (const order of orders) {
+    for (const rawOrder of orders) {
+        // Stavke s generičkim „Rad" ispadaju PRIJE svega ostalog — i iz sinteze grafa i iz
+        // pokrivenosti čvorova; nalog kojem ostane 0 stavki nema plan i preskače se u cjelini.
+        const order: ProcessBoardOrderInput = {
+            ...rawOrder,
+            items: rawOrder.items.filter(it => !isPlaceholderOnlyItem(it, catalogKeys)),
+        };
+        if (order.items.length === 0) continue;
         const woId = order.workOrder.Work_Order_ID;
         const orderLogs = logsByOrder.get(woId) || [];
         const crew = crewOfOrder(order.items, orderLogs);
@@ -182,53 +267,115 @@ export function buildProcessCells(
 }
 
 // ════════════════════════════════════════════════════════════════════
-// PROJEKCIJE (grupacije) — čiste transformacije nad ćelijama.
+// ZADATAK = nalog × proces (preko svih pokrivenih proizvoda) — jedinica rada.
 // ════════════════════════════════════════════════════════════════════
 
-export interface OrderPhase {
+export interface ProcessTask {
+    key: string;                 // workOrderId|nodeId — stabilan ključ odabira
+    workOrderId: string;
+    orderLabel: string;
+    orderColor?: string;
+    processName: string;
+    nodeId: string;
+    catalogOrder: number | null;
     phaseIndex: number;
+    gate: 'done' | 'active' | 'blocked';
+    /** Ćelije po proizvodu — za djelimičan odabir i prikaz „na kojim proizvodima". */
     cells: ProcessCell[];
-    allDone: boolean;
+    itemNames: string[];         // nazivi pokrivenih proizvoda (redoslijed ćelija)
+    doneCount: number;
+    totalCount: number;
+    /** Završeno = SVI proizvodi; Djelimično = neki; U toku = bar jedan pokrenut. */
+    status: 'Na čekanju' | 'U toku' | 'Djelimično' | 'Završeno';
+    hasLoggedWork: boolean;
+    crewWorkerIds: string[];
+    completedAt?: string;        // najkasniji datum završetka među proizvodima
+    workerNames: string[];       // ko je završio (glavni + pomoćnici, distinct)
 }
+
+/** Ćelije → zadaci (nalog×proces). Redoslijed toka: faza → katalog → naziv. */
+export function buildProcessTasks(cells: ProcessCell[]): ProcessTask[] {
+    const byKey = new Map<string, ProcessCell[]>();
+    const order: string[] = [];
+    for (const c of cells) {
+        const k = `${c.workOrderId}|${c.nodeId}`;
+        if (!byKey.has(k)) { byKey.set(k, []); order.push(k); }
+        byKey.get(k)!.push(c);
+    }
+    const tasks = order.map(k => {
+        const list = byKey.get(k)!;
+        const first = list[0];
+        const doneCount = list.filter(c => c.status === 'Završeno').length;
+        const totalCount = list.length;
+        const status: ProcessTask['status'] =
+            doneCount === totalCount ? 'Završeno'
+                : list.some(c => c.status === 'U toku') ? 'U toku'
+                    : doneCount > 0 ? 'Djelimično'
+                        : 'Na čekanju';
+        const completedAt = list.map(c => c.completedAt).filter(Boolean).sort().slice(-1)[0];
+        const names = new Set<string>();
+        list.forEach(c => {
+            if (c.status !== 'Završeno') return;
+            if (c.workerName) names.add(c.workerName);
+            (c.helpers || []).forEach(h => h.Worker_Name && names.add(h.Worker_Name));
+        });
+        return {
+            key: k,
+            workOrderId: first.workOrderId, orderLabel: first.orderLabel, orderColor: first.orderColor,
+            processName: first.processName, nodeId: first.nodeId, catalogOrder: first.catalogOrder,
+            phaseIndex: first.phaseIndex, gate: first.gate,
+            cells: list, itemNames: list.map(c => c.itemName),
+            doneCount, totalCount, status,
+            hasLoggedWork: list.some(c => c.hasLoggedWork),
+            crewWorkerIds: first.crewWorkerIds,
+            completedAt, workerNames: Array.from(names),
+        };
+    });
+    return tasks.sort((a, b) =>
+        a.phaseIndex - b.phaseIndex ||
+        (a.catalogOrder ?? Number.MAX_SAFE_INTEGER) - (b.catalogOrder ?? Number.MAX_SAFE_INTEGER) ||
+        a.processName.localeCompare(b.processName, 'hr'));
+}
+
+// ════════════════════════════════════════════════════════════════════
+// PROJEKCIJE (grupacije) — čiste transformacije nad zadacima.
+// ════════════════════════════════════════════════════════════════════
+
 export interface OrderGroup {
     workOrderId: string;
     orderLabel: string;
     orderColor?: string;
     crewWorkerIds: string[];
-    phases: OrderPhase[];
-    currentPhaseIndex: number;   // prva faza koja NIJE cijela Završeno; -1 = sve gotovo
-    activeCells: ProcessCell[];  // "na redu" (gate active, nezavršeni) u tekućoj fazi
-    doneCount: number;
+    /** SVI procesi naloga u redoslijedu toka (ne samo „na redu") — pregled cijelog toka. */
+    tasks: ProcessTask[];
+    activeCount: number;
+    doneCount: number;           // broji PROCESE (zadatke), ne ćelije
     totalCount: number;
+    productCount: number;
 }
 
-/** PO NALOGU (default): ekipa + fazni pipeline + "na redu". */
+/** PO NALOGU (default): ekipa + svi procesi naloga u redoslijedu toka. */
 export function groupByOrder(cells: ProcessCell[]): OrderGroup[] {
-    const byOrder = new Map<string, ProcessCell[]>();
+    const tasks = buildProcessTasks(cells);
+    const byOrder = new Map<string, ProcessTask[]>();
     const order: string[] = [];
-    for (const c of cells) {
-        if (!byOrder.has(c.workOrderId)) { byOrder.set(c.workOrderId, []); order.push(c.workOrderId); }
-        byOrder.get(c.workOrderId)!.push(c);
+    for (const t of tasks) {
+        if (!byOrder.has(t.workOrderId)) { byOrder.set(t.workOrderId, []); order.push(t.workOrderId); }
+        byOrder.get(t.workOrderId)!.push(t);
     }
     return order.map(woId => {
         const list = byOrder.get(woId)!;
         const first = list[0];
-        const phaseKeys = Array.from(new Set(list.map(c => c.phaseIndex))).sort((a, b) => a - b);
-        const phases: OrderPhase[] = phaseKeys.map(pi => {
-            const pc = list.filter(c => c.phaseIndex === pi);
-            return { phaseIndex: pi, cells: pc, allDone: pc.length > 0 && pc.every(c => c.status === 'Završeno') };
-        });
-        const currentPhaseIndex = phases.findIndex(p => !p.allDone);
-        const activeCells = currentPhaseIndex >= 0
-            ? phases[currentPhaseIndex].cells.filter(c => c.status !== 'Završeno' && c.gate === 'active')
-            : [];
+        const products = new Set<string>();
+        list.forEach(t => t.cells.forEach(c => products.add(c.itemId)));
         return {
             workOrderId: woId, orderLabel: first.orderLabel, orderColor: first.orderColor,
             crewWorkerIds: first.crewWorkerIds,
-            phases, currentPhaseIndex,
-            activeCells,
-            doneCount: list.filter(c => c.status === 'Završeno').length,
+            tasks: list,
+            activeCount: list.filter(t => t.gate === 'active' && t.status !== 'Završeno').length,
+            doneCount: list.filter(t => t.status === 'Završeno').length,
             totalCount: list.length,
+            productCount: products.size,
         };
     });
 }
@@ -237,30 +384,33 @@ export interface ProcessGroup {
     key: string;
     name: string;
     catalogOrder: number | null;
-    active: ProcessCell[];      // gate active, nezavršeni (red čekanja)
+    /** Jedan zadatak po nalogu — u ovoj leći su NALOZI/PROIZVODI istaknuti, ne naziv procesa. */
+    tasks: ProcessTask[];
+    activeCount: number;
     blockedCount: number;
     doneCount: number;
     totalCount: number;
     hasLoggedWork: boolean;
 }
 
-/** PO PROCESU (stanice): katalog redoslijed; legacy/ad-hoc (van kataloga) na kraj. */
+/** PO PROCESU (stanice): katalog redoslijed; procesi van kataloga na kraj. */
 export function groupByProcess(cells: ProcessCell[]): ProcessGroup[] {
-    const byKey = new Map<string, ProcessCell[]>();
-    for (const c of cells) {
-        const key = norm(c.processName);
+    const byKey = new Map<string, ProcessTask[]>();
+    for (const t of buildProcessTasks(cells)) {
+        const key = norm(t.processName);
         if (!byKey.has(key)) byKey.set(key, []);
-        byKey.get(key)!.push(c);
+        byKey.get(key)!.push(t);
     }
     const groups: ProcessGroup[] = [];
     byKey.forEach((list, key) => {
         groups.push({
             key, name: list[0].processName, catalogOrder: list[0].catalogOrder,
-            active: list.filter(c => c.gate === 'active' && c.status !== 'Završeno'),
-            blockedCount: list.filter(c => c.gate === 'blocked' && c.status !== 'Završeno').length,
-            doneCount: list.filter(c => c.status === 'Završeno').length,
+            tasks: list,
+            activeCount: list.filter(t => t.gate === 'active' && t.status !== 'Završeno').length,
+            blockedCount: list.filter(t => t.gate === 'blocked' && t.status !== 'Završeno').length,
+            doneCount: list.filter(t => t.status === 'Završeno').length,
             totalCount: list.length,
-            hasLoggedWork: list.some(c => c.hasLoggedWork),
+            hasLoggedWork: list.some(t => t.hasLoggedWork),
         });
     });
     // Katalog redoslijed (Order), pa procesi van kataloga (catalogOrder null) na kraj, po nazivu.
@@ -268,42 +418,5 @@ export function groupByProcess(cells: ProcessCell[]): ProcessGroup[] {
         const ao = a.catalogOrder ?? Number.MAX_SAFE_INTEGER;
         const bo = b.catalogOrder ?? Number.MAX_SAFE_INTEGER;
         return ao - bo || a.name.localeCompare(b.name, 'hr');
-    });
-}
-
-export interface WorkerGroup {
-    workerId: string;
-    workerName: string;
-    orders: { workOrderId: string; orderLabel: string; orderColor?: string; activeCells: ProcessCell[]; currentPhaseIndex: number }[];
-    activeCount: number;
-}
-
-/** PO RADNIKU (majstoru): njegovi nalozi + tekuća faza + "na redu". Ćelije bez ekipe → "Nedodijeljeno". */
-export function groupByWorker(cells: ProcessCell[], workers: Pick<Worker, 'Worker_ID' | 'Name'>[]): WorkerGroup[] {
-    const nameById = new Map(workers.map(w => [w.Worker_ID, w.Name]));
-    const orderGroups = groupByOrder(cells);
-    const UNASSIGNED = '__unassigned__';
-    const byWorker = new Map<string, WorkerGroup>();
-    const ensure = (workerId: string): WorkerGroup => {
-        let g = byWorker.get(workerId);
-        if (!g) {
-            g = { workerId, workerName: workerId === UNASSIGNED ? 'Nedodijeljeno' : (nameById.get(workerId) || 'Nepoznat'), orders: [], activeCount: 0 };
-            byWorker.set(workerId, g);
-        }
-        return g;
-    };
-    for (const og of orderGroups) {
-        const targets = og.crewWorkerIds.length ? og.crewWorkerIds : [UNASSIGNED];
-        for (const wid of targets) {
-            const g = ensure(wid);
-            g.orders.push({ workOrderId: og.workOrderId, orderLabel: og.orderLabel, orderColor: og.orderColor, activeCells: og.activeCells, currentPhaseIndex: og.currentPhaseIndex });
-            g.activeCount += og.activeCells.length;
-        }
-    }
-    // Radnici s aktivnim poslom prvi; Nedodijeljeno na kraj.
-    return Array.from(byWorker.values()).sort((a, b) => {
-        if (a.workerId === UNASSIGNED) return 1;
-        if (b.workerId === UNASSIGNED) return -1;
-        return b.activeCount - a.activeCount || a.workerName.localeCompare(b.workerName, 'hr');
     });
 }

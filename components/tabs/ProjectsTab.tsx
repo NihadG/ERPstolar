@@ -31,7 +31,6 @@ import { projectProfitBreakdown } from '@/lib/projectProfit';
 
 import ProjectMaterialsModal from '@/components/ui/ProjectMaterialsModal';
 import InvoiceModal from '@/components/ui/InvoiceModal';
-import BulkProcessPlanModal from '@/components/ui/BulkProcessPlanModal';
 import { useData } from '@/context/DataContext';
 import { syncAllProjectData, overrideWorkLogs } from '@/lib/services';
 import { PROJECT_STATUSES, PRODUCTION_STEPS, MATERIAL_CATEGORIES } from '@/lib/types';
@@ -74,7 +73,6 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
     // Završni račun — otvara se za projekat koji ima prihvaćenu ponudu (vidi InvoiceModal).
     const [invoiceModalProject, setInvoiceModalProject] = useState<Project | null>(null);
     // Generiši planove procesa — batch auto/AI plan za sve proizvode projekta.
-    const [bulkPlanProject, setBulkPlanProject] = useState<Project | null>(null);
     // Samo ID — proizvod se svaki put izvodi svjež iz `projects` (onChanged→onRefresh mora odmah ažurirati modal)
     const [processPlanProductId, setProcessPlanProductId] = useState<string | null>(null);
     const processPlanProduct = processPlanProductId
@@ -1552,9 +1550,6 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                                                     <button className="icon-btn" onClick={() => setMaterialsOverviewProject(project)} title="Pregled materijala">
                                                         <span className="material-icons-round">inventory</span>
                                                     </button>
-                                                    <button className="icon-btn" onClick={() => setBulkPlanProject(project)} title="Generiši planove procesa">
-                                                        <span className="material-icons-round">account_tree</span>
-                                                    </button>
                                                     {offers.some(o => o.Project_ID === project.Project_ID && o.Status === 'Prihvaćeno') && (
                                                         <button className="icon-btn" onClick={() => setInvoiceModalProject(project)} title="Završni račun">
                                                             <span className="material-icons-round">receipt_long</span>
@@ -2110,17 +2105,6 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                     />
                 )
             }
-
-            {/* Generiši planove procesa */}
-            {bulkPlanProject && organizationId && (
-                <BulkProcessPlanModal
-                    project={bulkPlanProject}
-                    organizationId={organizationId}
-                    onClose={() => setBulkPlanProject(null)}
-                    onChanged={() => onRefresh('projects')}
-                    showToast={showToast}
-                />
-            )}
 
             {/* Završni račun */}
             {

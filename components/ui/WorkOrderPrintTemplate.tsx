@@ -1,17 +1,31 @@
 'use client';
 
-import { useState, useRef } from 'react';
-import type { WorkOrder } from '@/lib/types';
+import { useState, useRef, useMemo, Fragment } from 'react';
+import { tasksForWorkOrder, taskProductInOrder, isTaskOverdue } from '@/lib/workOrderTasks';
+import { todayISO } from '@/lib/planning';
+import { TASK_PRIORITY_LABELS, TASK_CATEGORY_LABELS, TASK_STATUS_LABELS, type WorkOrder, type Task } from '@/lib/types';
 
 interface WorkOrderPrintTemplateProps {
     workOrder: WorkOrder;
+    /** Svi zadaci organizacije — filtriraju se po Task.Links za ovaj nalog. */
+    tasks?: Task[];
     companyName?: string;
 }
 
-export default function WorkOrderPrintTemplate({ workOrder, companyName = 'ERP Stolarija' }: WorkOrderPrintTemplateProps) {
+export default function WorkOrderPrintTemplate({ workOrder, tasks = [], companyName = 'ERP Stolarija' }: WorkOrderPrintTemplateProps) {
     const [showMaterials, setShowMaterials] = useState(true);
     const [showProcesses, setShowProcesses] = useState(false);
     const printRef = useRef<HTMLDivElement>(null);
+
+    // Zadaci ovog naloga — iz istih Task.Links koje vidi kartica i tab Zadaci.
+    const orderTasks = useMemo(
+        () => tasksForWorkOrder(tasks, workOrder.Work_Order_ID),
+        [tasks, workOrder.Work_Order_ID]
+    );
+    // Zadaci se štampaju samo kad ih ima — inače checkbox nema šta da uključi.
+    const [showTasks, setShowTasks] = useState(true);
+    const printTasks = showTasks && orderTasks.length > 0;
+    const today = todayISO();
 
     function formatDate(dateString: string): string {
         if (!dateString) return '-';
@@ -224,6 +238,79 @@ export default function WorkOrderPrintTemplate({ workOrder, companyName = 'ERP S
                     .status-badge-modern.primljeno { background: #e0f2f1; color: #004d40; }
                     .status-badge-modern.u-upotrebi { background: #fff8e1; color: #ff6f00; }
                     .status-badge-modern.unknown { background: #f5f5f5; color: #616161; }
+
+                    /* ====== ZADACI ======
+                       Isti jezik kao spisak proizvoda (red + uvučeno „ostrvo" za
+                       detalje), da nalog ostane jedan dokument, a ne dva stila. */
+                    .task-row td {
+                        border-bottom: 1px solid #e5e5e5;
+                        padding-top: 12px;
+                        padding-bottom: 12px;
+                        font-size: 10pt;
+                        vertical-align: top;
+                    }
+                    .task-row.has-detail td { border-bottom: none; padding-bottom: 6px; }
+
+                    /* Prazna kućica koju radnik štiklira rukom; završen zadatak je već označen. */
+                    .task-box {
+                        width: 11px;
+                        height: 11px;
+                        border: 1pt solid #86868b;
+                        border-radius: 2px;
+                        display: inline-block;
+                        text-align: center;
+                        line-height: 10px;
+                        font-size: 8.5pt;
+                        font-weight: 700;
+                        color: #1d1d1f;
+                    }
+                    .col-check { width: 26px; text-align: center; }
+                    .task-title { font-weight: 600; font-size: 10.5pt; color: #1d1d1f; }
+                    .task-title.is-done { color: #86868b; text-decoration: line-through; }
+                    .task-sub { font-size: 8.5pt; color: #86868b; margin-top: 2px; }
+                    .task-cell { color: #424245; font-size: 9pt; }
+                    .task-cell.is-overdue { color: #d63031; font-weight: 600; }
+
+                    .task-prio {
+                        display: inline-block;
+                        padding: 1px 7px;
+                        border-radius: 10px;
+                        font-size: 7.5pt;
+                        font-weight: 700;
+                        text-transform: uppercase;
+                        letter-spacing: 0.03em;
+                        white-space: nowrap;
+                    }
+                    .task-prio.urgent { background: #ffebee; color: #b71c1c; }
+                    .task-prio.high   { background: #fff3e0; color: #e65100; }
+                    .task-prio.medium { background: #e3f2fd; color: #0d47a1; }
+                    .task-prio.low    { background: #f5f5f5; color: #616161; }
+                    .task-prio.done   { background: #e8f5e9; color: #1b5e20; }
+                    .task-prio.cancelled { background: #f5f5f5; color: #9e9e9e; }
+
+                    .task-detail-row td { padding: 0 12px 14px 12px; border-bottom: 1px solid #e5e5e5; }
+                    .task-detail-container {
+                        background: #F5F5F7;
+                        border-radius: 8px;
+                        padding: 10px 14px;
+                        margin-left: 26px;
+                    }
+                    .task-desc { font-size: 9pt; color: #424245; line-height: 1.5; white-space: pre-wrap; }
+                    .task-notes { font-size: 8.5pt; color: #424245; line-height: 1.5; margin-top: 7px; }
+                    .task-notes strong { color: #1d1d1f; }
+                    .task-checklist { margin-top: 8px; }
+                    .task-checklist-label {
+                        font-size: 7.5pt;
+                        color: #86868b;
+                        font-weight: 600;
+                        text-transform: uppercase;
+                        letter-spacing: 0.05em;
+                        margin-bottom: 5px;
+                    }
+                    .task-cl-item { font-size: 9pt; color: #424245; padding: 2px 0; }
+                    .task-cl-item .task-box { margin-right: 7px; vertical-align: middle; }
+                    .task-cl-item.done { color: #86868b; text-decoration: line-through; }
+
                     .signature-area { margin-top: 15mm; padding-top: 10mm; }
                     .signature-row { display: flex; justify-content: space-between; gap: 20mm; }
                     .signature-block { flex: 1; text-align: center; }
@@ -284,6 +371,18 @@ export default function WorkOrderPrintTemplate({ workOrder, companyName = 'ERP S
                         />
                         <span className="checkmark"></span>
                         Prikaži raspodjelu procesa/radnika
+                    </label>
+                    <label className={`checkbox-label${orderTasks.length === 0 ? ' is-disabled' : ''}`}>
+                        <input
+                            type="checkbox"
+                            checked={printTasks}
+                            disabled={orderTasks.length === 0}
+                            onChange={e => setShowTasks(e.target.checked)}
+                        />
+                        <span className="checkmark"></span>
+                        {orderTasks.length === 0
+                            ? 'Prikaži zadatke (nema vezanih zadataka)'
+                            : `Prikaži zadatke (${orderTasks.length})`}
                     </label>
                 </div>
                 <button className="print-action-btn" onClick={handlePrint}>
@@ -360,6 +459,14 @@ export default function WorkOrderPrintTemplate({ workOrder, companyName = 'ERP S
                                         <span className="summary-label">Status:</span>
                                         <span className="summary-value">{workOrder.Status}</span>
                                     </div>
+                                    {printTasks && (
+                                        <div className="summary-item">
+                                            <span className="summary-label">Zadaci:</span>
+                                            <span className="summary-value">
+                                                {orderTasks.filter(t => t.Status === 'completed').length}/{orderTasks.length} urađeno
+                                            </span>
+                                        </div>
+                                    )}
                                 </div>
 
                                 {/* Products List */}
@@ -461,6 +568,93 @@ export default function WorkOrderPrintTemplate({ workOrder, companyName = 'ERP S
                                     );
                                 })()}
 
+                                {/* ZADACI — pregled + prazne kućice za štikliranje na papiru */}
+                                {printTasks && (
+                                    <div className="section">
+                                        <div className="section-title">ZADACI</div>
+                                        <table className="data-table">
+                                            <thead>
+                                                <tr>
+                                                    <th className="col-check"></th>
+                                                    <th className="col-name">Zadatak</th>
+                                                    <th className="col-project">Proizvod</th>
+                                                    <th className="col-project">Rok</th>
+                                                    <th className="col-project">Zadužen</th>
+                                                    <th style={{ textAlign: 'right' }} className="col-project">Prioritet</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {orderTasks.map(task => {
+                                                    const done = task.Status === 'completed';
+                                                    const cancelled = task.Status === 'cancelled';
+                                                    const overdue = isTaskOverdue(task, today);
+                                                    const productId = taskProductInOrder(task, workOrder.items || []);
+                                                    const productName = workOrder.items?.find(i => i.Product_ID === productId)?.Product_Name;
+                                                    const checklist = task.Checklist || [];
+                                                    const hasDetail = !!task.Description || checklist.length > 0 || !!task.Notes;
+
+                                                    return (
+                                                        <Fragment key={task.Task_ID}>
+                                                            <tr className={`task-row${hasDetail ? ' has-detail' : ''}`}>
+                                                                <td className="col-check">
+                                                                    <span className="task-box">{done ? '✓' : ''}</span>
+                                                                </td>
+                                                                <td>
+                                                                    <div className={`task-title${done || cancelled ? ' is-done' : ''}`}>{task.Title}</div>
+                                                                    <div className="task-sub">
+                                                                        {TASK_CATEGORY_LABELS[task.Category]}
+                                                                        {task.Status === 'in_progress' && ` · ${TASK_STATUS_LABELS.in_progress}`}
+                                                                        {cancelled && ` · ${TASK_STATUS_LABELS.cancelled}`}
+                                                                    </div>
+                                                                </td>
+                                                                <td className="task-cell">{productName || '—'}</td>
+                                                                <td className={`task-cell${overdue ? ' is-overdue' : ''}`}>
+                                                                    {task.Due_Date ? formatDate(task.Due_Date) : '—'}
+                                                                    {overdue && ' (kasni)'}
+                                                                </td>
+                                                                <td className="task-cell">{task.Assigned_Worker_Name || '—'}</td>
+                                                                <td style={{ textAlign: 'right' }}>
+                                                                    <span className={`task-prio ${done ? 'done' : cancelled ? 'cancelled' : task.Priority}`}>
+                                                                        {done ? TASK_STATUS_LABELS.completed
+                                                                            : cancelled ? TASK_STATUS_LABELS.cancelled
+                                                                                : TASK_PRIORITY_LABELS[task.Priority]}
+                                                                    </span>
+                                                                </td>
+                                                            </tr>
+
+                                                            {hasDetail && (
+                                                                <tr className="task-detail-row">
+                                                                    <td colSpan={6}>
+                                                                        <div className="task-detail-container">
+                                                                            {task.Description && <div className="task-desc">{task.Description}</div>}
+                                                                            {checklist.length > 0 && (
+                                                                                <div className="task-checklist">
+                                                                                    <div className="task-checklist-label">
+                                                                                        Koraci · {checklist.filter(c => c.completed).length}/{checklist.length}
+                                                                                    </div>
+                                                                                    {checklist.map(c => (
+                                                                                        <div key={c.id} className={`task-cl-item${c.completed ? ' done' : ''}`}>
+                                                                                            <span className="task-box">{c.completed ? '✓' : ''}</span>
+                                                                                            {c.text}
+                                                                                        </div>
+                                                                                    ))}
+                                                                                </div>
+                                                                            )}
+                                                                            {task.Notes && (
+                                                                                <div className="task-notes"><strong>Napomena:</strong> {task.Notes}</div>
+                                                                            )}
+                                                                        </div>
+                                                                    </td>
+                                                                </tr>
+                                                            )}
+                                                        </Fragment>
+                                                    );
+                                                })}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                )}
+
                                 {/* Signature Area */}
                                 <div className="signature-area avoid-break">
                                     <div className="signature-row">
@@ -531,6 +725,9 @@ export default function WorkOrderPrintTemplate({ workOrder, companyName = 'ERP S
                     accent-color: var(--accent);
                     cursor: pointer;
                 }
+                /* Nalog bez zadataka: opcija ostaje vidljiva (da se zna da postoji), ali ugašena. */
+                .checkbox-label.is-disabled { opacity: 0.5; cursor: default; }
+                .checkbox-label.is-disabled input[type="checkbox"] { cursor: default; }
                 .print-action-btn {
                     display: flex;
                     align-items: center;
