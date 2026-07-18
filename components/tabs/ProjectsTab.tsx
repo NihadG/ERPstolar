@@ -27,7 +27,7 @@ import ProductTimelineModal from '@/components/ui/ProductTimelineModal';
 import ProductProcessPlan from '@/components/ui/ProductProcessPlan';
 import { planToStages } from '@/lib/productProcesses';
 import { naturalCompare } from '@/lib/naturalCompare';
-import { projectStatusRank, PROJECT_STATUS_DISPLAY_ORDER } from '@/lib/utils';
+import { projectStatusRank, PROJECT_STATUS_DISPLAY_ORDER, countActiveWorkOrdersByProject, compareProjectsByActivity } from '@/lib/utils';
 import { projectProfitBreakdown } from '@/lib/projectProfit';
 
 import ProjectMaterialsModal from '@/components/ui/ProjectMaterialsModal';
@@ -204,6 +204,8 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
     // Grupisanje po statusu; redoslijed grupa iz projectStatusRank (U proizvodnji →
     // Odobreno → Ponuđeno → ostalo). Grupiše se po ZATEČENOM statusu, ne po fiksnoj
     // listi — ranije je nepoznat/prazan status tiho ispadao iz cijelog prikaza.
+    const activeOrderCounts = countActiveWorkOrdersByProject(workOrders);
+
     const groupedProjects = (() => {
         const groups = new Map<string, Project[]>();
         filteredProjects.forEach(project => {
@@ -213,7 +215,11 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
         });
         return Array.from(groups.entries())
             .sort(([a], [b]) => projectStatusRank(a) - projectStatusRank(b) || a.localeCompare(b, 'hr'))
-            .map(([status, projects]) => ({ status, projects }));
+            .map(([status, projects]) => ({
+                status,
+                // Unutar grupe: projekat s najviše naloga „U toku" ide prvi
+                projects: [...projects].sort((a, b) => compareProjectsByActivity(a, b, activeOrderCounts)),
+            }));
     })();
 
     // Status badge colors for group headers

@@ -321,6 +321,40 @@ export function projectStatusRank(status: string | null | undefined): number {
 }
 
 /**
+ * Broj naloga u statusu „U toku" po projektu. Nalog nema Project_ID — veza ide
+ * preko stavki, pa se po nalogu broje RAZLIČITI projekti (nalog koji pokriva
+ * više projekata svakom doda 1, ne po stavci).
+ */
+export function countActiveWorkOrdersByProject(
+    workOrders: { Status?: string; items?: { Project_ID?: string }[] }[]
+): Map<string, number> {
+    const counts = new Map<string, number>();
+    workOrders.forEach(wo => {
+        if (wo.Status !== 'U toku') return;
+        const projectIds = new Set<string>();
+        (wo.items || []).forEach(item => {
+            if (item.Project_ID) projectIds.add(item.Project_ID);
+        });
+        projectIds.forEach(id => counts.set(id, (counts.get(id) || 0) + 1));
+    });
+    return counts;
+}
+
+/**
+ * Poredak projekata UNUTAR iste grupe statusa: prvo oni na kojima se stvarno
+ * radi (više aktivnih naloga = više gore), pa abecedno po klijentu.
+ */
+export function compareProjectsByActivity(
+    a: { Project_ID: string; Client_Name?: string },
+    b: { Project_ID: string; Client_Name?: string },
+    activeCounts: Map<string, number>
+): number {
+    const diff = (activeCounts.get(b.Project_ID) || 0) - (activeCounts.get(a.Project_ID) || 0);
+    if (diff !== 0) return diff;
+    return (a.Client_Name || '').localeCompare(b.Client_Name || '', 'hr');
+}
+
+/**
  * Izračunava postotak
  * @param value - Vrijednost
  * @param total - Ukupno

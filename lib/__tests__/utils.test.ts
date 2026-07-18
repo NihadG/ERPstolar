@@ -347,3 +347,59 @@ describe('orderProcessProgress — napredak naloga iz procesa', () => {
         expect(orderProcessProgress([])).toBeNull();
     });
 });
+
+describe('Sortiranje projekata — status pa aktivnost', () => {
+    const {
+        projectStatusRank,
+        countActiveWorkOrdersByProject,
+        compareProjectsByActivity,
+    } = require('../utils');
+
+    test('rang statusa: U proizvodnji → Odobreno → Ponuđeno → ostalo', () => {
+        expect(projectStatusRank('U proizvodnji')).toBeLessThan(projectStatusRank('Odobreno'));
+        expect(projectStatusRank('Odobreno')).toBeLessThan(projectStatusRank('Ponuđeno'));
+        expect(projectStatusRank('Ponuđeno')).toBeLessThan(projectStatusRank('Nacrt'));
+        expect(projectStatusRank('Nacrt')).toBeLessThan(projectStatusRank('Završeno'));
+    });
+
+    test('nepoznat/prazan status ide na kraj (a ne ispada iz prikaza)', () => {
+        const last = projectStatusRank('Otkazano');
+        expect(projectStatusRank('Neki novi status')).toBeGreaterThan(last);
+        expect(projectStatusRank(undefined)).toBeGreaterThan(last);
+    });
+
+    test('broji samo naloge U toku, po projektu', () => {
+        const counts = countActiveWorkOrdersByProject([
+            { Status: 'U toku', items: [{ Project_ID: 'p1' }] },
+            { Status: 'U toku', items: [{ Project_ID: 'p1' }] },
+            { Status: 'Na čekanju', items: [{ Project_ID: 'p1' }] },
+            { Status: 'Završeno', items: [{ Project_ID: 'p2' }] },
+        ]);
+        expect(counts.get('p1')).toBe(2);
+        expect(counts.get('p2')).toBeUndefined();
+    });
+
+    test('nalog s više stavki istog projekta se broji JEDNOM', () => {
+        const counts = countActiveWorkOrdersByProject([
+            { Status: 'U toku', items: [{ Project_ID: 'p1' }, { Project_ID: 'p1' }, { Project_ID: 'p2' }] },
+        ]);
+        expect(counts.get('p1')).toBe(1);
+        expect(counts.get('p2')).toBe(1);
+    });
+
+    test('unutar grupe: više aktivnih naloga ide prvi, pa abecedno po klijentu', () => {
+        const counts = countActiveWorkOrdersByProject([
+            { Status: 'U toku', items: [{ Project_ID: 'b' }] },
+            { Status: 'U toku', items: [{ Project_ID: 'b' }] },
+            { Status: 'U toku', items: [{ Project_ID: 'c' }] },
+        ]);
+        const projects = [
+            { Project_ID: 'a', Client_Name: 'Ana' },     // 0 aktivnih
+            { Project_ID: 'b', Client_Name: 'Zdenko' },  // 2 aktivna
+            { Project_ID: 'c', Client_Name: 'Marko' },   // 1 aktivan
+            { Project_ID: 'd', Client_Name: 'Amir' },    // 0 aktivnih
+        ];
+        const sorted = [...projects].sort((x, y) => compareProjectsByActivity(x, y, counts));
+        expect(sorted.map(p => p.Project_ID)).toEqual(['b', 'c', 'd', 'a']);
+    });
+});

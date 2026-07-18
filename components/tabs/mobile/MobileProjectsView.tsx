@@ -3,7 +3,7 @@
 import React, { useState, useMemo } from 'react';
 import type { Project, Material, WorkOrder, Offer, WorkLog, Product, ProductMaterial } from '@/lib/types';
 import { PROJECT_STATUSES } from '@/lib/types';
-import { projectStatusRank } from '@/lib/utils';
+import { projectStatusRank, countActiveWorkOrdersByProject, compareProjectsByActivity } from '@/lib/utils';
 import { sortProductsByName } from '@/lib/sortProducts';
 import { summarizeNotes, summarizeProjectNotes } from '@/lib/productNotes';
 
@@ -38,6 +38,7 @@ interface MobileProjectsViewProps {
 export default function MobileProjectsView({
     projects,
     materials,
+    workOrders,
     onNavigateToTasks,
     onOpenProjectModal,
     onDeleteProject,
@@ -198,12 +199,14 @@ export default function MobileProjectsView({
         }
 
         // Mobilni je ravna lista (bez grupa po statusu kao desktop), pa redoslijed
-        // mora nositi sortiranje: U proizvodnji → Odobreno → Ponuđeno → ostalo.
+        // mora nositi sortiranje: U proizvodnji → Odobreno → Ponuđeno → ostalo,
+        // a unutar istog statusa projekat s najviše naloga „U toku" ide prvi.
+        const activeOrderCounts = countActiveWorkOrdersByProject(workOrders);
         return [...result].sort((a, b) =>
             projectStatusRank(a.Status) - projectStatusRank(b.Status) ||
-            (a.Client_Name || '').localeCompare(b.Client_Name || '', 'hr')
+            compareProjectsByActivity(a, b, activeOrderCounts)
         );
-    }, [projects, searchTerm, statusFilter, isInFocusMode, expandedProjectId, showHidden]);
+    }, [projects, workOrders, searchTerm, statusFilter, isInFocusMode, expandedProjectId, showHidden]);
 
     const getStatusColor = (status: string) => {
         switch (status) {
