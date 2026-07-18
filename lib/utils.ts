@@ -74,6 +74,53 @@ export function isOrderPaused(wo: {
     return wo.Status === 'U toku' && openItems.length > 0 && openItems.every(i => i.Is_Paused);
 }
 
+type WorkOrderRankInput = {
+    Status?: string;
+    Work_Order_Type?: string;
+    items?: { Status?: string; Is_Paused?: boolean }[];
+};
+
+/**
+ * Rang naloga za DEFAULT poredak u Nalozi tabu: aktivni (U toku, nepauzirani)
+ * PROIZVODNI nalozi prvo, pa montažni, pa razni poslovi ("Zadaci"), pa
+ * pauzirani (bilo kog tipa), pa na čekanju, pa završeni, pa otkazani.
+ * Work_Order_Type nedostaje → tretira se kao 'Proizvodnja' (podrazumijevani tip).
+ */
+export function workOrderSortRank(wo: WorkOrderRankInput): number {
+    if (wo.Status === 'U toku' && !isOrderPaused(wo)) {
+        if (wo.Work_Order_Type === 'Montaža') return 1;
+        if (wo.Work_Order_Type === 'Zadaci') return 2;
+        return 0;
+    }
+    if (wo.Status === 'U toku') return 3;
+    if (wo.Status === 'Na čekanju') return 4;
+    if (wo.Status === 'Završeno') return 5;
+    if (wo.Status === 'Otkazano') return 6;
+    return 99;
+}
+
+/** Naziv projekta naloga — nalog nema sopstveni Project_ID, čita se iz prve stavke. */
+function workOrderProjectName(wo: { items?: { Project_Name?: string }[] }): string {
+    return wo.items?.[0]?.Project_Name || '';
+}
+
+/**
+ * Poredak dva naloga za DEFAULT prikaz u Nalozi tabu: prvo po workOrderSortRank;
+ * unutar aktivnih proizvodnih naloga (rang 0) grupisano po nazivu projekta
+ * (abecedno); inače najnoviji prvo. Dijele ProductionTab (desktop) i
+ * MobileWorkOrdersView (mobilni) — jedan izvor, da se poredak ne razmimoiđe.
+ */
+export function compareWorkOrdersDefault(a: WorkOrderRankInput & { Created_Date?: string; items?: { Project_Name?: string; Status?: string; Is_Paused?: boolean }[] }, b: typeof a): number {
+    const rankA = workOrderSortRank(a);
+    const rankB = workOrderSortRank(b);
+    if (rankA !== rankB) return rankA - rankB;
+    if (rankA === 0) {
+        const projCompare = workOrderProjectName(a).localeCompare(workOrderProjectName(b), 'hr');
+        if (projCompare !== 0) return projCompare;
+    }
+    return new Date(b.Created_Date || 0).getTime() - new Date(a.Created_Date || 0).getTime();
+}
+
 /** Boja/ikona/pozadina statusa naloga — jedan izvor za karticu, mobile view i sl. */
 export function workOrderStatusDetails(status: string): { color: string; icon: string; bg: string } {
     switch (status) {

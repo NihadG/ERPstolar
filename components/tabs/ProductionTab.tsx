@@ -11,7 +11,7 @@ import { getWorkerAttendance, bookWorkerDayItems } from '@/lib/services';
 import { isWorkerAssignedToAutoItem } from '@/lib/autoBook';
 import { repairAllProductStatuses } from '@/lib/services';
 import { todayISO } from '@/lib/planning';
-import { workOrderDisplayName, isOrderPaused } from '@/lib/utils';
+import { workOrderDisplayName, isOrderPaused, workOrderSortRank, compareWorkOrdersDefault } from '@/lib/utils';
 import { useData } from '@/context/DataContext';
 import Modal from '@/components/ui/Modal';
 import WorkOrderPrintTemplate from '@/components/ui/WorkOrderPrintTemplate';
@@ -40,15 +40,6 @@ interface ProductionTabProps {
     /** Otvori (proširi) određeni nalog pri dolasku (npr. iz taba Procesi). */
     autoExpandWorkOrderId?: string | null;
     onClearAutoExpand?: () => void;
-}
-
-// Sort prioritet: U toku (aktivno) → U toku (pauzirano) → Na čekanju → Završeno → Otkazano
-function statusSortPriority(wo: WorkOrder): number {
-    if (wo.Status === 'U toku') return isOrderPaused(wo) ? 1 : 0;
-    if (wo.Status === 'Na čekanju') return 2;
-    if (wo.Status === 'Završeno') return 3;
-    if (wo.Status === 'Otkazano') return 4;
-    return 99;
 }
 
 export default function ProductionTab({ workOrders, projects, workers, tasks, workLogs, onRefresh, showToast, pendingWorkOrderProducts, onClearPendingWorkOrder, autoExpandWorkOrderId, onClearAutoExpand }: ProductionTabProps) {
@@ -121,14 +112,9 @@ export default function ProductionTab({ workOrders, projects, workers, tasks, wo
             return matchesSearch && matchesStatus;
         });
 
-        // Default sort: U toku (aktivno) → U toku (pauzirano) → Na čekanju → Završeno → Otkazano, then by date desc
-        return filtered.sort((a, b) => {
-            const priorityA = statusSortPriority(a);
-            const priorityB = statusSortPriority(b);
-            if (priorityA !== priorityB) return priorityA - priorityB;
-            // Within same status, newest first
-            return new Date(b.Created_Date).getTime() - new Date(a.Created_Date).getTime();
-        });
+        // Default: aktivni proizvodni nalozi (po projektu) → montažni → razni poslovi →
+        // pauzirani → na čekanju → završeni → otkazani. Vidi compareWorkOrdersDefault.
+        return filtered.sort(compareWorkOrdersDefault);
     }, [workOrders, searchTerm, statusFilter]);
 
     // Grouping Logic
@@ -214,7 +200,14 @@ export default function ProductionTab({ workOrders, projects, workers, tasks, wo
                 return b.totalValue - a.totalValue;
             }
             if (groupBy === 'project') {
-                // Projekti poredani prema datumu prvog (najstarijeg) naloga u projektu — najmlađi prvo
+                // Projekat s najboljim (najmanjim) rangom naloga ide prvi — npr. projekat
+                // koji ima BAR JEDAN aktivan proizvodni nalog uvijek ispred projekta čiji
+                // su svi nalozi pauzirani/montažni/razni poslovi. Vidi workOrderSortRank.
+                const bestRank = (items: WorkOrder[]) => Math.min(...items.map(workOrderSortRank));
+                const rankDiff = bestRank(a.items) - bestRank(b.items);
+                if (rankDiff !== 0) return rankDiff;
+                // Izjednačen rang: projekti poredani prema datumu prvog (najstarijeg)
+                // naloga u projektu — najmlađi prvo (nepromijenjeno, postojeće ponašanje)
                 const firstOrderDate = (items: WorkOrder[]) =>
                     Math.min(...items.map(i => new Date(i.Created_Date).getTime()));
                 return firstOrderDate(b.items) - firstOrderDate(a.items);
