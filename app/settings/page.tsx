@@ -390,7 +390,7 @@ export default function SettingsPage() {
                 <main className="settings-content">
                     {activeSection === 'company' && (
                         <section className="settings-section">
-                            <div className="section-header">
+                            <div className="settings-section-header">
                                 <h2>Podaci firme</h2>
                                 <p>Ovi podaci će se prikazati na ponudama, narudžbama i ostalim dokumentima.</p>
                             </div>
@@ -445,8 +445,8 @@ export default function SettingsPage() {
                                 )}
                             </div>
 
-                            <div className="form-grid">
-                                <div className="form-group full-width">
+                            <div className="settings-form-grid">
+                                <div className="settings-form-group full-width">
                                     <label>Naziv firme</label>
                                     <input
                                         type="text"
@@ -456,7 +456,7 @@ export default function SettingsPage() {
                                     />
                                 </div>
 
-                                <div className="form-group full-width">
+                                <div className="settings-form-group full-width">
                                     <label>Adresa</label>
                                     <input
                                         type="text"
@@ -466,7 +466,7 @@ export default function SettingsPage() {
                                     />
                                 </div>
 
-                                <div className="form-group">
+                                <div className="settings-form-group">
                                     <label>Telefon</label>
                                     <input
                                         type="text"
@@ -476,7 +476,7 @@ export default function SettingsPage() {
                                     />
                                 </div>
 
-                                <div className="form-group">
+                                <div className="settings-form-group">
                                     <label>Email</label>
                                     <input
                                         type="email"
@@ -486,7 +486,7 @@ export default function SettingsPage() {
                                     />
                                 </div>
 
-                                <div className="form-group">
+                                <div className="settings-form-group">
                                     <label>ID broj</label>
                                     <input
                                         type="text"
@@ -496,7 +496,7 @@ export default function SettingsPage() {
                                     />
                                 </div>
 
-                                <div className="form-group">
+                                <div className="settings-form-group">
                                     <label>PDV broj</label>
                                     <input
                                         type="text"
@@ -506,7 +506,7 @@ export default function SettingsPage() {
                                     />
                                 </div>
 
-                                <div className="form-group full-width">
+                                <div className="settings-form-group full-width">
                                     <label>Web stranica</label>
                                     <input
                                         type="text"
@@ -538,7 +538,7 @@ export default function SettingsPage() {
                                 {(companyInfo.bankAccounts || []).map((account, index) => (
                                     <div key={index} className="bank-row">
                                         <div className="bank-fields">
-                                            <div className="form-group">
+                                            <div className="settings-form-group">
                                                 <label>Banka</label>
                                                 <input
                                                     type="text"
@@ -547,7 +547,7 @@ export default function SettingsPage() {
                                                     placeholder="Naziv banke"
                                                 />
                                             </div>
-                                            <div className="form-group">
+                                            <div className="settings-form-group">
                                                 <label>Broj računa / IBAN</label>
                                                 <input
                                                     type="text"
@@ -568,13 +568,13 @@ export default function SettingsPage() {
 
                     {activeSection === 'documents' && (
                         <section className="settings-section">
-                            <div className="section-header">
+                            <div className="settings-section-header">
                                 <h2>Postavke dokumenata</h2>
                                 <p>Podrazumijevane vrijednosti za ponude i ostale dokumente.</p>
                             </div>
 
-                            <div className="form-grid">
-                                <div className="form-group">
+                            <div className="settings-form-grid">
+                                <div className="settings-form-group">
                                     <label>Valuta</label>
                                     <select
                                         value={appSettings.currency}
@@ -586,7 +586,7 @@ export default function SettingsPage() {
                                     </select>
                                 </div>
 
-                                <div className="form-group">
+                                <div className="settings-form-group">
                                     <label>PDV stopa (%)</label>
                                     <input
                                         type="number"
@@ -597,7 +597,7 @@ export default function SettingsPage() {
                                     />
                                 </div>
 
-                                <div className="form-group">
+                                <div className="settings-form-group">
                                     <label>Rok važenja ponude (dana)</label>
                                     <input
                                         type="number"
@@ -608,7 +608,7 @@ export default function SettingsPage() {
                                     />
                                 </div>
 
-                                <div className="form-group full-width">
+                                <div className="settings-form-group full-width">
                                     <label>Podrazumijevana napomena za ponude</label>
                                     <textarea
                                         value={appSettings.defaultOfferNote}
@@ -618,7 +618,7 @@ export default function SettingsPage() {
                                     />
                                 </div>
 
-                                <div className="form-group full-width">
+                                <div className="settings-form-group full-width">
                                     <label>Uslovi ponude (svaki uslov u novom redu)</label>
                                     <textarea
                                         value={appSettings.offerTerms}
@@ -626,7 +626,7 @@ export default function SettingsPage() {
                                         placeholder="Plaćanje: Avansno ili po dogovoru&#10;Rok isporuke: Po dogovoru nakon potvrde"
                                         rows={4}
                                     />
-                                    <span className="form-hint">Ovi uslovi će se prikazati na svakoj ponudi ispod tabele cijena.</span>
+                                    <span className="settings-form-hint">Ovi uslovi će se prikazati na svakoj ponudi ispod tabele cijena.</span>
                                 </div>
                             </div>
                         </section>
@@ -634,7 +634,7 @@ export default function SettingsPage() {
 
                     {activeSection === 'profit' && (
                         <section className="settings-section">
-                            <div className="section-header">
+                            <div className="settings-section-header">
                                 <h2>Postavke profita</h2>
                                 <p>Konfiguriši notifikacije za dnevno praćenje profita po nalozima.</p>
                             </div>
@@ -691,7 +691,7 @@ export default function SettingsPage() {
 
                     {activeSection === 'integracije' && (
                         <section className="settings-section">
-                            <div className="section-header">
+                            <div className="settings-section-header">
                                 <h2>Google integracija</h2>
                                 <p>Poveži Google Drive i Kalendar — folderi projekata, ponude/narudžbe na klik, zadaci u kalendaru.</p>
                             </div>
@@ -878,28 +878,6 @@ export default function SettingsPage() {
                     border-bottom: 1px solid var(--border-light);
                 }
 
-                .settings-back {
-                    display: inline-flex;
-                    align-items: center;
-                    gap: 8px;
-                    padding: 8px 14px;
-                    border-radius: var(--radius-md);
-                    background: var(--surface);
-                    color: var(--text-primary);
-                    text-decoration: none;
-                    font-size: 13px;
-                    font-weight: 600;
-                    transition: var(--transition);
-                }
-
-                .settings-back:hover {
-                    background: var(--surface-hover);
-                }
-
-                .settings-back .material-icons-round {
-                    font-size: 18px;
-                }
-
                 .settings-topbar h1 {
                     font-size: 20px;
                     font-weight: 700;
@@ -985,29 +963,6 @@ export default function SettingsPage() {
                     font-size: 16px;
                     font-weight: 700;
                     color: var(--text-primary);
-                }
-
-                .plan-card-link {
-                    display: flex;
-                    align-items: center;
-                    justify-content: space-between;
-                    padding: 10px 12px;
-                    background: var(--surface);
-                    border-radius: var(--radius-md);
-                    color: var(--text-primary);
-                    text-decoration: none;
-                    font-size: 13px;
-                    font-weight: 600;
-                    transition: var(--transition);
-                }
-
-                .plan-card-link:hover {
-                    background: var(--accent-light);
-                    color: var(--accent);
-                }
-
-                .plan-card-link .material-icons-round {
-                    font-size: 16px;
                 }
 
                 /* ── Sidebar nav ───────────────────────────────────── */
@@ -1123,49 +1078,49 @@ export default function SettingsPage() {
                     padding: 28px 32px;
                 }
 
-                .section-header {
+                .settings-section-header {
                     margin-bottom: 24px;
                 }
 
-                .section-header h2 {
+                .settings-section-header h2 {
                     font-size: 17px;
                     font-weight: 600;
                     color: var(--text-primary);
                     margin-bottom: 4px;
                 }
 
-                .section-header p {
+                .settings-section-header p {
                     font-size: 14px;
                     color: var(--text-secondary);
                     line-height: 1.5;
                 }
 
                 /* ── Form grid ─────────────────────────────────────── */
-                .form-grid {
+                .settings-form-grid {
                     display: grid;
                     grid-template-columns: 1fr 1fr;
                     gap: 20px;
                 }
 
-                .form-group {
+                .settings-form-group {
                     display: flex;
                     flex-direction: column;
                     gap: 6px;
                 }
 
-                .form-group.full-width {
+                .settings-form-group.full-width {
                     grid-column: 1 / -1;
                 }
 
-                .form-group label {
+                .settings-form-group label {
                     font-size: 13px;
                     font-weight: 600;
                     color: var(--text-primary);
                 }
 
-                .form-group input,
-                .form-group select,
-                .form-group textarea {
+                .settings-form-group input,
+                .settings-form-group select,
+                .settings-form-group textarea {
                     padding: 10px 14px;
                     border: 1px solid var(--border);
                     border-radius: var(--radius-md);
@@ -1176,21 +1131,21 @@ export default function SettingsPage() {
                     transition: border-color 0.15s ease, box-shadow 0.15s ease;
                 }
 
-                .form-group input:focus,
-                .form-group select:focus,
-                .form-group textarea:focus {
+                .settings-form-group input:focus,
+                .settings-form-group select:focus,
+                .settings-form-group textarea:focus {
                     outline: none;
                     border-color: var(--accent);
                     box-shadow: 0 0 0 3px var(--accent-light);
                 }
 
-                .form-group textarea {
+                .settings-form-group textarea {
                     resize: vertical;
                     min-height: 80px;
                     line-height: 1.5;
                 }
 
-                .form-hint {
+                .settings-form-hint {
                     font-size: 12px;
                     color: var(--text-tertiary);
                     line-height: 1.4;
@@ -1718,7 +1673,7 @@ export default function SettingsPage() {
                         padding: 22px 20px;
                     }
 
-                    .form-grid {
+                    .settings-form-grid {
                         grid-template-columns: 1fr;
                     }
 
