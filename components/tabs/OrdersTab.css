@@ -373,7 +373,8 @@
         width: 100%;
     }
 
-    .order-actions-group {
+    .order-status-col,
+    .order-actions-col {
         width: 100%;
         justify-content: space-between;
         padding-top: 12px;
@@ -658,23 +659,28 @@
     font-size: 18px;
 }
 
-/* ==================== ORDERS TAB - CUSTOM HEADER LAYOUT ==================== */
+/* ==================== ORDERS TAB - ISTA TABELA KAO PONUDE ==================== */
 
-/* CUSTOM HEADER LAYOUT */
+/* Iste kolone kao .offer-row u globals.css (info | cijena | status | akcije),
+   iste px vrijednosti — "isti dizajn tabele" preko oba taba. Svaki red je
+   nezavisan grid kontejner, pa kolone 2-4 MORAJU biti fiksne px (ne auto),
+   inače bi promjenljiv sadržaj (npr. da li ima "Primi sve" dugme) pomjerao
+   gdje kolona počinje, red po red — to je i bio problem koji se ispravlja. */
 .order-header-custom {
-    display: flex;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 140px 190px 216px;
     align-items: center;
-    gap: 16px;
-    padding: 12px 20px;
+    gap: 14px;
+    padding: 14px 18px;
     width: 100%;
+    cursor: pointer;
 }
 
-/* LEFT SIDE: ID, Project, Date - Compact */
+/* Kolona 1: expand + ID/naziv, projekat, dobavljač, datum */
 .order-info-group {
     display: flex;
     flex-direction: column;
     gap: 2px;
-    flex: 1;
     min-width: 0;
 }
 
@@ -682,6 +688,40 @@
     display: flex;
     align-items: center;
     gap: 8px;
+    flex-wrap: wrap;
+    row-gap: 2px;
+}
+
+/* Kolona 2: cijena — isti oblik kao .offer-row-price */
+.order-price-col {
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+}
+
+.order-amount-text {
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--text-primary);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
+/* Kolona 3: status bedž — isti oblik kao .offer-row-status */
+.order-status-col {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 6px;
+}
+
+/* Kolona 4: akcije (Primi sve + meni) — isti oblik kao .offer-row-actions */
+.order-actions-col {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 4px;
+    flex-wrap: wrap;
 }
 
 .order-id-text {
@@ -716,14 +756,6 @@
 .meta-separator {
     color: #d1d5db;
     margin: 0 2px;
-}
-
-/* RIGHT SIDE: Status + Actions in ONE LINE */
-.order-actions-group {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    flex-shrink: 0;
 }
 
 /* Unified dimensions for actions */
@@ -1294,6 +1326,7 @@
     align-items: center;
     justify-content: center;
     color: #86868b;
+    flex-shrink: 0;
 }
 
 .expand-btn:hover {
@@ -1569,17 +1602,14 @@
         background: #ffffff;
     }
 
-    /* Keep bottom corners rounded since overflow is now visible */
-    .order-actions-group {
-        border-radius: 0 0 12px 12px;
-    }
-    
     .project-products {
         border-radius: 0 0 12px 12px;
     }
 
-    /* ORDER CARD HEADER */
+    /* ORDER CARD HEADER — grid kolone (desktop) se ovdje slažu u karticu:
+       display:flex nadjačava display:grid iz osnovnog pravila. */
     .order-header-custom {
+        display: flex;
         flex-direction: column;
         align-items: stretch;
         gap: 0;
@@ -1634,7 +1664,6 @@
         display: none;
     }
 
-    /* Price styling prominently */
     .order-meta-info {
         display: flex;
         flex-direction: column;
@@ -1642,15 +1671,25 @@
         gap: 6px;
         font-size: 13px;
     }
-    
-    .order-meta-info span:last-child {
-        font-size: 15px;
-        color: #10b981; /* Green for price */
-        margin-top: 4px;
+
+    /* Cijena je sada zaseban red (.order-price-col), full-width i istaknuta —
+       ranije je bila zadnji span unutar .order-meta-info. */
+    .order-price-col {
+        width: 100%;
+        justify-content: flex-start;
+        padding: 0 16px 12px;
     }
 
-    /* ACTIONS ROW AT BOTTOM OF CARD */
-    .order-actions-group {
+    .order-amount-text {
+        font-size: 17px;
+        color: #10b981; /* Zelena — isto kao ranije za cijenu */
+    }
+
+    /* STATUS + ACTIONS REDOVI NA DNU KARTICE — bile su jedan red
+       (.order-actions-group), sad su dvije kolone (status/akcije) koje se
+       ovdje slažu jedna ispod druge, oba puna širine. */
+    .order-status-col,
+    .order-actions-col {
         width: 100%;
         display: flex;
         justify-content: space-between;
@@ -1659,6 +1698,14 @@
         padding: 12px 16px;
         border-top: 1px solid #f3f4f6;
         gap: 8px;
+    }
+
+    .order-status-col {
+        border-radius: 0;
+    }
+
+    .order-actions-col {
+        border-radius: 0 0 12px 12px;
     }
 
     .status-badge-custom {

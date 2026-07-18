@@ -323,6 +323,26 @@ export async function autoCreateOrdersForWorkOrder(
     return _auto(workOrderId, plannedStartDate, organizationId);
 }
 
+/** Pregled nedostajućih materijala naloga, grupisan po dobavljaču — bez upisa. */
+export async function buildMaterialOrderPlan(
+    workOrderId: string,
+    organizationId: string
+) {
+    const { buildMaterialOrderPlan: _build } = await import('../../database');
+    return _build(workOrderId, organizationId);
+}
+
+/** Kreiraj narudžbe SAMO za izabrane materijale (korisnikov izbor u modalu). */
+export async function createSelectedMaterialOrders(
+    workOrderId: string,
+    plannedStartDate: string,
+    selectedMaterialIds: string[],
+    organizationId: string
+): Promise<{ ordersCreated: number; orderNumbers: string[] }> {
+    const { createSelectedMaterialOrders: _create } = await import('../../database');
+    return _create(workOrderId, plannedStartDate, selectedMaterialIds, organizationId);
+}
+
 // ============================================
 // WORK LOGS (delegated — will move to laborCostService)
 // ============================================

@@ -1659,13 +1659,13 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
                                         return (
                                             <div key={order.Order_ID} className={`order-item ${isExpanded ? 'expanded' : ''}`}>
                                                 {/* Order Header Row */}
-                                                <div className="order-header-custom" onClick={() => toggleOrderExpand(order.Order_ID)} style={{ cursor: 'pointer' }}>
-                                                    <button className={`expand-btn ${isExpanded ? 'expanded' : ''}`}>
-                                                        <span className="material-icons-round">chevron_right</span>
-                                                    </button>
-
+                                                <div className="order-header-custom" onClick={() => toggleOrderExpand(order.Order_ID)}>
+                                                    {/* Kolona 1: expand + naziv, projekat, dobavljač, datum */}
                                                     <div className="order-info-group">
                                                         <div className="order-top-row">
+                                                            <button className={`expand-btn ${isExpanded ? 'expanded' : ''}`}>
+                                                                <span className="material-icons-round">chevron_right</span>
+                                                            </button>
                                                             <span className="order-id-text">{order.Name || `#${order.Order_Number}`}</span>
                                                             {order.Name && <span style={{ fontSize: '11px', color: '#9ca3af', fontWeight: 500 }}>#{order.Order_Number}</span>}
                                                             {groupBy !== 'project' && projectName !== 'N/A' && (
@@ -1686,12 +1686,16 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
                                                                 <span className="material-icons-round" style={{ fontSize: 14 }}>calendar_today</span>
                                                                 {formatDate(order.Order_Date)}
                                                             </span>
-                                                            <span className="meta-separator">•</span>
-                                                            <span style={{ fontWeight: 600 }}>{formatCurrency(order.Total_Amount || 0)}</span>
                                                         </div>
                                                     </div>
 
-                                                    <div className="order-actions-group" onClick={e => e.stopPropagation()}>
+                                                    {/* Kolona 2: cijena */}
+                                                    <div className="order-price-col">
+                                                        <span className="order-amount-text">{formatCurrency(order.Total_Amount || 0)}</span>
+                                                    </div>
+
+                                                    {/* Kolona 3: status */}
+                                                    <div className="order-status-col" onClick={e => e.stopPropagation()}>
                                                         {(() => {
                                                             const allowed = ALLOWED_ORDER_TRANSITIONS[order.Status] || [];
                                                             if (allowed.length > 0) {
@@ -1732,7 +1736,10 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
                                                                 </span>
                                                             );
                                                         })()}
+                                                    </div>
 
+                                                    {/* Kolona 4: akcije */}
+                                                    <div className="order-actions-col" onClick={e => e.stopPropagation()}>
                                                         {!allReceived && order.Status !== 'Nacrt' && (
                                                             <button
                                                                 className="btn-receive-all action-item"

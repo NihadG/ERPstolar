@@ -113,7 +113,9 @@ export {
     updateDueDate, updatePlannedStartDate, checkWorkerConflicts, autoCreateOrdersForWorkOrder,
     getWorkLogs, getWorkLogsForItem, getWorkLogsForWorkOrder, createWorkLog,
     planWorkOrderRenumbering, applyWorkOrderRenumbering,
+    buildMaterialOrderPlan, createSelectedMaterialOrders,
 } from './workOrder/workOrderService';
+export type { MaterialOrderPlanGroup, MaterialOrderPlanItem } from '../database';
 
 // Graf procesa (po nalogu) + templejti toka
 export { getProcessGraph, saveProcessGraph, listProcessTemplates, saveProcessTemplate, deleteProcessTemplate } from '../database';

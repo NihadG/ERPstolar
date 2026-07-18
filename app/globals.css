@@ -1513,16 +1513,21 @@ textarea::placeholder {
   overflow: visible;
 }
 
-/* Single row */
+/* Red = kolone koje se poravnaju niz cijelu listu: info | cijena | status | akcije.
+   Zašto GRID a ne flex: svaki red je NEZAVISAN grid kontejner, pa su širine
+   kolona 2-4 namjerno FIKSNI px (ne auto/content) — inače bi različit broj
+   bedževa/dugmadi po redu pomjerao gdje kolona počinje, i cijela lista bi
+   "plesala" lijevo-desno (tačno ono što je izgledalo razbacano ranije). */
 .offer-row {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 140px 190px 216px;
   align-items: center;
-  gap: 12px;
-  padding: 12px 16px;
+  gap: 14px;
+  padding: 14px 18px;
   background: var(--background);
   border-radius: 12px;
   border: 1px solid transparent;
-  cursor: default;
+  cursor: pointer;
   transition: background 0.15s, border-color 0.15s;
   overflow: visible;
   position: relative;
@@ -1533,11 +1538,35 @@ textarea::placeholder {
   border-color: var(--border-light);
 }
 
-/* Left info block – clickable */
+/* Kolona 1: naslov + meta — jedina fleksibilna (1fr), sve ostalo je fiksno */
 .offer-row-info {
-  flex: 1;
   min-width: 0;
-  cursor: pointer;
+}
+
+/* Kolona 2: cijena — desno poravnata, uvijek na istom mjestu niz listu */
+.offer-row-price {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+}
+
+/* Kolona 3: status + bedž zastarjelosti — jedan ISPOD drugog kad ima oba,
+   desno poravnato (kao kolona cijene iznad). */
+.offer-row-status {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+}
+
+/* Kolona 4: akcije — uvijek prislonjene uz desnu ivicu reda; manje dugmadi
+   znači više praznog prostora LIJEVO od njih unutar kolone, ne pomjeranje ivice. */
+.offer-row-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 2px;
+  flex-wrap: wrap;
 }
 
 .offer-row-title {
@@ -1569,20 +1598,52 @@ textarea::placeholder {
   font-size: 11px;
 }
 
-/* Right block */
-.offer-row-right {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-shrink: 0;
-}
-
 .offer-row-amount {
   font-size: 14px;
   font-weight: 700;
   color: var(--text-primary);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
+}
+
+/* Dugmad akcija u redu — ranije čisto inline stilovi bez hover efekta;
+   sad prava klasa (i konačno reaguje na hover/klik). */
+.action-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  flex-shrink: 0;
+  background: transparent;
+  border: none;
+  border-radius: 8px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.action-icon-btn:hover {
+  background: rgba(0, 0, 0, 0.06);
+  color: var(--text-primary);
+}
+
+.action-icon-btn .material-icons-round {
+  font-size: 20px;
+}
+
+.action-icon-btn.danger {
+  color: #ef4444;
+}
+
+.action-icon-btn.danger:hover {
+  background: #ffebe9;
+  color: #ff3b30;
+}
+
+/* Poslano na Drive — zelena umjesto ručnog inline stila po redu */
+.action-icon-btn.uploaded {
+  color: #1a7f37;
 }
 
 /* Oznaka zastarjelih cijena (poslane/prihvaćene ponude) */

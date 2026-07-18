@@ -1958,8 +1958,8 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
                                 </div>
                             )}
                             {group.offers.map(offer => (
-                                <div key={offer.Offer_ID} className="offer-row" onClick={() => openViewModal(offer.Offer_ID)} style={{ cursor: 'pointer' }}>
-                                    {/* Left: main info */}
+                                <div key={offer.Offer_ID} className="offer-row" onClick={() => openViewModal(offer.Offer_ID)}>
+                                    {/* Kolona 1: naslov + meta */}
                                     <div className="offer-row-info">
                                         <div className="offer-row-title">{offer.Name || offer.Offer_Number}</div>
                                         <div className="offer-row-meta">
@@ -1975,10 +1975,13 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
                                         </div>
                                     </div>
 
-                                    {/* Right: amount + status pill + actions */}
-                                    <div className="offer-row-right">
+                                    {/* Kolona 2: cijena */}
+                                    <div className="offer-row-price">
                                         <span className="offer-row-amount">{formatPrice(offer.Total || 0, ((offer as any).Currency || 'KM') as 'KM' | 'EUR')}</span>
+                                    </div>
 
+                                    {/* Kolona 3: status + bedž zastarjelosti (jedan ispod drugog kad ima oba) */}
+                                    <div className="offer-row-status">
                                         {/* Oznaka zastarjelih cijena: samo za poslane/prihvaćene ponude čiji se
                                             snapshot materijala razlikuje od trenutne cijene proizvoda. */}
                                         {(offer.Status === 'Poslano' || offer.Status === 'Prihvaćeno') && isOfferStale(offer, allProducts) && (
@@ -2017,62 +2020,38 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
                                                 </div>
                                             )}
                                         </div>
-                                        <div className="offer-actions-inline" style={{ display: 'flex', gap: '8px', marginLeft: '12px' }}>
-                                            <button
-                                                className="action-icon-btn"
-                                                onClick={(e) => { e.stopPropagation(); openEditModal(offer); }}
-                                                title="Uredi"
-                                                style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)', padding: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '4px', transition: 'all 0.2s' }}
-                                            >
-                                                <span className="material-icons-round" style={{ fontSize: '20px' }}>edit</span>
+                                    </div>
+
+                                    {/* Kolona 4: akcije */}
+                                    <div className="offer-row-actions" onClick={(e) => e.stopPropagation()}>
+                                        <button className="action-icon-btn" onClick={() => openEditModal(offer)} title="Uredi">
+                                            <span className="material-icons-round">edit</span>
+                                        </button>
+                                        {(offer.Status === 'Poslano' || offer.Status === 'Prihvaćeno') && (
+                                            <button className="action-icon-btn" onClick={() => handleReviseOffer(offer)} title="Revidiraj (nova verzija, original ostaje)">
+                                                <span className="material-icons-round">difference</span>
                                             </button>
-                                            {(offer.Status === 'Poslano' || offer.Status === 'Prihvaćeno') && (
-                                                <button
-                                                    className="action-icon-btn"
-                                                    onClick={(e) => { e.stopPropagation(); handleReviseOffer(offer); }}
-                                                    title="Revidiraj (nova verzija, original ostaje)"
-                                                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)', padding: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '4px', transition: 'all 0.2s' }}
-                                                >
-                                                    <span className="material-icons-round" style={{ fontSize: '20px' }}>difference</span>
-                                                </button>
-                                            )}
-                                            {offer.Status === 'Prihvaćeno' && (
-                                                <button
-                                                    className="action-icon-btn"
-                                                    onClick={(e) => { e.stopPropagation(); setInvoiceModalOffer(offer); }}
-                                                    title="Završni račun"
-                                                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)', padding: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '4px', transition: 'all 0.2s' }}
-                                                >
-                                                    <span className="material-icons-round" style={{ fontSize: '20px' }}>receipt_long</span>
-                                                </button>
-                                            )}
-                                            <button
-                                                className="action-icon-btn"
-                                                onClick={(e) => { e.stopPropagation(); handlePrintOffer(offer); }}
-                                                title="Printaj"
-                                                style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)', padding: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '4px', transition: 'all 0.2s' }}
-                                            >
-                                                <span className="material-icons-round" style={{ fontSize: '20px' }}>print</span>
+                                        )}
+                                        {offer.Status === 'Prihvaćeno' && (
+                                            <button className="action-icon-btn" onClick={() => setInvoiceModalOffer(offer)} title="Završni račun">
+                                                <span className="material-icons-round">receipt_long</span>
                                             </button>
-                                            {gi.moduleActive && (
-                                                <button
-                                                    className="action-icon-btn"
-                                                    onClick={(e) => { e.stopPropagation(); handleFileOfferToDrive(offer); }}
-                                                    title={offer.Drive_File_ID ? 'Ponovo spremi ponudu na Drive' : 'Spremi ponudu na Drive'}
-                                                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: offer.Drive_File_ID ? '#1a7f37' : 'var(--text-secondary)', padding: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '4px', transition: 'all 0.2s' }}
-                                                >
-                                                    <span className="material-icons-round" style={{ fontSize: '20px' }}>{offer.Drive_File_ID ? 'cloud_done' : 'cloud_upload'}</span>
-                                                </button>
-                                            )}
+                                        )}
+                                        <button className="action-icon-btn" onClick={() => handlePrintOffer(offer)} title="Printaj">
+                                            <span className="material-icons-round">print</span>
+                                        </button>
+                                        {gi.moduleActive && (
                                             <button
-                                                className="action-icon-btn danger"
-                                                onClick={(e) => { e.stopPropagation(); handleDeleteOffer(offer.Offer_ID); }}
-                                                title="Obriši"
-                                                style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#ef4444', padding: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '4px', transition: 'all 0.2s' }}
+                                                className={`action-icon-btn${offer.Drive_File_ID ? ' uploaded' : ''}`}
+                                                onClick={() => handleFileOfferToDrive(offer)}
+                                                title={offer.Drive_File_ID ? 'Ponovo spremi ponudu na Drive' : 'Spremi ponudu na Drive'}
                                             >
-                                                <span className="material-icons-round" style={{ fontSize: '20px' }}>delete</span>
+                                                <span className="material-icons-round">{offer.Drive_File_ID ? 'cloud_done' : 'cloud_upload'}</span>
                                             </button>
-                                        </div>
+                                        )}
+                                        <button className="action-icon-btn danger" onClick={() => handleDeleteOffer(offer.Offer_ID)} title="Obriši">
+                                            <span className="material-icons-round">delete</span>
+                                        </button>
                                     </div>
                                 </div>
                             ))}

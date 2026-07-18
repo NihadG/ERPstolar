@@ -4481,79 +4481,70 @@ export async function checkWorkerConflicts(
     }
 }
 
+// ════════════════════════════════════════════════════════════════════
+// NARUDŽBE MATERIJALA IZ RADNOG NALOGA
+//
+// buildMaterialOrderPlan = ČITANJE (grupiše nedostajuće materijale po
+// dobavljaču, ništa ne piše). Dijele ga:
+//   • autoCreateOrdersForWorkOrder — tihi put iz Planera (zakazivanje
+//     naloga s rokom ≤ 2 dana), kreira SVE grupe bez pitanja — namjerno
+//     nepromijenjeno ponašanje, to nije mjesto gdje korisnik bira.
+//   • createSelectedMaterialOrders — korisnik BIRA u modalu (wizard),
+//     pa se kreiraju SAMO odabrani materijali.
+// ════════════════════════════════════════════════════════════════════
+
+export interface MaterialOrderPlanItem {
+    productMaterialId: string;
+    materialName: string;
+    quantity: number;
+    unit: string;
+    unitPrice: number;
+    productId: string;
+    productName: string;
+    projectId: string;
+}
+
+export interface MaterialOrderPlanGroup {
+    supplierName: string;
+    supplierId?: string;
+    materials: MaterialOrderPlanItem[];
+}
+
 /**
- * Automatically create orders for materials needed by a work order
- * Groups materials by supplier and creates one order per supplier
- * Only orders materials not already received or in stock
+ * Materijali radnog naloga koji NISU pokriveni (nisu na stanju/naručeni/primljeni),
+ * grupisani po dobavljaču. Isti obuhvat/pravila kao stari autoCreateOrdersForWorkOrder
+ * (kvantitet-potreban minus na-stanju/naručeno/primljeno) — samo bez upisa u bazu.
  */
-export async function autoCreateOrdersForWorkOrder(
+export async function buildMaterialOrderPlan(
     workOrderId: string,
-    plannedStartDate: string,
     organizationId: string
-): Promise<{ ordersCreated: number; orderNumbers: string[] }> {
-    if (!organizationId) {
-        return { ordersCreated: 0, orderNumbers: [] };
-    }
+): Promise<MaterialOrderPlanGroup[]> {
+    if (!organizationId) return [];
 
     try {
-        const firestore = getDb();
-
-        // Get the work order to access items
         const workOrder = await getWorkOrder(workOrderId, organizationId);
-        if (!workOrder || !workOrder.items) {
-            return { ordersCreated: 0, orderNumbers: [] };
-        }
+        if (!workOrder || !workOrder.items) return [];
 
-        // Collect all materials that need ordering, grouped by supplier
-        const materialsBySupplier = new Map<string, {
-            supplierName: string;
-            materials: Array<{
-                productMaterialId: string;
-                materialName: string;
-                quantity: number;
-                unit: string;
-                unitPrice: number;
-                productId: string;
-                productName: string;
-                projectId: string;
-            }>;
-        }>();
+        const materialsBySupplier = new Map<string, MaterialOrderPlanGroup>();
 
         for (const item of workOrder.items) {
-            // Get product materials from the database for this item's product
             const productMaterials = await getProductMaterials(item.Product_ID, organizationId);
 
             for (const material of productMaterials) {
-                // Skip materials that are already received or in stock
-                if (material.Status === 'Primljeno' || material.Status === 'Na stanju') {
-                    continue;
-                }
+                if (material.Status === 'Primljeno' || material.Status === 'Na stanju') continue;
+                if (material.Status === 'Naručeno' && material.Order_ID) continue;
 
-                // Skip if already ordered
-                if (material.Status === 'Naručeno' && material.Order_ID) {
-                    continue;
-                }
-
-                // Calculate quantity needed vs already available (on stock + ordered + received)
                 const quantityNeeded = (material.Quantity || 0) * (item.Quantity || 1);
                 const onStock = material.On_Stock || 0;
                 const alreadyOrdered = material.Ordered_Quantity || 0;
                 const alreadyReceived = material.Received_Quantity || 0;
                 const quantityToOrder = quantityNeeded - onStock - alreadyOrdered - alreadyReceived;
+                if (quantityToOrder <= 0) continue;
 
-                if (quantityToOrder <= 0) {
-                    continue; // Already have enough covered
-                }
-
-                // Group by supplier
                 const supplierKey = material.Supplier || 'Nepoznat dobavljač';
                 if (!materialsBySupplier.has(supplierKey)) {
-                    materialsBySupplier.set(supplierKey, {
-                        supplierName: supplierKey,
-                        materials: []
-                    });
+                    materialsBySupplier.set(supplierKey, { supplierName: supplierKey, materials: [] });
                 }
-
                 materialsBySupplier.get(supplierKey)!.materials.push({
                     productMaterialId: material.ID,
                     materialName: material.Material_Name,
@@ -4562,73 +4553,136 @@ export async function autoCreateOrdersForWorkOrder(
                     unitPrice: material.Unit_Price || 0,
                     productId: item.Product_ID,
                     productName: item.Product_Name,
-                    projectId: item.Project_ID || ''
+                    projectId: item.Project_ID || '',
                 });
             }
         }
 
-        // Create orders for each supplier
-        const orderNumbers: string[] = [];
-
-        // Calculate expected delivery (1 day before start)
-        const startDate = new Date(plannedStartDate);
-        startDate.setDate(startDate.getDate() - 1);
-        const expectedDelivery = startDate.toISOString().split('T')[0];
-
-        for (const group of Array.from(materialsBySupplier.values())) {
-            if (group.materials.length === 0) continue;
-
-            // Try to find supplier ID by name
+        const groups = Array.from(materialsBySupplier.values()).filter(g => g.materials.length > 0);
+        if (groups.length > 0) {
             const suppliers = await getSuppliers(organizationId);
-            const supplier = suppliers.find(s => s.Name === group.supplierName);
-
-            // Calculate total amount
-            const totalAmount = group.materials.reduce(
-                (sum: number, m: { quantity: number; unitPrice: number }) => sum + (m.quantity * m.unitPrice),
-                0
-            );
-
-            // Create the order
-            const orderItems: Partial<OrderItem>[] = group.materials.map((m) => ({
-                Product_Material_ID: m.productMaterialId,
-                Product_ID: m.productId,
-                Product_Name: m.productName,
-                Project_ID: m.projectId,
-                Material_Name: m.materialName,
-                Quantity: m.quantity,
-                Unit: m.unit,
-                Expected_Price: m.unitPrice,
-                Status: 'Naručeno'
-            }));
-
-            const result = await createOrder({
-                Supplier_ID: supplier?.Supplier_ID || '',
-                Supplier_Name: group.supplierName,
-                Expected_Delivery: expectedDelivery,
-                Total_Amount: totalAmount,
-                Notes: `Automatski kreirano za radni nalog. Planirani početak: ${plannedStartDate}`,
-                items: orderItems as any
-            }, organizationId);
-
-            if (result.success && result.data) {
-                orderNumbers.push(result.data.Order_Number);
+            for (const g of groups) {
+                g.supplierId = suppliers.find(s => s.Name === g.supplierName)?.Supplier_ID;
             }
         }
+        return groups;
+    } catch (error) {
+        console.error('buildMaterialOrderPlan error:', error);
+        return [];
+    }
+}
 
-        if (orderNumbers.length > 0) {
-            await createNotification({
-                organizationId,
-                title: 'Automatski kreirane narudžbe',
-                message: `Automatski kreirano ${orderNumbers.length} narudžbi za radni nalog. Brojevi: ${orderNumbers.join(', ')}`,
-                type: 'info',
-                relatedId: workOrderId,
-                link: '/orders'
-            }, organizationId);
+/** Jedna narudžba po grupi (dobavljaču) iz plana — dijeli je auto i selektivni put. */
+async function createOrdersFromGroups(
+    workOrderId: string,
+    plannedStartDate: string,
+    groups: MaterialOrderPlanGroup[],
+    organizationId: string,
+    notePrefix: string,
+    notifyTitle: string
+): Promise<{ ordersCreated: number; orderNumbers: string[] }> {
+    const startDate = new Date(plannedStartDate);
+    startDate.setDate(startDate.getDate() - 1);
+    const expectedDelivery = startDate.toISOString().split('T')[0];
+
+    const orderNumbers: string[] = [];
+    for (const group of groups) {
+        if (group.materials.length === 0) continue;
+
+        const totalAmount = group.materials.reduce((sum, m) => sum + m.quantity * m.unitPrice, 0);
+        const orderItems: Partial<OrderItem>[] = group.materials.map((m) => ({
+            Product_Material_ID: m.productMaterialId,
+            Product_ID: m.productId,
+            Product_Name: m.productName,
+            Project_ID: m.projectId,
+            Material_Name: m.materialName,
+            Quantity: m.quantity,
+            Unit: m.unit,
+            Expected_Price: m.unitPrice,
+            Status: 'Naručeno',
+        }));
+
+        const result = await createOrder({
+            Supplier_ID: group.supplierId || '',
+            Supplier_Name: group.supplierName,
+            Expected_Delivery: expectedDelivery,
+            Total_Amount: totalAmount,
+            Notes: `${notePrefix} Planirani početak: ${plannedStartDate}`,
+            items: orderItems as any
+        }, organizationId);
+
+        if (result.success && result.data) {
+            orderNumbers.push(result.data.Order_Number);
         }
+    }
 
-        return { ordersCreated: orderNumbers.length, orderNumbers };
+    if (orderNumbers.length > 0) {
+        await createNotification({
+            organizationId,
+            title: notifyTitle,
+            message: `Kreirano ${orderNumbers.length} narudžbi za radni nalog. Brojevi: ${orderNumbers.join(', ')}`,
+            type: 'info',
+            relatedId: workOrderId,
+            link: '/orders'
+        }, organizationId);
+    }
+
+    return { ordersCreated: orderNumbers.length, orderNumbers };
+}
+
+/**
+ * Automatically create orders for materials needed by a work order
+ * Groups materials by supplier and creates one order per supplier
+ * Only orders materials not already received or in stock
+ *
+ * TIHI put (Planer/scheduleWorkOrder) — kreira SVE grupe iz plana, bez izbora.
+ * Za put gdje korisnik BIRA, vidi createSelectedMaterialOrders.
+ */
+export async function autoCreateOrdersForWorkOrder(
+    workOrderId: string,
+    plannedStartDate: string,
+    organizationId: string
+): Promise<{ ordersCreated: number; orderNumbers: string[] }> {
+    if (!organizationId) return { ordersCreated: 0, orderNumbers: [] };
+    try {
+        const groups = await buildMaterialOrderPlan(workOrderId, organizationId);
+        return await createOrdersFromGroups(
+            workOrderId, plannedStartDate, groups, organizationId,
+            'Automatski kreirano za radni nalog.', 'Automatski kreirane narudžbe'
+        );
     } catch (error) {
         console.error('autoCreateOrdersForWorkOrder error:', error);
+        return { ordersCreated: 0, orderNumbers: [] };
+    }
+}
+
+/**
+ * Kreiraj narudžbe SAMO za materijale koje je korisnik izabrao (Product_Material_ID
+ * skup) — poziva se poslije MaterialOrderSelectModal. Plan se ponovo izgrađuje
+ * ovdje (ne vjeruje se klijentskoj kopiji), pa selekcija filtrira svjež plan —
+ * materijal koji je u međuvremenu pokriven (npr. neko drugi ga naruči) se tiho
+ * preskoči umjesto da izazove grešku.
+ */
+export async function createSelectedMaterialOrders(
+    workOrderId: string,
+    plannedStartDate: string,
+    selectedMaterialIds: string[],
+    organizationId: string
+): Promise<{ ordersCreated: number; orderNumbers: string[] }> {
+    if (!organizationId || selectedMaterialIds.length === 0) return { ordersCreated: 0, orderNumbers: [] };
+    try {
+        const selectedSet = new Set(selectedMaterialIds);
+        const plan = await buildMaterialOrderPlan(workOrderId, organizationId);
+        const filtered = plan
+            .map(g => ({ ...g, materials: g.materials.filter(m => selectedSet.has(m.productMaterialId)) }))
+            .filter(g => g.materials.length > 0);
+
+        return await createOrdersFromGroups(
+            workOrderId, plannedStartDate, filtered, organizationId,
+            'Kreirano iz radnog naloga.', 'Narudžbe materijala kreirane'
+        );
+    } catch (error) {
+        console.error('createSelectedMaterialOrders error:', error);
         return { ordersCreated: 0, orderNumbers: [] };
     }
 }

@@ -10,12 +10,13 @@
 import { useState, useMemo, useEffect } from 'react';
 import type { WorkOrder, Project, Worker, Task } from '@/lib/types';
 import { MONTAZA_STEPS } from '@/lib/types';
-import { createWorkOrder, autoCreateOrdersForWorkOrder, getAllAttendanceByMonth } from '@/lib/services';
+import { createWorkOrder, getAllAttendanceByMonth } from '@/lib/services';
 import { workOrderDueDate, todayISO, buildSaturdayChecker } from '@/lib/planning';
 import { planToStages, flattenStages } from '@/lib/productProcesses';
 import { emptyTaskSelection, taskSelectionCount, taskProductIds, isTaskOpen, type TaskAttachSelection } from '@/lib/workOrderTasks';
 import Modal from '@/components/ui/Modal';
 import TaskAttachEditor from '@/components/ui/TaskAttachEditor';
+import MaterialOrderSelectModal from '@/components/ui/MaterialOrderSelectModal';
 
 export type WizardMode = 'production' | 'montaza';
 
@@ -152,8 +153,10 @@ export default function WorkOrderWizard({
     // Worker search dropdown state for step 4
     const [openDropdown, setOpenDropdown] = useState<string | null>(null);
     const [workerSearch, setWorkerSearch] = useState('');
-    // Odmah kreiraj narudžbe za nedostajuće materijale (uklanja poseban odlazak u Planer/narudžbe)
+    // Poslije kreiranja naloga, predloži narudžbe za nedostajuće materijale — korisnik
+    // BIRA dobavljače/materijale u MaterialOrderSelectModal, ništa se ne kreira tiho.
     const [createMaterialOrders, setCreateMaterialOrders] = useState(true);
+    const [orderSelectPrompt, setOrderSelectPrompt] = useState<{ workOrderId: string; label: string; startDate: string } | null>(null);
 
     // ── ZADACI: skupljaju se ovdje, vezuju se TEK kad nalog nastane ──
     const [taskSelection, setTaskSelection] = useState<TaskAttachSelection>(emptyTaskSelection);
@@ -776,20 +779,15 @@ export default function WorkOrderWizard({
             }
             onClose();
 
-            // Odmah naruči nedostajuće materijale (isti put kao iz Planera) — bez posebnog odlaska.
+            // Predloži narudžbe nedostajućih materijala — otvara modal gdje korisnik
+            // BIRA dobavljače/materijale (MaterialOrderSelectModal), umjesto tihog
+            // kreiranja svega. Modal sam prijavi "sve pokriveno" ako plan ispadne prazan.
             if (createMaterialOrders && !isMontazaMode && result.data?.Work_Order_ID && organizationId) {
-                try {
-                    const ord = await autoCreateOrdersForWorkOrder(result.data.Work_Order_ID, startDate || todayISO(), organizationId);
-                    if (ord.ordersCreated > 0) {
-                        showToast(`Kreirano ${ord.ordersCreated} narudžbi materijala (${ord.orderNumbers.join(', ')})`, 'success');
-                        onRefresh('orders');
-                    } else {
-                        showToast('Materijali već pokriveni — nema novih narudžbi', 'info');
-                    }
-                } catch (e) {
-                    console.error('auto material orders failed', e);
-                    showToast('Nalog kreiran, ali narudžbe materijala nisu uspjele — provjeri ručno', 'error');
-                }
+                setOrderSelectPrompt({
+                    workOrderId: result.data.Work_Order_ID,
+                    label: workOrderName.trim() || result.data.Work_Order_Number,
+                    startDate: startDate || todayISO(),
+                });
             }
 
             onRefresh('workOrders', 'projects');
@@ -1178,9 +1176,9 @@ export default function WorkOrderWizard({
                                             onChange={e => setCreateMaterialOrders(e.target.checked)}
                                             style={{ width: 16, height: 16, accentColor: 'var(--accent, #0071e3)' }}
                                         />
-                                        Odmah kreiraj narudžbe za nedostajuće materijale
+                                        Poslije kreiranja predloži narudžbe za nedostajuće materijale
                                         <span style={{ fontSize: '11px', color: 'var(--text-secondary, #64748b)' }}>
-                                            (grupisano po dobavljaču; već primljeni/na stanju se preskaču)
+                                            (biraš dobavljače i materijale prije nego što se narudžba stvarno kreira)
                                         </span>
                                     </label>
                                 )}
@@ -1455,6 +1453,21 @@ export default function WorkOrderWizard({
                 </div>
             </Modal>
 
+            {/* Izbor narudžbi materijala — otvara se TEK poslije uspješnog kreiranja
+                naloga (orderSelectPrompt), neovisno o wizard-ovom Modal-u iznad koji
+                se već zatvorio. Vidi handleCreateWorkOrder. */}
+            {orderSelectPrompt && organizationId && (
+                <MaterialOrderSelectModal
+                    isOpen={true}
+                    onClose={() => setOrderSelectPrompt(null)}
+                    workOrderId={orderSelectPrompt.workOrderId}
+                    workOrderLabel={orderSelectPrompt.label}
+                    plannedStartDate={orderSelectPrompt.startDate}
+                    organizationId={organizationId}
+                    onRefresh={onRefresh}
+                    showToast={showToast}
+                />
+            )}
 
             <style jsx>{`
                 /* Wizard Layout */
