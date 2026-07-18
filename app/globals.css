@@ -2361,6 +2361,16 @@ textarea::placeholder {
   font-family: inherit;
 }
 
+/* .material-icons-round (ligature icon font) has the SAME specificity as
+   ".modal *" above (one class each) — being declared later in this file,
+   ".modal *" was winning the cascade and forcing every icon inside every
+   modal back onto the inherited text font, so icons rendered as raw
+   ligature text ("close", "receipt_long"...) instead of glyphs. Two classes
+   here beats one, so this wins regardless of source order. */
+.modal .material-icons-round {
+  font-family: var(--font-material-icons, 'Material Icons Round'), 'Material Icons Round';
+}
+
 .modal input,
 .modal select,
 .modal textarea {
