@@ -3,6 +3,7 @@
 import React, { useState, useMemo } from 'react';
 import type { Project, Material, WorkOrder, Offer, WorkLog, Product, ProductMaterial } from '@/lib/types';
 import { PROJECT_STATUSES } from '@/lib/types';
+import { projectStatusRank } from '@/lib/utils';
 import { sortProductsByName } from '@/lib/sortProducts';
 import { summarizeNotes, summarizeProjectNotes } from '@/lib/productNotes';
 
@@ -196,7 +197,12 @@ export default function MobileProjectsView({
             result = result.filter(p => p.Project_ID === expandedProjectId);
         }
 
-        return result;
+        // Mobilni je ravna lista (bez grupa po statusu kao desktop), pa redoslijed
+        // mora nositi sortiranje: U proizvodnji → Odobreno → Ponuđeno → ostalo.
+        return [...result].sort((a, b) =>
+            projectStatusRank(a.Status) - projectStatusRank(b.Status) ||
+            (a.Client_Name || '').localeCompare(b.Client_Name || '', 'hr')
+        );
     }, [projects, searchTerm, statusFilter, isInFocusMode, expandedProjectId, showHidden]);
 
     const getStatusColor = (status: string) => {

@@ -1158,6 +1158,47 @@
     grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
 }
 
+/* KORAK 3 — prekidač: po dobavljaču / po kategoriji */
+.browse-mode-toggle {
+    display: inline-flex;
+    gap: 4px;
+    padding: 4px;
+    margin-bottom: 20px;
+    background: var(--surface, #f5f5f7);
+    border: 1px solid var(--border-light, #e5e5ea);
+    border-radius: 10px;
+}
+
+.browse-mode-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 16px;
+    min-height: 40px;
+    border: none;
+    border-radius: 7px;
+    background: transparent;
+    color: var(--text-secondary, #86868b);
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.15s ease, color 0.15s ease;
+}
+
+.browse-mode-btn .material-icons-round {
+    font-size: 18px;
+}
+
+.browse-mode-btn:hover:not(.active) {
+    color: var(--text-primary, #1d1d1f);
+}
+
+.browse-mode-btn.active {
+    background: #fff;
+    color: var(--accent, #0071e3);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+}
+
 /* WIZARD CARD */
 .wizard-card {
     background: #fff;

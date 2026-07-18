@@ -297,6 +297,30 @@ export function sortBy<T>(
 }
 
 /**
+ * Redoslijed prikaza projekata: prvo ono na čemu se STVARNO radi, pa potvrđeno,
+ * pa ponuđeno, a nacrti i završeni/otkazani na kraju. Nije isto što i
+ * PROJECT_STATUSES (to je redoslijed toka rada, koristi se za filter padajuću listu).
+ */
+export const PROJECT_STATUS_DISPLAY_ORDER = [
+    'U proizvodnji',
+    'Odobreno',
+    'Ponuđeno',
+    'Nacrt',
+    'Završeno',
+    'Otkazano',
+];
+
+/**
+ * Rang statusa projekta za sortiranje. Nepoznat/prazan status ide na kraj
+ * (a NE ispada iz prikaza) — statuse asinhrono upisuje syncProjectStatus,
+ * pa se ne smije pretpostaviti da je vrijednost uvijek jedna od poznatih.
+ */
+export function projectStatusRank(status: string | null | undefined): number {
+    const index = PROJECT_STATUS_DISPLAY_ORDER.indexOf(status || '');
+    return index === -1 ? PROJECT_STATUS_DISPLAY_ORDER.length : index;
+}
+
+/**
  * Izračunava postotak
  * @param value - Vrijednost
  * @param total - Ukupno

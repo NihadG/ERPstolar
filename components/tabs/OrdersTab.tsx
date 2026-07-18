@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useMemo, useEffect } from 'react';
-import type { Order, Supplier, Project, ProductMaterial } from '@/lib/types';
+import type { Order, Supplier, Project, ProductMaterial, Material } from '@/lib/types';
 import { createOrder, saveOrder, deleteOrder, updateOrderStatus, markOrderSent, markMaterialsReceived, getOrder, deleteOrderItemsByIds, updateOrderItem, recalculateOrderTotal } from '@/lib/services';
 import { useData } from '@/context/DataContext';
 import { buildOrderPrintDocument } from '@/lib/print/orderDocument';
@@ -23,6 +23,8 @@ interface OrdersTabProps {
     suppliers: Supplier[];
     projects: Project[];
     productMaterials: ProductMaterial[];
+    /** Katalog materijala — služi za kategoriju (ProductMaterial je nema, nosi samo Material_ID). */
+    materials: Material[];
     onRefresh: (...collections: string[]) => void;
     /** Optimistični lokalni patch narudžbe (badge reaguje odmah; usklađivanje ide kroz onRefresh). */
     onPatchOrder?: (orderId: string, partial: Partial<Order>) => void;
@@ -33,8 +35,13 @@ interface OrdersTabProps {
 
 type GroupBy = 'none' | 'supplier' | 'status' | 'date' | 'project';
 type SortBy = 'date-desc' | 'date-asc' | 'amount-desc' | 'amount-asc' | 'supplier';
+/** Korak 3 wizarda: grupisanje materijala po dobavljaču ili po kategoriji. */
+export type BrowseMode = 'supplier' | 'category';
 
-export default function OrdersTab({ orders, suppliers, projects, productMaterials, onRefresh, onPatchOrder, showToast, pendingOrderMaterials, onClearPendingOrder }: OrdersTabProps) {
+/** Bucket za materijale bez kategorije (ili bez zapisa u katalogu). */
+const NO_CATEGORY = 'Bez kategorije';
+
+export default function OrdersTab({ orders, suppliers, projects, productMaterials, materials, onRefresh, onPatchOrder, showToast, pendingOrderMaterials, onClearPendingOrder }: OrdersTabProps) {
     const { organizationId } = useData();
     const gi = useGoogleIntegration();
     const isMobile = useIsMobile();
@@ -58,6 +65,10 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
     const [selectedSupplierIds, setSelectedSupplierIds] = useState<Set<string>>(new Set());
     const [selectedMaterialIds, setSelectedMaterialIds] = useState<Set<string>>(new Set());
     const [orderName, setOrderName] = useState('');
+    // Korak 3 ima dva načina izbora: po dobavljaču ili po kategoriji materijala
+    // (dobavljač nije uvijek definisan na materijalu, pa je kategorija drugi ulaz).
+    const [browseMode, setBrowseMode] = useState<BrowseMode>('supplier');
+    const [selectedCategories, setSelectedCategories] = useState<Set<string>>(new Set());
 
     // Custom quantity state for materials
     const [orderQuantities, setOrderQuantities] = useState<Record<string, number>>({});
@@ -370,6 +381,16 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
         return products;
     }, [selectedProjectIds, projects, unorderedMaterials]);
 
+    // Kategorija materijala: ProductMaterial je NEMA, pa se dohvaća iz kataloga po Material_ID.
+    const categoryByMaterialId = useMemo(() => {
+        const map = new Map<string, string>();
+        materials.forEach(m => map.set(m.Material_ID, m.Category || NO_CATEGORY));
+        return map;
+    }, [materials]);
+
+    const categoryOf = (m: ProductMaterial): string =>
+        categoryByMaterialId.get(m.Material_ID) || NO_CATEGORY;
+
     // Get suppliers from selected products' materials
     const availableSuppliers = useMemo(() => {
         if (selectedProductIds.size === 0) return [];
@@ -385,6 +406,25 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
             }
         });
         const result: Supplier[] = suppliers.filter(s => supplierNames.has(s.Name));
+        // Dobavljač upisan na materijalu koji NEMA svoj zapis u Dobavljačima (preimenovan,
+        // obrisan ili samo utipkan) — ranije je takav materijal tiho ispadao i iz koraka 3
+        // i iz koraka 4, pa se nije mogao naručiti. Sada dobije privremenu karticu.
+        const definedNames = new Set(suppliers.map(s => s.Name));
+        Array.from(supplierNames)
+            .filter(name => !definedNames.has(name))
+            .sort((a, b) => a.localeCompare(b, 'hr'))
+            .forEach(name => {
+                result.push({
+                    Supplier_ID: `__unregistered__${name}`,
+                    Organization_ID: '',
+                    Name: name,
+                    Contact_Person: 'Nije u šifarniku dobavljača',
+                    Phone: '',
+                    Email: '',
+                    Address: '',
+                    Categories: '',
+                } as Supplier);
+            });
         if (hasNoSupplier) {
             result.push({
                 Supplier_ID: '__no_supplier__',
@@ -400,9 +440,30 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
         return result;
     }, [selectedProductIds, unorderedMaterials, suppliers]);
 
-    // Get materials filtered by selected products and suppliers (multi-select)
+    // Kategorije prisutne u materijalima odabranih proizvoda (s brojačem za karticu)
+    const availableCategories = useMemo(() => {
+        if (selectedProductIds.size === 0) return [];
+        const counts = new Map<string, number>();
+        unorderedMaterials.forEach(m => {
+            if (!selectedProductIds.has(m.Product_ID)) return;
+            const cat = categoryOf(m);
+            counts.set(cat, (counts.get(cat) || 0) + 1);
+        });
+        return Array.from(counts.entries())
+            .map(([name, count]) => ({ name, count }))
+            // Bez kategorije uvijek na kraj, ostalo abecedno
+            .sort((a, b) => {
+                if (a.name === NO_CATEGORY) return 1;
+                if (b.name === NO_CATEGORY) return -1;
+                return a.name.localeCompare(b.name, 'hr');
+            });
+    }, [selectedProductIds, unorderedMaterials, categoryByMaterialId]);
+
+    // Get materials filtered by selected products and suppliers/categories (multi-select)
     const filteredMaterials = useMemo(() => {
-        if (selectedProductIds.size === 0 || selectedSupplierIds.size === 0) return [];
+        if (selectedProductIds.size === 0) return [];
+        if (browseMode === 'supplier' && selectedSupplierIds.size === 0) return [];
+        if (browseMode === 'category' && selectedCategories.size === 0) return [];
 
         // Build set of selected supplier names
         const selectedSupplierNames = new Set<string>();
@@ -410,6 +471,8 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
         selectedSupplierIds.forEach(id => {
             if (id === '__no_supplier__') {
                 includeNoSupplier = true;
+            } else if (id.startsWith('__unregistered__')) {
+                selectedSupplierNames.add(id.slice('__unregistered__'.length));
             } else {
                 const s = suppliers.find(s => s.Supplier_ID === id);
                 if (s) selectedSupplierNames.add(s.Name);
@@ -418,6 +481,7 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
 
         return unorderedMaterials.filter(m => {
             if (!selectedProductIds.has(m.Product_ID)) return false;
+            if (browseMode === 'category') return selectedCategories.has(categoryOf(m));
             if (m.Supplier && selectedSupplierNames.has(m.Supplier)) return true;
             if (!m.Supplier && includeNoSupplier) return true;
             return false;
@@ -432,7 +496,7 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
                 Project_Name: product?.Project_Name || '',
             };
         });
-    }, [selectedProductIds, selectedSupplierIds, suppliers, unorderedMaterials, availableProducts]);
+    }, [selectedProductIds, selectedSupplierIds, selectedCategories, browseMode, categoryByMaterialId, suppliers, unorderedMaterials, availableProducts]);
 
     // Utility functions imported from lib/utils
 
@@ -441,6 +505,8 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
         setSelectedProjectIds(new Set());
         setSelectedProductIds(new Set());
         setSelectedSupplierIds(new Set());
+        setSelectedCategories(new Set());
+        setBrowseMode('supplier');
         setSelectedMaterialIds(new Set());
         setOrderQuantities({});
         setOnStockQuantities({});
@@ -460,6 +526,7 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
         // Reset downstream selections
         setSelectedProductIds(new Set());
         setSelectedSupplierIds(new Set());
+        setSelectedCategories(new Set());
         setSelectedMaterialIds(new Set());
     }
 
@@ -473,6 +540,27 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
         setSelectedProductIds(newSelected);
         // Reset downstream selections
         setSelectedSupplierIds(new Set());
+        setSelectedCategories(new Set());
+        setSelectedMaterialIds(new Set());
+    }
+
+    /** Prebacivanje koraka 3 dobavljač ↔ kategorija — izbor drugog načina se poništava. */
+    function changeBrowseMode(mode: BrowseMode) {
+        if (mode === browseMode) return;
+        setBrowseMode(mode);
+        setSelectedSupplierIds(new Set());
+        setSelectedCategories(new Set());
+        setSelectedMaterialIds(new Set());
+    }
+
+    function toggleCategory(category: string) {
+        const newSelected = new Set(selectedCategories);
+        if (newSelected.has(category)) {
+            newSelected.delete(category);
+        } else {
+            newSelected.add(category);
+        }
+        setSelectedCategories(newSelected);
         setSelectedMaterialIds(new Set());
     }
 
@@ -508,6 +596,8 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
             newSelected.forEach(id => {
                 if (id === '__no_supplier__') {
                     includeNoSupplier = true;
+                } else if (id.startsWith('__unregistered__')) {
+                    selectedSupplierNames.add(id.slice('__unregistered__'.length));
                 } else {
                     const s = suppliers.find(s => s.Supplier_ID === id);
                     if (s) selectedSupplierNames.add(s.Name);
@@ -541,8 +631,12 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
             showToast('Odaberite barem jedan proizvod', 'error');
             return;
         }
-        if (wizardStep === 3 && selectedSupplierIds.size === 0) {
+        if (wizardStep === 3 && browseMode === 'supplier' && selectedSupplierIds.size === 0) {
             showToast('Odaberite dobavljača', 'error');
+            return;
+        }
+        if (wizardStep === 3 && browseMode === 'category' && selectedCategories.size === 0) {
+            showToast('Odaberite kategoriju', 'error');
             return;
         }
         setWizardStep(wizardStep + 1);
@@ -559,19 +653,36 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
             return;
         }
 
-        if (selectedSupplierIds.size === 0) {
+        if (browseMode === 'supplier' && selectedSupplierIds.size === 0) {
             showToast('Odaberite dobavljača', 'error');
             return;
         }
+        if (browseMode === 'category' && selectedCategories.size === 0) {
+            showToast('Odaberite kategoriju', 'error');
+            return;
+        }
 
-        // Multiple suppliers → ask user for combined/separate
-        if (selectedSupplierIds.size > 1) {
+        // Multiple suppliers → ask user for combined/separate.
+        // Kad se bira po kategoriji, dobavljači nisu izabrani ručno — broj se izvodi iz
+        // stvarno odabranih materijala (narudžba i dalje ide dobavljaču, ne kategoriji).
+        if (distinctSupplierCount() > 1) {
             setOrderTypeModal(true);
             return;
         }
 
         // Single supplier → create directly
         await doCreateOrders('separate');
+    }
+
+    /** Broj različitih dobavljača koje odabrani materijali stvarno nose. */
+    function distinctSupplierCount(): number {
+        if (browseMode === 'supplier') return selectedSupplierIds.size;
+        const names = new Set<string>();
+        selectedMaterialIds.forEach(id => {
+            const m = filteredMaterials.find(x => x.ID === id);
+            if (m) names.add(m.Supplier || '__no_supplier__');
+        });
+        return names.size;
     }
 
     // Actual order creation logic
@@ -620,6 +731,9 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
             // Optimistic: close wizard and show success immediately
             setWizardModal(false);
             const isEditing = editingOrderId;
+            // Snimi PRIJE zatvaranja wizarda — grananje combined/separate ne smije ovisiti
+            // o stanju koje se u međuvremenu resetuje.
+            const distinctSuppliers = distinctSupplierCount();
 
             // Helper: group raw items by Material_Name + Unit and create order
             const groupAndCreateOrder = async (
@@ -667,19 +781,34 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
                         await deleteOrder(isEditing, organizationId!, 'reset');
                     }
 
-                    if (mode === 'combined' || selectedSupplierIds.size === 1) {
+                    if (mode === 'combined' || distinctSuppliers === 1) {
                         // Single order — either 1 supplier or combined multi-supplier
                         const supplierNames: string[] = [];
                         let supplierId = '';
-                        selectedSupplierIds.forEach(id => {
-                            if (id === '__no_supplier__') {
-                                supplierNames.push('Neodređen');
-                            } else {
-                                const s = suppliers.find(s => s.Supplier_ID === id);
-                                if (s) supplierNames.push(s.Name);
-                                if (selectedSupplierIds.size === 1) supplierId = id;
-                            }
-                        });
+                        if (browseMode === 'category') {
+                            // Po kategoriji: dobavljači se izvode iz samih materijala.
+                            const names = new Set<string>();
+                            rawItems.forEach(i => names.add(i.Supplier || ''));
+                            Array.from(names).forEach(name => {
+                                supplierNames.push(name || 'Neodređen');
+                                if (names.size === 1 && name) {
+                                    supplierId = suppliers.find(s => s.Name === name)?.Supplier_ID || '';
+                                }
+                            });
+                        } else {
+                            selectedSupplierIds.forEach(id => {
+                                if (id === '__no_supplier__') {
+                                    supplierNames.push('Neodređen');
+                                } else if (id.startsWith('__unregistered__')) {
+                                    // Dobavljač postoji samo kao tekst na materijalu (nije u šifarniku)
+                                    supplierNames.push(id.slice('__unregistered__'.length));
+                                } else {
+                                    const s = suppliers.find(s => s.Supplier_ID === id);
+                                    if (s) supplierNames.push(s.Name);
+                                    if (selectedSupplierIds.size === 1) supplierId = id;
+                                }
+                            });
+                        }
 
                         const result = await groupAndCreateOrder(
                             rawItems,
@@ -1744,6 +1873,11 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
                 availableSuppliers={availableSuppliers}
                 selectedSupplierIds={selectedSupplierIds}
                 toggleSupplier={toggleSupplier}
+                browseMode={browseMode}
+                onChangeBrowseMode={changeBrowseMode}
+                availableCategories={availableCategories}
+                selectedCategories={selectedCategories}
+                toggleCategory={toggleCategory}
                 setSelectedMaterialIds={setSelectedMaterialIds}
                 filteredMaterials={filteredMaterials}
                 selectedMaterialIds={selectedMaterialIds}
@@ -1836,7 +1970,9 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
                 footer={null}
             >
                 <p style={{ marginBottom: '20px', color: 'var(--text-secondary)', fontSize: '14px' }}>
-                    Odabrali ste {selectedSupplierIds.size} dobavljača. Kako želite kreirati narudžbu?
+                    {browseMode === 'category'
+                        ? `Odabrani materijali dolaze od ${distinctSupplierCount()} različitih dobavljača. Kako želite kreirati narudžbu?`
+                        : `Odabrali ste ${selectedSupplierIds.size} dobavljača. Kako želite kreirati narudžbu?`}
                 </p>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                     <button
@@ -1870,7 +2006,7 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
                         <span className="material-icons-round" style={{ fontSize: '28px', color: 'var(--accent)' }}>content_copy</span>
                         <div>
                             <div style={{ fontWeight: 600, fontSize: '15px', marginBottom: '2px' }}>Odvojene narudžbe</div>
-                            <div style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>Zasebna narudžba za svakog dobavljača ({selectedSupplierIds.size} narudžbi)</div>
+                            <div style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>Zasebna narudžba za svakog dobavljača ({distinctSupplierCount()} narudžbi)</div>
                         </div>
                     </button>
                 </div>

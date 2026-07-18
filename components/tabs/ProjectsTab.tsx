@@ -27,6 +27,7 @@ import ProductTimelineModal from '@/components/ui/ProductTimelineModal';
 import ProductProcessPlan from '@/components/ui/ProductProcessPlan';
 import { planToStages } from '@/lib/productProcesses';
 import { naturalCompare } from '@/lib/naturalCompare';
+import { projectStatusRank, PROJECT_STATUS_DISPLAY_ORDER } from '@/lib/utils';
 import { projectProfitBreakdown } from '@/lib/projectProfit';
 
 import ProjectMaterialsModal from '@/components/ui/ProjectMaterialsModal';
@@ -73,7 +74,7 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
     const [statusFilter, setStatusFilter] = useState('');
     const [expandedProjectId, setExpandedProjectId] = useState<string | null>(null);
     const [expandedProducts, setExpandedProducts] = useState<Set<string>>(new Set());
-    const [expandedStatusGroups, setExpandedStatusGroups] = useState<Set<string>>(new Set(['Nacrt', 'Ponuđeno', 'Odobreno', 'U proizvodnji', 'Završeno', 'Otkazano']));
+    const [expandedStatusGroups, setExpandedStatusGroups] = useState<Set<string>>(new Set([...PROJECT_STATUS_DISPLAY_ORDER, 'Bez statusa']));
     const [showMaterialsSummary, setShowMaterialsSummary] = useState<Set<string>>(new Set());
     const [materialsOverviewProject, setMaterialsOverviewProject] = useState<Project | null>(null);
     // Pitanja i napomene — jedan modal, ulaz s kartice projekta (sva) ili proizvoda (skrol na njega).
@@ -200,19 +201,20 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
         return matchesSearch && matchesStatus;
     });
 
-    // Status order: Active workflow first, then terminal states
-    // Nacrt → Ponuđeno → Odobreno → U proizvodnji (workflow order)
-    // Završeno and Otkazano always last (terminal states)
-    const STATUS_ORDER = ['Nacrt', 'Ponuđeno', 'Odobreno', 'U proizvodnji', 'Završeno', 'Otkazano'];
-
-    // Group projects by status
-    const groupedProjects = STATUS_ORDER.reduce((acc, status) => {
-        const projectsInStatus = filteredProjects.filter(p => p.Status === status);
-        if (projectsInStatus.length > 0) {
-            acc.push({ status, projects: projectsInStatus });
-        }
-        return acc;
-    }, [] as { status: string; projects: Project[] }[]);
+    // Grupisanje po statusu; redoslijed grupa iz projectStatusRank (U proizvodnji →
+    // Odobreno → Ponuđeno → ostalo). Grupiše se po ZATEČENOM statusu, ne po fiksnoj
+    // listi — ranije je nepoznat/prazan status tiho ispadao iz cijelog prikaza.
+    const groupedProjects = (() => {
+        const groups = new Map<string, Project[]>();
+        filteredProjects.forEach(project => {
+            const key = project.Status || 'Bez statusa';
+            if (!groups.has(key)) groups.set(key, []);
+            groups.get(key)!.push(project);
+        });
+        return Array.from(groups.entries())
+            .sort(([a], [b]) => projectStatusRank(a) - projectStatusRank(b) || a.localeCompare(b, 'hr'))
+            .map(([status, projects]) => ({ status, projects }));
+    })();
 
     // Status badge colors for group headers
     const getStatusColor = (status: string) => {

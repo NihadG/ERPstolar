@@ -519,6 +519,7 @@ export default function Home() {
                                 suppliers={appState.suppliers}
                                 projects={appState.projects}
                                 productMaterials={appState.productMaterials}
+                                materials={appState.materials}
                                 onRefresh={refreshCollections}
                                 onPatchOrder={(orderId, partial) => patchCollection('orders', 'Order_ID', orderId, partial)}
                                 showToast={showToast}
