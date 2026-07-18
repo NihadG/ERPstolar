@@ -1,21 +1,7 @@
 'use client';
 
 // ════════════════════════════════════════════════════════════════════
-// PROCESI — TABLA STANICA (kanban), pa dvije liste kao pomoćne leće.
-//
-// ZAŠTO TABLA: ovo su poslovi × faze proizvodnje. Standard za taj oblik
-// podatka u proizvodnji je kanban tabla: KOLONA = stanica (proces),
-// KARTICA = nalog na toj stanici. Tako radi i sam pogon — komad fizički
-// putuje od stanice do stanice — pa tabla preslikava ono što majstor već
-// ima u glavi. Lista to ne može: ona odgovara „šta ima na ovom nalogu",
-// a pitanje na ekranu je „gdje je šta sada i gdje se gomila".
-// (Druga polovina standarda je „dispatch list" — red čekanja po stanici;
-// to je ovdje sadržaj kolone.)
-//
-// Tri leće nad ISTIM podacima:
-//   • Tabla        — gdje je šta sada (default; kolone = katalog redoslijed)
-//   • Po nalozima  — napredak jedne ekipe kroz njen tok
-//   • Po procesima — dugačak red čekanja jedne stanice
+// PROCESI — PO NALOZIMA: napredak svake ekipe kroz njen tok, jedna kartica po nalogu.
 //
 // PRAVILA LAYOUTA (zašto izgleda ovako):
 //  1. NA REDU je jedino istaknuto — ostalo je tiho. Nalog ima 30+ procesa,
@@ -23,6 +9,9 @@
 //  2. Glagol je VIDLJIV: svaka kartica/red ima dugme „Završi". Checkbox je
 //     SAMO za grupni odabir, jer checkbox pored procesa inače laže — svako ga
 //     pročita kao „gotovo je", a on je selektovao.
+//  3. AKCENAT JE REZERVISAN ZA RADNJU: jedini akcentni elementi su dugme
+//     „Završi" i traka napretka na 100%. Bedževi stanja (pauza/danas/u toku)
+//     koriste meke tonove da se ne takmiče s dugmetom za istu pažnju.
 //
 // JEDINICA RADA = ZADATAK (nalog × proces) — „Priprema masive" za 3 proizvoda
 // je JEDNA kartica i JEDAN klik; strelica je rastavi na proizvode kad treba dio.
@@ -35,7 +24,7 @@ import type { WorkOrder, Worker, WorkLog, ProcessCatalogItem, ItemProcessStatus 
 import { useData } from '@/context/DataContext';
 import { getProcessCatalog, updateItemProcess } from '@/lib/services';
 import {
-    buildProcessCells, groupByOrder, groupByProcess, sortOrdersForBoard, isOrderPaused,
+    buildProcessCells, groupByOrder, sortOrdersForBoard, isOrderPaused,
     type ProcessCell, type ProcessTask,
 } from '@/lib/processBoard';
 import { workOrderDisplayName } from '@/lib/utils';
@@ -53,7 +42,6 @@ interface Props {
     onNavigateToOrder?: (workOrderId: string) => void;
 }
 
-type GroupMode = 'board' | 'order' | 'process';
 const cellKey = (c: ProcessCell) => `${c.workOrderId}|${c.itemId}|${c.itemProcessName}`;
 const todayISO = () => new Date().toISOString().split('T')[0];
 const fmtDate = (iso?: string) => (iso ? new Date(iso).toLocaleDateString('hr-HR', { day: '2-digit', month: '2-digit' }) : '');
@@ -75,7 +63,6 @@ const partition = (tasks: ProcessTask[]) => ({
 
 export default function ProcessesTab({ workOrders, workers, workLogs, onRefresh, showToast, onNavigateToOrder }: Props) {
     const { organizationId } = useData();
-    const [groupMode, setGroupMode] = useState<GroupMode>('board');
     const [search, setSearch] = useState('');
     const [includeWaiting, setIncludeWaiting] = useState(false);
     const [catalog, setCatalog] = useState<ProcessCatalogItem[]>([]);
@@ -87,15 +74,6 @@ export default function ProcessesTab({ workOrders, workers, workLogs, onRefresh,
     const [formOpen, setFormOpen] = useState(false);
     const [form, setForm] = useState<{ workerIds: string[]; date: string; notes: string }>({ workerIds: [], date: todayISO(), notes: '' });
     const [busy, setBusy] = useState(false);
-
-    useEffect(() => {
-        const saved = typeof window !== 'undefined' ? window.localStorage.getItem('pt-group') : null;
-        if (saved === 'board' || saved === 'order' || saved === 'process') setGroupMode(saved);
-    }, []);
-    const changeGroup = (m: GroupMode) => {
-        setGroupMode(m); setSel(new Set()); setExpanded(new Set()); setOpenSec(new Set());
-        if (typeof window !== 'undefined') window.localStorage.setItem('pt-group', m);
-    };
 
     useEffect(() => {
         if (!organizationId) return;
@@ -157,7 +135,6 @@ export default function ProcessesTab({ workOrders, workers, workLogs, onRefresh,
     const selectedCells = useMemo(() => Array.from(sel).map(k => cellByKey.get(k)).filter(Boolean) as ProcessCell[], [sel, cellByKey]);
 
     const orderGroups = useMemo(() => groupByOrder(filteredCells), [filteredCells]);
-    const processGroups = useMemo(() => groupByProcess(filteredCells), [filteredCells]);
 
     /**
      * Orijentacija na vrhu — oblik dana u jednoj rečenici.
@@ -253,19 +230,14 @@ export default function ProcessesTab({ workOrders, workers, workLogs, onRefresh,
         );
     };
 
-    /**
-     * Red zadatka. `lens` bira nosioca: proces (po nalozima) ili nalog+proizvodi (po procesima).
-     * `tone`: 'now' = akcijski (dugme Završi), 'quiet' = u sklopljenoj sekciji (samo pregled).
-     */
-    const TaskRow = ({ t, lens, tone }: { t: ProcessTask; lens: 'order' | 'process'; tone: 'now' | 'quiet' }) => {
+    /** Red zadatka. `tone`: 'now' = akcijski (checkbox + „Završi"), 'quiet' = u sklopljenoj sekciji. */
+    const TaskRow = ({ t, tone }: { t: ProcessTask; tone: 'now' | 'quiet' }) => {
         const check = taskCheck(t);
         const canAct = selectableOf(t).length > 0;
         const isOpen = expanded.has(t.key);
         const multi = t.totalCount > 1;
-        const title = lens === 'order' ? t.processName : t.orderLabel;
-        const sub = lens === 'order'
-            ? (multi ? plural(t.totalCount, 'proizvod', 'proizvoda') : t.itemNames[0])
-            : t.itemNames.join(' · ');
+        const title = t.processName;
+        const sub = multi ? plural(t.totalCount, 'proizvod', 'proizvoda') : t.itemNames[0];
 
         return (
             <div className={`pt-task ${tone} ${check !== 'off' ? 'sel' : ''} ${isDone(t) ? 'is-done' : ''}`}>
@@ -291,22 +263,25 @@ export default function ProcessesTab({ workOrders, workers, workLogs, onRefresh,
                         </span>
                     </button>
 
-                    {t.status === 'Djelimično' && <span className="pt-badge partial">{t.doneCount}/{t.totalCount}</span>}
-                    {t.status === 'U toku' && <span className="pt-badge running">u toku</span>}
-                    {t.hasLoggedWork && !isDone(t) && <span className="pt-badge logged" title="Ima knjižen rad">knjižen rad</span>}
-                    {isDone(t) && (
-                        <span className="pt-done-meta">
-                            {t.completedAt ? fmtDate(t.completedAt) : ''}{t.workerNames.length ? ` · ${t.workerNames.join(', ')}` : ''}
-                        </span>
-                    )}
+                    {/* Bedževi + glagol kao jedan blok, poravnati desno. */}
+                    <div className="pt-task-aside">
+                        {t.status === 'Djelimično' && <span className="pt-badge partial">{t.doneCount}/{t.totalCount}</span>}
+                        {t.status === 'U toku' && <span className="pt-badge running">u toku</span>}
+                        {t.hasLoggedWork && !isDone(t) && <span className="pt-badge logged" title="Ima knjižen rad">knjižen rad</span>}
+                        {isDone(t) && (
+                            <span className="pt-done-meta">
+                                {t.completedAt ? fmtDate(t.completedAt) : ''}{t.workerNames.length ? ` · ${t.workerNames.join(', ')}` : ''}
+                            </span>
+                        )}
 
-                    {/* GLAGOL JE VIDLJIV — bez ovoga checkbox „laže" da je označavanje = završetak */}
-                    {tone === 'now' && canAct && (
-                        <button className="pt-do" disabled={busy} onClick={() => openCompleteForm(selectableOf(t))}
-                            title={multi ? `Završi za svih ${t.totalCount} proizvoda` : 'Završi ovaj proces'}>
-                            <span className="material-icons-round">check</span> Završi
-                        </button>
-                    )}
+                        {/* GLAGOL JE VIDLJIV — bez ovoga checkbox „laže" da je označavanje = završetak */}
+                        {tone === 'now' && canAct && (
+                            <button className="pt-do" disabled={busy} onClick={() => openCompleteForm(selectableOf(t))}
+                                title={multi ? `Završi za svih ${t.totalCount} proizvoda` : 'Završi ovaj proces'}>
+                                <span className="material-icons-round">check</span> Završi
+                            </button>
+                        )}
+                    </div>
                 </div>
 
                 {isOpen && (
@@ -342,74 +317,8 @@ export default function ProcessesTab({ workOrders, workers, workLogs, onRefresh,
         );
     };
 
-    /**
-     * Kartica na tabli = jedan nalog na jednoj stanici (zadatak).
-     * Tri stanja nose cijelu čitljivost kolone:
-     *   now  — bijela, akcenat lijevo, ima „Završi"  (radi se / može odmah)
-     *   wait — prigušena, isprekidana ivica          (čeka prethodni proces)
-     *   done — utihnula, kvačica                     (odrađeno na ovoj stanici)
-     */
-    const BoardCard = ({ t }: { t: ProcessTask }) => {
-        const done = isDone(t);
-        const now = isNow(t);
-        const canAct = selectableOf(t).length > 0;
-        const f = orderFlags.get(t.workOrderId);
-        const multi = t.totalCount > 1;
-        const tone = done ? 'is-done' : now ? 'is-now' : 'is-wait';
-
-        return (
-            <div className={`pt-bcard ${tone}`} style={now && t.orderColor ? { borderLeftColor: t.orderColor } : undefined}>
-                <div className="pt-bcard-top">
-                    <button className="pt-bcard-id" onClick={() => onNavigateToOrder?.(t.workOrderId)} disabled={!onNavigateToOrder}
-                        title={onNavigateToOrder ? 'Otvori nalog' : undefined}>
-                        {t.orderLabel}
-                    </button>
-                    {done && <span className="material-icons-round pt-bcard-check">check_circle</span>}
-                </div>
-
-                <button className="pt-bcard-sub" onClick={() => multi && setExpanded(s => toggleIn(s, t.key))} disabled={!multi}
-                    title={multi ? 'Prikaži proizvode' : undefined}>
-                    {multi ? plural(t.totalCount, 'proizvod', 'proizvoda') : t.itemNames[0]}
-                    {multi && <span className="material-icons-round pt-bcard-caret">{expanded.has(t.key) ? 'expand_less' : 'expand_more'}</span>}
-                </button>
-
-                {expanded.has(t.key) && multi && (
-                    <div className="pt-bcard-items">
-                        {t.cells.map(c => (
-                            <div key={cellKey(c)} className={`pt-bcard-item ${c.status === 'Završeno' ? 'is-done' : ''}`}>
-                                <span className="pt-bcard-item-name">{c.itemName}</span>
-                                {c.status !== 'Završeno' && (t.gate === 'active' || c.status === 'U toku') && (
-                                    <button className="pt-do sm" disabled={busy} onClick={() => openCompleteForm([c])} title={`Završi samo ${c.itemName}`}>
-                                        <span className="material-icons-round">check</span>
-                                    </button>
-                                )}
-                            </div>
-                        ))}
-                    </div>
-                )}
-
-                <div className="pt-bcard-foot">
-                    <span className="pt-bcard-tags">
-                        {f?.today && <span className="pt-badge today" title="Danas je knjižen rad na ovom nalogu">danas</span>}
-                        {f?.paused && <span className="pt-badge paused" title="Nalog je pauziran — dnevnice ne teku">pauza</span>}
-                        {f?.waiting && <span className="pt-badge waiting">na čekanju</span>}
-                        {t.status === 'U toku' && <span className="pt-badge running">u toku</span>}
-                        {t.status === 'Djelimično' && <span className="pt-badge partial">{t.doneCount}/{t.totalCount}</span>}
-                        {done && t.completedAt && <span className="pt-bcard-meta">{fmtDate(t.completedAt)}</span>}
-                    </span>
-                    {now && canAct && (
-                        <button className="pt-do" disabled={busy} onClick={() => openCompleteForm(selectableOf(t))}
-                            title={multi ? `Završi za svih ${t.totalCount} proizvoda` : 'Završi ovaj proces'}>
-                            <span className="material-icons-round">check</span> Završi
-                        </button>
-                    )}
-                </div>
-            </div>
-        );
-    };
-
     /** Sklopiva sekcija (Čeka / Završeno) — dostupno na jedan klik, ali ne zauzima ekran. */
-    const Section = ({ id, label, tasks, lens }: { id: string; label: string; tasks: ProcessTask[]; lens: 'order' | 'process' }) => {
+    const Section = ({ id, label, tasks }: { id: string; label: string; tasks: ProcessTask[] }) => {
         if (tasks.length === 0) return null;
         const open = openSec.has(id);
         return (
@@ -418,7 +327,7 @@ export default function ProcessesTab({ workOrders, workers, workLogs, onRefresh,
                     <span className="material-icons-round">{open ? 'expand_more' : 'chevron_right'}</span>
                     {label} <span className="pt-sec-count">{tasks.length}</span>
                 </button>
-                {open && <div className="pt-sec-body">{tasks.map(t => <TaskRow key={t.key} t={t} lens={lens} tone="quiet" />)}</div>}
+                {open && <div className="pt-sec-body">{tasks.map(t => <TaskRow key={t.key} t={t} tone="quiet" />)}</div>}
             </div>
         );
     };
@@ -443,20 +352,6 @@ export default function ProcessesTab({ workOrders, workers, workLogs, onRefresh,
                     </p>
                 </div>
                 <div className="pt-header-spacer" />
-                <div className="pt-seg">
-                    <button className={groupMode === 'board' ? 'active' : ''} onClick={() => changeGroup('board')}
-                        title="Tabla stanica — kolona je proces, kartica je nalog na toj stanici">
-                        <span className="material-icons-round">view_kanban</span> Tabla
-                    </button>
-                    <button className={groupMode === 'order' ? 'active' : ''} onClick={() => changeGroup('order')}
-                        title="Napredak jednog naloga kroz njegov tok">
-                        <span className="material-icons-round">assignment</span> Po nalozima
-                    </button>
-                    <button className={groupMode === 'process' ? 'active' : ''} onClick={() => changeGroup('process')}
-                        title="Red čekanja po stanici, u punoj listi">
-                        <span className="material-icons-round">account_tree</span> Po procesima
-                    </button>
-                </div>
                 <div className="pt-search">
                     <span className="material-icons-round">search</span>
                     <input placeholder="Traži nalog / proizvod / proces…" value={search} onChange={e => setSearch(e.target.value)} />
@@ -477,54 +372,7 @@ export default function ProcessesTab({ workOrders, workers, workLogs, onRefresh,
                     <span className="material-icons-round">inbox</span>
                     <p>Nema aktivnih procesa{includeWaiting ? '' : ' — probaj „Na čekanju"'}.</p>
                 </div>
-            ) : isEmpty ? null : groupMode === 'board' ? (
-                /* ── TABLA: kolona = stanica (proces), kartica = nalog na njoj ──
-                   Kolone idu KANONSKIM redoslijedom iz kataloga (Order), pa se tabla
-                   čita lijevo→desno kao stvarni tok kroz pogon. */
-                <div className="pt-board">
-                    {processGroups.map(g => {
-                        const p = partition(g.tasks);
-                        const doneKey = `board|${g.key}|d`;
-                        const doneOpen = openSec.has(doneKey);
-                        const pct = g.totalCount ? Math.round((g.doneCount / g.totalCount) * 100) : 0;
-                        return (
-                            <div key={g.key} className={`pt-col ${p.now.length === 0 ? 'is-quiet' : ''}`}>
-                                <div className="pt-col-head">
-                                    <div className="pt-col-title-row">
-                                        <span className="pt-col-title" title={g.name}>{g.name}</span>
-                                        {p.now.length > 0 && <span className="pt-col-now">{p.now.length}</span>}
-                                    </div>
-                                    <div className="pt-col-meta">
-                                        <span className="pt-bar-track"><span className={`pt-bar-fill ${pct >= 100 ? 'full' : ''}`} style={{ width: `${pct}%` }} /></span>
-                                        <span className="pt-col-count">{g.doneCount}/{g.totalCount}</span>
-                                        {g.catalogOrder === null && <span className="pt-badge legacy" title="Proces nije u katalogu">van kataloga</span>}
-                                    </div>
-                                </div>
-
-                                <div className="pt-col-body">
-                                    {p.now.map(t => <BoardCard key={t.key} t={t} />)}
-                                    {p.waiting.map(t => <BoardCard key={t.key} t={t} />)}
-
-                                    {p.now.length === 0 && p.waiting.length === 0 && (
-                                        <div className="pt-col-empty">{p.done.length > 0 ? 'Sve odrađeno' : 'Prazno'}</div>
-                                    )}
-
-                                    {/* Završeno je sklopljeno: stanica pokazuje šta JOŠ ima da radi. */}
-                                    {p.done.length > 0 && (
-                                        <>
-                                            <button className="pt-col-done-toggle" onClick={() => setOpenSec(s => toggleIn(s, doneKey))} aria-expanded={doneOpen}>
-                                                <span className="material-icons-round">{doneOpen ? 'expand_more' : 'chevron_right'}</span>
-                                                {plural(p.done.length, 'završen', 'završeno')}
-                                            </button>
-                                            {doneOpen && p.done.map(t => <BoardCard key={t.key} t={t} />)}
-                                        </>
-                                    )}
-                                </div>
-                            </div>
-                        );
-                    })}
-                </div>
-            ) : groupMode === 'order' ? (
+            ) : isEmpty ? null : (
                 <div className="pt-list">
                     {orderGroups.map(og => {
                         const f = orderFlags.get(og.workOrderId);
@@ -556,7 +404,7 @@ export default function ProcessesTab({ workOrders, workers, workLogs, onRefresh,
                                     {p.now.length > 0 ? (
                                         <div className="pt-now">
                                             <div className="pt-now-label">Na redu</div>
-                                            {p.now.map(t => <TaskRow key={t.key} t={t} lens="order" tone="now" />)}
+                                            {p.now.map(t => <TaskRow key={t.key} t={t} tone="now" />)}
                                         </div>
                                     ) : (
                                         <div className="pt-note">
@@ -566,59 +414,13 @@ export default function ProcessesTab({ workOrders, workers, workLogs, onRefresh,
                                         </div>
                                     )}
                                     <div className="pt-secs">
-                                        <Section id={`${og.workOrderId}|w`} label="Čeka" tasks={p.waiting} lens="order" />
-                                        <Section id={`${og.workOrderId}|d`} label="Završeno" tasks={p.done} lens="order" />
+                                        <Section id={`${og.workOrderId}|w`} label="Čeka" tasks={p.waiting} />
+                                        <Section id={`${og.workOrderId}|d`} label="Završeno" tasks={p.done} />
                                     </div>
                                 </div>
                             </div>
                         );
                     })}
-                </div>
-            ) : (
-                <div className="pt-list">
-                    {(() => {
-                        const render = (g: typeof processGroups[number]) => {
-                            const p = partition(g.tasks);
-                            return (
-                                <div key={g.key} className={`pt-card ${p.now.length === 0 ? 'is-quiet' : ''}`}>
-                                    <div className="pt-card-head plain">
-                                        <div className="pt-card-id">
-                                            <span className="pt-card-title">
-                                                {g.name}
-                                                {g.catalogOrder === null && <span className="pt-badge legacy">van kataloga</span>}
-                                            </span>
-                                            <span className="pt-card-sub">
-                                                {p.now.length > 0 ? `${plural(p.now.length, 'nalog', 'naloga')} na redu` : 'ništa na redu'}
-                                            </span>
-                                        </div>
-                                        <div className="pt-card-spacer" />
-                                        {g.hasLoggedWork && <span className="pt-badge logged">knjižen rad</span>}
-                                        <Bar done={g.doneCount} total={g.totalCount} />
-                                    </div>
-                                    <div className="pt-body">
-                                        {p.now.length > 0 && (
-                                            <div className="pt-now">
-                                                {p.now.map(t => <TaskRow key={t.key} t={t} lens="process" tone="now" />)}
-                                            </div>
-                                        )}
-                                        <div className="pt-secs">
-                                            <Section id={`${g.key}|w`} label="Čeka" tasks={p.waiting} lens="process" />
-                                            <Section id={`${g.key}|d`} label="Završeno" tasks={p.done} lens="process" />
-                                        </div>
-                                    </div>
-                                </div>
-                            );
-                        };
-                        const inCatalog = processGroups.filter(g => g.catalogOrder !== null);
-                        const legacy = processGroups.filter(g => g.catalogOrder === null);
-                        return (
-                            <>
-                                {inCatalog.map(render)}
-                                {legacy.length > 0 && <div className="pt-section-label">Ostali procesi (van kataloga)</div>}
-                                {legacy.map(render)}
-                            </>
-                        );
-                    })()}
                 </div>
             )}
 

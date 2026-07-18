@@ -16,19 +16,6 @@
 .pt-sum-today { color: var(--success); font-weight: 700; }
 .pt-header-spacer { flex: 1; }
 
-.pt-seg {
-    display: inline-flex; background: var(--surface); border: 1px solid var(--border-light);
-    border-radius: 999px; padding: 3px;
-}
-.pt-seg button {
-    border: none; background: transparent; cursor: pointer; padding: 7px 14px; border-radius: 999px;
-    font-size: 13px; font-weight: 600; color: var(--text-secondary);
-    display: inline-flex; align-items: center; gap: 6px; transition: all 0.15s ease; white-space: nowrap;
-}
-.pt-seg button .material-icons-round { font-size: 16px; }
-.pt-seg button:hover { color: var(--text-primary); }
-.pt-seg button.active { background: var(--background); color: var(--accent); box-shadow: 0 1px 4px var(--shadow-md); }
-
 .pt-search { position: relative; display: inline-flex; align-items: center; }
 .pt-search input {
     height: 36px; padding: 0 12px 0 34px; border: 1px solid var(--border-light); border-radius: 999px;
@@ -66,130 +53,6 @@
 .pt-btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
 .pt-btn.primary:hover { filter: brightness(1.06); color: #fff; }
 
-/* ═══ TABLA STANICA (kanban) ═══
-   Kolona = proces/stanica, kartica = nalog na njoj. Kolone idu kanonskim
-   redoslijedom iz kataloga, pa se tabla čita lijevo→desno kao tok kroz pogon.
-   Kolona je siva „ladica", kartica u njoj bijela = predmet u ladici. */
-.pt-board {
-    display: flex;
-    gap: 12px;
-    align-items: flex-start;
-    overflow-x: auto;
-    padding-bottom: 10px;
-    /* Kolone se ne smiju stiskati — tabla se skroluje vodoravno kao pravi kanban. */
-    scroll-snap-type: x proximity;
-}
-.pt-col {
-    flex: 0 0 268px;
-    display: flex; flex-direction: column;
-    background: var(--surface);
-    border: 1px solid var(--border-light);
-    border-radius: 14px;
-    scroll-snap-align: start;
-    transition: opacity 0.15s ease;
-}
-/* Stanica bez ijednog posla na redu utihne — nije posao za sada. */
-.pt-col.is-quiet { opacity: 0.6; }
-.pt-col.is-quiet:hover { opacity: 1; }
-
-.pt-col-head {
-    display: flex; flex-direction: column; gap: 6px;
-    padding: 11px 12px 9px;
-    border-bottom: 1px solid var(--border-light);
-}
-.pt-col-title-row { display: flex; align-items: center; gap: 8px; }
-.pt-col-title {
-    flex: 1; min-width: 0;
-    font-size: 13.5px; font-weight: 800; color: var(--text-primary); letter-spacing: -0.01em;
-    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-/* Broj poslova NA REDU na ovoj stanici — jedina brojka koja se traži na prvi pogled. */
-.pt-col-now {
-    display: inline-flex; align-items: center; justify-content: center;
-    min-width: 20px; height: 20px; padding: 0 6px; flex-shrink: 0;
-    border-radius: 999px; background: var(--accent); color: #fff;
-    font-size: 11px; font-weight: 800;
-}
-.pt-col-meta { display: flex; align-items: center; gap: 7px; }
-.pt-col-meta .pt-bar-track { flex: 1; width: auto; }
-.pt-col-count { font-size: 10.5px; font-weight: 700; color: var(--text-tertiary); white-space: nowrap; }
-
-.pt-col-body { display: flex; flex-direction: column; gap: 7px; padding: 9px; }
-.pt-col-empty { font-size: 12px; color: var(--text-tertiary); text-align: center; padding: 14px 4px; }
-
-.pt-col-done-toggle {
-    display: inline-flex; align-items: center; gap: 3px; align-self: flex-start;
-    border: none; background: transparent; cursor: pointer;
-    padding: 4px 8px 4px 4px; border-radius: 999px;
-    font-size: 11.5px; font-weight: 700; color: var(--text-tertiary);
-    transition: all 0.12s ease;
-}
-.pt-col-done-toggle .material-icons-round { font-size: 15px; }
-.pt-col-done-toggle:hover { background: var(--background); color: var(--text-primary); }
-
-/* ── Kartica na tabli ── */
-.pt-bcard {
-    display: flex; flex-direction: column; gap: 5px;
-    padding: 9px 10px;
-    border: 1px solid var(--border-light);
-    border-left: 3px solid var(--accent);
-    border-radius: 9px;
-    background: var(--background);
-    box-shadow: 0 1px 2px var(--shadow);
-    transition: box-shadow 0.12s ease, opacity 0.12s ease;
-}
-.pt-bcard.is-now:hover { box-shadow: 0 3px 10px var(--shadow-md); }
-/* Čeka prethodni proces: bez akcenta i bez sjene — vidi se da nije na redu. */
-.pt-bcard.is-wait {
-    border-left-color: var(--border);
-    border-style: dashed;
-    background: transparent;
-    box-shadow: none;
-    opacity: 0.75;
-}
-.pt-bcard.is-done { border-left-color: var(--success); background: transparent; box-shadow: none; opacity: 0.7; }
-.pt-bcard.is-done .pt-bcard-id { color: var(--text-secondary); }
-
-.pt-bcard-top { display: flex; align-items: flex-start; gap: 6px; }
-.pt-bcard-id {
-    flex: 1; min-width: 0; text-align: left;
-    border: none; background: transparent; padding: 0; font: inherit;
-    font-size: 12.5px; font-weight: 700; color: var(--text-primary); line-height: 1.35;
-    transition: color 0.12s ease;
-}
-button.pt-bcard-id:not(:disabled) { cursor: pointer; }
-button.pt-bcard-id:not(:disabled):hover { color: var(--accent); }
-.pt-bcard-check { font-size: 15px; color: var(--success); flex-shrink: 0; }
-
-.pt-bcard-sub {
-    display: inline-flex; align-items: center; gap: 2px; align-self: flex-start; max-width: 100%;
-    border: none; background: transparent; padding: 0; font: inherit; text-align: left;
-    font-size: 11px; color: var(--text-secondary);
-    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-button.pt-bcard-sub:not(:disabled) { cursor: pointer; }
-button.pt-bcard-sub:not(:disabled):hover { color: var(--accent); }
-.pt-bcard-caret { font-size: 14px !important; color: var(--text-tertiary); }
-
-.pt-bcard-items {
-    display: flex; flex-direction: column; gap: 1px;
-    padding: 4px 0 2px; border-top: 1px solid var(--border-light);
-}
-.pt-bcard-item { display: flex; align-items: center; gap: 6px; padding: 3px 2px; border-radius: 5px; }
-.pt-bcard-item:hover { background: var(--surface); }
-.pt-bcard-item-name {
-    flex: 1; min-width: 0; font-size: 11.5px; color: var(--text-primary);
-    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-.pt-bcard-item.is-done .pt-bcard-item-name { color: var(--text-tertiary); text-decoration: line-through; }
-
-.pt-bcard-foot { display: flex; align-items: center; gap: 6px; }
-.pt-bcard-tags { display: inline-flex; align-items: center; gap: 4px; flex-wrap: wrap; flex: 1; min-width: 0; }
-.pt-bcard-meta { font-size: 10.5px; color: var(--text-tertiary); }
-/* Dugme „Završi" je uvijek desno dolje — na svakoj kartici na istom mjestu. */
-.pt-bcard-foot .pt-do { margin-left: auto; height: 26px; padding: 0 10px; font-size: 11.5px; }
-.pt-bcard-foot .pt-do .material-icons-round { font-size: 14px; }
-
 /* ── Kartica naloga ── */
 .pt-list { display: flex; flex-direction: column; gap: 12px; }
 .pt-card {
@@ -199,12 +62,8 @@ button.pt-bcard-sub:not(:disabled):hover { color: var(--accent); }
 .pt-card:hover { box-shadow: 0 4px 14px var(--shadow-md); }
 .pt-card.is-paused { opacity: 0.66; }
 .pt-card.is-paused:hover { opacity: 1; }
-/* Proces bez ijednog naloga na redu → kartica utihne (nije posao za sada) */
-.pt-card.is-quiet { opacity: 0.62; box-shadow: none; }
-.pt-card.is-quiet:hover { opacity: 1; }
 
 .pt-card-head { display: flex; align-items: center; gap: 12px; padding: 12px 14px; border-left: 4px solid var(--accent); }
-.pt-card-head.plain { border-left: none; padding-left: 18px; }
 .pt-card-id {
     display: flex; flex-direction: column; align-items: flex-start; gap: 1px; min-width: 0;
     border: none; background: transparent; padding: 0; text-align: left; font: inherit;
@@ -240,7 +99,7 @@ button.pt-card-id:not(:disabled):hover .pt-card-title { color: var(--accent); }
     color: var(--text-tertiary); padding: 1px 4px 3px;
 }
 
-/* ── Red zadatka ── */
+/* ── Red zadatka (isti u obje leće) ── */
 .pt-task { border-radius: 10px; border: 1.5px solid transparent; transition: all 0.12s ease; }
 .pt-task.now { background: var(--background); box-shadow: 0 1px 2px var(--shadow); }
 .pt-task.now:hover { border-color: var(--border); }
@@ -282,6 +141,8 @@ button.pt-card-id:not(:disabled):hover .pt-card-title { color: var(--accent); }
 }
 .pt-task-caret { font-size: 14px !important; color: var(--text-tertiary); }
 .pt-done-meta { font-size: 11px; color: var(--text-tertiary); flex-shrink: 0; white-space: nowrap; }
+/* Bedževi + glagol kao jedan blok, poravnati desno. */
+.pt-task-aside { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
 
 /* Vidljiv glagol — bez njega checkbox „laže" da označavanje = završetak */
 .pt-do {
@@ -329,19 +190,31 @@ button.pt-card-id:not(:disabled):hover .pt-card-title { color: var(--accent); }
 .pt-sec-head:hover .pt-sec-count { background: var(--background); }
 .pt-sec-body { display: flex; flex-direction: column; gap: 1px; padding: 4px 0 2px; }
 
-/* ── Badge ── */
+/* ── Badge ──
+   BOJA NOSI ZNAČENJE, pa svaka nijansa ima tačno jedan posao:
+     akcenat  — u letu (pokrenuto / djelimično)
+     zelena   — živo danas
+     žuta     — SMETNJA (pauza), i ništa drugo
+     neutral  — metapodatak (knjižen rad, na čekanju)
+   Ranije su „pauza", „knjižen rad" i „djelimično" dijelili žutu, pa se pauza —
+   jedina stvarna smetnja — gubila u šumu; a „u toku" i „danas" su bili PUNI
+   akcenat/zelena i vikali glasnije od dugmeta „Završi" pored sebe. Pravilo:
+   puna boja pripada RADNJI, meki ton pripada STANJU. */
 .pt-badge {
     display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 999px;
     font-size: 10px; font-weight: 800; white-space: nowrap; flex-shrink: 0;
 }
-.pt-badge.running { background: var(--accent); color: #fff; }
-.pt-badge.logged { background: var(--warning-bg); color: var(--warning); }
-.pt-badge.partial { background: var(--warning-bg); color: var(--warning); }
-.pt-badge.legacy { background: var(--surface); color: var(--text-tertiary); }
-/* Zašto je nalog na vrhu/dnu liste — vidljivo, ne magično */
-.pt-badge.today { background: var(--success); color: #fff; }
+.pt-badge.running { background: var(--accent-light); color: var(--accent); }
+.pt-badge.partial { background: var(--accent-light); color: var(--accent); }
+.pt-badge.today { background: var(--success-bg); color: var(--success); }
 .pt-badge.paused { background: var(--warning-bg); color: var(--warning); }
-.pt-badge.waiting { background: var(--surface); color: var(--text-tertiary); }
+/* Neutralni sloj nosi obrub umjesto ispune, čitljiv na bijelom redu. */
+.pt-badge.logged,
+.pt-badge.waiting {
+    background: transparent; color: var(--text-tertiary);
+    box-shadow: inset 0 0 0 1px var(--border-light);
+}
+.pt-badge.logged { color: var(--text-secondary); }
 
 .pt-section-label {
     font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.06em;
@@ -394,10 +267,4 @@ button.pt-card-id:not(:disabled):hover .pt-card-title { color: var(--accent); }
     .pt-card-head { flex-wrap: wrap; row-gap: 8px; }
     .pt-subs { padding-left: 20px; }
     .pt-actionbar { width: calc(100% - 8px); justify-content: center; flex-wrap: wrap; }
-
-    /* Tabla na telefonu ostaje tabla (kao Trello) — kolona skoro pune širine,
-       vodoravni skrol s snapom. Slaganje kolona jednu ispod druge bi ubilo poantu:
-       poenta je uporediti stanice jednu do druge. */
-    .pt-board { gap: 10px; scroll-snap-type: x mandatory; }
-    .pt-col { flex-basis: 82vw; max-width: 300px; }
 }
