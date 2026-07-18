@@ -659,28 +659,30 @@
     font-size: 18px;
 }
 
-/* ==================== ORDERS TAB - ISTA TABELA KAO PONUDE ==================== */
+/* ==================== RED NARUDŽBE ==================== */
 
-/* Iste kolone kao .offer-row u globals.css (info | cijena | status | akcije),
-   iste px vrijednosti — "isti dizajn tabele" preko oba taba. Svaki red je
-   nezavisan grid kontejner, pa kolone 2-4 MORAJU biti fiksne px (ne auto),
-   inače bi promjenljiv sadržaj (npr. da li ima "Primi sve" dugme) pomjerao
-   gdje kolona počinje, red po red — to je i bio problem koji se ispravlja. */
+/* Pet kolona: info | prijem | iznos | status | akcije.
+   Kolone 2-5 MORAJU biti fiksne px (ne auto): svaki red je nezavisan grid
+   kontejner, pa bi promjenljiv sadržaj (ima li red "Primi sve" dugme, koliko
+   je dug status) pomjerao gdje kolona počinje — red po red.
+
+   Kolona "prijem" je dodata jer je odnos primljeno/ukupno bio vidljiv tek
+   kad se red otvori, a to je podatak zbog kojeg se lista i gleda. */
 .order-header-custom {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) 140px 190px 216px;
+    grid-template-columns: minmax(0, 1fr) 136px 152px 140px 156px;
     align-items: center;
     gap: 14px;
-    padding: 14px 18px;
+    padding: 13px 18px;
     width: 100%;
     cursor: pointer;
 }
 
-/* Kolona 1: expand + ID/naziv, projekat, dobavljač, datum */
+/* ── Kolona 1: naziv + broj, ispod dobavljač · projekat · stavke · datum ── */
 .order-info-group {
     display: flex;
     flex-direction: column;
-    gap: 2px;
+    gap: 3px;
     min-width: 0;
 }
 
@@ -688,26 +690,144 @@
     display: flex;
     align-items: center;
     gap: 8px;
-    flex-wrap: wrap;
-    row-gap: 2px;
+    min-width: 0;
 }
 
-/* Kolona 2: cijena — isti oblik kao .offer-row-price */
+.order-title-text {
+    font-size: 14px;
+    font-weight: 600;
+    color: #111827;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* Broj je identifikator prema dobavljaču — mora se vidjeti, ali ne smije
+   nadjačati naziv (zato čip, a ne isti font kao naslov). */
+.order-number-chip {
+    flex-shrink: 0;
+    font-size: 11px;
+    font-weight: 600;
+    color: #6b7280;
+    background: #f3f4f6;
+    padding: 2px 7px;
+    border-radius: 5px;
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+}
+
+.order-meta-info {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 12px;
+    color: #9ca3af;
+    flex-wrap: wrap;
+    row-gap: 4px;
+    /* Poravnanje ispod naziva — mimo chevrona (28px) + gap (8px). */
+    padding-left: 36px;
+    min-width: 0;
+}
+
+.order-meta-cell {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    white-space: nowrap;
+}
+
+.order-meta-cell .material-icons-round {
+    font-size: 14px;
+}
+
+.order-project-text {
+    font-size: 12px;
+    color: #4b5563;
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 220px;
+}
+
+/* ── Kolona 2: prijem stavki ── */
+.order-progress-col {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 5px;
+    min-width: 0;
+}
+
+.order-progress-label {
+    display: flex;
+    align-items: baseline;
+    gap: 4px;
+    font-size: 11px;
+    color: #9ca3af;
+}
+
+.order-progress-label strong {
+    font-size: 13px;
+    font-weight: 700;
+    color: #374151;
+    font-variant-numeric: tabular-nums;
+}
+
+.order-progress-track {
+    height: 5px;
+    border-radius: 3px;
+    background: #eef0f3;
+    overflow: hidden;
+}
+
+.order-progress-fill {
+    height: 100%;
+    border-radius: 3px;
+    background: #3b82f6;
+    transition: width 0.25s ease;
+}
+
+.order-progress-fill.complete {
+    background: #10b981;
+}
+
+.order-progress-empty {
+    font-size: 12px;
+    font-style: italic;
+    color: #d1d5db;
+}
+
+/* ── Kolona 3: iznos + očekivana isporuka ── */
 .order-price-col {
     display: flex;
-    justify-content: flex-end;
-    align-items: center;
+    flex-direction: column;
+    align-items: flex-end;
+    justify-content: center;
+    gap: 2px;
 }
 
 .order-amount-text {
-    font-size: 14px;
+    font-size: 15px;
     font-weight: 700;
     color: var(--text-primary);
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
 }
 
-/* Kolona 3: status bedž — isti oblik kao .offer-row-status */
+.order-delivery-text {
+    font-size: 11px;
+    color: #9ca3af;
+    white-space: nowrap;
+}
+
+/* Jedini crveni signal u redu — probijen rok isporuke na neprimljenoj narudžbi. */
+.order-delivery-text.late {
+    color: #ef4444;
+    font-weight: 600;
+}
+
+/* ── Kolona 4: status ── */
 .order-status-col {
     display: flex;
     flex-direction: column;
@@ -715,47 +835,25 @@
     gap: 6px;
 }
 
-/* Kolona 4: akcije (Primi sve + meni) — isti oblik kao .offer-row-actions */
+/* ── Kolona 5: akcije (Primi sve + meni) ── */
 .order-actions-col {
     display: flex;
     align-items: center;
     justify-content: flex-end;
     gap: 4px;
-    flex-wrap: wrap;
 }
 
-.order-id-text {
-    font-size: 12px;
-    font-weight: 600;
-    color: #4b5563;
-    font-family: inherit;
-    background: transparent;
-    padding: 0;
-    border-radius: 0;
-    letter-spacing: normal;
-}
+/* Uže od 1200px: red i dalje stane, samo su kolone tijesnije. Ispod 768px
+   se cijeli red slaže u karticu (vidi blok niže). */
+@media (max-width: 1200px) {
+    .order-header-custom {
+        grid-template-columns: minmax(0, 1fr) 112px 130px 124px 136px;
+        gap: 10px;
+    }
 
-.order-project-text {
-    font-size: 13px;
-    color: #1f2937;
-    font-weight: 500;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-}
-
-.order-meta-info {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    font-size: 12px;
-    color: #9ca3af;
-    flex-wrap: wrap;
-}
-
-.meta-separator {
-    color: #d1d5db;
-    margin: 0 2px;
+    .order-project-text {
+        max-width: 140px;
+    }
 }
 
 /* Unified dimensions for actions */
@@ -1655,13 +1753,10 @@
         padding: 4px 10px;
     }
 
-    .order-id-text {
+    .order-title-text {
         font-size: 16px;
         color: #111827;
-    }
-
-    .meta-separator {
-        display: none;
+        white-space: normal;
     }
 
     .order-meta-info {
@@ -1670,13 +1765,24 @@
         align-items: flex-start;
         gap: 6px;
         font-size: 13px;
+        padding-left: 0;   /* nema chevrona u ovom redu — on je gore desno */
     }
 
-    /* Cijena je sada zaseban red (.order-price-col), full-width i istaknuta —
+    .order-project-text {
+        max-width: 100%;
+    }
+
+    /* Traka prijema ide punom širinom kartice, iznad cijene. */
+    .order-progress-col {
+        width: 100%;
+        padding: 0 16px 12px;
+    }
+
+    /* Cijena je zaseban red (.order-price-col), full-width i istaknuta —
        ranije je bila zadnji span unutar .order-meta-info. */
     .order-price-col {
         width: 100%;
-        justify-content: flex-start;
+        align-items: flex-start;
         padding: 0 16px 12px;
     }
 

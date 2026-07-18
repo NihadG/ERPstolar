@@ -1,17 +1,19 @@
 'use client';
 
 import { useState, useMemo, useEffect } from 'react';
-import type { Order, Supplier, Project, ProductMaterial, OrderItem } from '@/lib/types';
+import type { Order, Supplier, Project, ProductMaterial } from '@/lib/types';
 import { createOrder, saveOrder, deleteOrder, updateOrderStatus, markOrderSent, markMaterialsReceived, getOrder, deleteOrderItemsByIds, updateOrderItem, recalculateOrderTotal } from '@/lib/services';
 import { useData } from '@/context/DataContext';
-import { generateOrderPDF, generatePDFFromHTML, generatePDFBlobFromHTML, type OrderPDFData } from '@/lib/pdfGenerator';
+import { buildOrderPrintDocument } from '@/lib/print/orderDocument';
+import { exportHTMLToPDFBlob, exportHTMLToPDFFile, toSafeFileName } from '@/lib/pdfExport';
 import { useGoogleIntegration } from '@/lib/google/useGoogleIntegration';
 import { fileToSubfolder } from '@/lib/google/projectDrive';
 import { DropdownMenu } from '@/components/ui/DropdownMenu';
 import Modal from '@/components/ui/Modal';
 import { OrderWizardModal } from './OrderWizardModal';
 import { ORDER_STATUSES, MATERIAL_STATUSES, ALLOWED_ORDER_TRANSITIONS } from '@/lib/types';
-import { formatCurrency, formatDate, getStatusClass } from '@/lib/utils';
+import { formatCurrency, formatDate, getStatusClass, plural } from '@/lib/utils';
+import { daysUntil } from '@/lib/planning';
 import { useIsMobile } from '@/hooks/useIsMobile';
 import MobileOrdersView from './mobile/MobileOrdersView';
 import './OrdersTab.css';
@@ -1088,286 +1090,39 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
         onRefresh('orders', 'projects');
     }
 
-    // Print order document
+    // ============================================
+    // ŠTAMPA / PDF
+    //
+    // Layout živi u lib/print/orderDocument.ts — dijele ga štampa,
+    // "Preuzmi PDF" i "Spremi na Drive", pa se ne mogu razići.
+    // ============================================
+
+    function buildOrderDocument(order: Order) {
+        return buildOrderPrintDocument({
+            order,
+            supplier: suppliers.find(s => s.Supplier_ID === order.Supplier_ID),
+            projects,
+            company: companyInfo,
+        });
+    }
+
     function printOrderDocument() {
         if (!currentOrder) return;
-
-        const supplier = suppliers.find(s => s.Supplier_ID === currentOrder.Supplier_ID);
-
-        // Separate items by type
-        const regularItems: OrderItem[] = [];
-        const glassItems: { item: OrderItem; pieces: any[] }[] = [];
-        const aluDoorItems: { item: OrderItem; doors: any[] }[] = [];
-
-        (currentOrder.items || []).sort((a, b) => (a.Material_Name || '').localeCompare(b.Material_Name || '', 'hr')).forEach(item => {
-            let foundGlass = false;
-            let foundAluDoor = false;
-
-            for (const project of projects) {
-                for (const product of (project.products || [])) {
-                    const pm = product.materials?.find(m => m.ID === item.Product_Material_ID);
-                    if (pm?.glassItems && pm.glassItems.length > 0) {
-                        glassItems.push({ item, pieces: pm.glassItems });
-                        foundGlass = true;
-                        break;
-                    }
-                    if (pm?.aluDoorItems && pm.aluDoorItems.length > 0) {
-                        aluDoorItems.push({ item, doors: pm.aluDoorItems });
-                        foundAluDoor = true;
-                        break;
-                    }
-                }
-                if (foundGlass || foundAluDoor) break;
-            }
-
-            if (!foundGlass && !foundAluDoor) {
-                regularItems.push(item);
-            }
-        });
-
-        const html = generateOrderHtml(currentOrder, supplier, regularItems, glassItems, aluDoorItems);
-
-        // Print
+        const doc = buildOrderDocument(currentOrder);
         const printWindow = window.open('', '_blank');
-        if (printWindow) {
-            printWindow.document.write(html);
-            printWindow.document.close();
-            printWindow.focus();
-            setTimeout(() => printWindow.print(), 250);
-        }
-    }
-
-    function generateOrderHtml(order: Order, supplier: Supplier | undefined, regularItems: any[], glassItems: any[], aluDoorItems: any[]) {
-        const regularTableHtml = regularItems.length > 0 ? `
-            <h3 style="margin: 24px 0 12px; font-size: 14px; font-weight: 600;">Materijali</h3>
-            <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
-                <thead>
-                    <tr style="background: #f5f5f7;">
-                        <th style="padding: 10px; text-align: left; border-bottom: 1px solid #e5e5e5;">#</th>
-                        <th style="padding: 10px; text-align: left; border-bottom: 1px solid #e5e5e5;">Materijal</th>
-                        <th style="padding: 10px; text-align: right; border-bottom: 1px solid #e5e5e5;">Količina</th>
-                        <th style="padding: 10px; text-align: left; border-bottom: 1px solid #e5e5e5;">Jedinica</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    ${regularItems.map((item, idx) => `
-                        <tr>
-                            <td style="padding: 10px; border-bottom: 1px solid #f0f0f0;">${idx + 1}</td>
-                            <td style="padding: 10px; border-bottom: 1px solid #f0f0f0;">${item.Material_Name}</td>
-                            <td style="padding: 10px; text-align: right; border-bottom: 1px solid #f0f0f0;">${item.Quantity}</td>
-                            <td style="padding: 10px; border-bottom: 1px solid #f0f0f0;">${item.Unit}</td>
-                        </tr>
-                    `).join('')}
-                </tbody>
-            </table>
-        ` : '';
-
-        const glassTableHtml = glassItems.length > 0 ? `
-            <h3 style="margin: 24px 0 12px; font-size: 14px; font-weight: 600;">Stakla</h3>
-            <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
-                <thead>
-                    <tr style="background: #f5f5f7;">
-                        <th style="padding: 10px; text-align: left; border-bottom: 1px solid #e5e5e5;">#</th>
-                        <th style="padding: 10px; text-align: left; border-bottom: 1px solid #e5e5e5;">Vrsta stakla</th>
-                        <th style="padding: 10px; text-align: right; border-bottom: 1px solid #e5e5e5;">Kom</th>
-                        <th style="padding: 10px; text-align: left; border-bottom: 1px solid #e5e5e5;">Dimenzije</th>
-                        <th style="padding: 10px; text-align: right; border-bottom: 1px solid #e5e5e5;">m²</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    ${glassItems.map((g, idx) => {
-            const totalArea = g.pieces.reduce((sum: number, p: any) => {
-                const qty = parseInt(p.Qty) || 1;
-                const w = parseFloat(p.Width) || 0;
-                const h = parseFloat(p.Height) || 0;
-                return sum + (w * h / 1000000 * qty);
-            }, 0);
-            return `
-                            <tr style="background: #fafafa;">
-                                <td style="padding: 10px; font-weight: 600;">${idx + 1}</td>
-                                <td colspan="3" style="padding: 10px; font-weight: 600;">${g.item.Material_Name}</td>
-                                <td style="padding: 10px; text-align: right; font-weight: 600;">${totalArea.toFixed(2)}</td>
-                            </tr>
-                            ${g.pieces.map((p: any, pIdx: number) => {
-                const qty = parseInt(p.Qty) || 1;
-                const w = parseFloat(p.Width) || 0;
-                const h = parseFloat(p.Height) || 0;
-                const edge = p.Edge_Processing === true || p.Edge_Processing === 'true';
-                return `
-                                    <tr>
-                                        <td style="padding: 8px 10px 8px 24px; color: #86868b; font-size: 12px;">${idx + 1}.${pIdx + 1}</td>
-                                        <td style="padding: 8px 10px;"></td>
-                                        <td style="padding: 8px 10px; text-align: right;">${qty}</td>
-                                        <td style="padding: 8px 10px;">${w} × ${h} mm${edge ? ' <span style="background:#e8f5e9;padding:2px 6px;border-radius:4px;font-size:11px;">brušeno</span>' : ''}</td>
-                                        <td style="padding: 8px 10px;"></td>
-                                    </tr>
-                                `;
-            }).join('')}
-                        `;
-        }).join('')}
-                </tbody>
-            </table>
-        ` : '';
-
-        const aluDoorHtml = aluDoorItems.length > 0 ? `
-            <h3 style="margin: 24px 0 12px; font-size: 14px; font-weight: 600;">Alu Vrata</h3>
-            ${aluDoorItems.map((a, idx) => {
-            const totalArea = a.doors.reduce((sum: number, d: any) => {
-                const qty = parseInt(d.Qty) || 1;
-                const w = parseFloat(d.Width) || 0;
-                const h = parseFloat(d.Height) || 0;
-                return sum + (w * h / 1000000 * qty);
-            }, 0);
-            return `
-                    <div style="margin-bottom: 16px;">
-                        <div style="background: #f5f5f7; padding: 10px 14px; border-radius: 8px 8px 0 0; font-weight: 600;">
-                            ${idx + 1}. ${a.item.Material_Name} <span style="color: #86868b; font-weight: 400;">(${totalArea.toFixed(2)} m²)</span>
-                        </div>
-                        ${a.doors.map((d: any, dIdx: number) => {
-                const qty = parseInt(d.Qty) || 1;
-                const w = parseFloat(d.Width) || 0;
-                const h = parseFloat(d.Height) || 0;
-                return `
-                                <div style="border: 1px solid #e5e5e5; border-top: none; padding: 12px 14px;">
-                                    <div style="display: flex; gap: 16px; margin-bottom: 8px; font-size: 13px;">
-                                        <span style="color: #86868b;">${idx + 1}.${dIdx + 1}</span>
-                                        <strong>${w} × ${h} mm</strong>
-                                        <span>${qty} kom</span>
-                                    </div>
-                                    <div style="font-size: 12px; color: #1d1d1f; line-height: 1.6;">
-                                        <div><span style="color: #86868b;">Ram:</span> ${d.Frame_Type || '-'}${d.Frame_Color ? ', ' + d.Frame_Color : ''}</div>
-                                        <div><span style="color: #86868b;">Staklo:</span> ${d.Glass_Type || '-'}</div>
-                                        <div><span style="color: #86868b;">Baglame:</span> ${d.Hinge_Type || '-'}, ${d.Hinge_Side || 'lijevo'}${d.Hinge_Color ? ', ' + d.Hinge_Color : ''}</div>
-                                        ${d.Integrated_Handle ? '<div><span style="color: #86868b;">Ručka:</span> Integrisana</div>' : ''}
-                                        ${d.Note ? `<div style="margin-top: 6px; font-style: italic; color: #6e6e73;"><span style="color: #86868b;">Napomena:</span> ${d.Note}</div>` : ''}
-                                    </div>
-                                </div>
-                            `;
-            }).join('')}
-                    </div>
-                `;
-        }).join('')}
-        ` : '';
-
-        return `
-            <!DOCTYPE html>
-            <html>
-            <head>
-                <meta charset="utf-8">
-                <title>Narudžba ${order.Order_Number}</title>
-                <style>
-                    .print-layout * { box-sizing: border-box; margin: 0; padding: 0; }
-                    .print-layout { 
-                        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; 
-                        padding: 24px; 
-                        color: #1d1d1f; 
-                        background: white; 
-                        width: 794px;
-                        overflow: hidden;
-                    }
-                    .print-layout .header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 32px; padding-bottom: 24px; border-bottom: 1px solid #e5e5e5; }
-                    .print-layout .company-info { display: flex; flex-direction: column; gap: 6px; }
-                    .print-layout .company-logo { max-width: 180px; max-height: 60px; width: auto; height: auto; object-fit: contain; }
-                    .print-layout .company-name { font-size: 20px; font-weight: 700; letter-spacing: -0.3px; color: #1d1d1f; margin: 0; }
-                    .print-layout .company-details p { font-size: 11px; color: #86868b; margin: 0 0 2px 0; }
-                    .print-layout .order-info { text-align: right; font-size: 14px; }
-                    .print-layout .order-number { font-size: 18px; font-weight: 600; }
-                    .print-layout .supplier-section { background: #f5f5f7; padding: 16px; border-radius: 12px; margin-bottom: 24px; }
-                    .print-layout .supplier-name { font-size: 16px; font-weight: 600; margin-bottom: 4px; }
-                    .print-layout .supplier-contact { font-size: 13px; color: #86868b; }
-                    .print-layout .notes { margin-top: 24px; padding: 12px 16px; background: #fffaf0; border-radius: 8px; border-left: 3px solid #f5a623; font-size: 13px; }
-                    .print-layout .footer { margin-top: 32px; padding-top: 16px; border-top: 1px solid #e5e5e5; font-size: 12px; color: #86868b; display: flex; justify-content: space-between; }
-                    @media print { 
-                        .print-layout { padding: 20px; } 
-                        body { margin: 0; padding: 0; }
-                    }
-                </style>
-            </head>
-            <body>
-                <div class="print-layout">
-                    <div class="header">
-                        <div class="company-info">
-                            ${companyInfo.logoBase64 ? `<img class="company-logo" src="${companyInfo.logoBase64}" alt="${companyInfo.name}" />` : ''}
-                            ${(!companyInfo.logoBase64 || !companyInfo.hideNameWhenLogo) ? `<h1 class="company-name">${companyInfo.name}</h1>` : ''}
-                            <div class="company-details">
-                                <p>${companyInfo.address}</p>
-                                <p>${[companyInfo.phone, companyInfo.email].filter(Boolean).join(' · ')}</p>
-                            </div>
-                        </div>
-                        <div class="order-info">
-                            <div class="order-number">Narudžba: ${order.Order_Number}</div>
-                            <div>Datum: ${formatDate(order.Order_Date)}</div>
-                        </div>
-                    </div>
-                    
-                    <div class="supplier-section">
-                        <div class="supplier-name">${order.Supplier_Name || 'Dobavljač'}</div>
-                        <div class="supplier-contact">
-                            ${[supplier?.Phone, supplier?.Email, supplier?.Address].filter(Boolean).join(' | ')}
-                        </div>
-                    </div>
-
-                    ${regularTableHtml}
-                    ${glassTableHtml}
-                    ${aluDoorHtml}
-
-                    ${order.Notes ? `<div class="notes"><strong>Napomena:</strong> ${order.Notes}</div>` : ''}
-
-                    <div class="footer">
-                        <span>Očekivana dostava: ${order.Expected_Delivery ? formatDate(order.Expected_Delivery) : 'Po dogovoru'}</span>
-                        <span>Ukupno stavki: ${order.items?.length || 0}</span>
-                    </div>
-                </div>
-            </body>
-            </html>
-        `;
-    }
-
-    // Download order as PDF
-    // Sastavi HTML narudžbe (dijeli download i „spremi na Drive").
-    function buildOrderHtml(order: Order): string {
-        const supplier = suppliers.find(s => s.Supplier_ID === order.Supplier_ID);
-
-        // Re-use logic for grouped items to ensure consistency
-        const regularItems: OrderItem[] = [];
-        const glassItems: { item: OrderItem; pieces: any[] }[] = [];
-        const aluDoorItems: { item: OrderItem; doors: any[] }[] = [];
-
-        (order.items || []).sort((a, b) => (a.Material_Name || '').localeCompare(b.Material_Name || '', 'hr')).forEach(item => {
-            let foundGlass = false;
-            let foundAluDoor = false;
-
-            for (const project of projects) {
-                for (const product of (project.products || [])) {
-                    const pm = product.materials?.find(m => m.ID === item.Product_Material_ID);
-                    if (pm?.glassItems && pm.glassItems.length > 0) {
-                        glassItems.push({ item, pieces: pm.glassItems });
-                        foundGlass = true;
-                        break;
-                    }
-                    if (pm?.aluDoorItems && pm.aluDoorItems.length > 0) {
-                        aluDoorItems.push({ item, doors: pm.aluDoorItems });
-                        foundAluDoor = true;
-                        break;
-                    }
-                }
-                if (foundGlass || foundAluDoor) break;
-            }
-
-            if (!foundGlass && !foundAluDoor) {
-                regularItems.push(item);
-            }
-        });
-
-        // Re-use the EXACT same HTML generator as print
-        return generateOrderHtml(order, supplier, regularItems, glassItems, aluDoorItems);
+        if (!printWindow) return;
+        printWindow.document.write(doc.html);
+        printWindow.document.close();
+        printWindow.focus();
+        setTimeout(() => printWindow.print(), 250);
     }
 
     async function downloadOrderPDF(order: Order) {
         try {
-            const html = buildOrderHtml(order);
-            await generatePDFFromHTML(html, `Narudzba_${order.Order_Number}`, {
-                width: 794 // A4 width at 96 DPI
+            const doc = buildOrderDocument(order);
+            await exportHTMLToPDFFile(doc.body, `Narudzba_${toSafeFileName(order.Order_Number)}`, {
+                css: doc.css,
+                printOverrides: doc.printOverrides,
             });
             showToast('PDF narudžbe preuzet', 'success');
         } catch (error) {
@@ -1389,12 +1144,16 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
         }
         try {
             showToast('Šaljem narudžbu na Drive...', 'info');
-            const html = buildOrderHtml(order);
-            const blob = await generatePDFBlobFromHTML(html, { width: 794 });
+            const doc = buildOrderDocument(order);
+            const blob = await exportHTMLToPDFBlob(doc.body, {
+                css: doc.css,
+                printOverrides: doc.printOverrides,
+            });
+            const filename = `Narudzba_${toSafeFileName(order.Order_Number)}.pdf`;
             let firstFiled: { id: string; webViewLink?: string } | null = null;
             for (const project of targets) {
                 const subId = project.Drive_Subfolders!['Narudžbe'];
-                const filed = await fileToSubfolder(subId, blob, `Narudzba_${order.Order_Number}.pdf`);
+                const filed = await fileToSubfolder(subId, blob, filename);
                 if (!firstFiled) firstFiled = filed;
             }
             if (firstFiled) {
@@ -1599,7 +1358,7 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
                                         {collapsedGroups.has(group.groupKey) ? 'chevron_right' : 'expand_more'}
                                     </span>
                                     <span className="group-title">{group.groupLabel}</span>
-                                    <span className="group-count-badge">{group.count} narudžbi</span>
+                                    <span className="group-count-badge">{group.count} {plural(group.count, 'narudžba', 'narudžbe', 'narudžbi')}</span>
                                 </div>
                                 <div className="group-right">
                                     <span className="group-total">{formatCurrency(group.totalAmount)}</span>
@@ -1623,6 +1382,11 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
                                         const projectName = firstItem?.Project_ID
                                             ? projects.find(p => p.Project_ID === firstItem.Project_ID)?.Client_Name || 'N/A'
                                             : 'N/A';
+
+                                        // Rok isporuke je probijen a materijal još nije stigao — jedini
+                                        // crveni signal u redu, da se ne izgubi među ostalim podacima.
+                                        const daysToDelivery = daysUntil(order.Expected_Delivery);
+                                        const deliveryLate = !allReceived && daysToDelivery !== null && daysToDelivery < 0;
 
                                         const handleQuickReceiveAll = async (e: React.MouseEvent) => {
                                             e.stopPropagation();
@@ -1660,38 +1424,61 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
                                             <div key={order.Order_ID} className={`order-item ${isExpanded ? 'expanded' : ''}`}>
                                                 {/* Order Header Row */}
                                                 <div className="order-header-custom" onClick={() => toggleOrderExpand(order.Order_ID)}>
-                                                    {/* Kolona 1: expand + naziv, projekat, dobavljač, datum */}
+                                                    {/* Kolona 1: naziv + broj, ispod dobavljač · projekat · stavke · datum */}
                                                     <div className="order-info-group">
                                                         <div className="order-top-row">
                                                             <button className={`expand-btn ${isExpanded ? 'expanded' : ''}`}>
                                                                 <span className="material-icons-round">chevron_right</span>
                                                             </button>
-                                                            <span className="order-id-text">{order.Name || `#${order.Order_Number}`}</span>
-                                                            {order.Name && <span style={{ fontSize: '11px', color: '#9ca3af', fontWeight: 500 }}>#{order.Order_Number}</span>}
-                                                            {groupBy !== 'project' && projectName !== 'N/A' && (
-                                                                <>
-                                                                    <span className="meta-separator">•</span>
-                                                                    <span className="order-project-text">{projectName}</span>
-                                                                </>
-                                                            )}
-                                                            {groupBy !== 'supplier' && (
-                                                                <>
-                                                                    <span className="meta-separator">•</span>
-                                                                    <span className="order-supplier-text">{order.Supplier_Name}</span>
-                                                                </>
-                                                            )}
+                                                            <span className="order-title-text">{order.Name || 'Narudžba'}</span>
+                                                            <span className="order-number-chip">{order.Order_Number}</span>
                                                         </div>
                                                         <div className="order-meta-info">
-                                                            <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                                                                <span className="material-icons-round" style={{ fontSize: 14 }}>calendar_today</span>
+                                                            {groupBy !== 'supplier' && order.Supplier_Name && (
+                                                                <span className="order-supplier-text">{order.Supplier_Name}</span>
+                                                            )}
+                                                            {groupBy !== 'project' && projectName !== 'N/A' && (
+                                                                <span className="order-project-text">{projectName}</span>
+                                                            )}
+                                                            <span className="order-meta-cell">
+                                                                <span className="material-icons-round">inventory_2</span>
+                                                                {itemCount} {plural(itemCount, 'stavka', 'stavke', 'stavki')}
+                                                            </span>
+                                                            <span className="order-meta-cell">
+                                                                <span className="material-icons-round">calendar_today</span>
                                                                 {formatDate(order.Order_Date)}
                                                             </span>
                                                         </div>
                                                     </div>
 
-                                                    {/* Kolona 2: cijena */}
+                                                    {/* Kolona 2: prijem stavki — prije se vidio tek kad se red otvori */}
+                                                    <div className="order-progress-col">
+                                                        {itemCount > 0 ? (
+                                                            <>
+                                                                <div className="order-progress-label">
+                                                                    <strong>{receivedCount}/{itemCount}</strong>
+                                                                    <span>primljeno</span>
+                                                                </div>
+                                                                <div className="order-progress-track">
+                                                                    <div
+                                                                        className={`order-progress-fill ${allReceived ? 'complete' : ''}`}
+                                                                        style={{ width: `${Math.round((receivedCount / itemCount) * 100)}%` }}
+                                                                    />
+                                                                </div>
+                                                            </>
+                                                        ) : (
+                                                            <span className="order-progress-empty">bez stavki</span>
+                                                        )}
+                                                    </div>
+
+                                                    {/* Kolona 3: iznos + očekivana isporuka */}
                                                     <div className="order-price-col">
                                                         <span className="order-amount-text">{formatCurrency(order.Total_Amount || 0)}</span>
+                                                        {order.Expected_Delivery && (
+                                                            <span className={`order-delivery-text ${deliveryLate ? 'late' : ''}`}>
+                                                                {deliveryLate ? 'kasni od ' : 'isporuka '}{formatDate(order.Expected_Delivery)}
+                                                            </span>
+                                                        )}
                                                     </div>
 
                                                     {/* Kolona 3: status */}

@@ -53,6 +53,7 @@ import { mergeOfferProducts } from './offerLocking';
 import { assembleProjectGraph, assembleOrders, assembleWorkOrders } from './services/shared/dataAssembler';
 import { naturalCompare } from './naturalCompare';
 import { itemMaterialTotal } from './materialCost';
+import { workOrderDisplayName } from './utils';
 import {
     generateOrderNumber as _generateOrderNumber,
     generateWorkOrderNumber as _generateWorkOrderNumber,
@@ -85,8 +86,32 @@ export function generateUUID(): string {
 
 // Collision-safe ID generators — delegated to shared/idGenerator.ts
 // Uses timestamp+random instead of random-only (was limited to 1000 values/day)
-export function generateOrderNumber(): string {
-    return _generateOrderNumber();
+export function generateOrderNumber(existingOrderNumbers?: (string | undefined | null)[]): string {
+    return _generateOrderNumber(existingOrderNumbers);
+}
+
+/**
+ * Sljedeći broj narudžbe za organizaciju — pročita postojeće da nasumični
+ * par slovo+broj ne padne na već zauzet (vidi lib/orderNumber.ts).
+ *
+ * Isti kompromis kao kod naloga (nextWorkOrderNumberForOrg): dvije narudžbe
+ * kreirane u istom trenutku iz dva uređaja mogu proći kroz istu provjeru.
+ * Kod serijskog kreiranja (createOrdersFromGroups) upis prethodne je gotov
+ * prije sljedećeg čitanja, pa se one međusobno vide.
+ */
+async function nextOrderNumberForOrg(organizationId: string): Promise<string> {
+    try {
+        const snap = await getDocs(query(
+            collection(db, COLLECTIONS.ORDERS),
+            where('Organization_ID', '==', organizationId)
+        ));
+        return generateOrderNumber(snap.docs.map(d => (d.data() as Order).Order_Number));
+    } catch (error) {
+        // Čitanje palo → i dalje treba broj. Bez liste zauzetih rizik je sudar,
+        // ne pad kreiranja narudžbe.
+        console.warn('nextOrderNumberForOrg: čitanje postojećih brojeva palo', error);
+        return generateOrderNumber();
+    }
 }
 
 // ============================================
@@ -1568,7 +1593,7 @@ export async function createOrder(
 
     try {
         const orderId = generateUUID();
-        const orderNumber = generateOrderNumber();
+        const orderNumber = await nextOrderNumberForOrg(organizationId);
 
         const order: Order = {
             Order_ID: orderId,
@@ -3741,6 +3766,23 @@ export async function buildMaterialOrderPlan(
     }
 }
 
+/**
+ * Naziv koji auto-kreirane narudžbe naslijede od naloga — isti onaj pod
+ * kojim nalog stoji u Proizvodnji (workOrderDisplayName: naziv → projekat →
+ * #broj). Vraća undefined kad nalog nema ni naziva ni projekta, da narudžba
+ * ne dobije generičko „Nalog" umjesto vlastitog broja.
+ */
+async function workOrderNameForOrders(workOrderId: string, organizationId: string): Promise<string | undefined> {
+    try {
+        const wo = await getWorkOrder(workOrderId, organizationId);
+        if (!wo) return undefined;
+        const name = workOrderDisplayName(wo);
+        return name === 'Nalog' ? undefined : name;
+    } catch {
+        return undefined;   // naziv je kozmetika — ne obara kreiranje narudžbi
+    }
+}
+
 /** Jedna narudžba po grupi (dobavljaču) iz plana — dijeli je auto i selektivni put. */
 async function createOrdersFromGroups(
     workOrderId: string,
@@ -3753,6 +3795,10 @@ async function createOrdersFromGroups(
     const startDate = new Date(plannedStartDate);
     startDate.setDate(startDate.getDate() - 1);
     const expectedDelivery = startDate.toISOString().split('T')[0];
+
+    // Sve narudžbe iz jednog naloga nose naziv tog naloga (dobavljač ih i
+    // dalje razdvaja u listi) — bez toga su u Narudžbama samo brojevi.
+    const orderName = groups.length > 0 ? await workOrderNameForOrders(workOrderId, organizationId) : undefined;
 
     const orderNumbers: string[] = [];
     for (const group of groups) {
@@ -3772,6 +3818,7 @@ async function createOrdersFromGroups(
         }));
 
         const result = await createOrder({
+            Name: orderName,
             Supplier_ID: group.supplierId || '',
             Supplier_Name: group.supplierName,
             Expected_Delivery: expectedDelivery,

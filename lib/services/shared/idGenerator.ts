@@ -13,6 +13,7 @@
  */
 
 import { nextWorkOrderNumber } from '../../workOrderNumber';
+import { nextOrderNumber } from '../../orderNumber';
 
 /**
  * Generate a sequential offer number.
@@ -69,19 +70,14 @@ export function generateInvoiceNumber(existingInvoiceNumbers?: string[]): string
 }
 
 /**
- * Generate a collision-safe order number.
- * Format: N-YYYYMMDD-HHMMSS-RRR
+ * Broj narudžbe: N + GODINA-MJESEC/SLOVO+BROJ (npr. N2026-07/K7).
+ * Slovo i broj su nasumični; postojeći brojevi iz istog mjeseca se
+ * proslijede da se izbjegne sudar.
+ *
+ * Format i parsiranje žive u lib/orderNumber.ts (jedan izvor, testiran).
  */
-export function generateOrderNumber(): string {
-    const now = new Date();
-    const year = now.getFullYear();
-    const month = String(now.getMonth() + 1).padStart(2, '0');
-    const day = String(now.getDate()).padStart(2, '0');
-    const hours = String(now.getHours()).padStart(2, '0');
-    const minutes = String(now.getMinutes()).padStart(2, '0');
-    const seconds = String(now.getSeconds()).padStart(2, '0');
-    const random = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
-    return `N-${year}${month}${day}-${hours}${minutes}${seconds}-${random}`;
+export function generateOrderNumber(existingOrderNumbers?: (string | undefined | null)[]): string {
+    return nextOrderNumber(existingOrderNumbers || []);
 }
 
 /**

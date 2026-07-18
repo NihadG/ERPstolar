@@ -13,12 +13,19 @@ const inter = Inter({ subsets: ['latin'] })
 // fonts.googleapis.com za CSS + fonts.gstatic.com za sam font).
 // display:'block' a NE 'swap': sa swap-om bi se nakratko prikazale sirove ligature
 // ("arrow_back", "business") umjesto ikona dok se font ne učita.
+//
+// adjustFontFallback:false — next/font inače sam napravi rezervni font iz
+// local("Arial") sa size-adjust:219%. Za tekstualni font to je dobro (manje
+// pomjeranja rasporeda), ali za IKONE je štetno: kad font ne stigne, taj
+// rezervni ispiše imena ligatura ("receipt_long") i to uvećano 2.2×. Bez njega
+// eventualni ispad ostane u normalnoj veličini umjesto da razbije raspored.
 const materialIcons = localFont({
     src: './fonts/material-icons-round.woff2',
     variable: '--font-material-icons',
     display: 'block',
     weight: 'normal',
     style: 'normal',
+    adjustFontFallback: false,
 })
 
 export const metadata: Metadata = {

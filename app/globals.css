@@ -75,7 +75,11 @@ html {
    NE dirati text-transform i font-feature-settings: ikone su ligature, pa bi
    ih uppercase ili isključen 'liga' pretvorio u sirovi tekst ("arrow_back"). */
 .material-icons-round {
-  font-family: var(--font-material-icons), 'Material Icons Round';
+  /* Rezerva UNUTAR var(): ako --font-material-icons ikad ne bude definisan
+     (npr. font CSS iz layout-a nije stigao), prazan var() obara CIJELU
+     deklaraciju — pa bi i ime porodice iza zareza otpalo i ikone bi pale na
+     tekstualni font kao sirove ligature. Ovako pad ide na porodicu, ne u prazno. */
+  font-family: var(--font-material-icons, 'Material Icons Round'), 'Material Icons Round';
   font-weight: normal;
   font-style: normal;
   font-size: 24px;

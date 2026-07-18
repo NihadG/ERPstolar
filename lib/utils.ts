@@ -376,6 +376,23 @@ export function isValidPhone(phone: string): boolean {
     return phoneRegex.test(phone.replace(/[\s-]/g, ''));
 }
 
+/**
+ * Bosanska množina uz broj: 1 → jednina, 2-4 → mala množina, ostalo → velika.
+ * Izuzetak su 11-14, koji idu na veliku ("11 narudžbi", ne "11 narudžbe").
+ *
+ * plural(1, 'stavka', 'stavke', 'stavki') → 'stavka'
+ * plural(3, 'stavka', 'stavke', 'stavki') → 'stavke'
+ * plural(8, 'stavka', 'stavke', 'stavki') → 'stavki'
+ */
+export function plural(count: number, one: string, few: string, many: string): string {
+    const n = Math.abs(Math.trunc(count)) % 100;
+    if (n >= 11 && n <= 14) return many;
+    const last = n % 10;
+    if (last === 1) return one;
+    if (last >= 2 && last <= 4) return few;
+    return many;
+}
+
 // ============================================
 // CSS VARIABLE HELPERS
 // ============================================
