@@ -321,16 +321,19 @@ export function projectStatusRank(status: string | null | undefined): number {
 }
 
 /**
- * Broj naloga u statusu „U toku" po projektu. Nalog nema Project_ID — veza ide
- * preko stavki, pa se po nalogu broje RAZLIČITI projekti (nalog koji pokriva
- * više projekata svakom doda 1, ne po stavci).
+ * Broj naloga koji se STVARNO rade po projektu — Status je 'U toku' KAO PODNI
+ * status (floor) čak i kad su svi otvoreni items pauzirani, pa se mora
+ * isključiti preko isOrderPaused (isti izvor kao "Pauzirano" bedž na kartici).
+ * Nalog nema Project_ID — veza ide preko stavki, pa se po nalogu broje
+ * RAZLIČITI projekti (nalog koji pokriva više projekata svakom doda 1, ne po stavci).
  */
 export function countActiveWorkOrdersByProject(
-    workOrders: { Status?: string; items?: { Project_ID?: string }[] }[]
+    workOrders: { Status?: string; items?: { Project_ID?: string; Status?: string; Is_Paused?: boolean }[] }[]
 ): Map<string, number> {
     const counts = new Map<string, number>();
     workOrders.forEach(wo => {
         if (wo.Status !== 'U toku') return;
+        if (isOrderPaused(wo)) return;
         const projectIds = new Set<string>();
         (wo.items || []).forEach(item => {
             if (item.Project_ID) projectIds.add(item.Project_ID);

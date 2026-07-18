@@ -379,6 +379,18 @@ describe('Sortiranje projekata — status pa aktivnost', () => {
         expect(counts.get('p2')).toBeUndefined();
     });
 
+    test('pauzirani nalog se NE broji kao aktivan (Status ostaje "U toku" kao podni status)', () => {
+        // Regresija: WorkOrder.Status je 'U toku' KAO PODNI STATUS čak i kad su
+        // svi otvoreni items pauzirani ("Pauzirano" bedž je izvedeni prikaz).
+        const counts = countActiveWorkOrdersByProject([
+            { Status: 'U toku', items: [{ Project_ID: 'p1', Status: 'U toku', Is_Paused: true }] },
+            { Status: 'U toku', items: [{ Project_ID: 'p1', Status: 'U toku', Is_Paused: true }] },
+            { Status: 'U toku', items: [{ Project_ID: 'p2', Status: 'U toku', Is_Paused: false }] },
+        ]);
+        expect(counts.get('p1')).toBeUndefined();
+        expect(counts.get('p2')).toBe(1);
+    });
+
     test('nalog s više stavki istog projekta se broji JEDNOM', () => {
         const counts = countActiveWorkOrdersByProject([
             { Status: 'U toku', items: [{ Project_ID: 'p1' }, { Project_ID: 'p1' }, { Project_ID: 'p2' }] },
