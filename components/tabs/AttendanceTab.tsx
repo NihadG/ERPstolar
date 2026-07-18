@@ -38,6 +38,8 @@ import {
 } from 'lucide-react';
 import Modal from '@/components/ui/Modal';
 import { useData } from '@/context/DataContext';
+import { useIsMobile } from '@/hooks/useIsMobile';
+import MobileAttendanceView from '@/components/tabs/mobile/MobileAttendanceView';
 
 interface AttendanceTabProps {
     workers: Worker[];
@@ -144,6 +146,12 @@ export default function AttendanceTab({ workers, workOrders, onRefresh, showToas
         return set.has(`${workerId}|${dateStr}`);
     }
 
+    // (radnik, dan): Prisutan/Teren bez ijedne proknjižene dnevnice — koristi mobilni prikaz za indikatore
+    function isPresentUnbooked(workerId: string, dateStr: string): boolean {
+        const a = getAttendance(workerId, dateStr);
+        return !!a && (a.Status === 'Prisutan' || a.Status === 'Teren') && isBookedInfo(workerId, dateStr) === false;
+    }
+
     // Generate calendar days for ALL loaded months
     const flattenedDays = useMemo(() => {
         return loadedMonths.flatMap(m => {
@@ -245,6 +253,15 @@ export default function AttendanceTab({ workers, workOrders, onRefresh, showToas
         setSelectedStatus(attendance?.Status || '');
         setNotes(attendance?.Notes || '');
         setEditModalOpen(true);
+    }
+
+    // Mobilni prikaz radi s golim ISO datumom umjesto tabelarnim dayInfo objektom
+    function dayInfoFor(dateStr: string): { day: number; dateStr: string; dayName: string } {
+        const d = new Date(dateStr + 'T00:00:00');
+        return { day: d.getDate(), dateStr, dayName: ['Ned', 'Pon', 'Uto', 'Sri', 'Čet', 'Pet', 'Sub'][d.getDay()] };
+    }
+    function handleCellClickByDate(worker: Worker, dateStr: string) {
+        handleCellClick(worker, dayInfoFor(dateStr));
     }
 
     // Save attendance with OPTIMISTIC UPDATE
@@ -366,9 +383,10 @@ export default function AttendanceTab({ workers, workOrders, onRefresh, showToas
     // "KAO JUČER": ponovi jučerašnji status + ISTO knjiženje (isti nalozi/stavke, ista prisutnost).
     // Ide isključivo kroz postojeći pipeline bookWorkerDayItems → renormalizeWorkerDay → recalculateWorkOrder;
     // idempotentno (postojeći/ručni zapisi imaju prednost). Jučer bez knjiženja → normalan upit.
-    async function handleRepeatYesterday() {
-        if (!selectedCell || !organizationId) return;
-        const { workerId, workerName, date } = selectedCell;
+    async function handleRepeatYesterday(target?: { workerId: string; workerName: string; date: string }) {
+        const cell = target || selectedCell;
+        if (!cell || !organizationId) return;
+        const { workerId, workerName, date } = cell;
         const yesterday = shiftISO(date, -1);
 
         let yAtt: WorkerAttendance | undefined = getAttendance(workerId, yesterday);
@@ -517,6 +535,10 @@ export default function AttendanceTab({ workers, workOrders, onRefresh, showToas
         setBulkEditDate({ dateStr: dayInfo.dateStr, day: dayInfo.day, dayName: dayInfo.dayName });
         setBulkStatuses(initialStatuses);
         setBulkEditModalOpen(true);
+    }
+
+    function openBulkEditModalByDate(dateStr: string) {
+        openBulkEditModal(dayInfoFor(dateStr));
     }
 
     // Set all workers to a specific status
@@ -769,6 +791,322 @@ export default function AttendanceTab({ workers, workOrders, onRefresh, showToas
             nextMonth(); // Reuse nextMonth logic which appends
         }
     };
+
+    // Modali dijeljeni između desktop i mobilnog prikaza (jedan izvor istine, bez dupliranja)
+    function renderModals() {
+        return (
+            <>
+                {/* Edit Modal */}
+                <Modal
+                    isOpen={editModalOpen}
+                    onClose={() => {
+                        setEditModalOpen(false);
+                        setSelectedCell(null);
+                        setSelectedStatus('');
+                        setNotes('');
+                    }}
+                    title="Označi Prisustvo"
+                    footer={
+                        <>
+                            {selectedCell && (() => {
+                                const yStatus = yesterdayStatusOf(selectedCell.workerId, selectedCell.date);
+                                return (
+                                    <button
+                                        className="glass-btn"
+                                        onClick={() => handleRepeatYesterday()}
+                                        title={yStatus
+                                            ? `Ponovi jučerašnji dan: ${yStatus}${(yStatus === 'Prisutan' || yStatus === 'Teren') ? ' + isti nalozi' : ''}`
+                                            : 'Ponovi jučerašnji status i knjiženje'}
+                                        style={{ marginRight: 'auto', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+                                    >
+                                        <History size={15} />
+                                        Kao jučer{yStatus ? ` (${yStatus})` : ''}
+                                    </button>
+                                );
+                            })()}
+                            <button className="btn btn-secondary" onClick={() => setEditModalOpen(false)}>
+                                Otkaži
+                            </button>
+                            <button className="btn btn-primary" onClick={() => handleSaveAttendance()} disabled={!selectedStatus}>
+                                Sačuvaj
+                            </button>
+                        </>
+                    }
+                >
+                    {/* ... existing modal content ... */}
+                    {selectedCell && (
+                        <div>
+                            <div style={{ marginBottom: '20px', paddingBottom: '16px', borderBottom: '1px solid #e2e8f0' }}>
+                                <div style={{ fontSize: '16px', fontWeight: 600, color: '#0f172a', marginBottom: '4px' }}>
+                                    {selectedCell.dateLabel}
+                                </div>
+                                <div style={{ fontSize: '14px', color: '#64748b' }}>
+                                    {selectedCell.workerName}
+                                </div>
+                            </div>
+
+                            <div className="form-group">
+                                <label>Status</label>
+                                <div style={{
+                                    display: 'grid',
+                                    gridTemplateColumns: 'repeat(3, 1fr)',
+                                    gap: '12px',
+                                    marginTop: '8px'
+                                }}>
+                                    {ATTENDANCE_STATUSES.map(status => {
+                                        const display = getStatusDisplay(status);
+                                        const isSelected = selectedStatus === status;
+                                        return (
+                                            <button
+                                                key={status}
+                                                type="button"
+                                                onClick={() => setSelectedStatus(status)}
+                                                style={{
+                                                    padding: '16px 12px',
+                                                    border: `2px solid ${isSelected ? display.color : '#e2e8f0'}`,
+                                                    borderRadius: '12px',
+                                                    background: isSelected ? display.bg : 'white',
+                                                    cursor: 'pointer',
+                                                    transition: 'all 0.2s',
+                                                    display: 'flex',
+                                                    flexDirection: 'column',
+                                                    alignItems: 'center',
+                                                    gap: '8px'
+                                                }}
+                                                onMouseEnter={(e) => {
+                                                    if (!isSelected) {
+                                                        e.currentTarget.style.borderColor = '#cbd5e1';
+                                                        e.currentTarget.style.background = '#f8fafc';
+                                                    }
+                                                }}
+                                                onMouseLeave={(e) => {
+                                                    if (!isSelected) {
+                                                        e.currentTarget.style.borderColor = '#e2e8f0';
+                                                        e.currentTarget.style.background = 'white';
+                                                    }
+                                                }}
+                                            >
+                                                <span style={{ color: display.color }}><display.icon size={24} /></span>
+                                                <span style={{
+                                                    fontSize: '13px',
+                                                    fontWeight: isSelected ? 600 : 500,
+                                                    color: isSelected ? display.color : '#64748b'
+                                                }}>
+                                                    {status}
+                                                </span>
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+
+                            <div className="form-group" style={{ marginTop: '20px' }}>
+                                <label>Napomena (opcionalno)</label>
+                                <textarea
+                                    value={notes}
+                                    onChange={(e) => setNotes(e.target.value)}
+                                    placeholder="Razlog odsutnosti, lokacija terena..."
+                                    rows={3}
+                                    style={{ width: '100%', marginTop: '8px' }}
+                                />
+                            </div>
+                        </div>
+                    )}
+                </Modal>
+
+                {/* Bulk Edit Modal */}
+                <Modal
+                    isOpen={bulkEditModalOpen}
+                    onClose={() => {
+                        setBulkEditModalOpen(false);
+                        setBulkEditDate(null);
+                        setBulkStatuses({});
+                    }}
+                    title={
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                            <Users size={24} />
+                            <span>Bulk uređivanje - {bulkEditDate?.dateStr} ({bulkEditDate?.dayName})</span>
+                        </div>
+                    }
+                    footer={
+                        <>
+                            <button className="btn btn-secondary" onClick={() => setBulkEditModalOpen(false)}>
+                                Otkaži
+                            </button>
+                            <button className="glass-btn glass-btn-primary" onClick={handleBulkSave}>
+                                Sačuvaj sve
+                            </button>
+                        </>
+                    }
+                >
+                    <div>
+                        {/* Quick Set All Buttons */}
+                        <div style={{
+                            marginBottom: '20px',
+                            padding: '16px',
+                            background: 'linear-gradient(135deg, #f8fafc, #f1f5f9)',
+                            borderRadius: '12px',
+                            border: '1px solid #e2e8f0'
+                        }}>
+                            <div style={{ fontSize: '13px', fontWeight: 600, color: '#475569', marginBottom: '12px' }}>
+                                ⚡ Brzo postavi sve radnike na:
+                            </div>
+                            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                                {/* Kao jučer: svaki radnik dobije svoj jučerašnji status (bez jučerašnjeg unosa → ne mijenja se) */}
+                                {bulkEditDate && (
+                                    <button
+                                        className="glass-btn"
+                                        onClick={() => {
+                                            const next: Record<string, string> = { ...bulkStatuses };
+                                            let applied = 0;
+                                            activeWorkers.forEach(w => {
+                                                const ys = yesterdayStatusOf(w.Worker_ID, bulkEditDate.dateStr);
+                                                if (ys) { next[w.Worker_ID] = ys; applied++; }
+                                            });
+                                            setBulkStatuses(next);
+                                            showToast(applied > 0
+                                                ? `Postavljeno "kao jučer" za ${applied} radnika`
+                                                : 'Nema jučerašnjih unosa', applied > 0 ? 'success' : 'info');
+                                        }}
+                                        title="Svakom radniku postavi status koji je imao jučer"
+                                        style={{ padding: '8px 14px', fontSize: '13px', gap: '6px', fontWeight: 600 }}
+                                    >
+                                        <History size={16} />
+                                        Kao jučer
+                                    </button>
+                                )}
+                                {ATTENDANCE_STATUSES.map(status => {
+                                    const display = getStatusDisplay(status);
+                                    return (
+                                        <button
+                                            key={status}
+                                            className="glass-btn"
+                                            onClick={() => handleBulkSetAll(status)}
+                                            style={{
+                                                padding: '8px 14px',
+                                                fontSize: '13px',
+                                                gap: '6px'
+                                            }}
+                                        >
+                                            <display.icon size={16} style={{ color: display.color }} />
+                                            {status}
+                                        </button>
+                                    );
+                                })}
+                            </div>
+                        </div>
+
+                        {/* Worker List */}
+                        <div style={{
+                            maxHeight: '400px',
+                            overflowY: 'auto',
+                            border: '1px solid #e2e8f0',
+                            borderRadius: '12px'
+                        }}>
+                            {activeWorkers.map((worker, index) => {
+                                const currentStatus = bulkStatuses[worker.Worker_ID] || '';
+                                const display = currentStatus ? getStatusDisplay(currentStatus) : null;
+
+                                return (
+                                    <div
+                                        key={worker.Worker_ID}
+                                        style={{
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            justifyContent: 'space-between',
+                                            padding: '14px 16px',
+                                            borderBottom: index < activeWorkers.length - 1 ? '1px solid #f1f5f9' : 'none',
+                                            background: index % 2 === 0 ? 'white' : '#fafafa'
+                                        }}
+                                    >
+                                        <div>
+                                            <div style={{ fontWeight: 500, color: '#0f172a' }}>{worker.Name}</div>
+                                            <div style={{ fontSize: '12px', color: '#64748b' }}>{worker.Role}</div>
+                                        </div>
+                                        <select
+                                            value={currentStatus}
+                                            onChange={(e) => setBulkStatuses(prev => ({
+                                                ...prev,
+                                                [worker.Worker_ID]: e.target.value
+                                            }))}
+                                            style={{
+                                                padding: '8px 12px',
+                                                borderRadius: '8px',
+                                                border: `2px solid ${display ? display.color : '#e2e8f0'}`,
+                                                background: display ? display.bg : 'white',
+                                                color: display ? display.color : '#64748b',
+                                                fontWeight: 500,
+                                                fontSize: '13px',
+                                                cursor: 'pointer',
+                                                minWidth: '140px'
+                                            }}
+                                        >
+                                            <option value="">— Ne mijenjaj —</option>
+                                            {ATTENDANCE_STATUSES.map(status => (
+                                                <option key={status} value={status}>{status}</option>
+                                            ))}
+                                        </select>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    </div>
+                </Modal>
+
+                {/* Upit knjiženja dnevnica nakon unosa prisustva */}
+                {confirmOpen && (
+                    <AttendanceBookingConfirmModal
+                        isOpen={confirmOpen}
+                        onClose={() => setConfirmOpen(false)}
+                        date={confirmDate}
+                        rows={confirmRows}
+                        workOrders={workOrders}
+                        workers={workers}
+                        organizationId={organizationId || ''}
+                        onConfirm={commitDecisions}
+                        onCreated={onRefresh}
+                        showToast={showToast}
+                    />
+                )}
+
+                {/* Mjesečni obračun plata */}
+                {payrollOpen && (
+                    <PayrollModal
+                        isOpen={payrollOpen}
+                        onClose={() => setPayrollOpen(false)}
+                        workers={workers}
+                        organizationId={organizationId || ''}
+                        showToast={showToast}
+                    />
+                )}
+            </>
+        );
+    }
+
+    const isMobile = useIsMobile();
+    if (isMobile) {
+        return (
+            <>
+                <MobileAttendanceView
+                    workers={activeWorkers}
+                    getAttendance={getAttendance}
+                    isBookedInfo={isBookedInfo}
+                    isPresentUnbooked={isPresentUnbooked}
+                    getStatusDisplay={getStatusDisplay}
+                    yesterdayStatusOf={yesterdayStatusOf}
+                    onCellTap={handleCellClickByDate}
+                    onRepeatYesterday={(worker, dateStr) =>
+                        handleRepeatYesterday({ workerId: worker.Worker_ID, workerName: worker.Name, date: dateStr })}
+                    onOpenBulkEdit={openBulkEditModalByDate}
+                    onOpenBookingConfirm={openBookingConfirm}
+                    onLoadMonth={loadMonth}
+                    onOpenPayroll={() => setPayrollOpen(true)}
+                    showToast={showToast}
+                />
+                {renderModals()}
+            </>
+        );
+    }
 
     return (
         <div className="tab-content active">
@@ -1047,291 +1385,10 @@ export default function AttendanceTab({ workers, workOrders, onRefresh, showToas
 
 
 
-            {/* Edit Modal */}
-            <Modal
-                isOpen={editModalOpen}
-                onClose={() => {
-                    setEditModalOpen(false);
-                    setSelectedCell(null);
-                    setSelectedStatus('');
-                    setNotes('');
-                }}
-                title="Označi Prisustvo"
-                footer={
-                    <>
-                        {selectedCell && (() => {
-                            const yStatus = yesterdayStatusOf(selectedCell.workerId, selectedCell.date);
-                            return (
-                                <button
-                                    className="glass-btn"
-                                    onClick={handleRepeatYesterday}
-                                    title={yStatus
-                                        ? `Ponovi jučerašnji dan: ${yStatus}${(yStatus === 'Prisutan' || yStatus === 'Teren') ? ' + isti nalozi' : ''}`
-                                        : 'Ponovi jučerašnji status i knjiženje'}
-                                    style={{ marginRight: 'auto', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
-                                >
-                                    <History size={15} />
-                                    Kao jučer{yStatus ? ` (${yStatus})` : ''}
-                                </button>
-                            );
-                        })()}
-                        <button className="btn btn-secondary" onClick={() => setEditModalOpen(false)}>
-                            Otkaži
-                        </button>
-                        <button className="btn btn-primary" onClick={() => handleSaveAttendance()} disabled={!selectedStatus}>
-                            Sačuvaj
-                        </button>
-                    </>
-                }
-            >
-                {/* ... existing modal content ... */}
-                {selectedCell && (
-                    <div>
-                        <div style={{ marginBottom: '20px', paddingBottom: '16px', borderBottom: '1px solid #e2e8f0' }}>
-                            <div style={{ fontSize: '16px', fontWeight: 600, color: '#0f172a', marginBottom: '4px' }}>
-                                {selectedCell.dateLabel}
-                            </div>
-                            <div style={{ fontSize: '14px', color: '#64748b' }}>
-                                {selectedCell.workerName}
-                            </div>
-                        </div>
-
-                        <div className="form-group">
-                            <label>Status</label>
-                            <div style={{
-                                display: 'grid',
-                                gridTemplateColumns: 'repeat(3, 1fr)',
-                                gap: '12px',
-                                marginTop: '8px'
-                            }}>
-                                {ATTENDANCE_STATUSES.map(status => {
-                                    const display = getStatusDisplay(status);
-                                    const isSelected = selectedStatus === status;
-                                    return (
-                                        <button
-                                            key={status}
-                                            type="button"
-                                            onClick={() => setSelectedStatus(status)}
-                                            style={{
-                                                padding: '16px 12px',
-                                                border: `2px solid ${isSelected ? display.color : '#e2e8f0'}`,
-                                                borderRadius: '12px',
-                                                background: isSelected ? display.bg : 'white',
-                                                cursor: 'pointer',
-                                                transition: 'all 0.2s',
-                                                display: 'flex',
-                                                flexDirection: 'column',
-                                                alignItems: 'center',
-                                                gap: '8px'
-                                            }}
-                                            onMouseEnter={(e) => {
-                                                if (!isSelected) {
-                                                    e.currentTarget.style.borderColor = '#cbd5e1';
-                                                    e.currentTarget.style.background = '#f8fafc';
-                                                }
-                                            }}
-                                            onMouseLeave={(e) => {
-                                                if (!isSelected) {
-                                                    e.currentTarget.style.borderColor = '#e2e8f0';
-                                                    e.currentTarget.style.background = 'white';
-                                                }
-                                            }}
-                                        >
-                                            <span style={{ color: display.color }}><display.icon size={24} /></span>
-                                            <span style={{
-                                                fontSize: '13px',
-                                                fontWeight: isSelected ? 600 : 500,
-                                                color: isSelected ? display.color : '#64748b'
-                                            }}>
-                                                {status}
-                                            </span>
-                                        </button>
-                                    );
-                                })}
-                            </div>
-                        </div>
-
-                        <div className="form-group" style={{ marginTop: '20px' }}>
-                            <label>Napomena (opcionalno)</label>
-                            <textarea
-                                value={notes}
-                                onChange={(e) => setNotes(e.target.value)}
-                                placeholder="Razlog odsutnosti, lokacija terena..."
-                                rows={3}
-                                style={{ width: '100%', marginTop: '8px' }}
-                            />
-                        </div>
-                    </div>
-                )}
-            </Modal>
-
-            {/* Bulk Edit Modal */}
-            <Modal
-                isOpen={bulkEditModalOpen}
-                onClose={() => {
-                    setBulkEditModalOpen(false);
-                    setBulkEditDate(null);
-                    setBulkStatuses({});
-                }}
-                title={
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                        <Users size={24} />
-                        <span>Bulk uređivanje - {bulkEditDate?.dateStr} ({bulkEditDate?.dayName})</span>
-                    </div>
-                }
-                footer={
-                    <>
-                        <button className="btn btn-secondary" onClick={() => setBulkEditModalOpen(false)}>
-                            Otkaži
-                        </button>
-                        <button className="glass-btn glass-btn-primary" onClick={handleBulkSave}>
-                            Sačuvaj sve
-                        </button>
-                    </>
-                }
-            >
-                <div>
-                    {/* Quick Set All Buttons */}
-                    <div style={{
-                        marginBottom: '20px',
-                        padding: '16px',
-                        background: 'linear-gradient(135deg, #f8fafc, #f1f5f9)',
-                        borderRadius: '12px',
-                        border: '1px solid #e2e8f0'
-                    }}>
-                        <div style={{ fontSize: '13px', fontWeight: 600, color: '#475569', marginBottom: '12px' }}>
-                            ⚡ Brzo postavi sve radnike na:
-                        </div>
-                        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                            {/* Kao jučer: svaki radnik dobije svoj jučerašnji status (bez jučerašnjeg unosa → ne mijenja se) */}
-                            {bulkEditDate && (
-                                <button
-                                    className="glass-btn"
-                                    onClick={() => {
-                                        const next: Record<string, string> = { ...bulkStatuses };
-                                        let applied = 0;
-                                        activeWorkers.forEach(w => {
-                                            const ys = yesterdayStatusOf(w.Worker_ID, bulkEditDate.dateStr);
-                                            if (ys) { next[w.Worker_ID] = ys; applied++; }
-                                        });
-                                        setBulkStatuses(next);
-                                        showToast(applied > 0
-                                            ? `Postavljeno "kao jučer" za ${applied} radnika`
-                                            : 'Nema jučerašnjih unosa', applied > 0 ? 'success' : 'info');
-                                    }}
-                                    title="Svakom radniku postavi status koji je imao jučer"
-                                    style={{ padding: '8px 14px', fontSize: '13px', gap: '6px', fontWeight: 600 }}
-                                >
-                                    <History size={16} />
-                                    Kao jučer
-                                </button>
-                            )}
-                            {ATTENDANCE_STATUSES.map(status => {
-                                const display = getStatusDisplay(status);
-                                return (
-                                    <button
-                                        key={status}
-                                        className="glass-btn"
-                                        onClick={() => handleBulkSetAll(status)}
-                                        style={{
-                                            padding: '8px 14px',
-                                            fontSize: '13px',
-                                            gap: '6px'
-                                        }}
-                                    >
-                                        <display.icon size={16} style={{ color: display.color }} />
-                                        {status}
-                                    </button>
-                                );
-                            })}
-                        </div>
-                    </div>
-
-                    {/* Worker List */}
-                    <div style={{
-                        maxHeight: '400px',
-                        overflowY: 'auto',
-                        border: '1px solid #e2e8f0',
-                        borderRadius: '12px'
-                    }}>
-                        {activeWorkers.map((worker, index) => {
-                            const currentStatus = bulkStatuses[worker.Worker_ID] || '';
-                            const display = currentStatus ? getStatusDisplay(currentStatus) : null;
-
-                            return (
-                                <div
-                                    key={worker.Worker_ID}
-                                    style={{
-                                        display: 'flex',
-                                        alignItems: 'center',
-                                        justifyContent: 'space-between',
-                                        padding: '14px 16px',
-                                        borderBottom: index < activeWorkers.length - 1 ? '1px solid #f1f5f9' : 'none',
-                                        background: index % 2 === 0 ? 'white' : '#fafafa'
-                                    }}
-                                >
-                                    <div>
-                                        <div style={{ fontWeight: 500, color: '#0f172a' }}>{worker.Name}</div>
-                                        <div style={{ fontSize: '12px', color: '#64748b' }}>{worker.Role}</div>
-                                    </div>
-                                    <select
-                                        value={currentStatus}
-                                        onChange={(e) => setBulkStatuses(prev => ({
-                                            ...prev,
-                                            [worker.Worker_ID]: e.target.value
-                                        }))}
-                                        style={{
-                                            padding: '8px 12px',
-                                            borderRadius: '8px',
-                                            border: `2px solid ${display ? display.color : '#e2e8f0'}`,
-                                            background: display ? display.bg : 'white',
-                                            color: display ? display.color : '#64748b',
-                                            fontWeight: 500,
-                                            fontSize: '13px',
-                                            cursor: 'pointer',
-                                            minWidth: '140px'
-                                        }}
-                                    >
-                                        <option value="">— Ne mijenjaj —</option>
-                                        {ATTENDANCE_STATUSES.map(status => (
-                                            <option key={status} value={status}>{status}</option>
-                                        ))}
-                                    </select>
-                                </div>
-                            );
-                        })}
-                    </div>
-                </div>
-            </Modal>
-
-            {/* Upit knjiženja dnevnica nakon unosa prisustva */}
-            {confirmOpen && (
-                <AttendanceBookingConfirmModal
-                    isOpen={confirmOpen}
-                    onClose={() => setConfirmOpen(false)}
-                    date={confirmDate}
-                    rows={confirmRows}
-                    workOrders={workOrders}
-                    workers={workers}
-                    organizationId={organizationId || ''}
-                    onConfirm={commitDecisions}
-                    onCreated={onRefresh}
-                    showToast={showToast}
-                />
-            )}
-
-            {/* Mjesečni obračun plata */}
-            {payrollOpen && (
-                <PayrollModal
-                    isOpen={payrollOpen}
-                    onClose={() => setPayrollOpen(false)}
-                    workers={workers}
-                    organizationId={organizationId || ''}
-                    showToast={showToast}
-                />
-            )}
+            {renderModals()}
 
             {/* Styles moved to globals.css */}
         </div>
     );
 }
+

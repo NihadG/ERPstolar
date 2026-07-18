@@ -1427,10 +1427,21 @@
         min-width: 150px;
     }
 
+    .planner-modal-overlay {
+        align-items: flex-end;
+    }
+
     .planner-modal,
     .detail-modal {
-        margin: 16px;
-        max-width: calc(100% - 32px);
+        margin: 0;
+        width: 100%;
+        max-width: 100%;
+        max-height: 92vh;
+        border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+    }
+
+    .detail-modal .modal-body {
+        max-height: calc(92vh - 70px);
     }
 }
 

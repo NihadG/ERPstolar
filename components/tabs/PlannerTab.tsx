@@ -29,6 +29,8 @@ import {
     AlertTriangle
 } from 'lucide-react';
 import './PlannerTab.css';
+import { useIsMobile } from '@/hooks/useIsMobile';
+import MobilePlannerView from '@/components/tabs/mobile/MobilePlannerView';
 
 interface PlannerTabProps {
     workOrders: WorkOrder[];
@@ -124,13 +126,13 @@ const STATUS_META: Record<StatusKey, { text: string; icon: typeof Clock }> = {
 };
 
 // Get status color for work order
-const getStatusColor = (wo: WorkOrder): string => STATUS_COLORS[getStatusKey(wo)];
+export const getStatusColor = (wo: WorkOrder): string => STATUS_COLORS[getStatusKey(wo)];
 
 // Get status label
-const getStatusLabel = (wo: WorkOrder): { text: string; icon: typeof Clock } => STATUS_META[getStatusKey(wo)];
+export const getStatusLabel = (wo: WorkOrder): { text: string; icon: typeof Clock } => STATUS_META[getStatusKey(wo)];
 
 // Get project name from work order
-const getProjectName = (wo: WorkOrder): string => {
+export const getProjectName = (wo: WorkOrder): string => {
     if (wo.Name && wo.Name.trim()) return wo.Name.trim();
     if (wo.items && wo.items.length > 0) {
         return wo.items[0].Project_Name || 'Nepoznat projekt';
@@ -139,7 +141,7 @@ const getProjectName = (wo: WorkOrder): string => {
 };
 
 // Get deadline warning status
-const getDeadlineWarning = (wo: WorkOrder): 'overdue' | 'approaching' | 'ok' => {
+export const getDeadlineWarning = (wo: WorkOrder): 'overdue' | 'approaching' | 'ok' => {
     if (!wo.Due_Date || wo.Status === 'Završeno') return 'ok';
 
     const today = new Date();
@@ -672,6 +674,349 @@ export default function PlannerTab({ workOrders, workers, workLogs, onRefresh, s
         return materials;
     };
 
+    // Modali dijeljeni između desktop i mobilnog prikaza (jedan izvor istine, bez dupliranja)
+    function renderScheduleModal() {
+        return (
+            scheduleModal.open && scheduleModal.wo && typeof document !== 'undefined' && createPortal(
+                <div className="planner-modal-overlay" onClick={closeScheduleModal}>
+                    <div className="planner-modal" onClick={e => e.stopPropagation()}>
+                        <div className="modal-header">
+                            <h3>Zakaži nalog</h3>
+                            <button className="close-btn" onClick={closeScheduleModal}><X size={20} /></button>
+                        </div>
+                        <div className="modal-body">
+                            <div className="order-info">
+                                <span className="project-name">{getProjectName(scheduleModal.wo)}</span>
+                                <span className="order-number">{scheduleModal.wo.Work_Order_Number}</span>
+                            </div>
+
+                            <div className="workers-section">
+                                <label>Radnici:</label>
+                                <div className="worker-chips">
+                                    {(() => {
+                                        const wids = getWorkerIds(scheduleModal.wo);
+                                        if (wids.length === 0) return <span className="no-workers">⚠️ Nema dodijeljenih</span>;
+                                        return wids.map(wid => {
+                                            const w = workers.find(x => x.Worker_ID === wid);
+                                            return w ? <span key={wid} className="chip"><User size={12} /> {w.Name}</span> : null;
+                                        });
+                                    })()}
+                                </div>
+                            </div>
+
+                            <div className="date-inputs">
+                                <div className="date-field">
+                                    <label>Od</label>
+                                    <input type="date" value={scheduleModal.start} onChange={e => setScheduleModal(p => ({ ...p, start: e.target.value }))} />
+                                </div>
+                                <div className="date-field">
+                                    <label>Do</label>
+                                    <input type="date" value={scheduleModal.end} onChange={e => setScheduleModal(p => ({ ...p, end: e.target.value }))} />
+                                </div>
+                            </div>
+                        </div>
+                        <div className="modal-footer">
+                            <button className="cancel-btn" onClick={closeScheduleModal} disabled={submitting}>Odustani</button>
+                            <button className="submit-btn" onClick={() => submitSchedule()} disabled={submitting}>
+                                {submitting ? <><Loader2 size={16} className="spin" /> Zakazujem...</> : 'Zakaži'}
+                            </button>
+                        </div>
+                    </div>
+                </div>,
+                document.body
+            )
+        );
+    }
+
+    function renderDetailPanel() {
+        return (
+            detailPanel.open && detailWo && typeof document !== 'undefined' && createPortal(
+                <div className="planner-modal-overlay" onClick={closeDetailPanel}>
+                    <div className="planner-modal detail-modal" onClick={e => e.stopPropagation()}>
+                        <div className="modal-header">
+                            <div className="header-info">
+                                <h3>{getProjectName(detailWo)}</h3>
+                                <span className="order-num">{detailWo.Work_Order_Number}</span>
+                            </div>
+                            <button className="close-btn" onClick={closeDetailPanel}><X size={20} /></button>
+                        </div>
+                        <div className="modal-body">
+                            {/* Status */}
+                            <div className="status-badge" style={{ backgroundColor: getStatusColor(detailWo) }}>
+                                {(() => {
+                                    const info = getStatusLabel(detailWo);
+                                    const Icon = info.icon;
+                                    return <><Icon size={14} /> {info.text}</>;
+                                })()}
+                            </div>
+
+                            {/* Dates */}
+                            <div className="dates-grid">
+                                <div className="date-item">
+                                    <span className="date-label">Kreiran</span>
+                                    <span className="date-value">{detailWo.Created_Date?.split('T')[0] || '—'}</span>
+                                </div>
+                                {/* Editable Planned Start Date */}
+                                {detailWo.Status === 'Na čekanju' && detailWo.Is_Scheduled ? (
+                                    <div className="date-item editable" style={{ cursor: 'pointer', position: 'relative' }}
+                                        onClick={() => {
+                                            const input = document.getElementById(`planer-start-date-${detailWo!.Work_Order_ID}`) as HTMLInputElement;
+                                            if (input) input.showPicker();
+                                        }}
+                                    >
+                                        <span className="date-label">Planirani početak <Edit2 size={9} style={{ marginLeft: 2, opacity: 0.5 }} /></span>
+                                        <span className="date-value" style={{ color: '#0071e3' }}>{detailWo.Planned_Start_Date || '—'}</span>
+                                        <input
+                                            id={`planer-start-date-${detailWo.Work_Order_ID}`}
+                                            type="date"
+                                            value={detailWo.Planned_Start_Date || ''}
+                                            onChange={async (e) => {
+                                                const val = e.target.value;
+                                                if (!val || !orgId) return;
+                                                const res = await updatePlannedStartDate(detailWo!.Work_Order_ID, val, orgId);
+                                                if (res.success) {
+                                                    showToast('Planirani datum ažuriran', 'success');
+                                                    closeDetailPanel();
+                                                    onRefresh('workOrders');
+                                                } else {
+                                                    showToast(res.message, 'error');
+                                                }
+                                            }}
+                                            onClick={(e) => e.stopPropagation()}
+                                            style={{ position: 'absolute', bottom: 0, left: 0, width: 0, height: 0, opacity: 0, overflow: 'hidden', pointerEvents: 'none' }}
+                                        />
+                                    </div>
+                                ) : (
+                                    <div className="date-item">
+                                        <span className="date-label">Početak</span>
+                                        <span className="date-value">{detailWo.Started_At?.split('T')[0] || detailWo.Planned_Start_Date || '—'}</span>
+                                    </div>
+                                )}
+                                <div className="date-item">
+                                    <span className="date-label">Završeno</span>
+                                    <span className="date-value">{detailWo.Completed_At?.split('T')[0] || '—'}</span>
+                                </div>
+                                <div className="date-item editable" style={{ cursor: 'pointer', position: 'relative' }}
+                                    onClick={() => {
+                                        const input = document.getElementById(`planer-due-date-${detailWo!.Work_Order_ID}`) as HTMLInputElement;
+                                        if (input) input.showPicker();
+                                    }}
+                                >
+                                    <span className="date-label">Rok <Edit2 size={9} style={{ marginLeft: 2, opacity: 0.5 }} /></span>
+                                    <span className="date-value deadline">{detailWo.Due_Date?.split('T')[0] || '—'}</span>
+                                    <input
+                                        id={`planer-due-date-${detailWo.Work_Order_ID}`}
+                                        type="date"
+                                        value={detailWo.Due_Date?.split('T')[0] || ''}
+                                        onChange={async (e) => {
+                                            const val = e.target.value;
+                                            if (!val || !orgId) return;
+                                            const res = await updateDueDate(detailWo!.Work_Order_ID, val, orgId);
+                                            if (res.success) {
+                                                showToast('Rok ažuriran', 'success');
+                                                closeDetailPanel();
+                                                onRefresh('workOrders');
+                                            } else {
+                                                showToast(res.message, 'error');
+                                            }
+                                        }}
+                                        onClick={(e) => e.stopPropagation()}
+                                        style={{ position: 'absolute', bottom: 0, left: 0, width: 0, height: 0, opacity: 0, overflow: 'hidden', pointerEvents: 'none' }}
+                                    />
+                                </div>
+                            </div>
+
+                            {/* Products */}
+                            <div className="detail-section">
+                                <h4><Box size={16} /> Proizvodi ({detailWo.items?.length || 0})</h4>
+                                <div className="products-list">
+                                    {detailWo.items?.map((item, idx) => {
+                                        const hasSubTasks = item.SubTasks && item.SubTasks.length > 0;
+
+                                        // For items with SubTasks, show SubTask-level detail
+                                        if (hasSubTasks) {
+                                            return (
+                                                <div key={item.ID || idx} className="product-row with-subtasks">
+                                                    <div className="product-info">
+                                                        <span className="product-name">{item.Product_Name}</span>
+                                                        <span className="product-qty">{item.Quantity} kom ({item.SubTasks!.length} grupa)</span>
+                                                    </div>
+                                                    <div className="subtasks-status">
+                                                        {item.SubTasks!.map((st, stIdx) => (
+                                                            <div key={stIdx} className={`subtask-chip ${st.Is_Paused ? 'paused' : st.Status === 'U toku' ? 'active' : st.Status === 'Završeno' ? 'done' : 'pending'}`}>
+                                                                {st.Is_Paused ? <Pause size={10} /> : st.Status === 'U toku' ? <Play size={10} /> : st.Status === 'Završeno' ? <CheckCircle size={10} /> : <Clock size={10} />}
+                                                                <span>{st.Quantity}</span>
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                </div>
+                                            );
+                                        }
+
+                                        // Regular item without SubTasks
+                                        return (
+                                            <div key={item.ID || idx} className="product-row">
+                                                <div className="product-info">
+                                                    <span className="product-name">{item.Product_Name}</span>
+                                                    <span className="product-qty">{item.Quantity} kom</span>
+                                                </div>
+                                                <div className={`product-status ${item.Is_Paused ? 'paused' : item.Status === 'U toku' ? 'active' : item.Status === 'Završeno' ? 'done' : 'pending'}`}>
+                                                    {item.Is_Paused ? (
+                                                        <><Pause size={12} /> Pauzirano</>
+                                                    ) : item.Status === 'Završeno' ? (
+                                                        <><CheckCircle size={12} /> Završeno</>
+                                                    ) : item.Status === 'U toku' ? (
+                                                        <><Play size={12} /> U toku</>
+                                                    ) : (
+                                                        <><Clock size={12} /> Na čekanju</>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        );
+                                    }) || <p className="empty-msg">Nema proizvoda</p>}
+                                </div>
+                            </div>
+
+                            {/* Workers */}
+                            <div className="detail-section">
+                                <h4><User size={16} /> Radnici</h4>
+                                <div className="workers-list">
+                                    {(() => {
+                                        const wids = getWorkerIds(detailWo);
+                                        if (wids.length === 0) return <p className="empty-msg">Nema dodijeljenih radnika</p>;
+                                        return wids.map(wid => {
+                                            const w = workers.find(x => x.Worker_ID === wid);
+                                            if (!w) return null;
+                                            return (
+                                                <div key={wid} className="worker-row">
+                                                    <div className={`avatar small ${w.Worker_Type === 'Glavni' ? 'main' : ''}`}>
+                                                        {w.Name?.charAt(0) || '?'}
+                                                    </div>
+                                                    <span>{w.Name}</span>
+                                                    <span className="worker-type-badge">{w.Worker_Type}</span>
+                                                </div>
+                                            );
+                                        });
+                                    })()}
+                                </div>
+                            </div>
+
+                            {/* Quick Actions */}
+                            <div className="quick-actions">
+                                {detailWo.Status === 'Na čekanju' && (() => {
+                                    const today = new Date();
+                                    today.setHours(0, 0, 0, 0);
+                                    const plannedStart = detailWo.Planned_Start_Date ? new Date(detailWo.Planned_Start_Date) : today;
+                                    plannedStart.setHours(0, 0, 0, 0);
+                                    const canStart = plannedStart <= today;
+                                    if (!canStart) {
+                                        return (
+                                            <p className="cannot-start-msg">⏳ Nalog zakazan za {detailWo.Planned_Start_Date}</p>
+                                        );
+                                    }
+                                    return (
+                                        <button className="action-btn start" onClick={() => { startOrder(detailWo!); closeDetailPanel(); }}>
+                                            <Play size={16} /> Pokreni proizvodnju
+                                        </button>
+                                    );
+                                })()}
+                                {detailWo.Status !== 'U toku' ? (
+                                    <button className="action-btn remove" onClick={() => { unschedule(detailWo!); closeDetailPanel(); }}>
+                                        <X size={16} /> Ukloni iz planera
+                                    </button>
+                                ) : (
+                                    <p className="cannot-remove-msg">🔒 Nalog U toku ostaje u planeru</p>
+                                )}
+                            </div>
+                        </div>
+                    </div>
+                </div>,
+                document.body
+            )
+        );
+    }
+
+    function renderConflictModal() {
+        return (
+            conflictModal.open && conflictModal.conflicts.length > 0 && typeof document !== 'undefined' && createPortal(
+                <div className="planner-modal-overlay" onClick={closeConflictModal}>
+                    <div className="planner-modal conflict-modal" onClick={e => e.stopPropagation()}>
+                        <div className="modal-header conflict-header">
+                            <div className="conflict-icon">
+                                <AlertTriangle size={24} />
+                            </div>
+                            <div>
+                                <h3>Upozorenje: Konflikt rasporeda</h3>
+                                <p>Neki radnici već imaju zakazane naloge u ovom periodu</p>
+                            </div>
+                            <button className="close-btn" onClick={closeConflictModal}><X size={20} /></button>
+                        </div>
+                        <div className="modal-body">
+                            <div className="conflict-list">
+                                {conflictModal.conflicts.map((conflict, idx) => (
+                                    <div key={idx} className="conflict-item">
+                                        <div className="conflict-worker">
+                                            <User size={16} />
+                                            <strong>{conflict.Worker_Name}</strong>
+                                        </div>
+                                        <div className="conflict-details">
+                                            <span className="conflict-order">
+                                                {conflict.Conflicting_Project_Name} ({conflict.Conflicting_Work_Order_Number})
+                                            </span>
+                                            <span className="conflict-dates">
+                                                {conflict.Overlap_Start} — {conflict.Overlap_End}
+                                            </span>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                            <div className="conflict-info">
+                                <AlertCircle size={14} />
+                                <span>Možete ipak zakazati nalog ako je to namjerno (npr. iskorištenje materijala).</span>
+                            </div>
+                        </div>
+                        <div className="modal-footer">
+                            <button className="cancel-btn" onClick={closeConflictModal}>
+                                Odustani
+                            </button>
+                            <button className="submit-btn warning" onClick={forceScheduleWithConflicts}>
+                                <AlertTriangle size={14} />
+                                Ipak zakaži
+                            </button>
+                        </div>
+                    </div>
+                </div>,
+                document.body
+            )
+        );
+    }
+
+    const isMobile = useIsMobile();
+    if (isMobile) {
+        return (
+            <>
+                <MobilePlannerView
+                    workers={allWorkers}
+                    workerOrders={workerOrders}
+                    backlog={backlog}
+                    capacityWeeks={capacityWeeks}
+                    capacityGapOrders={capacityGapOrders}
+                    getStatusColor={getStatusColor}
+                    getStatusLabel={getStatusLabel}
+                    getProjectName={getProjectName}
+                    getDeadlineWarning={getDeadlineWarning}
+                    onOpenScheduleModal={openScheduleModal}
+                    onOpenDetailPanel={openDetailPanel}
+                    onUnschedule={unschedule}
+                    onStart={startOrder}
+                />
+                {renderScheduleModal()}
+                {renderDetailPanel()}
+                {renderConflictModal()}
+            </>
+        );
+    }
+
     return (
         <div className="planner-container">
             {/* Header */}
@@ -923,312 +1268,11 @@ export default function PlannerTab({ workOrders, workers, workLogs, onRefresh, s
                 </div>
             </DragDropContext>
 
-            {/* Schedule Modal */}
-            {scheduleModal.open && scheduleModal.wo && typeof document !== 'undefined' && createPortal(
-                <div className="planner-modal-overlay" onClick={closeScheduleModal}>
-                    <div className="planner-modal" onClick={e => e.stopPropagation()}>
-                        <div className="modal-header">
-                            <h3>Zakaži nalog</h3>
-                            <button className="close-btn" onClick={closeScheduleModal}><X size={20} /></button>
-                        </div>
-                        <div className="modal-body">
-                            <div className="order-info">
-                                <span className="project-name">{getProjectName(scheduleModal.wo)}</span>
-                                <span className="order-number">{scheduleModal.wo.Work_Order_Number}</span>
-                            </div>
+            {renderScheduleModal()}
 
-                            <div className="workers-section">
-                                <label>Radnici:</label>
-                                <div className="worker-chips">
-                                    {(() => {
-                                        const wids = getWorkerIds(scheduleModal.wo);
-                                        if (wids.length === 0) return <span className="no-workers">⚠️ Nema dodijeljenih</span>;
-                                        return wids.map(wid => {
-                                            const w = workers.find(x => x.Worker_ID === wid);
-                                            return w ? <span key={wid} className="chip"><User size={12} /> {w.Name}</span> : null;
-                                        });
-                                    })()}
-                                </div>
-                            </div>
+            {renderDetailPanel()}
 
-                            <div className="date-inputs">
-                                <div className="date-field">
-                                    <label>Od</label>
-                                    <input type="date" value={scheduleModal.start} onChange={e => setScheduleModal(p => ({ ...p, start: e.target.value }))} />
-                                </div>
-                                <div className="date-field">
-                                    <label>Do</label>
-                                    <input type="date" value={scheduleModal.end} onChange={e => setScheduleModal(p => ({ ...p, end: e.target.value }))} />
-                                </div>
-                            </div>
-                        </div>
-                        <div className="modal-footer">
-                            <button className="cancel-btn" onClick={closeScheduleModal} disabled={submitting}>Odustani</button>
-                            <button className="submit-btn" onClick={() => submitSchedule()} disabled={submitting}>
-                                {submitting ? <><Loader2 size={16} className="spin" /> Zakazujem...</> : 'Zakaži'}
-                            </button>
-                        </div>
-                    </div>
-                </div>,
-                document.body
-            )}
-
-            {/* Detail Panel */}
-            {detailPanel.open && detailWo && typeof document !== 'undefined' && createPortal(
-                <div className="planner-modal-overlay" onClick={closeDetailPanel}>
-                    <div className="planner-modal detail-modal" onClick={e => e.stopPropagation()}>
-                        <div className="modal-header">
-                            <div className="header-info">
-                                <h3>{getProjectName(detailWo)}</h3>
-                                <span className="order-num">{detailWo.Work_Order_Number}</span>
-                            </div>
-                            <button className="close-btn" onClick={closeDetailPanel}><X size={20} /></button>
-                        </div>
-                        <div className="modal-body">
-                            {/* Status */}
-                            <div className="status-badge" style={{ backgroundColor: getStatusColor(detailWo) }}>
-                                {(() => {
-                                    const info = getStatusLabel(detailWo);
-                                    const Icon = info.icon;
-                                    return <><Icon size={14} /> {info.text}</>;
-                                })()}
-                            </div>
-
-                            {/* Dates */}
-                            <div className="dates-grid">
-                                <div className="date-item">
-                                    <span className="date-label">Kreiran</span>
-                                    <span className="date-value">{detailWo.Created_Date?.split('T')[0] || '—'}</span>
-                                </div>
-                                {/* Editable Planned Start Date */}
-                                {detailWo.Status === 'Na čekanju' && detailWo.Is_Scheduled ? (
-                                    <div className="date-item editable" style={{ cursor: 'pointer', position: 'relative' }}
-                                        onClick={() => {
-                                            const input = document.getElementById(`planer-start-date-${detailWo!.Work_Order_ID}`) as HTMLInputElement;
-                                            if (input) input.showPicker();
-                                        }}
-                                    >
-                                        <span className="date-label">Planirani početak <Edit2 size={9} style={{ marginLeft: 2, opacity: 0.5 }} /></span>
-                                        <span className="date-value" style={{ color: '#0071e3' }}>{detailWo.Planned_Start_Date || '—'}</span>
-                                        <input
-                                            id={`planer-start-date-${detailWo.Work_Order_ID}`}
-                                            type="date"
-                                            value={detailWo.Planned_Start_Date || ''}
-                                            onChange={async (e) => {
-                                                const val = e.target.value;
-                                                if (!val || !orgId) return;
-                                                const res = await updatePlannedStartDate(detailWo!.Work_Order_ID, val, orgId);
-                                                if (res.success) {
-                                                    showToast('Planirani datum ažuriran', 'success');
-                                                    closeDetailPanel();
-                                                    onRefresh('workOrders');
-                                                } else {
-                                                    showToast(res.message, 'error');
-                                                }
-                                            }}
-                                            onClick={(e) => e.stopPropagation()}
-                                            style={{ position: 'absolute', bottom: 0, left: 0, width: 0, height: 0, opacity: 0, overflow: 'hidden', pointerEvents: 'none' }}
-                                        />
-                                    </div>
-                                ) : (
-                                    <div className="date-item">
-                                        <span className="date-label">Početak</span>
-                                        <span className="date-value">{detailWo.Started_At?.split('T')[0] || detailWo.Planned_Start_Date || '—'}</span>
-                                    </div>
-                                )}
-                                <div className="date-item">
-                                    <span className="date-label">Završeno</span>
-                                    <span className="date-value">{detailWo.Completed_At?.split('T')[0] || '—'}</span>
-                                </div>
-                                <div className="date-item editable" style={{ cursor: 'pointer', position: 'relative' }}
-                                    onClick={() => {
-                                        const input = document.getElementById(`planer-due-date-${detailWo!.Work_Order_ID}`) as HTMLInputElement;
-                                        if (input) input.showPicker();
-                                    }}
-                                >
-                                    <span className="date-label">Rok <Edit2 size={9} style={{ marginLeft: 2, opacity: 0.5 }} /></span>
-                                    <span className="date-value deadline">{detailWo.Due_Date?.split('T')[0] || '—'}</span>
-                                    <input
-                                        id={`planer-due-date-${detailWo.Work_Order_ID}`}
-                                        type="date"
-                                        value={detailWo.Due_Date?.split('T')[0] || ''}
-                                        onChange={async (e) => {
-                                            const val = e.target.value;
-                                            if (!val || !orgId) return;
-                                            const res = await updateDueDate(detailWo!.Work_Order_ID, val, orgId);
-                                            if (res.success) {
-                                                showToast('Rok ažuriran', 'success');
-                                                closeDetailPanel();
-                                                onRefresh('workOrders');
-                                            } else {
-                                                showToast(res.message, 'error');
-                                            }
-                                        }}
-                                        onClick={(e) => e.stopPropagation()}
-                                        style={{ position: 'absolute', bottom: 0, left: 0, width: 0, height: 0, opacity: 0, overflow: 'hidden', pointerEvents: 'none' }}
-                                    />
-                                </div>
-                            </div>
-
-                            {/* Products */}
-                            <div className="detail-section">
-                                <h4><Box size={16} /> Proizvodi ({detailWo.items?.length || 0})</h4>
-                                <div className="products-list">
-                                    {detailWo.items?.map((item, idx) => {
-                                        const hasSubTasks = item.SubTasks && item.SubTasks.length > 0;
-
-                                        // For items with SubTasks, show SubTask-level detail
-                                        if (hasSubTasks) {
-                                            return (
-                                                <div key={item.ID || idx} className="product-row with-subtasks">
-                                                    <div className="product-info">
-                                                        <span className="product-name">{item.Product_Name}</span>
-                                                        <span className="product-qty">{item.Quantity} kom ({item.SubTasks!.length} grupa)</span>
-                                                    </div>
-                                                    <div className="subtasks-status">
-                                                        {item.SubTasks!.map((st, stIdx) => (
-                                                            <div key={stIdx} className={`subtask-chip ${st.Is_Paused ? 'paused' : st.Status === 'U toku' ? 'active' : st.Status === 'Završeno' ? 'done' : 'pending'}`}>
-                                                                {st.Is_Paused ? <Pause size={10} /> : st.Status === 'U toku' ? <Play size={10} /> : st.Status === 'Završeno' ? <CheckCircle size={10} /> : <Clock size={10} />}
-                                                                <span>{st.Quantity}</span>
-                                                            </div>
-                                                        ))}
-                                                    </div>
-                                                </div>
-                                            );
-                                        }
-
-                                        // Regular item without SubTasks
-                                        return (
-                                            <div key={item.ID || idx} className="product-row">
-                                                <div className="product-info">
-                                                    <span className="product-name">{item.Product_Name}</span>
-                                                    <span className="product-qty">{item.Quantity} kom</span>
-                                                </div>
-                                                <div className={`product-status ${item.Is_Paused ? 'paused' : item.Status === 'U toku' ? 'active' : item.Status === 'Završeno' ? 'done' : 'pending'}`}>
-                                                    {item.Is_Paused ? (
-                                                        <><Pause size={12} /> Pauzirano</>
-                                                    ) : item.Status === 'Završeno' ? (
-                                                        <><CheckCircle size={12} /> Završeno</>
-                                                    ) : item.Status === 'U toku' ? (
-                                                        <><Play size={12} /> U toku</>
-                                                    ) : (
-                                                        <><Clock size={12} /> Na čekanju</>
-                                                    )}
-                                                </div>
-                                            </div>
-                                        );
-                                    }) || <p className="empty-msg">Nema proizvoda</p>}
-                                </div>
-                            </div>
-
-                            {/* Workers */}
-                            <div className="detail-section">
-                                <h4><User size={16} /> Radnici</h4>
-                                <div className="workers-list">
-                                    {(() => {
-                                        const wids = getWorkerIds(detailWo);
-                                        if (wids.length === 0) return <p className="empty-msg">Nema dodijeljenih radnika</p>;
-                                        return wids.map(wid => {
-                                            const w = workers.find(x => x.Worker_ID === wid);
-                                            if (!w) return null;
-                                            return (
-                                                <div key={wid} className="worker-row">
-                                                    <div className={`avatar small ${w.Worker_Type === 'Glavni' ? 'main' : ''}`}>
-                                                        {w.Name?.charAt(0) || '?'}
-                                                    </div>
-                                                    <span>{w.Name}</span>
-                                                    <span className="worker-type-badge">{w.Worker_Type}</span>
-                                                </div>
-                                            );
-                                        });
-                                    })()}
-                                </div>
-                            </div>
-
-                            {/* Quick Actions */}
-                            <div className="quick-actions">
-                                {detailWo.Status === 'Na čekanju' && (() => {
-                                    const today = new Date();
-                                    today.setHours(0, 0, 0, 0);
-                                    const plannedStart = detailWo.Planned_Start_Date ? new Date(detailWo.Planned_Start_Date) : today;
-                                    plannedStart.setHours(0, 0, 0, 0);
-                                    const canStart = plannedStart <= today;
-                                    if (!canStart) {
-                                        return (
-                                            <p className="cannot-start-msg">⏳ Nalog zakazan za {detailWo.Planned_Start_Date}</p>
-                                        );
-                                    }
-                                    return (
-                                        <button className="action-btn start" onClick={() => { startOrder(detailWo!); closeDetailPanel(); }}>
-                                            <Play size={16} /> Pokreni proizvodnju
-                                        </button>
-                                    );
-                                })()}
-                                {detailWo.Status !== 'U toku' ? (
-                                    <button className="action-btn remove" onClick={() => { unschedule(detailWo!); closeDetailPanel(); }}>
-                                        <X size={16} /> Ukloni iz planera
-                                    </button>
-                                ) : (
-                                    <p className="cannot-remove-msg">🔒 Nalog U toku ostaje u planeru</p>
-                                )}
-                            </div>
-                        </div>
-                    </div>
-                </div>,
-                document.body
-            )}
-
-            {/* Conflict Warning Modal */}
-            {conflictModal.open && conflictModal.conflicts.length > 0 && typeof document !== 'undefined' && createPortal(
-                <div className="planner-modal-overlay" onClick={closeConflictModal}>
-                    <div className="planner-modal conflict-modal" onClick={e => e.stopPropagation()}>
-                        <div className="modal-header conflict-header">
-                            <div className="conflict-icon">
-                                <AlertTriangle size={24} />
-                            </div>
-                            <div>
-                                <h3>Upozorenje: Konflikt rasporeda</h3>
-                                <p>Neki radnici već imaju zakazane naloge u ovom periodu</p>
-                            </div>
-                            <button className="close-btn" onClick={closeConflictModal}><X size={20} /></button>
-                        </div>
-                        <div className="modal-body">
-                            <div className="conflict-list">
-                                {conflictModal.conflicts.map((conflict, idx) => (
-                                    <div key={idx} className="conflict-item">
-                                        <div className="conflict-worker">
-                                            <User size={16} />
-                                            <strong>{conflict.Worker_Name}</strong>
-                                        </div>
-                                        <div className="conflict-details">
-                                            <span className="conflict-order">
-                                                {conflict.Conflicting_Project_Name} ({conflict.Conflicting_Work_Order_Number})
-                                            </span>
-                                            <span className="conflict-dates">
-                                                {conflict.Overlap_Start} — {conflict.Overlap_End}
-                                            </span>
-                                        </div>
-                                    </div>
-                                ))}
-                            </div>
-                            <div className="conflict-info">
-                                <AlertCircle size={14} />
-                                <span>Možete ipak zakazati nalog ako je to namjerno (npr. iskorištenje materijala).</span>
-                            </div>
-                        </div>
-                        <div className="modal-footer">
-                            <button className="cancel-btn" onClick={closeConflictModal}>
-                                Odustani
-                            </button>
-                            <button className="submit-btn warning" onClick={forceScheduleWithConflicts}>
-                                <AlertTriangle size={14} />
-                                Ipak zakaži
-                            </button>
-                        </div>
-                    </div>
-                </div>,
-                document.body
-            )}
+            {renderConflictModal()}
         </div>
     );
 }
