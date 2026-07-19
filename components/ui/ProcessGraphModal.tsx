@@ -176,6 +176,17 @@ function ProcessFlowEdge({ id, sourceX, sourceY, targetX, targetY, sourcePositio
 
 const edgeTypes = { process: ProcessFlowEdge };
 
+// Stabilne reference za React Flow propove (nova referenca po renderu = nepotrebni sync)
+const MARKER_BY_KIND: Record<StatusKind, { type: MarkerType; color: string; width: number; height: number }> = {
+    done: { type: MarkerType.ArrowClosed, color: KIND_HEX.done, width: 18, height: 18 },
+    active: { type: MarkerType.ArrowClosed, color: KIND_HEX.active, width: 18, height: 18 },
+    pending: { type: MarkerType.ArrowClosed, color: KIND_HEX.pending, width: 18, height: 18 },
+};
+const CONNECTION_LINE_STYLE = { stroke: KIND_HEX.active, strokeWidth: 2.5 };
+const FIT_VIEW_OPTIONS = { padding: 0.18 };
+const MINIMAP_STYLE = { width: 150, height: 100 };
+const PRO_OPTIONS = { hideAttribution: true };
+
 export default function ProcessGraphModal({
     workOrderId, workOrderNumber, workOrderName, items, workLogs, organizationId, onClose, showToast,
 }: ProcessGraphModalProps) {
@@ -258,7 +269,7 @@ export default function ProcessGraphModal({
     // Veze dobijaju custom tip + marker u boji statusa izvora (izvedeno; state ostaje čist za snimanje).
     const styledEdges = useMemo(() => edges.map(e => {
         const kind = statusById.get(e.source)?.kind ?? 'pending';
-        return { ...e, type: 'process', markerEnd: { type: MarkerType.ArrowClosed, color: KIND_HEX[kind], width: 18, height: 18 } } as Edge;
+        return { ...e, type: 'process', markerEnd: MARKER_BY_KIND[kind] } as Edge;
     }), [edges, statusById]);
 
     // Učitaj graf
@@ -423,6 +434,19 @@ export default function ProcessGraphModal({
     const renameGroup = useCallback((groupId: string, name: string) => {
         setNodes(ns => ns.map(n => n.id === groupId ? { ...n, data: { ...(n.data as GroupData), name } } : n));
     }, [setNodes]);
+
+    /**
+     * Selekcija: handler MORA imati stabilan identitet i NE smije postavljati novi niz
+     * kad se sadržaj nije promijenio — inače React Flow (koji se pretplaćuje na ovaj
+     * callback) uđe u beskonačnu petlju render→pretplata→callback→setState (React #185).
+     */
+    const handleSelectionChange = useCallback(({ nodes: sel }: { nodes: Node<any>[]; edges: Edge[] }) => {
+        const ids = sel.map(n => n.id);
+        setSelectedIds(prev =>
+            (prev.length === ids.length && prev.every((v, i) => v === ids[i])) ? prev : ids
+        );
+        setSelectedId(ids.length === 1 ? ids[0] : null);
+    }, []);
 
     // Procesi koji postoje na stavkama, a NEMA ih više NIGDJE u grafu → spremanje će ih
     // ukloniti iz naloga (graf je autoritet). Poklapanje po nazivu kroz cijeli graf — isto
@@ -686,16 +710,13 @@ export default function ProcessGraphModal({
                                     nodes={nodes} edges={styledEdges}
                                     onNodesChange={onNodesChange} onEdgesChange={onEdgesChange}
                                     onConnect={onConnect}
-                                    onSelectionChange={(p) => {
-                                        setSelectedIds(p.nodes.map(n => n.id));
-                                        setSelectedId(p.nodes.length === 1 ? p.nodes[0].id : null);
-                                    }}
+                                    onSelectionChange={handleSelectionChange}
                                     nodeTypes={nodeTypes}
                                     edgeTypes={edgeTypes}
-                                    connectionLineStyle={{ stroke: KIND_HEX.active, strokeWidth: 2.5 }}
+                                    connectionLineStyle={CONNECTION_LINE_STYLE}
                                     fitView
-                                    fitViewOptions={{ padding: 0.18 }}
-                                    proOptions={{ hideAttribution: true }}
+                                    fitViewOptions={FIT_VIEW_OPTIONS}
+                                    proOptions={PRO_OPTIONS}
                                 >
                                     <Background gap={18} size={1.5} color="rgba(0,0,0,0.07)" />
                                     <Controls showInteractive={false} />
@@ -705,7 +726,7 @@ export default function ProcessGraphModal({
                                         nodeStrokeWidth={2}
                                         nodeColor={(n) => KIND_HEX[statusById.get(n.id)?.kind ?? 'pending']}
                                         maskColor="rgba(0,0,0,0.04)"
-                                        style={{ width: 150, height: 100 }}
+                                        style={MINIMAP_STYLE}
                                     />
                                 </ReactFlow>
                                 {procNodes.length === 0 && (
