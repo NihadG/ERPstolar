@@ -152,3 +152,253 @@
     .pg-pulse { animation: none; }
     .pg-node { transition: none; }
 }
+
+/* ============================================
+   GRUPA PROCESA (React Flow parent kontejner)
+   ============================================ */
+.pg-group {
+    width: 100%;
+    height: 100%;
+    box-sizing: border-box;
+    border: 1.5px dashed var(--border);
+    border-radius: 14px;
+    background: rgba(0, 113, 227, 0.035);
+    transition: border-color 0.15s ease, background 0.15s ease;
+}
+.pg-group.is-selected {
+    border-color: var(--accent);
+    border-style: solid;
+    background: rgba(0, 113, 227, 0.07);
+}
+.pg-group-head {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    height: 30px;
+    padding: 0 11px;
+    color: var(--text-secondary);
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    cursor: grab;
+}
+.pg-group.is-selected .pg-group-head { color: var(--accent); }
+.pg-group-name {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* ============================================
+   LAYOUT MODALA — popunjava visinu, sabijen za laptop
+   ============================================ */
+.pg-shell {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
+    width: 100%;
+    gap: 9px;
+}
+
+.pg-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    flex-wrap: wrap;
+}
+.pg-toolbar-spacer { flex: 1 1 auto; min-width: 0; }
+
+.pg-tabs {
+    display: inline-flex;
+    gap: 3px;
+    background: var(--surface);
+    border-radius: 8px;
+    padding: 3px;
+    flex-shrink: 0;
+}
+.pg-tabs button {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 5px 10px;
+    border: none;
+    border-radius: 6px;
+    background: transparent;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    cursor: pointer;
+    white-space: nowrap;
+}
+.pg-tabs button.on {
+    background: var(--background);
+    color: var(--text-primary);
+    box-shadow: 0 1px 2px var(--shadow-md);
+}
+
+.pg-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 7px 12px;
+    height: 34px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border-light);
+    background: var(--background);
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-primary);
+    cursor: pointer;
+    white-space: nowrap;
+    transition: var(--transition);
+}
+.pg-btn:hover:not(:disabled) { background: var(--surface); border-color: var(--border); }
+.pg-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.pg-btn.on { background: var(--accent-light); border-color: var(--accent); color: var(--accent); }
+.pg-btn-icon { width: 34px; padding: 0; justify-content: center; }
+.pg-btn-primary {
+    background: var(--text-primary);
+    border-color: var(--text-primary);
+    color: var(--background);
+}
+.pg-btn-primary:hover:not(:disabled) { opacity: 0.88; background: var(--text-primary); }
+.pg-btn-count {
+    font-style: normal;
+    font-size: 11px;
+    font-weight: 700;
+    padding: 1px 6px;
+    border-radius: 999px;
+    background: var(--accent);
+    color: #fff;
+}
+
+/* Overflow meni (sekundarni alati) */
+.pg-tools { position: relative; flex-shrink: 0; }
+.pg-tools-menu {
+    position: absolute;
+    top: calc(100% + 5px);
+    right: 0;
+    z-index: 20;
+    min-width: 220px;
+    padding: 7px;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    background: var(--background);
+    border: 1px solid var(--border-light);
+    border-radius: 10px;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.14);
+}
+.pg-tools-menu label {
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+}
+.pg-tools-menu select {
+    width: 100%;
+    padding: 7px 9px;
+    border-radius: 8px;
+    border: 1px solid var(--border-light);
+    background: var(--background);
+    font-size: 13px;
+    color: var(--text-primary);
+    cursor: pointer;
+}
+.pg-tools-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 9px;
+    border: none;
+    border-radius: 8px;
+    background: transparent;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-primary);
+    cursor: pointer;
+    text-align: left;
+}
+.pg-tools-item:hover { background: var(--surface); }
+
+/* Radna površina + bočni panel */
+.pg-work { flex: 1; display: flex; gap: 9px; min-height: 0; position: relative; }
+.pg-canvas {
+    flex: 1;
+    min-width: 0;
+    border: 1px solid var(--border-light);
+    border-radius: 12px;
+    overflow: hidden;
+    background: var(--surface);
+    position: relative;
+}
+.pg-side {
+    width: 264px;
+    flex-shrink: 0;
+    border: 1px solid var(--border-light);
+    border-radius: 12px;
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    overflow-y: auto;
+    background: var(--background);
+}
+.pg-side-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+.pg-side-title {
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-secondary);
+}
+.pg-side-close {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    border-radius: 6px;
+    border: 1px solid var(--border-light);
+    background: var(--background);
+    color: var(--text-tertiary);
+    cursor: pointer;
+    flex-shrink: 0;
+}
+.pg-side-close:hover { background: var(--surface); color: var(--text-primary); }
+
+/* Laptop / uski ekrani: panel prelazi PREKO platna (ne krade širinu) */
+@media (max-width: 1180px) {
+    .pg-side {
+        position: absolute;
+        top: 0;
+        right: 0;
+        bottom: 0;
+        width: 272px;
+        z-index: 6;
+        box-shadow: -8px 0 26px rgba(0, 0, 0, 0.12);
+    }
+}
+
+/* Niski ekrani (laptop 768p i slično): zbij traku i skrati hint */
+@media (max-height: 820px) {
+    .pg-hint { padding: 5px 10px; font-size: 11px; gap: 12px; }
+    .pg-btn { height: 32px; padding: 6px 10px; }
+    .pg-tabs button { padding: 4px 9px; }
+}
+
+/* Vrlo usko: dugmad ostaju samo ikone */
+@media (max-width: 720px) {
+    .pg-btn span, .pg-tabs button span { display: none; }
+    .pg-btn { width: 34px; padding: 0; justify-content: center; }
+    .pg-btn-primary { width: auto; padding: 0 12px; }
+    .pg-btn-primary span { display: inline; }
+}

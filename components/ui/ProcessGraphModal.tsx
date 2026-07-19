@@ -10,9 +10,9 @@ import type { Node, Edge, Connection, NodeProps, EdgeProps } from '@xyflow/react
 import '@xyflow/react/dist/style.css';
 import './ProcessGraphModal.css';
 import Modal from './Modal';
-import { Plus, GitBranch, Save, Trash2, Loader2, List, Network, BookmarkPlus, Layers, X, CheckCircle2, Clock, MoveRight } from 'lucide-react';
+import { Plus, GitBranch, Save, Trash2, Loader2, List, Network, BookmarkPlus, Layers, X, CheckCircle2, Clock, MoveRight, Group, Ungroup, MoreHorizontal, PanelRight } from 'lucide-react';
 import { COMMON_PROCESSES } from '@/lib/types';
-import type { WorkLog, ProcessGraph, ProcessFlowTemplate } from '@/lib/types';
+import type { WorkLog, ProcessGraph, ProcessGroup, ProcessFlowTemplate } from '@/lib/types';
 import {
     getProcessGraph, saveProcessGraph, generateUUID, listProcessTemplates, saveProcessTemplate,
 } from '@/lib/services';
@@ -40,6 +40,12 @@ interface ProcessGraphModalProps {
 }
 
 type ProcData = { name: string; itemIds: string[]; aliases?: string[] };
+type GroupData = { name: string };
+
+// Grupa = VIZUELNI kontejner (React Flow parent). U editoru je čvor tipa 'pgGroup',
+// ali se pri snimanju izdvaja u ProcessGraph.groups — nikad u `nodes` (vidi types.ts).
+const GROUP_PAD = 26;      // razmak od ivice grupe do članova
+const GROUP_HEAD = 30;     // visina zaglavlja grupe (naziv)
 
 // Status čvora: 'done' = svi pokriveni proizvodi završili proces, 'active' = ima dnevnica
 // (radi se sada), 'pending' = još nije počelo. Boja ivice/minimape/ikone slijedi kind.
@@ -119,7 +125,21 @@ function ProcessRFNode({ id, data, selected }: NodeProps) {
     );
 }
 
-const nodeTypes = { process: ProcessRFNode };
+// Kontejner grupe: zaglavlje s nazivom je i "ručka" za pomjeranje cijele grupe
+// (React Flow sam pomjera djecu s roditeljem). Tijelo je providno da članovi ostanu čitljivi.
+function GroupRFNode({ data, selected }: NodeProps) {
+    const d = data as GroupData;
+    return (
+        <div className={`pg-group${selected ? ' is-selected' : ''}`}>
+            <div className="pg-group-head">
+                <Layers size={12} />
+                <span className="pg-group-name">{d.name || 'Grupa'}</span>
+            </div>
+        </div>
+    );
+}
+
+const nodeTypes = { process: ProcessRFNode, pgGroup: GroupRFNode };
 
 // Custom veza: status-obojena, animirana kad je izvorni proces "u toku", s uvijek vidljivim
 // dugmetom × na sredini za uklanjanje (rješava „mogu samo povezati, ne i odvezati").
@@ -159,13 +179,21 @@ const edgeTypes = { process: ProcessFlowEdge };
 export default function ProcessGraphModal({
     workOrderId, workOrderNumber, workOrderName, items, workLogs, organizationId, onClose, showToast,
 }: ProcessGraphModalProps) {
-    const [nodes, setNodes, onNodesChange] = useNodesState<Node<ProcData>>([]);
+    // Node<any>: stanje drži i procese (ProcData) i kontejnere grupa (GroupData)
+    const [nodes, setNodes, onNodesChange] = useNodesState<Node<any>>([]);
     const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
     const [selectedId, setSelectedId] = useState<string | null>(null);
+    const [selectedIds, setSelectedIds] = useState<string[]>([]);
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
     const [view, setView] = useState<'graph' | 'stages' | 'list'>('graph');
     const [templates, setTemplates] = useState<ProcessFlowTemplate[]>([]);
+    const [toolsOpen, setToolsOpen] = useState(false);
+    const [panelOpen, setPanelOpen] = useState(true);
+
+    // Samo STVARNI procesi — kontejneri grupa se izuzimaju iz svih izvedenih prikaza
+    // (status, lista, faze, provjera uklonjenih procesa), inače bi se pojavili kao proces.
+    const procNodes = useMemo(() => nodes.filter(n => n.type !== 'pgGroup'), [nodes]);
 
     const itemName = useCallback((id: string) => {
         const n = items.find(i => i.ID === id)?.Product_Name || '';
@@ -211,12 +239,12 @@ export default function ProcessGraphModal({
     // Status po čvoru (za boju/animaciju veze i minimapu) — jedan izračun, dijele custom veza i MiniMap.
     const statusById = useMemo(() => {
         const m = new Map<string, NodeStatus>();
-        nodes.forEach(n => {
+        procNodes.forEach(n => {
             const d = n.data as ProcData;
             m.set(n.id, status(n.id, d.itemIds || [], d.name, d.aliases));
         });
         return m;
-    }, [nodes, status]);
+    }, [procNodes, status]);
 
     const removeEdge = useCallback((id: string) => {
         setEdges(es => es.filter(e => e.id !== id));
@@ -260,11 +288,26 @@ export default function ProcessGraphModal({
             if (cancelled) return;
             const needLayout = g.nodes.length > 0 && g.nodes.every(n => !n.position);
             const pos = needLayout ? layoutProcessGraph(g.nodes, g.edges) : {};
-            setNodes(g.nodes.map((n, i) => ({
-                id: n.id, type: 'process',
-                position: n.position ?? pos[n.id] ?? { x: 24, y: 24 + i * (NODE_H + 30) },
-                data: { name: n.name, itemIds: n.itemIds || [], aliases: n.aliases },
-            })));
+            // Grupe: kontejneri idu PRIJE članova (React Flow zahtijeva roditelja prije djeteta),
+            // a članovima se apsolutna pozicija iz baze pretvara u relativnu na grupu.
+            const savedGroups = g.groups || [];
+            const groupNodes: Node<any>[] = savedGroups.map(gr => ({
+                id: gr.id, type: 'pgGroup', position: gr.position,
+                data: { name: gr.name } as GroupData,
+                style: { width: gr.width, height: gr.height },
+                deletable: false,   // brisanje ide kroz „Razgrupiši" da se ne pobrišu i članovi
+            }));
+            const procRFNodes: Node<any>[] = g.nodes.map((n, i) => {
+                const abs = n.position ?? pos[n.id] ?? { x: 24, y: 24 + i * (NODE_H + 30) };
+                const gr = n.groupId ? savedGroups.find(x => x.id === n.groupId) : undefined;
+                return {
+                    id: n.id, type: 'process',
+                    position: gr ? { x: abs.x - gr.position.x, y: abs.y - gr.position.y } : abs,
+                    ...(gr ? { parentId: gr.id, extent: 'parent' as const } : {}),
+                    data: { name: n.name, itemIds: n.itemIds || [], aliases: n.aliases },
+                };
+            });
+            setNodes([...groupNodes, ...procRFNodes]);
             setEdges(g.edges.map(e => ({ id: e.id, source: e.source, target: e.target, markerEnd: { type: MarkerType.ArrowClosed } })));
             setLoading(false);
             const tpls = await listProcessTemplates(organizationId);
@@ -286,7 +329,9 @@ export default function ProcessGraphModal({
         const position = base
             ? { x: base.position.x + (parallel ? 0 : NODE_W + 70), y: base.position.y + (parallel ? NODE_H + 30 : 0) }
             : { x: 24, y: 24 + nodes.length * (NODE_H + 30) };
-        setNodes(ns => [...ns, { id, type: 'process', position, data: { name: '', itemIds: [] } }]);
+        // Novi čvor nasljeđuje grupu svog prethodnika (pozicije su tad relativne na istu grupu)
+        const inherit = base?.parentId ? { parentId: base.parentId, extent: 'parent' as const } : {};
+        setNodes(ns => [...ns, { id, type: 'process', position, ...inherit, data: { name: '', itemIds: [] } }]);
         if (afterId && !parallel) {
             setEdges(es => addEdge({ id: `e-${afterId}-${id}`, source: afterId, target: id, markerEnd: { type: MarkerType.ArrowClosed } }, es));
         } else if (afterId && parallel) {
@@ -308,12 +353,83 @@ export default function ProcessGraphModal({
         setSelectedId(null);
     }, [selectedId, setNodes, setEdges]);
 
+    /**
+     * Umotaj zadate procese u novu grupu: kontejner se dimenzioniše po njihovom
+     * omeđujućem pravougaoniku, a članovi prelaze na pozicije RELATIVNE na grupu
+     * (React Flow parent/child) — otad se pomjeraju zajedno s grupom.
+     * Vraća id grupe. Preskače čvorove koji su već u nekoj grupi.
+     */
+    const wrapInGroup = useCallback((ids: string[], groupName: string): string => {
+        const gid = `g-${generateUUID()}`;   // izvan updater-a (StrictMode ga zove dvaput)
+        setNodes(ns => {
+            const members = ns.filter(n => ids.includes(n.id) && n.type !== 'pgGroup' && !n.parentId);
+            if (members.length < 1) return ns;
+            const h = (n: Node<any>) => n.measured?.height ?? NODE_H;
+            const minX = Math.min(...members.map(n => n.position.x));
+            const minY = Math.min(...members.map(n => n.position.y));
+            const maxX = Math.max(...members.map(n => n.position.x + NODE_W));
+            const maxY = Math.max(...members.map(n => n.position.y + h(n)));
+            const gx = minX - GROUP_PAD;
+            const gy = minY - GROUP_PAD - GROUP_HEAD;
+            const groupNode: Node<any> = {
+                id: gid, type: 'pgGroup', position: { x: gx, y: gy },
+                data: { name: groupName } as GroupData,
+                style: { width: (maxX - minX) + GROUP_PAD * 2, height: (maxY - minY) + GROUP_PAD * 2 + GROUP_HEAD },
+                deletable: false,
+            };
+            const memberIds = new Set(members.map(m => m.id));
+            const rest = ns.filter(n => !memberIds.has(n.id));
+            const reparented = members.map(n => ({
+                ...n,
+                parentId: gid, extent: 'parent' as const,
+                position: { x: n.position.x - gx, y: n.position.y - gy },
+                selected: false,
+            }));
+            return [...rest, groupNode, ...reparented];   // roditelj prije djece
+        });
+        return gid;
+    }, [setNodes]);
+
+    const groupSelected = useCallback(() => {
+        const ids = selectedIds.filter(id => {
+            const n = nodes.find(x => x.id === id);
+            return n && n.type !== 'pgGroup' && !n.parentId;
+        });
+        if (ids.length < 2) {
+            showToast?.('Označi bar 2 procesa (Shift + povuci ili Ctrl/Cmd + klik) pa Grupiši', 'info');
+            return;
+        }
+        wrapInGroup(ids, 'Grupa');
+        setSelectedIds([]);
+        setSelectedId(null);
+        showToast?.(`Grupisano ${ids.length} procesa — pomjeraju se zajedno`, 'success');
+    }, [selectedIds, nodes, wrapInGroup, showToast]);
+
+    /** Razgrupiši: ukloni kontejner, članovima vrati apsolutne pozicije (procesi ostaju). */
+    const ungroup = useCallback((groupId: string) => {
+        setNodes(ns => {
+            const g = ns.find(n => n.id === groupId);
+            if (!g) return ns;
+            return ns
+                .filter(n => n.id !== groupId)
+                .map(n => n.parentId === groupId
+                    ? { ...n, parentId: undefined, extent: undefined, position: { x: n.position.x + g.position.x, y: n.position.y + g.position.y } }
+                    : n);
+        });
+        setSelectedId(null);
+        setSelectedIds([]);
+    }, [setNodes]);
+
+    const renameGroup = useCallback((groupId: string, name: string) => {
+        setNodes(ns => ns.map(n => n.id === groupId ? { ...n, data: { ...(n.data as GroupData), name } } : n));
+    }, [setNodes]);
+
     // Procesi koji postoje na stavkama, a NEMA ih više NIGDJE u grafu → spremanje će ih
     // ukloniti iz naloga (graf je autoritet). Poklapanje po nazivu kroz cijeli graf — isto
     // pravilo kao reconcileItemsToGraph; itemIds se namjerno ne gledaju (vidi tamo).
     // Završeni se broje odvojeno, jer se s njima gubi i evidencija ko/kad je završio.
     const pendingRemovals = useMemo(() => {
-        const inGraph = (name: string) => nodes.some(n => {
+        const inGraph = (name: string) => procNodes.some(n => {
             const d = n.data as ProcData;
             return nodeMatchesProcess({ name: d.name, aliases: d.aliases }, name);
         });
@@ -325,7 +441,7 @@ export default function ProcessGraphModal({
             }
         }
         return Array.from(names.entries()).map(([name, hasDone]) => ({ name, hasDone }));
-    }, [nodes, items]);
+    }, [procNodes, items]);
 
     const handleSave = useCallback(async () => {
         if (pendingRemovals.length && typeof window !== 'undefined') {
@@ -338,19 +454,38 @@ export default function ProcessGraphModal({
             if (!ok) return;
         }
         setSaving(true);
+        // Razdvoji kontejnere grupa od procesa; pozicije članova vrati u APSOLUTNE
+        // (React Flow ih drži relativno na roditelja, a potrošači grafa — tabla/redovi —
+        // sortiraju po apsolutnoj poziciji).
+        const groupNodes = nodes.filter(n => n.type === 'pgGroup');
+        const groupById = new Map(groupNodes.map(g => [g.id, g]));
         const graph: ProcessGraph = {
-            nodes: nodes.map(n => ({ id: n.id, name: (n.data as ProcData).name || '', itemIds: (n.data as ProcData).itemIds || [], aliases: (n.data as ProcData).aliases, position: n.position })),
+            nodes: procNodes.map(n => {
+                const parent = n.parentId ? groupById.get(n.parentId) : undefined;
+                const abs = parent
+                    ? { x: n.position.x + parent.position.x, y: n.position.y + parent.position.y }
+                    : n.position;
+                return {
+                    id: n.id, name: (n.data as ProcData).name || '', itemIds: (n.data as ProcData).itemIds || [],
+                    aliases: (n.data as ProcData).aliases, position: abs,
+                    ...(n.parentId ? { groupId: n.parentId } : {}),
+                };
+            }),
             edges: edges.map(e => ({ id: e.id, source: e.source, target: e.target })),
+            groups: groupNodes.map(g => ({
+                id: g.id, name: (g.data as GroupData).name || 'Grupa', position: g.position,
+                width: Number(g.style?.width) || 320, height: Number(g.style?.height) || 200,
+            } as ProcessGroup)),
         };
         const res = await saveProcessGraph(workOrderId, graph, organizationId);
         showToast?.(res.message, res.success ? 'success' : 'error');
         setSaving(false);
         if (res.success) onClose();
-    }, [nodes, edges, pendingRemovals, workOrderId, organizationId, onClose, showToast]);
+    }, [nodes, procNodes, edges, pendingRemovals, workOrderId, organizationId, onClose, showToast]);
 
     const applyTemplate = useCallback(async (tpl: ProcessFlowTemplate) => {
         // Kad graf ima čvorove: OK = DODAJ šablon u postojeći graf (spoji), Odustani = ZAMIJENI.
-        const append = nodes.length > 0 && typeof window !== 'undefined'
+        const append = procNodes.length > 0 && typeof window !== 'undefined'
             && window.confirm(`Dodati šablon „${tpl.name}" U POSTOJEĆI graf?\n\nOK = dodaj (spoji s trenutnim), Odustani = zamijeni graf.`);
         if (append) {
             const { mergeFlowTemplateIntoGraph } = await import('@/lib/productProcesses');
@@ -359,10 +494,27 @@ export default function ProcessGraphModal({
                 edges: edges.map(e => ({ id: e.id, source: e.source, target: e.target })),
             };
             const { graph, addedNodeNames } = mergeFlowTemplateIntoGraph(prev, { nodes: tpl.nodes, edges: tpl.edges });
-            setNodes(graph.nodes.map(n => ({ id: n.id, type: 'process', position: n.position ?? { x: 24, y: 24 }, data: { name: n.name, itemIds: n.itemIds || [], aliases: n.aliases } })));
+            // Zadrži postojeće grupe/članstva; NOVI čvorovi iz templejta idu u svoju grupu.
+            const prevGroupNodes = nodes.filter(n => n.type === 'pgGroup');
+            const prevParentById = new Map(nodes.filter(n => n.parentId).map(n => [n.id, n.parentId!]));
+            const prevIds = new Set(nodes.map(n => n.id));
+            const merged: Node<any>[] = graph.nodes.map(n => {
+                const parentId = prevParentById.get(n.id);
+                return {
+                    id: n.id, type: 'process',
+                    position: n.position ?? { x: 24, y: 24 },
+                    ...(parentId ? { parentId, extent: 'parent' as const } : {}),
+                    data: { name: n.name, itemIds: n.itemIds || [], aliases: n.aliases },
+                };
+            });
+            setNodes([...prevGroupNodes, ...merged]);
             setEdges(graph.edges.map(e => ({ id: e.id, source: e.source, target: e.target, markerEnd: { type: MarkerType.ArrowClosed } })));
             setSelectedId(null);
-            showToast?.(`Šablon „${tpl.name}" dodan (+${addedNodeNames.length} čvorova) — provjeri veze pa Spremi`, 'success');
+            const freshIds = graph.nodes.filter(n => !prevIds.has(n.id)).map(n => n.id);
+            if (freshIds.length > 1) wrapInGroup(freshIds, tpl.name);
+            showToast?.(freshIds.length > 1
+                ? `Šablon „${tpl.name}" dodan kao grupa (+${addedNodeNames.length}) — pomjera se kao cjelina`
+                : `Šablon „${tpl.name}" dodan (+${addedNodeNames.length} čvorova) — provjeri veze pa Spremi`, 'success');
             return;
         }
         const idMap = new Map<string, string>();
@@ -375,8 +527,10 @@ export default function ProcessGraphModal({
             newNodes.forEach(n => { if (pos[n.id]) n.position = pos[n.id]; });
         }
         setNodes(newNodes); setEdges(newEdges); setSelectedId(null);
-        showToast?.(`Templejt „${tpl.name}" primijenjen — pridruži proizvode čvorovima`, 'info');
-    }, [nodes, edges, setNodes, setEdges, showToast]);
+        // Cijeli templejt = jedna grupa (pomjera se kao cjelina, ne miješa se s ostalim)
+        if (newNodes.length > 1) wrapInGroup(newNodes.map(n => n.id), tpl.name);
+        showToast?.(`Templejt „${tpl.name}" primijenjen kao grupa — pridruži proizvode čvorovima`, 'info');
+    }, [nodes, edges, setNodes, setEdges, wrapInGroup, showToast]);
 
     const saveAsTemplate = useCallback(async () => {
         const name = typeof window !== 'undefined' ? window.prompt('Naziv templejta toka:')?.trim() : '';
@@ -388,13 +542,28 @@ export default function ProcessGraphModal({
         if (res.success) listProcessTemplates(organizationId).then(setTemplates);
     }, [nodes, edges, organizationId, showToast]);
 
-    const selected = nodes.find(n => n.id === selectedId) || null;
+    const selected = nodes.find(n => n.id === selectedId && n.type !== 'pgGroup') || null;
     const selData = selected?.data as ProcData | undefined;
 
+    // Kandidati za grupisanje: označeni procesi koji NISU već u nekoj grupi
+    const groupableIds = useMemo(() => selectedIds.filter(id => {
+        const n = nodes.find(x => x.id === id);
+        return !!n && n.type !== 'pgGroup' && !n.parentId;
+    }), [selectedIds, nodes]);
+
+    const selectedGroupNode = useMemo(
+        () => nodes.find(n => n.id === selectedId && n.type === 'pgGroup') || null,
+        [nodes, selectedId]
+    );
+    const selectedGroupMembers = useMemo(
+        () => selectedGroupNode ? nodes.filter(n => n.parentId === selectedGroupNode.id).length : 0,
+        [nodes, selectedGroupNode]
+    );
+
     // Lista operacija: čvorovi + prethodnici + status/datum + KO JE RADIO (iz dnevnika po Process_Node_ID)
-    const opRows = useMemo(() => nodes.map(n => {
+    const opRows = useMemo(() => procNodes.map(n => {
         const d = n.data as ProcData;
-        const preds = edges.filter(e => e.target === n.id).map(e => (nodes.find(x => x.id === e.source)?.data as ProcData | undefined)?.name || '—');
+        const preds = edges.filter(e => e.target === n.id).map(e => (procNodes.find(x => x.id === e.source)?.data as ProcData | undefined)?.name || '—');
         const st = status(n.id, d.itemIds || [], d.name, d.aliases);
         const prods = (d.itemIds || []).length === 0 ? 'svi' : d.itemIds.map(itemName).join(', ');
         // Radnici · dani po čvoru — odgovor na "koji radnik je koji proces radio i koliko"
@@ -415,61 +584,97 @@ export default function ProcessGraphModal({
     // FAZE: kolone iz topologije TRENUTNOG canvasa (longest-path dubina) —
     // isti mentalni model kao fazni plan proizvoda (kolona = faza, unutar kolone paralelno).
     const stageColumns = useMemo(() => {
-        if (view !== 'stages' || nodes.length === 0) return [] as Node<ProcData>[][];
-        const depths = computeGraphDepths(nodes.map(n => ({ id: n.id })), edges.map(e => ({ source: e.source, target: e.target })));
-        const byDepth = new Map<number, Node<ProcData>[]>();
-        nodes.forEach(n => {
+        if (view !== 'stages' || procNodes.length === 0) return [] as Node<any>[][];
+        const depths = computeGraphDepths(procNodes.map(n => ({ id: n.id })), edges.map(e => ({ source: e.source, target: e.target })));
+        const byDepth = new Map<number, Node<any>[]>();
+        procNodes.forEach(n => {
             const d = depths.get(n.id) ?? 0;
             if (!byDepth.has(d)) byDepth.set(d, []);
             byDepth.get(d)!.push(n);
         });
         return Array.from(byDepth.keys()).sort((a, b) => a - b).map(k => byDepth.get(k)!);
-    }, [view, nodes, edges]);
+    }, [view, procNodes, edges]);
 
     const btn: React.CSSProperties = { display: 'inline-flex', alignItems: 'center', gap: 6, padding: '8px 14px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-light)', background: 'var(--background)', fontSize: 13, fontWeight: 600, cursor: 'pointer', color: 'var(--text-primary)', transition: 'var(--transition)' };
-    const tab: React.CSSProperties = { display: 'inline-flex', alignItems: 'center', gap: 5, padding: '5px 10px', borderRadius: 6, border: 'none', background: 'transparent', fontSize: 13, fontWeight: 600, cursor: 'pointer', color: 'var(--text-secondary)' };
-    const tabActive: React.CSSProperties = { background: 'var(--background)', color: 'var(--text-primary)', boxShadow: '0 1px 2px var(--shadow-md)' };
     const th: React.CSSProperties = { padding: '8px 12px', fontWeight: 600 };
     const td: React.CSSProperties = { padding: '8px 12px', color: 'var(--text-primary)', verticalAlign: 'top' };
 
     return (
         <Modal isOpen onClose={onClose} size="xl" title={`Procesi · ${workOrderName || ('Nalog ' + (workOrderNumber || ''))}`}>
-            <div style={{ display: 'flex', flexDirection: 'column', height: '74vh', width: '100%', gap: 10 }}>
+            <div className="pg-shell">
                 {/* Tabs + alati */}
-                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-                    <div style={{ display: 'flex', gap: 4, background: 'var(--surface)', borderRadius: 8, padding: 3 }}>
-                        <button style={{ ...tab, ...(view === 'graph' ? tabActive : {}) }} onClick={() => setView('graph')}><Network size={14} /> Graf</button>
-                        <button style={{ ...tab, ...(view === 'stages' ? tabActive : {}) }} onClick={() => setView('stages')} title="Faze toka — isti pregled kao plan procesa proizvoda"><Layers size={14} /> Faze</button>
-                        <button style={{ ...tab, ...(view === 'list' ? tabActive : {}) }} onClick={() => setView('list')}><List size={14} /> Lista</button>
+                <div className="pg-toolbar">
+                    <div className="pg-tabs">
+                        <button className={view === 'graph' ? 'on' : ''} onClick={() => setView('graph')} title="Graf"><Network size={14} /><span>Graf</span></button>
+                        <button className={view === 'stages' ? 'on' : ''} onClick={() => setView('stages')} title="Faze toka — isti pregled kao plan procesa proizvoda"><Layers size={14} /><span>Faze</span></button>
+                        <button className={view === 'list' ? 'on' : ''} onClick={() => setView('list')} title="Lista"><List size={14} /><span>Lista</span></button>
                     </div>
+
                     {view === 'graph' && <>
-                        <button style={btn} onClick={() => addNode()}><Plus size={15} /> Proces</button>
+                        <button className="pg-btn" onClick={() => addNode()} title="Dodaj proces"><Plus size={15} /><span>Proces</span></button>
+                        <button
+                            className="pg-btn"
+                            onClick={groupSelected}
+                            disabled={groupableIds.length < 2}
+                            title="Označi više procesa (Shift + povuci ili Ctrl/Cmd + klik) pa ih spoji u grupu koja se pomjera zajedno"
+                        >
+                            <Group size={15} /><span>Grupiši</span>
+                            {groupableIds.length > 1 && <em className="pg-btn-count">{groupableIds.length}</em>}
+                        </button>
+                        {selectedGroupNode && (
+                            <button className="pg-btn" onClick={() => ungroup(selectedGroupNode.id)} title="Rasformiraj grupu (procesi ostaju)">
+                                <Ungroup size={15} /><span>Razgrupiši</span>
+                            </button>
+                        )}
                     </>}
-                    {templates.length > 0 && (
-                        <select defaultValue="" onChange={e => { const t = templates.find(x => x.id === e.target.value); if (t) applyTemplate(t); e.currentTarget.value = ''; }} style={{ ...btn, paddingRight: 8 }}>
-                            <option value="">Primijeni templejt…</option>
-                            {templates.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
-                        </select>
+
+                    <div className="pg-toolbar-spacer" />
+
+                    <div className="pg-tools">
+                        <button className="pg-btn pg-btn-icon" onClick={() => setToolsOpen(o => !o)} title="Templejti i ostali alati">
+                            <MoreHorizontal size={16} />
+                        </button>
+                        {toolsOpen && (
+                            <div className="pg-tools-menu" onMouseLeave={() => setToolsOpen(false)}>
+                                {templates.length > 0 && (
+                                    <>
+                                        <label>Primijeni templejt (učitava se kao grupa)</label>
+                                        <select defaultValue="" onChange={e => { const t = templates.find(x => x.id === e.target.value); if (t) applyTemplate(t); e.currentTarget.value = ''; setToolsOpen(false); }}>
+                                            <option value="">Odaberi templejt…</option>
+                                            {templates.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                                        </select>
+                                    </>
+                                )}
+                                <button className="pg-tools-item" onClick={() => { setToolsOpen(false); saveAsTemplate(); }}>
+                                    <BookmarkPlus size={14} /> Snimi kao templejt
+                                </button>
+                            </div>
+                        )}
+                    </div>
+
+                    {view === 'graph' && (
+                        <button className={`pg-btn pg-btn-icon${panelOpen ? ' on' : ''}`} onClick={() => setPanelOpen(p => !p)} title={panelOpen ? 'Sakrij panel detalja' : 'Prikaži panel detalja'}>
+                            <PanelRight size={16} />
+                        </button>
                     )}
-                    <button style={btn} onClick={saveAsTemplate}><BookmarkPlus size={15} /> Snimi templejt</button>
-                    <div style={{ flex: 1 }} />
-                    <button style={{ ...btn, background: 'var(--text-primary)', color: 'var(--background)', border: 'none' }} onClick={handleSave} disabled={saving}>
-                        {saving ? <Loader2 size={15} className="dwb-spin" /> : <Save size={15} />} Spremi
+
+                    <button className="pg-btn pg-btn-primary" onClick={handleSave} disabled={saving}>
+                        {saving ? <Loader2 size={15} className="dwb-spin" /> : <Save size={15} />}<span>Spremi</span>
                     </button>
                 </div>
 
-                {view === 'graph' && !loading && nodes.length > 0 && (
+                {view === 'graph' && !loading && procNodes.length > 0 && (
                     <div className="pg-hint">
-                        <span><MoveRight size={13} /> Prevuci iz <b>plave tačke</b> (desno) za novu vezu</span>
-                        <span><span className="pg-hint-x"><X size={9} strokeWidth={2.5} /></span> Klikni <b>×</b> na sredini veze da je ukloniš</span>
-                        <span><Trash2 size={12} /> Označi čvor/vezu pa <b>Delete</b></span>
+                        <span><MoveRight size={13} /> Prevuci iz <b>plave tačke</b> za vezu</span>
+                        <span><span className="pg-hint-x"><X size={9} strokeWidth={2.5} /></span> <b>×</b> na vezi je uklanja</span>
+                        <span><Group size={12} /> <b>Shift + povuci</b> označi više → Grupiši</span>
                     </div>
                 )}
 
                 {view === 'graph' && (
-                <div style={{ flex: 1, display: 'flex', gap: 10, minHeight: 0 }}>
+                <div className="pg-work">
                     {/* Canvas */}
-                    <div style={{ flex: 1, border: '1px solid var(--border-light)', borderRadius: 12, overflow: 'hidden', background: 'var(--surface)', position: 'relative' }}>
+                    <div className="pg-canvas">
                         {loading ? (
                             <div style={{ display: 'flex', height: '100%', alignItems: 'center', justifyContent: 'center', color: 'var(--text-tertiary)', gap: 8 }}>
                                 <Loader2 size={18} className="dwb-spin" /> Učitavam…
@@ -481,7 +686,10 @@ export default function ProcessGraphModal({
                                     nodes={nodes} edges={styledEdges}
                                     onNodesChange={onNodesChange} onEdgesChange={onEdgesChange}
                                     onConnect={onConnect}
-                                    onSelectionChange={(p) => setSelectedId(p.nodes[0]?.id ?? null)}
+                                    onSelectionChange={(p) => {
+                                        setSelectedIds(p.nodes.map(n => n.id));
+                                        setSelectedId(p.nodes.length === 1 ? p.nodes[0].id : null);
+                                    }}
                                     nodeTypes={nodeTypes}
                                     edgeTypes={edgeTypes}
                                     connectionLineStyle={{ stroke: KIND_HEX.active, strokeWidth: 2.5 }}
@@ -500,7 +708,7 @@ export default function ProcessGraphModal({
                                         style={{ width: 150, height: 100 }}
                                     />
                                 </ReactFlow>
-                                {nodes.length === 0 && (
+                                {procNodes.length === 0 && (
                                     <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: 'var(--text-tertiary)', pointerEvents: 'none', gap: 6 }}>
                                         <GitBranch size={28} />
                                         <div style={{ fontSize: 13 }}>Nema procesa. Klikni „+ Proces".</div>
@@ -510,9 +718,39 @@ export default function ProcessGraphModal({
                         )}
                     </div>
 
+                    {/* Panel selektovane GRUPE */}
+                    {panelOpen && selectedGroupNode && (
+                        <div className="pg-side">
+                            <div className="pg-side-head">
+                                <span className="pg-side-title">Grupa · {selectedGroupMembers} {selectedGroupMembers === 1 ? 'proces' : 'procesa'}</span>
+                                <button className="pg-side-close" onClick={() => setPanelOpen(false)} title="Sakrij panel"><X size={13} /></button>
+                            </div>
+                            <div>
+                                <label style={{ fontSize: 11, color: 'var(--text-secondary)', fontWeight: 600 }}>Naziv grupe</label>
+                                <input
+                                    value={(selectedGroupNode.data as GroupData).name || ''}
+                                    placeholder="npr. Korpus"
+                                    onChange={e => renameGroup(selectedGroupNode.id, e.target.value)}
+                                    style={{ width: '100%', marginTop: 4, padding: '7px 9px', borderRadius: 8, border: '1px solid var(--border-light)', fontSize: 13 }}
+                                />
+                            </div>
+                            <div style={{ fontSize: 11, color: 'var(--text-tertiary)', lineHeight: 1.5 }}>
+                                Povuci zaglavlje grupe da pomjeriš sve procese zajedno. Grupa je samo vizuelna —
+                                ne utiče na tok, gating ni knjiženje.
+                            </div>
+                            <button className="pg-btn" style={{ justifyContent: 'center' }} onClick={() => ungroup(selectedGroupNode.id)}>
+                                <Ungroup size={14} /> Razgrupiši
+                            </button>
+                        </div>
+                    )}
+
                     {/* Panel selektovanog čvora */}
-                    {selected && selData && (
-                        <div style={{ width: 280, border: '1px solid var(--border-light)', borderRadius: 12, padding: 14, display: 'flex', flexDirection: 'column', gap: 12, overflowY: 'auto' }}>
+                    {panelOpen && selected && selData && (
+                        <div className="pg-side">
+                            <div className="pg-side-head">
+                                <span className="pg-side-title">Proces</span>
+                                <button className="pg-side-close" onClick={() => setPanelOpen(false)} title="Sakrij panel"><X size={13} /></button>
+                            </div>
                             <div>
                                 <label style={{ fontSize: 11, color: 'var(--text-secondary)', fontWeight: 600 }}>Naziv procesa</label>
                                 <input list="pg-common" value={selData.name} placeholder="npr. Kantiranje"
