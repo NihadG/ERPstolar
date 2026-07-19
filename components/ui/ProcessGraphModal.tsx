@@ -337,9 +337,28 @@ export default function ProcessGraphModal({
     const addNode = useCallback((afterId?: string, parallel?: boolean) => {
         const id = `n-${generateUUID()}`;
         const base = afterId ? nodes.find(n => n.id === afterId) : null;
-        const position = base
-            ? { x: base.position.x + (parallel ? 0 : NODE_W + 70), y: base.position.y + (parallel ? NODE_H + 30 : 0) }
-            : { x: 24, y: 24 + nodes.length * (NODE_H + 30) };
+
+        // Donja ivica čvora u APSOLUTNIM koordinatama (članovi grupe imaju poziciju
+        // relativnu na roditelja — bez ovoga bi se maxBottom pogrešno računao za njih).
+        const absBottom = (n: Node<any>): number => {
+            const parent = n.parentId ? nodes.find(x => x.id === n.parentId) : undefined;
+            const y = parent ? n.position.y + parent.position.y : n.position.y;
+            const h = n.type === 'pgGroup' ? (Number(n.style?.height) || 0) : (n.measured?.height ?? NODE_H);
+            return y + h;
+        };
+
+        let position: { x: number; y: number };
+        if (base) {
+            position = { x: base.position.x + (parallel ? 0 : NODE_W + 70), y: base.position.y + (parallel ? NODE_H + 30 : 0) };
+        } else if (nodes.length === 0) {
+            position = { x: 24, y: 24 };
+        } else {
+            // Bez odabranog čvora ("+ Proces" u traci): novi čvor ide ODMAH ISPOD cijelog
+            // postojećeg klastera — NE kumulativno po broju čvorova (to je ranije guralo
+            // svaki novi čvor sve dalje u ćošak što je graf bio gušći).
+            const maxBottom = Math.max(...nodes.map(absBottom));
+            position = { x: 24, y: maxBottom + 40 };
+        }
         // Novi čvor nasljeđuje grupu svog prethodnika (pozicije su tad relativne na istu grupu)
         const inherit = base?.parentId ? { parentId: base.parentId, extent: 'parent' as const } : {};
         setNodes(ns => [...ns, { id, type: 'process', position, ...inherit, data: { name: '', itemIds: [] } }]);
