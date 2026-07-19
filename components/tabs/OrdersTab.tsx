@@ -9,6 +9,7 @@ import { exportHTMLToPDFBlob, exportHTMLToPDFFile, toSafeFileName } from '@/lib/
 import { useGoogleIntegration } from '@/lib/google/useGoogleIntegration';
 import { fileToSubfolder } from '@/lib/google/projectDrive';
 import { DropdownMenu } from '@/components/ui/DropdownMenu';
+import { SlidersHorizontal, Plus } from 'lucide-react';
 import Modal from '@/components/ui/Modal';
 import { OrderWizardModal } from './OrderWizardModal';
 import { ORDER_STATUSES, MATERIAL_STATUSES, ALLOWED_ORDER_TRANSITIONS } from '@/lib/types';
@@ -354,6 +355,8 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
 
     // Check if any filters are active
     const hasActiveFilters = searchTerm || statusFilter || supplierFilter || projectFilter || dateFromFilter || dateToFilter;
+    // Broj aktivnih filtera za bedž na dugmetu "Filteri" (pretraga se ne broji — ima svoje polje)
+    const activeFilterCount = [statusFilter, supplierFilter, projectFilter, dateFromFilter, dateToFilter].filter(Boolean).length;
 
     // Get unordered materials (status = "Nije naručeno" or empty)
     const unorderedMaterials = useMemo(() => {
@@ -1342,26 +1345,28 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
             ) : (
                 <div className="orders-page">
             {/* Page Header */}
-            <div className="page-header">
-                <div className="header-content" style={{ padding: '0 24px' }}>
-                    <div className="header-text">
-                        <h1>Narudžbe</h1>
-                        <p>Upravljajte narudžbama materijala prema dobavljačima.</p>
-                    </div>
-                    <div className="header-actions">
-                        <button
-                            className={`filter-toggle ${isFiltersOpen ? 'active' : ''}`}
-                            onClick={() => setIsFiltersOpen(!isFiltersOpen)}
-                        >
-                            <span className="material-icons-round">tune</span>
-                            <span>{isFiltersOpen ? 'Zatvori filtere' : 'Filteri'}</span>
-                        </button>
-                        <button className="glass-btn glass-btn-primary" onClick={openWizard}>
-                            <span className="material-icons-round">add</span>
-                            Nova Narudžba
-                        </button>
-                    </div>
+            <div className="app-toolbar" style={{ margin: '0 24px 24px' }}>
+                <div className="app-toolbar-title">
+                    <h1>Narudžbe</h1>
+                    <p>Narudžbe materijala prema dobavljačima</p>
                 </div>
+
+                <div className="app-toolbar-spacer" />
+
+                <button
+                    className={`app-toolbar-btn ${isFiltersOpen ? 'on' : ''}`}
+                    onClick={() => setIsFiltersOpen(!isFiltersOpen)}
+                >
+                    <SlidersHorizontal size={16} />
+                    <span>{isFiltersOpen ? 'Zatvori filtere' : 'Filteri'}</span>
+                    {activeFilterCount > 0 && (
+                        <span className="app-toolbar-badge">{activeFilterCount}</span>
+                    )}
+                </button>
+                <button className="app-toolbar-btn app-toolbar-btn-primary" onClick={openWizard}>
+                    <Plus size={16} strokeWidth={2.4} />
+                    Nova Narudžba
+                </button>
             </div>
 
             {/* Collapsible Control Bar */}

@@ -25,6 +25,7 @@
   --radius-sm: 8px;
   --radius-md: 12px;
   --radius-lg: 16px;
+  --radius-xl: 20px;
   --transition: 0.15s ease;
 
   /* Liquid Glass Variables */
@@ -10474,4 +10475,300 @@ textarea::placeholder {
 
 .plan-card-link .material-icons-round {
   font-size: 16px;
+}
+
+/* ============================================
+   APP TOOLBAR - jedinstvena traka pretraga/filteri/akcije
+   Dijele Projekti, Ponude, Narudzbe (redizajn 2026-07-19, zamjena za
+   genericku .content-header + .glass-select-standalone kombinaciju).
+   ============================================ */
+.app-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 14px 18px;
+  margin-bottom: 24px;
+  background: rgba(255, 255, 255, 0.78);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  border-radius: var(--radius-xl);
+  border: 1px solid rgba(255, 255, 255, 0.7);
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.03),
+    0 8px 28px rgba(0, 0, 0, 0.07),
+    inset 0 1px 0 rgba(255, 255, 255, 0.9);
+}
+.app-toolbar + .app-toolbar { margin-top: -12px; }
+
+.app-toolbar-divider {
+  width: 1px;
+  height: 26px;
+  background: var(--border-light);
+  flex-shrink: 0;
+}
+@media (max-width: 860px) { .app-toolbar-divider { display: none; } }
+
+.app-toolbar-spacer { flex: 1 1 auto; min-width: 4px; }
+
+.app-toolbar-title {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-right: 6px;
+}
+.app-toolbar-title h1 {
+  font-size: 19px;
+  font-weight: 700;
+  color: var(--text-primary);
+  letter-spacing: -0.01em;
+  margin: 0;
+}
+.app-toolbar-title p {
+  font-size: 12.5px;
+  color: var(--text-secondary);
+  margin: 0;
+}
+
+/* ---- pretraga ---- */
+.app-toolbar-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 38px;
+  padding: 0 13px;
+  min-width: 220px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-light);
+  background: #ffffff;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.app-toolbar-search:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 4px var(--accent-light);
+}
+.app-toolbar-search svg { color: var(--text-tertiary); flex-shrink: 0; transition: color 0.15s; }
+.app-toolbar-search:focus-within svg { color: var(--accent); }
+.app-toolbar-search input {
+  border: none;
+  outline: none;
+  background: transparent;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-primary);
+  flex: 1;
+  min-width: 0;
+}
+.app-toolbar-search input::placeholder { color: var(--text-tertiary); font-weight: 400; }
+
+/* ---- select (doradjeni native select, ikona + strelica) ---- */
+.app-toolbar-select {
+  position: relative;
+  display: flex;
+  align-items: center;
+  height: 38px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-light);
+  background: #ffffff;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.app-toolbar-select:hover { border-color: var(--border); }
+.app-toolbar-select:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 4px var(--accent-light);
+}
+.app-toolbar-select svg.leading {
+  color: var(--text-tertiary);
+  margin-left: 12px;
+  flex-shrink: 0;
+  pointer-events: none;
+}
+.app-toolbar-select select {
+  appearance: none;
+  -webkit-appearance: none;
+  border: none;
+  outline: none;
+  background: transparent;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  padding: 0 30px 0 8px;
+  height: 100%;
+  cursor: pointer;
+}
+.app-toolbar-select.no-icon select { padding-left: 14px; }
+.app-toolbar-select::after {
+  content: "";
+  position: absolute;
+  right: 12px;
+  top: 50%;
+  width: 9px;
+  height: 9px;
+  border-right: 1.6px solid var(--text-tertiary);
+  border-bottom: 1.6px solid var(--text-tertiary);
+  transform: translateY(-65%) rotate(45deg);
+  pointer-events: none;
+}
+
+/* ---- segmentirani prekidac (2-4 fiksne opcije) ---- */
+.app-toolbar-seg {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  height: 38px;
+  padding: 3px;
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  border: 1px solid var(--border-light);
+  flex-wrap: wrap;
+}
+.app-toolbar-seg button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 13px;
+  border: none;
+  border-radius: 9px;
+  background: transparent;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s, color 0.15s, box-shadow 0.15s;
+}
+.app-toolbar-seg button:hover:not(.on) { color: var(--text-primary); }
+.app-toolbar-seg button.on {
+  background: #ffffff;
+  color: var(--accent);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1), 0 1px 1px rgba(0, 0, 0, 0.04);
+}
+
+/* ---- labelovana grupa (npr. "Grupisi:") ---- */
+.app-toolbar-labeled {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  height: 38px;
+  padding: 0 6px 0 13px;
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  border: 1px solid var(--border-light);
+}
+.app-toolbar-labeled .app-toolbar-label {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+.app-toolbar-labeled select {
+  appearance: none;
+  -webkit-appearance: none;
+  border: none;
+  outline: none;
+  background: #ffffff;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  padding: 6px 26px 6px 10px;
+  cursor: pointer;
+}
+.app-toolbar-labeled::after {
+  content: "";
+  position: absolute;
+  right: 14px;
+  top: 50%;
+  width: 8px;
+  height: 8px;
+  border-right: 1.6px solid var(--text-tertiary);
+  border-bottom: 1.6px solid var(--text-tertiary);
+  transform: translateY(-70%) rotate(45deg);
+  pointer-events: none;
+}
+
+/* ---- dugmad ---- */
+.app-toolbar-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 38px;
+  padding: 0 15px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-light);
+  background: #ffffff;
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: transform 0.12s ease, background 0.15s, border-color 0.15s, box-shadow 0.15s, color 0.15s;
+}
+.app-toolbar-btn:hover {
+  background: var(--surface);
+  border-color: var(--border);
+  transform: translateY(-1px);
+  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.06);
+}
+.app-toolbar-btn:active { transform: translateY(0); box-shadow: none; }
+.app-toolbar-btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; box-shadow: none; }
+
+.app-toolbar-btn-icon {
+  width: 38px;
+  padding: 0;
+  justify-content: center;
+  color: var(--text-secondary);
+}
+
+.app-toolbar-btn-primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #ffffff;
+  font-weight: 700;
+  box-shadow: 0 2px 8px rgba(0, 113, 227, 0.28);
+}
+.app-toolbar-btn-primary:hover {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+  color: #ffffff;
+  box-shadow: 0 6px 16px rgba(0, 113, 227, 0.34);
+}
+
+/* aktivan toggle (npr. Arhiva ukljucena, Filteri otvoreni) */
+.app-toolbar-btn.on {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #ffffff;
+}
+.app-toolbar-btn.on:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+
+.app-toolbar-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--warning-bg);
+  color: #b25f00;
+  font-size: 11px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.app-toolbar-btn.on .app-toolbar-badge {
+  background: rgba(255, 255, 255, 0.25);
+  color: #ffffff;
+}
+
+.app-toolbar-spin { animation: appToolbarSpin 1s linear infinite; }
+@keyframes appToolbarSpin { to { transform: rotate(360deg); } }
+
+@media (max-width: 640px) {
+  .app-toolbar { padding: 12px; gap: 8px; }
+  .app-toolbar-search { min-width: 0; flex: 1 1 100%; order: -1; }
 }

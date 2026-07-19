@@ -47,6 +47,7 @@ import SketchUpImportModal from '@/components/SketchUpImportModal';
 import { useGoogleIntegration } from '@/lib/google/useGoogleIntegration';
 import { ensureProjectFolderTree, shouldAutoCreateFolder } from '@/lib/google/projectDrive';
 import { folderLink } from '@/lib/google/driveClient';
+import { Search, ListFilter, Archive, ArchiveRestore, RefreshCw, Plus } from 'lucide-react';
 import './ProjectsTab.css';
 
 interface ProjectsTabProps {
@@ -1395,9 +1396,9 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
 
     return (
         <div className="tab-content active" id="projects-content">
-            <div className="content-header projects-toolbar">
-                <div className="glass-search">
-                    <span className="material-icons-round">search</span>
+            <div className="app-toolbar">
+                <div className="app-toolbar-search">
+                    <Search size={17} />
                     <input
                         type="text"
                         placeholder="Pretraži projekte..."
@@ -1405,34 +1406,37 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                         onChange={(e) => setSearchTerm(e.target.value)}
                     />
                 </div>
-                <select
-                    className="glass-select-standalone"
-                    value={statusFilter}
-                    onChange={(e) => setStatusFilter(e.target.value)}
-                >
-                    <option value="">Svi statusi</option>
-                    {PROJECT_STATUSES.map(status => (
-                        <option key={status} value={status}>{status}</option>
-                    ))}
-                </select>
+                <div className="app-toolbar-select">
+                    <ListFilter className="leading" size={15} />
+                    <select
+                        value={statusFilter}
+                        onChange={(e) => setStatusFilter(e.target.value)}
+                    >
+                        <option value="">Svi statusi</option>
+                        {PROJECT_STATUSES.map(status => (
+                            <option key={status} value={status}>{status}</option>
+                        ))}
+                    </select>
+                </div>
+
+                <div className="app-toolbar-spacer" />
+
                 <button
-                    className={`glass-btn archive-toggle-btn ${showHidden ? 'archive-active' : ''}`}
+                    className={`app-toolbar-btn ${showHidden ? 'on' : ''}`}
                     onClick={() => setShowHidden(!showHidden)}
                     title={showHidden ? 'Prikaži aktivne projekte' : 'Prikaži skrivene projekte'}
                 >
-                    <span className="material-icons-round">{showHidden ? 'inventory_2' : 'archive'}</span>
+                    {showHidden ? <ArchiveRestore size={16} /> : <Archive size={16} />}
                     {showHidden ? 'Aktivni' : 'Arhiva'}
                     {!showHidden && hiddenCount > 0 && (
-                        <span className="archive-badge">{hiddenCount}</span>
+                        <span className="app-toolbar-badge">{hiddenCount}</span>
                     )}
                 </button>
-                <button className="glass-btn glass-btn-primary" onClick={() => openProjectModal()}>
-                    <span className="material-icons-round">add</span>
-                    Novi Projekat
-                </button>
+
                 <button
-                    className="glass-btn"
+                    className="app-toolbar-btn app-toolbar-btn-icon"
                     disabled={syncing || !organizationId}
+                    title={syncing ? 'Sinkronizacija...' : 'Sinkroniziraj'}
                     onClick={async () => {
                         if (!organizationId) return;
                         setSyncing(true);
@@ -1449,8 +1453,12 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                         }
                     }}
                 >
-                    <span className="material-icons-round">{syncing ? 'hourglass_empty' : 'sync'}</span>
-                    {syncing ? 'Sinkronizacija...' : 'Sinkroniziraj'}
+                    <RefreshCw size={16} className={syncing ? 'app-toolbar-spin' : ''} />
+                </button>
+
+                <button className="app-toolbar-btn app-toolbar-btn-primary" onClick={() => openProjectModal()}>
+                    <Plus size={16} strokeWidth={2.4} />
+                    Novi Projekat
                 </button>
             </div>
 

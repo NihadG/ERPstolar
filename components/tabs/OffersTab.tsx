@@ -16,6 +16,7 @@ import { useIsMobile } from '@/hooks/useIsMobile';
 import MobileOffersView from './mobile/MobileOffersView';
 import { useGoogleIntegration } from '@/lib/google/useGoogleIntegration';
 import { fileToSubfolder } from '@/lib/google/projectDrive';
+import { Search, ListFilter, ArrowUpDown, Plus } from 'lucide-react';
 
 interface Extra {
     name: string;
@@ -1132,56 +1133,69 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
                 />
             ) : (
                 <div className="tab-content active" id="offers-content">
-                    <div className="content-header" style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap', padding: '16px 24px' }}>
-                <div className="glass-search">
-                    <span className="material-icons-round">search</span>
-                    <input
-                        type="text"
-                        placeholder="Pretraži ponude..."
-                        value={searchTerm}
-                        onChange={(e) => setSearchTerm(e.target.value)}
-                    />
-                </div>
-                <select
-                    className="glass-select-standalone"
-                    value={statusFilter}
-                    onChange={(e) => setStatusFilter(e.target.value)}
-                >
-                    <option value="">Svi statusi</option>
-                    {OFFER_STATUSES.map(status => (
-                        <option key={status} value={status}>{status}</option>
-                    ))}
-                </select>
-                <select
-                    className="glass-select-standalone"
-                    value={sortBy}
-                    onChange={(e) => setSortBy(e.target.value as any)}
-                    title="Sortiranje"
-                >
-                    <option value="date-desc">Najnovije prvo</option>
-                    <option value="date-asc">Najstarije prvo</option>
-                    <option value="amount-desc">Najveći iznos</option>
-                    <option value="amount-asc">Najmanji iznos</option>
-                    <option value="client-asc">Klijent A-Ž</option>
-                    <option value="client-desc">Klijent Ž-A</option>
-                </select>
-                <select
-                    className="glass-select-standalone"
-                    value={groupBy}
-                    onChange={(e) => setGroupBy(e.target.value as any)}
-                    title="Grupisanje"
-                >
-                    <option value="none">Bez grupisanja</option>
-                    <option value="status">Po statusu</option>
-                    <option value="project">Po klijentu/projektu</option>
-                </select>
-                <div style={{ marginLeft: 'auto' }}>
-                    <button className="glass-btn glass-btn-primary" onClick={openCreateModal}>
-                        <span className="material-icons-round">add</span>
-                        Nova Ponuda
-                    </button>
-                </div>
-            </div>
+                    <div className="app-toolbar">
+                        <div className="app-toolbar-search">
+                            <Search size={17} />
+                            <input
+                                type="text"
+                                placeholder="Pretraži ponude..."
+                                value={searchTerm}
+                                onChange={(e) => setSearchTerm(e.target.value)}
+                            />
+                        </div>
+                        <div className="app-toolbar-select">
+                            <ListFilter className="leading" size={15} />
+                            <select
+                                value={statusFilter}
+                                onChange={(e) => setStatusFilter(e.target.value)}
+                            >
+                                <option value="">Svi statusi</option>
+                                {OFFER_STATUSES.map(status => (
+                                    <option key={status} value={status}>{status}</option>
+                                ))}
+                            </select>
+                        </div>
+                        <div className="app-toolbar-select">
+                            <ArrowUpDown className="leading" size={15} />
+                            <select
+                                value={sortBy}
+                                onChange={(e) => setSortBy(e.target.value as any)}
+                                title="Sortiranje"
+                            >
+                                <option value="date-desc">Najnovije prvo</option>
+                                <option value="date-asc">Najstarije prvo</option>
+                                <option value="amount-desc">Najveći iznos</option>
+                                <option value="amount-asc">Najmanji iznos</option>
+                                <option value="client-asc">Klijent A-Ž</option>
+                                <option value="client-desc">Klijent Ž-A</option>
+                            </select>
+                        </div>
+
+                        <div className="app-toolbar-divider" />
+
+                        <div className="app-toolbar-seg">
+                            {([
+                                { value: 'none', label: 'Bez grupisanja' },
+                                { value: 'status', label: 'Po statusu' },
+                                { value: 'project', label: 'Po klijentu' },
+                            ] as const).map(opt => (
+                                <button
+                                    key={opt.value}
+                                    className={groupBy === opt.value ? 'on' : ''}
+                                    onClick={() => setGroupBy(opt.value as any)}
+                                >
+                                    {opt.label}
+                                </button>
+                            ))}
+                        </div>
+
+                        <div className="app-toolbar-spacer" />
+
+                        <button className="app-toolbar-btn app-toolbar-btn-primary" onClick={openCreateModal}>
+                            <Plus size={16} strokeWidth={2.4} />
+                            Nova Ponuda
+                        </button>
+                    </div>
 
             <div className="offers-list">
                 {sortedOffers.length === 0 ? (
