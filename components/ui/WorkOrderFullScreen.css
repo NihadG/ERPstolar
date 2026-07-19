@@ -1,0 +1,113 @@
+/* ═══════════════════════════════════════════════════════════════════
+   Puna stranica naloga — full-screen overlay (portal)
+   z-index 900: ispod app modala (1000/1001) da Print/Brisanje/Knjiženje
+   iskaču IZNAD stranice. Sve boje iz dizajn-tokena. Responsivno.
+   ═══════════════════════════════════════════════════════════════════ */
+
+.wofs-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 900;
+    background: var(--surface);
+    overflow-y: auto;
+    overflow-x: hidden;
+    -webkit-overflow-scrolling: touch;
+    animation: wofs-in 0.16s ease-out;
+}
+@keyframes wofs-in { from { opacity: 0; } to { opacity: 1; } }
+
+/* ── Zaglavlje ─────────────────────────────────────────────────────── */
+.wofs-header {
+    position: sticky;
+    top: 0;
+    z-index: 5;
+    background: var(--background);
+    border-top: 3px solid var(--accent);
+    border-bottom: 1px solid var(--border-light);
+    box-shadow: 0 1px 8px var(--shadow);
+}
+.wofs-header-inner {
+    max-width: 1280px;
+    margin: 0 auto;
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 12px 24px;
+}
+
+.wofs-back {
+    flex-shrink: 0;
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    border: 1px solid var(--border-light);
+    background: var(--surface);
+    color: var(--text-secondary);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: var(--transition);
+}
+.wofs-back:hover { background: var(--surface-hover); color: var(--text-primary); }
+
+.wofs-titles { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.wofs-title-row { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
+.wofs-name {
+    margin: 0;
+    font-size: 20px;
+    font-weight: 700;
+    color: var(--text-primary);
+    line-height: 1.2;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.wofs-number { flex-shrink: 0; font-size: 13px; font-weight: 500; color: var(--text-tertiary); }
+
+.wofs-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 13px; }
+.wofs-status { display: inline-flex; align-items: center; gap: 4px; font-weight: 600; }
+.wofs-status .material-icons-round { font-size: 16px; }
+.wofs-badge.montaza {
+    display: inline-flex; align-items: center; gap: 4px;
+    font-weight: 700; color: #00897b; background: rgba(0, 137, 123, 0.12);
+    padding: 1px 8px; border-radius: 999px; font-size: 12px;
+}
+.wofs-badge.montaza .material-icons-round { font-size: 14px; }
+.wofs-dot { color: var(--border); }
+.wofs-project { color: var(--text-secondary); font-weight: 500; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.wofs-actions { flex-shrink: 0; display: flex; align-items: center; gap: 8px; }
+.wofs-act {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 8px 14px; border-radius: var(--radius-sm);
+    border: 1px solid var(--border-light); background: var(--background);
+    color: var(--text-primary); font-size: 13px; font-weight: 600;
+    cursor: pointer; transition: var(--transition);
+}
+.wofs-act:hover { background: var(--surface); }
+.wofs-act.danger { color: var(--error); }
+.wofs-act.danger:hover { background: var(--error-bg); border-color: var(--error); }
+
+/* ── Sadržaj ───────────────────────────────────────────────────────── */
+.wofs-body {
+    max-width: 1280px;
+    margin: 0 auto;
+    width: 100%;
+    padding: 18px 20px 48px;
+}
+/* Sadržaj se stapa s pozadinom stranice (bez dojma ugniježđene kartice). */
+.wofs-body .wo-detail { padding: 0; background: transparent; }
+
+/* ── Mobitel ───────────────────────────────────────────────────────── */
+@media (max-width: 767px) {
+    .wofs-header-inner { padding: 10px 12px; gap: 10px; }
+    .wofs-back { width: 36px; height: 36px; }
+    .wofs-name { font-size: 17px; }
+    .wofs-number { font-size: 12px; }
+    .wofs-meta { font-size: 12px; gap: 6px; }
+    .wofs-act { padding: 8px; }
+    .wofs-act-label { display: none; }
+    .wofs-body { padding: 12px 8px 32px; }
+}

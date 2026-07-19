@@ -501,15 +501,32 @@ export interface ProcessNode {
     // Prazno/undefined → ponaša se kao [name] (unazad kompatibilno; poklapanje statusa/knjiženja).
     aliases?: string[];
     position?: { x: number; y: number };  // opcioni ručni override; inače auto-raspored
+    // Članstvo u grupi (ProcessGroup.id). Grupa je SAMO vizuelni kontejner u editoru —
+    // pozicija ostaje APSOLUTNA (React Flow relativne pozicije se pretvaraju pri snimanju),
+    // pa potrošači grafa (tabla, gating, redovi) ovo polje mogu bezbjedno ignorisati.
+    groupId?: string;
 }
 export interface ProcessEdge {
     id: string;
     source: string;                // ProcessNode.id (prethodnik)
     target: string;                // ProcessNode.id (nastavak)
 }
+/**
+ * Vizuelna grupa procesa u grafu naloga (npr. cijeli templejt učitan kao cjelina).
+ * NAMJERNO odvojena od `nodes`: sve što je u `nodes` tretira se kao stvaran proces
+ * (Production_Steps, tabla procesa, gating, knjiženje), pa kontejner tu ne smije upasti.
+ */
+export interface ProcessGroup {
+    id: string;
+    name: string;
+    position: { x: number; y: number };
+    width: number;
+    height: number;
+}
 export interface ProcessGraph {
     nodes: ProcessNode[];
     edges: ProcessEdge[];
+    groups?: ProcessGroup[];
 }
 // Templejt toka (bez vezivanja proizvoda) — snimi i primijeni na novi nalog
 export interface ProcessFlowTemplate {

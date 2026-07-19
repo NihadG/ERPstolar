@@ -5,10 +5,13 @@ import { createPortal } from 'react-dom';
 import {
     Check, ChevronDown, ChevronRight, Clock, Play, Users, Plus, X, Loader2, StickyNote, PauseCircle, RotateCcw, Search,
 } from 'lucide-react';
-import type { WorkOrderItem, Worker, WorkLog, ItemProcessStatus, ProcessCatalogItem, ProcessNode, ProcessEdge, ProcessGraph } from '@/lib/types';
+import type { WorkOrderItem, Worker, WorkLog, ItemProcessStatus, ProcessCatalogItem, ProcessGraph } from '@/lib/types';
 import { updateItemProcess, addProcessToOrderItem, getProcessCatalog, getProcessGraph } from '@/lib/services';
-import { planToStages, synthesizeOrderGraph, nodeMatchesProcess, computeProcessGating } from '@/lib/productProcesses';
-import { layoutProcessGraph } from '@/lib/processLayout';
+import { planToStages, synthesizeOrderGraph } from '@/lib/productProcesses';
+import {
+    buildOrderProcessRows, mergeDuplicateNameRows, dedupeProcessKey,
+    type ProcRow as Row, type ProcPerItem as PerItem,
+} from '@/lib/orderProcessRows';
 import './OrderProcessBoard.css';
 
 interface Props {
@@ -25,27 +28,6 @@ interface Props {
 
 const norm = (s: string) => (s || '').trim().toLowerCase();
 const todayISO = () => new Date().toISOString().split('T')[0];
-
-type PerItem = {
-    itemId: string;
-    itemName: string;
-    procName: string;               // TAČNO ime procesa na stavci (za updateItemProcess)
-    status: string;                 // Na čekanju | U toku | Završeno | Odloženo
-    workerName?: string;
-    helpers: { Worker_ID: string; Worker_Name: string }[];
-    completedAt?: string;
-};
-type Row = {
-    id: string;
-    key: string;
-    name: string;
-    perItem: PerItem[];
-    done: number;
-    total: number;
-    workers: string[];
-    predIds: string[];
-    state: 'done' | 'active' | 'blocked';
-};
 
 const STATUS_LABEL: Record<string, string> = {
     'Na čekanju': 'Čeka', 'U toku': 'U toku', 'Završeno': 'Završeno', 'Odloženo': 'Odloženo',
@@ -134,56 +116,8 @@ export default function OrderProcessBoard({
     const workerName = (id: string) => workers.find(w => w.Worker_ID === id)?.Name || 'Radnik';
 
     // ── Projekcija: procesi ujedinjeni preko proizvoda, u redoslijedu toka ──
+    // Gradnja redova + gating + dedup duplih naziva je u lib/orderProcessRows (testirano).
     const rows = useMemo<Row[]>(() => {
-        // Izgradi redove (perItem, gating) iz proizvoljnog skupa čvorova+veza.
-        // Per-čvor predecessor gating: proces je 'active' čim su SVI njegovi (direktni) prethodnici gotovi.
-        const buildRows = (nodes: ProcessNode[], edges: ProcessEdge[]): Row[] => {
-            if (!nodes.length) return [];
-            const allPositioned = nodes.every(n => n.position);
-            const pos: Record<string, { x: number; y: number }> = allPositioned
-                ? Object.fromEntries(nodes.map(n => [n.id, n.position!]))
-                : layoutProcessGraph(nodes.map(n => ({ id: n.id })), edges.map(e => ({ source: e.source, target: e.target })));
-            const preds = new Map<string, string[]>();
-            nodes.forEach(n => preds.set(n.id, []));
-            edges.forEach(e => { if (preds.has(e.target)) preds.get(e.target)!.push(e.source); });
-
-            const ordered = [...nodes].sort((a, b) => {
-                const pa = pos[a.id] || { x: 0, y: 0 }, pb = pos[b.id] || { x: 0, y: 0 };
-                return pa.x - pb.x || pa.y - pb.y;
-            });
-
-            const doneById = new Map<string, boolean>();
-            const base: Omit<Row, 'state'>[] = ordered.map(n => {
-                const covered = (n.itemIds && n.itemIds.length) ? n.itemIds : items.map(i => i.ID);
-                const perItem: PerItem[] = covered.map(itemId => {
-                    const it = itemById.get(itemId);
-                    // Poklapanje po nazivu I sinonimima (aliases) — graf može spajati različito imenovane procese.
-                    const proc = it?.Processes?.find(p => nodeMatchesProcess({ name: n.name, aliases: n.aliases }, p.Process_Name));
-                    return {
-                        itemId, itemName: it?.Product_Name || '—',
-                        // TAČNO pohranjeno ime procesa stavke (alias može biti različit od kanonskog n.name) —
-                        // updateItemProcess matchuje po tačnom imenu i UPSERT-uje na promašaj (dup-bug).
-                        procName: proc?.Process_Name || n.name,
-                        status: (proc?.Status as string) || 'Na čekanju',
-                        workerName: proc?.Worker_Name, helpers: proc?.Helpers || [], completedAt: proc?.Completed_At,
-                    };
-                });
-                const done = perItem.filter(p => p.status === 'Završeno').length;
-                const total = perItem.length;
-                doneById.set(n.id, total > 0 && done === total);
-                const wset = new Map<string, string>();
-                perItem.filter(p => p.status === 'Završeno').forEach(p => {
-                    if (p.workerName) wset.set(p.workerName, p.workerName);
-                    (p.helpers || []).forEach(h => h.Worker_Name && wset.set(h.Worker_Name, h.Worker_Name));
-                });
-                return { id: n.id, key: norm(n.name), name: n.name, perItem, done, total, workers: Array.from(wset.values()), predIds: preds.get(n.id) || [] };
-            });
-
-            // Per-čvor gating iz veza (čista, testirana logika u lib/productProcesses).
-            const gating = computeProcessGating(base.map(b => b.id), edges, doneById);
-            return base.map(r => ({ ...r, state: gating.get(r.id) || 'blocked' }));
-        };
-
         const synthItems = items.map(it => ({
             itemId: it.ID,
             stages: planToStages((it as any).Process_Stages, (it.Processes || []).map(p => p.Process_Name).filter(Boolean) as string[]),
@@ -194,22 +128,24 @@ export default function OrderProcessBoard({
         //    Npr. kantiranje se otvara ČIM je krojenje (njegov jedini prethodnik) gotovo — a ne
         //    kad su SVE stavke prve faze gotove (što daje dense sinteza).
         if (savedGraph && savedGraph.nodes.length) {
-            const out = buildRows(savedGraph.nodes, savedGraph.edges);
+            const out = buildOrderProcessRows(savedGraph.nodes, savedGraph.edges, items);
             // Hibrid: procesi na stavkama koje snimljeni graf NE pokriva (dodani nakon zadnjeg snimanja)
             // → dopuni iz sinteze (među sobom gate-uju po fazama; ne skrivaj rad).
-            const coveredKeys = new Set(out.map(r => r.key));
-            const extraNodes = synth.nodes.filter(n => !coveredKeys.has(norm(n.name)));
+            const coveredKeys = new Set(out.map(r => dedupeProcessKey(r.name)));
+            const extraNodes = synth.nodes.filter(n => !coveredKeys.has(dedupeProcessKey(n.name)));
             if (extraNodes.length) {
                 const extraIds = new Set(extraNodes.map(n => n.id));
                 const extraEdges = synth.edges.filter(e => extraIds.has(e.source) && extraIds.has(e.target));
-                out.push(...buildRows(extraNodes, extraEdges));
+                out.push(...buildOrderProcessRows(extraNodes, extraEdges, items));
             }
-            return out;
+            // Završni spoj preko OBA izvora — čuva „isti proces = jedan red" i kad duplikat
+            // dolazi iz različitih puteva (snimljeni + sinteza).
+            return mergeDuplicateNameRows(out);
         }
 
         // 2) Fallback: sinteza iz faznih planova (nema snimljenog grafa).
-        return buildRows(synth.nodes, synth.edges);
-    }, [items, itemById, savedGraph]);
+        return buildOrderProcessRows(synth.nodes, synth.edges, items);
+    }, [items, savedGraph]);
 
     const toggleExpand = (row: Row) => {
         if (expanded === row.id) { setExpanded(null); setSel(new Set()); setFormOpen(false); return; }

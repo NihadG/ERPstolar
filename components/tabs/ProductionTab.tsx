@@ -6,10 +6,9 @@ import { firstBookingByOrder } from '@/lib/workOrderTasks';
 import { isNewFormatWorkOrderNumber } from '@/lib/workOrderNumber';
 import RenumberWorkOrdersModal from '@/components/ui/RenumberWorkOrdersModal';
 import { deleteWorkOrder, startWorkOrder, updateWorkOrder } from '@/lib/services';
-import { checkMissingAttendanceForActiveOrders, recalculateWorkOrder } from '@/lib/services';
-import { getWorkerAttendance, bookWorkerDayItems } from '@/lib/services';
-import { isWorkerAssignedToAutoItem } from '@/lib/autoBook';
+import { checkMissingAttendanceForActiveOrders } from '@/lib/services';
 import { repairAllProductStatuses } from '@/lib/services';
+import { checkWorkOrderStart, findWorkersToBookToday, bookWorkersToday } from '@/lib/workOrderStart';
 import { todayISO } from '@/lib/planning';
 import { workOrderDisplayName, isOrderPaused, workOrderSortRank, compareWorkOrdersDefault } from '@/lib/utils';
 import { useData } from '@/context/DataContext';
@@ -24,6 +23,7 @@ import { WORK_ORDER_STATUSES } from '@/lib/types';
 import MobileWorkOrdersView from './mobile/MobileWorkOrdersView';
 import WorkOrderWizard, { type WizardMode, type WizardInitialProducts } from '@/components/production/WorkOrderWizard';
 import WorkOrderCard from '@/components/production/WorkOrderCard';
+import WorkOrderFullScreen from '@/components/ui/WorkOrderFullScreen';
 
 interface ProductionTabProps {
     workOrders: WorkOrder[];
@@ -255,6 +255,9 @@ export default function ProductionTab({ workOrders, projects, workers, tasks, wo
 
     // Expansion State
     const [expandedOrderId, setExpandedOrderId] = useState<string | null>(null);
+    // Nalog otvoren kao PUNA STRANICA (full-screen overlay). Dijeli sve akcije/modale
+    // s listom (bez ponovnog učitavanja aplikacije → trenutno otvaranje/zatvaranje).
+    const [pageOrderId, setPageOrderId] = useState<string | null>(null);
     // Dolazak iz taba Procesi → proširi traženi nalog jednom.
     useEffect(() => {
         if (autoExpandWorkOrderId) { setExpandedOrderId(autoExpandWorkOrderId); onClearAutoExpand?.(); }
@@ -355,6 +358,10 @@ export default function ProductionTab({ workOrders, projects, workers, tasks, wo
         setDeleteConfirmModal({ isOpen: false, workOrderId: null, workOrderNumber: '' });
         if (expandedOrderId === workOrderId) {
             setExpandedOrderId(null);
+        }
+        // Zatvori punu stranicu ako je otvoren upravo taj nalog (inače bi ostala prazna).
+        if (pageOrderId === workOrderId) {
+            setPageOrderId(null);
         }
         showToast('Brisanje naloga...', 'info');
 
@@ -488,70 +495,11 @@ export default function ProductionTab({ workOrders, projects, workers, tasks, wo
             return;
         }
 
-        // S2.2: Check at least one worker is assigned
-        const hasWorker = (wo.items || []).some(item =>
-            (item.Processes || []).some(p => p.Worker_ID)
-        );
-        if (!hasWorker) {
-            showToast('Dodijelite barem jednog radnika prije pokretanja naloga', 'error');
-            return;
-        }
-
-        // VALIDATION 1: Check essential materials are received
-        const missingMaterials: string[] = [];
-        for (const item of wo.items || []) {
-            // Get product materials from projects
-            const project = projects.find(p => p.Project_ID === item.Project_ID);
-            const product = project?.products?.find(pr => pr.Product_ID === item.Product_ID);
-
-            if (product?.materials) {
-                const missing = product.materials.filter(
-                    m => m.Is_Essential && m.Status !== 'Primljeno' && m.Status !== 'Na stanju'
-                );
-                missing.forEach(m => missingMaterials.push(`${item.Product_Name}: ${m.Material_Name}`));
-            }
-        }
-
-        if (missingMaterials.length > 0) {
-            showToast(`Esencijalni materijali nisu spremni: ${missingMaterials.join(', ')}`, 'error');
-            return;
-        }
-
-        // VALIDATION 2: Check ALL workers (all processes + helpers) are present today
-        const { canWorkerStartProcess } = await import('@/lib/services');
-        const workerChecks: { workerId: string; label: string }[] = [];
-        const checkedWorkers = new Set<string>(); // Avoid duplicate checks
-
-        for (const item of wo.items || []) {
-            for (const process of item.Processes || []) {
-                if (process.Worker_ID && !checkedWorkers.has(process.Worker_ID)) {
-                    checkedWorkers.add(process.Worker_ID);
-                    workerChecks.push({ workerId: process.Worker_ID, label: `${process.Worker_Name} (${process.Process_Name})` });
-                }
-                if (process.Helpers && process.Helpers.length > 0) {
-                    for (const helper of process.Helpers) {
-                        if (helper.Worker_ID && !checkedWorkers.has(helper.Worker_ID)) {
-                            checkedWorkers.add(helper.Worker_ID);
-                            workerChecks.push({ workerId: helper.Worker_ID, label: `${helper.Worker_Name} (pomoćnik za ${process.Process_Name})` });
-                        }
-                    }
-                }
-            }
-        }
-
-        // Parallel availability check instead of serial
-        const availabilityResults = await Promise.all(
-            workerChecks.map(async ({ workerId, label }) => {
-                const availability = await canWorkerStartProcess(workerId);
-                return { label, availability };
-            })
-        );
-        const workerIssues = availabilityResults
-            .filter(r => !r.availability.allowed)
-            .map(r => `${r.label} - ${r.availability.reason}`);
-
-        if (workerIssues.length > 0) {
-            showToast(`Radnici nisu prisutni: ${workerIssues.join(', ')}`, 'error');
+        // Validacije (radnik dodijeljen, esencijalni materijali, prisustvo danas) — dijeljene
+        // s punom stranicom naloga u lib/workOrderStart.
+        const check = await checkWorkOrderStart(wo, projects);
+        if (!check.ok) {
+            showToast(check.message, 'error');
             return;
         }
 
@@ -569,44 +517,13 @@ export default function ProductionTab({ workOrders, projects, workers, tasks, wo
         }
     }
 
-    // Nađi dodijeljene radnike naloga koji su DANAS prisutni u šihtarici (Prisutan → proizvodnja,
-    // Teren → montaža; isti raspored kao auto-knjiženje) i otvori upit za knjiženje današnjeg dana.
-    // bookWorkerDayItems je idempotentan (preskače postojeće logove), pa je upit bezopasan.
+    // Nađi dodijeljene radnike naloga koji su DANAS prisutni u šihtarici i otvori upit za
+    // knjiženje današnjeg dana (findWorkersToBookToday je idempotentan izbor kandidata).
     async function offerBookTodayAfterStart(workOrderId: string) {
         const wo = workOrders.find(w => w.Work_Order_ID === workOrderId);
         if (!wo) return;
-        const assigned = new Map<string, string>();
-        const note = (id?: string, name?: string) => {
-            if (!id) return;
-            assigned.set(id, name || workers.find(w => w.Worker_ID === id)?.Name || id);
-        };
-        for (const item of wo.items || []) {
-            (item.Assigned_Workers || []).forEach(w => note(w.Worker_ID, w.Worker_Name));
-            (item.Processes || []).forEach(p => {
-                note(p.Worker_ID, p.Worker_Name);
-                (p.Helpers || []).forEach(h => note(h.Worker_ID, h.Worker_Name));
-            });
-            (item.SubTasks || []).forEach(st => {
-                note(st.Worker_ID, st.Worker_Name);
-                (st.Helpers || []).forEach(h => note(h.Worker_ID, h.Worker_Name));
-            });
-        }
-        if (assigned.size === 0) return;
-
-        const today = todayISO();
-        const isMontaza = wo.Work_Order_Type === 'Montaža';
-        const eligible: { workerId: string; workerName: string }[] = [];
-        await Promise.all(Array.from(assigned.entries()).map(async ([workerId, workerName]) => {
-            try {
-                const att = await getWorkerAttendance(workerId, today, organizationId || undefined);
-                if (!att) return;
-                if ((att.Status === 'Prisutan' && !isMontaza) || (att.Status === 'Teren' && isMontaza)) {
-                    eligible.push({ workerId, workerName });
-                }
-            } catch (e) { console.warn('attendance check failed', workerId, e); }
-        }));
+        const eligible = await findWorkersToBookToday(wo, workers, organizationId || '', todayISO());
         if (eligible.length === 0) return;
-
         setBookTodayModal({ isOpen: true, workOrderId, workers: eligible });
     }
 
@@ -616,20 +533,8 @@ export default function ProductionTab({ workOrders, projects, workers, tasks, wo
         setBookTodaySaving(true);
         try {
             const wo = workOrders.find(w => w.Work_Order_ID === workOrderId);
-            const today = todayISO();
-            let booked = 0;
-            for (const w of toBook) {
-                const live = (wo?.items || []).filter(it => it.Status !== 'Završeno');
-                const mine = live.filter(it =>
-                    isWorkerAssignedToAutoItem({ ID: it.ID, Assigned_Workers: it.Assigned_Workers, Processes: it.Processes, SubTasks: it.SubTasks }, w.workerId)
-                );
-                const targets = (mine.length > 0 ? mine : live).map(it => ({ workOrderId, itemId: it.ID, productId: it.Product_ID }));
-                if (targets.length === 0) continue;
-                const res = await bookWorkerDayItems(w.workerId, w.workerName, today, organizationId || '', targets, 1);
-                booked += res.created;
-            }
+            const booked = await bookWorkersToday(workOrderId, wo, toBook, organizationId || '', todayISO());
             if (booked > 0) {
-                await recalculateWorkOrder(workOrderId, { skipMaterialRefresh: true, skipStatusSync: true });
                 showToast(`Proknjiženo ${booked} dnevnica za danas`, 'success');
                 onRefresh('workOrders', 'workers');
             } else {
@@ -657,6 +562,7 @@ export default function ProductionTab({ workOrders, projects, workers, tasks, wo
             attendanceWarnings={attendanceWarnings?.warnings}
             organizationId={organizationId}
             onToggle={toggleWorkOrder}
+            onOpenPage={setPageOrderId}
             onStart={handleStartWorkOrder}
             onPrint={handlePrintWorkOrder}
             onDelete={handleDeleteWorkOrder}
@@ -667,6 +573,29 @@ export default function ProductionTab({ workOrders, projects, workers, tasks, wo
             showToast={showToast}
         />
     );
+
+    // Puna stranica naloga (full-screen overlay) — dijeli render s desktop i mobile granom.
+    // Nalog se čita iz žive liste (ostaje svjež nakon akcija/osvježavanja); ako nestane
+    // (npr. obrisan), overlay se ne prikazuje.
+    function renderFullScreen() {
+        if (!pageOrderId) return null;
+        const wo = workOrders.find(w => w.Work_Order_ID === pageOrderId);
+        if (!wo) return null;
+        return (
+            <WorkOrderFullScreen
+                workOrder={wo}
+                workers={workers}
+                tasks={tasks}
+                onClose={() => setPageOrderId(null)}
+                onUpdate={handleUpdateWorkOrder}
+                onPrint={handlePrintWorkOrder}
+                onDelete={handleDeleteWorkOrder}
+                onStart={handleStartWorkOrder}
+                onRefresh={onRefresh}
+                showToast={showToast}
+            />
+        );
+    }
 
     // Mobile State
     const [isMobile, setIsMobile] = useState(false);
@@ -690,6 +619,7 @@ export default function ProductionTab({ workOrders, projects, workers, tasks, wo
                     onRefresh={onRefresh}
                     showToast={showToast}
                     onCreate={openCreateModal}
+                    onOpenPage={setPageOrderId}
                     onUpdate={handleUpdateWorkOrder}
                     onDelete={handleDeleteWorkOrder}
                     onStart={handleStartWorkOrder}
@@ -698,6 +628,9 @@ export default function ProductionTab({ workOrders, projects, workers, tasks, wo
                     attendanceWarnings={attendanceWarnings}
                     onAttendanceFix={setAttendanceFixWorkOrder}
                 />
+
+                {/* Puna stranica naloga (overlay) — i na mobitelu */}
+                {renderFullScreen()}
 
                 {/* Isti dijaloški modali kao na desktopu — bez ovoga Print/Brisanje/Rezime/Prisustvo
                     tiho ne bi radili na mobitelu (mijenjaju state, ali se nigdje ne prikazuju). */}
@@ -1124,6 +1057,9 @@ export default function ProductionTab({ workOrders, projects, workers, tasks, wo
                 onDone={onRefresh}
                 showToast={showToast}
             />
+
+            {/* Puna stranica naloga (full-screen overlay) */}
+            {renderFullScreen()}
         </div >
     );
 }

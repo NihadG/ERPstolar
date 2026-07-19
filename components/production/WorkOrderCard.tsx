@@ -32,6 +32,8 @@ interface WorkOrderCardProps {
     attendanceWarnings?: AttendanceWarningLite[];  // upozorenja SVIH naloga; kartica filtrira svoja
     organizationId: string | null;
     onToggle: (workOrderId: string) => void;
+    /** Otvori nalog kao punu stranicu (full-screen overlay). */
+    onOpenPage: (workOrderId: string) => void;
     onStart: (workOrderId: string) => Promise<void>;
     onPrint: (wo: WorkOrder) => void;
     onDelete: (workOrderId: string) => Promise<void>;
@@ -52,6 +54,7 @@ export default function WorkOrderCard({
     attendanceWarnings,
     organizationId,
     onToggle,
+    onOpenPage,
     onStart,
     onPrint,
     onDelete,
@@ -327,6 +330,13 @@ export default function WorkOrderCard({
                     </div>
 
                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        {/* Otvori nalog kao punu stranicu (više prostora, fokusiran prikaz) */}
+                        <button className="icon-btn" title="Otvori kao stranicu" onClick={(e) => {
+                            e.stopPropagation();
+                            onOpenPage(wo.Work_Order_ID);
+                        }}>
+                            <span className="material-icons-round">open_in_full</span>
+                        </button>
                         {/* Pokreni direktno s kartice (guard-poruke stižu kroz postojeći toast) */}
                         {wo.Status === 'Na čekanju' && (
                             <button className="icon-btn" title="Pokreni nalog" style={{ color: '#059669' }} onClick={(e) => {

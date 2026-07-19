@@ -10,15 +10,14 @@ import type { Node, Edge, Connection, NodeProps, EdgeProps } from '@xyflow/react
 import '@xyflow/react/dist/style.css';
 import './ProcessGraphModal.css';
 import Modal from './Modal';
-import { Plus, GitBranch, Wand2, Save, Trash2, Loader2, List, Network, BookmarkPlus, RefreshCw, Combine, Layers, X, CheckCircle2, Clock, MoveRight } from 'lucide-react';
+import { Plus, GitBranch, Save, Trash2, Loader2, List, Network, BookmarkPlus, Layers, X, CheckCircle2, Clock, MoveRight } from 'lucide-react';
 import { COMMON_PROCESSES } from '@/lib/types';
 import type { WorkLog, ProcessGraph, ProcessFlowTemplate } from '@/lib/types';
 import {
     getProcessGraph, saveProcessGraph, generateUUID, listProcessTemplates, saveProcessTemplate,
 } from '@/lib/services';
 import { layoutProcessGraph, layoutColumns, computeGraphDepths, NODE_W, NODE_H } from '@/lib/processLayout';
-import { nodeMatchesProcess, type Consolidation } from '@/lib/productProcesses';
-import OrderProcessWizard from './OrderProcessWizard';
+import { nodeMatchesProcess } from '@/lib/productProcesses';
 
 interface ProcessGraphModalProps {
     workOrderId: string;
@@ -31,7 +30,7 @@ interface ProcessGraphModalProps {
         // proizvodi imaju istoimeni proces označen završenim (veza po nazivu procesa)
         // Worker_Name/Helpers = KO je završio (prikaz u čvoru/listi, ne samo iz dnevnika)
         Processes?: { Process_Name: string; Status?: string; Completed_At?: string; Worker_Name?: string; Helpers?: { Worker_Name: string }[] }[];
-        // Fazni plan stavke (snapshot pri kreiranju) — izvor za "Sinhronizuj iz proizvoda"
+        // Fazni plan stavke (snapshot pri kreiranju) — izvor za auto-sintezu grafa
         Process_Stages?: { processes: string[] }[];
     }[];
     workLogs?: WorkLog[];
@@ -167,7 +166,6 @@ export default function ProcessGraphModal({
     const [saving, setSaving] = useState(false);
     const [view, setView] = useState<'graph' | 'stages' | 'list'>('graph');
     const [templates, setTemplates] = useState<ProcessFlowTemplate[]>([]);
-    const [wizardOpen, setWizardOpen] = useState(false);
 
     const itemName = useCallback((id: string) => {
         const n = items.find(i => i.ID === id)?.Product_Name || '';
@@ -269,9 +267,6 @@ export default function ProcessGraphModal({
             })));
             setEdges(g.edges.map(e => ({ id: e.id, source: e.source, target: e.target, markerEnd: { type: MarkerType.ArrowClosed } })));
             setLoading(false);
-            // PRVI PUT (nema snimljenog grafa) a ima procesa iz proizvoda → ponudi wizard konsolidacije.
-            // Iza njega je već auto-sintetisan graf (fallback ako se wizard zatvori bez potvrde).
-            if (!cancelled && persistedEmpty && g.nodes.length > 0) setWizardOpen(true);
             const tpls = await listProcessTemplates(organizationId);
             if (!cancelled) setTemplates(tpls);
         })();
@@ -312,11 +307,6 @@ export default function ProcessGraphModal({
         setEdges(es => es.filter(e => e.source !== selectedId && e.target !== selectedId));
         setSelectedId(null);
     }, [selectedId, setNodes, setEdges]);
-
-    const doLayout = useCallback(() => {
-        const pos = layoutProcessGraph(nodes.map(n => ({ id: n.id })), edges.map(e => ({ source: e.source, target: e.target })));
-        setNodes(ns => ns.map(n => pos[n.id] ? { ...n, position: pos[n.id] } : n));
-    }, [nodes, edges, setNodes]);
 
     // Procesi koji postoje na stavkama, a NEMA ih više NIGDJE u grafu → spremanje će ih
     // ukloniti iz naloga (graf je autoritet). Poklapanje po nazivu kroz cijeli graf — isto
@@ -388,72 +378,6 @@ export default function ProcessGraphModal({
         showToast?.(`Templejt „${tpl.name}" primijenjen — pridruži proizvode čvorovima`, 'info');
     }, [nodes, edges, setNodes, setEdges, showToast]);
 
-    // SINHRONIZUJ IZ PROIZVODA: ponovo sintetiši graf iz FAZNIH planova stavki
-    // (Process_Stages snapshot pri kreiranju; fallback nazivi iz checkliste = sekvencijalno).
-    // Isti proces više proizvoda = jedan čvor. Pozicije istoimenih čvorova se čuvaju.
-    const syncFromProducts = useCallback(async () => {
-        const { synthesizeOrderGraph, planToStages, mergeSynthesizedGraph } = await import('@/lib/productProcesses');
-        const planItems = items.map(i => ({
-            itemId: i.ID,
-            stages: planToStages(i.Process_Stages, (i.Processes || []).map(p => p.Process_Name).filter(Boolean) as string[]),
-        })).filter(pi => pi.stages.length > 0);
-        // SA auto-vezama iz faza; MERGE u postojeći graf (ne briše ručne izmjene/pozicije/ID-eve).
-        const { graph: synth } = synthesizeOrderGraph(planItems, undefined, { includeEdges: true });
-        if (synth.nodes.length === 0) {
-            showToast?.('Proizvodi nemaju definisane procese (checklist je prazan)', 'info');
-            return;
-        }
-        // Rekonstruiši trenutni (editor) graf → prev za merge (čuva ID/poziciju/ručne ivice).
-        const prev = {
-            nodes: nodes.map(n => ({
-                id: n.id, name: (n.data as ProcData).name, itemIds: (n.data as ProcData).itemIds || [],
-                aliases: (n.data as ProcData).aliases, position: n.position,
-            })),
-            edges: edges.map(e => ({ id: e.id, source: e.source, target: e.target })),
-        };
-        const { graph, addedNodeNames, staleNodeNames } = mergeSynthesizedGraph(prev, synth);
-        // Rasporedi SAMO nove čvorove (postojeći zadržavaju svoju poziciju iz merge-a).
-        const laidOut = layoutProcessGraph(graph.nodes.filter(n => !n.position), graph.edges);
-        setNodes(graph.nodes.map(n => ({
-            id: n.id, type: 'process',
-            position: n.position ?? laidOut[n.id] ?? { x: 24, y: 24 },
-            data: { name: n.name, itemIds: n.itemIds || [], aliases: n.aliases },
-        })));
-        setEdges(graph.edges.map(e => ({ id: e.id, source: e.source, target: e.target, markerEnd: { type: MarkerType.ArrowClosed } })));
-        setSelectedId(null);
-        const parts = [`sinhronizovano iz proizvoda`];
-        if (addedNodeNames.length) parts.push(`+${addedNodeNames.length} novih`);
-        if (staleNodeNames.length) parts.push(`${staleNodeNames.length} van planova (zadržani)`);
-        showToast?.(`Graf ${parts.join(', ')} — provjeri veze pa Spremi`, 'success');
-    }, [nodes, edges, items, setNodes, setEdges, showToast]);
-
-    // Primjena konsolidacije iz wizarda: sintetiši graf iz faznih planova + korisnikovih grupa
-    // (spajanje različitih naziva u zajednički čvor s aliasima). Ne snima automatski — „Spremi" za trajno.
-    const applyConsolidation = useCallback(async (consolidation: Consolidation) => {
-        const { synthesizeOrderGraph, planToStages } = await import('@/lib/productProcesses');
-        const planItems = items.map(i => ({
-            itemId: i.ID,
-            stages: planToStages(i.Process_Stages, (i.Processes || []).map(p => p.Process_Name).filter(Boolean) as string[]),
-        })).filter(pi => pi.stages.length > 0);
-        // SA auto-vezama iz faza (konsolidacija je first-open setup → zamjena je u redu).
-        const { graph, columns } = synthesizeOrderGraph(planItems, consolidation, { includeEdges: true });
-        if (graph.nodes.length === 0) {
-            showToast?.('Proizvodi nemaju definisane procese (checklist je prazan)', 'info');
-            return;
-        }
-        const oldPosByName = new Map(nodes.map(n => [((n.data as ProcData).name || '').trim().toLowerCase(), n.position]));
-        const pos = layoutColumns(columns);
-        setNodes(graph.nodes.map(n => ({
-            id: n.id, type: 'process',
-            position: oldPosByName.get(n.name.trim().toLowerCase()) ?? pos[n.id] ?? { x: 24, y: 24 },
-            data: { name: n.name, itemIds: n.itemIds, aliases: n.aliases },
-        })));
-        setEdges(graph.edges.map(e => ({ id: e.id, source: e.source, target: e.target, markerEnd: { type: MarkerType.ArrowClosed } })));
-        setSelectedId(null);
-        setWizardOpen(false);
-        showToast?.('Procesi konsolidovani i povezani iz faza — provjeri pa Spremi', 'success');
-    }, [nodes, items, setNodes, setEdges, showToast]);
-
     const saveAsTemplate = useCallback(async () => {
         const name = typeof window !== 'undefined' ? window.prompt('Naziv templejta toka:')?.trim() : '';
         if (!name) return;
@@ -520,14 +444,7 @@ export default function ProcessGraphModal({
                     </div>
                     {view === 'graph' && <>
                         <button style={btn} onClick={() => addNode()}><Plus size={15} /> Proces</button>
-                        <button style={btn} onClick={doLayout}><Wand2 size={15} /> Posloži</button>
                     </>}
-                    <button style={btn} onClick={() => setWizardOpen(true)} title="Wizard: grupiši procese proizvoda (zajednički vs pojedinačni; spoji slične nazive)">
-                        <Combine size={15} /> Konsoliduj procese
-                    </button>
-                    <button style={btn} onClick={syncFromProducts} title="Dopuni graf procesima i vezama iz planova proizvoda — ručne izmjene se ČUVAJU (spajanje, ne brisanje)">
-                        <RefreshCw size={15} /> Sinhronizuj iz proizvoda
-                    </button>
                     {templates.length > 0 && (
                         <select defaultValue="" onChange={e => { const t = templates.find(x => x.id === e.target.value); if (t) applyTemplate(t); e.currentTarget.value = ''; }} style={{ ...btn, paddingRight: 8 }}>
                             <option value="">Primijeni templejt…</option>
@@ -586,7 +503,7 @@ export default function ProcessGraphModal({
                                 {nodes.length === 0 && (
                                     <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: 'var(--text-tertiary)', pointerEvents: 'none', gap: 6 }}>
                                         <GitBranch size={28} />
-                                        <div style={{ fontSize: 13 }}>Nema procesa. Klikni „Sinhronizuj iz proizvoda" ili „+ Proces".</div>
+                                        <div style={{ fontSize: 13 }}>Nema procesa. Klikni „+ Proces".</div>
                                     </div>
                                 )}
                             </GraphCtx.Provider>
@@ -744,15 +661,6 @@ export default function ProcessGraphModal({
                     </div>
                 )}
             </div>
-
-            {wizardOpen && (
-                <OrderProcessWizard
-                    items={items}
-                    onConfirm={applyConsolidation}
-                    onClose={() => setWizardOpen(false)}
-                    zIndex={1100}
-                />
-            )}
         </Modal>
     );
 }

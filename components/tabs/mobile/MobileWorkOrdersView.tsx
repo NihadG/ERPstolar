@@ -24,6 +24,7 @@ interface MobileWorkOrdersViewProps {
 
     // Actions
     onCreate: () => void;
+    onOpenPage: (workOrderId: string) => void;
     onUpdate: (workOrderId: string, updates: any) => Promise<void>;
     onDelete: (workOrderId: string) => void;
     onStart: (workOrderId: string) => void;
@@ -41,6 +42,7 @@ export default function MobileWorkOrdersView({
     onRefresh,
     showToast,
     onCreate,
+    onOpenPage,
     onUpdate,
     onDelete,
     onStart,
@@ -209,6 +211,10 @@ export default function MobileWorkOrdersView({
 
                                 {/* Brze akcije — isti set kao desktop red naloga */}
                                 <div className="wo-header-actions">
+                                    <button className="wo-icon-btn" title="Otvori kao stranicu"
+                                        onClick={(e) => { e.stopPropagation(); onOpenPage(wo.Work_Order_ID); }}>
+                                        <span className="material-icons-round">open_in_full</span>
+                                    </button>
                                     {wo.Status === 'Na čekanju' && (
                                         <button className="wo-icon-btn start" title="Pokreni nalog"
                                             onClick={(e) => { e.stopPropagation(); onStart(wo.Work_Order_ID); }}>

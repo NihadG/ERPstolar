@@ -279,3 +279,42 @@
     .wo-seg { align-self: stretch; }
     .wo-seg button { flex: 1; justify-content: center; }
 }
+
+/* ════════════════════════════════════════════════════════════════════
+   PAGE LAYOUT (layout="page" — puna stranica naloga / WorkOrderFullScreen)
+   Kartica ostaje netaknuta; ovdje se samo NADOGRAĐUJE široki raspored.
+   ════════════════════════════════════════════════════════════════════ */
+
+/* U kartici je .wo-main „proziran" (djeca teku direktno u .wo-detail fleks),
+   pa je izgled kartice identičan kao prije. */
+.wo-main { display: contents; }
+
+/* Široki 2-kolonski raspored: lijeva ljepljiva traka (hero: metrike + akcije),
+   desno glavni sadržaj (tabovi Tok/Knjiga rada/Zadaci). */
+@media (min-width: 1000px) {
+    .wo-detail--page {
+        display: grid;
+        grid-template-columns: 340px minmax(0, 1fr);
+        gap: 22px;
+        align-items: start;
+    }
+    .wo-detail--page .wo-hero {
+        position: sticky;
+        top: 12px;
+    }
+    .wo-detail--page .wo-main {
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+        min-width: 0;
+    }
+    /* Hero kao vertikalna traka: naslov/akcije/metrike jedno ispod drugog. */
+    .wo-detail--page .wo-hero-top { flex-direction: column; align-items: stretch; gap: 10px; }
+    .wo-detail--page .wo-hero-actions { margin-left: 0; width: 100%; }
+    .wo-detail--page .wo-hero-actions .wo-hact { flex: 1; justify-content: center; }
+    .wo-detail--page .wo-metrics { flex-direction: column; flex-wrap: nowrap; }
+    .wo-detail--page .wo-metric { width: 100%; min-width: 0; }
+    /* Segmentna kontrola preko cijele širine desne kolone. */
+    .wo-detail--page .wo-seg { display: flex; align-self: stretch; }
+    .wo-detail--page .wo-seg button { flex: 1; justify-content: center; }
+}

@@ -36,6 +36,12 @@ interface WorkOrderExpandedDetailProps {
     onStart: (workOrderId: string) => Promise<void>;
     onRefresh?: (...collections: string[]) => void;
     showToast?: (message: string, type: 'success' | 'error' | 'info') => void;
+    /**
+     * 'card' (default) = uski prikaz u proširenom redu naloga.
+     * 'page' = široki 2-kolonski raspored za punu stranicu (metrike/akcije u lijevoj
+     * ljepljivoj traci, sadržaj desno) — koristi WorkOrderFullScreen.
+     */
+    layout?: 'card' | 'page';
 }
 
 export default function WorkOrderExpandedDetail({
@@ -45,7 +51,8 @@ export default function WorkOrderExpandedDetail({
     onUpdate,
     onStart,
     onRefresh,
-    showToast
+    showToast,
+    layout = 'card',
 }: WorkOrderExpandedDetailProps) {
     const [localItems, setLocalItems] = useState<WorkOrderItem[]>([]);
     const [isLoading, setIsLoading] = useState<string | null>(null);
@@ -434,7 +441,7 @@ export default function WorkOrderExpandedDetail({
     const rokWarnTitle = `${missingDaysCount} ${missingDaysCount === 1 ? 'stavka nema' : 'stavke/i nemaju'} planirane dane u ponudi — rok je potcijenjen`;
 
     return (
-        <div className="wo-detail">
+        <div className={`wo-detail${layout === 'page' ? ' wo-detail--page' : ''}`}>
             {/* ═══ HERO: metrike (naziv/status/rok su već vidljivi u zaglavlju iznad) ═══ */}
             <div className="wo-hero">
                 <div className="wo-hero-top">
@@ -555,6 +562,9 @@ export default function WorkOrderExpandedDetail({
                 )}
             </div>
 
+            {/* wo-main: u 'card' modu je display:contents (bez efekta); u 'page' modu je
+                desna kolona 2-kolonskog rasporeda (metrike/akcije su lijeva traka = wo-hero). */}
+            <div className="wo-main">
             {/* ═══ SEGMENTED: Tok / Knjiga rada / Zadaci ═══ */}
             <div className="wo-seg">
                 <button className={tab === 'tok' ? 'active' : ''} onClick={() => setTab('tok')}>
@@ -750,6 +760,7 @@ export default function WorkOrderExpandedDetail({
                     showToast={showToast || (() => { })}
                 />
             )}
+            </div>{/* /wo-main */}
 
             {/* Graf procesa naloga */}
             {processOpen && (
