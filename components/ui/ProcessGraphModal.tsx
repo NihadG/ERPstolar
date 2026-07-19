@@ -2,13 +2,15 @@
 
 import { useState, useEffect, useCallback, useContext, createContext, useMemo } from 'react';
 import {
-    ReactFlow, Background, Controls, Handle, Position, addEdge, MarkerType,
+    ReactFlow, Background, Controls, MiniMap, Handle, Position, addEdge, MarkerType,
+    BaseEdge, EdgeLabelRenderer, getSmoothStepPath,
     useNodesState, useEdgesState,
 } from '@xyflow/react';
-import type { Node, Edge, Connection, NodeProps } from '@xyflow/react';
+import type { Node, Edge, Connection, NodeProps, EdgeProps } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
+import './ProcessGraphModal.css';
 import Modal from './Modal';
-import { Plus, GitBranch, Wand2, Save, Trash2, Loader2, List, Network, BookmarkPlus, RefreshCw, Combine, Layers } from 'lucide-react';
+import { Plus, GitBranch, Wand2, Save, Trash2, Loader2, List, Network, BookmarkPlus, RefreshCw, Combine, Layers, X, CheckCircle2, Clock, MoveRight } from 'lucide-react';
 import { COMMON_PROCESSES } from '@/lib/types';
 import type { WorkLog, ProcessGraph, ProcessFlowTemplate } from '@/lib/types';
 import {
@@ -40,18 +42,40 @@ interface ProcessGraphModalProps {
 
 type ProcData = { name: string; itemIds: string[]; aliases?: string[] };
 
+// Status čvora: 'done' = svi pokriveni proizvodi završili proces, 'active' = ima dnevnica
+// (radi se sada), 'pending' = još nije počelo. Boja ivice/minimape/ikone slijedi kind.
+type StatusKind = 'done' | 'active' | 'pending';
+type NodeStatus = { color: string; label: string; kind: StatusKind };
+// Konkretni hex (SVG markeri/minimapa ne razrješavaju CSS varijable pouzdano)
+const KIND_HEX: Record<StatusKind, string> = { done: '#34c759', active: '#0071e3', pending: '#c7c7cc' };
+
 const fmt = (iso: string) => iso ? `${iso.slice(8, 10)}.${iso.slice(5, 7)}.` : '';
 
 // Kontekst da custom node zna nazive proizvoda + status/datum (iz dnevnika + checklist završetka).
 // `aliases` = sinonimi čvora (spojeni različiti nazivi procesa) → poklapanje po skupu, ne samo po `name`.
+// removeEdge/nodeStatusById služe custom vezi (uklanjanje + boja/animacija po statusu izvora).
 const GraphCtx = createContext<{
     itemName: (id: string) => string;
-    status: (nodeId: string, itemIds: string[], name?: string, aliases?: string[]) => { color: string; label: string };
+    status: (nodeId: string, itemIds: string[], name?: string, aliases?: string[]) => NodeStatus;
     completers: (itemIds: string[], name?: string, aliases?: string[]) => string[];
-}>({ itemName: () => '', status: () => ({ color: 'var(--text-tertiary)', label: 'čeka' }), completers: () => [] });
+    removeEdge: (id: string) => void;
+    nodeStatusById: (id: string) => { kind: StatusKind };
+}>({
+    itemName: () => '',
+    status: () => ({ color: 'var(--text-tertiary)', label: 'čeka', kind: 'pending' }),
+    completers: () => [],
+    removeEdge: () => {},
+    nodeStatusById: () => ({ kind: 'pending' }),
+});
 
 const badge: React.CSSProperties = { fontSize: 10, padding: '1px 6px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-light)', color: 'var(--accent)', background: 'var(--accent-light)', whiteSpace: 'nowrap' };
 const badgeAll: React.CSSProperties = { ...badge, border: '1px dashed var(--border)', color: 'var(--text-secondary)', background: 'transparent' };
+
+function StatusIcon({ kind }: { kind: StatusKind }) {
+    if (kind === 'done') return <CheckCircle2 size={13} color="var(--success)" style={{ flexShrink: 0 }} />;
+    if (kind === 'active') return <span className="pg-pulse" style={{ width: 9, height: 9, borderRadius: '50%', background: 'var(--accent)', display: 'inline-block', flexShrink: 0 }} />;
+    return <Clock size={12} color="var(--text-tertiary)" style={{ flexShrink: 0 }} />;
+}
 
 function ProcessRFNode({ id, data, selected }: NodeProps) {
     const ctx = useContext(GraphCtx);
@@ -60,16 +84,19 @@ function ProcessRFNode({ id, data, selected }: NodeProps) {
     const done = ctx.completers(d.itemIds || [], d.name, d.aliases);
     const merged = (d.aliases || []).filter(a => a.trim().toLowerCase() !== (d.name || '').trim().toLowerCase());
     return (
-        <div style={{
+        <div className="pg-node" style={{
             width: NODE_W, minHeight: NODE_H, background: 'var(--background)',
             border: `2px solid ${selected ? 'var(--accent)' : 'var(--border-light)'}`, borderRadius: 'var(--radius-md)',
-            boxShadow: '0 1px 3px var(--shadow-md)', overflow: 'hidden',
+            boxShadow: selected ? '0 4px 14px rgba(0,113,227,0.18)' : '0 1px 3px var(--shadow-md)', overflow: 'hidden',
         }}>
-            <Handle type="target" position={Position.Left} style={{ background: 'var(--text-tertiary)', width: 10, height: 10 }} />
+            <Handle type="target" position={Position.Left} className="pg-handle" style={{ background: 'var(--text-tertiary)', width: 11, height: 11 }} />
             <div style={{ height: 5, background: st.color }} />
             <div style={{ padding: '8px 10px' }}>
-                <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)', lineHeight: 1.2 }}>{d.name || 'Proces'}</div>
-                <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginTop: 2 }}>{st.label}</div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <StatusIcon kind={st.kind} />
+                    <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)', lineHeight: 1.2 }}>{d.name || 'Proces'}</div>
+                </div>
+                <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginTop: 3 }}>{st.label}</div>
                 {done.length > 0 && (
                     <div style={{ fontSize: 10, color: 'var(--success)', marginTop: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                         ✓ {done.slice(0, 2).join(', ')}{done.length > 2 ? ` +${done.length - 2}` : ''}
@@ -88,12 +115,47 @@ function ProcessRFNode({ id, data, selected }: NodeProps) {
                     </div>
                 )}
             </div>
-            <Handle type="source" position={Position.Right} style={{ background: 'var(--accent)', width: 10, height: 10 }} />
+            <Handle type="source" position={Position.Right} className="pg-handle pg-handle-source" style={{ background: 'var(--accent)', width: 11, height: 11 }} />
         </div>
     );
 }
 
 const nodeTypes = { process: ProcessRFNode };
+
+// Custom veza: status-obojena, animirana kad je izvorni proces "u toku", s uvijek vidljivim
+// dugmetom × na sredini za uklanjanje (rješava „mogu samo povezati, ne i odvezati").
+function ProcessFlowEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, source, selected, markerEnd }: EdgeProps) {
+    const ctx = useContext(GraphCtx);
+    const [edgePath, labelX, labelY] = getSmoothStepPath({ sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition, borderRadius: 14 });
+    const kind = ctx.nodeStatusById(source).kind;
+    const stroke = selected ? KIND_HEX.active : KIND_HEX[kind];
+    return (
+        <>
+            <BaseEdge
+                id={id}
+                path={edgePath}
+                markerEnd={markerEnd}
+                className={kind === 'active' ? 'pg-edge pg-edge-flow' : 'pg-edge'}
+                style={{ stroke, strokeWidth: selected ? 3 : 2, opacity: kind === 'pending' && !selected ? 0.6 : 1 }}
+            />
+            <EdgeLabelRenderer>
+                <div className="pg-edge-del-wrap" style={{ transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)` }}>
+                    <button
+                        type="button"
+                        className={`pg-edge-del${selected ? ' is-selected' : ''}`}
+                        onClick={(e) => { e.stopPropagation(); ctx.removeEdge(id); }}
+                        title="Ukloni vezu"
+                        aria-label="Ukloni vezu"
+                    >
+                        <X size={11} strokeWidth={2.5} />
+                    </button>
+                </div>
+            </EdgeLabelRenderer>
+        </>
+    );
+}
+
+const edgeTypes = { process: ProcessFlowEdge };
 
 export default function ProcessGraphModal({
     workOrderId, workOrderNumber, workOrderName, items, workLogs, organizationId, onClose, showToast,
@@ -112,7 +174,7 @@ export default function ProcessGraphModal({
         return n.length > 14 ? n.slice(0, 13) + '…' : (n || '—');
     }, [items]);
 
-    const status = useCallback((nodeId: string, nodeItemIds: string[], name?: string, aliases?: string[]) => {
+    const status = useCallback((nodeId: string, nodeItemIds: string[], name?: string, aliases?: string[]): NodeStatus => {
         // ZAVRŠENO: svi pokriveni proizvodi (prazno = svi) imaju odgovarajući proces označen
         // završenim u checklisti (ItemProcessChecklist → item.Processes). Veza po sinonimima (aliases).
         if (name) {
@@ -122,15 +184,15 @@ export default function ProcessGraphModal({
                 if (entries.every(e => e?.Status === 'Završeno')) {
                     const doneDates = entries.map(e => e!.Completed_At?.split('T')[0] || '').filter(Boolean).sort();
                     const last = doneDates[doneDates.length - 1];
-                    return { color: 'var(--success)', label: last ? `završeno ${fmt(last)}` : 'završeno' };
+                    return { color: 'var(--success)', label: last ? `završeno ${fmt(last)}` : 'završeno', kind: 'done' };
                 }
             }
         }
         const logs = (workLogs || []).filter(l => l.Process_Node_ID === nodeId);
-        if (!logs.length) return { color: 'var(--text-tertiary)', label: 'čeka' };
+        if (!logs.length) return { color: 'var(--text-tertiary)', label: 'čeka', kind: 'pending' };
         const dates = logs.map(l => l.Date).filter(Boolean).sort();
         const start = dates[0], end = dates[dates.length - 1];
-        return { color: 'var(--accent)', label: start === end ? fmt(start) : `${fmt(start)} – ${fmt(end)}` };
+        return { color: 'var(--accent)', label: start === end ? fmt(start) : `${fmt(start)} – ${fmt(end)}`, kind: 'active' };
     }, [workLogs, items]);
 
     // KO je završio proces (iz checkliste — Worker_Name + Helpers pokrivenih stavki), veza po nazivu
@@ -148,7 +210,30 @@ export default function ProcessGraphModal({
         return Array.from(set);
     }, [items]);
 
-    const ctxValue = useMemo(() => ({ itemName, status, completers }), [itemName, status, completers]);
+    // Status po čvoru (za boju/animaciju veze i minimapu) — jedan izračun, dijele custom veza i MiniMap.
+    const statusById = useMemo(() => {
+        const m = new Map<string, NodeStatus>();
+        nodes.forEach(n => {
+            const d = n.data as ProcData;
+            m.set(n.id, status(n.id, d.itemIds || [], d.name, d.aliases));
+        });
+        return m;
+    }, [nodes, status]);
+
+    const removeEdge = useCallback((id: string) => {
+        setEdges(es => es.filter(e => e.id !== id));
+    }, [setEdges]);
+
+    const ctxValue = useMemo(() => ({
+        itemName, status, completers, removeEdge,
+        nodeStatusById: (id: string) => ({ kind: statusById.get(id)?.kind ?? 'pending' as StatusKind }),
+    }), [itemName, status, completers, removeEdge, statusById]);
+
+    // Veze dobijaju custom tip + marker u boji statusa izvora (izvedeno; state ostaje čist za snimanje).
+    const styledEdges = useMemo(() => edges.map(e => {
+        const kind = statusById.get(e.source)?.kind ?? 'pending';
+        return { ...e, type: 'process', markerEnd: { type: MarkerType.ArrowClosed, color: KIND_HEX[kind], width: 18, height: 18 } } as Edge;
+    }), [edges, statusById]);
 
     // Učitaj graf
     useEffect(() => {
@@ -456,6 +541,14 @@ export default function ProcessGraphModal({
                     </button>
                 </div>
 
+                {view === 'graph' && !loading && nodes.length > 0 && (
+                    <div className="pg-hint">
+                        <span><MoveRight size={13} /> Prevuci iz <b>plave tačke</b> (desno) za novu vezu</span>
+                        <span><span className="pg-hint-x"><X size={9} strokeWidth={2.5} /></span> Klikni <b>×</b> na sredini veze da je ukloniš</span>
+                        <span><Trash2 size={12} /> Označi čvor/vezu pa <b>Delete</b></span>
+                    </div>
+                )}
+
                 {view === 'graph' && (
                 <div style={{ flex: 1, display: 'flex', gap: 10, minHeight: 0 }}>
                     {/* Canvas */}
@@ -467,16 +560,28 @@ export default function ProcessGraphModal({
                         ) : (
                             <GraphCtx.Provider value={ctxValue}>
                                 <ReactFlow
-                                    nodes={nodes} edges={edges}
+                                    className="pg-flow"
+                                    nodes={nodes} edges={styledEdges}
                                     onNodesChange={onNodesChange} onEdgesChange={onEdgesChange}
                                     onConnect={onConnect}
                                     onSelectionChange={(p) => setSelectedId(p.nodes[0]?.id ?? null)}
                                     nodeTypes={nodeTypes}
+                                    edgeTypes={edgeTypes}
+                                    connectionLineStyle={{ stroke: KIND_HEX.active, strokeWidth: 2.5 }}
                                     fitView
+                                    fitViewOptions={{ padding: 0.18 }}
                                     proOptions={{ hideAttribution: true }}
                                 >
-                                    <Background />
+                                    <Background gap={18} size={1.5} color="rgba(0,0,0,0.07)" />
                                     <Controls showInteractive={false} />
+                                    <MiniMap
+                                        pannable
+                                        zoomable
+                                        nodeStrokeWidth={2}
+                                        nodeColor={(n) => KIND_HEX[statusById.get(n.id)?.kind ?? 'pending']}
+                                        maskColor="rgba(0,0,0,0.04)"
+                                        style={{ width: 150, height: 100 }}
+                                    />
                                 </ReactFlow>
                                 {nodes.length === 0 && (
                                     <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: 'var(--text-tertiary)', pointerEvents: 'none', gap: 6 }}>
@@ -521,6 +626,33 @@ export default function ProcessGraphModal({
                                 </div>
                                 <div style={{ fontSize: 10.5, color: 'var(--text-tertiary)', marginTop: 4 }}>Prazno = proces vrijedi za sve proizvode naloga.</div>
                             </div>
+
+                            {/* Veze čvora — drugi (jasan) put za odvezivanje kad se ivice teško kliknu */}
+                            {(() => {
+                                const nodeName = (nid: string) => (nodes.find(x => x.id === nid)?.data as ProcData | undefined)?.name || 'Proces';
+                                const incoming = edges.filter(e => e.target === selected.id);
+                                const outgoing = edges.filter(e => e.source === selected.id);
+                                if (incoming.length === 0 && outgoing.length === 0) return null;
+                                const row = (e: Edge, label: string, other: string) => (
+                                    <div key={e.id} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, padding: '4px 0' }}>
+                                        <span style={{ color: 'var(--text-tertiary)', fontSize: 10, minWidth: 44 }}>{label}</span>
+                                        <span style={{ flex: 1, color: 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{other}</span>
+                                        <button onClick={() => removeEdge(e.id)} title="Ukloni vezu" aria-label="Ukloni vezu"
+                                            style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 22, height: 22, flexShrink: 0, borderRadius: 6, border: '1px solid var(--border-light)', background: 'var(--background)', color: 'var(--text-tertiary)', cursor: 'pointer' }}>
+                                            <X size={13} />
+                                        </button>
+                                    </div>
+                                );
+                                return (
+                                    <div>
+                                        <label style={{ fontSize: 11, color: 'var(--text-secondary)', fontWeight: 600 }}>Veze ({incoming.length + outgoing.length})</label>
+                                        <div style={{ marginTop: 4 }}>
+                                            {incoming.map(e => row(e, 'prije ←', nodeName(e.source)))}
+                                            {outgoing.map(e => row(e, 'poslije →', nodeName(e.target)))}
+                                        </div>
+                                    </div>
+                                );
+                            })()}
 
                             <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                                 <button style={btn} onClick={() => addNode(selected.id, false)}><Plus size={14} /> Nastavak</button>
