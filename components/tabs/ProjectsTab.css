@@ -81,7 +81,7 @@
 
 /* ---- Project Card ---- */
 #projects-content .project-card {
-    background: #ffffff;
+    background: linear-gradient(180deg, #ffffff 0%, #f7f9fb 100%);
     border-radius: 16px;
     margin-bottom: 12px;
     border: 1px solid rgba(0, 0, 0, 0.05);
@@ -98,13 +98,34 @@
     transform: translateY(-1px);
 }
 
-/* Status-based left border colors */
-#projects-content .project-card.border-nacrt { border-left-color: #9ca3af; }
-#projects-content .project-card.border-ponudeno { border-left-color: #fbbf24; }
-#projects-content .project-card.border-odobreno { border-left-color: #3b82f6; }
-#projects-content .project-card.border-u-proizvodnji { border-left-color: #8b5cf6; }
-#projects-content .project-card.border-zavrseno { border-left-color: #10b981; }
-#projects-content .project-card.border-otkazano { border-left-color: #ef4444; }
+/* Status-based left border + suptilni gradijent koji "izvire" iz statusne ivice.
+   Namjerno vrlo blago: daje personalnost i pojačava statusni kod na prvi pogled
+   (funkcionalno), a ne smeta čitljivosti teksta. Prva ploha = statusna nijansa
+   s lijeva koja se gasi do ~34%, druga = neutralna dubina odozgo nadolje. */
+#projects-content .project-card.border-nacrt {
+    border-left-color: #9ca3af;
+    background: linear-gradient(90deg, rgba(156, 163, 175, 0.08) 0%, rgba(156, 163, 175, 0) 34%), linear-gradient(180deg, #ffffff 0%, #f7f9fb 100%);
+}
+#projects-content .project-card.border-ponudeno {
+    border-left-color: #fbbf24;
+    background: linear-gradient(90deg, rgba(251, 191, 36, 0.12) 0%, rgba(251, 191, 36, 0) 34%), linear-gradient(180deg, #ffffff 0%, #f7f9fb 100%);
+}
+#projects-content .project-card.border-odobreno {
+    border-left-color: #3b82f6;
+    background: linear-gradient(90deg, rgba(59, 130, 246, 0.09) 0%, rgba(59, 130, 246, 0) 34%), linear-gradient(180deg, #ffffff 0%, #f7f9fb 100%);
+}
+#projects-content .project-card.border-u-proizvodnji {
+    border-left-color: #8b5cf6;
+    background: linear-gradient(90deg, rgba(139, 92, 246, 0.09) 0%, rgba(139, 92, 246, 0) 34%), linear-gradient(180deg, #ffffff 0%, #f7f9fb 100%);
+}
+#projects-content .project-card.border-zavrseno {
+    border-left-color: #10b981;
+    background: linear-gradient(90deg, rgba(16, 185, 129, 0.09) 0%, rgba(16, 185, 129, 0) 34%), linear-gradient(180deg, #ffffff 0%, #f7f9fb 100%);
+}
+#projects-content .project-card.border-otkazano {
+    border-left-color: #ef4444;
+    background: linear-gradient(90deg, rgba(239, 68, 68, 0.08) 0%, rgba(239, 68, 68, 0) 34%), linear-gradient(180deg, #ffffff 0%, #f7f9fb 100%);
+}
 
 /* ---- Project Header ---- */
 #projects-content .project-header {

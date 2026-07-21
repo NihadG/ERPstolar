@@ -61,7 +61,7 @@ export default function Home() {
     const [activeTab, setActiveTab] = useState('projects');
     const [dropdownOpen, setDropdownOpen] = useState(false);
     const [userMenuOpen, setUserMenuOpen] = useState(false);
-    const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+    const [sidebarCollapsed, setSidebarCollapsed] = useState(true); // defaultno skupljen; korisnik ga širi po želji
     const [loading, setLoading] = useState(true);
     const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null);
 
@@ -453,20 +453,6 @@ export default function Home() {
 
             {/* Main Content Area */}
             <div className={`main-content-wrapper ${sidebarCollapsed ? 'sidebar-collapsed' : ''}`}>
-                {/* Mobile Header */}
-                <header className="mobile-header">
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                        <span className="logo-text" style={{ fontSize: '16px' }}>Furniture Prod.</span>
-                        <div className="user-avatar-small" style={{
-                            width: '32px', height: '32px', borderRadius: '50%',
-                            background: '#e3f2fd', color: '#0071e3', display: 'flex',
-                            alignItems: 'center', justifyContent: 'center', fontSize: '12px', fontWeight: 'bold'
-                        }}>
-                            {getUserInitials()}
-                        </div>
-                    </div>
-                </header>
-
                 <button
                     className="mobile-menu-fab"
                     onClick={() => setUserMenuOpen(true)}

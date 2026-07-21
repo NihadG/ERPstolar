@@ -593,8 +593,8 @@ export default function MobileProjectsView({
                 /* Floating Action Button */
                 .mobile-fab {
                     position: fixed;
-                    bottom: 80px; /* Above bottom nav */
-                    right: 20px;
+                    bottom: 88px; /* iznad menu-FAB-a (bottom:24, h:56), poravnato po right:24 */
+                    right: 24px;
                     width: 56px;
                     height: 56px;
                     border-radius: 28px;

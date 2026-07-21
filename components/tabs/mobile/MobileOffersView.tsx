@@ -97,7 +97,7 @@ const S = {
     emptyH3: { fontSize: 18, fontWeight: 600, color: '#475569', marginBottom: 8, margin: 0 } as React.CSSProperties,
     emptyP: { fontSize: 14, margin: 0 } as React.CSSProperties,
     fab: {
-        position: 'fixed' as const, bottom: 80, right: 20, width: 56, height: 56,
+        position: 'fixed' as const, bottom: 88, right: 24, width: 56, height: 56,
         borderRadius: 28, background: '#0f172a', color: 'white', border: 'none',
         display: 'flex', alignItems: 'center', justifyContent: 'center',
         boxShadow: '0 10px 25px rgba(15,23,42,0.3)', zIndex: 100, cursor: 'pointer',

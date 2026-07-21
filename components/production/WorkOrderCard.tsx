@@ -103,6 +103,12 @@ export default function WorkOrderCard({
 
         const isMontaza = wo.Work_Order_Type === 'Montaža';
 
+        // Statusna ivica + suptilni gradijent u zaglavlju (isti jezik kao kartice
+        // projekata): nijansa "izvire" iz obojene ivice statusa i gasi se, plus
+        // vrlo blaga neutralna dubina. Namjerno tiho — ne smeta čitljivosti.
+        const edgeColor = isMontaza ? '#00C7BE' : statusDetails.color;
+        const headerBg = `linear-gradient(90deg, ${edgeColor}1f 0%, ${edgeColor}00 36%), linear-gradient(180deg, #ffffff 0%, #f8fafc 100%)`;
+
         // Rok + odbrojavanje (živ signal na kartici u listi)
         const dd = wo.Status !== 'Završeno' && wo.Status !== 'Otkazano' ? daysUntil(wo.Due_Date) : null;
         const dueCountdown = dd === null ? '' : dd < 0 ? `kasni ${-dd} ${-dd === 1 ? 'dan' : 'dana'}` : dd === 0 ? 'danas' : `za ${dd} ${dd === 1 ? 'dan' : 'dana'}`;
@@ -113,9 +119,9 @@ export default function WorkOrderCard({
             <div key={wo.Work_Order_ID} className={`project-card ${isExpanded ? 'active' : ''}`}
                 style={{
                     position: 'relative',
-                    borderLeft: `3px solid ${isMontaza ? '#00C7BE' : statusDetails.color}`,
+                    borderLeft: `3px solid ${edgeColor}`,
                 }}>
-                <div className="project-header" onClick={() => onToggle(wo.Work_Order_ID)}>
+                <div className="project-header" onClick={() => onToggle(wo.Work_Order_ID)} style={{ background: headerBg }}>
                     <button className={`expand-btn ${isExpanded ? 'expanded' : ''}`}>
                         <span className="material-icons-round">chevron_right</span>
                     </button>

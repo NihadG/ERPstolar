@@ -42,14 +42,6 @@ interface SidebarProps {
     onOpenImport?: () => void;
 }
 
-// Helper to convert hex to rgb for css variables
-const hexToRgb = (hex: string) => {
-    const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
-    return result ?
-        `${parseInt(result[1], 16)}, ${parseInt(result[2], 16)}, ${parseInt(result[3], 16)}` :
-        '142, 142, 147'; // System Gray
-};
-
 const Sidebar: React.FC<SidebarProps> = ({ activeTab, onTabChange, isOpen, onClose, isCollapsed, onToggleCollapse, onOpenSearch, onOpenImport }) => {
     const router = useRouter();
     const { user, hasModule } = useAuth();
@@ -64,21 +56,6 @@ const Sidebar: React.FC<SidebarProps> = ({ activeTab, onTabChange, isOpen, onClo
     const getUserInitials = () => {
         if (!user?.Name) return '?';
         return user.Name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2);
-    };
-
-    // SwiftUI-like distinct colors (Apple HIG inspired)
-    const navColors: Record<string, string> = {
-        projects: '#007AFF', // System Blue
-
-        offers: '#FF9500',   // System Orange
-        orders: '#34C759',   // System Green
-        production: '#FF2D55', // System Pink
-        planer: '#5AC8FA',   // System Cyan
-        materials: '#5856D6', // System Indigo
-        workers: '#00C7BE',   // System Teal
-        suppliers: '#FFCC00', // System Yellow
-        attendance: '#FF3B30', // System Red
-        tasks: '#8E8E93',     // System Gray (or Blue)
     };
 
     const NavItem = ({
@@ -97,8 +74,6 @@ const Sidebar: React.FC<SidebarProps> = ({ activeTab, onTabChange, isOpen, onClo
         isActiveOverride?: boolean
     }) => {
         const isActive = isActiveOverride !== undefined ? isActiveOverride : activeTab === id;
-        const color = navColors[id] || '#8E8E93';
-        const rgb = hexToRgb(color);
 
         return (
             <button
@@ -114,21 +89,12 @@ const Sidebar: React.FC<SidebarProps> = ({ activeTab, onTabChange, isOpen, onClo
                 }}
                 disabled={locked}
                 title={isCollapsed ? label : undefined}
-                style={{
-                    '--item-color': color,
-                    '--item-rgb': rgb,
-                } as React.CSSProperties}
             >
                 <div className="nav-icon-wrapper">
-                    <Icon strokeWidth={isActive ? 2.5 : 2} size={19} />
+                    <Icon strokeWidth={2} size={20} />
                 </div>
                 {!isCollapsed && <span className="nav-label">{label}</span>}
                 {!isCollapsed && locked && <Lock size={14} className="tab-lock" />}
-
-                {/* Active Indicator for collapsed state or clean visual */}
-                {isActive && !isCollapsed && (
-                    <div className="active-indicator" />
-                )}
             </button>
         );
     };
@@ -188,7 +154,7 @@ const Sidebar: React.FC<SidebarProps> = ({ activeTab, onTabChange, isOpen, onClo
                 <div className="sidebar-header">
                     <div className="logo-section">
                         <div className="logo-icon">
-                            <Grid size={22} color="white" />
+                            <Grid size={17} color="white" />
                         </div>
                         {!isCollapsed && <span className="logo-text">Furniture Prod.</span>}
                     </div>
@@ -216,7 +182,7 @@ const Sidebar: React.FC<SidebarProps> = ({ activeTab, onTabChange, isOpen, onClo
                             title={isCollapsed ? "Pretraga (Ctrl+K)" : undefined}
                         >
                             <div className="nav-icon-wrapper">
-                                <Search size={19} />
+                                <Search size={20} strokeWidth={2} />
                             </div>
                             {!isCollapsed && (
                                 <div className="nav-label-group">
@@ -253,7 +219,7 @@ const Sidebar: React.FC<SidebarProps> = ({ activeTab, onTabChange, isOpen, onClo
                                         >
                                             <div className="group-info">
                                                 <div className={`nav-icon-wrapper group-icon ${isGroupActive && !isExpanded ? 'highlighted' : ''}`}>
-                                                    <GroupIcon size={20} strokeWidth={isGroupActive ? 2.5 : 2} />
+                                                    <GroupIcon size={19} strokeWidth={2} />
                                                 </div>
                                                 <span className="group-label">{group.label}</span>
                                             </div>
@@ -298,13 +264,9 @@ const Sidebar: React.FC<SidebarProps> = ({ activeTab, onTabChange, isOpen, onClo
                                     if (window.innerWidth <= 768) onClose();
                                 }}
                                 title={isCollapsed ? "Admin Panel" : undefined}
-                                style={{
-                                    '--item-color': '#FF3B30',
-                                    '--item-rgb': '255, 59, 48',
-                                } as React.CSSProperties}
                             >
                                 <div className="nav-icon-wrapper">
-                                    <Shield size={19} />
+                                    <Shield size={20} strokeWidth={2} />
                                 </div>
                                 {!isCollapsed && <span className="nav-label">Admin Panel</span>}
                             </button>
@@ -324,7 +286,7 @@ const Sidebar: React.FC<SidebarProps> = ({ activeTab, onTabChange, isOpen, onClo
                                 title={isCollapsed ? "Import podataka" : undefined}
                             >
                                 <div className="nav-icon-wrapper">
-                                    <FileUp size={19} />
+                                    <FileUp size={20} strokeWidth={2} />
                                 </div>
                                 {!isCollapsed && <span className="nav-label">Import podataka</span>}
                             </button>
