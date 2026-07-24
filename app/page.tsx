@@ -463,6 +463,8 @@ export default function Home() {
                             workOrders={appState.workOrders}
                             offers={appState.offers}
                             workLogs={appState.workLogs}
+                            orders={appState.orders}
+                            tasks={appState.tasks}
                             onRefresh={refreshCollections}
                             showToast={showToast}
                             onNavigateToTasks={handleNavigateToTasks}

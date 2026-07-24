@@ -33,6 +33,8 @@ interface MobileProjectsViewProps {
     onEditAluDoor: (productId: string, material: ProductMaterial) => void;
     onUpdateMaterial: (materialId: string, updates: { Quantity: number; Unit_Price: number; Total_Price: number }) => Promise<void>;
     onToggleHidden?: (project: Project) => void;
+    /** Otvara puni pregled projekta (full-screen overlay). */
+    onOpenOverview?: (project: Project) => void;
 }
 
 export default function MobileProjectsView({
@@ -51,7 +53,8 @@ export default function MobileProjectsView({
     onEditGlass,
     onEditAluDoor,
     onUpdateMaterial,
-    onToggleHidden
+    onToggleHidden,
+    onOpenOverview
 }: MobileProjectsViewProps) {
     const [searchTerm, setSearchTerm] = useState('');
     const [statusFilter, setStatusFilter] = useState('');
@@ -314,6 +317,16 @@ export default function MobileProjectsView({
                                     <span className="material-icons-round">layers</span>
                                     {totalProducts} proizvoda
                                 </span>
+                                {onOpenOverview && (
+                                    <button
+                                        className="mp-overview-btn"
+                                        onClick={(e) => { e.stopPropagation(); onOpenOverview(project); }}
+                                        title="Pregled projekta"
+                                    >
+                                        <span className="material-icons-round">dashboard</span>
+                                        Pregled
+                                    </button>
+                                )}
                                 <span className="material-icons-round chevron">
                                     {isExpanded ? 'expand_less' : 'expand_more'}
                                 </span>
@@ -838,6 +851,25 @@ export default function MobileProjectsView({
                     font-weight: 600;
                     color: #1d1d1f;
                 }
+
+                .mp-overview-btn {
+                    margin-left: auto;
+                    margin-right: 12px;
+                    display: inline-flex;
+                    align-items: center;
+                    gap: 6px;
+                    padding: 7px 14px;
+                    border: none;
+                    border-radius: 999px;
+                    background: linear-gradient(135deg, #0071e3, #0a84ff);
+                    color: #ffffff;
+                    font-size: 13px;
+                    font-weight: 700;
+                    cursor: pointer;
+                    box-shadow: 0 2px 8px rgba(0, 113, 227, 0.3);
+                }
+                .mp-overview-btn:active { transform: scale(0.96); }
+                .mp-overview-btn .material-icons-round { font-size: 17px; }
 
                 .mp-stat-item .material-icons-round {
                     font-size: 20px;

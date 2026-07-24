@@ -409,6 +409,21 @@
 
 /* Pitanja/napomene — dugme s brojem otvorenih pitanja. Dok ima otvorenih,
    nosi diskretnu plavu boju da se vidi „ovdje nešto visi" bez galame. */
+/* Pregled projekta — primarna akcija (istaknuta, akcent) */
+#projects-content .overview-icon-btn {
+    color: #ffffff;
+    background: linear-gradient(135deg, #0071e3, #0a84ff);
+    border-color: transparent;
+    box-shadow: 0 2px 6px rgba(0, 113, 227, 0.3);
+}
+#projects-content .overview-icon-btn:hover {
+    color: #ffffff;
+    background: linear-gradient(135deg, #0077ed, #339cff);
+    border-color: transparent;
+    box-shadow: 0 6px 14px rgba(0, 113, 227, 0.4);
+    transform: translateY(-2px);
+}
+
 #projects-content .notes-icon-btn { position: relative; overflow: visible; }
 #projects-content .notes-icon-btn.has-open {
     color: #2563eb;

@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import type { Project, Material, Product, ProductMaterial, WorkOrder, WorkOrderItem, Offer, OfferProduct, WorkLog } from '@/lib/types';
+import type { Project, Material, Product, ProductMaterial, WorkOrder, WorkOrderItem, Offer, OfferProduct, WorkLog, Order, Task } from '@/lib/types';
 import { ALLOWED_MATERIAL_TRANSITIONS } from '@/lib/types';
 import {
     saveProject,
@@ -35,6 +35,7 @@ import { projectStatusRank, PROJECT_STATUS_DISPLAY_ORDER, countActiveWorkOrdersB
 import { projectProfitBreakdown } from '@/lib/projectProfit';
 
 import ProjectMaterialsModal from '@/components/ui/ProjectMaterialsModal';
+import ProjectOverviewScreen from '@/components/ui/ProjectOverviewScreen';
 import InvoiceModal from '@/components/ui/InvoiceModal';
 import ProjectNotesModal from '@/components/ui/ProjectNotesModal';
 import { summarizeNotes, summarizeProjectNotes } from '@/lib/productNotes';
@@ -61,6 +62,8 @@ interface ProjectsTabProps {
     workOrders: WorkOrder[];
     offers?: Offer[];
     workLogs?: WorkLog[];
+    orders?: Order[];
+    tasks?: Task[];
     onRefresh: (...collections: string[]) => void;
     showToast: (message: string, type: 'success' | 'error' | 'info') => void;
     onNavigateToTasks?: (projectId: string) => void;
@@ -72,7 +75,7 @@ interface ProjectsTabProps {
     onClearAutoExpand?: () => void;
 }
 
-export default function ProjectsTab({ projects, materials, workOrders = [], offers = [], workLogs = [], onRefresh, showToast, onNavigateToTasks, onCreateWorkOrder, autoExpandProjectId, autoExpandProductId, returnToOfferId, onReturnToOffer, onClearAutoExpand }: ProjectsTabProps) {
+export default function ProjectsTab({ projects, materials, workOrders = [], offers = [], workLogs = [], orders = [], tasks = [], onRefresh, showToast, onNavigateToTasks, onCreateWorkOrder, autoExpandProjectId, autoExpandProductId, returnToOfferId, onReturnToOffer, onClearAutoExpand }: ProjectsTabProps) {
     const { organizationId, appState } = useData();
     const gi = useGoogleIntegration();
     const allWorkers = appState.workers || [];
@@ -83,6 +86,8 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
     const [expandedStatusGroups, setExpandedStatusGroups] = useState<Set<string>>(new Set([...PROJECT_STATUS_DISPLAY_ORDER, 'Bez statusa']));
     const [showMaterialsSummary, setShowMaterialsSummary] = useState<Set<string>>(new Set());
     const [materialsOverviewProject, setMaterialsOverviewProject] = useState<Project | null>(null);
+    // Puni pregled projekta (full-screen overlay) — sav novac/proizvodi/materijali/nalozi/radnici.
+    const [overviewProject, setOverviewProject] = useState<Project | null>(null);
     // Pitanja i napomene — jedan modal, ulaz s kartice projekta (sva) ili proizvoda (skrol na njega).
     const [notesModal, setNotesModal] = useState<{ project: Project; productId?: string } | null>(null);
     // Završni račun — otvara se za projekat koji ima prihvaćenu ponudu (vidi InvoiceModal).
@@ -1101,6 +1106,7 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                         }
                     }}
                     onToggleHidden={handleToggleHidden}
+                    onOpenOverview={setOverviewProject}
                 />
 
                 {/* Modals are shared but different for mobile */}
@@ -1442,6 +1448,24 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                     />
                 )}
 
+                {/* Puni pregled projekta (mobitel) */}
+                {overviewProject && (
+                    <ProjectOverviewScreen
+                        project={projects.find(p => p.Project_ID === overviewProject.Project_ID) || overviewProject}
+                        workOrders={workOrders}
+                        workLogs={workLogs}
+                        offers={offers}
+                        workers={allWorkers}
+                        materials={materials}
+                        orders={orders}
+                        tasks={tasks}
+                        onClose={() => setOverviewProject(null)}
+                        onCreateWorkOrder={onCreateWorkOrder}
+                        onRefresh={onRefresh}
+                        showToast={showToast}
+                    />
+                )}
+
                 {/* Pitanja i napomene (mobitel) — isti modal kao desktop, responsive */}
                 {notesModal && organizationId && (() => {
                     const fresh = projects.find(p => p.Project_ID === notesModal.project.Project_ID) || notesModal.project;
@@ -1703,6 +1727,9 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                                                     {project.Status}
                                                 </span>
                                                 <div className="project-actions" onClick={(e) => e.stopPropagation()}>
+                                                    <button className="icon-btn overview-icon-btn" onClick={() => setOverviewProject(project)} title="Pregled projekta — novac, proizvodi, materijali, nalozi, radnici">
+                                                        <span className="material-icons-round">dashboard</span>
+                                                    </button>
                                                     {(() => {
                                                         const ns = summarizeProjectNotes(project.products || []);
                                                         return (
@@ -2299,6 +2326,26 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                         isOpen={!!materialsOverviewProject}
                         onClose={() => setMaterialsOverviewProject(null)}
                         project={materialsOverviewProject}
+                    />
+                )
+            }
+
+            {/* Puni pregled projekta (full-screen) — svjež projekat iz `projects`. */}
+            {
+                overviewProject && (
+                    <ProjectOverviewScreen
+                        project={projects.find(p => p.Project_ID === overviewProject.Project_ID) || overviewProject}
+                        workOrders={workOrders}
+                        workLogs={workLogs}
+                        offers={offers}
+                        workers={allWorkers}
+                        materials={materials}
+                        orders={orders}
+                        tasks={tasks}
+                        onClose={() => setOverviewProject(null)}
+                        onCreateWorkOrder={onCreateWorkOrder}
+                        onRefresh={onRefresh}
+                        showToast={showToast}
                     />
                 )
             }
