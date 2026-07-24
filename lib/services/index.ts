@@ -80,7 +80,7 @@ export {
 export { getProjects, getProject, saveProject, deleteProject, updateProjectStatus } from './project/projectService';
 
 // Product
-export { getProductsByProject, getProduct, saveProduct, deleteProduct, updateProductStatus, recalculateProductCost, updateProductNotes } from './product/productService';
+export { getProductsByProject, getProduct, saveProduct, deleteProduct, updateProductStatus, recalculateProductCost, updateProductNotes, updateProductCutLists } from './product/productService';
 export { addMaterialToProduct, deleteProductMaterial, updateProductMaterial, addGlassMaterialToProduct, updateGlassMaterial, addAluDoorMaterialToProduct, updateAluDoorMaterial, generateUUID } from '../database';
 
 // Worker
@@ -102,7 +102,7 @@ export { getInvoicesForProject, saveInvoiceDraft, deleteInvoice, issueInvoice, c
 export type { InvoiceDraftInput } from './invoice/invoiceService';
 
 // Order
-export { getOrders, getOrder, getOrderItems, createOrder, saveOrder, deleteOrder, updateOrderStatus, markOrderSent, markMaterialsReceived, deleteOrderItemsByIds, updateOrderItem, recalculateOrderTotal, batchUpdateMaterialStatuses } from './order/orderService';
+export { getOrders, getOrder, getOrderItems, createOrder, saveOrder, deleteOrder, updateOrderStatus, markOrderSent, markMaterialsReceived, markMaterialsUnreceived, deleteOrderItemsByIds, updateOrderItem, recalculateOrderTotal, batchUpdateMaterialStatuses } from './order/orderService';
 
 // Work Order
 export {
@@ -120,6 +120,7 @@ export type { MaterialOrderPlanGroup, MaterialOrderPlanItem } from '../database'
 // Graf procesa (po nalogu) + templejti toka
 export { getProcessGraph, saveProcessGraph, listProcessTemplates, saveProcessTemplate, deleteProcessTemplate } from '../database';
 export { getProductMaterials } from '../database';
+export { applyBasisReview, buildBasisReview } from '../database';
 
 // Katalog procesa (org) + pravila materijal→proces + plan procesa proizvoda
 export {

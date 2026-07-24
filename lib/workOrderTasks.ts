@@ -215,6 +215,22 @@ export function firstBookingDate(workLogs: Pick<WorkLog, 'Date'>[]): string | un
 }
 
 /**
+ * Datum ZADNJEG knjiženja radnika na nalog (YYYY-MM-DD) — stvarni posljednji
+ * dan rada. Koristi se kod završetka naloga kao prijedlog „dana zadnjeg rada"
+ * (kad se nalog završava naknadno, a ne na dan zadnjeg rada).
+ * Bez knjiženja → undefined.
+ */
+export function lastBookingDate(workLogs: Pick<WorkLog, 'Date'>[]): string | undefined {
+    let max: string | undefined;
+    for (const log of workLogs) {
+        const d = log.Date?.split('T')[0];
+        if (!d) continue;
+        if (!max || d > max) max = d;
+    }
+    return max;
+}
+
+/**
  * Prvo knjiženje po SVIM nalozima odjednom (Work_Order_ID → YYYY-MM-DD) —
  * za liste, gdje bi upit po nalogu značio N upita.
  *

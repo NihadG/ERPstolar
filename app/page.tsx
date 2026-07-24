@@ -343,23 +343,17 @@ export default function Home() {
                     const updates: any = {};
                     results.forEach(({ name, data }) => { updates[name] = data; });
 
-                    // Guard: don't replace valid collections with empty array 
-                    // (Firestore eventual consistency after cascade deletes)
-                    if (updates.projects && updates.projects.length === 0 && prev.projects.length > 0) {
-                        console.warn('refreshCollections: projects came back empty, retrying...');
-                        setTimeout(() => refreshCollections('projects'), 1000);
-                        delete updates.projects;
-                    }
-                    if (updates.orders && updates.orders.length === 0 && prev.orders.length > 0) {
-                        console.warn('refreshCollections: orders came back empty, retrying...');
-                        setTimeout(() => refreshCollections('orders'), 1000);
-                        delete updates.orders;
-                    }
-                    if (updates.offers && updates.offers.length === 0 && prev.offers.length > 0) {
-                        console.warn('refreshCollections: offers came back empty, retrying...');
-                        setTimeout(() => refreshCollections('offers'), 1000);
-                        delete updates.offers;
-                    }
+                    // Guard: don't replace a non-empty collection with an empty array.
+                    // Firestore eventual consistency (nakon upisa/recalca, npr. završetak naloga)
+                    // zna nakratko vratiti prazan rezultat — bez ovoga bi cijela lista „nestala"
+                    // dok korisnik ne reloada. Zadržimo staru vrijednost i pokušamo ponovo.
+                    (['projects', 'orders', 'offers', 'workOrders', 'workers'] as const).forEach(col => {
+                        if (updates[col] && updates[col].length === 0 && (prev[col] as any[]).length > 0) {
+                            console.warn(`refreshCollections: ${col} came back empty, retrying...`);
+                            setTimeout(() => refreshCollections(col), 1000);
+                            delete updates[col];
+                        }
+                    });
 
                     return Object.keys(updates).length > 0 ? { ...prev, ...updates } : prev;
                 });

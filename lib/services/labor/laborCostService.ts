@@ -231,7 +231,7 @@ export async function recalcAllWorkLogSplits(
 
 export async function recalculateWorkOrder(
     workOrderId: string,
-    options?: { skipSnapshot?: boolean; skipStatusSync?: boolean; skipMaterialRefresh?: boolean }
+    options?: { skipSnapshot?: boolean; skipStatusSync?: boolean; skipMaterialRefresh?: boolean; forceMaterialBasisRefresh?: boolean }
 ): Promise<void> {
     const { recalculateWorkOrder: _recalc } = await import('../../attendance');
     await _recalc(workOrderId, options);

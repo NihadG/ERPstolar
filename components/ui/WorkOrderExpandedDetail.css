@@ -318,3 +318,114 @@
     .wo-detail--page .wo-seg { display: flex; align-self: stretch; }
     .wo-detail--page .wo-seg button { flex: 1; justify-content: center; }
 }
+
+/* ═══════════════════════════════════════════════════════════════════
+   Dijalog završetka naloga — izbor zvaničnog datuma završetka
+   ═══════════════════════════════════════════════════════════════════ */
+.wo-fin-intro {
+    margin: 0 0 12px;
+    font-size: 14px;
+    line-height: 1.5;
+    color: var(--text-secondary);
+}
+.wo-fin-intro strong { color: var(--text-primary); font-weight: 600; }
+
+.wo-fin-products {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin: 0 0 20px;
+}
+.wo-fin-chip {
+    font-size: 12.5px;
+    padding: 4px 11px;
+    border-radius: 999px;
+    background: var(--surface);
+    color: var(--text-secondary);
+    white-space: nowrap;
+}
+
+.wo-fin-legend {
+    margin: 0 0 10px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.wo-fin-opts { display: flex; flex-direction: column; gap: 8px; }
+
+.wo-fin-opt {
+    display: flex;
+    align-items: center;
+    gap: 13px;
+    width: 100%;
+    padding: 12px 14px;
+    border: 1.5px solid var(--border-light);
+    border-radius: var(--radius-md);
+    background: var(--background);
+    cursor: pointer;
+    text-align: left;
+    transition: border-color var(--transition), background var(--transition);
+}
+.wo-fin-opt:hover { border-color: var(--border); background: var(--surface); }
+.wo-fin-opt.sel { border-color: var(--accent); background: var(--accent-light); }
+
+.wo-fin-opt-ico {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 38px;
+    height: 38px;
+    flex-shrink: 0;
+    border-radius: 10px;
+    background: var(--surface);
+    color: var(--text-tertiary);
+    transition: background var(--transition), color var(--transition);
+}
+.wo-fin-opt.sel .wo-fin-opt-ico { background: var(--accent); color: #fff; }
+
+.wo-fin-opt-txt { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.wo-fin-opt-title { font-size: 14px; font-weight: 600; color: var(--text-primary); }
+.wo-fin-opt-sub { font-size: 13px; color: var(--text-secondary); }
+.wo-fin-opt.sel .wo-fin-opt-sub { color: var(--accent); font-weight: 600; }
+
+.wo-fin-radio {
+    position: relative;
+    width: 18px;
+    height: 18px;
+    margin-left: auto;
+    flex-shrink: 0;
+    border: 2px solid var(--border);
+    border-radius: 50%;
+    transition: border-color var(--transition);
+}
+.wo-fin-opt.sel .wo-fin-radio { border-color: var(--accent); }
+.wo-fin-opt.sel .wo-fin-radio::after {
+    content: '';
+    position: absolute;
+    inset: 3px;
+    border-radius: 50%;
+    background: var(--accent);
+}
+
+.wo-fin-dateinput {
+    margin: 10px 0 0 51px;
+}
+.wo-fin-dateinput input {
+    width: 100%;
+    max-width: 220px;
+    padding: 8px 12px;
+    font-size: 14px;
+    color: var(--text-primary);
+    background: var(--background);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    outline: none;
+}
+.wo-fin-dateinput input:focus { border-color: var(--accent); }
+
+.wo-fin-err {
+    margin: 12px 0 0;
+    font-size: 12.5px;
+    color: var(--error);
+}

@@ -9,12 +9,14 @@ import { workOrderDisplayName } from '@/lib/utils';
 import { getAnalyticsRaw, computeAnalytics } from '@/lib/services/profit/analyticsService';
 import type { AnalyticsData, AnalyticsScope, AnalyticsRaw } from '@/lib/services/profit/analyticsService';
 import type { PvAMetric } from '@/lib/analytics';
-import type { WorkLog } from '@/lib/types';
+import type { Project, WorkLog } from '@/lib/types';
 import ProductTimelineModal from './ProductTimelineModal';
 import './AnalyticsDashboard.css';
 
 interface AnalyticsDashboardProps {
     onClose: () => void;
+    /** Projekti iz glavnog store-a (page.tsx) — DataContext.appState ih ne učitava. */
+    projects?: Project[];
     showToast?: (message: string, type: 'success' | 'error' | 'info') => void;
     onRefresh?: (...collections: string[]) => void;
 }
@@ -45,9 +47,16 @@ function HBar({ value, max, color }: { value: number; max: number; color: string
     return <div className="ana-bar-track"><div className="ana-bar-fill" style={{ width: `${w}%`, background: color }} /></div>;
 }
 
-export default function AnalyticsDashboard({ onClose, showToast, onRefresh }: AnalyticsDashboardProps) {
+export default function AnalyticsDashboard({ onClose, projects, showToast, onRefresh }: AnalyticsDashboardProps) {
     const { organizationId, appState } = useData();
     const allWorkers = appState.workers || [];
+    // Analitika grupiše po Project_ID ali redove obilježava imenom KLIJENTA (item.Project_Name).
+    // Mapa Project_ID → Project daje i klijenta i opisni naziv projekta (Project.Name), da red
+    // pokaže oboje. Izvor: prop `projects` (glavni store); appState.projects je fallback.
+    const projectsById = useMemo(
+        () => new Map(((projects && projects.length ? projects : appState.projects) || []).map(p => [p.Project_ID, p])),
+        [projects, appState.projects]
+    );
 
     const [tab, setTab] = useState<Tab>('overview');
     const [period, setPeriod] = useState<Period>('all');
@@ -165,7 +174,7 @@ export default function AnalyticsDashboard({ onClose, showToast, onRefresh }: An
                     ) : tab === 'overview' ? (
                         <Overview data={data} onGoTo={setTab} />
                     ) : tab === 'projects' ? (
-                        <ProjectsTab data={data} onPick={(projectId, projectName) => setProjectCal({ projectId, projectName })} />
+                        <ProjectsTab data={data} projectsById={projectsById} onPick={(projectId, projectName) => setProjectCal({ projectId, projectName })} />
                     ) : tab === 'workers' ? (
                         <WorkersTab data={data} onPick={(workerId, workerName) => setWorkerCal({ workerId, workerName })} />
                     ) : tab === 'products' ? (
@@ -414,17 +423,27 @@ function Kpi({ label, value, tone, big }: { label: string; value: string; tone?:
 }
 
 // ── Projekti ─────────────────────────────────────────────────────────────────
-function ProjectsTab({ data, onPick }: { data: AnalyticsData; onPick: (projectId: string, projectName: string) => void }) {
+function ProjectsTab({ data, projectsById, onPick }: { data: AnalyticsData; projectsById: Map<string, Project>; onPick: (projectId: string, projectName: string) => void }) {
     const maxAbs = Math.max(1, ...data.projects.map(p => Math.abs(p.profit)));
     return (
         <div className="ana-section">
-            <div className="ana-hint">Klikni projekt za kalendar rada (dan-po-dan: ko je i na čemu radio).</div>
+            <div className="ana-hint">Klikni red za kalendar rada (dan-po-dan: ko je i na čemu radio).</div>
             <table className="ana-table">
-                <thead><tr><th>Projekat</th><th className="r">Prihod</th><th className="r">Materijal</th><th className="r">Rad</th><th className="r">Usluge</th><th className="r">Profit</th><th className="r">Marža</th><th className="ana-barcol">Profit</th><th></th></tr></thead>
+                <thead><tr><th>Klijent · projekat</th><th className="r">Prihod</th><th className="r">Materijal</th><th className="r">Rad</th><th className="r">Usluge</th><th className="r">Profit</th><th className="r">Marža</th><th className="ana-barcol">Profit</th><th></th></tr></thead>
                 <tbody>
-                    {data.projects.map(p => (
+                    {data.projects.map(p => {
+                        // Klijent = obilježje reda (item.Project_Name); opisni naziv projekta iz kataloga.
+                        const proj = projectsById.get(p.projectId);
+                        const client = proj?.Client_Name || p.projectName;
+                        const projectName = proj?.Name?.trim();
+                        return (
                         <tr key={p.projectId || p.projectName} className="ana-row-click" onClick={() => onPick(p.projectId, p.projectName)} title="Otvori kalendar rada">
-                            <td>{p.projectName} <span className="muted">· {p.productCount} prod.</span></td>
+                            <td>
+                                <span className="ana-cell-title" title={client}>{client}</span>
+                                <span className="ana-cell-meta" title={projectName ? `${projectName} · ${p.productCount} prod.` : `${p.productCount} prod.`}>
+                                    {projectName ? `${projectName} · ` : ''}{p.productCount} prod.
+                                </span>
+                            </td>
                             <td className="r">{fmt(p.revenue)}</td>
                             <td className="r">{fmt(p.material)}</td>
                             <td className="r amber">{fmt(p.labor)}</td>
@@ -434,7 +453,8 @@ function ProjectsTab({ data, onPick }: { data: AnalyticsData; onPick: (projectId
                             <td className="ana-barcol"><HBar value={p.profit} max={maxAbs} color={p.profit >= 0 ? '#22c55e' : '#ef4444'} /></td>
                             <td className="r"><span className="ana-link">Kalendar →</span></td>
                         </tr>
-                    ))}
+                        );
+                    })}
                 </tbody>
             </table>
         </div>

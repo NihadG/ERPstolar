@@ -22,7 +22,7 @@ import {
 } from '../shared/firestoreClient';
 import { eventBus } from '../eventBus';
 import { v4 as uuidv4 } from 'uuid';
-import type { Product, ProductMaterial, ProductNote } from '../../types';
+import type { Product, ProductCutList, ProductMaterial, ProductNote } from '../../types';
 
 // ============================================
 // HELPERS
@@ -266,6 +266,29 @@ export async function updateProductNotes(
     } catch (error) {
         console.error('updateProductNotes error:', error);
         return { success: false, message: 'Greška pri spremanju napomena' };
+    }
+}
+
+/**
+ * Upiši SAMO krojne liste proizvoda (Product.Cut_Lists) — isti princip kao
+ * updateProductNotes: pozivalac drži cijeli niz i predaje ga cijelog.
+ */
+export async function updateProductCutLists(
+    productId: string,
+    cutLists: ProductCutList[],
+    organizationId: string,
+): Promise<{ success: boolean; message: string }> {
+    if (!organizationId) {
+        return { success: false, message: 'Organization ID is required' };
+    }
+    try {
+        const ref = await findRef(COLLECTIONS.PRODUCTS, 'Product_ID', productId, organizationId);
+        if (!ref) return { success: false, message: 'Proizvod nije pronađen' };
+        await updateDocByRef(ref, { Cut_Lists: cutLists });
+        return { success: true, message: 'Krojna lista sačuvana' };
+    } catch (error) {
+        console.error('updateProductCutLists error:', error);
+        return { success: false, message: 'Greška pri spremanju krojne liste' };
     }
 }
 

@@ -171,6 +171,14 @@ export async function markMaterialsReceived(
     return _mark(orderItemIds, organizationId);
 }
 
+export async function markMaterialsUnreceived(
+    orderItemIds: string[],
+    organizationId: string
+): Promise<{ success: boolean; message: string; postCascade?: Promise<void> }> {
+    const { markMaterialsUnreceived: _unmark } = await import('../../database');
+    return _unmark(orderItemIds, organizationId);
+}
+
 // ============================================
 // RECALCULATION
 // ============================================

@@ -5,7 +5,9 @@ import type { WorkOrder, Project, Worker, Task, WorkLog } from '@/lib/types';
 import { firstBookingByOrder } from '@/lib/workOrderTasks';
 import { isNewFormatWorkOrderNumber } from '@/lib/workOrderNumber';
 import RenumberWorkOrdersModal from '@/components/ui/RenumberWorkOrdersModal';
-import { deleteWorkOrder, startWorkOrder, updateWorkOrder } from '@/lib/services';
+import { deleteWorkOrder, startWorkOrder, updateWorkOrder, applyBasisReview } from '@/lib/services';
+import type { ProjectBasisReview, BasisReviewItem } from '@/lib/profitBasis';
+import ProfitBasisReviewModal from '@/components/ui/ProfitBasisReviewModal';
 import { checkMissingAttendanceForActiveOrders } from '@/lib/services';
 import { repairAllProductStatuses } from '@/lib/services';
 import { checkWorkOrderStart, findWorkersToBookToday, bookWorkersToday } from '@/lib/workOrderStart';
@@ -268,6 +270,20 @@ export default function ProductionTab({ workOrders, projects, workers, tasks, wo
 
     function toggleWorkOrder(id: string) {
         setExpandedOrderId(prev => prev === id ? null : id);
+    }
+
+    // Gejt „profit zastario" — usklađivanje osnovice na trenutni trošak (iz badge-a na kartici).
+    const [basisReview, setBasisReview] = useState<{ review: ProjectBasisReview[]; label: string } | null>(null);
+    async function handleApplyBasisReview(approvedItems: BasisReviewItem[]) {
+        if (!organizationId) { setBasisReview(null); return; }
+        const res = await applyBasisReview(approvedItems, organizationId);
+        if (res.success) {
+            showToast(approvedItems.length > 0 ? 'Profit usklađen' : 'Profit nepromijenjen', 'success');
+            onRefresh('workOrders', 'projects');
+        } else {
+            showToast(res.message, 'error');
+        }
+        setBasisReview(null);
     }
 
     // Print Modal
@@ -569,6 +585,7 @@ export default function ProductionTab({ workOrders, projects, workers, tasks, wo
             onSummary={setSummaryOrder}
             onAttendanceFix={setAttendanceFixWorkOrder}
             onUpdate={handleUpdateWorkOrder}
+            onReviewBasis={(review, label) => setBasisReview({ review, label })}
             onRefresh={onRefresh}
             showToast={showToast}
         />
@@ -836,15 +853,12 @@ export default function ProductionTab({ workOrders, projects, workers, tasks, wo
                     <div className="empty-state"><span className="material-icons-round">engineering</span><h3>Nema radnih naloga</h3><p>Kreirajte prvi radni nalog</p></div>
                 ) : (
                     groupBy === 'none' ? (
-                        (expandedOrderId
-                            ? filteredWorkOrders.filter(wo => wo.Work_Order_ID === expandedOrderId)
-                            : filteredWorkOrders
-                        ).map(wo => renderWorkOrderCard(wo))
+                        // Proširenje kartice NE skriva ostale — sve ostaju u listi, red se samo
+                        // proširi na mjestu (glatka animacija u WorkOrderCard), a zatvaranje
+                        // vraća karticu tačno gdje je bila (bez skoka na vrh liste).
+                        filteredWorkOrders.map(wo => renderWorkOrderCard(wo))
                     ) : (
-                        (expandedOrderId
-                            ? groupedWorkOrders.filter(g => g.items.some(wo => wo.Work_Order_ID === expandedOrderId))
-                            : groupedWorkOrders
-                        ).map(group => (
+                        groupedWorkOrders.map(group => (
                             <div key={group.key} className="group-section" style={{ marginBottom: '24px' }}>
                                 <div
                                     className="group-header"
@@ -930,10 +944,7 @@ export default function ProductionTab({ workOrders, projects, workers, tasks, wo
 
                                 {!collapsedGroups.has(group.key) && (
                                     <div className="group-items" style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginTop: '12px' }}>
-                                        {(expandedOrderId
-                                            ? group.items.filter(wo => wo.Work_Order_ID === expandedOrderId)
-                                            : group.items
-                                        ).map(wo => renderWorkOrderCard(wo))}
+                                        {group.items.map(wo => renderWorkOrderCard(wo))}
                                     </div>
                                 )}
                             </div>
@@ -1029,8 +1040,19 @@ export default function ProductionTab({ workOrders, projects, workers, tasks, wo
             {profitDashboardOpen && (
                 <AnalyticsDashboard
                     onClose={() => setProfitDashboardOpen(false)}
+                    projects={projects}
                     showToast={showToast}
                     onRefresh={onRefresh}
+                />
+            )}
+
+            {basisReview && (
+                <ProfitBasisReviewModal
+                    review={basisReview.review}
+                    intro="Trenutni trošak materijala odstupa od zamrznute osnovice profita. Odaberi projekte za usklađivanje osnovice na trenutni trošak — ostatak ostaje netaknut."
+                    applyLabel="Uskladi"
+                    onClose={() => setBasisReview(null)}
+                    onApply={handleApplyBasisReview}
                 />
             )}
 

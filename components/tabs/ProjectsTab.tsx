@@ -15,8 +15,12 @@ import {
     updateGlassMaterial,
     addAluDoorMaterialToProduct,
     updateAluDoorMaterial,
-    saveProfitOverrides
+    saveProfitOverrides,
+    buildBasisReview,
+    applyBasisReview
 } from '@/lib/services';
+import type { ProjectBasisReview, BasisReviewItem } from '@/lib/profitBasis';
+import ProfitBasisReviewModal from '@/components/ui/ProfitBasisReviewModal';
 import Modal from '@/components/ui/Modal';
 import GlassModal, { type GlassModalData } from '@/components/ui/GlassModal';
 import AluDoorModal, { type AluDoorModalData } from '@/components/ui/AluDoorModal';
@@ -44,6 +48,7 @@ import MobileProjectModal from './mobile/MobileProjectModal';
 import MobileProductModal from './mobile/MobileProductModal';
 import MobileMaterialAddModal from './mobile/MobileMaterialAddModal';
 import SketchUpImportModal from '@/components/SketchUpImportModal';
+import CutlistModal from '@/components/ui/CutlistModal';
 import { useGoogleIntegration } from '@/lib/google/useGoogleIntegration';
 import { ensureProjectFolderTree, shouldAutoCreateFolder } from '@/lib/google/projectDrive';
 import { folderLink } from '@/lib/google/driveClient';
@@ -125,6 +130,16 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
     const [glassModal, setGlassModal] = useState(false);
     const [aluDoorModal, setAluDoorModal] = useState(false);
     const [sketchUpImportProductId, setSketchUpImportProductId] = useState<string | null>(null);
+    // Krojenje ploča — samo ID; proizvod se svaki render izvodi svjež iz `projects`
+    // (spremanje/brisanje liste → onRefresh mora odmah ažurirati modal).
+    const [cutlistProductId, setCutlistProductId] = useState<string | null>(null);
+    const cutlistProject = cutlistProductId
+        ? projects.find(pr => (pr.products || []).some(p => p.Product_ID === cutlistProductId)) || null
+        : null;
+    const cutlistProduct = cutlistProject?.products?.find(p => p.Product_ID === cutlistProductId) || null;
+
+    // Gejt „utiče li na profit?" nakon izmjene materijala u kartici proizvoda.
+    const [basisReview, setBasisReview] = useState<{ review: ProjectBasisReview[]; label: string } | null>(null);
 
 
     // Form states
@@ -447,6 +462,44 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
         return mat.Is_Alu_Door === true || mat.Category === 'Alu vrata';
     }
 
+    // ── GEJT profita za izmjene materijala u kartici proizvoda ──────────────
+    // Δ osnovice PO KOMADU = Δ Total_Price materijala (add=+TP, del=−TP, edit=novi−stari).
+    // UI zna deltu tačno iz same izmjene → ne treba čekati recalc (ne-racy).
+
+    /** Nađi ProductMaterial + njegov proizvod kroz sve projekte (za brisanje/edit). */
+    function locateProductMaterial(materialId: string): { productId: string; material: ProductMaterial } | null {
+        for (const p of projects) {
+            for (const pr of (p.products || [])) {
+                const m = (pr.materials || []).find(mm => mm.ID === materialId);
+                if (m) return { productId: pr.Product_ID, material: m };
+            }
+        }
+        return null;
+    }
+
+    /** Izračunaj pregled i otvori dijalog ako izmjena dira osnovicu proizvodnih naloga. */
+    async function reviewProductBasis(productId: string, label: string, perUnitDelta: number) {
+        if (!organizationId || !productId || !perUnitDelta) return;
+        try {
+            const review = await buildBasisReview(organizationId, [productId], new Map([[productId, perUnitDelta]]));
+            if (review.length > 0) setBasisReview({ review, label });
+        } catch (e) {
+            console.warn('reviewProductBasis failed (non-critical):', e);
+        }
+    }
+
+    async function handleApplyBasisReview(approvedItems: BasisReviewItem[]) {
+        if (!organizationId) return;
+        const res = await applyBasisReview(approvedItems, organizationId);
+        if (res.success) {
+            showToast(approvedItems.length > 0 ? 'Profit ažuriran' : 'Profit nepromijenjen', 'success');
+            onRefresh('workOrders', 'projects');
+        } else {
+            showToast(res.message, 'error');
+        }
+        setBasisReview(null);
+    }
+
     // Batch add materials from the new multi-select modal
     async function handleAddMaterials(items: SelectedMaterial[]) {
         const targetProductId = addingMaterial?.productId;
@@ -457,6 +510,7 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
 
         let successCount = 0;
         let errorCount = 0;
+        let addedDelta = 0;   // Σ Total_Price uspješno dodanih (za gejt profita)
 
         for (const item of items) {
             const result = await addMaterialToProduct({
@@ -471,6 +525,7 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
 
             if (result.success) {
                 successCount++;
+                addedDelta += (item.quantity || 0) * (item.price || 0);
             } else {
                 errorCount++;
             }
@@ -480,6 +535,7 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
             showToast(`Dodano ${successCount} materijal${successCount === 1 ? '' : 'a'}`, 'success');
             setMaterialModal(false);
             onRefresh('projects');
+            await reviewProductBasis(targetProductId, successCount === 1 ? items[0].materialName : `${successCount} materijala`, addedDelta);
         }
         if (errorCount > 0) {
             showToast(`Greška pri dodavanju ${errorCount} materijala`, 'error');
@@ -518,13 +574,14 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
             return;
         }
 
+        const effectivePrice = targetPrice || targetMaterialObj.Default_Unit_Price;
         const result = await addMaterialToProduct({
             Product_ID: targetProductId,
             Material_ID: targetMaterialObj.Material_ID,
             Material_Name: targetMaterialObj.Name,
             Quantity: targetQuantity,
             Unit: targetMaterialObj.Unit,
-            Unit_Price: targetPrice || targetMaterialObj.Default_Unit_Price,
+            Unit_Price: effectivePrice,
             Supplier: targetMaterialObj.Default_Supplier || '',
         }, organizationId!);
 
@@ -532,6 +589,7 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
             showToast(result.message, 'success');
             setMaterialModal(false);
             onRefresh('projects');
+            await reviewProductBasis(targetProductId, targetMaterialObj.Name, (targetQuantity || 0) * (effectivePrice || 0));
         } else {
             showToast(result.message, 'error');
         }
@@ -657,10 +715,14 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
             return;
         }
 
+        // Uhvati trošak PRIJE brisanja (za gejt: Δ = −Total_Price).
+        const loc = locateProductMaterial(materialId);
+
         const result = await deleteProductMaterial(materialId, organizationId);
         if (result.success) {
             showToast(result.message, 'success');
             onRefresh('projects');
+            if (loc) await reviewProductBasis(loc.productId, loc.material.Material_Name || 'materijal', -(loc.material.Total_Price || 0));
         } else {
             showToast(result.message, 'error');
         }
@@ -687,11 +749,13 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                 showToast('Organization ID is required', 'error');
                 return;
             }
+            const loc = locateProductMaterial(id);   // stari trošak prije izmjene
             const result = await updateProductMaterial(id, updates, organizationId);
             if (result.success) {
                 showToast('Materijal uspješno ažuriran', 'success');
                 setEditMaterialModal(false);
                 onRefresh('projects');
+                if (loc) await reviewProductBasis(loc.productId, loc.material.Material_Name || 'materijal', (updates.Total_Price || 0) - (loc.material.Total_Price || 0));
             } else {
                 showToast(result.message, 'error');
             }
@@ -720,12 +784,17 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
             updatePayload.Supplier = editMaterialNewSupplier;
         }
 
+        const oldTotalPrice = editingMaterial.Total_Price || 0;
+        const newTotalPrice = editMaterialQty * editMaterialPrice;
+        const editedProductId = editingMaterial.Product_ID;
+        const editedName = editingMaterial.Material_Name;
         const result = await updateProductMaterial(editingMaterial.ID, updatePayload as any, organizationId);
 
         if (result.success) {
             showToast('Materijal uspješno ažuriran', 'success');
             setEditMaterialModal(false);
             onRefresh('projects');
+            await reviewProductBasis(editedProductId, editedName || 'materijal', newTotalPrice - oldTotalPrice);
         } else {
             showToast(result.message, 'error');
         }
@@ -1827,6 +1896,14 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                                                                                 }}>
                                                                                     <span className="material-icons-round">upload_file</span>
                                                                                     SketchUp
+                                                                                </button>
+                                                                                <button
+                                                                                    className="btn-add-item"
+                                                                                    onClick={() => setCutlistProductId(product.Product_ID)}
+                                                                                    title={`Krojenje ploča${(product.Cut_Lists?.length || 0) > 0 ? ` — ${product.Cut_Lists!.length} sačuvano` : ''}`}
+                                                                                >
+                                                                                    <span className="material-icons-round">content_cut</span>
+                                                                                    Krojenje{(product.Cut_Lists?.length || 0) > 0 ? ` (${product.Cut_Lists!.length})` : ''}
                                                                                 </button>
                                                                                 <button className="btn-add-item" onClick={() => openMaterialModal(product.Product_ID)}>
                                                                                     <span className="material-icons-round">add</span>
@@ -2950,6 +3027,28 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                 onImportComplete={() => onRefresh('projects')}
                 showToast={showToast}
             />
+
+            {/* Krojenje ploča */}
+            <CutlistModal
+                isOpen={!!cutlistProductId}
+                onClose={() => setCutlistProductId(null)}
+                product={cutlistProduct}
+                projectProducts={cutlistProject?.products || []}
+                projectName={cutlistProject?.Client_Name}
+                materials={materials}
+                organizationId={organizationId || ''}
+                onRefresh={onRefresh}
+                showToast={showToast}
+            />
+
+            {basisReview && (
+                <ProfitBasisReviewModal
+                    review={basisReview.review}
+                    changeLabel={basisReview.label}
+                    onClose={() => setBasisReview(null)}
+                    onApply={handleApplyBasisReview}
+                />
+            )}
         </div >
     );
 }

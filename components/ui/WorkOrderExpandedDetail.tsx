@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, type ReactNode } from 'react';
-import { Play, Pause, CheckCircle, Clock, Edit2, AlertTriangle, NotebookPen, GitBranch, ListTodo, Hammer } from 'lucide-react';
+import { Play, Pause, CheckCircle, Clock, Edit2, AlertTriangle, NotebookPen, GitBranch, ListTodo, Hammer, CalendarCheck, History, Calendar } from 'lucide-react';
 import { useData } from '@/context/DataContext';
 import {
     checkMissingAttendanceHistory,
@@ -21,7 +21,7 @@ import WorkOrderWorkLog from './WorkOrderWorkLog';
 import ProcessGraphModal from './ProcessGraphModal';
 import OrderProcessBoard from './OrderProcessBoard';
 import WorkOrderTasksPanel from './WorkOrderTasksPanel';
-import { tasksForWorkOrder, taskProgress, firstBookingDate } from '@/lib/workOrderTasks';
+import { tasksForWorkOrder, taskProgress, firstBookingDate, lastBookingDate } from '@/lib/workOrderTasks';
 import { workOrderDisplayName, orderProcessProgress } from '@/lib/utils';
 import './WorkOrderExpandedDetail.css';
 
@@ -81,6 +81,14 @@ export default function WorkOrderExpandedDetail({
         confirmLabel: string;
         onConfirm: () => void | Promise<void>;
     } | null>(null);
+    // Modal završetka naloga — izbor ZVANIČNOG datuma završetka (danas / dan zadnjeg
+    // rada / proizvoljno). Nalog se često završava nekoliko dana nakon posljednjeg rada.
+    const [completeState, setCompleteState] = useState<{
+        items: WorkOrderItem[];        // ne-završene stavke koje će se završiti
+        lastWork?: string;             // YYYY-MM-DD zadnjeg knjiženja (ako postoji)
+    } | null>(null);
+    const [completeChoice, setCompleteChoice] = useState<'today' | 'lastWork' | 'custom'>('today');
+    const [completeCustomDate, setCompleteCustomDate] = useState<string>('');
     const toggleProduct = (id: string) => setExpandedProducts(prev => {
         const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n;
     });
@@ -303,38 +311,37 @@ export default function WorkOrderExpandedDetail({
     const allPaused = openItems.length > 0 && openItems.every(i => i.Is_Paused);
 
     // Završi cijeli nalog (sve ne-završene stavke). Procesi su odspojeni — status vodi ova akcija.
+    // Otvara modal s izborom ZVANIČNOG datuma završetka (danas / dan zadnjeg rada / proizvoljno).
     const completeOrder = () => {
         if (orderBusy) return;
         const unfinished = localItems.filter(i => (i.Status as string) !== 'Završeno');
         if (unfinished.length === 0) return;
-        setConfirmState({
-            title: 'Završi cijeli nalog',
-            confirmLabel: 'Završi nalog',
-            body: (
-                <>
-                    <p style={{ margin: '0 0 10px 0', color: 'var(--text-secondary)', fontSize: 14 }}>
-                        Završiće se {unfinished.length} {unfinished.length === 1 ? 'stavka' : 'stavki'}:
-                    </p>
-                    <ul style={{ margin: 0, paddingLeft: 20, fontSize: 14, color: 'var(--text-primary)' }}>
-                        {unfinished.map(i => <li key={i.ID}>{i.Product_Name} × {i.Quantity || 1}</li>)}
-                    </ul>
-                </>
-            ),
-            onConfirm: async () => {
-                try {
-                    setOrderBusy(true);
-                    for (const it of unfinished) {
-                        await completeWorkOrderItem(workOrder.Work_Order_ID, it.ID);
-                    }
-                    onRefresh?.('workOrders', 'projects', 'workLogs');
-                } catch (error) {
-                    console.error('Error completing order:', error);
-                    showToast?.('Greška pri završavanju naloga', 'error');
-                } finally {
-                    setOrderBusy(false);
-                }
-            },
-        });
+        const lastWork = lastBookingDate(workLogs);
+        // Ako se zadnji rad razlikuje od danas → predloži taj dan; inače default „danas".
+        setCompleteChoice(lastWork && lastWork !== todayISO() ? 'lastWork' : 'today');
+        setCompleteCustomDate(lastWork || todayISO());
+        setCompleteState({ items: unfinished, lastWork });
+    };
+
+    // Izvrši završetak naloga na odabrani datum (ISO YYYY-MM-DD).
+    const runCompleteOrder = async (dateISO: string) => {
+        if (!completeState) return;
+        const items = completeState.items;
+        setCompleteState(null);
+        try {
+            setOrderBusy(true);
+            // Podne da izbjegnemo pomak dana u različitim vremenskim zonama.
+            const customDate = `${dateISO}T12:00:00`;
+            for (const it of items) {
+                await completeWorkOrderItem(workOrder.Work_Order_ID, it.ID, { customDate });
+            }
+            onRefresh?.('workOrders', 'projects', 'workLogs');
+        } catch (error) {
+            console.error('Error completing order:', error);
+            showToast?.('Greška pri završavanju naloga', 'error');
+        } finally {
+            setOrderBusy(false);
+        }
     };
 
     // Pauza / nastavak cijelog naloga (sve otvorene stavke odjednom).
@@ -796,6 +803,93 @@ export default function WorkOrderExpandedDetail({
                     {confirmState.body}
                 </Modal>
             )}
+
+            {/* Završetak naloga — izbor zvaničnog datuma završetka (danas / dan zadnjeg rada / proizvoljno) */}
+            {completeState && (() => {
+                const today = todayISO();
+                const lastWork = completeState.lastWork;
+                const showLastWork = !!lastWork && lastWork !== today;
+                const chosenDate = completeChoice === 'today' ? today
+                    : completeChoice === 'lastWork' ? (lastWork || today)
+                        : completeCustomDate;
+                const canConfirm = !!chosenDate && chosenDate <= today;
+                const n = completeState.items.length;
+                return (
+                    <Modal
+                        isOpen={true}
+                        onClose={() => setCompleteState(null)}
+                        title="Završi nalog"
+                        footer={
+                            <>
+                                <button className="btn btn-secondary" onClick={() => setCompleteState(null)}>Odustani</button>
+                                <button className="btn btn-primary" disabled={!canConfirm}
+                                    onClick={() => runCompleteOrder(chosenDate)}>
+                                    Završi nalog
+                                </button>
+                            </>
+                        }
+                    >
+                        <p className="wo-fin-intro">
+                            {n === 1 ? 'Jedan proizvod se zavodi kao završen' : `${n} proizvoda se zavode kao završeni`}:
+                        </p>
+                        <div className="wo-fin-products">
+                            {completeState.items.map(i => (
+                                <span key={i.ID} className="wo-fin-chip">
+                                    {i.Product_Name}{(i.Quantity || 1) > 1 ? ` ×${i.Quantity}` : ''}
+                                </span>
+                            ))}
+                        </div>
+
+                        <p className="wo-fin-legend">Koji je zvanični datum završetka?</p>
+                        <div className="wo-fin-opts">
+                            <button type="button" className={`wo-fin-opt${completeChoice === 'today' ? ' sel' : ''}`}
+                                onClick={() => setCompleteChoice('today')}>
+                                <span className="wo-fin-opt-ico"><CalendarCheck size={19} /></span>
+                                <span className="wo-fin-opt-txt">
+                                    <span className="wo-fin-opt-title">Danas</span>
+                                    <span className="wo-fin-opt-sub">{formatDate(today)}</span>
+                                </span>
+                                <span className="wo-fin-radio" />
+                            </button>
+
+                            {showLastWork && (
+                                <button type="button" className={`wo-fin-opt${completeChoice === 'lastWork' ? ' sel' : ''}`}
+                                    onClick={() => setCompleteChoice('lastWork')}>
+                                    <span className="wo-fin-opt-ico"><History size={19} /></span>
+                                    <span className="wo-fin-opt-txt">
+                                        <span className="wo-fin-opt-title">Dan zadnjeg rada</span>
+                                        <span className="wo-fin-opt-sub">{formatDate(lastWork)}</span>
+                                    </span>
+                                    <span className="wo-fin-radio" />
+                                </button>
+                            )}
+
+                            <button type="button" className={`wo-fin-opt${completeChoice === 'custom' ? ' sel' : ''}`}
+                                onClick={() => setCompleteChoice('custom')}>
+                                <span className="wo-fin-opt-ico"><Calendar size={19} /></span>
+                                <span className="wo-fin-opt-txt">
+                                    <span className="wo-fin-opt-title">Drugi datum</span>
+                                    <span className="wo-fin-opt-sub">
+                                        {completeChoice === 'custom' && completeCustomDate ? formatDate(completeCustomDate) : 'Odaberi ručno'}
+                                    </span>
+                                </span>
+                                <span className="wo-fin-radio" />
+                            </button>
+                        </div>
+
+                        {completeChoice === 'custom' && (
+                            <div className="wo-fin-dateinput">
+                                <input type="date" value={completeCustomDate} max={today} autoFocus
+                                    onChange={e => setCompleteCustomDate(e.target.value)} />
+                            </div>
+                        )}
+
+                        {!canConfirm && (
+                            <p className="wo-fin-err">Odaberite datum završetka (ne u budućnosti).</p>
+                        )}
+                    </Modal>
+                );
+            })()}
 
             {/* ProductTimelineModal — SAMO PREGLED (uređivanje dnevnica ide kroz tab „Knjiga rada") */}
             {timelineItem && (

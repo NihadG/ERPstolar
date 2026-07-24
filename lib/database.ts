@@ -53,6 +53,7 @@ import { mergeOfferProducts } from './offerLocking';
 import { assembleProjectGraph, assembleOrders, assembleWorkOrders } from './services/shared/dataAssembler';
 import { naturalCompare } from './naturalCompare';
 import { itemMaterialTotal } from './materialCost';
+import { groupBasisReviewByProject, type ItemMaterialChange, type ProjectBasisReview } from './profitBasis';
 import { workOrderDisplayName } from './utils';
 import {
     generateOrderNumber as _generateOrderNumber,
@@ -852,7 +853,7 @@ export async function getMaterialsCatalog(organizationId: string): Promise<Mater
     return snapshot.docs.map(doc => ({ ...doc.data() } as Material));
 }
 
-export async function saveMaterial(data: Partial<Material>, organizationId: string): Promise<{ success: boolean; data?: { Material_ID: string }; message: string }> {
+export async function saveMaterial(data: Partial<Material>, organizationId: string): Promise<{ success: boolean; data?: { Material_ID: string }; message: string; basisReview?: ProjectBasisReview[] }> {
     if (!organizationId) {
         return { success: false, message: 'Organization ID is required' };
     }
@@ -876,16 +877,19 @@ export async function saveMaterial(data: Partial<Material>, organizationId: stri
                 await updateDoc(snapshot.docs[0].ref, updateData as Record<string, unknown>);
             }
 
-            // REACTIVE: Propagate price/name/supplier changes to ALL ProductMaterial records
-            // This ensures editing a material in Resources immediately updates all products using it
+            // REACTIVE: Propagate price/name/supplier changes to ALL ProductMaterial records.
+            // Živa product cijena se ažurira odmah; osnovica profita proizvodnih naloga se NE dira —
+            // umjesto toga se vrati pregled po projektu (gejt „utiče li na profit?").
+            let basisReview: ProjectBasisReview[] = [];
             try {
-                await propagateMaterialPriceChange(data.Material_ID!, data, organizationId);
+                basisReview = await propagateMaterialPriceChange(data.Material_ID!, data, organizationId);
             } catch (propErr) {
                 console.warn('Material propagation warning (non-critical):', propErr);
             }
+            return { success: true, data: { Material_ID: data.Material_ID! }, message: 'Materijal ažuriran', basisReview };
         }
 
-        return { success: true, data: { Material_ID: data.Material_ID! }, message: isNew ? 'Materijal kreiran' : 'Materijal ažuriran' };
+        return { success: true, data: { Material_ID: data.Material_ID! }, message: 'Materijal kreiran' };
     } catch (error) {
         console.error('saveMaterial error:', error);
         return { success: false, message: 'Greška pri spremanju materijala' };
@@ -907,7 +911,7 @@ async function propagateMaterialPriceChange(
     materialId: string,
     updatedData: Partial<Material>,
     organizationId: string
-): Promise<void> {
+): Promise<ProjectBasisReview[]> {
     const firestore = getDb();
 
     // 1. Find ALL ProductMaterial records referencing this material
@@ -918,9 +922,12 @@ async function propagateMaterialPriceChange(
     );
     const pmSnap = await getDocs(pmQuery);
 
-    if (pmSnap.empty) return; // No products use this material
+    if (pmSnap.empty) return []; // No products use this material
 
     const affectedProductIds = new Set<string>();
+    // Δ troška materijala PO KOMADU po proizvodu (Σ Δ Total_Price ove izmjene) —
+    // sirovina za gejtovani pregled: koliko OVA izmjena mijenja osnovicu profita.
+    const productDelta = new Map<string, number>();
     let updatedCount = 0;
 
     for (const pmDoc of pmSnap.docs) {
@@ -933,9 +940,11 @@ async function propagateMaterialPriceChange(
         const pmUpdate: Record<string, unknown> = {};
 
         if (updatedData.Default_Unit_Price !== undefined && pm.Unit_Price !== updatedData.Default_Unit_Price) {
+            const oldTotal = (pm.Quantity || 0) * (pm.Unit_Price || 0);
+            const newTotal = (pm.Quantity || 0) * updatedData.Default_Unit_Price;
             pmUpdate.Unit_Price = updatedData.Default_Unit_Price;
-            // Recalculate Total_Price = Quantity × new Unit_Price
-            pmUpdate.Total_Price = (pm.Quantity || 0) * updatedData.Default_Unit_Price;
+            pmUpdate.Total_Price = newTotal;                       // Total_Price = Quantity × new Unit_Price
+            if (pm.Product_ID) productDelta.set(pm.Product_ID, (productDelta.get(pm.Product_ID) || 0) + (newTotal - oldTotal));
         }
 
         if (updatedData.Name !== undefined && pm.Material_Name !== updatedData.Name) {
@@ -956,14 +965,13 @@ async function propagateMaterialPriceChange(
         }
     }
 
-    if (updatedCount === 0) return; // Nothing changed
+    if (updatedCount === 0) return []; // Nothing changed
 
     console.log(`[MATERIAL PROPAGATION] Updated ${updatedCount} ProductMaterial records for Material ${materialId}`);
 
-    // 2. Recalculate Material_Cost for each affected product
-    const affectedWoIds = new Set<string>();
+    // 2. Recalculate LIVE product Material_Cost (kartica proizvoda / zastarjelost ponude) —
+    //    ovo je ŽIVA istina; osnovica naloga je odvojena i ostaje frozen (gejt).
     for (const productId of Array.from(affectedProductIds)) {
-        // Recalculate product cost (this updates the Product document)
         const materials = await getProductMaterials(productId, organizationId);
         const totalCost = materials.reduce((sum, m) => sum + (m.Total_Price || 0), 0);
 
@@ -976,26 +984,121 @@ async function propagateMaterialPriceChange(
         if (!productSnap.empty) {
             await updateDoc(productSnap.docs[0].ref, { Material_Cost: totalCost });
         }
+    }
 
-        // Find work orders containing this product
-        const woItemsQ = query(
+    // 3. GEJT: umjesto tihog recalca naloga, izračunaj Δ profita po projektu za
+    //    proizvodne stavke i vrati pregled. Osnovica se NE dira dok korisnik ne odobri.
+    const changedProducts = Array.from(productDelta.entries()).filter(([, d]) => d !== 0).map(([pid]) => pid);
+    return buildBasisReview(organizationId, changedProducts, productDelta);
+}
+
+/**
+ * Primijeni ODOBRENE delte iz pregleda: postavi novu osnovicu materijala PO KOMADU na
+ * stavke i osvježi agregate naloga (skipMaterialRefresh — koristi upravo postavljenu
+ * osnovicu, ne živo). Neuključeni projekti se ne diraju (osnovica ostaje snapshot).
+ */
+export async function applyBasisReview(
+    items: { itemId: string; workOrderId: string; newBasisPerUnit: number }[],
+    organizationId: string,
+): Promise<{ success: boolean; message: string }> {
+    if (!organizationId) return { success: false, message: 'Organization ID is required' };
+    if (!items || items.length === 0) return { success: true, message: 'Ništa za primijeniti' };
+
+    try {
+        const firestore = getDb();
+        const byId = new Map(items.map(i => [i.itemId, i]));
+        const ids = Array.from(byId.keys());
+        const woIds = new Set<string>();
+
+        for (let i = 0; i < ids.length; i += 30) {
+            const chunk = ids.slice(i, i + 30);
+            const snap = await getDocs(query(
+                collection(firestore, COLLECTIONS.WORK_ORDER_ITEMS),
+                where('ID', 'in', chunk),
+                where('Organization_ID', '==', organizationId),
+            ));
+            if (snap.empty) continue;
+            const batch = writeBatch(firestore);
+            snap.docs.forEach(d => {
+                const upd = byId.get((d.data() as { ID: string }).ID);
+                if (upd) {
+                    batch.update(d.ref, { Material_Cost: upd.newBasisPerUnit });
+                    if (upd.workOrderId) woIds.add(upd.workOrderId);
+                }
+            });
+            await batch.commit();
+        }
+
+        if (woIds.size > 0) {
+            const { recalculateWorkOrder } = await import('./attendance');
+            await Promise.all(Array.from(woIds).map(woId => recalculateWorkOrder(woId, { skipMaterialRefresh: true })));
+        }
+        return { success: true, message: 'Osnovica profita ažurirana' };
+    } catch (error) {
+        console.error('applyBasisReview error:', error);
+        return { success: false, message: 'Greška pri ažuriranju osnovice profita' };
+    }
+}
+
+/**
+ * Sastavi gejt-pregled: za date proizvode (s Δ troška po komadu) skupi proizvodne
+ * stavke naloga i grupiši po projektu (lib/profitBasis). Montaža/otkazano/zamrznuto
+ * se izostavlja. Dijeli ga i katalog (propagate) i kartica proizvoda (recalculateProductCost).
+ */
+export async function buildBasisReview(
+    organizationId: string,
+    productIds: string[],
+    productDelta: Map<string, number>,
+): Promise<ProjectBasisReview[]> {
+    if (productIds.length === 0) return [];
+    const firestore = getDb();
+
+    // Skupi stavke naloga za pogođene proizvode (chunked 'in', max 30 po upitu).
+    const items: any[] = [];
+    for (let i = 0; i < productIds.length; i += 30) {
+        const chunk = productIds.slice(i, i + 30);
+        const snap = await getDocs(query(
             collection(firestore, COLLECTIONS.WORK_ORDER_ITEMS),
-            where('Product_ID', '==', productId),
-            where('Organization_ID', '==', organizationId)
-        );
-        const woItemsSnap = await getDocs(woItemsQ);
-        woItemsSnap.docs.forEach(d => {
-            const woId = d.data().Work_Order_ID;
-            if (woId) affectedWoIds.add(woId);
-        });
+            where('Product_ID', 'in', chunk),
+            where('Organization_ID', '==', organizationId),
+        ));
+        snap.docs.forEach(d => items.push(d.data()));
+    }
+    if (items.length === 0) return [];
+
+    // Statusi/tip naloga (za montaža/otkazano filter).
+    const woIds = Array.from(new Set(items.map(it => it.Work_Order_ID).filter(Boolean)));
+    const woById = new Map<string, { Status?: string; Work_Order_Type?: string }>();
+    for (let i = 0; i < woIds.length; i += 30) {
+        const chunk = woIds.slice(i, i + 30);
+        const snap = await getDocs(query(
+            collection(firestore, COLLECTIONS.WORK_ORDERS),
+            where('Work_Order_ID', 'in', chunk),
+            where('Organization_ID', '==', organizationId),
+        ));
+        snap.docs.forEach(d => { const w = d.data(); woById.set(w.Work_Order_ID, { Status: w.Status, Work_Order_Type: w.Work_Order_Type }); });
     }
 
-    // 3. Recalculate ALL affected work orders (profit, margin, etc.) — paralelno.
-    if (affectedWoIds.size > 0) {
-        const { recalculateWorkOrder } = await import('./attendance');
-        await Promise.all(Array.from(affectedWoIds).map(woId => recalculateWorkOrder(woId)));
-        console.log(`[MATERIAL PROPAGATION] Recalculated ${affectedWoIds.size} work orders`);
-    }
+    const changes: ItemMaterialChange[] = items.map(it => {
+        const wo = woById.get(it.Work_Order_ID);
+        return {
+            itemId: it.ID,
+            workOrderId: it.Work_Order_ID,
+            workOrderStatus: wo?.Status,
+            isMontaza: wo?.Work_Order_Type === 'Montaža',
+            projectId: it.Project_ID || '',
+            projectName: it.Project_Name || '—',
+            productName: it.Product_Name,
+            quantity: it.Quantity || 1,
+            basisPerUnit: it.Material_Cost || 0,
+            perUnitDelta: productDelta.get(it.Product_ID) || 0,
+            Status: it.Status,
+            Completed_At: it.Completed_At,
+            Material_Cost_Source: it.Material_Cost_Source,
+        };
+    });
+
+    return groupBasisReviewByProject(changes);
 }
 
 export async function getSuppliers(organizationId: string): Promise<Supplier[]> {
@@ -1980,6 +2083,90 @@ export async function markMaterialsReceived(orderItemIds: string[], organization
     } catch (error) {
         console.error('markMaterialsReceived error:', error);
         return { success: false, message: 'Greška pri primanju materijala' };
+    }
+}
+
+/**
+ * Poništi prijem stavki (Primljeno → Naručeno) — TAČAN obrat markMaterialsReceived.
+ * Za: greškom označen prijem, reklamacija, pogrešna isporuka dobavljača.
+ * Stavka → „Naručeno" (briše Received_Date); materijalu vrati naručenu, skini primljenu
+ * količinu (delta model) + status „Naručeno"; narudžba „Primljeno" → „Poslano" (više nije
+ * sve primljeno); proizvod „Materijali spremni" → „Materijali naručeni".
+ */
+export async function markMaterialsUnreceived(orderItemIds: string[], organizationId: string): Promise<{ success: boolean; message: string; postCascade?: Promise<void> }> {
+    if (!organizationId) {
+        return { success: false, message: 'Organization ID is required' };
+    }
+
+    try {
+        const affectedProducts = new Set<string>();
+        const affectedOrderIds = new Set<string>();
+        const materialBatchUpdates: { materialId: string; status: string; orderId: string; orderedQty: number; receivedQty: number }[] = [];
+
+        const itemDocs: any[] = [];
+        const itemChunkSize = 30;
+        for (let i = 0; i < orderItemIds.length; i += itemChunkSize) {
+            const chunk = orderItemIds.slice(i, i + itemChunkSize);
+            const itemSnap = await getDocs(query(
+                collection(db, COLLECTIONS.ORDER_ITEMS),
+                where('ID', 'in', chunk),
+                where('Organization_ID', '==', organizationId)
+            ));
+            itemSnap.docs.forEach(d => itemDocs.push(d));
+        }
+
+        const itemBatch = writeBatch(db);
+        let itemUpdates = 0;
+        for (const docSnap of itemDocs) {
+            if (!docSnap) continue;
+            const item = docSnap.data() as OrderItem;
+            if (item.Status !== 'Primljeno') continue;   // samo primljene se poništavaju
+            itemBatch.update(docSnap.ref, { Status: 'Naručeno', Received_Date: null });
+            itemUpdates++;
+            const materialIds = extractMaterialIds(item);
+            const qtyPerMat = materialIds.length > 0 ? (item.Quantity || 0) / materialIds.length : 0;
+            for (const matId of materialIds) {
+                // Obrat prijema: vrati naručenu (+), skini primljenu (−) količinu.
+                materialBatchUpdates.push({ materialId: matId, status: 'Naručeno', orderId: item.Order_ID, orderedQty: qtyPerMat, receivedQty: -qtyPerMat });
+            }
+            if (item.Product_ID) affectedProducts.add(item.Product_ID);
+            if (item.Order_ID) affectedOrderIds.add(item.Order_ID);
+        }
+
+        if (itemUpdates === 0) {
+            return { success: false, message: 'Nema primljenih stavki za poništiti' };
+        }
+
+        const [, matResult] = await Promise.all([
+            itemBatch.commit(),
+            materialBatchUpdates.length > 0
+                ? batchUpdateMaterialStatuses(materialBatchUpdates, organizationId, { costRecalc: 'background' })
+                : Promise.resolve(undefined),
+        ]);
+
+        await Promise.all([
+            ...Array.from(affectedOrderIds).map(async (oId) => {
+                const orderSnap = await getDocs(query(
+                    collection(db, COLLECTIONS.ORDERS),
+                    where('Order_ID', '==', oId),
+                    where('Organization_ID', '==', organizationId)
+                ));
+                if (!orderSnap.empty && (orderSnap.docs[0].data() as Order).Status === 'Primljeno') {
+                    await updateDoc(orderSnap.docs[0].ref, { Status: 'Poslano' });
+                }
+            }),
+            ...Array.from(affectedProducts).map(async (productId) => {
+                const product = await getProduct(productId, organizationId);
+                if (product && product.Status === 'Materijali spremni') {
+                    await updateProductStatus(productId, 'Materijali naručeni', organizationId);
+                }
+            }),
+        ]);
+
+        return { success: true, message: 'Prijem poništen', postCascade: matResult?.postCascade };
+    } catch (error) {
+        console.error('markMaterialsUnreceived error:', error);
+        return { success: false, message: 'Greška pri poništavanju prijema' };
     }
 }
 
@@ -3813,7 +4000,9 @@ async function createOrdersFromGroups(
             Material_Name: m.materialName,
             Quantity: m.quantity,
             Unit: m.unit,
-            Expected_Price: m.unitPrice,
+            // Expected_Price je UKUPNA cijena stavke (qty × jedinična), isti invarijant kao
+            // OrdersTab wizard i recalculateOrderTotal — ne smije biti gola jedinična cijena.
+            Expected_Price: m.quantity * m.unitPrice,
             Status: 'Naručeno',
         }));
 

@@ -1,0 +1,401 @@
+/* ═══════════════════════════════════════════════════════════════════
+   KROJENJE PLOČA (CutlistModal) — stil prati MaterialSelectModal (msm-*)
+   ═══════════════════════════════════════════════════════════════════ */
+
+.clm-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(17, 17, 19, 0.45);
+    backdrop-filter: blur(3px);
+    z-index: 1000;
+    animation: clmFadeIn 0.15s ease;
+}
+
+.clm-modal {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: min(1180px, calc(100vw - 32px));
+    height: min(860px, calc(100vh - 32px));
+    background: #fff;
+    border-radius: 16px;
+    box-shadow: 0 24px 80px rgba(0, 0, 0, 0.28);
+    z-index: 1001;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    animation: clmSlideUp 0.18s ease;
+}
+
+@keyframes clmFadeIn { from { opacity: 0; } to { opacity: 1; } }
+@keyframes clmSlideUp {
+    from { opacity: 0; transform: translate(-50%, -48%); }
+    to { opacity: 1; transform: translate(-50%, -50%); }
+}
+
+/* ── Zaglavlje ── */
+.clm-header {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 16px 20px;
+    border-bottom: 1px solid #ececf0;
+    flex-shrink: 0;
+}
+
+.clm-header-left { display: flex; align-items: center; gap: 12px; flex: 1; min-width: 0; }
+
+.clm-header-icon {
+    width: 40px;
+    height: 40px;
+    border-radius: 10px;
+    background: linear-gradient(135deg, #b45309, #78350f);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
+.clm-header-icon .material-icons-round { color: #fff; font-size: 22px; }
+
+.clm-title { font-size: 16px; font-weight: 700; color: #111; }
+.clm-subtitle { font-size: 12px; color: #86868b; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+.clm-steps { display: flex; gap: 6px; flex-shrink: 0; }
+.clm-step {
+    font-size: 12px;
+    font-weight: 600;
+    color: #a1a1a6;
+    padding: 5px 12px;
+    border-radius: 99px;
+    background: #f5f5f7;
+}
+.clm-step.active { background: #111; color: #fff; }
+
+.clm-close-btn {
+    width: 32px; height: 32px;
+    border: none; background: #f5f5f7;
+    border-radius: 8px; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    color: #6e6e73;
+    flex-shrink: 0;
+}
+.clm-close-btn:hover { background: #ececf0; color: #111; }
+
+/* ── Tijelo ── */
+.clm-body { flex: 1; overflow-y: auto; padding: 20px; }
+
+/* Unos — samo lijepljenje iz Excela */
+.clm-paste-box { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
+.clm-paste-label { font-size: 12px; color: #6e6e73; }
+.clm-paste-box textarea {
+    width: 100%;
+    min-height: 150px;
+    resize: vertical;
+    border: 1px solid #d2d2d7;
+    border-radius: 10px;
+    padding: 10px 12px;
+    font-family: 'SF Mono', Consolas, monospace;
+    font-size: 12px;
+    line-height: 1.5;
+}
+.clm-paste-box textarea:focus { outline: none; border-color: #b45309; }
+
+.clm-spin { animation: clmSpin 1s linear infinite; }
+@keyframes clmSpin { to { transform: rotate(360deg); } }
+
+/* Tabela komada */
+.clm-parts-editor { margin-top: 18px; }
+.clm-parts-header {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 8px;
+}
+.clm-parts-header h4 { font-size: 14px; color: #111; }
+.clm-parts-mats { font-weight: 400; font-size: 12px; color: #86868b; margin-left: 10px; }
+
+.clm-parts-table { border: 1px solid #ececf0; border-radius: 10px; overflow: hidden; }
+.clm-pt-row {
+    display: grid;
+    grid-template-columns: 1.6fr 78px 78px 58px 1.3fr 52px 52px 66px;
+    gap: 6px;
+    align-items: center;
+    padding: 4px 8px;
+    border-bottom: 1px solid #f2f2f4;
+}
+.clm-pt-actions { display: flex; gap: 2px; justify-content: flex-end; }
+.clm-pt-row:last-child { border-bottom: none; }
+.clm-pt-head {
+    background: #f9f9fb;
+    font-size: 10.5px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: 0.03em; color: #86868b;
+    padding: 7px 8px;
+}
+.clm-pt-row input, .clm-pt-row select {
+    width: 100%;
+    border: 1px solid transparent;
+    background: transparent;
+    border-radius: 6px;
+    padding: 5px 6px;
+    font-size: 12.5px;
+}
+.clm-pt-row input:hover, .clm-pt-row select:hover { border-color: #e5e5ea; }
+.clm-pt-row input:focus, .clm-pt-row select:focus { outline: none; border-color: #b45309; background: #fff; }
+.clm-pt-row input[type="number"] { text-align: right; font-variant-numeric: tabular-nums; }
+
+/* Snimljene liste */
+.clm-saved { margin-top: 22px; }
+.clm-saved h4 { font-size: 13px; color: #515154; margin-bottom: 8px; }
+.clm-saved-row {
+    display: flex; align-items: center; justify-content: space-between;
+    border: 1px solid #ececf0; border-radius: 10px;
+    padding: 10px 14px; margin-bottom: 8px;
+}
+.clm-saved-name { font-weight: 600; font-size: 13.5px; color: #111; display: block; }
+.clm-saved-meta { font-size: 12px; color: #86868b; }
+.clm-saved-actions { display: flex; gap: 6px; }
+
+/* Mapiranje */
+.clm-mapping-intro {
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    font-size: 13px; color: #515154;
+    margin-bottom: 14px;
+}
+
+.clm-group-card {
+    border: 1px solid #ececf0;
+    border-radius: 12px;
+    padding: 14px;
+    margin-bottom: 12px;
+    background: #fff;
+}
+.clm-group-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 10px; }
+.clm-group-label { font-weight: 700; font-size: 14px; color: #111; }
+.clm-group-meta { font-size: 12px; color: #86868b; }
+
+.clm-group-controls { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; }
+.clm-field { display: flex; flex-direction: column; gap: 4px; }
+.clm-field.grow { flex: 1; min-width: 240px; }
+.clm-field.small { width: 92px; }
+.clm-field label { font-size: 11px; font-weight: 600; color: #86868b; }
+.clm-field input, .clm-field select {
+    border: 1px solid #d2d2d7; border-radius: 8px;
+    padding: 8px 10px; font-size: 13px; background: #fff;
+}
+.clm-field input:focus, .clm-field select:focus { outline: none; border-color: #b45309; }
+
+.clm-group-footer {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-top: 10px;
+}
+.clm-group-footer .clm-check { padding-bottom: 0; }
+
+.clm-newmat-form {
+    display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap;
+    margin-top: 10px; padding: 12px;
+    background: #fffbeb; border: 1px solid #fde68a; border-radius: 10px;
+}
+.clm-newmat-form .clm-field.grow { min-width: 200px; }
+.clm-newmat-actions { display: flex; gap: 8px; margin-left: auto; }
+
+.clm-settings-row {
+    display: flex; gap: 14px; align-items: flex-end;
+    padding: 12px 14px;
+    background: #f9f9fb; border-radius: 12px;
+    margin-top: 4px;
+}
+.clm-check { display: flex; align-items: center; gap: 7px; font-size: 13px; color: #333; padding-bottom: 8px; }
+
+/* Rezultat */
+.clm-stats-row { display: flex; gap: 12px; margin-bottom: 14px; align-items: stretch; flex-wrap: wrap; }
+.clm-stat {
+    background: #f9f9fb; border-radius: 12px;
+    padding: 12px 18px;
+    text-align: center;
+    min-width: 110px;
+}
+.clm-stat-value { font-size: 22px; font-weight: 800; color: #111; }
+.clm-stat-value.green { color: #16a34a; }
+.clm-stat-label { font-size: 11px; color: #86868b; margin-top: 2px; }
+
+.clm-name-field { margin-left: auto; display: flex; flex-direction: column; gap: 4px; justify-content: center; }
+.clm-name-field label { font-size: 11px; font-weight: 600; color: #86868b; }
+.clm-name-field input {
+    border: 1px solid #d2d2d7; border-radius: 8px;
+    padding: 8px 10px; font-size: 13px; min-width: 220px;
+}
+
+.clm-warning {
+    display: flex; align-items: center; gap: 8px;
+    background: #fef2f2; color: #b91c1c;
+    border: 1px solid #fecaca; border-radius: 10px;
+    padding: 10px 14px; font-size: 13px;
+    margin-bottom: 12px;
+}
+.clm-warning .material-icons-round { font-size: 18px; }
+
+/* Primjena liste na proizvode (multi-select) */
+.clm-apply {
+    border: 1px solid #ececf0;
+    border-radius: 12px;
+    padding: 12px 14px;
+    margin-bottom: 14px;
+    background: #fafafa;
+}
+.clm-apply-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.clm-apply-title { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; color: #333; }
+.clm-apply-title .material-icons-round { font-size: 18px; color: #b45309; }
+.clm-apply-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.clm-apply-empty { font-size: 12.5px; color: #a1a1a6; }
+.clm-chip {
+    display: inline-flex; align-items: center; gap: 4px;
+    background: #111; color: #fff;
+    border-radius: 99px; padding: 4px 6px 4px 12px;
+    font-size: 12.5px; font-weight: 500;
+}
+.clm-chip button {
+    display: flex; border: none; background: rgba(255,255,255,0.18);
+    color: #fff; border-radius: 50%; cursor: pointer; padding: 1px;
+}
+.clm-chip button .material-icons-round { font-size: 13px; }
+.clm-chip button:hover { background: rgba(255,255,255,0.35); }
+
+.clm-apply-picker { margin-top: 10px; border-top: 1px solid #ececf0; padding-top: 10px; }
+.clm-apply-search {
+    width: 100%; border: 1px solid #d2d2d7; border-radius: 8px;
+    padding: 8px 10px; font-size: 13px; margin-bottom: 8px;
+}
+.clm-apply-search:focus { outline: none; border-color: #b45309; }
+.clm-apply-list { max-height: 200px; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; }
+.clm-apply-item {
+    display: flex; align-items: center; gap: 8px;
+    padding: 7px 8px; border-radius: 8px; cursor: pointer; font-size: 13px;
+}
+.clm-apply-item:hover { background: #f2f2f4; }
+.clm-apply-item.on { background: #fffbeb; }
+.clm-apply-item input { accent-color: #b45309; }
+.clm-apply-item-name { flex: 1; color: #1a1a1a; }
+.clm-apply-item-badge { font-size: 11px; color: #86868b; background: #ececf0; border-radius: 99px; padding: 2px 8px; }
+
+.clm-info {
+    display: flex; align-items: center; gap: 8px;
+    background: #eff6ff; color: #1d4ed8;
+    border: 1px solid #bfdbfe; border-radius: 10px;
+    padding: 10px 14px; font-size: 13px;
+    margin-bottom: 12px;
+}
+.clm-info .material-icons-round { font-size: 18px; }
+
+.clm-sheet-meta { font-size: 11.5px; color: #86868b; font-weight: 400; margin-left: auto; margin-right: 12px; }
+
+.clm-result-group { margin-bottom: 20px; }
+.clm-result-group-head {
+    display: flex; align-items: baseline; gap: 10px;
+    padding: 8px 12px;
+    background: #f4f4f5;
+    border-left: 3px solid #b45309;
+    border-radius: 6px;
+    margin-bottom: 10px;
+    position: sticky;
+    top: -20px;
+    z-index: 5;
+}
+.clm-result-group-title { font-weight: 700; font-size: 14px; color: #111; }
+.clm-result-group-meta { font-size: 12px; color: #6e6e73; }
+
+.clm-sheet {
+    border: 1px solid #ececf0; border-radius: 12px;
+    padding: 12px 14px; margin-bottom: 12px;
+}
+.clm-sheet-head {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-bottom: 8px;
+    font-size: 13px; font-weight: 600; color: #333;
+}
+.clm-eff { font-weight: 800; }
+.clm-eff.good { color: #16a34a; }
+.clm-eff.ok { color: #2563eb; }
+.clm-eff.low { color: #ea580c; }
+
+/* Pregled ploče je odzumljen (max ~480px) da stane više ploča po ekranu i
+   da se odmah vidi cjelina — puna veličina/detalji su u printu. */
+.clm-sheet-svg { display: flex; justify-content: center; }
+.clm-sheet-svg svg { width: 100%; max-width: 480px; height: auto; display: block; border: 1px solid #e2e8f0; }
+
+/* Panel dodavanja u materijale */
+.clm-add-panel {
+    border: 1px solid #ececf0;
+    border-radius: 12px;
+    padding: 14px;
+    background: #f9f9fb;
+    margin-bottom: 12px;
+}
+.clm-add-panel h4 { font-size: 13.5px; color: #111; margin-bottom: 10px; }
+.clm-add-row {
+    display: flex; align-items: center; gap: 10px;
+    background: #fff; border: 1px solid #ececf0; border-radius: 10px;
+    padding: 8px 12px; margin-bottom: 6px;
+}
+.clm-add-kind { font-size: 18px; color: #b45309; }
+.clm-add-info { display: flex; flex-direction: column; flex: 1; font-size: 12.5px; color: #333; }
+.clm-add-info strong { font-size: 13px; color: #111; }
+.clm-add-target { font-size: 12.5px; color: #16a34a; font-weight: 600; max-width: 45%; text-align: right; }
+.clm-add-target.missing { color: #b91c1c; font-weight: 500; }
+.clm-add-row select {
+    border: 1px solid #d2d2d7; border-radius: 8px;
+    padding: 7px 9px; font-size: 12.5px; min-width: 180px;
+}
+.clm-add-edge { display: flex; align-items: center; gap: 6px; max-width: 55%; flex-wrap: wrap; justify-content: flex-end; }
+.clm-add-create { padding: 6px 8px; font-size: 11.5px; white-space: nowrap; }
+.clm-add-create .material-icons-round { font-size: 15px; }
+.clm-add-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; }
+
+/* ── Dugmad ── */
+.clm-btn {
+    display: inline-flex; align-items: center; gap: 6px;
+    border: none; border-radius: 9px;
+    padding: 9px 16px;
+    font-size: 13px; font-weight: 600;
+    cursor: pointer;
+    transition: background 0.15s, opacity 0.15s;
+    white-space: nowrap;
+}
+.clm-btn .material-icons-round { font-size: 17px; }
+.clm-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.clm-btn.primary { background: #111; color: #fff; }
+.clm-btn.primary:hover:not(:disabled) { background: #333; }
+.clm-btn.secondary { background: #f5f5f7; color: #111; }
+.clm-btn.secondary:hover:not(:disabled) { background: #ececf0; }
+.clm-btn.ghost { background: transparent; color: #b45309; padding: 7px 10px; }
+.clm-btn.ghost:hover:not(:disabled) { background: #fffbeb; }
+
+.clm-icon-btn {
+    width: 30px; height: 30px;
+    border: none; background: transparent; border-radius: 7px;
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer; color: #86868b;
+}
+.clm-icon-btn .material-icons-round { font-size: 17px; }
+.clm-icon-btn:hover { background: #f5f5f7; color: #111; }
+.clm-icon-btn.danger:hover { background: #fef2f2; color: #dc2626; }
+
+/* ── Podnožje ── */
+.clm-footer {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 14px 20px;
+    border-top: 1px solid #ececf0;
+    flex-shrink: 0;
+    gap: 10px;
+}
+.clm-footer-actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+
+/* ── Mobilno ── */
+@media (max-width: 768px) {
+    .clm-modal { width: 100vw; height: 100vh; border-radius: 0; }
+    .clm-steps { display: none; }
+    .clm-pt-row { grid-template-columns: 1.4fr 64px 64px 48px 1fr 44px 44px 60px; }
+    .clm-stats-row { gap: 8px; }
+    .clm-stat { min-width: 90px; padding: 10px 12px; }
+    .clm-name-field { margin-left: 0; width: 100%; }
+    .clm-name-field input { min-width: 0; }
+    .clm-footer { flex-wrap: wrap; }
+}

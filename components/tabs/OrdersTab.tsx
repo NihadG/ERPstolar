@@ -1,8 +1,8 @@
 'use client';
 
 import { useState, useMemo, useEffect } from 'react';
-import type { Order, Supplier, Project, ProductMaterial, Material } from '@/lib/types';
-import { createOrder, saveOrder, deleteOrder, updateOrderStatus, markOrderSent, markMaterialsReceived, getOrder, deleteOrderItemsByIds, updateOrderItem, recalculateOrderTotal } from '@/lib/services';
+import type { Order, OrderItem, Supplier, Project, ProductMaterial, Material } from '@/lib/types';
+import { createOrder, saveOrder, deleteOrder, updateOrderStatus, markOrderSent, markMaterialsReceived, markMaterialsUnreceived, getOrder, deleteOrderItemsByIds, updateOrderItem, recalculateOrderTotal } from '@/lib/services';
 import { useData } from '@/context/DataContext';
 import { buildOrderPrintDocument } from '@/lib/print/orderDocument';
 import { exportHTMLToPDFBlob, exportHTMLToPDFFile, toSafeFileName } from '@/lib/pdfExport';
@@ -14,8 +14,9 @@ import Modal from '@/components/ui/Modal';
 import { OrderWizardModal } from './OrderWizardModal';
 import { ORDER_STATUSES, MATERIAL_STATUSES, ALLOWED_ORDER_TRANSITIONS } from '@/lib/types';
 import { formatCurrency, formatDate, getStatusClass, plural } from '@/lib/utils';
+import { orderItemPricing } from '@/lib/orderPricing';
 import { daysUntil } from '@/lib/planning';
-import { useIsMobile } from '@/hooks/useIsMobile';
+import { useIsCompact } from '@/hooks/useIsCompact';
 import MobileOrdersView from './mobile/MobileOrdersView';
 import './OrdersTab.css';
 
@@ -45,7 +46,8 @@ const NO_CATEGORY = 'Bez kategorije';
 export default function OrdersTab({ orders, suppliers, projects, productMaterials, materials, onRefresh, onPatchOrder, showToast, pendingOrderMaterials, onClearPendingOrder }: OrdersTabProps) {
     const { organizationId } = useData();
     const gi = useGoogleIntegration();
-    const isMobile = useIsMobile();
+    // Tablet + mobitel (< 1024px) → kartično-mrežni prikaz; desktop zadržava red-tabelu.
+    const isCompact = useIsCompact();
     const [searchTerm, setSearchTerm] = useState('');
     const [statusFilter, setStatusFilter] = useState('');
     const [groupBy, setGroupBy] = useState<GroupBy>('supplier');
@@ -1238,9 +1240,12 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
         });
     }
 
-    function printOrderDocument() {
-        if (!currentOrder) return;
-        const doc = buildOrderDocument(currentOrder);
+    function printOrderDocument(order?: Order) {
+        // Prima konkretnu narudžbu (kao downloadOrderPDF) — štampa radi i kad kartica
+        // nije proširena. Fallback na currentOrder zadržava stari poziv iz proširenog reda.
+        const target = order || currentOrder;
+        if (!target) return;
+        const doc = buildOrderDocument(target);
         const printWindow = window.open('', '_blank');
         if (!printWindow) return;
         printWindow.document.write(doc.html);
@@ -1310,6 +1315,27 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
         }
     }
 
+    // Poništi prijem jedne stavke (greška, reklamacija, pogrešna isporuka) — vraća je u „Naručeno".
+    async function handleUnreceiveItem(item: OrderItem, order: Order) {
+        if (!confirm(`Poništiti prijem stavke „${item.Material_Name}"?\n\nVraća se u „Naručeno" — za reklamaciju, grešku pri unosu ili pogrešnu isporuku dobavljača.`)) return;
+        // Optimistično: stavka nazad u Naručeno; ako je narudžba bila „Primljeno", pada na „Poslano".
+        const prevStatus = order.Status;
+        const prevItems = order.items;
+        onPatchOrder?.(order.Order_ID, {
+            Status: order.Status === 'Primljeno' ? 'Poslano' : order.Status,
+            items: (order.items || []).map(i => i.ID === item.ID ? { ...i, Status: 'Naručeno', Received_Date: undefined } : i),
+        });
+        const result = await markMaterialsUnreceived([item.ID], organizationId!);
+        if (result.success) {
+            showToast('Prijem poništen', 'success');
+            onRefresh('orders');
+            (result.postCascade ?? Promise.resolve()).finally(() => onRefresh('projects'));
+        } else {
+            onPatchOrder?.(order.Order_ID, { Status: prevStatus, items: prevItems });
+            showToast(result.message, 'error');
+        }
+    }
+
     const selectedTotal = Array.from(selectedMaterialIds).reduce((sum, id) => {
         const mat = filteredMaterials.find(m => m.ID === id);
         return sum + (mat?.Total_Price || 0);
@@ -1325,7 +1351,7 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
 
     return (
         <>
-            {isMobile ? (
+            {isCompact ? (
                 <MobileOrdersView
                     orders={orders}
                     suppliers={suppliers}
@@ -1337,10 +1363,7 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
                     onEditOrder={handleEditOrder}
                     onDeleteOrder={handleDeleteOrder}
                     onDownloadPDF={downloadOrderPDF}
-                    onPrintOrder={(order) => {
-                        setExpandedOrderId(order.Order_ID);
-                        setTimeout(() => printOrderDocument(), 100);
-                    }}
+                    onPrintOrder={(order) => printOrderDocument(order)}
                 />
             ) : (
                 <div className="orders-page">
@@ -1477,10 +1500,7 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
                         <p>{hasActiveFilters ? 'Pokušajte promijeniti filtere' : 'Kreirajte prvu narudžbu klikom na "Nova Narudžba"'}</p>
                     </div>
                 ) : (
-                    (expandedOrderId
-                        ? groupedOrders.filter(g => g.items.some(o => o.Order_ID === expandedOrderId))
-                        : groupedOrders
-                    ).map(group => (
+                    groupedOrders.map(group => (
                         <div key={group.groupKey} className="group-card">
                             {/* Group Header */}
                             <div
@@ -1502,10 +1522,7 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
                             {/* Group Items */}
                             {!collapsedGroups.has(group.groupKey) && (
                                 <div className="group-card-content">
-                                    {(expandedOrderId
-                                        ? group.items.filter(o => o.Order_ID === expandedOrderId)
-                                        : group.items
-                                    ).map(order => {
+                                    {group.items.map(order => {
                                         const isExpanded = expandedOrderId === order.Order_ID;
                                         const itemCount = order.items?.length || 0;
                                         const receivedCount = order.items?.filter(i => i.Status === 'Primljeno').length || 0;
@@ -1694,10 +1711,7 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
                                                                 </div>
                                                             )}
 
-                                                            <div className="dropdown-item" onClick={() => {
-                                                                setExpandedOrderId(order.Order_ID);
-                                                                setTimeout(() => printOrderDocument(), 100);
-                                                            }}>
+                                                            <div className="dropdown-item" onClick={() => printOrderDocument(order)}>
                                                                 <span className="material-icons-round" style={{ fontSize: 18 }}>print</span>
                                                                 Printaj
                                                             </div>
@@ -1760,56 +1774,65 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
                                                         )}
                                                     </div>
 
-                                                    {[...(order.items || [])].sort((a, b) => (a.Material_Name || '').localeCompare(b.Material_Name || '', 'hr')).map(item => {
+                                                    {(() => { const pricing = orderItemPricing(order); return [...(order.items || [])].sort((a, b) => (a.Material_Name || '').localeCompare(b.Material_Name || '', 'hr')).map(item => {
                                                         const isReceived = item.Status === 'Primljeno';
                                                         const isSelected = selectedItemIds.has(item.ID);
 
                                                         return (
                                                             <div
                                                                 key={item.ID}
-                                                                className="product-card"
-                                                                onClick={() => {
-                                                                    if (!isReceived) toggleItemSelection(item.ID, !isSelected);
-                                                                }}
-                                                                style={{ background: isSelected ? '#eff6ff' : undefined }}
+                                                                className={`oi-row${isReceived ? ' received' : ''}${isSelected ? ' selected' : ''}`}
+                                                                onClick={() => { if (!isReceived) toggleItemSelection(item.ID, !isSelected); }}
                                                             >
-                                                                <div className="product-header">
-                                                                    {!isReceived ? (
-                                                                        <div onClick={e => e.stopPropagation()}>
-                                                                            <input
-                                                                                type="checkbox"
-                                                                                checked={isSelected}
-                                                                                onChange={(e) => toggleItemSelection(item.ID, e.target.checked)}
-                                                                                style={{ width: 18, height: 18, cursor: 'pointer' }}
-                                                                            />
+                                                                {isReceived ? (
+                                                                    <span className="oi-status" title="Primljeno">
+                                                                        <span className="material-icons-round">check_circle</span>
+                                                                    </span>
+                                                                ) : (
+                                                                    <label className="oi-check" onClick={e => e.stopPropagation()}>
+                                                                        <input
+                                                                            type="checkbox"
+                                                                            checked={isSelected}
+                                                                            onChange={(e) => toggleItemSelection(item.ID, e.target.checked)}
+                                                                        />
+                                                                    </label>
+                                                                )}
+
+                                                                <div className="oi-body">
+                                                                    <div className="oi-name">{item.Material_Name}</div>
+                                                                    <div className="oi-meta">
+                                                                        <span>{item.Quantity} {item.Unit}</span>
+                                                                        {item.Quantity > 0 && <><span className="oi-sep">·</span><span>{formatCurrency(pricing.unitPrice(item))}/{item.Unit}</span></>}
+                                                                        {item.Product_Name && <><span className="oi-sep">·</span><span className="oi-prod" title={item.Product_Name}>{item.Product_Name}</span></>}
+                                                                    </div>
+                                                                </div>
+
+                                                                <div className="oi-right">
+                                                                    <span className="oi-price">{formatCurrency(pricing.lineTotal(item))}</span>
+                                                                    {isReceived ? (
+                                                                        <div className="oi-recv">
+                                                                            {item.Received_Date && (
+                                                                                <span className="oi-recv-date">
+                                                                                    <span className="material-icons-round">event_available</span>
+                                                                                    {formatDate(item.Received_Date)}
+                                                                                </span>
+                                                                            )}
+                                                                            <button
+                                                                                className="oi-undo"
+                                                                                title="Poništi prijem — reklamacija, greška pri unosu ili pogrešna isporuka"
+                                                                                onClick={(e) => { e.stopPropagation(); handleUnreceiveItem(item, order); }}
+                                                                            >
+                                                                                <span className="material-icons-round">undo</span>
+                                                                                Vrati
+                                                                            </button>
                                                                         </div>
                                                                     ) : (
-                                                                        <span className="material-icons-round" style={{ color: 'var(--success)' }}>check_circle</span>
+                                                                        <span className="oi-await">čeka prijem</span>
                                                                     )}
-
-                                                                    <div className="product-info">
-                                                                        <div className="product-name">{item.Material_Name}</div>
-                                                                        <div className="product-dims">
-                                                                            {item.Quantity} {item.Unit}
-                                                                            {item.Product_Name && ` • ${item.Product_Name}`}
-                                                                        </div>
-                                                                    </div>
-
-                                                                    {isReceived && item.Received_Date && (
-                                                                        <span className="status-badge status-primljeno">
-                                                                            {formatDate(item.Received_Date)}
-                                                                        </span>
-                                                                    )}
-
-                                                                    <div className="project-actions">
-                                                                        <span style={{ fontWeight: 600, color: 'var(--accent)' }}>
-                                                                            {formatCurrency(item.Expected_Price)}
-                                                                        </span>
-                                                                    </div>
                                                                 </div>
                                                             </div>
                                                         );
-                                                    })}
+                                                    }); })()}
                                                 </div>
                                             </div>
                                         );

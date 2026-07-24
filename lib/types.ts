@@ -64,6 +64,8 @@ export interface Product {
     // 'ai'   = AI prijedlog iz naziva (kad nema sastavnice) — auto GA SMIJE prebrisati kad se pojave materijali/pravila;
     // 'manual' = korisnik uredio → auto ga NE dira.
     Process_Plan_Source?: 'auto' | 'manual' | 'ai';
+    // Snimljene krojne liste (optimizacija rezanja ploča) — vidi lib/cutlist.
+    Cut_Lists?: ProductCutList[];
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -186,6 +188,84 @@ export interface AluDoorItem {
     Total_Price: number;
     Note: string;
     Status: string;
+}
+
+// ════════════════════════════════════════════════════════════════════
+// KROJNE LISTE PO PROIZVODU (Product.Cut_Lists)
+// Snimljen REZULTAT optimizacije krojenja (lib/cutlist): komadi + raspored
+// po pločama po grupama materijala. Čuva se cijeli layout da se lista može
+// ponovo otvoriti/printati bez ponovnog računanja (optimizator je
+// deterministički, ali ulazni katalog/postavke se mijenjaju kroz vrijeme).
+// Bez `undefined` vrijednosti u dubini — stripUndefined u firestoreClient
+// je plitak, pa serijalizator (lib/cutlist/persist.ts) izostavlja opcionalna
+// polja umjesto da ih šalje kao undefined.
+// ════════════════════════════════════════════════════════════════════
+
+export interface CutlistPartRecord {
+    ID: string;
+    Name: string;
+    Width: number;
+    Height: number;
+    Quantity: number;
+    /** Naziv materijala iz dokumenta (grupa krojenja). */
+    Material_Label: string;
+    /** Kant traka: broj kantiranih ivica po dužini / širini (0–2). */
+    Edge_L?: number;
+    Edge_W?: number;
+    Can_Rotate?: boolean;
+}
+
+export interface CutlistPlacementRecord {
+    Name: string;
+    W: number;
+    H: number;
+    X: number;
+    Y: number;
+    Rotated: boolean;
+}
+
+export interface CutlistCutRecord {
+    Axis: 'h' | 'v';
+    X1: number;
+    Y1: number;
+    X2: number;
+    Y2: number;
+    Order: number;
+}
+
+export interface CutlistSheetRecord {
+    Placements: CutlistPlacementRecord[];
+    Cuts: CutlistCutRecord[];
+    Efficiency: number;
+    Used_Area: number;
+    Cut_Length: number;
+    /** Najveći iskoristivi ostaci (mm) — objašnjava zašto još komada ne staje. */
+    Offcuts?: { W: number; H: number }[];
+}
+
+export interface CutlistGroupRecord {
+    /** Prikazni naziv grupe (naziv iz kataloga ako je spario, inače sirovi). */
+    Material_Label: string;
+    /** Spareni materijal iz kataloga (prazno = nesparen). */
+    Material_ID?: string;
+    Board_Width: number;
+    Board_Height: number;
+    Sheets: CutlistSheetRecord[];
+    /** Ukupno metara kant trake za grupu (s dodatkom za otpad). */
+    Edge_Banding_M?: number;
+    /** false = usmjereni dekor, komadi se NE rotiraju (izostavljeno = rotacija dozvoljena). */
+    Allow_Rotation?: boolean;
+}
+
+export interface ProductCutList {
+    ID: string;
+    Name: string;
+    Created_At: string;
+    Updated_At?: string;
+    Settings: { Kerf: number; Trim: number; Allow_Rotation: boolean };
+    Parts: CutlistPartRecord[];
+    Groups: CutlistGroupRecord[];
+    Total_Sheets: number;
 }
 
 export interface Offer {
@@ -505,6 +585,12 @@ export interface ProcessNode {
     // pozicija ostaje APSOLUTNA (React Flow relativne pozicije se pretvaraju pri snimanju),
     // pa potrošači grafa (tabla, gating, redovi) ovo polje mogu bezbjedno ignorisati.
     groupId?: string;
+    /**
+     * ProductMaterial.ID-evi koji MORAJU biti spremni (Na stanju/Primljeno) prije ovog
+     * procesa. Kad prethodni proces krene, a neki od njih nisu ni naručeni, aplikacija
+     * javlja da ih treba naručiti. Prazno/undefined = proces nema uslov materijala.
+     */
+    requiredMaterials?: string[];
 }
 export interface ProcessEdge {
     id: string;

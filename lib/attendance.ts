@@ -3162,11 +3162,14 @@ export async function calculateActualLaborCost(item: any, organizationId?: strin
  */
 export async function recalculateWorkOrder(
     workOrderId: string,
-    options?: { skipSnapshot?: boolean; skipStatusSync?: boolean; skipMaterialRefresh?: boolean }
+    options?: { skipSnapshot?: boolean; skipStatusSync?: boolean; skipMaterialRefresh?: boolean; forceMaterialBasisRefresh?: boolean }
 ): Promise<void> {
     const skipSnapshot = options?.skipSnapshot ?? false;
     const skipStatusSync = options?.skipStatusSync ?? false;
     const skipMaterialRefresh = options?.skipMaterialRefresh ?? false;
+    // Probija „zamrznutu osnovicu" i povuče živi materijalni trošak — SAMO za eksplicitni
+    // „osvježi profit na trenutno" iz pregleda izmjena. Podrazumijevano false (osnovica frozen).
+    const forceMaterialBasisRefresh = options?.forceMaterialBasisRefresh ?? false;
     try {
         const firestore = getDb();
         const workOrder = await getWorkOrderWithItems(workOrderId);
@@ -3331,8 +3334,21 @@ export async function recalculateWorkOrder(
             } else if ((item as any).Material_Cost_Source === 'manual' && (item.Material_Cost || 0) > 0) {
                 // Manually set via PriceEditModal: preserve user's value
                 itemMaterialCost = item.Material_Cost || 0;
+            } else if ((item.Material_Cost || 0) > 0) {
+                // ZAMRZNUTA OSNOVICA: jednom uspostavljen materijalni trošak proizvodne stavke je
+                // SNAPSHOT (osnovica profita). Izmjene materijala (katalog / kartica proizvoda) NE
+                // ulaze više tihim preračunom — ulaze SAMO kroz odobrenu deltu u pregledu
+                // „utiče li ovo na profit?" (vidi lib/profitBasis.ts). Prvo popunjavanje (osnovica 0)
+                // i dalje povuče živo (self-heal, grana ispod). forceMaterialBasisRefresh probija
+                // freeze samo za eksplicitni „osvježi na trenutno" iz pregleda.
+                if (forceMaterialBasisRefresh && !skipMaterialRefresh && item.Product_ID && workOrder.Organization_ID) {
+                    const materials = await getProductMaterials(item.Product_ID, workOrder.Organization_ID);
+                    itemMaterialCost = materials.reduce((sum, m) => sum + (m.Total_Price || 0), 0);
+                } else {
+                    itemMaterialCost = item.Material_Cost || 0;
+                }
             } else if (!skipMaterialRefresh && item.Product_ID && workOrder.Organization_ID) {
-                // Active: fetch fresh material costs
+                // Prvo popunjavanje (osnovica još 0): povuci živi trošak i time je uspostavi.
                 const materials = await getProductMaterials(item.Product_ID, workOrder.Organization_ID);
                 itemMaterialCost = materials.reduce((sum, m) => sum + (m.Total_Price || 0), 0);
             } else {
