@@ -1130,6 +1130,16 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
                     onUpdateStatus={handleUpdateStatus}
                     onDownloadPDF={handleDownloadPDF}
                     onPrintOffer={handlePrintOffer}
+                    onReviseOffer={handleReviseOffer}
+                    onCreateWorkOrder={(offer) => {
+                        const included = (offer.products || []).filter(p => p.Included !== false);
+                        const project = projects.find(pr => pr.Project_ID === offer.Project_ID);
+                        onCreateWorkOrder?.(
+                            offer.Project_ID,
+                            project?.Client_Name || offer.Client_Name || '',
+                            included.map(p => ({ productId: p.Product_ID, productName: p.Product_Name, quantity: p.Quantity || 1 }))
+                        );
+                    }}
                 />
             ) : (
                 <div className="tab-content active" id="offers-content">

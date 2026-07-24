@@ -22,13 +22,14 @@ import type {
     Project, Product, Material, ProductMaterial, WorkOrder, Offer, WorkLog,
 } from '@/lib/types';
 import { formatCurrency } from '@/lib/utils';
+import { daysUntil } from '@/lib/planning';
 import { sortProductsByName } from '@/lib/sortProducts';
 import { projectProfitBreakdown } from '@/lib/projectProfit';
 import { summarizeProjectNotes } from '@/lib/productNotes';
 import MobileProductDetail from './MobileProductDetail';
 import {
-    MLarge, MSearch, MChips, MSection, MList, MItem, MCell, MText, MValue,
-    MPill, MAvatar, MEmpty, MButton, MSheet, MOption,
+    MLarge, MSearch, MChips, MSection, MList, MEmpty, MButton, MSheet, MOption,
+    MCard, MCardHead, MCardBody, MIcon, MAvatar, MPill, MProgress,
 } from './MobileUI';
 import { useMobileSort, sortLabel, type SortKey, type GroupKey } from './useMobileSort';
 import './MobileUI.css';
@@ -206,30 +207,38 @@ export default function MobileProjectsView({
                         </div>
                     </MEmpty>
                 ) : (
-                    <MList lead>
+                    <div className="mui-elist">
                         {products.map(product => {
                             const mats = product.materials || [];
                             // „Fali" = nije ni naručeno ni na stanju/primljeno.
                             const need = mats.filter(m =>
                                 m.Status !== 'Primljeno' && m.Status !== 'Na stanju' && m.Status !== 'Naručeno'
                             ).length;
+                            const ready = mats.length - need;
                             return (
-                                <MItem key={product.Product_ID}>
-                                    <MCell onClick={() => setOpenProductId(product.Product_ID)} chevron>
-                                        <MAvatar tone={productTone(product.Status)}><Package size={17} /></MAvatar>
-                                        <MText
-                                            title={product.Name}
-                                            sub={<>
+                                <MCard key={product.Product_ID} onClick={() => setOpenProductId(product.Product_ID)}>
+                                    <MCardHead>
+                                        <MIcon tone={productTone(product.Status)}><Package size={20} /></MIcon>
+                                        <MCardBody
+                                            name={product.Name}
+                                            meta={<>
                                                 <MPill tone={productTone(product.Status)}>{product.Status || 'Na čekanju'}</MPill>
-                                                <span>×{product.Quantity || 1} · {mats.length} {mats.length === 1 ? 'materijal' : 'materijala'}</span>
+                                                <span>×{product.Quantity || 1}</span>
                                             </>}
                                         />
                                         {need > 0 && <MPill tone="red">{need} fali</MPill>}
-                                    </MCell>
-                                </MItem>
+                                    </MCardHead>
+                                    {mats.length > 0 && (
+                                        <MProgress
+                                            pct={Math.round((ready / mats.length) * 100)}
+                                            tone={need === 0 ? 'green' : need > ready ? 'orange' : undefined}
+                                            label={<><b>{ready}/{mats.length}</b> materijala spremno</>}
+                                        />
+                                    )}
+                                </MCard>
                             );
                         })}
-                    </MList>
+                    </div>
                 )}
 
                 <div className="mui-stack mui-gap10 mui-pt14">
@@ -255,16 +264,28 @@ export default function MobileProjectsView({
     }
 
     // ── Ekran 1: lista projekata ────────────────────────────────────
+    // Kartica (ne red liste): projekat nosi status, klijenta, novac, napredak
+    // i rok — u ravnoj listi se to stapa u sivu masu.
     const renderProject = (project: Project) => {
         const products = project.products || [];
         const revenue = revenueOf(project.Project_ID);
+        const done = products.filter(p => p.Status === 'Završeno' || p.Status === 'Spremno').length;
+        const pct = products.length > 0 ? Math.round((done / products.length) * 100) : 0;
+        const isDone = project.Status === 'Završeno';
+
+        const dd = !isDone && project.Deadline ? daysUntil(project.Deadline) : null;
+        const dueText = dd === null ? null
+            : dd < 0 ? `kasni ${-dd} ${-dd === 1 ? 'dan' : 'dana'}`
+                : dd === 0 ? 'rok danas' : `rok za ${dd} ${dd === 1 ? 'dan' : 'dana'}`;
+        const dueCls = dd === null ? '' : dd < 0 ? ' late' : dd <= 3 ? ' soon' : '';
+
         return (
-            <MItem key={project.Project_ID}>
-                <MCell onClick={() => setOpenProjectId(project.Project_ID)} chevron>
+            <MCard key={project.Project_ID} onClick={() => setOpenProjectId(project.Project_ID)}>
+                <MCardHead>
                     <MAvatar tone={statusTone(project.Status)}>{initials(project.Name || project.Client_Name)}</MAvatar>
-                    <MText
-                        title={project.Name || project.Client_Name}
-                        sub={<>
+                    <MCardBody
+                        name={project.Name || project.Client_Name}
+                        meta={<>
                             <MPill tone={statusTone(project.Status)}>{project.Status}</MPill>
                             <span>
                                 {project.Name ? `${project.Client_Name} · ` : ''}
@@ -272,9 +293,22 @@ export default function MobileProjectsView({
                             </span>
                         </>}
                     />
-                    {revenue > 0 && <MValue strong>{formatCurrency(revenue)}</MValue>}
-                </MCell>
-            </MItem>
+                    {revenue > 0 && <span className="mui-ec-val mui-num">{formatCurrency(revenue)}</span>}
+                </MCardHead>
+
+                {products.length > 0 ? (
+                    <MProgress
+                        pct={pct}
+                        tone={pct >= 100 ? 'green' : undefined}
+                        label={<>
+                            <b>{done}/{products.length}</b> gotovo
+                            {dueText && <span className={dueCls.trim()}> · {dueText}</span>}
+                        </>}
+                    />
+                ) : dueText ? (
+                    <div className="mui-ec-foot"><span className={`mui-barl${dueCls}`}>{dueText}</span></div>
+                ) : null}
+            </MCard>
         );
     };
 
@@ -325,11 +359,11 @@ export default function MobileProjectsView({
                 groups.map(g => (
                     <div key={g.key}>
                         <MSection title={g.key} right={<span className="mui-dim">{g.rows.length}</span>} />
-                        <MList lead>{g.rows.map(renderProject)}</MList>
+                        <div className="mui-elist">{g.rows.map(renderProject)}</div>
                     </div>
                 ))
             ) : (
-                <MList lead>{filtered.map(renderProject)}</MList>
+                <div className="mui-elist">{filtered.map(renderProject)}</div>
             )}
 
             <MSheet open={sort.isOpen} title="Sortiraj i grupiši" onClose={sort.close}>

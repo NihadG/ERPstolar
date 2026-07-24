@@ -1,0 +1,45 @@
+/* ═══════════════════════════════════════════════════════════════════
+   Donja navigacija (telefon) — iOS tab bar.
+   Prikazuje se samo dok je sidebar sakriven (≤768px, vidi globals.css).
+   ═══════════════════════════════════════════════════════════════════ */
+
+.mtb {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 800;   /* iznad sadržaja, ispod full-screen detalja (900) i modala */
+    display: flex;
+    padding: 8px 4px calc(10px + env(safe-area-inset-bottom, 0px));
+    background: rgba(249, 249, 251, 0.92);
+    backdrop-filter: saturate(180%) blur(22px);
+    -webkit-backdrop-filter: saturate(180%) blur(22px);
+    border-top: 0.5px solid rgba(60, 60, 67, 0.29);
+}
+
+.mtb-item {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 3px;
+    padding: 4px 2px;
+    border: none;
+    background: none;
+    cursor: pointer;
+    color: rgba(60, 60, 67, 0.45);
+    font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', Roboto, sans-serif;
+    font-size: 10px;
+    font-weight: 500;
+    letter-spacing: -0.01em;
+    transition: color 0.15s;
+    -webkit-tap-highlight-color: transparent;
+}
+
+.mtb-item.on { color: #007aff; }
+.mtb-item:active { opacity: 0.6; }
+
+/* Sadržaj ne smije završiti ispod trake. */
+@media (max-width: 768px) {
+    .content-area { padding-bottom: calc(76px + env(safe-area-inset-bottom, 0px)) !important; }
+}

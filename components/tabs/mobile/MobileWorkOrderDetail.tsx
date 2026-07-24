@@ -17,20 +17,20 @@
 import { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
-    ArrowLeft, Play, Pause, CheckCircle, Printer, Trash2, ClipboardList,
-    ListTodo, NotebookPen, Package, Check,
+    ArrowLeft, Play, Pause, CheckCircle, Printer, Trash2, Check,
 } from 'lucide-react';
 import type { WorkOrder, WorkOrderItem, Worker, Task, WorkLog, Project } from '@/lib/types';
 import { workOrderDisplayName, orderProcessProgress } from '@/lib/utils';
 import { daysUntil, todayISO } from '@/lib/planning';
 import { tasksForWorkOrder, taskProgress, lastBookingDate } from '@/lib/workOrderTasks';
-import { updateItemProcess, toggleItemPause, completeWorkOrderItem, getWorkLogsForWorkOrder } from '@/lib/services';
+import { toggleItemPause, completeWorkOrderItem, getWorkLogsForWorkOrder } from '@/lib/services';
 import { useData } from '@/context/DataContext';
 import WorkOrderTasksPanel from '@/components/ui/WorkOrderTasksPanel';
 import WorkOrderWorkLog from '@/components/ui/WorkOrderWorkLog';
+import OrderProcessBoard from '@/components/ui/OrderProcessBoard';
 import {
-    MHero, MSegmented, MSection, MList, MItem, MCell, MText, MValue, MPill,
-    MCheck, MActions, MAction, MButton, MSheet, MOption, MEmpty,
+    MHero, MSegmented, MSection, MList, MItem, MCell, MText, MPill,
+    MActions, MAction, MButton, MSheet, MOption, MEmpty,
 } from './MobileUI';
 import './MobileUI.css';
 import './MobileWorkOrderDetail.css';
@@ -105,28 +105,6 @@ export default function MobileWorkOrderDetail({
     const goBack = () => window.history.back();
 
     // ── Radnje ──────────────────────────────────────────────────────
-
-    /** Čekiranje procesa — isti upis kao desktop (radnik + datum se pamte). */
-    const toggleProcess = async (item: WorkOrderItem, processName: string, done: boolean) => {
-        if (busy || isFinal) return;
-        // Radnik za zapis: prvi dodijeljeni na stavci (isti fallback kao desktop).
-        const assigned = item.Assigned_Workers?.[0];
-        try {
-            setBusy(true);
-            await updateItemProcess(workOrder.Work_Order_ID, item.ID, processName, done
-                ? {
-                    Status: 'Završeno',
-                    Completed_At: new Date(todayISO() + 'T12:00:00').toISOString(),
-                    Worker_ID: assigned?.Worker_ID,
-                    Worker_Name: assigned?.Worker_Name,
-                }
-                : { Status: 'Na čekanju', Completed_At: null });
-            onRefresh('workOrders', 'projects', 'workLogs');
-        } catch (e) {
-            console.error(e);
-            showToast('Greška pri promjeni procesa', 'error');
-        } finally { setBusy(false); }
-    };
 
     /** Pauza/nastavak cijelog naloga (dnevnice ne teku dok je pauziran). */
     const togglePause = async () => {
@@ -248,59 +226,28 @@ export default function MobileWorkOrderDetail({
                     ]}
                 />
 
-                {/* ── TOK: procesi po proizvodu, čekiranje ── */}
+                {/* ── TOK: isti prikaz kao desktop ──────────────────────────
+                    OrderProcessBoard je JEDINI ispravan izvor toka: gradi redove
+                    iz GRAFA naloga (+ sinteze iz faznih planova), a `Processes` na
+                    stavci koristi samo za status. Ranija mobilna verzija je čitala
+                    `item.Processes` direktno — tamo postoje samo procesi koji su
+                    već dirani, pa su procesi falili, izgledali svi završeni, a
+                    legacy placeholder „Rad" se prikazivao kao pravi proces. */}
                 {tab === 'tok' && (
                     items.length === 0 ? (
                         <MEmpty title="Nalog nema proizvoda" sub="Dodaj proizvode da bi se pratio tok procesa." />
                     ) : (
-                        <>
-                            {items.map(item => {
-                                const procs = item.Processes || [];
-                                const done = procs.filter(p => p.Status === 'Završeno').length;
-                                return (
-                                    <div key={item.ID}>
-                                        <MSection
-                                            title={item.Product_Name}
-                                            right={<span className="mui-dim">{procs.length > 0 ? `${done}/${procs.length}` : item.Status}</span>}
-                                        />
-                                        {procs.length === 0 ? (
-                                            <MList>
-                                                <MItem>
-                                                    <MCell>
-                                                        <MText title="Nema definisanih procesa" sub="Proizvod se prati kroz status stavke." />
-                                                    </MCell>
-                                                </MItem>
-                                            </MList>
-                                        ) : (
-                                            <MList>
-                                                {procs.map(p => {
-                                                    const isDone = p.Status === 'Završeno';
-                                                    return (
-                                                        <MItem key={p.Process_Name}>
-                                                            <MCell done={isDone}>
-                                                                <MCheck
-                                                                    on={isDone}
-                                                                    disabled={busy || isFinal}
-                                                                    label={isDone ? 'Vrati na čekanje' : 'Označi završenim'}
-                                                                    onClick={() => toggleProcess(item, p.Process_Name, !isDone)}
-                                                                />
-                                                                <MText
-                                                                    title={p.Process_Name}
-                                                                    sub={[p.Worker_Name, isDone && p.Completed_At
-                                                                        ? new Date(p.Completed_At).toLocaleDateString('bs-BA', { day: '2-digit', month: '2-digit' })
-                                                                        : p.Status !== 'Na čekanju' ? p.Status : null]
-                                                                        .filter(Boolean).join(' · ') || undefined}
-                                                                />
-                                                            </MCell>
-                                                        </MItem>
-                                                    );
-                                                })}
-                                            </MList>
-                                        )}
-                                    </div>
-                                );
-                            })}
-                        </>
+                        <div className="mwd-panel">
+                            <OrderProcessBoard
+                                workOrderId={workOrder.Work_Order_ID}
+                                items={items}
+                                workers={workers}
+                                workLogs={workLogs}
+                                organizationId={organizationId || ''}
+                                onChanged={() => onRefresh('workOrders', 'projects', 'workLogs')}
+                                showToast={showToast}
+                            />
+                        </div>
                     )
                 )}
 

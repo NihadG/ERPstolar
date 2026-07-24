@@ -2,7 +2,6 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
-import { ChevronRight, ChevronLeft } from 'lucide-react';
 import { getProjects, getMaterialsCatalog, getSuppliers, getWorkers, getOffers, getOrders, getWorkOrders, getTasks, getWorkLogs, getTaskProfiles } from '@/lib/services';
 
 import { signOut } from '@/lib/auth';
@@ -16,6 +15,7 @@ import Toast from '@/components/ui/Toast';
 import LoadingOverlay from '@/components/ui/LoadingOverlay';
 import ModuleGuard from '@/components/auth/ModuleGuard';
 import Sidebar from '@/components/Sidebar';
+import MobileTabBar from '@/components/tabs/mobile/MobileTabBar';
 import CommandPalette, { type CommandPaletteItem } from '@/components/ui/CommandPalette';
 import CSVImportWizard from '@/components/CSVImportWizard';
 
@@ -433,26 +433,24 @@ export default function Home() {
         <div
             className="app-container"
         >
-            {/* Sidebar Navigation */}
-            <Sidebar
-                activeTab={activeTab}
-                onTabChange={handleTabClick}
-                isOpen={userMenuOpen}
-                onClose={() => setUserMenuOpen(false)}
-                isCollapsed={sidebarCollapsed}
-                onToggleCollapse={() => setSidebarCollapsed(!sidebarCollapsed)}
-                onOpenSearch={() => setCommandPaletteOpen(true)}
-                onOpenImport={() => setImportWizardOpen(true)}
-            />
+            {/* Navigacija: sidebar na desktopu, donja traka na telefonu.
+                Na telefonu se sidebar NE renderuje (ne samo sakriva) — drawer i
+                njegov FAB su tamo suvišni kad postoji tab-traka. */}
+            {!isMobile && (
+                <Sidebar
+                    activeTab={activeTab}
+                    onTabChange={handleTabClick}
+                    isOpen={userMenuOpen}
+                    onClose={() => setUserMenuOpen(false)}
+                    isCollapsed={sidebarCollapsed}
+                    onToggleCollapse={() => setSidebarCollapsed(!sidebarCollapsed)}
+                    onOpenSearch={() => setCommandPaletteOpen(true)}
+                    onOpenImport={() => setImportWizardOpen(true)}
+                />
+            )}
 
             {/* Main Content Area */}
-            <div className={`main-content-wrapper ${sidebarCollapsed ? 'sidebar-collapsed' : ''}`}>
-                <button
-                    className="mobile-menu-fab"
-                    onClick={() => setUserMenuOpen(true)}
-                >
-                    <ChevronLeft size={24} color="white" />
-                </button>
+            <div className={`main-content-wrapper ${sidebarCollapsed ? 'sidebar-collapsed' : ''}${isMobile ? ' mobile-nav' : ''}`}>
 
                 {/* Content */}
                 <main className="content-area">
@@ -615,6 +613,9 @@ export default function Home() {
                 </main>
             </div>
 
+            {/* Donja navigacija (telefon) */}
+            {isMobile && <MobileTabBar activeTab={activeTab} onTabChange={handleTabClick} />}
+
             {/* Toast Notifications */}
             {toast && <Toast message={toast.message} type={toast.type} />}
 
@@ -635,35 +636,6 @@ export default function Home() {
                     flex-direction: column;
                     min-width: 0;
                     background: #f8fafc;
-                }
-
-                .mobile-menu-fab {
-                    position: fixed;
-                    bottom: 24px;
-                    right: 24px;
-                    width: 56px;
-                    height: 56px;
-                    background: #1d1d1f;
-                    border-radius: 50%;
-                    color: white;
-                    display: none;
-                    align-items: center;
-                    justify-content: center;
-                    box-shadow: 0 4px 20px rgba(0,0,0,0.25);
-                    border: none;
-                    z-index: 900;
-                    cursor: pointer;
-                    transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
-                }
-
-                .mobile-menu-fab:active {
-                    transform: scale(0.92);
-                }
-
-                @media (max-width: 768px) {
-                    .mobile-menu-fab {
-                        display: flex;
-                    }
                 }
 
                 @media (min-width: 769px) {
