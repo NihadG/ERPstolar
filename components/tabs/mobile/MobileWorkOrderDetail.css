@@ -1,0 +1,107 @@
+/* ═══════════════════════════════════════════════════════════════════
+   Detalj naloga (mobilni) — full-screen sloj iznad liste.
+   z-index 900: ispod app modala (isti dogovor kao WorkOrderFullScreen).
+   ═══════════════════════════════════════════════════════════════════ */
+
+.mwd {
+    position: fixed;
+    inset: 0;
+    z-index: 900;
+    display: flex;
+    flex-direction: column;
+    background: linear-gradient(178deg, #eef1f6, #e7eaf1);
+    animation: mwd-in 0.22s cubic-bezier(0.32, 0.72, 0, 1);
+}
+@keyframes mwd-in { from { opacity: 0; transform: translateX(14px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .mwd { animation: none; } }
+
+/* Traka: nazad lijevo, akcije desno */
+.mwd-nav {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: calc(10px + env(safe-area-inset-top, 0px)) 12px 9px;
+    background: rgba(249, 249, 251, 0.82);
+    backdrop-filter: saturate(180%) blur(20px);
+    -webkit-backdrop-filter: saturate(180%) blur(20px);
+    border-bottom: 0.5px solid var(--mui-sep);
+}
+.mwd-back {
+    display: flex; align-items: center; gap: 2px; padding: 4px 6px 4px 0;
+    background: none; border: none; cursor: pointer; font-family: inherit;
+    color: var(--mui-blue); font-size: 17px; letter-spacing: -0.02em;
+}
+.mwd-back:active { opacity: 0.6; }
+.mwd-nav-actions { display: flex; align-items: center; gap: 4px; }
+.mwd-navbtn {
+    width: 36px; height: 36px; border-radius: 50%; border: none; background: none;
+    display: flex; align-items: center; justify-content: center;
+    color: var(--mui-blue); cursor: pointer;
+}
+.mwd-navbtn:active { background: rgba(120, 120, 128, 0.16); }
+.mwd-navbtn.danger { color: var(--mui-red); }
+
+/* Nazad-traka unutar taba (nije full-screen sloj) — poravnata s rubom sadržaja. */
+.mui-subnav {
+    margin: -14px -16px 8px;
+    padding-left: 12px;
+    padding-right: 12px;
+    background: transparent;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    border-bottom: none;
+}
+
+/* Sadržaj */
+.mwd-body {
+    flex: 1 1 auto;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    padding: 14px 16px calc(40px + env(safe-area-inset-bottom, 0px));
+}
+
+/* Objašnjenje ispod liste (npr. kako se čekira prijem). */
+.mwd-hint {
+    margin: 9px 16px 0;
+    font-size: 12.5px;
+    color: var(--mui-label3);
+    letter-spacing: -0.01em;
+    line-height: 1.45;
+}
+
+.mwd-sheet-note {
+    margin: 2px 4px 14px;
+    font-size: 13.5px;
+    color: var(--mui-label2);
+    letter-spacing: -0.01em;
+    line-height: 1.45;
+    text-align: center;
+}
+
+/* ── Ugniježđeni desktop paneli (Zadaci, Knjiga rada) ────────────────
+   Paneli su dijeljeni s desktopom; ovdje im se skida okvir i suzuju
+   razmaci da se uklope u mobilni ekran. Ne mijenja se njihova logika. */
+.mwd-panel { margin-top: 14px; }
+.mwd-panel .wot,
+.mwd-panel .wowl {
+    background: var(--mui-cell);
+    border-radius: 14px;
+    padding: 12px;
+    box-shadow: 0 1px 2px rgba(20, 30, 60, 0.05), 0 12px 28px -18px rgba(20, 30, 60, 0.22);
+}
+/* Trake s akcijama unutar panela se prelamaju umjesto da se guraju. */
+.mwd-panel .wot-bar,
+.mwd-panel .wot-actions,
+.mwd-panel .wot-create-fields {
+    flex-wrap: wrap;
+}
+.mwd-panel .wot-actions { width: 100%; }
+.mwd-panel .wot-btn { flex: 1; justify-content: center; min-height: 38px; }
+/* Polja unosa ≥16px — ispod toga iOS zumira ekran pri fokusu. */
+.mwd-panel input,
+.mwd-panel select,
+.mwd-panel textarea { font-size: 16px; }
+.mwd-panel .wot-task-side { flex-wrap: wrap; gap: 6px; }
+.mwd-panel .wot-prod-select { max-width: 100%; }

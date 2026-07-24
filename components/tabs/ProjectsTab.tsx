@@ -1107,6 +1107,7 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                     }}
                     onToggleHidden={handleToggleHidden}
                     onOpenOverview={setOverviewProject}
+                    onOpenCutlist={(product) => setCutlistProductId(product.Product_ID)}
                 />
 
                 {/* Modals are shared but different for mobile */}

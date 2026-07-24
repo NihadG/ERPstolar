@@ -1,0 +1,406 @@
+'use client';
+
+// ════════════════════════════════════════════════════════════════════
+// DETALJ NALOGA — mobilni (full-screen)
+//
+// Zamjena za „razvuci karticu u listi": na telefonu se nalog otvara kao
+// vlastiti ekran, jer u nalogu ima previše radnji za jedan red liste.
+//
+// Zaglavlje NE prikazuje novac (profit/marža) — na terenu trebaju napredak,
+// rok i radnje; finansije žive u pregledu projekta.
+//
+// Tabovi „Zadaci" i „Rad" NAMJERNO renderuju iste panele kao desktop
+// (WorkOrderTasksPanel, WorkOrderWorkLog) — logika knjiženja i zadataka
+// postoji na jednom mjestu i ne smije se duplirati.
+// ════════════════════════════════════════════════════════════════════
+
+import { useEffect, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
+import {
+    ArrowLeft, Play, Pause, CheckCircle, Printer, Trash2, ClipboardList,
+    ListTodo, NotebookPen, Package, Check,
+} from 'lucide-react';
+import type { WorkOrder, WorkOrderItem, Worker, Task, WorkLog, Project } from '@/lib/types';
+import { workOrderDisplayName, orderProcessProgress } from '@/lib/utils';
+import { daysUntil, todayISO } from '@/lib/planning';
+import { tasksForWorkOrder, taskProgress, lastBookingDate } from '@/lib/workOrderTasks';
+import { updateItemProcess, toggleItemPause, completeWorkOrderItem, getWorkLogsForWorkOrder } from '@/lib/services';
+import { useData } from '@/context/DataContext';
+import WorkOrderTasksPanel from '@/components/ui/WorkOrderTasksPanel';
+import WorkOrderWorkLog from '@/components/ui/WorkOrderWorkLog';
+import {
+    MHero, MSegmented, MSection, MList, MItem, MCell, MText, MValue, MPill,
+    MCheck, MActions, MAction, MButton, MSheet, MOption, MEmpty,
+} from './MobileUI';
+import './MobileUI.css';
+import './MobileWorkOrderDetail.css';
+
+type Tab = 'tok' | 'zadaci' | 'rad' | 'stavke';
+
+interface Props {
+    workOrder: WorkOrder;
+    workers: Worker[];
+    tasks?: Task[];
+    projects?: Project[];
+    onClose: () => void;
+    onRefresh: (...collections: string[]) => void;
+    showToast: (message: string, type: 'success' | 'error' | 'info') => void;
+    onStart: (workOrderId: string) => void;
+    onPrint: (workOrder: WorkOrder) => void;
+    onDelete: (workOrderId: string) => void;
+}
+
+const statusTone = (s?: string) =>
+    s === 'Završeno' ? 'green' : s === 'U toku' ? 'blue' : s === 'Otkazano' ? 'red' : 'gray';
+
+export default function MobileWorkOrderDetail({
+    workOrder, workers, tasks = [], onClose, onRefresh, showToast, onStart, onPrint, onDelete,
+}: Props) {
+    const { organizationId } = useData();
+    const [tab, setTab] = useState<Tab>('tok');
+    const [busy, setBusy] = useState(false);
+    const [workLogs, setWorkLogs] = useState<WorkLog[]>([]);
+    const [completeSheet, setCompleteSheet] = useState(false);
+    const [completeDate, setCompleteDate] = useState<string>(todayISO());
+
+    // Stavke se čitaju iz propsa (osvježava ih onRefresh) — bez lokalne kopije
+    // statusa, da prikaz ne odluta od baze.
+    const items: WorkOrderItem[] = useMemo(() => workOrder.items || [], [workOrder.items]);
+    const openItems = items.filter(i => i.Status !== 'Završeno');
+    const allPaused = openItems.length > 0 && openItems.every(i => i.Is_Paused);
+    const isWaiting = workOrder.Status === 'Na čekanju';
+    const isFinal = workOrder.Status === 'Završeno' || workOrder.Status === 'Otkazano';
+
+    const prog = orderProcessProgress(items);
+    const pct = prog?.pct ?? 0;
+    const dd = !isFinal ? daysUntil(workOrder.Due_Date) : null;
+    const dueText = dd === null ? (workOrder.Status === 'Završeno' ? 'završen' : 'bez roka')
+        : dd < 0 ? `kasni ${-dd} ${-dd === 1 ? 'dan' : 'dana'}`
+            : dd === 0 ? 'rok danas' : `rok za ${dd} ${dd === 1 ? 'dan' : 'dana'}`;
+
+    const orderTasks = useMemo(() => tasksForWorkOrder(tasks, workOrder.Work_Order_ID), [tasks, workOrder.Work_Order_ID]);
+    const tProg = useMemo(() => taskProgress(orderTasks, todayISO()), [orderTasks]);
+
+    // Logovi naloga — za knjigu rada i za prijedlog datuma završetka.
+    const reloadLogs = async () => {
+        if (!organizationId) return;
+        try { setWorkLogs(await getWorkLogsForWorkOrder(workOrder.Work_Order_ID, organizationId)); }
+        catch (e) { console.warn('getWorkLogsForWorkOrder failed', e); }
+    };
+    useEffect(() => { reloadLogs(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [workOrder.Work_Order_ID]);
+
+    // Zatvaranje nazad-tipkom telefona + zaključan scroll pozadine.
+    useEffect(() => {
+        window.history.pushState({ moWoDetail: true }, '');
+        const onPop = () => onClose();
+        window.addEventListener('popstate', onPop);
+        const prev = document.body.style.overflow;
+        document.body.style.overflow = 'hidden';
+        return () => {
+            window.removeEventListener('popstate', onPop);
+            document.body.style.overflow = prev;
+        };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+    const goBack = () => window.history.back();
+
+    // ── Radnje ──────────────────────────────────────────────────────
+
+    /** Čekiranje procesa — isti upis kao desktop (radnik + datum se pamte). */
+    const toggleProcess = async (item: WorkOrderItem, processName: string, done: boolean) => {
+        if (busy || isFinal) return;
+        // Radnik za zapis: prvi dodijeljeni na stavci (isti fallback kao desktop).
+        const assigned = item.Assigned_Workers?.[0];
+        try {
+            setBusy(true);
+            await updateItemProcess(workOrder.Work_Order_ID, item.ID, processName, done
+                ? {
+                    Status: 'Završeno',
+                    Completed_At: new Date(todayISO() + 'T12:00:00').toISOString(),
+                    Worker_ID: assigned?.Worker_ID,
+                    Worker_Name: assigned?.Worker_Name,
+                }
+                : { Status: 'Na čekanju', Completed_At: null });
+            onRefresh('workOrders', 'projects', 'workLogs');
+        } catch (e) {
+            console.error(e);
+            showToast('Greška pri promjeni procesa', 'error');
+        } finally { setBusy(false); }
+    };
+
+    /** Pauza/nastavak cijelog naloga (dnevnice ne teku dok je pauziran). */
+    const togglePause = async () => {
+        if (busy || openItems.length === 0) return;
+        const next = !allPaused;
+        try {
+            setBusy(true);
+            for (const it of openItems) await toggleItemPause(workOrder.Work_Order_ID, it.ID, next);
+            showToast(next ? 'Nalog pauziran' : 'Nalog nastavljen', 'success');
+            onRefresh('workOrders', 'projects', 'workLogs');
+        } catch (e) {
+            console.error(e);
+            showToast('Greška pri pauzi naloga', 'error');
+        } finally { setBusy(false); }
+    };
+
+    const openComplete = () => {
+        const last = lastBookingDate(workLogs);
+        setCompleteDate(last && last !== todayISO() ? last : todayISO());
+        setCompleteSheet(true);
+    };
+
+    /** Završetak naloga na odabrani ZVANIČNI datum (isti model kao desktop). */
+    const runComplete = async (dateISO: string) => {
+        setCompleteSheet(false);
+        const unfinished = items.filter(i => i.Status !== 'Završeno');
+        if (unfinished.length === 0) return;
+        try {
+            setBusy(true);
+            const customDate = `${dateISO}T12:00:00`;
+            for (const it of unfinished) {
+                await completeWorkOrderItem(workOrder.Work_Order_ID, it.ID, { customDate });
+            }
+            showToast('Nalog završen', 'success');
+            onRefresh('workOrders', 'projects', 'workLogs');
+        } catch (e) {
+            console.error(e);
+            showToast('Greška pri završavanju naloga', 'error');
+        } finally { setBusy(false); }
+    };
+
+    const pauseItem = async (item: WorkOrderItem) => {
+        if (busy) return;
+        try {
+            setBusy(true);
+            await toggleItemPause(workOrder.Work_Order_ID, item.ID, !item.Is_Paused);
+            onRefresh('workOrders', 'projects', 'workLogs');
+        } catch (e) {
+            console.error(e);
+            showToast('Greška pri pauzi proizvoda', 'error');
+        } finally { setBusy(false); }
+    };
+
+    if (typeof document === 'undefined') return null;
+
+    const lastWork = lastBookingDate(workLogs);
+
+    return createPortal(
+        <div className="mui mwd">
+            <header className="mwd-nav">
+                <button type="button" className="mwd-back" onClick={goBack}>
+                    <ArrowLeft size={21} strokeWidth={2.3} /> Nalozi
+                </button>
+                <div className="mwd-nav-actions">
+                    <button type="button" className="mwd-navbtn" onClick={() => onPrint(workOrder)} aria-label="Printaj">
+                        <Printer size={19} />
+                    </button>
+                    <button type="button" className="mwd-navbtn danger" onClick={() => { onDelete(workOrder.Work_Order_ID); onClose(); }} aria-label="Obriši">
+                        <Trash2 size={19} />
+                    </button>
+                </div>
+            </header>
+
+            <div className="mwd-body">
+                <div className="mui-large">
+                    <h1>{workOrderDisplayName(workOrder)}</h1>
+                    <p>
+                        <MPill tone={statusTone(workOrder.Status)}>{workOrder.Status}</MPill>
+                        {workOrder.Work_Order_Type === 'Montaža' && <MPill tone="purple">Montaža</MPill>}
+                        <span>#{workOrder.Work_Order_Number} · {items.length} {items.length === 1 ? 'proizvod' : 'proizvoda'}</span>
+                    </p>
+                </div>
+
+                <MHero
+                    kicker="Napredak naloga"
+                    value={<>{pct}<small>%</small></>}
+                    chip={dueText}
+                    pct={pct}
+                    green={workOrder.Status === 'Završeno'}
+                />
+
+                {!isFinal && (
+                    <MActions>
+                        {isWaiting ? (
+                            <MAction tone="green" disabled={busy} onClick={() => onStart(workOrder.Work_Order_ID)}>
+                                <Play size={18} /> Pokreni nalog
+                            </MAction>
+                        ) : (
+                            <>
+                                <MAction tone="otint" disabled={busy || openItems.length === 0} onClick={togglePause}>
+                                    {allPaused ? <><Play size={18} /> Nastavi</> : <><Pause size={18} /> Pauza</>}
+                                </MAction>
+                                <MAction tone="green" disabled={busy} onClick={openComplete}>
+                                    <CheckCircle size={18} /> Završi
+                                </MAction>
+                            </>
+                        )}
+                    </MActions>
+                )}
+
+                <MSegmented<Tab>
+                    value={tab}
+                    onChange={setTab}
+                    options={[
+                        { id: 'tok', label: 'Tok' },
+                        { id: 'zadaci', label: tProg.total > 0 ? `Zadaci ${tProg.done}/${tProg.total}` : 'Zadaci' },
+                        { id: 'rad', label: 'Rad' },
+                        { id: 'stavke', label: `Stavke ${items.length}` },
+                    ]}
+                />
+
+                {/* ── TOK: procesi po proizvodu, čekiranje ── */}
+                {tab === 'tok' && (
+                    items.length === 0 ? (
+                        <MEmpty title="Nalog nema proizvoda" sub="Dodaj proizvode da bi se pratio tok procesa." />
+                    ) : (
+                        <>
+                            {items.map(item => {
+                                const procs = item.Processes || [];
+                                const done = procs.filter(p => p.Status === 'Završeno').length;
+                                return (
+                                    <div key={item.ID}>
+                                        <MSection
+                                            title={item.Product_Name}
+                                            right={<span className="mui-dim">{procs.length > 0 ? `${done}/${procs.length}` : item.Status}</span>}
+                                        />
+                                        {procs.length === 0 ? (
+                                            <MList>
+                                                <MItem>
+                                                    <MCell>
+                                                        <MText title="Nema definisanih procesa" sub="Proizvod se prati kroz status stavke." />
+                                                    </MCell>
+                                                </MItem>
+                                            </MList>
+                                        ) : (
+                                            <MList>
+                                                {procs.map(p => {
+                                                    const isDone = p.Status === 'Završeno';
+                                                    return (
+                                                        <MItem key={p.Process_Name}>
+                                                            <MCell done={isDone}>
+                                                                <MCheck
+                                                                    on={isDone}
+                                                                    disabled={busy || isFinal}
+                                                                    label={isDone ? 'Vrati na čekanje' : 'Označi završenim'}
+                                                                    onClick={() => toggleProcess(item, p.Process_Name, !isDone)}
+                                                                />
+                                                                <MText
+                                                                    title={p.Process_Name}
+                                                                    sub={[p.Worker_Name, isDone && p.Completed_At
+                                                                        ? new Date(p.Completed_At).toLocaleDateString('bs-BA', { day: '2-digit', month: '2-digit' })
+                                                                        : p.Status !== 'Na čekanju' ? p.Status : null]
+                                                                        .filter(Boolean).join(' · ') || undefined}
+                                                                />
+                                                            </MCell>
+                                                        </MItem>
+                                                    );
+                                                })}
+                                            </MList>
+                                        )}
+                                    </div>
+                                );
+                            })}
+                        </>
+                    )
+                )}
+
+                {/* ── ZADACI: isti panel kao desktop (Task.Links je izvor istine) ── */}
+                {tab === 'zadaci' && (
+                    <div className="mwd-panel">
+                        <WorkOrderTasksPanel
+                            workOrder={workOrder}
+                            tasks={tasks}
+                            workers={workers}
+                            organizationId={organizationId || ''}
+                            onRefresh={onRefresh}
+                            showToast={showToast}
+                        />
+                    </div>
+                )}
+
+                {/* ── RAD: knjiga rada (isti panel kao desktop) ── */}
+                {tab === 'rad' && (
+                    <div className="mwd-panel">
+                        <WorkOrderWorkLog
+                            workOrder={workOrder}
+                            items={items}
+                            workLogs={workLogs}
+                            workers={workers}
+                            organizationId={organizationId || ''}
+                            onReload={() => { reloadLogs(); onRefresh('workOrders', 'projects', 'workLogs'); }}
+                            showToast={showToast}
+                        />
+                    </div>
+                )}
+
+                {/* ── STAVKE: proizvodi naloga + pauza po proizvodu ── */}
+                {tab === 'stavke' && (
+                    <>
+                        <MSection title="Proizvodi u nalogu" />
+                        <MList>
+                            {items.map(item => {
+                                const procs = item.Processes || [];
+                                const done = procs.filter(p => p.Status === 'Završeno').length;
+                                return (
+                                    <MItem key={item.ID}>
+                                        <MCell>
+                                            <MText
+                                                title={item.Product_Name}
+                                                sub={<>
+                                                    <MPill tone={statusTone(item.Status)}>{item.Status}</MPill>
+                                                    {item.Is_Paused && <MPill tone="orange">Pauzirano</MPill>}
+                                                    <span>{procs.length > 0 ? `${done}/${procs.length} procesa` : `${item.Quantity || 1} kom`}</span>
+                                                </>}
+                                            />
+                                            {!isFinal && item.Status !== 'Završeno' && (
+                                                <button type="button" className="mui-actbtn" onClick={() => pauseItem(item)} disabled={busy}>
+                                                    {item.Is_Paused ? 'Nastavi' : 'Pauza'}
+                                                </button>
+                                            )}
+                                        </MCell>
+                                    </MItem>
+                                );
+                            })}
+                        </MList>
+                        <div className="mui-pt14">
+                            <MButton variant="tinted" onClick={() => onPrint(workOrder)}>
+                                <Printer size={19} /> Printaj nalog
+                            </MButton>
+                        </div>
+                    </>
+                )}
+            </div>
+
+            {/* Završetak naloga — izbor zvaničnog datuma (kao desktop) */}
+            <MSheet open={completeSheet} title="Završi nalog" onClose={() => setCompleteSheet(false)}
+                footer={
+                    <div className="mui-pt14">
+                        <MButton variant="gfilled" onClick={() => runComplete(completeDate)}>
+                            <Check size={19} /> Završi nalog
+                        </MButton>
+                    </div>
+                }>
+                <p className="mwd-sheet-note">
+                    {items.filter(i => i.Status !== 'Završeno').length} {items.filter(i => i.Status !== 'Završeno').length === 1 ? 'proizvod će biti završen' : 'proizvoda će biti završeno'}.
+                    Odaberi datum završetka — on ulazi u obračun.
+                </p>
+                <MList>
+                    <MOption label="Danas" sub={todayISO().split('-').reverse().join('.')}
+                        selected={completeDate === todayISO()} onClick={() => setCompleteDate(todayISO())} />
+                    {lastWork && lastWork !== todayISO() && (
+                        <MOption label="Dan zadnjeg rada" sub={lastWork.split('-').reverse().join('.')}
+                            selected={completeDate === lastWork} onClick={() => setCompleteDate(lastWork)} />
+                    )}
+                </MList>
+                <div className="mui-shd"><span>Drugi datum</span></div>
+                <MList>
+                    <div className="mui-field">
+                        <label htmlFor="mwd-date">Datum</label>
+                        <input id="mwd-date" type="date" value={completeDate} onChange={e => setCompleteDate(e.target.value)} />
+                    </div>
+                </MList>
+            </MSheet>
+        </div>,
+        document.body
+    );
+}

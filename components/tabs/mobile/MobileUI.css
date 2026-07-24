@@ -1,0 +1,313 @@
+/* ═══════════════════════════════════════════════════════════════════
+   MOBILNI UI SISTEM (iOS-stil) — jedan izvor istine za telefon/tablet
+   ═══════════════════════════════════════════════════════════════════
+
+   Prefiks `mui-` je namjerno odvojen od desktop klasa: mobilni prikazi se
+   crtaju NEZAVISNO od desktopa (ne skupljeni desktop), pa promjena ovdje
+   NE MOŽE pokvariti desktop — i obrnuto.
+
+   ZAKLJUČANE DIMENZIJE (ne mijenjati bez razloga — konzistentnost preko
+   svih ekrana je bila izričit zahtjev):
+     naslov ekrana .......... 30px / 700
+     naslov ćelije .......... 16px / 400   (kartice: 16px / 600)
+     podnaslov .............. 13.5px
+     vrijednost desno ....... 16px
+     status-pločica ......... 12.5px
+     sekcijski naslov ....... 13px
+   ═══════════════════════════════════════════════════════════════════ */
+
+.mui {
+    /* Svjetlosna shema iOS grupiranih tabela */
+    --mui-grp: #f2f2f7;
+    --mui-cell: #ffffff;
+    --mui-sep: rgba(60, 60, 67, 0.29);
+    --mui-label: #1c1c1e;
+    --mui-label2: rgba(60, 60, 67, 0.6);
+    --mui-label3: rgba(60, 60, 67, 0.3);
+    --mui-blue: #007aff;
+    --mui-blue-t: #0067da;
+    --mui-green: #34c759;
+    --mui-green-t: #248a3d;
+    --mui-red: #ff3b30;
+    --mui-red-t: #d70015;
+    --mui-orange: #ff9500;
+    --mui-orange-t: #b5610a;
+    --mui-purple: #af52de;
+    --mui-purple-t: #8a35c0;
+
+    font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', 'Helvetica Neue', 'Segoe UI', Roboto, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    color: var(--mui-label);
+}
+
+.mui-num { font-variant-numeric: tabular-nums; font-feature-settings: 'tnum' 1; }
+
+/* ── Veliki naslov ekrana (iOS large title) ─────────────────────────── */
+.mui-large { padding: 4px 4px 12px; }
+.mui-large h1 { margin: 0; font-size: 30px; font-weight: 700; letter-spacing: -0.025em; line-height: 1.08; }
+.mui-large p {
+    margin: 6px 0 0; font-size: 14.5px; color: var(--mui-label2); letter-spacing: -0.01em;
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+}
+
+/* ── Sekcijski naslov ───────────────────────────────────────────────── */
+.mui-shd {
+    font-size: 13px; color: var(--mui-label2); letter-spacing: -0.01em;
+    padding: 22px 16px 7px; display: flex; justify-content: space-between; align-items: baseline; gap: 10px;
+}
+.mui-shd:first-child { padding-top: 6px; }
+.mui-shd-act { color: var(--mui-blue); font-size: 14px; cursor: pointer; background: none; border: none; font-family: inherit; padding: 0; }
+
+/* ── Grupirana lista (iOS inset) ────────────────────────────────────── */
+.mui-list {
+    background: var(--mui-cell); border-radius: 14px; overflow: hidden;
+    box-shadow: 0 1px 2px rgba(20, 30, 60, 0.05), 0 12px 28px -18px rgba(20, 30, 60, 0.22);
+}
+.mui-item { position: relative; }
+/* Hairline razdjelnik uvučen do teksta — kao iOS */
+.mui-item + .mui-item::before {
+    content: ''; position: absolute; top: 0; left: 16px; right: 0; height: 0.5px;
+    background: var(--mui-sep); transform: scaleY(0.6);
+}
+.mui-list.mui-lead .mui-item + .mui-item::before { left: 60px; }
+
+.mui-cell {
+    min-height: 47px; padding: 12px 16px; display: flex; align-items: center; gap: 12px;
+    background: var(--mui-cell); width: 100%; text-align: left; border: none; font-family: inherit;
+}
+.mui-cell.mui-tap { cursor: pointer; }
+.mui-cell.mui-tap:active { background: var(--mui-grp); }
+.mui-cell.mui-top { align-items: flex-start; }
+
+.mui-ctext { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.mui-ctitle {
+    font-size: 16px; font-weight: 400; letter-spacing: -0.022em; color: var(--mui-label);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.mui-csub {
+    font-size: 13.5px; color: var(--mui-label2); letter-spacing: -0.01em;
+    display: flex; align-items: center; gap: 7px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.mui-cval { flex: 0 0 auto; font-size: 16px; letter-spacing: -0.024em; color: var(--mui-label2); white-space: nowrap; }
+.mui-cval.mui-strong { color: var(--mui-label); font-weight: 590; }
+.mui-chev { flex: 0 0 auto; color: var(--mui-label3); width: 8px; height: 14px; margin-left: 2px; }
+
+/* Precrtano kad je gotovo */
+.mui-cell.mui-done .mui-ctitle {
+    color: var(--mui-label2); text-decoration: line-through; text-decoration-color: var(--mui-label3);
+}
+
+/* ── Status-pločica ─────────────────────────────────────────────────── */
+.mui-pill {
+    display: inline-flex; align-items: center; font-size: 12.5px; font-weight: 500;
+    padding: 2.5px 9px; border-radius: 7px; letter-spacing: -0.01em; flex: 0 0 auto;
+    background: rgba(120, 120, 128, 0.16); color: var(--mui-label2);
+}
+.mui-pill.blue { background: rgba(0, 122, 255, 0.13); color: var(--mui-blue-t); }
+.mui-pill.green { background: rgba(52, 199, 89, 0.2); color: var(--mui-green-t); }
+.mui-pill.orange { background: rgba(255, 149, 0, 0.18); color: var(--mui-orange-t); }
+.mui-pill.purple { background: rgba(175, 82, 222, 0.15); color: var(--mui-purple-t); }
+.mui-pill.red { background: rgba(255, 59, 48, 0.14); color: var(--mui-red-t); }
+.mui-dim { color: var(--mui-label3); }
+
+/* Tačka statusa (materijali) */
+.mui-dot { width: 9px; height: 9px; border-radius: 50%; flex: 0 0 auto; background: var(--mui-label3); }
+.mui-dot.need { background: var(--mui-red); }
+.mui-dot.ord { background: var(--mui-orange); }
+.mui-dot.rdy { background: var(--mui-green); }
+
+/* ── Avatar / ikonska pločica ───────────────────────────────────────── */
+.mui-av {
+    width: 36px; height: 36px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+    font-size: 13px; font-weight: 640; letter-spacing: -0.02em; flex: 0 0 auto;
+    background: rgba(120, 120, 128, 0.15); color: var(--mui-label2);
+}
+.mui-av.blue { background: rgba(0, 122, 255, 0.13); color: var(--mui-blue-t); }
+.mui-av.green { background: rgba(52, 199, 89, 0.2); color: var(--mui-green-t); }
+.mui-av.orange { background: rgba(255, 149, 0, 0.18); color: var(--mui-orange-t); }
+.mui-av.purple { background: rgba(175, 82, 222, 0.15); color: var(--mui-purple-t); }
+
+.mui-ic {
+    width: 40px; height: 40px; border-radius: 11px; flex: 0 0 auto;
+    display: flex; align-items: center; justify-content: center;
+    background: rgba(120, 120, 128, 0.14); color: var(--mui-label2);
+}
+.mui-ic.blue { background: rgba(0, 122, 255, 0.12); color: var(--mui-blue); }
+.mui-ic.green { background: rgba(52, 199, 89, 0.18); color: var(--mui-green-t); }
+.mui-ic.orange { background: rgba(255, 149, 0, 0.17); color: var(--mui-orange-t); }
+.mui-ic.purple { background: rgba(175, 82, 222, 0.14); color: var(--mui-purple-t); }
+
+/* ── Entitetska kartica (nalozi, narudžbe) — svaka odvojena ─────────── */
+.mui-elist { display: flex; flex-direction: column; gap: 12px; }
+.mui-ecard {
+    background: var(--mui-cell); border-radius: 16px; padding: 14px 15px;
+    box-shadow: 0 1px 2px rgba(20, 30, 60, 0.05), 0 14px 30px -18px rgba(20, 30, 60, 0.28);
+    cursor: pointer; transition: transform 0.1s;
+}
+.mui-ecard:active { transform: scale(0.99); }
+.mui-ec-head { display: flex; align-items: center; gap: 12px; }
+.mui-ec-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 5px; }
+.mui-ec-name {
+    font-size: 16px; font-weight: 600; letter-spacing: -0.025em; color: var(--mui-label);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.mui-ec-meta {
+    display: flex; align-items: center; gap: 7px; font-size: 13px; color: var(--mui-label2);
+    letter-spacing: -0.01em; white-space: nowrap; overflow: hidden;
+}
+.mui-ec-val { flex: 0 0 auto; font-size: 16px; font-weight: 640; letter-spacing: -0.03em; color: var(--mui-label); }
+.mui-ec-prog { display: flex; align-items: center; gap: 10px; margin-top: 14px; }
+.mui-ec-foot { display: flex; align-items: center; gap: 10px; margin-top: 14px; }
+
+/* ── Traka napretka ─────────────────────────────────────────────────── */
+.mui-bar { flex: 1; height: 7px; border-radius: 4px; background: rgba(118, 118, 128, 0.16); overflow: hidden; }
+.mui-bar > i { display: block; height: 100%; border-radius: 4px; background: linear-gradient(90deg, #0a84ff, #409cff); }
+.mui-bar > i.green { background: linear-gradient(90deg, #2bb24c, #34c759); }
+.mui-bar > i.orange { background: linear-gradient(90deg, #ff9500, #ffb340); }
+.mui-barl { font-size: 12.5px; color: var(--mui-label2); letter-spacing: -0.01em; white-space: nowrap; flex: 0 0 auto; }
+.mui-barl b { color: var(--mui-label); font-weight: 590; }
+.mui-barl.soon { color: var(--mui-orange-t); }
+.mui-barl.late { color: var(--mui-red-t); }
+.mui-prow {
+    display: flex; align-items: center; gap: 10px; padding: 13px 16px;
+    background: var(--mui-cell); border-radius: 14px; box-shadow: 0 1px 2px rgba(20, 30, 60, 0.05);
+}
+
+/* ── Hero (gradijent) — napredak, ne novac ──────────────────────────── */
+.mui-hero {
+    background: linear-gradient(135deg, #0a84ff, #5e5ce6); border-radius: 18px; padding: 18px 19px;
+    color: #fff; box-shadow: 0 14px 32px -14px rgba(30, 70, 190, 0.55);
+    display: flex; flex-direction: column;
+}
+.mui-hero.green { background: linear-gradient(135deg, #2bb24c, #1f9d8f); box-shadow: 0 14px 32px -14px rgba(20, 140, 90, 0.5); }
+.mui-hero-k { font-size: 11.5px; font-weight: 600; letter-spacing: 0.05em; color: rgba(255, 255, 255, 0.8); text-transform: uppercase; }
+.mui-hero-row { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; margin-top: 5px; }
+.mui-hero-v { font-size: 29px; font-weight: 750; letter-spacing: -0.035em; line-height: 1; }
+.mui-hero-v small { font-size: 19px; font-weight: 600; letter-spacing: -0.02em; }
+.mui-hero-chip {
+    flex: 0 0 auto; background: rgba(255, 255, 255, 0.22); border-radius: 9px;
+    padding: 5px 11px; font-size: 12.5px; font-weight: 590; letter-spacing: -0.01em;
+}
+.mui-hero-bar { height: 7px; border-radius: 4px; background: rgba(255, 255, 255, 0.28); overflow: hidden; margin-top: 15px; }
+.mui-hero-bar > i { display: block; height: 100%; border-radius: 4px; background: #fff; }
+
+/* ── Segmentna kontrola ─────────────────────────────────────────────── */
+.mui-seg { display: flex; background: rgba(118, 118, 128, 0.14); border-radius: 9px; padding: 2px; margin: 16px 0 4px; }
+.mui-seg button {
+    flex: 1; border: none; background: none; padding: 7px 4px; border-radius: 7px;
+    font-size: 13.5px; font-weight: 500; letter-spacing: -0.02em; color: var(--mui-label);
+    cursor: pointer; font-family: inherit; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.mui-seg button.on { background: var(--mui-cell); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12); font-weight: 590; }
+
+/* ── Checkbox (procesi, prijem, zadaci) ─────────────────────────────── */
+.mui-cbx {
+    width: 26px; height: 26px; border-radius: 50%; border: 1.8px solid var(--mui-label3); flex: 0 0 auto;
+    display: flex; align-items: center; justify-content: center; background: none; cursor: pointer;
+    transition: background 0.15s, border-color 0.15s; padding: 0;
+}
+.mui-cbx > svg { width: 15px; height: 15px; color: #fff; opacity: 0; }
+.mui-cbx.on { background: var(--mui-green); border-color: var(--mui-green); }
+.mui-cbx.on > svg { opacity: 1; }
+.mui-cbx.blue.on { background: var(--mui-blue); border-color: var(--mui-blue); }
+.mui-cbx:disabled { opacity: 0.5; cursor: default; }
+.mui-cbx.sm { width: 21px; height: 21px; border-width: 1.6px; }
+.mui-cbx.sm > svg { width: 12px; height: 12px; }
+
+/* ── Dugmad ─────────────────────────────────────────────────────────── */
+.mui-btn {
+    display: flex; align-items: center; justify-content: center; gap: 8px; height: 50px;
+    border-radius: 13px; border: none; font-size: 17px; font-weight: 590; width: 100%;
+    letter-spacing: -0.022em; cursor: pointer; font-family: inherit; transition: transform 0.1s, opacity 0.15s;
+}
+.mui-btn:active { transform: scale(0.98); opacity: 0.85; }
+.mui-btn:disabled { opacity: 0.5; cursor: default; transform: none; }
+.mui-btn.filled { background: var(--mui-blue); color: #fff; }
+.mui-btn.tinted { background: rgba(0, 122, 255, 0.13); color: var(--mui-blue); }
+.mui-btn.gfilled { background: var(--mui-green); color: #fff; }
+.mui-btn.danger { background: rgba(255, 59, 48, 0.13); color: var(--mui-red-t); }
+
+/* Red akcija (Pokreni / Pauziraj / Završi) */
+.mui-arow { display: flex; gap: 9px; margin-top: 14px; }
+.mui-abtn {
+    flex: 1; height: 46px; border-radius: 13px; border: none; font-size: 15.5px; font-weight: 590;
+    letter-spacing: -0.02em; cursor: pointer; font-family: inherit;
+    display: flex; align-items: center; justify-content: center; gap: 6px; transition: transform 0.1s;
+}
+.mui-abtn:active { transform: scale(0.97); }
+.mui-abtn:disabled { opacity: 0.5; cursor: default; transform: none; }
+.mui-abtn.blue { background: var(--mui-blue); color: #fff; }
+.mui-abtn.tint { background: rgba(0, 122, 255, 0.13); color: var(--mui-blue); }
+.mui-abtn.green { background: var(--mui-green); color: #fff; }
+.mui-abtn.gtint { background: rgba(52, 199, 89, 0.18); color: var(--mui-green-t); }
+.mui-abtn.otint { background: rgba(255, 149, 0, 0.18); color: var(--mui-orange-t); }
+.mui-abtn.rtint { background: rgba(255, 59, 48, 0.13); color: var(--mui-red-t); }
+
+/* Mala akcija u redu kartice */
+.mui-actbtn {
+    flex: 0 0 auto; height: 32px; padding: 0 14px; border-radius: 9px; border: none;
+    font-size: 14px; font-weight: 500; letter-spacing: -0.02em; cursor: pointer; font-family: inherit;
+    background: rgba(0, 122, 255, 0.13); color: var(--mui-blue);
+}
+.mui-actbtn.green { background: rgba(52, 199, 89, 0.18); color: var(--mui-green-t); }
+.mui-actbtn:active { transform: scale(0.97); }
+
+/* ── Filter-čipovi (vodoravno klizanje) ─────────────────────────────── */
+.mui-chiprail { display: flex; gap: 8px; overflow-x: auto; padding: 2px 2px 10px; scrollbar-width: none; }
+.mui-chiprail::-webkit-scrollbar { display: none; }
+.mui-chip {
+    flex: 0 0 auto; padding: 7px 14px; border-radius: 999px; border: none; cursor: pointer; font-family: inherit;
+    background: var(--mui-cell); color: var(--mui-label2); font-size: 13.5px; font-weight: 500; letter-spacing: -0.01em;
+    box-shadow: 0 1px 2px rgba(20, 30, 60, 0.06); white-space: nowrap;
+}
+.mui-chip.on { background: var(--mui-blue); color: #fff; }
+.mui-chip-n { opacity: 0.65; margin-left: 5px; }
+
+/* ── Pretraga ───────────────────────────────────────────────────────── */
+.mui-search {
+    display: flex; align-items: center; gap: 8px; height: 38px; padding: 0 12px;
+    background: rgba(118, 118, 128, 0.12); border-radius: 11px; color: var(--mui-label2);
+}
+.mui-search input {
+    flex: 1; min-width: 0; border: none; background: none; outline: none; font-family: inherit;
+    font-size: 16px; letter-spacing: -0.02em; color: var(--mui-label);
+}
+.mui-search input::placeholder { color: var(--mui-label3); }
+
+/* ── Bottom sheet ───────────────────────────────────────────────────── */
+.mui-sheet-wrap { position: fixed; inset: 0; z-index: 1200; display: flex; flex-direction: column; justify-content: flex-end; }
+.mui-sheet-bg { position: absolute; inset: 0; background: rgba(0, 0, 0, 0.35); animation: mui-fade 0.2s ease; }
+.mui-sheet {
+    position: relative; background: var(--mui-grp); border-radius: 22px 22px 0 0;
+    padding: 8px 16px calc(28px + env(safe-area-inset-bottom, 0px));
+    max-height: 88vh; overflow-y: auto; animation: mui-up 0.3s cubic-bezier(0.32, 0.72, 0, 1);
+}
+.mui-grab { width: 36px; height: 5px; border-radius: 3px; background: var(--mui-label3); margin: 0 auto 14px; }
+.mui-sheet h3 { margin: 0 0 4px; font-size: 17px; font-weight: 640; letter-spacing: -0.02em; text-align: center; }
+@keyframes mui-up { from { transform: translateY(100%); } to { transform: none; } }
+@keyframes mui-fade { from { opacity: 0; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) {
+    .mui-sheet, .mui-sheet-bg { animation: none; }
+}
+
+/* ── Polja u sheetu ─────────────────────────────────────────────────── */
+.mui-field { display: flex; align-items: center; gap: 12px; padding: 12px 16px; background: var(--mui-cell); }
+.mui-field label { flex: 0 0 40%; font-size: 16px; letter-spacing: -0.022em; }
+.mui-field input, .mui-field select, .mui-field textarea {
+    flex: 1; min-width: 0; border: none; background: none; outline: none; font-family: inherit;
+    font-size: 16px; letter-spacing: -0.022em; color: var(--mui-label); text-align: right;
+}
+.mui-field select { text-align: left; text-align-last: right; }
+
+/* ── Prazno stanje ──────────────────────────────────────────────────── */
+.mui-empty { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 56px 24px; text-align: center; }
+.mui-empty-t { font-size: 17px; font-weight: 590; letter-spacing: -0.02em; }
+.mui-empty-s { font-size: 14px; color: var(--mui-label2); letter-spacing: -0.01em; line-height: 1.45; }
+
+/* ── Rasporedni pomoćnici ───────────────────────────────────────────── */
+.mui-stack { display: flex; flex-direction: column; }
+.mui-gap10 { gap: 10px; }
+.mui-gap14 { gap: 14px; }
+.mui-pt14 { padding-top: 14px; }
+.mui-spacer { flex: 1; }

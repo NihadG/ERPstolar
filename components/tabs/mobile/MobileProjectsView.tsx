@@ -1,11 +1,38 @@
 'use client';
 
-import React, { useState, useMemo } from 'react';
-import type { Project, Material, WorkOrder, Offer, WorkLog, Product, ProductMaterial } from '@/lib/types';
-import { PROJECT_STATUSES } from '@/lib/types';
-import { projectStatusRank, countActiveWorkOrdersByProject, compareProjectsByActivity } from '@/lib/utils';
+// ════════════════════════════════════════════════════════════════════
+// PROJEKTI — mobilni prikaz
+//
+// Tri nivoa, svaki svoj ekran (umjesto gnijezda harmonika):
+//   1) lista projekata  →  2) proizvodi projekta  →  3) detalj proizvoda
+//
+// Novac se NE ističe po proizvodu; vrijednost projekta stoji u listi i u
+// punom pregledu („Pregled projekta"), gdje mu je i mjesto.
+//
+// Sve izmjene idu kroz callbackove roditelja (ProjectsTab) — modali za unos
+// proizvoda i materijala su zajednički s postojećim tokom.
+// ════════════════════════════════════════════════════════════════════
+
+import React, { useMemo, useState } from 'react';
+import {
+    Plus, ArrowLeft, ArrowUpDown, LayoutDashboard, Pencil, Trash2,
+    MessageSquareText, ListTodo, Package,
+} from 'lucide-react';
+import type {
+    Project, Product, Material, ProductMaterial, WorkOrder, Offer, WorkLog,
+} from '@/lib/types';
+import { formatCurrency } from '@/lib/utils';
 import { sortProductsByName } from '@/lib/sortProducts';
-import { summarizeNotes, summarizeProjectNotes } from '@/lib/productNotes';
+import { projectProfitBreakdown } from '@/lib/projectProfit';
+import { summarizeProjectNotes } from '@/lib/productNotes';
+import MobileProductDetail from './MobileProductDetail';
+import {
+    MLarge, MSearch, MChips, MSection, MList, MItem, MCell, MText, MValue,
+    MPill, MAvatar, MEmpty, MButton, MSheet, MOption,
+} from './MobileUI';
+import { useMobileSort, sortLabel, type SortKey, type GroupKey } from './useMobileSort';
+import './MobileUI.css';
+import './MobileWorkOrderDetail.css';
 
 interface MobileProjectsViewProps {
     projects: Project[];
@@ -17,11 +44,9 @@ interface MobileProjectsViewProps {
     showToast: (message: string, type: 'success' | 'error' | 'info') => void;
     onNavigateToTasks?: (projectId: string) => void;
 
-    // Explicitly passing handlers from parent to keep logic centralized
     onOpenProjectModal: (project?: Project) => void;
     onDeleteProject: (projectId: string) => void;
 
-    // Product & Material Handlers
     onOpenProductModal: (projectId: string, product?: Product) => void;
     onDeleteProduct: (productId: string) => void;
     /** Pitanja/napomene — bez productId = sva pitanja projekta, s productId = skrol na proizvod. */
@@ -35,1289 +60,293 @@ interface MobileProjectsViewProps {
     onToggleHidden?: (project: Project) => void;
     /** Otvara puni pregled projekta (full-screen overlay). */
     onOpenOverview?: (project: Project) => void;
+    /** Krojenje ploča za proizvod (CutlistModal). */
+    onOpenCutlist?: (product: Product) => void;
 }
 
+const statusTone = (s?: string) =>
+    s === 'Završeno' ? 'gray'
+        : s === 'U proizvodnji' ? 'blue'
+            : s === 'Odobreno' ? 'green'
+                : s === 'Ponuđeno' ? 'orange' : 'gray';
+
+const productTone = (s?: string) =>
+    s === 'Završeno' || s === 'Spremno' ? 'green'
+        : s === 'U proizvodnji' ? 'blue'
+            : s === 'U montaži' ? 'purple' : 'gray';
+
+/** Inicijali za avatar (najviše dva slova). */
+const initials = (name: string) =>
+    name.split(/\s+/).filter(Boolean).slice(0, 2).map(w => w[0]).join('').toUpperCase() || '—';
+
 export default function MobileProjectsView({
-    projects,
-    materials,
-    workOrders,
-    onNavigateToTasks,
-    onOpenProjectModal,
-    onDeleteProject,
-    onOpenProductModal,
-    onDeleteProduct,
-    onOpenNotes,
-    onOpenMaterialModal,
-    onDeleteMaterial,
-    onEditMaterial,
-    onEditGlass,
-    onEditAluDoor,
-    onUpdateMaterial,
-    onToggleHidden,
-    onOpenOverview
+    projects, workOrders, workLogs = [],
+    onNavigateToTasks, onOpenProjectModal, onDeleteProject,
+    onOpenProductModal, onDeleteProduct, onOpenNotes,
+    onOpenMaterialModal, onDeleteMaterial, onEditMaterial,
+    onToggleHidden, onOpenOverview, onOpenCutlist,
 }: MobileProjectsViewProps) {
-    const [searchTerm, setSearchTerm] = useState('');
-    const [statusFilter, setStatusFilter] = useState('');
-    const [expandedProjectId, setExpandedProjectId] = useState<string | null>(null);
-    const [expandedProductId, setExpandedProductId] = useState<string | null>(null);
-    const [showHidden, setShowHidden] = useState(false);
+    const [search, setSearch] = useState('');
+    const [status, setStatus] = useState('');
+    const [openProjectId, setOpenProjectId] = useState<string | null>(null);
+    const [openProductId, setOpenProductId] = useState<string | null>(null);
+    const sort = useMobileSort('projekti', 'datum');
 
-    // Quick edit mode for materials
-    const [quickEditMode, setQuickEditMode] = useState<string | null>(null); // Product_ID in quick edit mode
-    const [editingMaterialValues, setEditingMaterialValues] = useState<Record<string, { qty: number; price: number }>>({});
+    const counts = useMemo(() => {
+        const c: Record<string, number> = {};
+        for (const p of projects) c[p.Status] = (c[p.Status] || 0) + 1;
+        return c;
+    }, [projects]);
 
-    // Focus Mode: when a project is expanded, only show that project
-    const isInFocusMode = expandedProjectId !== null;
-    const isInProductFocusMode = expandedProductId !== null;
+    // Vrijednost projekta — ISTA formula kao desktop (lib/projectProfit).
+    // Keširano po projektu: lista može imati desetine redova.
+    const revenueOf = useMemo(() => {
+        const cache = new Map<string, number>();
+        return (projectId: string) => {
+            const hit = cache.get(projectId);
+            if (hit !== undefined) return hit;
+            const fin = projectProfitBreakdown({ projectId, workOrders, workLogs });
+            cache.set(projectId, fin.revenue);
+            return fin.revenue;
+        };
+    }, [workOrders, workLogs]);
 
-    function toggleProject(projectId: string, e: React.MouseEvent) {
-        if ((e.target as HTMLElement).closest('button')) return;
-        if (expandedProjectId === projectId) {
-            // Collapse project and reset product
-            setExpandedProjectId(null);
-            setExpandedProductId(null);
-        } else {
-            // Expand this project, collapse any expanded product
-            setExpandedProjectId(projectId);
-            setExpandedProductId(null);
-        }
-    }
-
-    function toggleProduct(productId: string, e: React.MouseEvent) {
-        e.stopPropagation();
-        if ((e.target as HTMLElement).closest('button')) return;
-
-        // Toggle single product (focus mode for products)
-        setExpandedProductId(prev => prev === productId ? null : productId);
-    }
-
-    function exitFocusMode() {
-        setExpandedProjectId(null);
-        setExpandedProductId(null);
-    }
-
-    function exitProductFocusMode() {
-        setExpandedProductId(null);
-    }
-
-    // Helper to determine edit action
-    function handleMaterialEdit(productId: string, mat: ProductMaterial) {
-        const isGlass = mat.glassItems && mat.glassItems.length > 0;
-        const isAluDoor = mat.aluDoorItems && mat.aluDoorItems.length > 0;
-
-        if (isGlass) {
-            onEditGlass(productId, mat);
-        } else if (isAluDoor) {
-            onEditAluDoor(productId, mat);
-        } else {
-            onEditMaterial(mat);
-        }
-    }
-
-    // Prirodni + hijerarhijski poredak naziva (Poz 1 < Poz 1.1 < Poz 2 < Poz 10, E1 < E2 < E10) —
-    // zajednički util, isti kao na desktopu (OffersTab) i data-sloju.
-    function sortProductsByPosition(products: Product[]): Product[] {
-        return sortProductsByName(products, p => p.Name || '');
-    }
-
-    // Quick Edit Functions for Mobile
-    function toggleQuickEdit(productId: string) {
-        if (quickEditMode === productId) {
-            // Exit quick edit mode
-            setQuickEditMode(null);
-            setEditingMaterialValues({});
-        } else {
-            // Enter quick edit mode
-            setQuickEditMode(productId);
-            // Initialize values for all materials in this product
-            const product = projects.flatMap(p => p.products || []).find(prod => prod.Product_ID === productId);
-            if (product?.materials) {
-                const initialValues: Record<string, { qty: number; price: number }> = {};
-                product.materials.forEach(mat => {
-                    initialValues[mat.ID] = {
-                        qty: mat.Quantity,
-                        price: mat.Unit_Price
-                    };
-                });
-                setEditingMaterialValues(initialValues);
-            }
-        }
-    }
-
-    function handleQuickEditChange(materialId: string, field: 'qty' | 'price', value: string) {
-        const numValue = parseFloat(value) || 0;
-        setEditingMaterialValues(prev => ({
-            ...prev,
-            [materialId]: {
-                ...prev[materialId],
-                [field]: numValue
-            }
-        }));
-    }
-
-    async function saveQuickEdit(materialId: string) {
-        const values = editingMaterialValues[materialId];
-        if (!values) return;
-
-        // Find the original material to check if values changed
-        const material = projects
-            .flatMap(p => p.products || [])
-            .flatMap(prod => prod.materials || [])
-            .find(m => m.ID === materialId);
-
-        if (!material) return;
-
-        // Only save if changed
-        if (values.qty === material.Quantity && values.price === material.Unit_Price) {
-            return;
-        }
-
-        await onUpdateMaterial(materialId, {
-            Quantity: values.qty,
-            Unit_Price: values.price,
-            Total_Price: values.qty * values.price
+    const filtered = useMemo(() => {
+        const q = search.trim().toLowerCase();
+        const list = projects.filter(p => {
+            const matchQ = !q
+                || p.Name?.toLowerCase().includes(q)
+                || p.Client_Name?.toLowerCase().includes(q);
+            return matchQ && (!status || p.Status === status);
         });
-    }
-
-    const hiddenCount = projects.filter(p => p.Hidden).length;
-
-    const filteredProjects = useMemo(() => {
-        let result = projects.filter(project => {
-            // Hide hidden projects unless showHidden is on
-            if (!showHidden && project.Hidden) return false;
-            if (showHidden && !project.Hidden) return false;
-
-            const term = searchTerm?.toLowerCase() || '';
-            const matchesSearch =
-                (project.Client_Name?.toLowerCase() || '').includes(term) ||
-                (project.Name?.toLowerCase() || '').includes(term) ||
-                (project.Address?.toLowerCase() || '').includes(term);
-            const matchesStatus = !statusFilter || project.Status === statusFilter;
-            return matchesSearch && matchesStatus;
+        return sort.apply(list, {
+            naziv: p => (p.Name || p.Client_Name || '').toLowerCase(),
+            datum: p => -(p.Created_Date ? new Date(p.Created_Date).getTime() : 0),
+            vrijednost: p => -revenueOf(p.Project_ID),
+            rok: p => (p.Deadline ? new Date(p.Deadline).getTime() : Number.MAX_SAFE_INTEGER),
+            status: p => p.Status,
         });
+    }, [projects, search, status, sort, revenueOf]);
 
-        // Focus Mode: only show expanded project
-        if (isInFocusMode) {
-            result = result.filter(p => p.Project_ID === expandedProjectId);
-        }
+    const groups = useMemo(() => sort.group(filtered, {
+        status: p => p.Status,
+        klijent: p => p.Client_Name || 'Bez klijenta',
+    }), [filtered, sort]);
 
-        // Mobilni je ravna lista (bez grupa po statusu kao desktop), pa redoslijed
-        // mora nositi sortiranje: U proizvodnji → Odobreno → Ponuđeno → ostalo,
-        // a unutar istog statusa projekat s najviše naloga „U toku" ide prvi.
-        const activeOrderCounts = countActiveWorkOrdersByProject(workOrders);
-        return [...result].sort((a, b) =>
-            projectStatusRank(a.Status) - projectStatusRank(b.Status) ||
-            compareProjectsByActivity(a, b, activeOrderCounts)
+    // Svjež projekt/proizvod iz propsa — prikaz prati upis nakon onRefresh.
+    const openProject = openProjectId ? projects.find(p => p.Project_ID === openProjectId) : null;
+    const openProduct = openProject && openProductId
+        ? (openProject.products || []).find(p => p.Product_ID === openProductId)
+        : null;
+
+    // ── Ekran 3: detalj proizvoda ───────────────────────────────────
+    if (openProject && openProduct) {
+        return (
+            <MobileProductDetail
+                project={openProject}
+                product={openProduct}
+                onClose={() => setOpenProductId(null)}
+                onEditProduct={(projectId, product) => onOpenProductModal(projectId, product)}
+                onDeleteProduct={onDeleteProduct}
+                onAddMaterial={onOpenMaterialModal}
+                onEditMaterial={(_productId, material) => onEditMaterial(material)}
+                onDeleteMaterial={onDeleteMaterial}
+                onOpenNotes={onOpenNotes}
+                onOpenCutlist={onOpenCutlist}
+            />
         );
-    }, [projects, workOrders, searchTerm, statusFilter, isInFocusMode, expandedProjectId, showHidden]);
+    }
 
-    const getStatusColor = (status: string) => {
-        switch (status) {
-            case 'Nacrt': return { bg: '#f3f4f6', color: '#6b7280' };
-            case 'Ponuđeno': return { bg: '#fef3c7', color: '#d97706' };
-            case 'Odobreno': return { bg: '#dbeafe', color: '#2563eb' };
-            case 'U proizvodnji': return { bg: '#ede9fe', color: '#7c3aed' };
-            case 'Završeno': return { bg: '#dcfce7', color: '#15803d' };
-            case 'Otkazano': return { bg: '#fee2e2', color: '#dc2626' };
-            default: return { bg: '#f3f4f6', color: '#6b7280' };
-        }
+    // ── Ekran 2: proizvodi projekta ─────────────────────────────────
+    if (openProject) {
+        const products = sortProductsByName(openProject.products || [], p => p.Name);
+        const notes = summarizeProjectNotes(openProject.products || []);
+        return (
+            <div className="mui">
+                <header className="mwd-nav mui-subnav">
+                    <button type="button" className="mwd-back" onClick={() => setOpenProjectId(null)}>
+                        <ArrowLeft size={21} strokeWidth={2.3} /> Projekti
+                    </button>
+                    <div className="mwd-nav-actions">
+                        <button type="button" className="mwd-navbtn" onClick={() => onOpenProjectModal(openProject)} aria-label="Uredi projekat">
+                            <Pencil size={18} />
+                        </button>
+                        <button type="button" className="mwd-navbtn danger"
+                            onClick={() => { onDeleteProject(openProject.Project_ID); setOpenProjectId(null); }} aria-label="Obriši projekat">
+                            <Trash2 size={19} />
+                        </button>
+                    </div>
+                </header>
+
+                <MLarge title={openProject.Name || openProject.Client_Name}>
+                    <MPill tone={statusTone(openProject.Status)}>{openProject.Status}</MPill>
+                    <span>
+                        {openProject.Name ? `${openProject.Client_Name} · ` : ''}
+                        {products.length} {products.length === 1 ? 'proizvod' : 'proizvoda'}
+                    </span>
+                </MLarge>
+
+                {onOpenOverview && (
+                    <MButton variant="filled" onClick={() => onOpenOverview(openProject)}>
+                        <LayoutDashboard size={19} /> Pregled projekta
+                    </MButton>
+                )}
+
+                <MSection
+                    title="Proizvodi"
+                    action="+ Dodaj"
+                    onAction={() => onOpenProductModal(openProject.Project_ID)}
+                />
+                {products.length === 0 ? (
+                    <MEmpty title="Nema proizvoda" sub="Dodaj prvi proizvod u ovaj projekat.">
+                        <div style={{ width: '100%', paddingTop: 14 }}>
+                            <MButton variant="filled" onClick={() => onOpenProductModal(openProject.Project_ID)}>
+                                <Plus size={19} /> Dodaj proizvod
+                            </MButton>
+                        </div>
+                    </MEmpty>
+                ) : (
+                    <MList lead>
+                        {products.map(product => {
+                            const mats = product.materials || [];
+                            // „Fali" = nije ni naručeno ni na stanju/primljeno.
+                            const need = mats.filter(m =>
+                                m.Status !== 'Primljeno' && m.Status !== 'Na stanju' && m.Status !== 'Naručeno'
+                            ).length;
+                            return (
+                                <MItem key={product.Product_ID}>
+                                    <MCell onClick={() => setOpenProductId(product.Product_ID)} chevron>
+                                        <MAvatar tone={productTone(product.Status)}><Package size={17} /></MAvatar>
+                                        <MText
+                                            title={product.Name}
+                                            sub={<>
+                                                <MPill tone={productTone(product.Status)}>{product.Status || 'Na čekanju'}</MPill>
+                                                <span>×{product.Quantity || 1} · {mats.length} {mats.length === 1 ? 'materijal' : 'materijala'}</span>
+                                            </>}
+                                        />
+                                        {need > 0 && <MPill tone="red">{need} fali</MPill>}
+                                    </MCell>
+                                </MItem>
+                            );
+                        })}
+                    </MList>
+                )}
+
+                <div className="mui-stack mui-gap10 mui-pt14">
+                    {onOpenNotes && (
+                        <MButton variant="tinted" onClick={() => onOpenNotes(openProject.Project_ID)}>
+                            <MessageSquareText size={19} />
+                            Pitanja i napomene{notes.total > 0 ? ` · ${notes.total}` : ''}
+                        </MButton>
+                    )}
+                    {onNavigateToTasks && (
+                        <MButton variant="tinted" onClick={() => onNavigateToTasks(openProject.Project_ID)}>
+                            <ListTodo size={19} /> Zadaci projekta
+                        </MButton>
+                    )}
+                    {onToggleHidden && (
+                        <MButton variant="tinted" onClick={() => onToggleHidden(openProject)}>
+                            {openProject.Hidden ? 'Vrati iz arhive' : 'Arhiviraj projekat'}
+                        </MButton>
+                    )}
+                </div>
+            </div>
+        );
+    }
+
+    // ── Ekran 1: lista projekata ────────────────────────────────────
+    const renderProject = (project: Project) => {
+        const products = project.products || [];
+        const revenue = revenueOf(project.Project_ID);
+        return (
+            <MItem key={project.Project_ID}>
+                <MCell onClick={() => setOpenProjectId(project.Project_ID)} chevron>
+                    <MAvatar tone={statusTone(project.Status)}>{initials(project.Name || project.Client_Name)}</MAvatar>
+                    <MText
+                        title={project.Name || project.Client_Name}
+                        sub={<>
+                            <MPill tone={statusTone(project.Status)}>{project.Status}</MPill>
+                            <span>
+                                {project.Name ? `${project.Client_Name} · ` : ''}
+                                {products.length} {products.length === 1 ? 'proizvod' : 'proizvoda'}
+                            </span>
+                        </>}
+                    />
+                    {revenue > 0 && <MValue strong>{formatCurrency(revenue)}</MValue>}
+                </MCell>
+            </MItem>
+        );
     };
 
-    function formatCurrency(amount: number) {
-        return (amount || 0).toFixed(2) + ' KM';
-    }
-
     return (
-        <div className="mobile-projects-view">
-            {/* Main FAB for adding projects */}
-            {!isInFocusMode && (
-                <button className="mobile-fab" onClick={() => onOpenProjectModal()}>
-                    <span className="material-icons-round">add</span>
-                </button>
-            )}
+        <div className="mui">
+            <MLarge title="Projekti">
+                {projects.length} {projects.length === 1 ? 'projekat' : 'projekata'}
+                {counts['U proizvodnji'] ? ` · ${counts['U proizvodnji']} u proizvodnji` : ''}
+            </MLarge>
 
-            {/* Mobile Toolbar */}
-            <div className="mobile-toolbar">
-                <div className="mobile-search">
-                    <span className="material-icons-round">search</span>
-                    <input
-                        type="text"
-                        placeholder="Traži projekte..."
-                        value={searchTerm}
-                        onChange={(e) => setSearchTerm(e.target.value)}
-                    />
+            <div className="mui-stack mui-gap10" style={{ paddingBottom: 4 }}>
+                <MSearch value={search} onChange={setSearch} placeholder="Traži projekat ili klijenta…" />
+                <div style={{ display: 'flex', gap: 8 }}>
+                    <button type="button" className="mui-chip" onClick={sort.open}>
+                        <ArrowUpDown size={13} style={{ verticalAlign: -2, marginRight: 5 }} />
+                        {sortLabel(sort.sortKey, sort.groupKey)}
+                    </button>
+                    <div className="mui-spacer" />
+                    <button type="button" className="mui-chip on" onClick={() => onOpenProjectModal()}>
+                        <Plus size={14} style={{ verticalAlign: -2, marginRight: 4 }} />Novi
+                    </button>
                 </div>
             </div>
 
-            {/* Filter Pills - Hidden in Focus Mode */}
-            {!isInFocusMode && (
-                <div className="filter-scroll">
-                    <button
-                        className={`filter-pill ${statusFilter === '' ? 'active' : ''}`}
-                        onClick={() => setStatusFilter('')}
-                    >
-                        Sve
-                    </button>
-                    {PROJECT_STATUSES.map(status => (
-                        <button
-                            key={status}
-                            className={`filter-pill ${statusFilter === status ? 'active' : ''}`}
-                            onClick={() => setStatusFilter(status)}
-                        >
-                            {status}
-                        </button>
-                    ))}
-                    <button
-                        className={`filter-pill archive-pill ${showHidden ? 'active' : ''}`}
-                        onClick={() => setShowHidden(!showHidden)}
-                    >
-                        <span className="material-icons-round" style={{ fontSize: '15px' }}>{showHidden ? 'inventory_2' : 'archive'}</span>
-                        Arhiva{hiddenCount > 0 ? ` (${hiddenCount})` : ''}
-                    </button>
-                </div>
-            )}
+            <MChips
+                value={status}
+                onChange={setStatus}
+                options={[
+                    { id: '', label: 'Svi', count: projects.length },
+                    ...Object.keys(counts).map(s => ({ id: s, label: s, count: counts[s] })),
+                ]}
+            />
 
-            {/* Back Button for Focus Mode */}
-            {isInFocusMode && (
-                <button className="focus-back-btn" onClick={exitFocusMode}>
-                    <span className="material-icons-round">arrow_back</span>
-                    Svi Projekti
-                </button>
-            )}
-
-            {/* Projects List */}
-            <div className="mobile-list">
-                {filteredProjects.map(project => {
-                    const statusStyle = getStatusColor(project.Status);
-                    const totalProducts = project.products?.length || 0;
-                    const isExpanded = expandedProjectId === project.Project_ID;
-
-                    return (
-                        <div
-                            key={project.Project_ID}
-                            className={`mobile-project-card ${isExpanded ? 'expanded' : ''}`}
-                            onClick={(e) => toggleProject(project.Project_ID, e)}
-                        >
-                            <div className="mp-header">
-                                <div className="mp-title-row">
-                                    <h3 className="mp-client">{project.Name || project.Client_Name}</h3>
-                                    <span
-                                        className="mp-status-badge"
-                                        style={{ backgroundColor: statusStyle.bg, color: statusStyle.color }}
-                                    >
-                                        {project.Status}
-                                    </span>
-                                </div>
-                                {project.Name && <div className="mp-subtitle">{project.Client_Name}</div>}
-                                {project.Address && <div className="mp-address">{project.Address}</div>}
-                            </div>
-
-                            <div className="mp-stats">
-                                <span className="mp-stat-item">
-                                    <span className="material-icons-round">layers</span>
-                                    {totalProducts} proizvoda
-                                </span>
-                                {onOpenOverview && (
-                                    <button
-                                        className="mp-overview-btn"
-                                        onClick={(e) => { e.stopPropagation(); onOpenOverview(project); }}
-                                        title="Pregled projekta"
-                                    >
-                                        <span className="material-icons-round">dashboard</span>
-                                        Pregled
-                                    </button>
-                                )}
-                                <span className="material-icons-round chevron">
-                                    {isExpanded ? 'expand_less' : 'expand_more'}
-                                </span>
-                            </div>
-
-                            {/* Expanded Content: Products */}
-                            {isExpanded && (
-                                <div className="mp-products-section">
-                                    {/* Back Button for Product Focus Mode */}
-                                    {isInProductFocusMode && (
-                                        <button className="focus-back-btn small" onClick={(e) => { e.stopPropagation(); exitProductFocusMode(); }}>
-                                            <span className="material-icons-round">arrow_back</span>
-                                            Svi Proizvodi
-                                        </button>
-                                    )}
-
-                                    {!isInProductFocusMode && (
-                                        <div className="label-row">
-                                            <span>Proizvodi</span>
-                                            <button
-                                                className="mobile-add-tiny-btn"
-                                                onClick={(e) => {
-                                                    e.stopPropagation();
-                                                    onOpenProductModal(project.Project_ID);
-                                                }}
-                                            >
-                                                <span className="material-icons-round">add</span>
-                                            </button>
-                                        </div>
-                                    )}
-
-                                    <div className="mp-products-list">
-                                        {sortProductsByPosition(project.products || [])
-                                            .filter(p => !isInProductFocusMode || expandedProductId === p.Product_ID)
-                                            .map((product, idx) => {
-                                                const isProdExpanded = expandedProductId === product.Product_ID;
-                                                return (
-                                                    <div
-                                                        key={idx}
-                                                        className={`mp-product-card ${isProdExpanded ? 'expanded' : ''}`}
-                                                        onClick={(e) => toggleProduct(product.Product_ID, e)}
-                                                    >
-                                                        <div className="img-ph-actions-row">
-                                                            <div className="mpp-header">
-                                                                <span className="mpp-name">{product.Name}</span>
-                                                                <span className="mpp-qty">x{product.Quantity}</span>
-                                                            </div>
-                                                            <div className="mp-prod-buttons">
-                                                                {onOpenNotes && (() => {
-                                                                    const ns = summarizeNotes(product.Questions);
-                                                                    return (
-                                                                        <button
-                                                                            className={`mini-btn notes${ns.unresolved > 0 ? ' has-open' : ''}`}
-                                                                            onClick={(e) => {
-                                                                                e.stopPropagation();
-                                                                                onOpenNotes(project.Project_ID, product.Product_ID);
-                                                                            }}
-                                                                            title="Pitanja i napomene"
-                                                                        >
-                                                                            <span className="material-icons-round">forum</span>
-                                                                            {ns.unresolved > 0 && <span className="mini-badge">{ns.unresolved}</span>}
-                                                                        </button>
-                                                                    );
-                                                                })()}
-                                                                <button
-                                                                    className="mini-btn"
-                                                                    onClick={(e) => {
-                                                                        e.stopPropagation();
-                                                                        onOpenProductModal(project.Project_ID, product);
-                                                                    }}
-                                                                >
-                                                                    <span className="material-icons-round">edit</span>
-                                                                </button>
-                                                                {isProdExpanded && (
-                                                                    <button
-                                                                        className="mini-btn danger"
-                                                                        onClick={(e) => {
-                                                                            e.stopPropagation();
-                                                                            onDeleteProduct(product.Product_ID);
-                                                                        }}
-                                                                    >
-                                                                        <span className="material-icons-round">delete</span>
-                                                                    </button>
-                                                                )}
-                                                            </div>
-                                                        </div>
-
-                                                        <div className="mpp-dims">
-                                                            {product.Width && `${product.Width}×${product.Height}×${product.Depth}mm`}
-                                                        </div>
-
-                                                        {/* Materials Summary (When Collapsed) */}
-                                                        {!isProdExpanded && (product.materials && product.materials.length > 0) && (
-                                                            <div className="mpp-materials-summary">
-                                                                <span className="material-icons-round tiny">layers</span>
-                                                                {product.materials.length} materijala
-                                                                <span className="material-icons-round tiny" style={{ marginLeft: 'auto' }}>expand_more</span>
-                                                            </div>
-                                                        )}
-
-                                                        {/* Expanded Product Content: Materials */}
-                                                        {isProdExpanded && (
-                                                            <div className="mpp-expanded-materials">
-                                                                <div className="mpp-mat-header">
-                                                                    <span>Materijali ({product.materials?.length || 0})</span>
-                                                                    <div style={{ display: 'flex', gap: '6px' }}>
-                                                                        {(product.materials?.length || 0) > 0 && (
-                                                                            <button
-                                                                                className={`mobile-quick-edit-btn ${quickEditMode === product.Product_ID ? 'active' : ''}`}
-                                                                                onClick={(e) => {
-                                                                                    e.stopPropagation();
-                                                                                    toggleQuickEdit(product.Product_ID);
-                                                                                }}
-                                                                            >
-                                                                                <span className="material-icons-round">
-                                                                                    {quickEditMode === product.Product_ID ? 'check' : 'flash_on'}
-                                                                                </span>
-                                                                            </button>
-                                                                        )}
-                                                                        <button
-                                                                            className="mobile-add-tiny-btn"
-                                                                            onClick={(e) => {
-                                                                                e.stopPropagation();
-                                                                                onOpenMaterialModal(product.Product_ID);
-                                                                            }}
-                                                                        >
-                                                                            <span className="material-icons-round">add</span>
-                                                                        </button>
-                                                                    </div>
-                                                                </div>
-
-                                                                <div className="mpp-materials-list detailed">
-                                                                    {product.materials?.map((mat, mIdx) => {
-                                                                        const isInQuickEdit = quickEditMode === product.Product_ID;
-                                                                        const editValues = editingMaterialValues[mat.ID] || { qty: mat.Quantity, price: mat.Unit_Price };
-                                                                        const isGlass = mat.glassItems && mat.glassItems.length > 0;
-                                                                        const isAluDoor = mat.aluDoorItems && mat.aluDoorItems.length > 0;
-
-                                                                        return (
-                                                                            <div key={mIdx} className={`mpp-material-item-detailed ${isInQuickEdit ? 'editing' : ''}`}>
-                                                                                <div className="m-info">
-                                                                                    <span className="m-name">{mat.Material_Name}</span>
-                                                                                    {isInQuickEdit && !isGlass && !isAluDoor ? (
-                                                                                        <div className="m-quick-edit-controls">
-                                                                                            <div className="m-edit-field">
-                                                                                                <label>Količina</label>
-                                                                                                <input
-                                                                                                    type="number"
-                                                                                                    className="mobile-quick-edit-input"
-                                                                                                    value={editValues.qty}
-                                                                                                    onChange={(e) => handleQuickEditChange(mat.ID, 'qty', e.target.value)}
-                                                                                                    onBlur={() => saveQuickEdit(mat.ID)}
-                                                                                                    step="0.01"
-                                                                                                    min="0"
-                                                                                                    onClick={(e) => e.stopPropagation()}
-                                                                                                />
-                                                                                                <span className="unit-label">{mat.Unit}</span>
-                                                                                            </div>
-                                                                                            <div className="m-edit-field">
-                                                                                                <label>Cijena</label>
-                                                                                                <input
-                                                                                                    type="number"
-                                                                                                    className="mobile-quick-edit-input"
-                                                                                                    value={editValues.price}
-                                                                                                    onChange={(e) => handleQuickEditChange(mat.ID, 'price', e.target.value)}
-                                                                                                    onBlur={() => saveQuickEdit(mat.ID)}
-                                                                                                    step="0.01"
-                                                                                                    min="0"
-                                                                                                    onClick={(e) => e.stopPropagation()}
-                                                                                                />
-                                                                                                <span className="unit-label">KM</span>
-                                                                                            </div>
-                                                                                        </div>
-                                                                                    ) : (
-                                                                                        <span className="m-detail">
-                                                                                            {mat.Quantity} {mat.Unit} × {formatCurrency(mat.Unit_Price)}
-                                                                                        </span>
-                                                                                    )}
-                                                                                    <span className="m-total">
-                                                                                        Ukupno: <strong>
-                                                                                            {isInQuickEdit && !isGlass && !isAluDoor
-                                                                                                ? formatCurrency(editValues.qty * editValues.price)
-                                                                                                : formatCurrency(mat.Total_Price || 0)
-                                                                                            }
-                                                                                        </strong>
-                                                                                    </span>
-                                                                                </div>
-                                                                                {!isInQuickEdit && (
-                                                                                    <div className="m-actions">
-                                                                                        <button
-                                                                                            className="mini-btn"
-                                                                                            onClick={(e) => {
-                                                                                                e.stopPropagation();
-                                                                                                handleMaterialEdit(product.Product_ID, mat);
-                                                                                            }}
-                                                                                        >
-                                                                                            <span className="material-icons-round">edit</span>
-                                                                                        </button>
-                                                                                        <button
-                                                                                            className="mini-btn danger"
-                                                                                            onClick={(e) => {
-                                                                                                e.stopPropagation();
-                                                                                                onDeleteMaterial(mat.ID);
-                                                                                            }}
-                                                                                        >
-                                                                                            <span className="material-icons-round">delete</span>
-                                                                                        </button>
-                                                                                    </div>
-                                                                                )}
-                                                                            </div>
-                                                                        );
-                                                                    })}
-                                                                    {(!product.materials || product.materials.length === 0) && (
-                                                                        <div className="mp-no-data">Nema materijala</div>
-                                                                    )}
-                                                                </div>
-                                                            </div>
-                                                        )}
-                                                    </div>
-                                                );
-                                            })}
-
-                                        {(!project.products || project.products.length === 0) && (
-                                            <div className="mp-no-products">Nema proizvoda</div>
-                                        )}
-                                    </div>
-                                </div>
-                            )}
-
-                            <div className="mp-actions" onClick={(e) => e.stopPropagation()}>
-                                {onOpenNotes && (() => {
-                                    const ns = summarizeProjectNotes(project.products || []);
-                                    return (
-                                        <button className={`mp-action-btn notes${ns.unresolved > 0 ? ' has-open' : ''}`}
-                                            onClick={() => onOpenNotes(project.Project_ID)} title="Pitanja i napomene">
-                                            <span className="material-icons-round">forum</span>
-                                            {ns.unresolved > 0 && <span className="mp-badge">{ns.unresolved}</span>}
-                                        </button>
-                                    );
-                                })()}
-                                {onNavigateToTasks && (
-                                    <button className="mp-action-btn" onClick={() => onNavigateToTasks(project.Project_ID)}>
-                                        <span className="material-icons-round">task_alt</span>
-                                    </button>
-                                )}
-                                <button className="mp-action-btn primary" onClick={() => onOpenProjectModal(project)}>
-                                    <span className="material-icons-round">edit</span>
-                                </button>
-                                {onToggleHidden && (
-                                    <button className={`mp-action-btn archive-action ${project.Hidden ? 'is-hidden' : ''}`} onClick={() => onToggleHidden(project)} title={project.Hidden ? 'Vrati iz arhive' : 'Arhiviraj'}>
-                                        <span className="material-icons-round">{project.Hidden ? 'unarchive' : 'archive'}</span>
-                                    </button>
-                                )}
-                                <button className="mp-action-btn danger-text" onClick={() => onDeleteProject(project.Project_ID)}>
-                                    <span className="material-icons-round">delete</span>
-                                </button>
-                            </div>
+            {filtered.length === 0 ? (
+                <MEmpty
+                    title="Nema projekata"
+                    sub={search || status ? 'Promijeni pretragu ili filter.' : 'Kreiraj prvi projekat.'}
+                >
+                    {!search && !status && (
+                        <div style={{ width: '100%', paddingTop: 14 }}>
+                            <MButton variant="filled" onClick={() => onOpenProjectModal()}>
+                                <Plus size={19} /> Novi projekat
+                            </MButton>
                         </div>
-                    );
-                })}
-
-                {filteredProjects.length === 0 && (
-                    <div className="mobile-empty-state">
-                        <span className="material-icons-round">{showHidden ? 'inventory_2' : 'folder_off'}</span>
-                        <p>{showHidden ? 'Nema arhiviranih projekata' : 'Nema pronađenih projekata'}</p>
+                    )}
+                </MEmpty>
+            ) : groups ? (
+                groups.map(g => (
+                    <div key={g.key}>
+                        <MSection title={g.key} right={<span className="mui-dim">{g.rows.length}</span>} />
+                        <MList lead>{g.rows.map(renderProject)}</MList>
                     </div>
-                )}
-            </div>
+                ))
+            ) : (
+                <MList lead>{filtered.map(renderProject)}</MList>
+            )}
 
-            <style jsx>{`
-                .mobile-projects-view {
-                    padding-bottom: 90px; /* Space for FAB */
-                    position: relative;
-                    min-height: 100%;
-                }
-
-                /* Floating Action Button */
-                .mobile-fab {
-                    position: fixed;
-                    bottom: 88px; /* iznad menu-FAB-a (bottom:24, h:56), poravnato po right:24 */
-                    right: 24px;
-                    width: 56px;
-                    height: 56px;
-                    border-radius: 28px;
-                    background: linear-gradient(135deg, #007aff 0%, #005bb5 100%);
-                    color: white;
-                    border: none;
-                    display: flex;
-                    align-items: center;
-                    justify-content: center;
-                    box-shadow: 0 8px 24px rgba(0, 122, 255, 0.4);
-                    z-index: 100;
-                    transition: transform 0.2s cubic-bezier(0.25, 0.8, 0.25, 1), box-shadow 0.2s;
-                }
-                
-                .mobile-fab:active {
-                    transform: scale(0.92);
-                    box-shadow: 0 4px 12px rgba(0, 122, 255, 0.3);
-                }
-                
-                .mobile-fab .material-icons-round {
-                    font-size: 28px;
-                }
-
-                .mobile-toolbar {
-                    display: flex;
-                    gap: 12px;
-                    margin-bottom: 16px;
-                    position: sticky;
-                    top: 0;
-                    z-index: 50;
-                    background: rgba(245, 245, 247, 0.8);
-                    backdrop-filter: blur(12px);
-                    -webkit-backdrop-filter: blur(12px);
-                    padding: 8px 0;
-                    margin-top: -8px;
-                }
-
-                .mobile-search {
-                    flex: 1;
-                    height: 48px;
-                    background: #ffffff;
-                    border-radius: 16px;
-                    display: flex;
-                    align-items: center;
-                    padding: 0 16px;
-                    box-shadow: 0 2px 12px rgba(0,0,0,0.03);
-                    border: 1px solid rgba(0,0,0,0.05);
-                }
-
-                .mobile-search .material-icons-round {
-                    color: #86868b;
-                }
-
-                .mobile-search input {
-                    border: none;
-                    background: transparent;
-                    width: 100%;
-                    height: 100%;
-                    margin-left: 10px;
-                    font-size: 16px;
-                    outline: none;
-                    color: #1d1d1f;
-                    font-weight: 500;
-                }
-                
-                .mobile-search input::placeholder {
-                    color: #86868b;
-                }
-
-                /* Focus Mode Back Button */
-                .focus-back-btn {
-                    display: flex;
-                    align-items: center;
-                    gap: 8px;
-                    padding: 12px 16px;
-                    background: rgba(0, 122, 255, 0.1);
-                    border: none;
-                    border-radius: 16px;
-                    font-size: 15px;
-                    font-weight: 600;
-                    color: #007aff;
-                    margin-bottom: 16px;
-                    transition: transform 0.2s, background 0.2s;
-                }
-                
-                .focus-back-btn:active {
-                    transform: scale(0.97);
-                    background: rgba(0, 122, 255, 0.15);
-                }
-                
-                .focus-back-btn .material-icons-round {
-                    font-size: 20px;
-                }
-                
-                .focus-back-btn.small {
-                    padding: 8px 12px;
-                    font-size: 13px;
-                    margin-bottom: 12px;
-                    border-radius: 12px;
-                }
-                
-                .focus-back-btn.small .material-icons-round {
-                    font-size: 18px;
-                }
-
-                /* Mobile Add Tiny Btn - Compact */
-                .mobile-add-tiny-btn {
-                    display: flex;
-                    align-items: center;
-                    justify-content: center;
-                    width: 32px;
-                    height: 32px;
-                    background: rgba(0, 122, 255, 0.1);
-                    color: #007aff;
-                    border: none;
-                    padding: 0;
-                    border-radius: 10px;
-                    transition: all 0.2s;
-                }
-                
-                .mobile-add-tiny-btn:active {
-                    background: rgba(0, 122, 255, 0.2);
-                    transform: scale(0.95);
-                }
-
-                .mobile-add-tiny-btn .material-icons-round {
-                    font-size: 18px;
-                }
-
-                .filter-scroll {
-                    display: flex;
-                    gap: 8px;
-                    overflow-x: auto;
-                    padding-bottom: 8px; 
-                    margin-bottom: 16px;
-                    -webkit-overflow-scrolling: touch;
-                    scrollbar-width: none;
-                }
-                
-                .filter-scroll::-webkit-scrollbar {
-                    display: none;
-                }
-
-                .filter-pill {
-                    white-space: nowrap;
-                    padding: 8px 16px;
-                    border-radius: 20px;
-                    border: 1px solid rgba(0,0,0,0.05);
-                    background: #ffffff;
-                    color: #86868b;
-                    font-size: 14px;
-                    font-weight: 600;
-                    box-shadow: 0 1px 4px rgba(0,0,0,0.02);
-                    transition: all 0.2s;
-                }
-
-                .filter-pill.active {
-                    background: #1d1d1f;
-                    color: #ffffff;
-                    border-color: #1d1d1f;
-                }
-
-                .mobile-list {
-                    display: flex;
-                    flex-direction: column;
-                    gap: 16px;
-                }
-
-                .mobile-project-card {
-                    background: #ffffff;
-                    border-radius: 24px;
-                    padding: 20px;
-                    box-shadow: 0 4px 20px rgba(0,0,0,0.04);
-                    border: 1px solid rgba(0,0,0,0.02);
-                    transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
-                }
-                
-                .mobile-project-card.expanded {
-                    border: 1px solid rgba(0, 122, 255, 0.3);
-                    box-shadow: 0 8px 30px rgba(0, 122, 255, 0.1);
-                }
-
-                .mp-header {
-                    margin-bottom: 16px;
-                }
-
-                .mp-title-row {
-                    display: flex;
-                    justify-content: space-between;
-                    align-items: flex-start;
-                    margin-bottom: 6px;
-                }
-
-                .mp-client {
-                    font-size: 20px;
-                    font-weight: 700;
-                    margin: 0;
-                    color: #1d1d1f;
-                    line-height: 1.2;
-                }
-
-                .mp-status-badge {
-                    font-size: 11px;
-                    font-weight: 700;
-                    padding: 4px 10px;
-                    border-radius: 8px;
-                    text-transform: uppercase;
-                    letter-spacing: 0.5px;
-                }
-
-                .mp-subtitle {
-                    color: #515154;
-                    font-size: 15px;
-                    font-weight: 500;
-                }
-
-                .mp-address {
-                    color: #86868b;
-                    font-size: 14px;
-                    margin-top: 4px;
-                    display: flex;
-                    align-items: center;
-                    gap: 4px;
-                }
-
-                .mp-stats {
-                    padding: 12px 16px;
-                    background: #f5f5f7;
-                    border-radius: 16px;
-                    margin-bottom: 16px;
-                    display: flex;
-                    justify-content: space-between;
-                    align-items: center;
-                }
-
-                .mp-stat-item {
-                    display: flex;
-                    align-items: center;
-                    gap: 8px;
-                    font-size: 14px;
-                    font-weight: 600;
-                    color: #1d1d1f;
-                }
-
-                .mp-overview-btn {
-                    margin-left: auto;
-                    margin-right: 12px;
-                    display: inline-flex;
-                    align-items: center;
-                    gap: 6px;
-                    padding: 7px 14px;
-                    border: none;
-                    border-radius: 999px;
-                    background: linear-gradient(135deg, #0071e3, #0a84ff);
-                    color: #ffffff;
-                    font-size: 13px;
-                    font-weight: 700;
-                    cursor: pointer;
-                    box-shadow: 0 2px 8px rgba(0, 113, 227, 0.3);
-                }
-                .mp-overview-btn:active { transform: scale(0.96); }
-                .mp-overview-btn .material-icons-round { font-size: 17px; }
-
-                .mp-stat-item .material-icons-round {
-                    font-size: 20px;
-                    color: #007aff;
-                    background: #ffffff;
-                    padding: 6px;
-                    border-radius: 10px;
-                    box-shadow: 0 2px 8px rgba(0,0,0,0.04);
-                }
-                
-                .chevron {
-                    color: #86868b;
-                    transition: transform 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
-                    background: #ffffff;
-                    border-radius: 50%;
-                    width: 32px;
-                    height: 32px;
-                    display: flex;
-                    align-items: center;
-                    justify-content: center;
-                    box-shadow: 0 2px 8px rgba(0,0,0,0.04);
-                }
-                
-                .mobile-project-card.expanded .chevron {
-                    transform: rotate(180deg);
-                    color: #007aff;
-                }
-                
-                .mp-products-section {
-                    margin-bottom: 16px;
-                    background: transparent;
-                }
-                
-                .label-row {
-                    display: flex;
-                    justify-content: space-between;
-                    align-items: center;
-                    margin-bottom: 12px;
-                    font-size: 14px;
-                    font-weight: 700;
-                    color: #1d1d1f;
-                    padding-left: 4px;
-                }
-                
-                .mp-products-list {
-                    display: flex;
-                    flex-direction: column;
-                    gap: 12px;
-                }
-                
-                .mp-product-card {
-                    background: #ffffff;
-                    border-radius: 16px;
-                    padding: 16px;
-                    border: 1px solid rgba(0,0,0,0.06);
-                    box-shadow: 0 2px 8px rgba(0,0,0,0.02);
-                    transition: all 0.2s cubic-bezier(0.25, 0.8, 0.25, 1);
-                }
-                
-                .mp-product-card.expanded {
-                    border-color: #007aff;
-                    box-shadow: 0 4px 16px rgba(0, 122, 255, 0.08);
-                }
-
-                .img-ph-actions-row {
-                    display: flex;
-                    justify-content: space-between;
-                    align-items: flex-start;
-                }
-                
-                .mpp-header {
-                    flex: 1;
-                }
-                
-                .mp-prod-buttons {
-                    display: flex;
-                    gap: 6px;
-                    margin-left: 12px;
-                }
-                
-                .mini-btn {
-                    width: 32px;
-                    height: 32px;
-                    display: flex;
-                    align-items: center;
-                    justify-content: center;
-                    border: none;
-                    background: #f5f5f7;
-                    border-radius: 10px;
-                    color: #515154;
-                    transition: all 0.2s;
-                }
-                
-                .mini-btn:active {
-                    transform: scale(0.92);
-                    background: #e5e5ea;
-                }
-
-                .mini-btn.danger {
-                    color: #ff3b30;
-                    background: rgba(255, 59, 48, 0.1);
-                }
-                
-                .mini-btn.danger:active {
-                    background: rgba(255, 59, 48, 0.2);
-                }
-
-                .mini-btn .material-icons-round {
-                    font-size: 18px;
-                }
-
-                /* Pitanja/napomene po proizvodu — badge s brojem otvorenih */
-                .mini-btn.notes { position: relative; overflow: visible; }
-                .mini-btn.notes.has-open { color: #2563eb; background: #eff6ff; }
-                .mini-badge {
-                    position: absolute; top: -5px; right: -5px;
-                    min-width: 16px; height: 16px; padding: 0 4px;
-                    border-radius: 999px; background: #ef4444; color: #fff;
-                    font-size: 10px; font-weight: 800; line-height: 16px; text-align: center;
-                    box-shadow: 0 0 0 2px #fff;
-                }
-
-                .mpp-name {
-                    display: block;
-                    font-weight: 700;
-                    color: #1d1d1f;
-                    font-size: 15px;
-                    margin-bottom: 4px;
-                }
-                
-                .mpp-qty {
-                    background: rgba(0, 122, 255, 0.1);
-                    color: #007aff;
-                    padding: 2px 8px;
-                    border-radius: 6px;
-                    font-size: 12px;
-                    font-weight: 700;
-                    display: inline-block;
-                }
-                
-                .mpp-dims {
-                    font-size: 13px;
-                    color: #86868b;
-                    margin-bottom: 12px;
-                    margin-top: 6px;
-                    font-weight: 500;
-                }
-                
-                .mpp-materials-summary {
-                    display: flex;
-                    align-items: center;
-                    gap: 6px;
-                    font-size: 13px;
-                    font-weight: 600;
-                    color: #515154;
-                    margin-top: 12px;
-                    padding: 12px;
-                    background: #f5f5f7;
-                    border-radius: 12px;
-                }
-
-                /* Expanded Materials */
-                .mpp-expanded-materials {
-                    margin-top: 16px;
-                    padding-top: 16px;
-                    border-top: 1px solid rgba(0,0,0,0.06);
-                }
-                
-                .mpp-mat-header {
-                    display: flex;
-                    justify-content: space-between;
-                    align-items: center;
-                    margin-bottom: 12px;
-                    font-size: 13px;
-                    font-weight: 700;
-                    color: #86868b;
-                }
-                
-                .mpp-materials-list.detailed {
-                    display: flex;
-                    flex-direction: column;
-                    gap: 8px;
-                }
-                
-                .mpp-material-item-detailed {
-                    display: flex;
-                    justify-content: space-between;
-                    align-items: center;
-                    padding: 12px;
-                    background: #fcfcfd;
-                    border-radius: 12px;
-                    border: 1px solid rgba(0,0,0,0.04);
-                }
-                
-                .m-info {
-                    flex: 1;
-                    font-size: 13px;
-                }
-                
-                .m-name {
-                    display: block;
-                    font-weight: 600;
-                    color: #1d1d1f;
-                    margin-bottom: 4px;
-                }
-                
-                .m-detail {
-                    display: block;
-                    color: #86868b;
-                    font-size: 12px;
-                    font-weight: 500;
-                }
-                
-                .m-total {
-                    display: block;
-                    margin-top: 4px;
-                    color: #34c759;
-                    font-size: 12px;
-                    font-weight: 600;
-                }
-                
-                .m-actions {
-                    display: flex;
-                    gap: 6px;
-                    margin-left: 8px;
-                }
-                
-                .mp-no-data, .mp-no-products {
-                    text-align: center;
-                    font-size: 14px;
-                    font-weight: 500;
-                    color: #86868b;
-                    padding: 16px;
-                    background: #f5f5f7;
-                    border-radius: 12px;
-                }
-                
-                .mp-actions {
-                    display: flex;
-                    gap: 10px;
-                    justify-content: flex-end;
-                    margin-top: 16px;
-                    padding-top: 16px;
-                    border-top: 1px solid rgba(0,0,0,0.04);
-                }
-
-                .mp-action-btn {
-                    width: 44px;
-                    height: 44px;
-                    padding: 0;
-                    border: none;
-                    background: #f5f5f7;
-                    border-radius: 14px;
-                    display: flex;
-                    align-items: center;
-                    justify-content: center;
-                    color: #515154;
-                    transition: all 0.2s cubic-bezier(0.25, 0.8, 0.25, 1);
-                }
-                
-                .mp-action-btn:active {
-                    transform: scale(0.92);
-                    background: #e5e5ea;
-                }
-
-                .mp-action-btn.notes { position: relative; overflow: visible; }
-                .mp-action-btn.notes.has-open { background: #eff6ff; color: #2563eb; }
-                .mp-badge {
-                    position: absolute; top: -3px; right: -3px;
-                    min-width: 18px; height: 18px; padding: 0 5px;
-                    border-radius: 999px; background: #ef4444; color: #fff;
-                    font-size: 11px; font-weight: 800; line-height: 18px; text-align: center;
-                    box-shadow: 0 0 0 2px #fff;
-                }
-
-                .mp-action-btn.primary {
-                    background: rgba(0, 122, 255, 0.1);
-                    color: #007aff;
-                }
-                
-                .mp-action-btn.primary:active {
-                    background: rgba(0, 122, 255, 0.2);
-                }
-
-                .mp-action-btn.danger-text {
-                    color: #ff3b30;
-                    background: rgba(255, 59, 48, 0.1);
-                }
-                
-                .mp-action-btn.danger-text:active {
-                    background: rgba(255, 59, 48, 0.2);
-                }
-
-                .mp-action-btn .material-icons-round {
-                    font-size: 22px;
-                }
-
-                /* Archive Filter Pill */
-                .filter-pill.archive-pill {
-                    display: flex;
-                    align-items: center;
-                    gap: 6px;
-                    background: #fffbeb;
-                    border-color: #fde68a;
-                    color: #92400e;
-                }
-
-                .filter-pill.archive-pill.active {
-                    background: linear-gradient(135deg, #f59e0b, #d97706);
-                    border-color: #b45309;
-                    color: #ffffff;
-                }
-
-                .filter-pill.archive-pill .material-icons-round {
-                    color: inherit;
-                }
-
-                /* Archive Action Button on Cards */
-                .mp-action-btn.archive-action {
-                    background: rgba(245, 158, 11, 0.1);
-                    color: #d97706;
-                }
-
-                .mp-action-btn.archive-action:active {
-                    background: rgba(245, 158, 11, 0.2);
-                    transform: scale(0.92);
-                }
-
-                .mp-action-btn.archive-action.is-hidden {
-                    background: rgba(5, 150, 105, 0.1);
-                    color: #059669;
-                }
-
-                .mp-action-btn.archive-action.is-hidden:active {
-                    background: rgba(5, 150, 105, 0.2);
-                }
-
-                /* Mobile Quick Edit Styles */
-                .mobile-quick-edit-btn {
-                    padding: 0;
-                    background: none;
-                    color: #ff9500;
-                    border: none;
-                    display: flex;
-                    align-items: center;
-                    justify-content: center;
-                    transition: all 0.2s;
-                }
-
-                .mobile-quick-edit-btn:active {
-                    transform: scale(0.85);
-                }
-
-                .mobile-quick-edit-btn.active {
-                    color: #34c759;
-                }
-
-                .mobile-quick-edit-btn .material-icons-round {
-                    font-size: 24px;
-                }
-
-                .mpp-material-item-detailed.editing {
-                    background: #fffcf2;
-                    border: 1px solid #ffcc00;
-                }
-
-                .m-quick-edit-controls {
-                    display: flex;
-                    flex-direction: column;
-                    gap: 12px;
-                    margin-top: 12px;
-                    padding: 12px;
-                    background: #ffffff;
-                    border-radius: 10px;
-                    border: 1px solid rgba(255, 149, 0, 0.3);
-                }
-
-                .m-edit-field {
-                    display: flex;
-                    align-items: center;
-                    gap: 12px;
-                }
-
-                .m-edit-field label {
-                    font-size: 13px;
-                    font-weight: 600;
-                    color: #515154;
-                    min-width: 60px;
-                }
-
-                .mobile-quick-edit-input {
-                    flex: 1;
-                    padding: 12px;
-                    border: 1px solid #e5e5ea;
-                    border-radius: 10px;
-                    font-size: 16px;
-                    font-weight: 600;
-                    text-align: center;
-                    background: #f9f9f9;
-                    color: #1d1d1f;
-                    transition: all 0.2s;
-                }
-
-                .mobile-quick-edit-input:focus {
-                    outline: none;
-                    border-color: #ff9500;
-                    background: #ffffff;
-                    box-shadow: 0 0 0 3px rgba(255, 149, 0, 0.15);
-                }
-
-                .unit-label {
-                    font-size: 14px;
-                    font-weight: 600;
-                    color: #86868b;
-                    min-width: 30px;
-                }
-
-                .mobile-quick-edit-input::-webkit-outer-spin-button,
-                .mobile-quick-edit-input::-webkit-inner-spin-button {
-                    -webkit-appearance: none;
-                    margin: 0;
-                }
-
-                .mobile-quick-edit-input[type=number] {
-                    -moz-appearance: textfield;
-                }
-                
-                .mobile-empty-state {
-                    display: flex;
-                    flex-direction: column;
-                    align-items: center;
-                    justify-content: center;
-                    padding: 40px 20px;
-                    text-align: center;
-                    color: #86868b;
-                }
-                
-                .mobile-empty-state .material-icons-round {
-                    font-size: 48px;
-                    margin-bottom: 16px;
-                    color: #d1d1d6;
-                }
-                
-                .mobile-empty-state p {
-                    font-size: 16px;
-                    font-weight: 500;
-                }
-            `}</style>
+            <MSheet open={sort.isOpen} title="Sortiraj i grupiši" onClose={sort.close}>
+                <div className="mui-shd"><span>Sortiraj po</span></div>
+                <MList>
+                    {(['naziv', 'datum', 'vrijednost', 'rok', 'status'] as SortKey[]).map(k => (
+                        <MOption key={k} label={sortLabel(k)} selected={sort.sortKey === k} onClick={() => sort.setSortKey(k)} />
+                    ))}
+                </MList>
+                <div className="mui-shd"><span>Grupiši po</span></div>
+                <MList>
+                    {([null, 'status', 'klijent'] as (GroupKey | null)[]).map(k => (
+                        <MOption key={k || 'none'} label={k ? sortLabel(undefined, k) : 'Bez grupisanja'}
+                            selected={sort.groupKey === k} onClick={() => sort.setGroupKey(k)} />
+                    ))}
+                </MList>
+            </MSheet>
         </div>
     );
 }

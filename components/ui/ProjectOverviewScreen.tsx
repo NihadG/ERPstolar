@@ -21,6 +21,7 @@ import {
 import type { Project, WorkOrder, WorkLog, Offer, Worker, Material, Order, Task } from '@/lib/types';
 import { buildProjectOverview, type ProjectOverview } from '@/lib/projectOverview';
 import { formatDate } from '@/lib/utils';
+import { useIsCompact } from '@/hooks/useIsCompact';
 import { useData } from '@/context/DataContext';
 import { createOrder, updateWorkOrder, startWorkOrder, deleteWorkOrder } from '@/lib/services';
 import { checkWorkOrderStart, findWorkersToBookToday, bookWorkersToday } from '@/lib/workOrderStart';
@@ -256,30 +257,23 @@ export default function ProjectOverviewScreen({
 
     return createPortal(
         <div className="pov-overlay">
-            <header className="pov-header" style={{ borderTopColor: marginClass === 'good' ? COLORS.profit : marginClass === 'mid' ? COLORS.labor : COLORS.loss }}>
-                <div className="pov-header-inner">
+            <header className="pov-header">
+                <div className="pov-topbar">
                     <button className="pov-back" onClick={goBack} title="Nazad" aria-label="Nazad">
-                        <ArrowLeft size={18} />
+                        <ArrowLeft size={19} />
                     </button>
 
                     <div className="pov-titleblock" title={project.Name || project.Client_Name}>
-                        <h1 className="pov-name">{project.Name || project.Client_Name}</h1>
-                        {project.Name && <span className="pov-client">{project.Client_Name}</span>}
-                        <span className={`pov-status-badge s-${statusSlug(project.Status)}`}>{project.Status || 'Nacrt'}</span>
-                        {project.Deadline && <span className="pov-metatext">Rok {formatDate(project.Deadline)}</span>}
+                        <div className="pov-title-line">
+                            <h1 className="pov-name">{project.Name || project.Client_Name}</h1>
+                            <span className={`pov-status-badge s-${statusSlug(project.Status)}`}>{project.Status || 'Nacrt'}</span>
+                        </div>
+                        <div className="pov-sub-line">
+                            {project.Name && <span className="pov-client">{project.Client_Name}</span>}
+                            {project.Name && project.Deadline && <span className="pov-dot">•</span>}
+                            {project.Deadline && <span className="pov-metatext">Rok {formatDate(project.Deadline)}</span>}
+                        </div>
                     </div>
-
-                    <span className="pov-header-divider" />
-
-                    <nav className="pov-tabs">
-                        {TABS.map(t => (
-                            <button key={t.id} className={`pov-tab ${tab === t.id ? 'active' : ''}`} onClick={() => setTab(t.id)}>
-                                <t.Icon size={15} />
-                                <span>{t.label}</span>
-                                {t.count != null && t.count > 0 && <span className="pov-tab-count">{t.count}</span>}
-                            </button>
-                        ))}
-                    </nav>
 
                     <div className="pov-actions">
                         <button className="pov-act" onClick={() => window.print()} title="Printaj pregled">
@@ -287,10 +281,20 @@ export default function ProjectOverviewScreen({
                         </button>
                     </div>
                 </div>
+
+                <nav className="pov-tabbar" role="tablist">
+                    {TABS.map(t => (
+                        <button key={t.id} role="tab" aria-selected={tab === t.id} className={`pov-tab ${tab === t.id ? 'active' : ''}`} onClick={() => setTab(t.id)}>
+                            <t.Icon size={16} />
+                            <span className="pov-tab-label">{t.label}</span>
+                            {t.count != null && t.count > 0 && <span className="pov-tab-count">{t.count}</span>}
+                        </button>
+                    ))}
+                </nav>
             </header>
 
             <main className="pov-body">
-                {tab === 'pregled' && <PregledTab ov={ov} cost={cost} fmt={fmt} fmt0={fmt0} marginClass={marginClass} currency={currency} />}
+                {tab === 'pregled' && <PregledTab ov={ov} cost={cost} fmt={fmt} fmt0={fmt0} marginClass={marginClass} />}
                 {tab === 'proizvodi' && <ProizvodiTab ov={ov} fmt={fmt} onCreateWorkOrder={onCreateWorkOrder ? createWorkOrderFromProducts : undefined} />}
                 {tab === 'materijali' && (
                     <MaterijaliTab
@@ -387,8 +391,8 @@ export default function ProjectOverviewScreen({
 // ════════════════════════════════════════════════════════════════════
 // TAB: PREGLED
 // ════════════════════════════════════════════════════════════════════
-function PregledTab({ ov, cost, fmt, fmt0, marginClass, currency }: {
-    ov: ProjectOverview; cost: number; fmt: (n: number) => string; fmt0: (n: number) => string; marginClass: string; currency: string;
+function PregledTab({ ov, cost, fmt, fmt0, marginClass }: {
+    ov: ProjectOverview; cost: number; fmt: (n: number) => string; fmt0: (n: number) => string; marginClass: string;
 }) {
     const fin = ov.financial;
     const allocSegments = [
@@ -405,48 +409,49 @@ function PregledTab({ ov, cost, fmt, fmt0, marginClass, currency }: {
         <div className="pov-pregled">
             <div className="pov-kpis">
                 <div className="pov-kpi accent">
-                    <div className="pov-kpi-icon"><Wallet size={20} /></div>
+                    <div className="pov-kpi-icon"><Wallet size={19} /></div>
                     <div className="pov-kpi-body">
                         <span className="pov-kpi-label">Klijent plaća</span>
                         <span className="pov-kpi-value">{fmt(fin.revenue)}</span>
-                        {ov.acceptedOffer && (
-                            <span className="pov-kpi-sub">Ponuda {ov.acceptedOffer.offerNumber ? `#${ov.acceptedOffer.offerNumber}` : ''}: {fmt(ov.acceptedOffer.total)}{ov.acceptedOffer.includePDV ? ` (s PDV)` : ''}</span>
-                        )}
-                        {fin.missingPrice && <span className="pov-kpi-sub warn"><AlertTriangle size={12} /> neki proizvodi bez cijene</span>}
+                        {ov.acceptedOffer
+                            ? <span className="pov-kpi-sub">Ponuda {ov.acceptedOffer.offerNumber ? `#${ov.acceptedOffer.offerNumber}` : ''}{ov.acceptedOffer.includePDV ? ` · s PDV` : ''}</span>
+                            : fin.missingPrice
+                                ? <span className="pov-kpi-sub warn"><AlertTriangle size={12} /> neki bez cijene</span>
+                                : <span className="pov-kpi-sub">prihod projekta</span>}
                     </div>
                 </div>
                 <div className="pov-kpi">
-                    <div className="pov-kpi-icon"><Coins size={20} /></div>
+                    <div className="pov-kpi-icon"><Coins size={19} /></div>
                     <div className="pov-kpi-body">
                         <span className="pov-kpi-label">Ukupni trošak</span>
                         <span className="pov-kpi-value">{fmt(cost)}</span>
-                        <span className="pov-kpi-sub">Mat {fmt0(fin.material)} · Rad {fmt0(fin.labor)}{fin.services > 0 ? ` · Usl ${fmt0(fin.services)}` : ''}{fin.transport > 0 ? ` · Tr ${fmt0(fin.transport)}` : ''}</span>
+                        <span className="pov-kpi-sub">Mat {fmt0(fin.material)} · Rad {fmt0(fin.labor)}</span>
                     </div>
                 </div>
                 <div className={`pov-kpi ${marginClass}`}>
-                    <div className="pov-kpi-icon">{fin.profit < 0 ? <TrendingDown size={20} /> : <TrendingUp size={20} />}</div>
+                    <div className="pov-kpi-icon">{fin.profit < 0 ? <TrendingDown size={19} /> : <TrendingUp size={19} />}</div>
                     <div className="pov-kpi-body">
                         <span className="pov-kpi-label">{fin.profit < 0 ? 'Gubitak' : 'Profit'}</span>
                         <span className="pov-kpi-value">{fmt(fin.profit)}</span>
-                        {ov.hasPlan && <span className="pov-kpi-sub">Plan: {fmt(ov.plannedProfit)}</span>}
+                        {ov.hasPlan
+                            ? <span className="pov-kpi-sub">plan {fmt(ov.plannedProfit)}</span>
+                            : <span className="pov-kpi-sub">nakon svih troškova</span>}
                     </div>
                 </div>
-                <div className="pov-kpi">
-                    <div className="pov-kpi-body pov-kpi-ring">
-                        <Ring pct={fin.margin} label={`${Math.round(fin.margin)}%`} colorClass={marginClass} />
-                        <div className="pov-kpi-ring-text">
-                            <span className="pov-kpi-label">Marža</span>
-                            <span className="pov-kpi-sub">{ov.counts.products} proizv. · {ov.counts.workOrders} nal.</span>
-                            <span className="pov-kpi-sub">{ov.counts.workers} radnika · {fmt0(ov.counts.totalWorkerDays)} radnih dana</span>
-                        </div>
+                <div className={`pov-kpi ${marginClass}`}>
+                    <Ring pct={fin.margin} label={`${Math.round(fin.margin)}%`} colorClass={marginClass} />
+                    <div className="pov-kpi-body">
+                        <span className="pov-kpi-label">Marža</span>
+                        <span className="pov-kpi-sub">{ov.counts.products} proizv. · {ov.counts.workOrders} nal.</span>
+                        <span className="pov-kpi-sub">{ov.counts.workers} radnika · {fmt0(ov.counts.totalWorkerDays)} dana</span>
                     </div>
                 </div>
             </div>
 
             <section className="pov-card pov-hero-card">
                 <div className="pov-card-head">
-                    <h3>Gdje ide svaka marka koju klijent plaća</h3>
-                    <span className="pov-card-sub">{fmt(fin.revenue)} prihod → {fmt(cost)} trošak · {fmt(fin.profit)} {fin.profit < 0 ? 'gubitak' : 'profit'}</span>
+                    <h3>Gdje ide svaki KM koji klijent plaća</h3>
+                    <span className="pov-card-sub">{fmt(fin.revenue)} → trošak {fmt(cost)} · {fin.profit < 0 ? 'gubitak' : 'profit'} {fmt(Math.abs(fin.profit))}</span>
                 </div>
                 <div className="pov-alloc">
                     <div className="pov-alloc-track">
@@ -472,7 +477,6 @@ function PregledTab({ ov, cost, fmt, fmt0, marginClass, currency }: {
                                 <span className="pov-legend-dot" style={{ background: COLORS.loss }} />
                                 <span className="pov-legend-label">Gubitak</span>
                                 <span className="pov-legend-value">{fmt(Math.abs(fin.profit))}</span>
-                                <span className="pov-legend-pct">—</span>
                             </div>
                         )}
                     </div>
@@ -481,40 +485,39 @@ function PregledTab({ ov, cost, fmt, fmt0, marginClass, currency }: {
 
             <div className="pov-grid-2">
                 <section className="pov-card">
-                    <div className="pov-card-head"><h3>Struktura troška</h3></div>
-                    <div className="pov-donut-row">
-                        <Donut segments={costSegments} centerTop={fmt0(cost)} centerSub={currency} />
-                        <div className="pov-donut-legend">
-                            {costSegments.length === 0 && <span className="pov-empty-inline">Nema evidentiranih troškova.</span>}
-                            {costSegments.map(seg => (
-                                <div key={seg.key} className="pov-legend-item">
-                                    <span className="pov-legend-dot" style={{ background: seg.color }} />
-                                    <span className="pov-legend-label">{seg.label}</span>
-                                    <span className="pov-legend-value">{fmt(seg.value)}</span>
-                                    <span className="pov-legend-pct">{cost > 0 ? Math.round((seg.value / cost) * 100) : 0}%</span>
-                                </div>
-                            ))}
-                        </div>
-                    </div>
-                </section>
-
-                <section className="pov-card">
-                    <div className="pov-card-head"><h3>{ov.hasPlan ? 'Plan (ponuda) vs stvarno' : 'Sažetak'}</h3></div>
+                    <div className="pov-card-head"><h3>{ov.hasPlan ? 'Plan (ponuda) vs stvarno' : 'Struktura troška'}</h3></div>
                     {ov.hasPlan ? (
                         <div className="pov-pva">
                             <PvARow label="Materijal" planned={ov.plannedMaterial} actual={fin.material} fmt={fmt} invert />
                             <PvARow label="Rad" planned={ov.plannedLabor} actual={fin.labor} fmt={fmt} invert />
                             <PvARow label="Profit" planned={ov.plannedProfit} actual={fin.profit} fmt={fmt} />
                         </div>
+                    ) : costSegments.length === 0 ? (
+                        <span className="pov-empty-inline">Nema evidentiranih troškova.</span>
                     ) : (
-                        <ul className="pov-summary-list">
-                            <li><span>Proizvoda</span><b>{ov.counts.products}</b></li>
-                            <li><span>U proizvodnji</span><b>{ov.counts.productsInProduction}</b></li>
-                            <li><span>Radnih naloga</span><b>{ov.counts.workOrders}</b></li>
-                            <li><span>Materijala (stavki)</span><b>{ov.counts.materials}</b></li>
-                            <li><span>Radnih dana</span><b>{fmt0(ov.counts.totalWorkerDays)}</b></li>
-                        </ul>
+                        <div className="pov-costbars">
+                            {costSegments.map(seg => (
+                                <div key={seg.key} className="pov-costbar">
+                                    <div className="pov-costbar-top">
+                                        <span className="pov-costbar-label"><span className="pov-legend-dot" style={{ background: seg.color }} />{seg.label}</span>
+                                        <span className="pov-costbar-value">{fmt(seg.value)} <span className="pov-costbar-pct">{cost > 0 ? Math.round((seg.value / cost) * 100) : 0}%</span></span>
+                                    </div>
+                                    <div className="pov-costbar-track"><div className="pov-costbar-fill" style={{ width: `${cost > 0 ? (seg.value / cost) * 100 : 0}%`, background: seg.color }} /></div>
+                                </div>
+                            ))}
+                        </div>
                     )}
+                </section>
+
+                <section className="pov-card">
+                    <div className="pov-card-head"><h3>Sažetak</h3></div>
+                    <ul className="pov-summary-list">
+                        <li><span>Proizvoda</span><b>{ov.counts.products}</b></li>
+                        <li><span>U proizvodnji</span><b>{ov.counts.productsInProduction}</b></li>
+                        <li><span>Radnih naloga</span><b>{ov.counts.workOrders}</b></li>
+                        <li><span>Radnika</span><b>{ov.counts.workers}</b></li>
+                        <li><span>Radnih dana</span><b>{fmt0(ov.counts.totalWorkerDays)}</b></li>
+                    </ul>
                     {fin.missingPrice && (
                         <div className="pov-note warn"><AlertTriangle size={14} /> Neki proizvodi nemaju prodajnu cijenu — profit je nepotpun (uloženi rad se prikazuje kao gubitak).</div>
                     )}
@@ -530,6 +533,7 @@ function PregledTab({ ov, cost, fmt, fmt0, marginClass, currency }: {
 function ProizvodiTab({ ov, fmt, onCreateWorkOrder }: {
     ov: ProjectOverview; fmt: (n: number) => string; onCreateWorkOrder?: (productIds: string[]) => void;
 }) {
+    const compact = useIsCompact();
     const [open, setOpen] = useState<Set<string>>(new Set());
     const [selected, setSelected] = useState<Set<string>>(new Set());
     const maxRevenue = Math.max(1, ...ov.products.map(p => Math.abs(p.revenue) || p.material));
@@ -538,7 +542,83 @@ function ProizvodiTab({ ov, fmt, onCreateWorkOrder }: {
 
     const selectable = ov.products.filter(p => !p.isCustom);
     const toggleSel = (id: string) => setSelected(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
+    const toggleOpen = (id: string) => setOpen(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
 
+    // ── Kartični prikaz (tablet + mobitel) ──────────────────────────────
+    const selBar = onCreateWorkOrder && selected.size > 0 && (
+        <div className="pov-selbar">
+            <span className="pov-selbar-info">{selected.size} od {selectable.length} odabrano</span>
+            <div className="pov-selbar-actions">
+                <button className="pov-btn-ghost" onClick={() => setSelected(new Set())}>Poništi</button>
+                <button className="pov-btn-ghost" onClick={() => setSelected(new Set(selectable.map(p => p.productId)))}>Svi</button>
+                <button className="pov-btn-primary" onClick={() => onCreateWorkOrder(Array.from(selected))}>
+                    <Hammer size={16} /> Kreiraj nalog
+                </button>
+            </div>
+        </div>
+    );
+
+    if (compact) {
+        return (
+            <div className="pov-mlist">
+                {ov.products.map(p => {
+                    const isOpen = open.has(p.productId);
+                    const mc = p.notInProduction ? '' : p.profit < 0 ? 'bad' : p.margin >= 30 ? 'good' : p.margin >= 15 ? 'mid' : 'bad';
+                    const isSel = selected.has(p.productId);
+                    const noRev = p.notInProduction || (p.missingPrice && p.revenue === 0);
+                    return (
+                        <div key={p.productId} className={`pov-mcard ${p.notInProduction ? 'muted' : ''} ${isSel ? 'sel' : ''}`}>
+                            <div className="pov-mcard-head" onClick={() => toggleOpen(p.productId)}>
+                                {onCreateWorkOrder && !p.isCustom && (
+                                    <button className="pov-mcard-check" onClick={(e) => { e.stopPropagation(); toggleSel(p.productId); }} aria-label="Odaberi za nalog">
+                                        {isSel ? <CheckSquare size={20} className="pov-check on" /> : <Square size={20} className="pov-check" />}
+                                    </button>
+                                )}
+                                <div className="pov-mcard-title">
+                                    <div className="pov-mcard-name">{p.productName}</div>
+                                    <div className="pov-mcard-badges">
+                                        {p.isCustom && <span className="pov-tag custom">zadatak</span>}
+                                        {p.notInProduction && <span className="pov-tag wait">nije u nalogu</span>}
+                                        <span className={`pov-chip s-${statusSlug(p.status)}`}>{p.status}</span>
+                                        {p.quantity ? <span className="pov-mcard-qty">×{p.quantity}</span> : null}
+                                    </div>
+                                </div>
+                                <ChevronRight size={18} className={`pov-chev ${isOpen ? 'open' : ''}`} />
+                            </div>
+                            <div className="pov-mcard-figs">
+                                <div className="pov-fig"><span>Cijena</span><b>{noRev ? '—' : fmt(p.revenue)}</b></div>
+                                <div className="pov-fig"><span>{p.profit < 0 ? 'Gubitak' : 'Profit'}</span><b className={mc}>{p.notInProduction ? '—' : fmt(p.profit)}</b></div>
+                                <div className="pov-fig"><span>Marža</span><b className={mc}>{p.notInProduction ? '—' : `${Math.round(p.margin)}%`}</b></div>
+                            </div>
+                            {isOpen && (
+                                <div className="pov-mcard-detail">
+                                    <Detail label="Materijal" value={fmt(p.material)} />
+                                    {!p.notInProduction && <Detail label="Rad" value={fmt(p.labor)} />}
+                                    <Detail label="Usluge" value={fmt(p.services)} />
+                                    <Detail label="Transport" value={fmt(p.transport)} />
+                                    <Detail label="Radnih dana" value={`${p.workerDays}`} />
+                                    <Detail label="Radnika" value={`${p.workerCount}`} />
+                                    <Detail label="Nalozi" value={p.workOrderNumbers.join(', ') || '—'} />
+                                    {ov.hasPlan && !p.notInProduction && <Detail label="Plan rad" value={fmt(p.plannedLabor)} />}
+                                </div>
+                            )}
+                        </div>
+                    );
+                })}
+                <div className="pov-mcard total">
+                    <div className="pov-mcard-name">Ukupno (u proizvodnji)</div>
+                    <div className="pov-mcard-figs">
+                        <div className="pov-fig"><span>Prihod</span><b>{fmt(ov.financial.revenue)}</b></div>
+                        <div className="pov-fig"><span>Profit</span><b>{fmt(ov.financial.profit)}</b></div>
+                        <div className="pov-fig"><span>Marža</span><b>{Math.round(ov.financial.margin)}%</b></div>
+                    </div>
+                </div>
+                {selBar}
+            </div>
+        );
+    }
+
+    // ── Tabela (desktop ≥1024) ──────────────────────────────────────────
     return (
         <div className="pov-card pov-table-card">
             <div className="pov-table-wrap">
@@ -547,13 +627,13 @@ function ProizvodiTab({ ov, fmt, onCreateWorkOrder }: {
                         <tr>
                             {onCreateWorkOrder && <th className="c pov-sel-col" />}
                             <th>Proizvod</th>
-                            <th className="c">Kol.</th>
+                            <th className="c hide-sm">Kol.</th>
                             <th className="c">Status</th>
                             <th className="r">Cijena</th>
-                            <th className="r">Materijal</th>
-                            <th className="r">Rad</th>
+                            <th className="r hide-md">Materijal</th>
+                            <th className="r hide-md">Rad</th>
                             <th className="r hl">Profit</th>
-                            <th className="r">Marža</th>
+                            <th className="r hide-sm">Marža</th>
                             <th className="c" />
                         </tr>
                     </thead>
@@ -581,19 +661,22 @@ function ProizvodiTab({ ov, fmt, onCreateWorkOrder }: {
                                                 <div className="pov-barline-fill" style={{ width: `${((Math.abs(p.revenue) || p.material) / maxRevenue) * 100}%`, background: p.notInProduction ? 'var(--border)' : p.profit < 0 ? COLORS.loss : COLORS.material }} />
                                             </div>
                                         </td>
-                                        <td className="c">{p.quantity || '—'}</td>
+                                        <td className="c hide-sm">{p.quantity || '—'}</td>
                                         <td className="c"><span className={`pov-chip s-${statusSlug(p.status)}`}>{p.status}</span></td>
                                         <td className="r fw">{p.notInProduction || (p.missingPrice && p.revenue === 0) ? '—' : fmt(p.revenue)}</td>
-                                        <td className="r dim">{fmt(p.material)}</td>
-                                        <td className="r dim">{p.notInProduction ? '—' : fmt(p.labor)}</td>
+                                        <td className="r dim hide-md">{fmt(p.material)}</td>
+                                        <td className="r dim hide-md">{p.notInProduction ? '—' : fmt(p.labor)}</td>
                                         <td className={`r hl fw ${mc}`}>{p.notInProduction ? '—' : fmt(p.profit)}</td>
-                                        <td className={`r ${mc}`}>{p.notInProduction ? '—' : `${Math.round(p.margin)}%`}</td>
+                                        <td className={`r hide-sm ${mc}`}>{p.notInProduction ? '—' : `${Math.round(p.margin)}%`}</td>
                                         <td className="c"><ChevronRight size={16} className={`pov-chev ${isOpen ? 'open' : ''}`} /></td>
                                     </tr>
                                     {isOpen && (
                                         <tr className="pov-detail-row">
                                             <td colSpan={onCreateWorkOrder ? 10 : 9}>
                                                 <div className="pov-detail-grid">
+                                                    <Detail label="Materijal" value={fmt(p.material)} />
+                                                    {!p.notInProduction && <Detail label="Rad" value={fmt(p.labor)} />}
+                                                    {!p.notInProduction && <Detail label="Marža" value={`${Math.round(p.margin)}%`} />}
                                                     <Detail label="Usluge" value={fmt(p.services)} />
                                                     <Detail label="Transport" value={fmt(p.transport)} />
                                                     <Detail label="Radnih dana" value={`${p.workerDays}`} />
@@ -612,12 +695,12 @@ function ProizvodiTab({ ov, fmt, onCreateWorkOrder }: {
                         <tr>
                             {onCreateWorkOrder && <td className="pov-sel-col" />}
                             <td className="fw">Ukupno (u proizvodnji)</td>
-                            <td /><td />
+                            <td className="hide-sm" /><td />
                             <td className="r fw">{fmt(ov.financial.revenue)}</td>
-                            <td className="r fw">{fmt(ov.financial.material)}</td>
-                            <td className="r fw">{fmt(ov.financial.labor)}</td>
+                            <td className="r fw hide-md">{fmt(ov.financial.material)}</td>
+                            <td className="r fw hide-md">{fmt(ov.financial.labor)}</td>
                             <td className="r hl fw">{fmt(ov.financial.profit)}</td>
-                            <td className="r fw">{Math.round(ov.financial.margin)}%</td>
+                            <td className="r fw hide-sm">{Math.round(ov.financial.margin)}%</td>
                             <td />
                         </tr>
                     </tfoot>
@@ -648,9 +731,11 @@ function MaterijaliTab({ ov, fmt, orders, orderable, canOrder, onCreateOrders }:
     orderable: OrderableMaterial[]; canOrder: boolean;
     onCreateOrders: (ids: Set<string>, mode: 'single' | 'supplier' | 'category') => Promise<void>;
 }) {
+    const compact = useIsCompact();
     const [filter, setFilter] = useState<string>('');
     const [orderModal, setOrderModal] = useState(false);
     const [openOrders, setOpenOrders] = useState<Set<string>>(new Set());
+    const [openMat, setOpenMat] = useState<Set<string>>(new Set());
     const counts = useMemo(() => ({
         total: ov.materials.length,
         notOrdered: ov.materials.filter(m => m.status === 'Nije naručeno').length,
@@ -683,18 +768,49 @@ function MaterijaliTab({ ov, fmt, orders, orderable, canOrder, onCreateOrders }:
                 </div>
                 {rows.length === 0 ? (
                     <div className="pov-empty"><span className="material-icons-round">filter_alt_off</span><p>Nema materijala u ovom filteru.</p></div>
+                ) : compact ? (
+                    <div className="pov-mlist pov-mlist-inset">
+                        {rows.map((m, i) => {
+                            const isOpen = openMat.has(m.materialId || String(i));
+                            const key = m.materialId || String(i);
+                            return (
+                                <div key={key} className="pov-mcard">
+                                    <div className="pov-mcard-head" onClick={() => setOpenMat(prev => { const n = new Set(prev); n.has(key) ? n.delete(key) : n.add(key); return n; })}>
+                                        <div className="pov-mcard-title">
+                                            <div className="pov-mcard-name">{m.name}</div>
+                                            {m.products.length > 0 && <div className="pov-mcard-sub">{m.products.length === 1 ? m.products[0] : `${m.products.length} proizvoda`}</div>}
+                                        </div>
+                                        <span className={`pov-chip ${matStatusClass(m.status)}`}>{m.status}</span>
+                                        <ChevronRight size={18} className={`pov-chev ${isOpen ? 'open' : ''}`} />
+                                    </div>
+                                    <div className="pov-mcard-figs">
+                                        <div className="pov-fig"><span>Potrebno</span><b>{fmtQty(m.needed, m.unit)}</b></div>
+                                        <div className="pov-fig"><span>Preostalo</span><b style={{ color: m.remaining > 0 ? 'var(--error)' : 'var(--success)' }}>{fmtQty(m.remaining, m.unit)}</b></div>
+                                        <div className="pov-fig"><span>Vrijednost</span><b>{fmt(m.lineCost)}</b></div>
+                                    </div>
+                                    {isOpen && (
+                                        <div className="pov-mcard-detail">
+                                            <Detail label="Na stanju" value={fmtQty(m.onStock, m.unit)} />
+                                            <Detail label="Naručeno" value={fmtQty(m.ordered, m.unit)} />
+                                            <Detail label="Primljeno" value={fmtQty(m.received, m.unit)} />
+                                        </div>
+                                    )}
+                                </div>
+                            );
+                        })}
+                    </div>
                 ) : (
                     <div className="pov-table-wrap">
                         <table className="pov-table">
                             <thead>
                                 <tr>
                                     <th>Materijal</th>
-                                    <th className="r">Potrebno</th>
-                                    <th className="r">Na stanju</th>
-                                    <th className="r">Naručeno</th>
-                                    <th className="r">Primljeno</th>
+                                    <th className="r hide-sm">Potrebno</th>
+                                    <th className="r hide-md">Na stanju</th>
+                                    <th className="r hide-md">Naručeno</th>
+                                    <th className="r hide-md">Primljeno</th>
                                     <th className="r hl">Preostalo</th>
-                                    <th className="r">Vrijednost</th>
+                                    <th className="r hide-sm">Vrijednost</th>
                                     <th className="c">Status</th>
                                 </tr>
                             </thead>
@@ -705,12 +821,12 @@ function MaterijaliTab({ ov, fmt, orders, orderable, canOrder, onCreateOrders }:
                                             <div className="pov-mat-name">{m.name}</div>
                                             {m.products.length > 0 && <div className="pov-mat-sub" title={m.products.join(', ')}>{m.products.length === 1 ? m.products[0] : `${m.products.length} proizvoda`}</div>}
                                         </td>
-                                        <td className="r fw">{fmtQty(m.needed, m.unit)}</td>
-                                        <td className="r dim">{fmtQty(m.onStock, m.unit)}</td>
-                                        <td className="r dim">{fmtQty(m.ordered, m.unit)}</td>
-                                        <td className="r dim">{fmtQty(m.received, m.unit)}</td>
+                                        <td className="r fw hide-sm">{fmtQty(m.needed, m.unit)}</td>
+                                        <td className="r dim hide-md">{fmtQty(m.onStock, m.unit)}</td>
+                                        <td className="r dim hide-md">{fmtQty(m.ordered, m.unit)}</td>
+                                        <td className="r dim hide-md">{fmtQty(m.received, m.unit)}</td>
                                         <td className="r hl"><span style={{ color: m.remaining > 0 ? 'var(--error)' : 'var(--success)', fontWeight: 700 }}>{fmtQty(m.remaining, m.unit)}</span></td>
-                                        <td className="r dim">{fmt(m.lineCost)}</td>
+                                        <td className="r dim hide-sm">{fmt(m.lineCost)}</td>
                                         <td className="c"><span className={`pov-chip ${matStatusClass(m.status)}`}>{m.status}</span></td>
                                     </tr>
                                 ))}
@@ -971,36 +1087,8 @@ function RadniciTab({ ov, fmt }: { ov: ProjectOverview; fmt: (n: number) => stri
 // ════════════════════════════════════════════════════════════════════
 // GRAFOVI / PRIMITIVI
 // ════════════════════════════════════════════════════════════════════
-function Donut({ segments, centerTop, centerSub, size = 168, thickness = 26 }: {
-    segments: { key: string; label: string; value: number; color: string }[];
-    centerTop: string; centerSub: string; size?: number; thickness?: number;
-}) {
-    const total = segments.reduce((s, x) => s + Math.max(0, x.value), 0);
-    const r = (size - thickness) / 2;
-    const cx = size / 2;
-    const circ = 2 * Math.PI * r;
-    let offset = 0;
-    return (
-        <svg className="pov-donut" viewBox={`0 0 ${size} ${size}`} width={size} height={size} role="img" aria-label="Struktura troška">
-            <circle cx={cx} cy={cx} r={r} fill="none" stroke="var(--surface-hover)" strokeWidth={thickness} />
-            {total > 0 && segments.map(seg => {
-                const frac = Math.max(0, seg.value) / total;
-                const dash = frac * circ;
-                const el = (
-                    <circle key={seg.key} cx={cx} cy={cx} r={r} fill="none" stroke={seg.color} strokeWidth={thickness}
-                        strokeDasharray={`${dash} ${circ - dash}`} strokeDashoffset={-offset} transform={`rotate(-90 ${cx} ${cx})`} />
-                );
-                offset += dash;
-                return el;
-            })}
-            <text x={cx} y={cx - 4} textAnchor="middle" className="pov-donut-center-top">{centerTop}</text>
-            <text x={cx} y={cx + 16} textAnchor="middle" className="pov-donut-center-sub">{centerSub}</text>
-        </svg>
-    );
-}
-
 function Ring({ pct, label, colorClass }: { pct: number; label: string; colorClass: string }) {
-    const size = 72, thickness = 8;
+    const size = 52, thickness = 6;
     const r = (size - thickness) / 2;
     const cx = size / 2;
     const circ = 2 * Math.PI * r;
