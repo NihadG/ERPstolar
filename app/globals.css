@@ -10839,3 +10839,34 @@ textarea::placeholder {
   .modal .modal-header h2,
   .modal .modal-header h3 { font-size: 18px; letter-spacing: -0.02em; }
 }
+
+
+/* ════════════════════════════════════════════════════════════════════
+   GESTOVI NA TELEFONU — vizuelna podrška
+   Sam gest je u components/tabs/mobile/useSwipe.ts; ovdje su samo
+   nagovještaji (ručka) i pravila da preglednik ne otme pokret.
+   ════════════════════════════════════════════════════════════════════ */
+@media (max-width: 768px) {
+
+  /* Modal je full-screen list koji se povlači nadolje — ručka to najavljuje. */
+  .modal-header { position: relative; }
+  .modal-grab {
+    position: absolute;
+    top: 6px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 36px;
+    height: 5px;
+    border-radius: 3px;
+    background: rgba(60, 60, 67, 0.3);
+  }
+  .modal-header h2 { margin-top: 6px; }
+
+  /* Okomito skrolanje ostaje pregledniku, vodoravni gest je naš. */
+  .modal,
+  .mobile-sheet { touch-action: pan-y; }
+
+  /* Dok prst vuče ekran, ispod se nazire tamna podloga (dubina, kao iOS). */
+  .mwd,
+  .pov-overlay { background-color: #e7eaf1; }
+}

@@ -1,32 +1,36 @@
 'use client';
 
 // ════════════════════════════════════════════════════════════════════
-// SWIPE GESTOVI (telefon)
+// GESTOVI (telefon) — iOS osjećaj
 //
-// ZAŠTO TOUCH, A NE POINTER: prva verzija je koristila pointer evente na
-// `window` bez `touch-action`, pa je preglednik gest tumačio kao skrolanje i
-// slao `pointercancel` — gest je „radio" samo ponekad. Sada:
-//   • touchstart/touchmove/touchend na SAM element (ne window),
-//   • touchmove je NE-passive da se može pozvati preventDefault kad gest
-//     stvarno počne (bez toga se ekran istovremeno skroluje),
-//   • odluka „ovo je swipe" pada tek nakon što vodoravni pomak nadmaši
-//     okomiti — dotad se ne dira ponašanje stranice.
+// Prethodna verzija je „radila svaki drugi put" i djelovala mrtvo. Tri uzroka
+// i njihova rješenja, jer se lako ponove:
+//   1. pointer eventi bez `touch-action` → preglednik proglasi pokret
+//      skrolanjem i pošalje cancel. Sada: touch eventi + `touch-action: pan-y`
+//      + `preventDefault` čim gest postane naš.
+//   2. nije bilo ANIMACIJE — ekran je nestajao/skakao. Sada: prst vuče 1:1,
+//      a na otpuštanju ekran ili doklizi van (zatvara se) ili se vrati natrag,
+//      oboje s krivuljom.
+//   3. prag je bio samo udaljenost, pa je brz kratak flick propadao. Sada se
+//      gleda i BRZINA (kao iOS): brz pokret zatvara i na pola puta.
 //
-// Gestovi:
-//   useEdgeSwipeBack — povlačenje s lijeve ivice = nazad
-//   useSwipeTabs     — vodoravni swipe = prethodni/sljedeći tab
-//   useSwipeDismiss  — povlačenje nadolje = zatvori sheet
+// Gestovi: useSwipeBack (nazad), useSwipeDismiss (zatvori sheet nadolje),
+// useSwipeTabs (promjena taba), plus haptika i „dupli tap = vrh".
 // ════════════════════════════════════════════════════════════════════
 
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 /** Kontrole koje same troše dodir — gest ih ne smije oteti. */
 const INTERACTIVE = 'input, textarea, select, button, a, [role="slider"], [data-no-swipe]';
 
-/** Vodoravni skroler (čipovi, tabele) — tu swipe ne hvatamo. */
-function insideHorizontalScroller(target: EventTarget | null, root: HTMLElement | null): boolean {
+/** Kratka vibracija kao potvrda gesta (gdje uređaj podržava). */
+export function haptic(ms = 8) {
+    try { navigator.vibrate?.(ms); } catch { /* nije podržano */ }
+}
+
+function insideHorizontalScroller(target: EventTarget | null): boolean {
     let el = target as HTMLElement | null;
-    while (el && el !== root && el !== document.body) {
+    while (el && el !== document.body) {
         if (el.scrollWidth > el.clientWidth + 4) {
             const ox = getComputedStyle(el).overflowX;
             if (ox === 'auto' || ox === 'scroll') return true;
@@ -36,95 +40,243 @@ function insideHorizontalScroller(target: EventTarget | null, root: HTMLElement 
     return false;
 }
 
-function blocked(target: EventTarget | null, root: HTMLElement | null): boolean {
+function blocked(target: EventTarget | null): boolean {
     const t = target as HTMLElement | null;
     if (!t) return false;
     if (t.closest(INTERACTIVE)) return true;
-    return insideHorizontalScroller(t, root);
+    return insideHorizontalScroller(t);
 }
 
-interface EdgeBackOptions {
+/**
+ * Je li bilo koji okomiti skroler ISPOD prsta već odskrolan?
+ * Sheet je često samo okvir, a skrol je na unutrašnjem sadržaju — bez ove
+ * provjere bi povlačenje nadolje zatvaralo sheet usred čitanja liste.
+ */
+function scrolledVertically(target: EventTarget | null, root: HTMLElement | null): boolean {
+    let el = target as HTMLElement | null;
+    while (el) {
+        if (el.scrollHeight > el.clientHeight + 4) {
+            const oy = getComputedStyle(el).overflowY;
+            if ((oy === 'auto' || oy === 'scroll') && el.scrollTop > 2) return true;
+        }
+        if (el === root || el === document.body) break;
+        el = el.parentElement;
+    }
+    return false;
+}
+
+/** Krivulja izlaska/povratka — ista koju koristi iOS za guranje ekrana. */
+const EASE = 'cubic-bezier(0.32, 0.72, 0, 1)';
+
+export interface SwipeBackState {
+    /** Stil za korijenski element ekrana (transform + transition). */
+    style: React.CSSProperties | undefined;
+    /** Koliko je gest odmakao, 0–1 — za zatamnjenje pozadine iza ekrana. */
+    progress: number;
+    /** true dok prst vuče (za isključivanje hover/animacija u sadržaju). */
+    dragging: boolean;
+}
+
+interface BackOptions {
     enabled?: boolean;
-    /** Širina zone uz lijevu ivicu u kojoj gest počinje (px). */
+    /** Zona uz lijevu ivicu u kojoj gest počinje (px). */
     edgeWidth?: number;
-    /** Koliko treba povući da se okine „nazad" (px). */
+    /** Udaljenost koja sama po sebi zatvara (px). */
     threshold?: number;
 }
 
 /**
- * Povlačenje s lijeve ivice = nazad. Vraća `dragX` da ekran može pratiti prst
- * (bez povratne informacije gest djeluje kao slučajan skok).
- *
- * Sluša na `document` jer su ekrani portali van React stabla, ali gest počinje
- * samo u ivičnoj zoni — pa ne smeta ostatku stranice.
+ * Povlačenje s lijeve ivice = nazad, s pravim iOS ponašanjem:
+ * prst vuče ekran 1:1, brz flick zatvara i ranije, a na otpuštanju ekran
+ * doklizi van ili se vrati — nikad ne „nestane" bez prijelaza.
  */
-export function useEdgeSwipeBack(onBack: () => void, opts: EdgeBackOptions = {}) {
-    const { enabled = true, edgeWidth = 32, threshold = 80 } = opts;
-    const [dragX, setDragX] = useState(0);
-    const state = useRef<{ x: number; y: number; live: boolean; decided: boolean } | null>(null);
-    // onBack u ref-u: gest se veže jednom, a callback se mijenja svakim renderom.
+export function useSwipeBack(onBack: () => void, opts: BackOptions = {}): SwipeBackState {
+    const { enabled = true, edgeWidth = 30, threshold = 90 } = opts;
+
+    const [dx, setDx] = useState(0);
+    const [dragging, setDragging] = useState(false);
+    const [closing, setClosing] = useState(false);
+
+    const gesture = useRef<{ x0: number; y0: number; t0: number; lastX: number; lastT: number; decided: boolean } | null>(null);
+    const width = useRef(0);
     const backRef = useRef(onBack);
     backRef.current = onBack;
 
     useEffect(() => {
-        if (!enabled) { setDragX(0); return; }
+        if (!enabled) { setDx(0); setDragging(false); setClosing(false); return; }
+
+        const finish = () => {
+            // Ekran doklizi van, pa se tek onda demontira — inače „trepne".
+            setClosing(true);
+            setDragging(false);
+            haptic();
+            window.setTimeout(() => backRef.current(), 260);
+        };
 
         const onStart = (e: TouchEvent) => {
-            if (e.touches.length !== 1) return;
+            if (closing || e.touches.length !== 1) return;
             const t = e.touches[0];
             if (t.clientX > edgeWidth) return;
-            if (blocked(e.target, null)) return;
-            state.current = { x: t.clientX, y: t.clientY, live: true, decided: false };
+            if (blocked(e.target)) return;
+            width.current = window.innerWidth || 400;
+            gesture.current = { x0: t.clientX, y0: t.clientY, t0: performance.now(), lastX: t.clientX, lastT: performance.now(), decided: false };
         };
 
         const onMove = (e: TouchEvent) => {
-            const s = state.current;
-            if (!s?.live) return;
+            const g = gesture.current;
+            if (!g || closing) return;
             const t = e.touches[0];
-            const dx = t.clientX - s.x;
-            const dy = t.clientY - s.y;
+            const moveX = t.clientX - g.x0;
+            const moveY = t.clientY - g.y0;
 
-            if (!s.decided) {
-                // Okomit pokret = skrolanje; gest se tiho povlači.
-                if (Math.abs(dy) > Math.abs(dx)) { state.current = null; setDragX(0); return; }
-                if (Math.abs(dx) < 10) return;      // premalo da se odluči
-                s.decided = true;
+            if (!g.decided) {
+                if (Math.abs(moveY) > Math.abs(moveX)) { gesture.current = null; setDx(0); setDragging(false); return; }
+                if (Math.abs(moveX) < 8) return;
+                g.decided = true;
+                setDragging(true);
             }
-            // Od trenutka odluke gest je naš — spriječi paralelno skrolanje.
             if (e.cancelable) e.preventDefault();
-            setDragX(Math.max(0, dx));
+            g.lastX = t.clientX;
+            g.lastT = performance.now();
+            // Blago usporenje preko pola ekrana — spriječi da ekran „odleti".
+            const raw = Math.max(0, moveX);
+            setDx(raw > width.current * 0.5 ? width.current * 0.5 + (raw - width.current * 0.5) * 0.55 : raw);
         };
 
-        const onEnd = () => {
-            const s = state.current;
-            state.current = null;
-            setDragX(prev => {
-                if (s?.decided && prev >= threshold) backRef.current();
-                return 0;
-            });
+        const onEnd = (e: TouchEvent) => {
+            const g = gesture.current;
+            gesture.current = null;
+            if (!g?.decided) { setDragging(false); return; }
+
+            const t = e.changedTouches[0];
+            const dist = Math.max(0, t.clientX - g.x0);
+            const dt = Math.max(1, performance.now() - g.lastT);
+            const velocity = (t.clientX - g.lastX) / dt;   // px/ms udesno
+
+            // Brz flick zatvara i na pola puta — inače gest djeluje „tvrdo".
+            if (dist >= threshold || velocity > 0.45) finish();
+            else { setDragging(false); setDx(0); }
         };
 
         document.addEventListener('touchstart', onStart, { passive: true });
         document.addEventListener('touchmove', onMove, { passive: false });
         document.addEventListener('touchend', onEnd, { passive: true });
-        document.addEventListener('touchcancel', onEnd, { passive: true });
+        document.addEventListener('touchcancel', onEnd as EventListener, { passive: true });
         return () => {
             document.removeEventListener('touchstart', onStart);
             document.removeEventListener('touchmove', onMove as EventListener);
-            document.removeEventListener('touchend', onEnd);
-            document.removeEventListener('touchcancel', onEnd);
+            document.removeEventListener('touchend', onEnd as EventListener);
+            document.removeEventListener('touchcancel', onEnd as EventListener);
         };
-    }, [enabled, edgeWidth, threshold]);
+    }, [enabled, edgeWidth, threshold, closing]);
 
-    return dragX;
+    const w = width.current || 1;
+    const style: React.CSSProperties | undefined = closing
+        ? { transform: `translateX(100%)`, transition: `transform 260ms ${EASE}`, boxShadow: '-12px 0 32px rgba(0,0,0,0.18)' }
+        : dragging
+            ? { transform: `translateX(${dx}px)`, transition: 'none', boxShadow: '-12px 0 32px rgba(0,0,0,0.18)' }
+            : dx === 0
+                ? undefined
+                : { transform: 'translateX(0px)', transition: `transform 280ms ${EASE}` };
+
+    return { style, progress: closing ? 1 : Math.min(1, dx / w), dragging };
 }
 
 /**
- * Vodoravni swipe = prethodni/sljedeći tab. Traži jasan vodoravni pokret
- * (≥90px i dvostruko veći od okomitog) da se tab ne mijenja pri skrolanju.
+ * Povlačenje nadolje zatvara sheet (modali materijala, proizvoda, MSheet).
+ * Hvata se samo kad je sadržaj na vrhu, da ne otima skrolanje.
  */
+export function useSwipeDismiss(
+    ref: React.RefObject<HTMLElement | null>,
+    onDismiss: () => void,
+    enabled = true
+) {
+    const [dy, setDy] = useState(0);
+    const [dragging, setDragging] = useState(false);
+    const [closing, setClosing] = useState(false);
+    const gesture = useRef<{ y0: number; x0: number; lastY: number; lastT: number; decided: boolean } | null>(null);
+    const dismissRef = useRef(onDismiss);
+    dismissRef.current = onDismiss;
+
+    useEffect(() => {
+        if (!enabled) { setDy(0); setDragging(false); setClosing(false); return; }
+        const el = ref.current;
+        if (!el) return;
+        const THRESHOLD = 110;
+
+        const finish = () => {
+            setClosing(true);
+            setDragging(false);
+            haptic();
+            window.setTimeout(() => dismissRef.current(), 240);
+        };
+
+        const onStart = (e: TouchEvent) => {
+            if (closing || e.touches.length !== 1) return;
+            if ((e.target as HTMLElement)?.closest('input, textarea, select')) return;
+            // Ni sam okvir ni bilo koji skroler pod prstom ne smiju biti odskrolani.
+            if (el.scrollTop > 2 || scrolledVertically(e.target, el)) return;
+            const t = e.touches[0];
+            gesture.current = { y0: t.clientY, x0: t.clientX, lastY: t.clientY, lastT: performance.now(), decided: false };
+        };
+
+        const onMove = (e: TouchEvent) => {
+            const g = gesture.current;
+            if (!g || closing) return;
+            const t = e.touches[0];
+            const moveY = t.clientY - g.y0;
+            const moveX = Math.abs(t.clientX - g.x0);
+
+            if (!g.decided) {
+                if (moveY < 0 || moveX > Math.abs(moveY)) { gesture.current = null; setDy(0); setDragging(false); return; }
+                if (moveY < 8) return;
+                g.decided = true;
+                setDragging(true);
+            }
+            if (e.cancelable) e.preventDefault();
+            g.lastY = t.clientY;
+            g.lastT = performance.now();
+            setDy(Math.max(0, moveY));
+        };
+
+        const onEnd = (e: TouchEvent) => {
+            const g = gesture.current;
+            gesture.current = null;
+            if (!g?.decided) { setDragging(false); return; }
+            const t = e.changedTouches[0];
+            const dist = Math.max(0, t.clientY - g.y0);
+            const dt = Math.max(1, performance.now() - g.lastT);
+            const velocity = (t.clientY - g.lastY) / dt;
+            if (dist >= THRESHOLD || velocity > 0.5) finish();
+            else { setDragging(false); setDy(0); }
+        };
+
+        el.addEventListener('touchstart', onStart, { passive: true });
+        el.addEventListener('touchmove', onMove, { passive: false });
+        el.addEventListener('touchend', onEnd, { passive: true });
+        el.addEventListener('touchcancel', onEnd as EventListener, { passive: true });
+        return () => {
+            el.removeEventListener('touchstart', onStart);
+            el.removeEventListener('touchmove', onMove as EventListener);
+            el.removeEventListener('touchend', onEnd as EventListener);
+            el.removeEventListener('touchcancel', onEnd as EventListener);
+        };
+    }, [ref, enabled, closing]);
+
+    const style: React.CSSProperties | undefined = closing
+        ? { transform: 'translateY(100%)', transition: `transform 240ms ${EASE}` }
+        : dragging
+            ? { transform: `translateY(${dy}px)`, transition: 'none' }
+            : dy === 0
+                ? undefined
+                : { transform: 'translateY(0px)', transition: `transform 260ms ${EASE}` };
+
+    return { style, dragY: dy, closing, backdropOpacity: closing ? 0 : Math.max(0.2, 1 - dy / 320) };
+}
+
+/** Vodoravni swipe = prethodni/sljedeći tab (samo na listama, ne u detaljima). */
 export function useSwipeTabs(onPrev: () => void, onNext: () => void, enabled = true) {
-    const state = useRef<{ x: number; y: number } | null>(null);
+    const gesture = useRef<{ x: number; y: number; t: number } | null>(null);
     const prevRef = useRef(onPrev);
     const nextRef = useRef(onNext);
     prevRef.current = onPrev;
@@ -132,100 +284,103 @@ export function useSwipeTabs(onPrev: () => void, onNext: () => void, enabled = t
 
     useEffect(() => {
         if (!enabled) return;
-        const THRESHOLD = 90;
+        const DIST = 80;
 
         const onStart = (e: TouchEvent) => {
-            if (e.touches.length !== 1) { state.current = null; return; }
-            // Ne hvataj gest koji je krenuo s ivice — to je „nazad".
-            if (e.touches[0].clientX < 36) { state.current = null; return; }
-            if (blocked(e.target, null)) { state.current = null; return; }
-            state.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+            if (e.touches.length !== 1) { gesture.current = null; return; }
+            const t = e.touches[0];
+            if (t.clientX < 36) { gesture.current = null; return; }   // ivica = „nazad"
+            if (blocked(e.target)) { gesture.current = null; return; }
+            gesture.current = { x: t.clientX, y: t.clientY, t: performance.now() };
         };
 
         const onEnd = (e: TouchEvent) => {
-            const s = state.current;
-            state.current = null;
-            if (!s || !e.changedTouches.length) return;
+            const g = gesture.current;
+            gesture.current = null;
+            if (!g || !e.changedTouches.length) return;
             const t = e.changedTouches[0];
-            const dx = t.clientX - s.x;
-            const dy = Math.abs(t.clientY - s.y);
-            if (Math.abs(dx) < THRESHOLD || dy > Math.abs(dx) / 2) return;
+            const dx = t.clientX - g.x;
+            const dy = Math.abs(t.clientY - g.y);
+            const dt = Math.max(1, performance.now() - g.t);
+            const speed = Math.abs(dx) / dt;
+            if (dy > Math.abs(dx) / 2) return;                  // previše okomito
+            if (Math.abs(dx) < DIST && speed < 0.5) return;     // ni daleko ni brzo
+            haptic(6);
             if (dx > 0) prevRef.current(); else nextRef.current();
         };
 
         document.addEventListener('touchstart', onStart, { passive: true });
         document.addEventListener('touchend', onEnd, { passive: true });
-        document.addEventListener('touchcancel', () => { state.current = null; }, { passive: true });
+        document.addEventListener('touchcancel', () => { gesture.current = null; }, { passive: true });
         return () => {
             document.removeEventListener('touchstart', onStart);
-            document.removeEventListener('touchend', onEnd);
+            document.removeEventListener('touchend', onEnd as EventListener);
         };
     }, [enabled]);
 }
 
 /**
- * Povlačenje nadolje zatvara sheet. Hvata se samo kad je sadržaj skrolan na
- * vrh — inače bi gest otimao skrolanje dugačkog sheeta.
+ * Povlačenje liste nadolje s vrha = osvježi (kao u nativnim aplikacijama).
+ * Vraća pomak za indikator; poziva `onRefresh` kad se pređe prag.
  */
-export function useSwipeDismiss(
+export function usePullToRefresh(
     ref: React.RefObject<HTMLElement | null>,
-    onDismiss: () => void,
+    onRefresh: () => void | Promise<void>,
     enabled = true
 ) {
-    const [dragY, setDragY] = useState(0);
-    const state = useRef<{ y: number; x: number; decided: boolean } | null>(null);
-    const dismissRef = useRef(onDismiss);
-    dismissRef.current = onDismiss;
+    const [pull, setPull] = useState(0);
+    const [busy, setBusy] = useState(false);
+    const gesture = useRef<{ y0: number; decided: boolean } | null>(null);
+    const refreshRef = useRef(onRefresh);
+    refreshRef.current = onRefresh;
 
     useEffect(() => {
-        if (!enabled) { setDragY(0); return; }
-        const el = ref.current;
+        if (!enabled) return;
+        const el = ref.current || document.scrollingElement as HTMLElement | null;
         if (!el) return;
-        const THRESHOLD = 100;
+        const THRESHOLD = 70;
+        const target: HTMLElement | Document = ref.current || document;
+
+        const scrollTopOf = () => (ref.current ? ref.current.scrollTop : window.scrollY);
 
         const onStart = (e: TouchEvent) => {
-            if (e.touches.length !== 1) return;
-            if ((e.target as HTMLElement)?.closest('input, textarea, select')) return;
-            if (el.scrollTop > 2) return;                 // sadržaj se još skroluje
-            state.current = { y: e.touches[0].clientY, x: e.touches[0].clientX, decided: false };
+            if (busy || e.touches.length !== 1 || scrollTopOf() > 2) return;
+            gesture.current = { y0: e.touches[0].clientY, decided: false };
         };
 
         const onMove = (e: TouchEvent) => {
-            const s = state.current;
-            if (!s) return;
-            const t = e.touches[0];
-            const dy = t.clientY - s.y;
-            const dx = Math.abs(t.clientX - s.x);
-
-            if (!s.decided) {
-                if (dy < 0 || dx > Math.abs(dy)) { state.current = null; setDragY(0); return; }
+            const g = gesture.current;
+            if (!g || busy) return;
+            const dy = e.touches[0].clientY - g.y0;
+            if (dy <= 0) { setPull(0); return; }
+            if (!g.decided) {
                 if (dy < 10) return;
-                s.decided = true;
+                g.decided = true;
             }
             if (e.cancelable) e.preventDefault();
-            setDragY(Math.max(0, dy));
+            setPull(Math.min(110, dy * 0.55));   // otpor, kao gumica
         };
 
-        const onEnd = () => {
-            const s = state.current;
-            state.current = null;
-            setDragY(prev => {
-                if (s?.decided && prev >= THRESHOLD) dismissRef.current();
-                return 0;
-            });
+        const onEnd = async () => {
+            const g = gesture.current;
+            gesture.current = null;
+            if (!g?.decided) return;
+            if (pull >= THRESHOLD) {
+                setBusy(true);
+                haptic(10);
+                try { await refreshRef.current(); } finally { setBusy(false); setPull(0); }
+            } else setPull(0);
         };
 
-        el.addEventListener('touchstart', onStart, { passive: true });
-        el.addEventListener('touchmove', onMove, { passive: false });
-        el.addEventListener('touchend', onEnd, { passive: true });
-        el.addEventListener('touchcancel', onEnd, { passive: true });
+        target.addEventListener('touchstart', onStart as EventListener, { passive: true });
+        target.addEventListener('touchmove', onMove as EventListener, { passive: false });
+        target.addEventListener('touchend', onEnd as EventListener, { passive: true });
         return () => {
-            el.removeEventListener('touchstart', onStart);
-            el.removeEventListener('touchmove', onMove as EventListener);
-            el.removeEventListener('touchend', onEnd);
-            el.removeEventListener('touchcancel', onEnd);
+            target.removeEventListener('touchstart', onStart as EventListener);
+            target.removeEventListener('touchmove', onMove as EventListener);
+            target.removeEventListener('touchend', onEnd as EventListener);
         };
-    }, [ref, enabled]);
+    }, [ref, enabled, pull, busy]);
 
-    return dragY;
+    return { pull, busy };
 }

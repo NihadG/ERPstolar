@@ -1,6 +1,7 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
+import { useSwipeDismiss } from './useSwipe';
 import { createPortal } from 'react-dom';
 import type { ProductMaterial, Material } from '@/lib/types';
 import { SearchableSelect } from '@/components/ui/SearchableSelect';
@@ -16,6 +17,10 @@ interface MobileMaterialEditModalProps {
 export default function MobileMaterialEditModal({ isOpen, onClose, material, materials: materialsCatalog, onSave }: MobileMaterialEditModalProps) {
     const [shouldRender, setShouldRender] = useState(isOpen);
     const [animationClass, setAnimationClass] = useState('');
+
+    // Povlačenje sheeta nadolje = zatvori (hvata se samo kad sadržaj nije odskrolan).
+    const sheetRef = useRef<HTMLDivElement>(null);
+    const dismiss = useSwipeDismiss(sheetRef, onClose, isOpen);
 
     // Form state
     const [quantity, setQuantity] = useState(0);
@@ -82,8 +87,8 @@ export default function MobileMaterialEditModal({ isOpen, onClose, material, mat
 
     return createPortal(
         <div className="mobile-edit-overlay">
-            <div className={`mobile-backdrop ${animationClass}`} onClick={onClose} />
-            <div className={`mobile-sheet ${animationClass}`}>
+            <div className={`mobile-backdrop ${animationClass}`} onClick={onClose} style={{ opacity: dismiss.backdropOpacity }} />
+            <div className={`mobile-sheet ${animationClass}`} ref={sheetRef} style={dismiss.style}>
                 {/* Drag Handle */}
                 <div className="sheet-handle-bar">
                     <div className="sheet-handle" />

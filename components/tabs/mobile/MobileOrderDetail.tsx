@@ -28,7 +28,7 @@ import {
     MHero, MSection, MList, MItem, MCell, MText, MValue, MPill, MCheck,
     MActions, MAction, MButton, MSheet, MOption, MEmpty,
 } from './MobileUI';
-import { useEdgeSwipeBack } from './useSwipe';
+import { useSwipeBack } from './useSwipe';
 import './MobileUI.css';
 import './MobileWorkOrderDetail.css';
 
@@ -100,7 +100,7 @@ export default function MobileOrderDetail({
     const goBack = () => window.history.back();
 
     // Povlačenje s lijeve ivice = nazad; isključeno dok je otvoren sheet.
-    const dragX = useEdgeSwipeBack(goBack, { enabled: !statusSheet && !confirm });
+    const swipe = useSwipeBack(goBack, { enabled: !statusSheet && !confirm });
 
     // ── Radnje ──────────────────────────────────────────────────────
 
@@ -212,7 +212,7 @@ export default function MobileOrderDetail({
     return createPortal(
         <div
             className="mui mwd"
-            style={dragX > 0 ? { transform: `translateX(${dragX}px)`, transition: 'none' } : undefined}
+            style={swipe.style}
         >
             <header className="mwd-nav">
                 <button type="button" className="mwd-back" onClick={goBack}>

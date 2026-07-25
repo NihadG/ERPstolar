@@ -23,7 +23,7 @@ import { buildProjectOverview, type ProjectOverview } from '@/lib/projectOvervie
 import { formatDate } from '@/lib/utils';
 import { orderItemPricing } from '@/lib/orderPricing';
 import { useIsCompact } from '@/hooks/useIsCompact';
-import { useEdgeSwipeBack } from '@/components/tabs/mobile/useSwipe';
+import { useSwipeBack } from '@/components/tabs/mobile/useSwipe';
 import { useData } from '@/context/DataContext';
 import { createOrder, updateWorkOrder, startWorkOrder, deleteWorkOrder } from '@/lib/services';
 import { checkWorkOrderStart, findWorkersToBookToday, bookWorkersToday } from '@/lib/workOrderStart';
@@ -155,7 +155,7 @@ export default function ProjectOverviewScreen({
     const goBack = () => window.history.back();
 
     // Povlačenje s lijeve ivice = nazad (telefon); modali ga isključuju.
-    const dragX = useEdgeSwipeBack(goBack, { enabled: !printWO && !deleteWO && !bookToday });
+    const swipe = useSwipeBack(goBack, { enabled: !printWO && !deleteWO && !bookToday });
 
     const fmt = (n: number) => `${Math.round(n).toLocaleString('hr-HR')} ${currency}`;
     const fmt0 = (n: number) => Math.round(n).toLocaleString('hr-HR');
@@ -263,7 +263,7 @@ export default function ProjectOverviewScreen({
     return createPortal(
         <div
             className="pov-overlay"
-            style={dragX > 0 ? { transform: `translateX(${dragX}px)`, transition: 'none' } : undefined}
+            style={swipe.style}
         >
             <header className="pov-header">
                 <div className="pov-topbar">

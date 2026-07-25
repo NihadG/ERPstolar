@@ -13,7 +13,7 @@
 import { type ReactNode, type CSSProperties, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { Check, ChevronRight, X } from 'lucide-react';
-import { useSwipeDismiss } from './useSwipe';
+import { useSwipeDismiss, usePullToRefresh } from './useSwipe';
 import './MobileUI.css';
 
 type Tone = 'blue' | 'green' | 'orange' | 'purple' | 'red' | 'gray';
@@ -253,7 +253,7 @@ export function MSheet({ open, title, onClose, children, footer }: {
 }) {
     const sheetRef = useRef<HTMLDivElement>(null);
     // Povlačenje nadolje zatvara sheet (iOS navika) — hvata se samo na vrhu sadržaja.
-    const dragY = useSwipeDismiss(sheetRef, onClose, open);
+    const dismiss = useSwipeDismiss(sheetRef, onClose, open);
 
     useEffect(() => {
         if (!open) return;
@@ -267,14 +267,14 @@ export function MSheet({ open, title, onClose, children, footer }: {
     if (!open || typeof document === 'undefined') return null;
     return createPortal(
         <div className="mui mui-sheet-wrap">
-            <div className="mui-sheet-bg" onClick={onClose} style={dragY > 0 ? { opacity: Math.max(0.25, 1 - dragY / 260) } : undefined} />
+            <div className="mui-sheet-bg" onClick={onClose} style={{ opacity: dismiss.backdropOpacity }} />
             <div
                 ref={sheetRef}
                 className="mui-sheet"
                 role="dialog"
                 aria-modal="true"
                 aria-label={title}
-                style={dragY > 0 ? { transform: `translateY(${dragY}px)`, transition: 'none' } : undefined}
+                style={dismiss.style}
             >
                 <div className="mui-grab" />
                 {title && <h3>{title}</h3>}
@@ -297,6 +297,32 @@ export function MOption({ label, sub, selected, onClick }: {
                 {selected && <Check size={18} strokeWidth={3} color="var(--mui-blue)" />}
             </MCell>
         </MItem>
+    );
+}
+
+/**
+ * Povlačenje liste nadolje = osvježi. Renderuje indikator koji prati prst,
+ * pa je jasno da se nešto dešava prije nego što se pusti.
+ */
+export function MPullToRefresh({ onRefresh, children }: { onRefresh: () => void | Promise<void>; children: ReactNode }) {
+    const ref = useRef<HTMLDivElement>(null);
+    const { pull, busy } = usePullToRefresh(ref, onRefresh);
+    const active = pull > 0 || busy;
+
+    return (
+        <div ref={ref} className="mui-ptr">
+            {active && (
+                <div className="mui-ptr-ind" style={{ height: busy ? 44 : pull }}>
+                    <span
+                        className={`mui-ptr-spin${busy ? ' busy' : ''}`}
+                        style={busy ? undefined : { transform: `rotate(${pull * 3}deg)`, opacity: Math.min(1, pull / 60) }}
+                    />
+                </div>
+            )}
+            <div style={active && !busy ? { transform: `translateY(${pull}px)`, transition: 'none' } : undefined}>
+                {children}
+            </div>
+        </div>
     );
 }
 

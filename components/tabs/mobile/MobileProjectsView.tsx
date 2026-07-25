@@ -29,10 +29,10 @@ import { summarizeProjectNotes } from '@/lib/productNotes';
 import MobileProductDetail from './MobileProductDetail';
 import {
     MLarge, MSearch, MChips, MSection, MList, MEmpty, MButton, MSheet, MOption,
-    MCard, MCardHead, MCardBody, MIcon, MAvatar, MPill, MProgress,
+    MCard, MCardHead, MCardBody, MIcon, MAvatar, MPill, MProgress, MPullToRefresh,
 } from './MobileUI';
 import { groupProjectsByStatus } from '@/lib/grouping';
-import { useEdgeSwipeBack } from './useSwipe';
+import { useSwipeBack } from './useSwipe';
 import './MobileUI.css';
 import './MobileWorkOrderDetail.css';
 
@@ -82,7 +82,7 @@ const initials = (name: string) =>
     name.split(/\s+/).filter(Boolean).slice(0, 2).map(w => w[0]).join('').toUpperCase() || '—';
 
 export default function MobileProjectsView({
-    projects, workOrders, workLogs = [],
+    projects, workOrders, workLogs = [], onRefresh,
     onNavigateToTasks, onOpenProjectModal, onDeleteProject,
     onOpenProductModal, onDeleteProduct, onOpenNotes,
     onOpenMaterialModal, onDeleteMaterial, onEditMaterial,
@@ -95,7 +95,7 @@ export default function MobileProjectsView({
 
     // Ekran „proizvodi projekta" nije portal nego dio taba, pa mu treba
     // vlastiti swipe-nazad (detalj proizvoda ima svoj).
-    useEdgeSwipeBack(
+    useSwipeBack(
         () => setOpenProjectId(null),
         { enabled: !!openProjectId && !openProductId }
     );
@@ -319,6 +319,7 @@ export default function MobileProjectsView({
     };
 
     return (
+        <MPullToRefresh onRefresh={() => onRefresh("projects", "workOrders")}>
         <div className="mui">
             <MLarge title="Projekti">
                 {projects.length} {projects.length === 1 ? 'projekat' : 'projekata'}
@@ -366,5 +367,6 @@ export default function MobileProjectsView({
                 ))
             )}
         </div>
+        </MPullToRefresh>
     );
 }

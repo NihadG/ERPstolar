@@ -1,7 +1,9 @@
 'use client';
 
-import { useState, useEffect, ReactNode } from 'react';
+import { useState, useEffect, useRef, ReactNode } from 'react';
 import { createPortal } from 'react-dom';
+import { useSwipeDismiss } from '@/components/tabs/mobile/useSwipe';
+import { useIsMobile } from '@/hooks/useIsMobile';
 
 interface ModalProps {
     isOpen: boolean;
@@ -17,6 +19,12 @@ export default function Modal({ isOpen, onClose, title, children, footer, size =
     const [shouldRender, setShouldRender] = useState(isOpen);
     const [animationClass, setAnimationClass] = useState('');
     const [mounted, setMounted] = useState(false);
+
+    // Na telefonu je modal full-screen list — povlačenje nadolje ga zatvara,
+    // isto kao sheetove. Na desktopu gest ne postoji.
+    const isMobile = useIsMobile();
+    const bodyRef = useRef<HTMLDivElement>(null);
+    const dismiss = useSwipeDismiss(bodyRef, onClose, isMobile && isOpen);
 
     useEffect(() => {
         setMounted(true);
@@ -74,17 +82,19 @@ export default function Modal({ isOpen, onClose, title, children, footer, size =
             />
             <div
                 className={`modal ${sizeClass} ${animationClass}`}
-                style={modalStyle}
+                style={{ ...modalStyle, ...(isMobile ? dismiss.style : undefined) }}
             >
                 {title && (
                     <div className="modal-header">
+                        {/* Ručka: vidljiv nagovještaj da se modal može povući nadolje. */}
+                        {isMobile && <span className="modal-grab" aria-hidden="true" />}
                         <h2>{title}</h2>
                         <button className="modal-close" onClick={onClose}>
                             <span className="material-icons-round">close</span>
                         </button>
                     </div>
                 )}
-                <div className="modal-body">
+                <div className="modal-body" ref={bodyRef}>
                     {children}
                 </div>
                 {footer && (

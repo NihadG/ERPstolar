@@ -323,3 +323,27 @@
 .mui-gap14 { gap: 14px; }
 .mui-pt14 { padding-top: 14px; }
 .mui-spacer { flex: 1; }
+
+/* ── Povlačenje za osvježavanje ──────────────────────────────────────
+   Indikator raste s prstom; kad krene osvježavanje prelazi u vrtnju. */
+.mui-ptr { position: relative; }
+.mui-ptr-ind {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    transition: height 0.2s ease;
+}
+.mui-ptr-spin {
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    border: 2.5px solid rgba(120, 120, 128, 0.25);
+    border-top-color: var(--mui-blue);
+    display: block;
+}
+.mui-ptr-spin.busy { animation: mui-spin 0.7s linear infinite; }
+@keyframes mui-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+    .mui-ptr-spin.busy { animation-duration: 2s; }
+}

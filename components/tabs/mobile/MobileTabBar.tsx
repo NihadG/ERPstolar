@@ -8,6 +8,7 @@
 // ════════════════════════════════════════════════════════════════════
 
 import { FolderOpen, FileText, ShoppingCart, ClipboardList } from 'lucide-react';
+import { haptic } from './useSwipe';
 import './MobileTabBar.css';
 
 export interface MobileTab {
@@ -30,6 +31,18 @@ interface Props {
 }
 
 export default function MobileTabBar({ activeTab, onTabChange }: Props) {
+    /** Dodir aktivnog taba vraća na vrh liste — iOS navika kod dugih lista. */
+    const handle = (id: string) => {
+        if (id === activeTab) {
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+            document.querySelector('.content-area')?.scrollTo({ top: 0, behavior: 'smooth' });
+            haptic(5);
+            return;
+        }
+        haptic(5);
+        onTabChange(id);
+    };
+
     return (
         <nav className="mtb" role="tablist" aria-label="Glavna navigacija">
             {MOBILE_TABS.map(t => {
@@ -41,7 +54,7 @@ export default function MobileTabBar({ activeTab, onTabChange }: Props) {
                         role="tab"
                         aria-selected={on}
                         className={`mtb-item${on ? ' on' : ''}`}
-                        onClick={() => onTabChange(t.id)}
+                        onClick={() => handle(t.id)}
                     >
                         <t.Icon size={25} strokeWidth={on ? 2.1 : 1.8} />
                         <span>{t.label}</span>
