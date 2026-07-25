@@ -11,7 +11,7 @@
 // ════════════════════════════════════════════════════════════════════
 
 import React, { useMemo, useState } from 'react';
-import { Plus, Play, ClipboardList, Wrench, ArrowUpDown, PersonStanding } from 'lucide-react';
+import { Plus, Play, ClipboardList, Wrench, Layers, PersonStanding } from 'lucide-react';
 import type { WorkOrder, Worker, Task, Project } from '@/lib/types';
 import { WORK_ORDER_STATUSES } from '@/lib/types';
 import { daysUntil } from '@/lib/planning';
@@ -21,7 +21,8 @@ import {
     MLarge, MSearch, MChips, MSection, MCard, MCardHead, MCardBody, MIcon,
     MPill, MProgress, MEmpty, MButton, MSheet, MList, MOption,
 } from './MobileUI';
-import { useMobileSort, sortLabel, type SortKey, type GroupKey } from './useMobileSort';
+import { useMobileGrouping } from './useMobileGrouping';
+import { groupWorkOrders, WORK_ORDER_GROUPING_OPTIONS, type WorkOrderGroupBy } from '@/lib/grouping';
 import './MobileUI.css';
 
 interface AttendanceWarnings {
@@ -60,7 +61,9 @@ export default function MobileWorkOrdersView({
     const [search, setSearch] = useState('');
     const [status, setStatus] = useState<string>('');
     const [openId, setOpenId] = useState<string | null>(null);
-    const sort = useMobileSort('nalozi', 'zadano');
+    // Isti izbor kao desktop: samo grupisanje (poredak naloga je fiksan).
+    const [groupBy, setGroupBy] = useMobileGrouping<WorkOrderGroupBy>('nalozi', 'project');
+    const [groupSheet, setGroupSheet] = useState(false);
 
     const counts = useMemo(() => {
         const c: Record<string, number> = {};
@@ -70,26 +73,20 @@ export default function MobileWorkOrdersView({
 
     const filtered = useMemo(() => {
         const q = search.trim().toLowerCase();
-        const list = workOrders.filter(wo => {
+        return workOrders.filter(wo => {
             const matchQ = !q
                 || wo.Work_Order_Number?.toLowerCase().includes(q)
                 || wo.Name?.toLowerCase().includes(q);
             return matchQ && (!status || wo.Status === status);
         });
-        return sort.apply(list, {
-            // Zadano = identičan poredak kao desktop lista naloga.
-            zadano: compareWorkOrdersDefault,
-            naziv: wo => workOrderDisplayName(wo),
-            datum: wo => -new Date(wo.Created_Date).getTime(),
-            rok: wo => (wo.Due_Date ? new Date(wo.Due_Date).getTime() : Number.MAX_SAFE_INTEGER),
-            status: wo => wo.Status,
-        });
-    }, [workOrders, search, status, sort]);
+    }, [workOrders, search, status]);
 
-    const groups = useMemo(() => sort.group(filtered, {
-        status: wo => wo.Status,
-        projekat: wo => wo.items?.[0]?.Project_Name || 'Bez projekta',
-    }), [filtered, sort]);
+    // Grupisanje i poredak = ISTA logika kao desktop (lib/grouping).
+    const groups = useMemo(
+        () => groupWorkOrders(filtered, groupBy, workers),
+        [filtered, groupBy, workers]
+    );
+    const ungrouped = useMemo(() => [...filtered].sort(compareWorkOrdersDefault), [filtered]);
 
     // Nalog otvoren u detalju — čita se SVJEŽ iz propsa da se prikaz mijenja
     // odmah nakon upisa (onRefresh vraća nove objekte).
@@ -168,9 +165,9 @@ export default function MobileWorkOrdersView({
             <div className="mui-stack mui-gap10" style={{ paddingBottom: 4 }}>
                 <MSearch value={search} onChange={setSearch} placeholder="Traži nalog…" />
                 <div style={{ display: 'flex', gap: 8 }}>
-                    <button type="button" className="mui-chip" onClick={sort.open}>
-                        <ArrowUpDown size={13} style={{ verticalAlign: -2, marginRight: 5 }} />
-                        {sortLabel(sort.sortKey, sort.groupKey)}
+                    <button type="button" className="mui-chip" onClick={() => setGroupSheet(true)}>
+                        <Layers size={13} style={{ verticalAlign: -2, marginRight: 5 }} />
+                        {WORK_ORDER_GROUPING_OPTIONS.find(o => o.value === groupBy)?.label || 'Grupiši'}
                     </button>
                     <div className="mui-spacer" />
                     <button type="button" className="mui-chip on" onClick={onCreate}>
@@ -199,30 +196,27 @@ export default function MobileWorkOrdersView({
                         </div>
                     )}
                 </MEmpty>
-            ) : groups ? (
+            ) : groupBy === 'none' ? (
+                <div className="mui-elist">{ungrouped.map(renderCard)}</div>
+            ) : (
                 groups.map(g => (
                     <div key={g.key}>
-                        <MSection title={g.key} right={<span className="mui-dim">{g.rows.length}</span>} />
-                        <div className="mui-elist">{g.rows.map(renderCard)}</div>
+                        <MSection title={g.label} right={<span className="mui-dim">{g.count}</span>} />
+                        <div className="mui-elist">{g.items.map(renderCard)}</div>
                     </div>
                 ))
-            ) : (
-                <div className="mui-elist">{filtered.map(renderCard)}</div>
             )}
 
-            {/* Sortiranje i grupisanje */}
-            <MSheet open={sort.isOpen} title="Sortiraj i grupiši" onClose={sort.close}>
-                <div className="mui-shd"><span>Sortiraj po</span></div>
+            {/* Grupisanje — iste opcije kao desktop (poredak naloga je fiksan). */}
+            <MSheet open={groupSheet} title="Grupiši naloge" onClose={() => setGroupSheet(false)}>
                 <MList>
-                    {(['zadano', 'naziv', 'datum', 'rok', 'status'] as SortKey[]).map(k => (
-                        <MOption key={k} label={sortLabel(k)} selected={sort.sortKey === k} onClick={() => sort.setSortKey(k)} />
-                    ))}
-                </MList>
-                <div className="mui-shd"><span>Grupiši po</span></div>
-                <MList>
-                    {([null, 'status', 'projekat'] as (GroupKey | null)[]).map(k => (
-                        <MOption key={k || 'none'} label={k ? sortLabel(undefined, k) : 'Bez grupisanja'}
-                            selected={sort.groupKey === k} onClick={() => sort.setGroupKey(k)} />
+                    {WORK_ORDER_GROUPING_OPTIONS.map(o => (
+                        <MOption
+                            key={o.value}
+                            label={o.label}
+                            selected={groupBy === o.value}
+                            onClick={() => { setGroupBy(o.value); setGroupSheet(false); }}
+                        />
                     ))}
                 </MList>
             </MSheet>

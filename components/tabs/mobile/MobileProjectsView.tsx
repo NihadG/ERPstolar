@@ -15,7 +15,7 @@
 
 import React, { useMemo, useState } from 'react';
 import {
-    Plus, ArrowLeft, ArrowUpDown, LayoutDashboard, Pencil, Trash2,
+    Plus, ArrowLeft, LayoutDashboard, Pencil, Trash2,
     MessageSquareText, ListTodo, Package,
 } from 'lucide-react';
 import type {
@@ -31,7 +31,8 @@ import {
     MLarge, MSearch, MChips, MSection, MList, MEmpty, MButton, MSheet, MOption,
     MCard, MCardHead, MCardBody, MIcon, MAvatar, MPill, MProgress,
 } from './MobileUI';
-import { useMobileSort, sortLabel, type SortKey, type GroupKey } from './useMobileSort';
+import { groupProjectsByStatus } from '@/lib/grouping';
+import { useEdgeSwipeBack } from './useSwipe';
 import './MobileUI.css';
 import './MobileWorkOrderDetail.css';
 
@@ -91,7 +92,13 @@ export default function MobileProjectsView({
     const [status, setStatus] = useState('');
     const [openProjectId, setOpenProjectId] = useState<string | null>(null);
     const [openProductId, setOpenProductId] = useState<string | null>(null);
-    const sort = useMobileSort('projekti', 'zadano');
+
+    // Ekran „proizvodi projekta" nije portal nego dio taba, pa mu treba
+    // vlastiti swipe-nazad (detalj proizvoda ima svoj).
+    useEdgeSwipeBack(
+        () => setOpenProjectId(null),
+        { enabled: !!openProjectId && !openProductId }
+    );
 
     const counts = useMemo(() => {
         const c: Record<string, number> = {};
@@ -123,21 +130,15 @@ export default function MobileProjectsView({
                 || p.Client_Name?.toLowerCase().includes(q);
             return matchQ && (!status || p.Status === status);
         });
-        return sort.apply(list, {
-            // Zadano = kao desktop: projekti s aktivnim nalozima prvi, pa klijent.
-            zadano: (a, b) => compareProjectsByActivity(a, b, activeCounts),
-            naziv: p => p.Name || p.Client_Name || '',
-            datum: p => -(p.Created_Date ? new Date(p.Created_Date).getTime() : 0),
-            vrijednost: p => -revenueOf(p.Project_ID),
-            rok: p => (p.Deadline ? new Date(p.Deadline).getTime() : Number.MAX_SAFE_INTEGER),
-            status: p => p.Status,
-        });
-    }, [projects, search, status, sort, revenueOf, activeCounts]);
+        return list;
+    }, [projects, search, status]);
 
-    const groups = useMemo(() => sort.group(filtered, {
-        status: p => p.Status,
-        klijent: p => p.Client_Name || 'Bez klijenta',
-    }), [filtered, sort]);
+    // Desktop projekte UVIJEK grupiše po statusu (nema izbora): redoslijed grupa
+    // po projectStatusRank, unutar grupe projekat s najviše aktivnih naloga prvi.
+    const groups = useMemo(
+        () => groupProjectsByStatus(filtered, activeCounts),
+        [filtered, activeCounts]
+    );
 
     // Svjež projekt/proizvod iz propsa — prikaz prati upis nakon onRefresh.
     const openProject = openProjectId ? projects.find(p => p.Project_ID === openProjectId) : null;
@@ -327,13 +328,9 @@ export default function MobileProjectsView({
             <div className="mui-stack mui-gap10" style={{ paddingBottom: 4 }}>
                 <MSearch value={search} onChange={setSearch} placeholder="Traži projekat ili klijenta…" />
                 <div style={{ display: 'flex', gap: 8 }}>
-                    <button type="button" className="mui-chip" onClick={sort.open}>
-                        <ArrowUpDown size={13} style={{ verticalAlign: -2, marginRight: 5 }} />
-                        {sortLabel(sort.sortKey, sort.groupKey)}
-                    </button>
                     <div className="mui-spacer" />
                     <button type="button" className="mui-chip on" onClick={() => onOpenProjectModal()}>
-                        <Plus size={14} style={{ verticalAlign: -2, marginRight: 4 }} />Novi
+                        <Plus size={14} style={{ verticalAlign: -2, marginRight: 4 }} />Novi projekat
                     </button>
                 </div>
             </div>
@@ -360,32 +357,14 @@ export default function MobileProjectsView({
                         </div>
                     )}
                 </MEmpty>
-            ) : groups ? (
+            ) : (
                 groups.map(g => (
                     <div key={g.key}>
-                        <MSection title={g.key} right={<span className="mui-dim">{g.rows.length}</span>} />
-                        <div className="mui-elist">{g.rows.map(renderProject)}</div>
+                        <MSection title={g.label} right={<span className="mui-dim">{g.count}</span>} />
+                        <div className="mui-elist">{g.items.map(renderProject)}</div>
                     </div>
                 ))
-            ) : (
-                <div className="mui-elist">{filtered.map(renderProject)}</div>
             )}
-
-            <MSheet open={sort.isOpen} title="Sortiraj i grupiši" onClose={sort.close}>
-                <div className="mui-shd"><span>Sortiraj po</span></div>
-                <MList>
-                    {(['zadano', 'naziv', 'datum', 'vrijednost', 'rok', 'status'] as SortKey[]).map(k => (
-                        <MOption key={k} label={sortLabel(k)} selected={sort.sortKey === k} onClick={() => sort.setSortKey(k)} />
-                    ))}
-                </MList>
-                <div className="mui-shd"><span>Grupiši po</span></div>
-                <MList>
-                    {([null, 'status', 'klijent'] as (GroupKey | null)[]).map(k => (
-                        <MOption key={k || 'none'} label={k ? sortLabel(undefined, k) : 'Bez grupisanja'}
-                            selected={sort.groupKey === k} onClick={() => sort.setGroupKey(k)} />
-                    ))}
-                </MList>
-            </MSheet>
         </div>
     );
 }

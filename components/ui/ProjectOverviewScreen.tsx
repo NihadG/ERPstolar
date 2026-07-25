@@ -306,7 +306,7 @@ export default function ProjectOverviewScreen({
                 {tab === 'proizvodi' && <ProizvodiTab ov={ov} fmt={fmt} onCreateWorkOrder={onCreateWorkOrder ? createWorkOrderFromProducts : undefined} />}
                 {tab === 'materijali' && (
                     <MaterijaliTab
-                        ov={ov} fmt={fmt} orders={projectOrders} orderable={orderableMaterials}
+                        ov={ov} project={project} fmt={fmt} orders={projectOrders} orderable={orderableMaterials}
                         canOrder={!!organizationId && orderableMaterials.length > 0}
                         onCreateOrders={async (ids, mode) => {
                             if (!organizationId) return;
@@ -734,8 +734,8 @@ function ProizvodiTab({ ov, fmt, onCreateWorkOrder }: {
 // ════════════════════════════════════════════════════════════════════
 // TAB: MATERIJALI (+ narudžbe)
 // ════════════════════════════════════════════════════════════════════
-function MaterijaliTab({ ov, fmt, orders, orderable, canOrder, onCreateOrders }: {
-    ov: ProjectOverview; fmt: (n: number) => string; orders: Order[];
+function MaterijaliTab({ ov, project, fmt, orders, orderable, canOrder, onCreateOrders }: {
+    ov: ProjectOverview; project: Project; fmt: (n: number) => string; orders: Order[];
     orderable: OrderableMaterial[]; canOrder: boolean;
     onCreateOrders: (ids: Set<string>, mode: 'single' | 'supplier' | 'category') => Promise<void>;
 }) {
@@ -862,14 +862,13 @@ function MaterijaliTab({ ov, fmt, orders, orderable, canOrder, onCreateOrders }:
                                     <div className="pov-order-row" onClick={() => setOpenOrders(prev => { const n = new Set(prev); n.has(o.Order_ID) ? n.delete(o.Order_ID) : n.add(o.Order_ID); return n; })}>
                                         <div className="pov-order-main">
                                             <ChevronRight size={16} className={`pov-chev ${isOpen ? 'open' : ''}`} />
-                                            {/* Naziv vodi (auto-narudžbe naslijede naziv naloga); sirovi
-                                                broj je za dobavljača, pa stoji sitno pored. */}
-                                            <span className="pov-order-name">{o.Name || o.Supplier_Name || `Narudžba ${o.Order_Number}`}</span>
-                                            <span className="pov-order-num">{o.Order_Number}</span>
+                                            {/* Projekat vodi, dobavljač je drugi. Interni ID narudžbe se
+                                                NE prikazuje — čita se samo na samoj narudžbi/PDF-u. */}
+                                            <span className="pov-order-name">{project.Name || project.Client_Name}</span>
+                                            {o.Supplier_Name && <span className="pov-order-supplier">{o.Supplier_Name}</span>}
                                             <span className={`pov-chip s-${orderStatusSlug(o.Status)}`}>{o.Status}</span>
                                         </div>
                                         <div className="pov-order-meta">
-                                            {o.Name && o.Supplier_Name && <><span>{o.Supplier_Name}</span><span className="pov-dot">•</span></>}
                                             <span>{items.length} {items.length === 1 ? 'stavka' : 'stavki'}</span>
                                             {o.Expected_Delivery && <><span className="pov-dot">•</span><span>Isporuka: {formatDate(o.Expected_Delivery)}</span></>}
                                             <span className="pov-dot">•</span><b>{fmt(o.Total_Amount || 0)}</b>

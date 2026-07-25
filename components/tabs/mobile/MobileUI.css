@@ -43,6 +43,18 @@
 
 .mui-num { font-variant-numeric: tabular-nums; font-feature-settings: 'tnum' 1; }
 
+/* Gestovi: dozvoli samo okomito skrolanje, da vodoravni swipe ostane nama.
+   Bez ovoga preglednik proglasi pokret skrolanjem i pošalje touchcancel —
+   swipe tada radi „svaki drugi put". */
+.mui,
+.mwd,
+.pov-overlay { touch-action: pan-y; }
+
+/* Vodoravni skroleri zadržavaju svoje ponašanje. */
+.mui-chiprail,
+.mui-seg,
+.mui-table-wrap { touch-action: pan-x pan-y; }
+
 /* ── Veliki naslov ekrana (iOS large title) ─────────────────────────── */
 .mui-large { padding: 4px 4px 12px; }
 .mui-large h1 { margin: 0; font-size: 30px; font-weight: 700; letter-spacing: -0.025em; line-height: 1.08; }

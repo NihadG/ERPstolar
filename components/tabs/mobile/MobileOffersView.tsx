@@ -8,7 +8,7 @@
 // ════════════════════════════════════════════════════════════════════
 
 import React, { useMemo, useState } from 'react';
-import { Plus, FileText, ArrowUpDown, Send } from 'lucide-react';
+import { Plus, FileText, Layers, Send } from 'lucide-react';
 import type { Offer, Project } from '@/lib/types';
 import { OFFER_STATUSES } from '@/lib/types';
 import { formatCurrency, formatDate } from '@/lib/utils';
@@ -18,7 +18,11 @@ import {
     MLarge, MSearch, MChips, MSection, MCard, MCardHead, MCardBody, MIcon,
     MPill, MEmpty, MButton, MSheet, MList, MOption,
 } from './MobileUI';
-import { useMobileSort, sortLabel, type SortKey, type GroupKey } from './useMobileSort';
+import { useMobileGrouping } from './useMobileGrouping';
+import {
+    groupOffers, sortOffers, OFFER_GROUPING_OPTIONS, OFFER_SORT_OPTIONS,
+    type OfferGroupBy, type OfferSortBy,
+} from '@/lib/grouping';
 import './MobileUI.css';
 
 interface MobileOffersViewProps {
@@ -44,7 +48,10 @@ export default function MobileOffersView({
     const [search, setSearch] = useState('');
     const [status, setStatus] = useState('');
     const [openId, setOpenId] = useState<string | null>(null);
-    const sort = useMobileSort('ponude', 'datum');
+    // Isti defaulti kao desktop: bez grupisanja, najnovije prvo.
+    const [groupBy, setGroupBy] = useMobileGrouping<OfferGroupBy>('ponude', 'none');
+    const [sortBy, setSortBy] = useMobileGrouping<OfferSortBy>('ponude-sort', 'date-desc');
+    const [sheet, setSheet] = useState(false);
 
     const counts = useMemo(() => {
         const c: Record<string, number> = {};
@@ -62,19 +69,11 @@ export default function MobileOffersView({
                 || client.toLowerCase().includes(q);
             return matchQ && (!status || o.Status === status);
         });
-        return sort.apply(list, {
-            naziv: o => o.Name || o.Offer_Number || '',
-            datum: o => -new Date(o.Created_Date).getTime(),
-            vrijednost: o => -(o.Total || 0),
-            rok: o => (o.Valid_Until ? new Date(o.Valid_Until).getTime() : Number.MAX_SAFE_INTEGER),
-            status: o => o.Status,
-        });
-    }, [offers, projects, search, status, sort]);
+        // Sortiranje i grupisanje = ISTA logika kao desktop (lib/grouping).
+        return sortOffers(list, sortBy);
+    }, [offers, projects, search, status, sortBy]);
 
-    const groups = useMemo(() => sort.group(filtered, {
-        status: o => o.Status,
-        klijent: o => o.Client_Name || projects.find(p => p.Project_ID === o.Project_ID)?.Client_Name || 'Bez klijenta',
-    }), [filtered, projects, sort]);
+    const groups = useMemo(() => groupOffers(filtered, groupBy), [filtered, groupBy]);
 
     const openOffer = openId ? offers.find(o => o.Offer_ID === openId) : null;
 
@@ -134,9 +133,9 @@ export default function MobileOffersView({
             <div className="mui-stack mui-gap10" style={{ paddingBottom: 4 }}>
                 <MSearch value={search} onChange={setSearch} placeholder="Traži ponudu ili klijenta…" />
                 <div style={{ display: 'flex', gap: 8 }}>
-                    <button type="button" className="mui-chip" onClick={sort.open}>
-                        <ArrowUpDown size={13} style={{ verticalAlign: -2, marginRight: 5 }} />
-                        {sortLabel(sort.sortKey, sort.groupKey)}
+                    <button type="button" className="mui-chip" onClick={() => setSheet(true)}>
+                        <Layers size={13} style={{ verticalAlign: -2, marginRight: 5 }} />
+                        {OFFER_SORT_OPTIONS.find(o => o.value === sortBy)?.label || 'Sortiraj'}
                     </button>
                     <div className="mui-spacer" />
                     <button type="button" className="mui-chip on" onClick={onOpenCreate}>
@@ -165,29 +164,34 @@ export default function MobileOffersView({
                         </div>
                     )}
                 </MEmpty>
-            ) : groups ? (
+            ) : groupBy === 'none' ? (
+                <div className="mui-elist">{filtered.map(renderCard)}</div>
+            ) : (
                 groups.map(g => (
                     <div key={g.key}>
-                        <MSection title={g.key} right={<span className="mui-dim">{g.rows.length}</span>} />
-                        <div className="mui-elist">{g.rows.map(renderCard)}</div>
+                        <MSection
+                            title={g.label}
+                            right={<span className="mui-dim">{g.count} · {formatCurrency(g.totalValue)}</span>}
+                        />
+                        <div className="mui-elist">{g.items.map(renderCard)}</div>
                     </div>
                 ))
-            ) : (
-                <div className="mui-elist">{filtered.map(renderCard)}</div>
             )}
 
-            <MSheet open={sort.isOpen} title="Sortiraj i grupiši" onClose={sort.close}>
+            {/* Grupisanje i sortiranje — iste opcije kao desktop. */}
+            <MSheet open={sheet} title="Grupiši i sortiraj" onClose={() => setSheet(false)}>
                 <div className="mui-shd"><span>Sortiraj po</span></div>
                 <MList>
-                    {(['naziv', 'datum', 'vrijednost', 'rok', 'status'] as SortKey[]).map(k => (
-                        <MOption key={k} label={sortLabel(k)} selected={sort.sortKey === k} onClick={() => sort.setSortKey(k)} />
+                    {OFFER_SORT_OPTIONS.map(o => (
+                        <MOption key={o.value} label={o.label} selected={sortBy === o.value}
+                            onClick={() => setSortBy(o.value)} />
                     ))}
                 </MList>
                 <div className="mui-shd"><span>Grupiši po</span></div>
                 <MList>
-                    {([null, 'status', 'klijent'] as (GroupKey | null)[]).map(k => (
-                        <MOption key={k || 'none'} label={k ? sortLabel(undefined, k) : 'Bez grupisanja'}
-                            selected={sort.groupKey === k} onClick={() => sort.setGroupKey(k)} />
+                    {OFFER_GROUPING_OPTIONS.map(o => (
+                        <MOption key={o.value} label={o.label} selected={groupBy === o.value}
+                            onClick={() => setGroupBy(o.value)} />
                     ))}
                 </MList>
             </MSheet>
