@@ -24,6 +24,7 @@ import { formatDate } from '@/lib/utils';
 import { orderItemPricing } from '@/lib/orderPricing';
 import { useIsCompact } from '@/hooks/useIsCompact';
 import { useSwipeBack } from '@/components/tabs/mobile/useSwipe';
+import { useOverlayGuard } from '@/components/tabs/mobile/overlayGuard';
 import { useData } from '@/context/DataContext';
 import { createOrder, updateWorkOrder, startWorkOrder, deleteWorkOrder } from '@/lib/services';
 import { checkWorkOrderStart, findWorkersToBookToday, bookWorkersToday } from '@/lib/workOrderStart';
@@ -153,6 +154,8 @@ export default function ProjectOverviewScreen({
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
     const goBack = () => window.history.back();
+    // Prijavljuje da je full-screen overlay otvoren (samo relevantno na mobitelu).
+    useOverlayGuard(true);
 
     // Povlačenje s lijeve ivice = nazad (telefon); modali ga isključuju.
     const swipeRef = useSwipeBack(goBack, { enabled: !printWO && !deleteWO && !bookToday });

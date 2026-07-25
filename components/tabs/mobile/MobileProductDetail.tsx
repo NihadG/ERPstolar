@@ -22,6 +22,7 @@ import {
     MDot, MButton, MEmpty, MSheet,
 } from './MobileUI';
 import { useSwipeBack } from './useSwipe';
+import { useOverlayGuard } from './overlayGuard';
 import './MobileUI.css';
 import './MobileWorkOrderDetail.css';
 
@@ -89,6 +90,9 @@ export default function MobileProductDetail({
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
     const goBack = () => window.history.back();
+    // Prijavljuje da je full-screen detalj otvoren — sprječava globalni
+    // tab-swipe (page.tsx) da otme isti dodir dok je ovaj ekran na vrhu.
+    useOverlayGuard(true);
 
     // Povlačenje s lijeve ivice = nazad; isključeno dok je otvorena potvrda.
     const swipeRef = useSwipeBack(goBack, { enabled: !confirmDel });

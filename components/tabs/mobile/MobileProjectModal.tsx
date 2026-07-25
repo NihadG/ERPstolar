@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { useSwipeDismiss } from './useSwipe';
+import { useOverlayGuard } from './overlayGuard';
 import { createPortal } from 'react-dom';
 import type { Project } from '@/lib/types';
 import { PROJECT_STATUSES } from '@/lib/types';
@@ -19,6 +20,7 @@ export default function MobileProjectModal({ isOpen, onClose, project, onSave }:
 
     // Povlačenje sheeta nadolje = zatvori (imperativno, bez re-rendera).
     const { sheetRef, backdropRef } = useSwipeDismiss(onClose, isOpen);
+    useOverlayGuard(isOpen);
 
     // Form state
     const [formData, setFormData] = useState<Partial<Project>>({});

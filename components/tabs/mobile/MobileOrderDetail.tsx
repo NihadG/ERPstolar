@@ -29,6 +29,7 @@ import {
     MActions, MAction, MButton, MSheet, MOption, MEmpty,
 } from './MobileUI';
 import { useSwipeBack } from './useSwipe';
+import { useOverlayGuard } from './overlayGuard';
 import './MobileUI.css';
 import './MobileWorkOrderDetail.css';
 
@@ -98,6 +99,9 @@ export default function MobileOrderDetail({
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
     const goBack = () => window.history.back();
+    // Prijavljuje da je full-screen detalj otvoren — sprječava globalni
+    // tab-swipe (page.tsx) da otme isti dodir dok je ovaj ekran na vrhu.
+    useOverlayGuard(true);
 
     // Povlačenje s lijeve ivice = nazad; isključeno dok je otvoren sheet.
     const swipeRef = useSwipeBack(goBack, { enabled: !statusSheet && !confirm });

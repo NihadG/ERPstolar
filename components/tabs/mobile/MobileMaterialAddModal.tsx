@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { useSwipeDismiss } from './useSwipe';
+import { useOverlayGuard } from './overlayGuard';
 import { createPortal } from 'react-dom';
 import type { Material, ProductMaterial } from '@/lib/types';
 import { SearchableSelect } from '@/components/ui/SearchableSelect';
@@ -19,6 +20,7 @@ export default function MobileMaterialAddModal({ isOpen, onClose, materials, onA
 
     // Povlačenje sheeta nadolje = zatvori (imperativno, bez re-rendera).
     const { sheetRef, backdropRef } = useSwipeDismiss(onClose, isOpen);
+    useOverlayGuard(isOpen);
 
     // Form state
     const [selectedMaterialId, setSelectedMaterialId] = useState('');

@@ -3,6 +3,7 @@
 import { useState, useEffect, ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { useSwipeDismiss } from '@/components/tabs/mobile/useSwipe';
+import { useOverlayGuard } from '@/components/tabs/mobile/overlayGuard';
 import { useIsMobile } from '@/hooks/useIsMobile';
 
 interface ModalProps {
@@ -24,6 +25,7 @@ export default function Modal({ isOpen, onClose, title, children, footer, size =
     // isto kao sheetove. Na desktopu gest ne postoji.
     const isMobile = useIsMobile();
     const { sheetRef, backdropRef } = useSwipeDismiss(onClose, isMobile && isOpen);
+    useOverlayGuard(isMobile && isOpen);
 
     useEffect(() => {
         setMounted(true);

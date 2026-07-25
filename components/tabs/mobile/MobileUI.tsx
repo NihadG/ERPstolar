@@ -14,6 +14,7 @@ import { type ReactNode, type CSSProperties, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { Check, ChevronRight, X } from 'lucide-react';
 import { useSwipeDismiss } from './useSwipe';
+import { useOverlayGuard } from './overlayGuard';
 import './MobileUI.css';
 
 type Tone = 'blue' | 'green' | 'orange' | 'purple' | 'red' | 'gray';
@@ -253,6 +254,7 @@ export function MSheet({ open, title, onClose, children, footer }: {
 }) {
     // Povlačenje nadolje zatvara sheet (iOS navika) — imperativno, bez re-rendera.
     const { sheetRef, backdropRef } = useSwipeDismiss(onClose, open);
+    useOverlayGuard(open);
 
     useEffect(() => {
         if (!open) return;

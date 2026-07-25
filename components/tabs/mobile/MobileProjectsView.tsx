@@ -33,6 +33,7 @@ import {
 } from './MobileUI';
 import { groupProjectsByStatus } from '@/lib/grouping';
 import { useSwipeBack } from './useSwipe';
+import { useOverlayGuard } from './overlayGuard';
 import './MobileUI.css';
 import './MobileWorkOrderDetail.css';
 
@@ -100,6 +101,9 @@ export default function MobileProjectsView({
         () => setOpenProjectId(null),
         { enabled: !!openProjectId && !openProductId }
     );
+    // Dok je ovaj ekran prikazan (zamjenjuje listu projekata unutar taba),
+    // globalni tab-swipe ne smije reagovati na isti dodir.
+    useOverlayGuard(!!openProjectId && !openProductId);
 
     const counts = useMemo(() => {
         const c: Record<string, number> = {};

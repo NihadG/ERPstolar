@@ -18,18 +18,31 @@
 // ════════════════════════════════════════════════════════════════════
 
 import { useEffect, useRef } from 'react';
+import { isOverlayOpen } from './overlayGuard';
 
 const EASE = 'cubic-bezier(0.32, 0.72, 0, 1)';
+
+/** Za TAB-swipe: izbjegava otimanje dodira namijenjenog tapu/dugmetu. */
 const INTERACTIVE = 'input, textarea, select, button, a, [role="slider"], [data-no-swipe]';
+
+/**
+ * Za EDGE-swipe-nazad: SAMO prava tekst-polja isključuju gest. Redovi liste
+ * (MCell) su <button> pune širine koji počinju ~16px od ivice — kad bi ih
+ * blokirali kao i INTERACTIVE, edge-swipe bi promašivao skoro svaki put
+ * (isti problem kao kod iOS-a da nije riješen: sistemski edge-swipe radi
+ * PREKO tabela/dugmadi, ne odustaje zbog njih). Pomak > 6px već dokazuje
+ * da je namjera swipe, ne tap, pa se ispod-ležeći klik neće okinuti.
+ */
+const EDGE_BLOCK = 'input, textarea, select, [role="slider"], [data-no-swipe]';
 
 /** Kratka vibracija kao potvrda gesta (gdje uređaj podržava). */
 export function haptic(ms = 8) {
     try { navigator.vibrate?.(ms); } catch { /* nije podržano */ }
 }
 
-function blocked(target: EventTarget | null): boolean {
+function matches(target: EventTarget | null, selector: string): boolean {
     const t = target as HTMLElement | null;
-    return !!t?.closest(INTERACTIVE);
+    return !!t?.closest(selector);
 }
 
 /** Je li ijedan okomiti skroler pod prstom već odskrolan (tad ne hvatamo gest). */
@@ -83,7 +96,7 @@ export function useSwipeBack(onBack: () => void, opts: BackOptions = {}) {
             if (active || e.touches.length !== 1) return;
             const t = e.touches[0];
             if (t.clientX > edgeWidth) return;
-            if (blocked(e.target)) return;
+            if (matches(e.target, EDGE_BLOCK)) return;
             sx = t.clientX; sy = t.clientY; lastX = sx; lastT = performance.now();
             decided = false; active = true;
             el.style.transition = 'none';
@@ -261,9 +274,12 @@ export function useSwipeTabs(onPrev: () => void, onNext: () => void, enabled = t
 
         const onStart = (e: TouchEvent) => {
             if (e.touches.length !== 1) { gesture.current = null; return; }
+            // Bilo koji full-screen detalj/sheet je otvoren (portal u body) →
+            // ovaj dodir mu pripada, ne globalnoj promjeni taba ispod njega.
+            if (isOverlayOpen()) { gesture.current = null; return; }
             const t = e.touches[0];
             if (t.clientX < 36) { gesture.current = null; return; }   // ivica = „nazad"
-            if (blocked(e.target)) { gesture.current = null; return; }
+            if (matches(e.target, INTERACTIVE)) { gesture.current = null; return; }
             gesture.current = { x: t.clientX, y: t.clientY, t: performance.now() };
         };
         const onEnd = (e: TouchEvent) => {
