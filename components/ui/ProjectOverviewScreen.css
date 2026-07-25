@@ -15,6 +15,9 @@
     overflow-x: hidden;
     -webkit-overflow-scrolling: touch;
     animation: pov-in 0.18s ease-out;
+    /* Swipe-nazad (telefon): dozvoli vertikalni skrol, horizontalu uzimamo mi. */
+    touch-action: pan-y;
+    overscroll-behavior: contain;
 }
 @keyframes pov-in { from { opacity: 0; } to { opacity: 1; } }
 

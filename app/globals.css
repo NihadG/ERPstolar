@@ -10866,6 +10866,11 @@ textarea::placeholder {
   .modal,
   .mobile-sheet { touch-action: pan-y; }
 
+  /* Bez preglednikovog bounce-a — inače se bori s povlačenjem za zatvaranje. */
+  .modal-body,
+  .mobile-sheet,
+  .mobile-sheet .sheet-body { overscroll-behavior: contain; }
+
   /* Dok prst vuče ekran, ispod se nazire tamna podloga (dubina, kao iOS). */
   .mwd,
   .pov-overlay { background-color: #e7eaf1; }

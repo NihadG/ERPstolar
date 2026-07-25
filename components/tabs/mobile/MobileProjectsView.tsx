@@ -29,7 +29,7 @@ import { summarizeProjectNotes } from '@/lib/productNotes';
 import MobileProductDetail from './MobileProductDetail';
 import {
     MLarge, MSearch, MChips, MSection, MList, MEmpty, MButton, MSheet, MOption,
-    MCard, MCardHead, MCardBody, MIcon, MAvatar, MPill, MProgress, MPullToRefresh,
+    MCard, MCardHead, MCardBody, MIcon, MAvatar, MPill, MProgress,
 } from './MobileUI';
 import { groupProjectsByStatus } from '@/lib/grouping';
 import { useSwipeBack } from './useSwipe';
@@ -94,8 +94,9 @@ export default function MobileProjectsView({
     const [openProductId, setOpenProductId] = useState<string | null>(null);
 
     // Ekran „proizvodi projekta" nije portal nego dio taba, pa mu treba
-    // vlastiti swipe-nazad (detalj proizvoda ima svoj).
-    useSwipeBack(
+    // vlastiti swipe-nazad (detalj proizvoda ima svoj). Ref se kači na
+    // korijenski div tog ekrana niže.
+    const productsSwipeRef = useSwipeBack(
         () => setOpenProjectId(null),
         { enabled: !!openProjectId && !openProductId }
     );
@@ -169,7 +170,7 @@ export default function MobileProjectsView({
         const products = sortProductsByName(openProject.products || [], p => p.Name);
         const notes = summarizeProjectNotes(openProject.products || []);
         return (
-            <div className="mui">
+            <div className="mui" ref={productsSwipeRef}>
                 <header className="mwd-nav mui-subnav">
                     <button type="button" className="mwd-back" onClick={() => setOpenProjectId(null)}>
                         <ArrowLeft size={21} strokeWidth={2.3} /> Projekti
@@ -319,7 +320,6 @@ export default function MobileProjectsView({
     };
 
     return (
-        <MPullToRefresh onRefresh={() => onRefresh("projects", "workOrders")}>
         <div className="mui">
             <MLarge title="Projekti">
                 {projects.length} {projects.length === 1 ? 'projekat' : 'projekata'}
@@ -367,6 +367,5 @@ export default function MobileProjectsView({
                 ))
             )}
         </div>
-        </MPullToRefresh>
     );
 }

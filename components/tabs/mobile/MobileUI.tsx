@@ -10,10 +10,10 @@
 // Stil živi u MobileUI.css (prefiks `mui-`, odvojen od desktop klasa).
 // ════════════════════════════════════════════════════════════════════
 
-import { type ReactNode, type CSSProperties, useEffect, useRef } from 'react';
+import { type ReactNode, type CSSProperties, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { Check, ChevronRight, X } from 'lucide-react';
-import { useSwipeDismiss, usePullToRefresh } from './useSwipe';
+import { useSwipeDismiss } from './useSwipe';
 import './MobileUI.css';
 
 type Tone = 'blue' | 'green' | 'orange' | 'purple' | 'red' | 'gray';
@@ -251,9 +251,8 @@ export function MSearch({ value, onChange, placeholder }: {
 export function MSheet({ open, title, onClose, children, footer }: {
     open: boolean; title?: string; onClose: () => void; children: ReactNode; footer?: ReactNode;
 }) {
-    const sheetRef = useRef<HTMLDivElement>(null);
-    // Povlačenje nadolje zatvara sheet (iOS navika) — hvata se samo na vrhu sadržaja.
-    const dismiss = useSwipeDismiss(sheetRef, onClose, open);
+    // Povlačenje nadolje zatvara sheet (iOS navika) — imperativno, bez re-rendera.
+    const { sheetRef, backdropRef } = useSwipeDismiss(onClose, open);
 
     useEffect(() => {
         if (!open) return;
@@ -267,14 +266,13 @@ export function MSheet({ open, title, onClose, children, footer }: {
     if (!open || typeof document === 'undefined') return null;
     return createPortal(
         <div className="mui mui-sheet-wrap">
-            <div className="mui-sheet-bg" onClick={onClose} style={{ opacity: dismiss.backdropOpacity }} />
+            <div className="mui-sheet-bg" ref={backdropRef} onClick={onClose} />
             <div
                 ref={sheetRef}
                 className="mui-sheet"
                 role="dialog"
                 aria-modal="true"
                 aria-label={title}
-                style={dismiss.style}
             >
                 <div className="mui-grab" />
                 {title && <h3>{title}</h3>}
@@ -297,32 +295,6 @@ export function MOption({ label, sub, selected, onClick }: {
                 {selected && <Check size={18} strokeWidth={3} color="var(--mui-blue)" />}
             </MCell>
         </MItem>
-    );
-}
-
-/**
- * Povlačenje liste nadolje = osvježi. Renderuje indikator koji prati prst,
- * pa je jasno da se nešto dešava prije nego što se pusti.
- */
-export function MPullToRefresh({ onRefresh, children }: { onRefresh: () => void | Promise<void>; children: ReactNode }) {
-    const ref = useRef<HTMLDivElement>(null);
-    const { pull, busy } = usePullToRefresh(ref, onRefresh);
-    const active = pull > 0 || busy;
-
-    return (
-        <div ref={ref} className="mui-ptr">
-            {active && (
-                <div className="mui-ptr-ind" style={{ height: busy ? 44 : pull }}>
-                    <span
-                        className={`mui-ptr-spin${busy ? ' busy' : ''}`}
-                        style={busy ? undefined : { transform: `rotate(${pull * 3}deg)`, opacity: Math.min(1, pull / 60) }}
-                    />
-                </div>
-            )}
-            <div style={active && !busy ? { transform: `translateY(${pull}px)`, transition: 'none' } : undefined}>
-                {children}
-            </div>
-        </div>
     );
 }
 

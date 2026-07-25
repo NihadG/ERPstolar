@@ -106,7 +106,7 @@ export default function MobileWorkOrderDetail({
     const goBack = () => window.history.back();
 
     // Povlačenje s lijeve ivice = nazad; isključeno dok je sheet otvoren.
-    const swipe = useSwipeBack(goBack, { enabled: !completeSheet });
+    const swipeRef = useSwipeBack(goBack, { enabled: !completeSheet });
 
     // ── Radnje ──────────────────────────────────────────────────────
 
@@ -169,7 +169,7 @@ export default function MobileWorkOrderDetail({
     return createPortal(
         <div
             className="mui mwd"
-            style={swipe.style}
+            ref={swipeRef}
         >
             <header className="mwd-nav">
                 <button type="button" className="mwd-back" onClick={goBack}>

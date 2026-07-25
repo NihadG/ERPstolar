@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef, ReactNode } from 'react';
+import { useState, useEffect, ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { useSwipeDismiss } from '@/components/tabs/mobile/useSwipe';
 import { useIsMobile } from '@/hooks/useIsMobile';
@@ -23,8 +23,7 @@ export default function Modal({ isOpen, onClose, title, children, footer, size =
     // Na telefonu je modal full-screen list — povlačenje nadolje ga zatvara,
     // isto kao sheetove. Na desktopu gest ne postoji.
     const isMobile = useIsMobile();
-    const bodyRef = useRef<HTMLDivElement>(null);
-    const dismiss = useSwipeDismiss(bodyRef, onClose, isMobile && isOpen);
+    const { sheetRef, backdropRef } = useSwipeDismiss(onClose, isMobile && isOpen);
 
     useEffect(() => {
         setMounted(true);
@@ -76,13 +75,15 @@ export default function Modal({ isOpen, onClose, title, children, footer, size =
     return createPortal(
         <>
             <div
+                ref={backdropRef}
                 className={`modal-overlay ${animationClass}`}
                 onClick={onClose}
                 style={overlayStyle}
             />
             <div
+                ref={sheetRef}
                 className={`modal ${sizeClass} ${animationClass}`}
-                style={{ ...modalStyle, ...(isMobile ? dismiss.style : undefined) }}
+                style={modalStyle}
             >
                 {title && (
                     <div className="modal-header">
@@ -94,7 +95,7 @@ export default function Modal({ isOpen, onClose, title, children, footer, size =
                         </button>
                     </div>
                 )}
-                <div className="modal-body" ref={bodyRef}>
+                <div className="modal-body">
                     {children}
                 </div>
                 {footer && (

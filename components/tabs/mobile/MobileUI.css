@@ -294,6 +294,8 @@
     position: relative; background: var(--mui-grp); border-radius: 22px 22px 0 0;
     padding: 8px 16px calc(28px + env(safe-area-inset-bottom, 0px));
     max-height: 88vh; overflow-y: auto; animation: mui-up 0.3s cubic-bezier(0.32, 0.72, 0, 1);
+    /* Bez preglednikovog bounce-a — inače se bori s gestom zatvaranja. */
+    overscroll-behavior: contain;
 }
 .mui-grab { width: 36px; height: 5px; border-radius: 3px; background: var(--mui-label3); margin: 0 auto 14px; }
 .mui-sheet h3 { margin: 0 0 4px; font-size: 17px; font-weight: 640; letter-spacing: -0.02em; text-align: center; }
@@ -323,27 +325,3 @@
 .mui-gap14 { gap: 14px; }
 .mui-pt14 { padding-top: 14px; }
 .mui-spacer { flex: 1; }
-
-/* ── Povlačenje za osvježavanje ──────────────────────────────────────
-   Indikator raste s prstom; kad krene osvježavanje prelazi u vrtnju. */
-.mui-ptr { position: relative; }
-.mui-ptr-ind {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    overflow: hidden;
-    transition: height 0.2s ease;
-}
-.mui-ptr-spin {
-    width: 22px;
-    height: 22px;
-    border-radius: 50%;
-    border: 2.5px solid rgba(120, 120, 128, 0.25);
-    border-top-color: var(--mui-blue);
-    display: block;
-}
-.mui-ptr-spin.busy { animation: mui-spin 0.7s linear infinite; }
-@keyframes mui-spin { to { transform: rotate(360deg); } }
-@media (prefers-reduced-motion: reduce) {
-    .mui-ptr-spin.busy { animation-duration: 2s; }
-}

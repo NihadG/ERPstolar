@@ -155,7 +155,7 @@ export default function ProjectOverviewScreen({
     const goBack = () => window.history.back();
 
     // Povlačenje s lijeve ivice = nazad (telefon); modali ga isključuju.
-    const swipe = useSwipeBack(goBack, { enabled: !printWO && !deleteWO && !bookToday });
+    const swipeRef = useSwipeBack(goBack, { enabled: !printWO && !deleteWO && !bookToday });
 
     const fmt = (n: number) => `${Math.round(n).toLocaleString('hr-HR')} ${currency}`;
     const fmt0 = (n: number) => Math.round(n).toLocaleString('hr-HR');
@@ -263,7 +263,7 @@ export default function ProjectOverviewScreen({
     return createPortal(
         <div
             className="pov-overlay"
-            style={swipe.style}
+            ref={swipeRef}
         >
             <header className="pov-header">
                 <div className="pov-topbar">

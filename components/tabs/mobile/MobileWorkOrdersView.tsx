@@ -19,7 +19,7 @@ import { workOrderDisplayName, orderProcessProgress, compareWorkOrdersDefault } 
 import MobileWorkOrderDetail from './MobileWorkOrderDetail';
 import {
     MLarge, MSearch, MChips, MSection, MCard, MCardHead, MCardBody, MIcon,
-    MPill, MProgress, MEmpty, MButton, MSheet, MList, MOption, MPullToRefresh,
+    MPill, MProgress, MEmpty, MButton, MSheet, MList, MOption,
 } from './MobileUI';
 import { useMobileGrouping } from './useMobileGrouping';
 import { groupWorkOrders, WORK_ORDER_GROUPING_OPTIONS, type WorkOrderGroupBy } from '@/lib/grouping';
@@ -156,7 +156,6 @@ export default function MobileWorkOrdersView({
     };
 
     return (
-        <MPullToRefresh onRefresh={() => onRefresh('workOrders', 'projects', 'workLogs')}>
         <div className="mui">
             <MLarge title="Nalozi">
                 {workOrders.length} {workOrders.length === 1 ? 'nalog' : 'naloga'}
@@ -238,6 +237,5 @@ export default function MobileWorkOrdersView({
                 />
             )}
         </div>
-        </MPullToRefresh>
     );
 }

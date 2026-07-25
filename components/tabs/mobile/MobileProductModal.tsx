@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useSwipeDismiss } from './useSwipe';
 import { createPortal } from 'react-dom';
 import type { Product } from '@/lib/types';
@@ -16,9 +16,8 @@ export default function MobileProductModal({ isOpen, onClose, product, onSave }:
     const [shouldRender, setShouldRender] = useState(isOpen);
     const [animationClass, setAnimationClass] = useState('');
 
-    // Povlačenje sheeta nadolje = zatvori (hvata se samo kad sadržaj nije odskrolan).
-    const sheetRef = useRef<HTMLDivElement>(null);
-    const dismiss = useSwipeDismiss(sheetRef, onClose, isOpen);
+    // Povlačenje sheeta nadolje = zatvori (imperativno, bez re-rendera).
+    const { sheetRef, backdropRef } = useSwipeDismiss(onClose, isOpen);
 
     // Form state
     const [formData, setFormData] = useState<Partial<Product>>({});
@@ -58,8 +57,8 @@ export default function MobileProductModal({ isOpen, onClose, product, onSave }:
 
     return createPortal(
         <div className="mobile-sheet-overlay">
-            <div className={`mobile-backdrop ${animationClass}`} onClick={onClose} style={{ opacity: dismiss.backdropOpacity }} />
-            <div className={`mobile-sheet ${animationClass}`} ref={sheetRef} style={dismiss.style}>
+            <div className={`mobile-backdrop ${animationClass}`} ref={backdropRef} onClick={onClose} />
+            <div className={`mobile-sheet ${animationClass}`} ref={sheetRef}>
                 {/* Drag Handle */}
                 <div className="sheet-handle-bar">
                     <div className="sheet-handle" />

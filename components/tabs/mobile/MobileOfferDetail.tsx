@@ -82,7 +82,7 @@ export default function MobileOfferDetail({
     const goBack = () => window.history.back();
 
     // Povlačenje s lijeve ivice = nazad; isključeno dok je otvoren sheet.
-    const swipe = useSwipeBack(goBack, { enabled: !statusSheet && !confirmDelete });
+    const swipeRef = useSwipeBack(goBack, { enabled: !statusSheet && !confirmDelete });
 
     const pdvAmount = offer.Include_PDV
         ? (offer.Total || 0) - (offer.Subtotal || 0) - (offer.Transport_Cost || 0)
@@ -93,7 +93,7 @@ export default function MobileOfferDetail({
     return createPortal(
         <div
             className="mui mwd"
-            style={swipe.style}
+            ref={swipeRef}
         >
             <header className="mwd-nav">
                 <button type="button" className="mwd-back" onClick={goBack}>

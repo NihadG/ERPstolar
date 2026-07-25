@@ -60,6 +60,8 @@
     overflow-y: auto;
     -webkit-overflow-scrolling: touch;
     padding: 14px 16px calc(40px + env(safe-area-inset-bottom, 0px));
+    /* Zaustavi bounce da ne konkuriše swipe-nazad gestu. */
+    overscroll-behavior: contain;
 }
 
 /* Objašnjenje ispod liste (npr. kako se čekira prijem). */

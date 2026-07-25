@@ -16,7 +16,7 @@ import { daysUntil } from '@/lib/planning';
 import MobileOfferDetail, { offerTone } from './MobileOfferDetail';
 import {
     MLarge, MSearch, MChips, MSection, MCard, MCardHead, MCardBody, MIcon,
-    MPill, MEmpty, MButton, MSheet, MList, MOption, MPullToRefresh,
+    MPill, MEmpty, MButton, MSheet, MList, MOption,
 } from './MobileUI';
 import { useMobileGrouping } from './useMobileGrouping';
 import {
@@ -124,7 +124,6 @@ export default function MobileOffersView({
     };
 
     return (
-        <MPullToRefresh onRefresh={() => onRefresh("offers", "projects")}>
         <div className="mui">
             <MLarge title="Ponude">
                 {offers.length} {offers.length === 1 ? 'ponuda' : 'ponuda'}
@@ -213,6 +212,5 @@ export default function MobileOffersView({
                 />
             )}
         </div>
-        </MPullToRefresh>
     );
 }

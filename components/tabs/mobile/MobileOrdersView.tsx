@@ -17,7 +17,7 @@ import { useData } from '@/context/DataContext';
 import MobileOrderDetail from './MobileOrderDetail';
 import {
     MLarge, MSearch, MChips, MSection, MCard, MCardHead, MCardBody, MIcon,
-    MPill, MProgress, MEmpty, MButton, MSheet, MList, MOption, MPullToRefresh,
+    MPill, MProgress, MEmpty, MButton, MSheet, MList, MOption,
 } from './MobileUI';
 import { useMobileGrouping } from './useMobileGrouping';
 import {
@@ -168,7 +168,6 @@ export default function MobileOrdersView({
     };
 
     return (
-        <MPullToRefresh onRefresh={() => onRefresh("orders", "projects")}>
         <div className="mui">
             <MLarge title="Narudžbe">
                 {orders.length} {orders.length === 1 ? 'narudžba' : 'narudžbi'}
@@ -259,6 +258,5 @@ export default function MobileOrdersView({
                 />
             )}
         </div>
-        </MPullToRefresh>
     );
 }

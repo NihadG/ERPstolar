@@ -91,14 +91,14 @@ export default function MobileProductDetail({
     const goBack = () => window.history.back();
 
     // Povlačenje s lijeve ivice = nazad; isključeno dok je otvorena potvrda.
-    const swipe = useSwipeBack(goBack, { enabled: !confirmDel });
+    const swipeRef = useSwipeBack(goBack, { enabled: !confirmDel });
 
     if (typeof document === 'undefined') return null;
 
     return createPortal(
         <div
             className="mui mwd"
-            style={swipe.style}
+            ref={swipeRef}
         >
             <header className="mwd-nav">
                 <button type="button" className="mwd-back" onClick={goBack}>
