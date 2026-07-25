@@ -15,7 +15,8 @@ import Toast from '@/components/ui/Toast';
 import LoadingOverlay from '@/components/ui/LoadingOverlay';
 import ModuleGuard from '@/components/auth/ModuleGuard';
 import Sidebar from '@/components/Sidebar';
-import MobileTabBar from '@/components/tabs/mobile/MobileTabBar';
+import MobileTabBar, { MOBILE_TABS } from '@/components/tabs/mobile/MobileTabBar';
+import { useSwipeTabs } from '@/components/tabs/mobile/useSwipe';
 import CommandPalette, { type CommandPaletteItem } from '@/components/ui/CommandPalette';
 import CSVImportWizard from '@/components/CSVImportWizard';
 
@@ -413,6 +414,15 @@ export default function Home() {
     }
 
     const isDropdownTab = ['materials', 'workers', 'suppliers'].includes(activeTab);
+
+    // Vodoravno prevlačenje mijenja tab (samo telefon, i samo dok je otvoren
+    // jedan od tabova iz donje trake — inače bi swipe „ispao" na nepoznat tab).
+    const mobileTabIndex = MOBILE_TABS.findIndex(t => t.id === activeTab);
+    useSwipeTabs(
+        () => { if (mobileTabIndex > 0) setActiveTab(MOBILE_TABS[mobileTabIndex - 1].id); },
+        () => { if (mobileTabIndex >= 0 && mobileTabIndex < MOBILE_TABS.length - 1) setActiveTab(MOBILE_TABS[mobileTabIndex + 1].id); },
+        isMobile && mobileTabIndex >= 0
+    );
 
     // Show loading while checking auth
     if (authLoading) {

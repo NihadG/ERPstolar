@@ -21,6 +21,7 @@ import {
     MHero, MSegmented, MSection, MList, MItem, MCell, MText, MValue, MPill,
     MDot, MButton, MEmpty, MSheet,
 } from './MobileUI';
+import { useEdgeSwipeBack } from './useSwipe';
 import './MobileUI.css';
 import './MobileWorkOrderDetail.css';
 
@@ -89,10 +90,16 @@ export default function MobileProductDetail({
     }, []);
     const goBack = () => window.history.back();
 
+    // Povlačenje s lijeve ivice = nazad; isključeno dok je otvorena potvrda.
+    const dragX = useEdgeSwipeBack(goBack, { enabled: !confirmDel });
+
     if (typeof document === 'undefined') return null;
 
     return createPortal(
-        <div className="mui mwd">
+        <div
+            className="mui mwd"
+            style={dragX > 0 ? { transform: `translateX(${dragX}px)`, transition: 'none' } : undefined}
+        >
             <header className="mwd-nav">
                 <button type="button" className="mwd-back" onClick={goBack}>
                     <ArrowLeft size={21} strokeWidth={2.3} /> {project.Client_Name || 'Projekat'}

@@ -15,7 +15,7 @@ import { Plus, Play, ClipboardList, Wrench, ArrowUpDown, PersonStanding } from '
 import type { WorkOrder, Worker, Task, Project } from '@/lib/types';
 import { WORK_ORDER_STATUSES } from '@/lib/types';
 import { daysUntil } from '@/lib/planning';
-import { workOrderDisplayName, orderProcessProgress } from '@/lib/utils';
+import { workOrderDisplayName, orderProcessProgress, compareWorkOrdersDefault } from '@/lib/utils';
 import MobileWorkOrderDetail from './MobileWorkOrderDetail';
 import {
     MLarge, MSearch, MChips, MSection, MCard, MCardHead, MCardBody, MIcon,
@@ -60,7 +60,7 @@ export default function MobileWorkOrdersView({
     const [search, setSearch] = useState('');
     const [status, setStatus] = useState<string>('');
     const [openId, setOpenId] = useState<string | null>(null);
-    const sort = useMobileSort('nalozi', 'datum');
+    const sort = useMobileSort('nalozi', 'zadano');
 
     const counts = useMemo(() => {
         const c: Record<string, number> = {};
@@ -77,11 +77,12 @@ export default function MobileWorkOrdersView({
             return matchQ && (!status || wo.Status === status);
         });
         return sort.apply(list, {
-            naziv: wo => workOrderDisplayName(wo).toLowerCase(),
+            // Zadano = identičan poredak kao desktop lista naloga.
+            zadano: compareWorkOrdersDefault,
+            naziv: wo => workOrderDisplayName(wo),
             datum: wo => -new Date(wo.Created_Date).getTime(),
             rok: wo => (wo.Due_Date ? new Date(wo.Due_Date).getTime() : Number.MAX_SAFE_INTEGER),
             status: wo => wo.Status,
-            vrijednost: wo => -(wo.items?.length || 0),
         });
     }, [workOrders, search, status, sort]);
 
@@ -213,7 +214,7 @@ export default function MobileWorkOrdersView({
             <MSheet open={sort.isOpen} title="Sortiraj i grupiši" onClose={sort.close}>
                 <div className="mui-shd"><span>Sortiraj po</span></div>
                 <MList>
-                    {(['naziv', 'datum', 'rok', 'status'] as SortKey[]).map(k => (
+                    {(['zadano', 'naziv', 'datum', 'rok', 'status'] as SortKey[]).map(k => (
                         <MOption key={k} label={sortLabel(k)} selected={sort.sortKey === k} onClick={() => sort.setSortKey(k)} />
                     ))}
                 </MList>

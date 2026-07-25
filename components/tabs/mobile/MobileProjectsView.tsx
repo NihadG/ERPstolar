@@ -21,7 +21,7 @@ import {
 import type {
     Project, Product, Material, ProductMaterial, WorkOrder, Offer, WorkLog,
 } from '@/lib/types';
-import { formatCurrency } from '@/lib/utils';
+import { formatCurrency, compareProjectsByActivity, countActiveWorkOrdersByProject } from '@/lib/utils';
 import { daysUntil } from '@/lib/planning';
 import { sortProductsByName } from '@/lib/sortProducts';
 import { projectProfitBreakdown } from '@/lib/projectProfit';
@@ -91,13 +91,16 @@ export default function MobileProjectsView({
     const [status, setStatus] = useState('');
     const [openProjectId, setOpenProjectId] = useState<string | null>(null);
     const [openProductId, setOpenProductId] = useState<string | null>(null);
-    const sort = useMobileSort('projekti', 'datum');
+    const sort = useMobileSort('projekti', 'zadano');
 
     const counts = useMemo(() => {
         const c: Record<string, number> = {};
         for (const p of projects) c[p.Status] = (c[p.Status] || 0) + 1;
         return c;
     }, [projects]);
+
+    // Broj aktivnih naloga po projektu — ulaz za zadani poredak (kao desktop).
+    const activeCounts = useMemo(() => countActiveWorkOrdersByProject(workOrders), [workOrders]);
 
     // Vrijednost projekta — ISTA formula kao desktop (lib/projectProfit).
     // Keširano po projektu: lista može imati desetine redova.
@@ -121,13 +124,15 @@ export default function MobileProjectsView({
             return matchQ && (!status || p.Status === status);
         });
         return sort.apply(list, {
-            naziv: p => (p.Name || p.Client_Name || '').toLowerCase(),
+            // Zadano = kao desktop: projekti s aktivnim nalozima prvi, pa klijent.
+            zadano: (a, b) => compareProjectsByActivity(a, b, activeCounts),
+            naziv: p => p.Name || p.Client_Name || '',
             datum: p => -(p.Created_Date ? new Date(p.Created_Date).getTime() : 0),
             vrijednost: p => -revenueOf(p.Project_ID),
             rok: p => (p.Deadline ? new Date(p.Deadline).getTime() : Number.MAX_SAFE_INTEGER),
             status: p => p.Status,
         });
-    }, [projects, search, status, sort, revenueOf]);
+    }, [projects, search, status, sort, revenueOf, activeCounts]);
 
     const groups = useMemo(() => sort.group(filtered, {
         status: p => p.Status,
@@ -369,7 +374,7 @@ export default function MobileProjectsView({
             <MSheet open={sort.isOpen} title="Sortiraj i grupiši" onClose={sort.close}>
                 <div className="mui-shd"><span>Sortiraj po</span></div>
                 <MList>
-                    {(['naziv', 'datum', 'vrijednost', 'rok', 'status'] as SortKey[]).map(k => (
+                    {(['zadano', 'naziv', 'datum', 'vrijednost', 'rok', 'status'] as SortKey[]).map(k => (
                         <MOption key={k} label={sortLabel(k)} selected={sort.sortKey === k} onClick={() => sort.setSortKey(k)} />
                     ))}
                 </MList>

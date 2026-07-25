@@ -10771,4 +10771,71 @@ textarea::placeholder {
 @media (max-width: 640px) {
   .app-toolbar { padding: 12px; gap: 8px; }
   .app-toolbar-search { min-width: 0; flex: 1 1 100%; order: -1; }
-}
+}
+
+/* ════════════════════════════════════════════════════════════════════
+   MODALI NA TELEFONU — forme prilagođene prstu
+   (kreiranje ponude, radnog naloga, narudžbe… — svi dijele .modal)
+
+   Modal je već full-screen na ≤768px; ovdje se sređuje SADRŽAJ, koji je
+   bio guste desktop forme: sitna polja, uski razmaci, više kolona.
+   Pravila prate mobilni sistem iz components/tabs/mobile/MobileUI.css.
+   ════════════════════════════════════════════════════════════════════ */
+@media (max-width: 768px) {
+
+  /* Polja ≥16px — ispod toga iOS zumira ekran pri fokusu i razbije layout. */
+  .modal input[type="text"],
+  .modal input[type="number"],
+  .modal input[type="date"],
+  .modal input[type="email"],
+  .modal input[type="tel"],
+  .modal select,
+  .modal textarea {
+    font-size: 16px !important;
+    min-height: 46px;
+    border-radius: 11px;
+    padding: 11px 14px;
+  }
+
+  .modal textarea { min-height: 90px; }
+
+  /* Prozračnije grupe polja + čitljive oznake. */
+  .modal .form-group { margin-bottom: 14px; }
+  .modal .form-group label,
+  .modal .form-field label { font-size: 14px !important; margin-bottom: 7px; }
+
+  /* Sve višekolonske forme padaju u jednu kolonu — na 375px su 2 kolone
+     neupotrebljive (polja se stisnu ispod 140px). */
+  .modal .offer-form,
+  .modal .offer-top-row,
+  .modal [class*="form-row"],
+  .modal [class*="form-grid"] {
+    grid-template-columns: 1fr !important;
+    display: grid !important;
+    gap: 12px !important;
+  }
+
+  /* Sažetak/pregled cijene ne smije biti ljepljiv na telefonu — pojede ekran. */
+  .modal .offer-form-right { position: static; }
+
+  /* Redovi izbora (proizvodi, materijali) — veća meta za prst. */
+  .modal .selectable-row,
+  .modal .product-select-row,
+  .modal .checkbox-row,
+  .modal label:has(> input[type="checkbox"]) {
+    min-height: 48px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .modal input[type="checkbox"],
+  .modal input[type="radio"] { width: 22px; height: 22px; }
+
+  /* Tabele u modalu klize umjesto da guraju layout. */
+  .modal table { display: block; overflow-x: auto; white-space: nowrap; }
+
+  /* Naslov modala u rangu s ostatkom mobilnog UI-a. */
+  .modal .modal-header h2,
+  .modal .modal-header h3 { font-size: 18px; letter-spacing: -0.02em; }
+}

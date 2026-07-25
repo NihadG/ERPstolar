@@ -63,7 +63,7 @@ export default function MobileOffersView({
             return matchQ && (!status || o.Status === status);
         });
         return sort.apply(list, {
-            naziv: o => (o.Name || o.Offer_Number || '').toLowerCase(),
+            naziv: o => o.Name || o.Offer_Number || '',
             datum: o => -new Date(o.Created_Date).getTime(),
             vrijednost: o => -(o.Total || 0),
             rok: o => (o.Valid_Until ? new Date(o.Valid_Until).getTime() : Number.MAX_SAFE_INTEGER),

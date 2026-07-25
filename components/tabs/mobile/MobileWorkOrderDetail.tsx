@@ -28,6 +28,7 @@ import { useData } from '@/context/DataContext';
 import WorkOrderTasksPanel from '@/components/ui/WorkOrderTasksPanel';
 import WorkOrderWorkLog from '@/components/ui/WorkOrderWorkLog';
 import OrderProcessBoard from '@/components/ui/OrderProcessBoard';
+import { useEdgeSwipeBack } from './useSwipe';
 import {
     MHero, MSegmented, MSection, MList, MItem, MCell, MText, MPill,
     MActions, MAction, MButton, MSheet, MOption, MEmpty,
@@ -104,6 +105,9 @@ export default function MobileWorkOrderDetail({
     }, []);
     const goBack = () => window.history.back();
 
+    // Povlačenje s lijeve ivice = nazad; isključeno dok je sheet otvoren.
+    const dragX = useEdgeSwipeBack(goBack, { enabled: !completeSheet });
+
     // ── Radnje ──────────────────────────────────────────────────────
 
     /** Pauza/nastavak cijelog naloga (dnevnice ne teku dok je pauziran). */
@@ -163,7 +167,10 @@ export default function MobileWorkOrderDetail({
     const lastWork = lastBookingDate(workLogs);
 
     return createPortal(
-        <div className="mui mwd">
+        <div
+            className="mui mwd"
+            style={dragX > 0 ? { transform: `translateX(${dragX}px)`, transition: 'none' } : undefined}
+        >
             <header className="mwd-nav">
                 <button type="button" className="mwd-back" onClick={goBack}>
                     <ArrowLeft size={21} strokeWidth={2.3} /> Nalozi

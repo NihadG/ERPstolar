@@ -10,9 +10,10 @@
 // Stil živi u MobileUI.css (prefiks `mui-`, odvojen od desktop klasa).
 // ════════════════════════════════════════════════════════════════════
 
-import { type ReactNode, type CSSProperties, useEffect } from 'react';
+import { type ReactNode, type CSSProperties, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { Check, ChevronRight, X } from 'lucide-react';
+import { useSwipeDismiss } from './useSwipe';
 import './MobileUI.css';
 
 type Tone = 'blue' | 'green' | 'orange' | 'purple' | 'red' | 'gray';
@@ -250,6 +251,10 @@ export function MSearch({ value, onChange, placeholder }: {
 export function MSheet({ open, title, onClose, children, footer }: {
     open: boolean; title?: string; onClose: () => void; children: ReactNode; footer?: ReactNode;
 }) {
+    const sheetRef = useRef<HTMLDivElement>(null);
+    // Povlačenje nadolje zatvara sheet (iOS navika) — hvata se samo na vrhu sadržaja.
+    const dragY = useSwipeDismiss(sheetRef, onClose, open);
+
     useEffect(() => {
         if (!open) return;
         const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
@@ -262,8 +267,15 @@ export function MSheet({ open, title, onClose, children, footer }: {
     if (!open || typeof document === 'undefined') return null;
     return createPortal(
         <div className="mui mui-sheet-wrap">
-            <div className="mui-sheet-bg" onClick={onClose} />
-            <div className="mui-sheet" role="dialog" aria-modal="true" aria-label={title}>
+            <div className="mui-sheet-bg" onClick={onClose} style={dragY > 0 ? { opacity: Math.max(0.25, 1 - dragY / 260) } : undefined} />
+            <div
+                ref={sheetRef}
+                className="mui-sheet"
+                role="dialog"
+                aria-modal="true"
+                aria-label={title}
+                style={dragY > 0 ? { transform: `translateY(${dragY}px)`, transition: 'none' } : undefined}
+            >
                 <div className="mui-grab" />
                 {title && <h3>{title}</h3>}
                 {children}

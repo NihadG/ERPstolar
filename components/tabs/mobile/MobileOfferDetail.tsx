@@ -22,6 +22,7 @@ import {
     MSegmented, MSection, MList, MItem, MCell, MText, MValue, MPill,
     MActions, MAction, MButton, MSheet, MOption, MEmpty,
 } from './MobileUI';
+import { useEdgeSwipeBack } from './useSwipe';
 import './MobileUI.css';
 import './MobileWorkOrderDetail.css';
 
@@ -80,6 +81,9 @@ export default function MobileOfferDetail({
     }, []);
     const goBack = () => window.history.back();
 
+    // Povlačenje s lijeve ivice = nazad; isključeno dok je otvoren sheet.
+    const dragX = useEdgeSwipeBack(goBack, { enabled: !statusSheet && !confirmDelete });
+
     const pdvAmount = offer.Include_PDV
         ? (offer.Total || 0) - (offer.Subtotal || 0) - (offer.Transport_Cost || 0)
         : 0;
@@ -87,7 +91,10 @@ export default function MobileOfferDetail({
     if (typeof document === 'undefined') return null;
 
     return createPortal(
-        <div className="mui mwd">
+        <div
+            className="mui mwd"
+            style={dragX > 0 ? { transform: `translateX(${dragX}px)`, transition: 'none' } : undefined}
+        >
             <header className="mwd-nav">
                 <button type="button" className="mwd-back" onClick={goBack}>
                     <ArrowLeft size={21} strokeWidth={2.3} /> Ponude

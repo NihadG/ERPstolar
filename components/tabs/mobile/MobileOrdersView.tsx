@@ -77,7 +77,7 @@ export default function MobileOrdersView({
             return matchQ && (!status || displayStatusOf(o) === status);
         });
         return sort.apply(list, {
-            naziv: o => (o.Name || o.Order_Number || '').toLowerCase(),
+            naziv: o => o.Name || o.Order_Number || '',
             datum: o => -new Date(o.Order_Date).getTime(),
             vrijednost: o => -(o.Total_Amount || 0),
             status: o => displayStatusOf(o),

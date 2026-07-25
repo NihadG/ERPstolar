@@ -281,17 +281,36 @@
    TAB: MATERIJALI
    ───────────────────────────────────────────────────────────────────── */
 .pov-materijali { display: flex; flex-direction: column; gap: 16px; }
-.pov-mat-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 14px; flex-wrap: wrap; padding: 14px 16px; border-bottom: 1px solid var(--border-light); }
+
+/* ── Toolbar materijala ──────────────────────────────────────────────
+   Filteri lijevo, vrijednost + akcija desno. Vrijednost je odvojena
+   tankom linijom da se ne stapa s dugmetom. */
+.pov-mat-toolbar {
+    display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap;
+    padding: 12px 16px; border-bottom: 1px solid var(--border-light);
+    background: linear-gradient(180deg, #fcfcfd, var(--background));
+}
 .pov-mat-toolbar-right { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
-.pov-filter-chips { display: flex; gap: 8px; flex-wrap: wrap; }
-.pov-fchip { padding: 6px 13px; border-radius: 999px; border: 1px solid var(--border-light); background: var(--background); color: var(--text-secondary); font-size: 12px; font-weight: 600; cursor: pointer; transition: var(--transition); }
-.pov-fchip:hover { background: var(--surface); }
-.pov-fchip.on { background: var(--text-primary); color: var(--background); border-color: var(--text-primary); }
-.pov-fchip.danger.on { background: var(--error); border-color: var(--error); }
-.pov-fchip.warning.on { background: var(--warning); border-color: var(--warning); }
-.pov-fchip.success.on { background: var(--success); border-color: var(--success); }
-.pov-mat-total { font-size: 13px; color: var(--text-secondary); white-space: nowrap; }
-.pov-mat-total b { color: var(--text-primary); font-weight: 700; }
+.pov-filter-chips { display: flex; gap: 6px; flex-wrap: wrap; }
+
+/* Segmentni izgled: neutralni chipovi, aktivni nosi boju statusa. */
+.pov-fchip {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 6px 12px; border-radius: 9px; border: 1px solid transparent;
+    background: var(--surface); color: var(--text-secondary);
+    font-size: 12.5px; font-weight: 600; cursor: pointer; transition: var(--transition);
+}
+.pov-fchip:hover { background: var(--surface-hover); color: var(--text-primary); }
+.pov-fchip.on { background: var(--background); color: var(--text-primary); border-color: var(--border); box-shadow: 0 1px 2px var(--shadow); }
+.pov-fchip.danger.on { color: var(--error); border-color: rgba(255, 59, 48, 0.35); background: var(--error-bg); }
+.pov-fchip.warning.on { color: #b5610a; border-color: rgba(255, 149, 0, 0.35); background: var(--warning-bg); }
+.pov-fchip.success.on { color: #1a7f37; border-color: rgba(52, 199, 89, 0.35); background: var(--success-bg); }
+
+.pov-mat-total {
+    font-size: 12.5px; color: var(--text-secondary); white-space: nowrap;
+    padding-right: 14px; border-right: 1px solid var(--border-light);
+}
+.pov-mat-total b { color: var(--text-primary); font-weight: 700; font-size: 14px; margin-left: 4px; font-variant-numeric: tabular-nums; }
 .pov-mat-name { font-weight: 600; color: var(--text-primary); }
 .pov-mat-sub { font-size: 11px; color: var(--text-tertiary); margin-top: 2px; }
 
@@ -304,7 +323,13 @@
 .pov-order-main { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .pov-order-main .pov-chev { color: var(--text-tertiary); transition: transform var(--transition); }
 .pov-order-main .pov-chev.open { transform: rotate(90deg); color: var(--accent); }
-.pov-order-num { font-size: 13.5px; font-weight: 700; color: var(--text-primary); }
+/* Naziv vodi, broj (za dobavljača) je sitan i monospaced radi čitanja koda. */
+.pov-order-name { font-size: 14px; font-weight: 700; color: var(--text-primary); }
+.pov-order-num {
+    font-size: 11.5px; font-weight: 600; color: var(--text-tertiary);
+    background: var(--surface); padding: 2px 8px; border-radius: 6px;
+    font-variant-numeric: tabular-nums; letter-spacing: -0.01em;
+}
 .pov-order-supplier { font-size: 13px; color: var(--text-secondary); }
 .pov-order-meta { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--text-secondary); }
 .pov-order-meta b { color: var(--text-primary); }

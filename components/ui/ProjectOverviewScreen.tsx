@@ -21,7 +21,9 @@ import {
 import type { Project, WorkOrder, WorkLog, Offer, Worker, Material, Order, Task } from '@/lib/types';
 import { buildProjectOverview, type ProjectOverview } from '@/lib/projectOverview';
 import { formatDate } from '@/lib/utils';
+import { orderItemPricing } from '@/lib/orderPricing';
 import { useIsCompact } from '@/hooks/useIsCompact';
+import { useEdgeSwipeBack } from '@/components/tabs/mobile/useSwipe';
 import { useData } from '@/context/DataContext';
 import { createOrder, updateWorkOrder, startWorkOrder, deleteWorkOrder } from '@/lib/services';
 import { checkWorkOrderStart, findWorkersToBookToday, bookWorkersToday } from '@/lib/workOrderStart';
@@ -152,6 +154,9 @@ export default function ProjectOverviewScreen({
     }, []);
     const goBack = () => window.history.back();
 
+    // Povlačenje s lijeve ivice = nazad (telefon); modali ga isključuju.
+    const dragX = useEdgeSwipeBack(goBack, { enabled: !printWO && !deleteWO && !bookToday });
+
     const fmt = (n: number) => `${Math.round(n).toLocaleString('hr-HR')} ${currency}`;
     const fmt0 = (n: number) => Math.round(n).toLocaleString('hr-HR');
 
@@ -256,7 +261,10 @@ export default function ProjectOverviewScreen({
     if (typeof document === 'undefined') return null;
 
     return createPortal(
-        <div className="pov-overlay">
+        <div
+            className="pov-overlay"
+            style={dragX > 0 ? { transform: `translateX(${dragX}px)`, transition: 'none' } : undefined}
+        >
             <header className="pov-header">
                 <div className="pov-topbar">
                     <button className="pov-back" onClick={goBack} title="Nazad" aria-label="Nazad">
@@ -854,11 +862,14 @@ function MaterijaliTab({ ov, fmt, orders, orderable, canOrder, onCreateOrders }:
                                     <div className="pov-order-row" onClick={() => setOpenOrders(prev => { const n = new Set(prev); n.has(o.Order_ID) ? n.delete(o.Order_ID) : n.add(o.Order_ID); return n; })}>
                                         <div className="pov-order-main">
                                             <ChevronRight size={16} className={`pov-chev ${isOpen ? 'open' : ''}`} />
-                                            <span className="pov-order-num">#{o.Order_Number}</span>
-                                            <span className="pov-order-supplier">{o.Supplier_Name || 'Bez dobavljača'}</span>
+                                            {/* Naziv vodi (auto-narudžbe naslijede naziv naloga); sirovi
+                                                broj je za dobavljača, pa stoji sitno pored. */}
+                                            <span className="pov-order-name">{o.Name || o.Supplier_Name || `Narudžba ${o.Order_Number}`}</span>
+                                            <span className="pov-order-num">{o.Order_Number}</span>
                                             <span className={`pov-chip s-${orderStatusSlug(o.Status)}`}>{o.Status}</span>
                                         </div>
                                         <div className="pov-order-meta">
+                                            {o.Name && o.Supplier_Name && <><span>{o.Supplier_Name}</span><span className="pov-dot">•</span></>}
                                             <span>{items.length} {items.length === 1 ? 'stavka' : 'stavki'}</span>
                                             {o.Expected_Delivery && <><span className="pov-dot">•</span><span>Isporuka: {formatDate(o.Expected_Delivery)}</span></>}
                                             <span className="pov-dot">•</span><b>{fmt(o.Total_Amount || 0)}</b>
@@ -868,17 +879,24 @@ function MaterijaliTab({ ov, fmt, orders, orderable, canOrder, onCreateOrders }:
                                         <div className="pov-order-items">
                                             {items.length === 0 ? (
                                                 <div className="pov-order-item empty">Nema stavki.</div>
-                                            ) : items.map(it => (
-                                                <div key={it.ID} className="pov-order-item">
-                                                    <div className="pov-order-item-main">
-                                                        <span className="pov-order-item-name">{it.Material_Name}</span>
-                                                        {it.Product_Name && <span className="pov-order-item-sub">{it.Product_Name}</span>}
+                                            ) : (() => {
+                                                // Legacy auto-narudžbe su Expected_Price spremile kao JEDINIČNU
+                                                // cijenu — bez ovoga red pokazuje 3.000 KM za 0.08 m³.
+                                                const pricing = orderItemPricing(o);
+                                                return items.map(it => (
+                                                    <div key={it.ID} className="pov-order-item">
+                                                        <div className="pov-order-item-main">
+                                                            <span className="pov-order-item-name">{it.Material_Name}</span>
+                                                            <span className="pov-order-item-sub">
+                                                                {it.Quantity % 1 === 0 ? it.Quantity : it.Quantity.toFixed(2)} {it.Unit} × {fmt(pricing.unitPrice(it))}
+                                                                {it.Product_Name ? ` · ${it.Product_Name}` : ''}
+                                                            </span>
+                                                        </div>
+                                                        <span className={`pov-chip ${matStatusClass(it.Status)}`}>{it.Status}</span>
+                                                        <b className="pov-order-item-price">{fmt(pricing.lineTotal(it))}</b>
                                                     </div>
-                                                    <span className="pov-order-item-qty">{it.Quantity % 1 === 0 ? it.Quantity : it.Quantity.toFixed(2)} {it.Unit}</span>
-                                                    <span className={`pov-chip ${matStatusClass(it.Status)}`}>{it.Status}</span>
-                                                    <b className="pov-order-item-price">{fmt(it.Expected_Price || 0)}</b>
-                                                </div>
-                                            ))}
+                                                ));
+                                            })()}
                                         </div>
                                     )}
                                 </div>

@@ -11,11 +11,13 @@
 // ════════════════════════════════════════════════════════════════════
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { naturalCompare } from '@/lib/naturalCompare';
 
-export type SortKey = 'naziv' | 'datum' | 'vrijednost' | 'rok' | 'status';
+export type SortKey = 'zadano' | 'naziv' | 'datum' | 'vrijednost' | 'rok' | 'status';
 export type GroupKey = 'status' | 'klijent' | 'projekat' | 'dobavljac';
 
 const SORT_LABELS: Record<SortKey, string> = {
+    zadano: 'Zadano (aktivni prvi)',
     naziv: 'Naziv (A–Ž)',
     datum: 'Datum · najnovije',
     vrijednost: 'Vrijednost',
@@ -39,6 +41,15 @@ export function sortLabel(sort?: SortKey, group?: GroupKey | null): string {
 /** Vrijednost po kojoj se sortira — broj (rastuće) ili tekst. */
 type Selector<T> = (row: T) => string | number;
 
+/**
+ * Pravila po kriteriju. Uz selektore se može dati i `zadano` — pun komparator
+ * koji preslikava desktop poredak (npr. compareWorkOrdersDefault), jer se
+ * „aktivni prvi, pa projekat, pa datum" ne može izraziti jednom vrijednošću.
+ */
+type SortRules<R> = Partial<Record<Exclude<SortKey, 'zadano'>, Selector<R>>> & {
+    zadano?: (a: R, b: R) => number;
+};
+
 export interface MobileSort<T = any> {
     sortKey: SortKey;
     groupKey: GroupKey | null;
@@ -47,7 +58,7 @@ export interface MobileSort<T = any> {
     isOpen: boolean;
     open: () => void;
     close: () => void;
-    apply: <R>(rows: R[], selectors: Partial<Record<SortKey, Selector<R>>>) => R[];
+    apply: <R>(rows: R[], rules: SortRules<R>) => R[];
     group: <R>(rows: R[], selectors: Partial<Record<GroupKey, Selector<R>>>) => { key: string; rows: R[] }[] | null;
 }
 
@@ -86,14 +97,20 @@ export function useMobileSort<T = any>(scope: string, initial: SortKey = 'datum'
         setSortKeyState(s => { persist(s, k); return s; });
     }, [persist]);
 
-    const apply = useCallback(<R,>(rows: R[], selectors: Partial<Record<SortKey, Selector<R>>>): R[] => {
-        const sel = selectors[sortKey];
+    const apply = useCallback(<R,>(rows: R[], rules: SortRules<R>): R[] => {
+        // Zadani poredak = isti komparator kao desktop (ako ga tab dostavi).
+        if (sortKey === 'zadano') {
+            return rules.zadano ? [...rows].sort(rules.zadano) : rows;
+        }
+        const sel = rules[sortKey] as Selector<R> | undefined;
         if (!sel) return rows;
         // Kopija — ulazni niz može biti memoiziran drugdje.
         return [...rows].sort((a, b) => {
             const va = sel(a), vb = sel(b);
             if (typeof va === 'number' && typeof vb === 'number') return va - vb;
-            return String(va).localeCompare(String(vb), 'bs');
+            // naturalCompare: „Poz 10" ide IZA „Poz 2", a ne ispred kao kod
+            // običnog poređenja stringova (isti kolator koji koristi desktop).
+            return naturalCompare(String(va), String(vb));
         });
     }, [sortKey]);
 
