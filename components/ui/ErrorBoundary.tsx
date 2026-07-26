@@ -19,6 +19,46 @@ interface ErrorBoundaryState {
 }
 
 // ============================================
+// CHUNK LOAD ERROR (nova verzija objavljena)
+// ============================================
+
+// Tabovi se učitavaju lijeno (next/dynamic). Kad se objavi novi build, stari
+// chunk-ovi nestanu sa CDN-a, pa tab koji je ostao otvoren preko noći dobije
+// 404 na `/_next/static/chunks/...` čim korisnik otvori tab koji dotad nije
+// učitao. To NIJE greška aplikacije — HTML u tabu je jednostavno star.
+// Rješenje je osvježiti stranicu; ona tada povuče nove hasheve.
+const CHUNK_RELOAD_KEY = 'erp:chunk-reload-at';
+const CHUNK_RELOAD_COOLDOWN_MS = 30_000;
+
+function isChunkLoadError(error: Error | null): boolean {
+    if (!error) return false;
+    if (error.name === 'ChunkLoadError') return true;
+    const msg = error.message || '';
+    return /Loading chunk \S+ failed/i.test(msg)
+        || /Loading CSS chunk \S+ failed/i.test(msg)
+        || /Failed to fetch dynamically imported module/i.test(msg);
+}
+
+/**
+ * Osvježi stranicu jednom, ali ne u petlji: ako novi build i dalje ne uspije
+ * (npr. deploy je stvarno pokvaren), unutar cooldown-a se prikaže poruka
+ * umjesto beskonačnog reload-a.
+ */
+function reloadForNewBuild(): boolean {
+    if (typeof window === 'undefined') return false;
+    try {
+        const last = Number(window.sessionStorage.getItem(CHUNK_RELOAD_KEY) || 0);
+        if (last && Date.now() - last < CHUNK_RELOAD_COOLDOWN_MS) return false;
+        window.sessionStorage.setItem(CHUNK_RELOAD_KEY, String(Date.now()));
+    } catch {
+        // privatni mod / blokiran storage — radije ne osvježavaj nego riskiraj petlju
+        return false;
+    }
+    window.location.reload();
+    return true;
+}
+
+// ============================================
 // ERROR BOUNDARY COMPONENT
 // ============================================
 
@@ -42,6 +82,10 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
 
     componentDidCatch(error: Error, errorInfo: React.ErrorInfo): void {
         this.setState({ errorInfo });
+
+        // Zastarjeli tab nakon novog deploy-a: osvježi umjesto da korisniku
+        // pokažeš „Nešto je pošlo po krivu" za nešto što nije njegova greška.
+        if (isChunkLoadError(error) && reloadForNewBuild()) return;
 
         // Log error to console (and potentially to external service)
         console.error('ErrorBoundary caught an error:', error, errorInfo);
@@ -67,8 +111,12 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
 
     render(): ReactNode {
         if (this.state.hasError) {
+            // Zastarjeli tab ima prednost nad custom fallback-om: poruka o
+            // "grešci u tabu" bi bila pogrešna dijagnoza za korisnika.
+            const staleBuild = isChunkLoadError(this.state.error);
+
             // Custom fallback if provided
-            if (this.props.fallback) {
+            if (this.props.fallback && !staleBuild) {
                 return this.props.fallback;
             }
 
@@ -76,9 +124,13 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
             return (
                 <div className="error-boundary">
                     <div className="error-boundary-content">
-                        <div className="error-icon">⚠️</div>
-                        <h2>Ups! Nešto je pošlo po krivu</h2>
-                        <p>Došlo je do neočekivane greške. Molimo pokušajte ponovo.</p>
+                        <div className="error-icon">{staleBuild ? '🔄' : '⚠️'}</div>
+                        <h2>{staleBuild ? 'Objavljena je nova verzija' : 'Ups! Nešto je pošlo po krivu'}</h2>
+                        <p>
+                            {staleBuild
+                                ? 'Ova kartica je otvorena od ranije verzije aplikacije. Osvježite stranicu da nastavite.'
+                                : 'Došlo je do neočekivane greške. Molimo pokušajte ponovo.'}
+                        </p>
 
                         {process.env.NODE_ENV === 'development' && this.state.error && (
                             <details className="error-details">
@@ -91,15 +143,19 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
                         )}
 
                         <div className="error-actions">
-                            <button
-                                onClick={this.handleRetry}
-                                className="error-retry-btn"
-                            >
-                                Pokušaj ponovo
-                            </button>
+                            {/* Kod zastarjelog build-a "Pokušaj ponovo" ne pomaže —
+                                chunk-a nema na serveru dok se stranica ne osvježi. */}
+                            {!staleBuild && (
+                                <button
+                                    onClick={this.handleRetry}
+                                    className="error-retry-btn"
+                                >
+                                    Pokušaj ponovo
+                                </button>
+                            )}
                             <button
                                 onClick={() => window.location.reload()}
-                                className="error-reload-btn"
+                                className={staleBuild ? 'error-retry-btn' : 'error-reload-btn'}
                             >
                                 Osvježi stranicu
                             </button>
