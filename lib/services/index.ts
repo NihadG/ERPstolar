@@ -194,5 +194,29 @@ export {
 // Settings
 export { getOrgSettings, saveOrgSettings } from '../database';
 
+// Podaci i spremnost (snapshot v3 → profili → indikator spremnosti)
+export { getDataReadiness, rebuildProductionSnapshots, getProductTaxonomy } from '../database';
+export type { RebuildSnapshotsResult } from '../database';
+export { computeReadiness } from '../insights/readiness';
+export type { Readiness, ReadinessMetric, ReadinessLevel } from '../insights/readiness';
+export { buildWorkerAffinity, processOwnership } from '../insights/workerAffinity';
+export type { WorkerProfile, AffinityRow } from '../insights/workerAffinity';
+export { buildTypeProfiles, driverRates } from '../insights/typeProfile';
+export type { TypeProfile } from '../insights/typeProfile';
+export { buildFlowSummary } from '../insights/processFlow';
+export type { FlowSummary, TransitionStat } from '../insights/processFlow';
+export { findComparable, describeComparable } from '../insights/comparable';
+export type { ComparableQuery, ComparableResult } from '../insights/comparable';
+// Platno — planerski scenariji (jedina kolekcija u koju platno piše)
+export {
+    getScenarios, getScenario, createScenario, saveScenario,
+    duplicateScenario, renameScenario, archiveScenario, deleteScenario,
+} from './planning/scenarioService';
+export type { SaveScenarioResult } from './planning/scenarioService';
+
+export { collectUnresolved } from '../insights/unresolved';
+export type { UnresolvedReport, UnresolvedEntry } from '../insights/unresolved';
+export { getMaterialTaxonomy } from '../database';
+
 // Data Loading
 export { getAllData } from '../database';

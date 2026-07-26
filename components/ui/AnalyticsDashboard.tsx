@@ -3,8 +3,9 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useData } from '@/context/DataContext';
 import {
-    X, BarChart3, FolderKanban, Package, GitCompareArrows, RefreshCw, Search, Loader2, Users,
+    X, BarChart3, FolderKanban, Package, GitCompareArrows, RefreshCw, Search, Loader2, Users, Fingerprint,
 } from 'lucide-react';
+import ProfilesTab from './ProfilesTab';
 import { workOrderDisplayName } from '@/lib/utils';
 import { getAnalyticsRaw, computeAnalytics } from '@/lib/services/profit/analyticsService';
 import type { AnalyticsData, AnalyticsScope, AnalyticsRaw } from '@/lib/services/profit/analyticsService';
@@ -21,7 +22,7 @@ interface AnalyticsDashboardProps {
     onRefresh?: (...collections: string[]) => void;
 }
 
-type Tab = 'overview' | 'workers' | 'projects' | 'products' | 'planvsactual';
+type Tab = 'overview' | 'workers' | 'projects' | 'products' | 'planvsactual' | 'profili';
 type Period = 'all' | 'month' | '30d';
 
 const fmt = (n: number) => `${Math.round(n).toLocaleString('hr-HR')} KM`;
@@ -127,6 +128,7 @@ export default function AnalyticsDashboard({ onClose, projects, showToast, onRef
         { id: 'products', label: 'Proizvodi', Icon: Package },
         { id: 'workers', label: 'Radnici', Icon: Users },
         { id: 'planvsactual', label: 'Plan vs Stvarno', Icon: GitCompareArrows },
+        { id: 'profili', label: 'Profili', Icon: Fingerprint },
     ];
 
     return (
@@ -167,7 +169,11 @@ export default function AnalyticsDashboard({ onClose, projects, showToast, onRef
 
                 {/* Body */}
                 <div className="ana-body">
-                    {loading ? (
+                    {/* Profili čitaju SNAPSHOTE, ne `data` — zato idu prije provjere
+                        „nema podataka za period": filter perioda se na njih ne odnosi. */}
+                    {tab === 'profili' ? (
+                        <ProfilesTab organizationId={organizationId || ''} />
+                    ) : loading ? (
                         <div className="ana-center"><Loader2 size={20} className="ana-spin" /> Učitavanje…</div>
                     ) : !data || data.kpis.productCount === 0 ? (
                         <div className="ana-center">Nema podataka za odabrani period/opseg.</div>

@@ -287,6 +287,18 @@ service cloud.firestore {
     }
 
     // ============================================
+    // PLANNING SCENARIOS (Platno — pješčanik za planiranje)
+    // Jedina kolekcija u koju platno piše. Bez ovog bloka čitanje je ODBIJENO
+    // (rules nemaju catch-all match) i platno tiho ne radi.
+    // ============================================
+
+    match /planning_scenarios/{scenarioId} {
+      allow read: if isOrgMember();
+      allow create: if hasValidOrgId();
+      allow update, delete: if isOrgMember();
+    }
+
+    // ============================================
     // ZAVRŠNI RAČUNI (Multi-tenancy enabled)
     // ============================================
 

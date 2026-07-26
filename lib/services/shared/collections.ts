@@ -28,6 +28,8 @@ export const COLLECTIONS = {
     TASK_PROFILES: 'task_profiles',
     NOTIFICATIONS: 'notifications',
     PRODUCTION_SNAPSHOTS: 'production_snapshots',
+    // Platno — planerski scenariji. JEDINA kolekcija u koju platno piše.
+    PLANNING_SCENARIOS: 'planning_scenarios',
     HOLIDAYS: 'holidays',
     ORG_SETTINGS: 'org_settings',
     SERVICE_DEFINITIONS: 'service_definitions',

@@ -41,6 +41,9 @@ const AttendanceTab = nextDynamic(() => import('@/components/tabs/AttendanceTab'
 const TasksTab = nextDynamic(() => import('@/components/tabs/TasksTab'), { loading: TabLoading });
 const MobileTasksTab = nextDynamic(() => import('@/components/tabs/MobileTasksTab'), { loading: TabLoading });
 const PlannerTab = nextDynamic(() => import('@/components/tabs/PlannerTab'), { loading: TabLoading });
+// Platno — pješčanik za planiranje. Čita naloge/radnike/projekte, piše SAMO u
+// planning_scenarios; ne mijenja nijedan status ni datum stvarnog naloga.
+const CanvasTab = nextDynamic(() => import('@/components/canvas/CanvasTab'), { loading: TabLoading });
 const ProcessesTab = nextDynamic(() => import('@/components/tabs/ProcessesTab'), { loading: TabLoading });
 
 export default function Home() {
@@ -552,6 +555,19 @@ export default function Home() {
                             workers={appState.workers}
                             workLogs={appState.workLogs}
                             onRefresh={refreshCollections}
+                            showToast={showToast}
+                        />
+                    )}
+
+                    {/* Platno NE dobija onRefresh — nema šta da osvježava jer ništa
+                        izvan svoje kolekcije ne mijenja. */}
+                    {activeTab === 'platno' && (
+                        <CanvasTab
+                            projects={appState.projects}
+                            workers={appState.workers}
+                            workOrders={appState.workOrders}
+                            orders={appState.orders}
+                            suppliers={appState.suppliers}
                             showToast={showToast}
                         />
                     )}

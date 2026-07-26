@@ -41,12 +41,22 @@ export const MATERIAL_TYPES: MaterialType[] = [
     { key: 'mdf', label: 'MDF', patterns: ['mdf'] },
     { key: 'furnir', label: 'Furnir', patterns: ['furnir'] },
     { key: 'masiv', label: 'Masiv', patterns: ['masiv'] },
+    // Špera/multiplex = materijal SAVIJANJA (oblikovna špera → presa, zaobljenja).
+    // Iza furnira i masiva NAMJERNO: "Furnirana šperploča" je prvenstveno furnir
+    // (prvi pogodak pobjeđuje). Pattern traži 'šper' S DIJAKRITIKOM ili puno
+    // 'sperploc' — golo 'sper' bi hvatalo "disperzija" (boja).
+    { key: 'sper', label: 'Šperploča / multipleks', patterns: ['šper', 'sperploc', 'sperploč', 'multipleks', 'multiplex'] },
+    // Ljepilo prati presovanje/lameliranje — nosi isti signal o složenosti posla.
+    { key: 'ljepilo', label: 'Ljepilo', patterns: ['ljepil', 'lijepil', 'ljepak', 'lepak'] },
     { key: 'lak', label: 'Lak / boja', patterns: ['lak', 'farb', 'boja'] },
     { key: 'vodilice', label: 'Vodilice', patterns: ['vodilic'] },
     // "baglama" = uobičajen bosanski naziv za šarku (korisnikovi materijali: "Baglama ravna/paralelna")
     { key: 'sarke', label: 'Šarke', patterns: ['šark', 'sark', 'baglam'] },
     { key: 'rucke', label: 'Ručke', patterns: ['ručk', 'ruck'] },
-    { key: 'staklo', label: 'Staklo', patterns: ['staklo', 'plexi'] },
+    // 'parsol' = uobičajena marka toniranog float stakla (npr. "Parsol / Bronza")
+    { key: 'staklo', label: 'Staklo', patterns: ['staklo', 'plexi', 'parsol', 'float'] },
+    // Nogice/stopala — otkrivaju STOJEĆI element (nasuprot visećem)
+    { key: 'nogice', label: 'Nogice / stopala', patterns: ['nogic', 'nogar', 'stopal', 'sokl'] },
     { key: 'ogledalo', label: 'Ogledalo', patterns: ['ogledal'] },
     { key: 'led', label: 'LED', patterns: ['led'] },
     // "KT / Textil…" = kant traka skraćeno; pattern s razmakom/kosom da ne hvata "projekt" i sl.
@@ -55,11 +65,31 @@ export const MATERIAL_TYPES: MaterialType[] = [
     { key: 'alu', label: 'Alu', patterns: ['alu'] },
 ];
 
-/** Tip materijala iz naziva (prvi tip čiji pattern se javlja u nazivu); null ako nijedan. */
-export function materialTypeFromName(name: string | undefined): string | null {
+/**
+ * SVI tipovi iz naziva jednog materijala. Jedan artikal zna nositi VIŠE signala:
+ * „Furnirana šperploča" je i furnir i špera — a špera je ta koja nagovještava
+ * savijanje/presu. Sa samo prvim pogotkom (materialTypeFromName) taj se signal gubi.
+ * Redoslijed prati MATERIAL_TYPES (stabilno).
+ */
+export function materialTypesFromName(
+    name: string | undefined,
+    types: MaterialType[] = MATERIAL_TYPES
+): string[] {
+    const n = norm(name || '');
+    if (!n) return [];
+    return types.filter(t => t.patterns.some(p => n.includes(p))).map(t => t.key);
+}
+
+/** Tip materijala iz naziva (PRVI tip čiji pattern se javlja u nazivu); null ako nijedan.
+ *  Zadržan zbog pravila materijal→proces i zatečenog ponašanja; za analitiku koristi
+ *  materialTypesFromName (višestruki pogoci). */
+export function materialTypeFromName(
+    name: string | undefined,
+    types: MaterialType[] = MATERIAL_TYPES
+): string | null {
     const n = norm(name || '');
     if (!n) return null;
-    for (const t of MATERIAL_TYPES) {
+    for (const t of types) {
         if (t.patterns.some(p => n.includes(p))) return t.key;
     }
     return null;

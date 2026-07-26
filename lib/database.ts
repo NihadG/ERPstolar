@@ -59,6 +59,11 @@ import {
     generateOrderNumber as _generateOrderNumber,
     generateWorkOrderNumber as _generateWorkOrderNumber,
 } from './services/shared/idGenerator';
+// Production snapshot v3 — čista računica (testirana) živi izvan ovog fajla
+import { buildProductionSnapshot } from './snapshot/buildSnapshot';
+import { PRODUCT_TYPES, type ProductType } from './classify/taxonomy';
+import { MATERIAL_TYPES, type MaterialType } from './productProcesses';
+import { computeReadiness, type Readiness } from './insights/readiness';
 
 // ============================================
 // HELPER: GET FIRESTORE WITH NULL CHECK
@@ -5624,10 +5629,72 @@ export async function workLogExists(workerId: string, workOrderItemId: string, d
  * This captures denormalized data for AI/ML training purposes.
  * ENHANCED: Now includes offer data, process timing, surface area, and material ratios.
  */
+/**
+ * Taksonomija tipova proizvoda za organizaciju: KORISNIKOVA potvrđena pravila
+ * (org_settings.productTaxonomy) + ugrađena tabela. Pravila su PODATAK, ne kod —
+ * zato ih AI može predložiti, korisnik potvrditi, a klasifikacija ostaje
+ * deterministička i reproducibilna offline.
+ * Korisnikova pravila idu PRVA: kod jednakog patterna njegov rječnik pobjeđuje.
+ */
+export async function getProductTaxonomy(organizationId: string): Promise<ProductType[]> {
+    if (!organizationId) return PRODUCT_TYPES;
+    try {
+        const settings = await getOrgSettings(organizationId);
+        const custom = settings?.productTaxonomy;
+        if (Array.isArray(custom) && custom.length > 0) {
+            const valid = custom.filter((t: unknown): t is ProductType => {
+                const x = t as ProductType;
+                return !!x && typeof x.key === 'string' && Array.isArray(x.patterns);
+            });
+            if (valid.length > 0) return [...valid, ...PRODUCT_TYPES];
+        }
+    } catch (error) {
+        console.warn('[Snapshot] Taksonomija organizacije nije učitana, koristim ugrađenu:', error);
+    }
+    return PRODUCT_TYPES;
+}
+
+/**
+ * Taksonomija MATERIJALA: korisnikova potvrđena pravila + ugrađena tabela.
+ * Bez ovoga petlja učenja ne bi radila za materijale — a sastavnica je jači
+ * signal o poslu od naziva proizvoda („oblikovna špera" ⇒ savijanje/presa).
+ */
+export async function getMaterialTaxonomy(organizationId: string): Promise<MaterialType[]> {
+    if (!organizationId) return MATERIAL_TYPES;
+    try {
+        const settings = await getOrgSettings(organizationId);
+        const custom = settings?.materialTaxonomy;
+        if (Array.isArray(custom) && custom.length > 0) {
+            const valid = custom.filter((t: unknown): t is MaterialType => {
+                const x = t as MaterialType;
+                return !!x && typeof x.key === 'string' && Array.isArray(x.patterns);
+            });
+            // Korisnikova pravila IDU PRVA: kod prvog-pogotka njegov rječnik pobjeđuje.
+            if (valid.length > 0) return [...valid, ...MATERIAL_TYPES];
+        }
+    } catch (error) {
+        console.warn('[Snapshot] Taksonomija materijala nije učitana, koristim ugrađenu:', error);
+    }
+    return MATERIAL_TYPES;
+}
+
+/**
+ * Production snapshot v3 za JEDAN nalog.
+ *
+ * Ova funkcija radi SAMO dohvat i upis — cijela računica je u
+ * lib/snapshot/buildSnapshot.ts (čista, bez Firebase, pokrivena testovima).
+ * Do v2 je računica živjela ovdje unutar async funkcije s upitima, pa se nije mogla
+ * testirati; tako su i nastale greške koje su trovale statistiku (vidi buildSnapshot).
+ *
+ * JEDAN SNAPSHOT PO NALOGU: v2 je slijepo `addDoc`-ovao, pa je svaki ponovni
+ * recalculateWorkOrder nad završenim nalogom ostavljao još jedan red — i svaki
+ * agregat preko snapshota bio nategnut. Sada se postojeći prepisuje, a zatečeni
+ * duplikati brišu.
+ */
 export async function createProductionSnapshot(
     workOrderId: string,
     organizationId: string
-): Promise<{ success: boolean; snapshotId?: string; message: string }> {
+): Promise<{ success: boolean; snapshotId?: string; message: string; duplicatesRemoved?: number }> {
     if (!organizationId) {
         return { success: false, message: 'Organization ID is required' };
     }
@@ -5635,426 +5702,210 @@ export async function createProductionSnapshot(
     try {
         const firestore = getDb();
 
-        // 1. Get Work Order with items
         const workOrder = await getWorkOrder(workOrderId, organizationId);
         if (!workOrder) {
-            return { success: false, message: 'Work order not found' };
+            return { success: false, message: 'Radni nalog nije pronađen' };
         }
 
-        // 2. Get Project
-        const projectQ = query(
-            collection(firestore, COLLECTIONS.PROJECTS),
-            where('Project_ID', '==', workOrder.items?.[0]?.Project_ID || ''),
-            where('Organization_ID', '==', organizationId)
-        );
-        const projectSnap = await getDocs(projectQ);
-        const project = projectSnap.docs[0]?.data() as Project | undefined;
+        const items = workOrder.items || [];
+        const projectId = items[0]?.Project_ID || '';
 
-        // 3. Get Offer for this project (if exists)
+        // ── Dohvat: sve nezavisno ide PARALELNO ─────────────────────────
+        const [projectSnap, workLogsSnap, workersSnap, catalog, graph, taxonomy, matTaxonomy] = await Promise.all([
+            projectId
+                ? getDocs(query(
+                    collection(firestore, COLLECTIONS.PROJECTS),
+                    where('Project_ID', '==', projectId),
+                    where('Organization_ID', '==', organizationId)))
+                : Promise.resolve(null),
+            getDocs(query(
+                collection(firestore, COLLECTIONS.WORK_LOGS),
+                where('Work_Order_ID', '==', workOrderId),
+                where('Organization_ID', '==', organizationId))),
+            getDocs(query(
+                collection(firestore, COLLECTIONS.WORKERS),
+                where('Organization_ID', '==', organizationId))),
+            getMaterialsCatalog(organizationId),
+            getProcessGraph(workOrderId, organizationId),
+            getProductTaxonomy(organizationId),
+            getMaterialTaxonomy(organizationId),
+        ]);
+
+        const project = (projectSnap?.docs[0]?.data() as Project | undefined) || undefined;
+        const workLogs = workLogsSnap.docs.map(d => d.data() as WorkLog);
+        const workers = workersSnap.docs.map(d => d.data() as Worker);
+
+        // ── Ponuda + proizvodi ponude + extras ──────────────────────────
         let offer: Offer | undefined;
         let offerProducts: OfferProduct[] = [];
         if (project?.Project_ID) {
-            const offerQ = query(
+            const offerSnap = await getDocs(query(
                 collection(firestore, COLLECTIONS.OFFERS),
                 where('Project_ID', '==', project.Project_ID),
-                where('Organization_ID', '==', organizationId)
-            );
-            const offerSnap = await getDocs(offerQ);
+                where('Organization_ID', '==', organizationId)));
             if (!offerSnap.empty) {
                 offer = offerSnap.docs[0].data() as Offer;
-                // Get offer products
-                const offerProdsQ = query(
+                const opSnap = await getDocs(query(
                     collection(firestore, COLLECTIONS.OFFER_PRODUCTS),
                     where('Offer_ID', '==', offer.Offer_ID),
-                    where('Organization_ID', '==', organizationId)
-                );
-                const offerProdsSnap = await getDocs(offerProdsQ);
-                offerProducts = offerProdsSnap.docs.map(d => d.data() as OfferProduct);
-
-                // Get extras for each offer product
-                for (const op of offerProducts) {
-                    const extrasQ = query(
-                        collection(firestore, COLLECTIONS.OFFER_EXTRAS),
-                        where('Offer_Product_ID', '==', op.ID),
-                        where('Organization_ID', '==', organizationId)
-                    );
-                    const extrasSnap = await getDocs(extrasQ);
-                    op.extras = extrasSnap.docs.map(d => d.data() as OfferExtra);
-                }
+                    where('Organization_ID', '==', organizationId)));
+                offerProducts = opSnap.docs.map(d => d.data() as OfferProduct);
+                // Extras SVIH proizvoda paralelno (v2: sekvencijalni await u petlji)
+                const extrasSnaps = await Promise.all(offerProducts.map(op => getDocs(query(
+                    collection(firestore, COLLECTIONS.OFFER_EXTRAS),
+                    where('Offer_Product_ID', '==', op.ID),
+                    where('Organization_ID', '==', organizationId)))));
+                offerProducts.forEach((op, i) => {
+                    op.extras = extrasSnaps[i].docs.map(d => d.data() as OfferExtra);
+                });
             }
         }
 
-        // 4. Get all work logs for this work order
-        const workLogsQ = query(
-            collection(firestore, COLLECTIONS.WORK_LOGS),
-            where('Work_Order_ID', '==', workOrderId),
-            where('Organization_ID', '==', organizationId)
+        // ── Proizvodi i sastavnice BATCH, prije petlje ──────────────────
+        // v2 je radio `await getProduct(...)` + `await getProductMaterials(...)` UNUTAR
+        // petlje po stavkama → N+1 upita po snapshotu.
+        const productIds = Array.from(new Set(items.map(i => i.Product_ID).filter(Boolean)));
+        const [products, materialLists] = await Promise.all([
+            Promise.all(productIds.map(id => getProduct(id, organizationId))),
+            Promise.all(productIds.map(id => getProductMaterials(id, organizationId))),
+        ]);
+        const productsById = new Map<string, Product>();
+        const materialsByProduct = new Map<string, ProductMaterial[]>();
+        productIds.forEach((id, i) => {
+            const p = products[i];
+            if (p) productsById.set(id, p);
+            materialsByProduct.set(id, materialLists[i] || []);
+        });
+        const materialCatalogById = new Map<string, Material>(
+            catalog.map(m => [m.Material_ID, m] as [string, Material])
         );
-        const workLogsSnap = await getDocs(workLogsQ);
-        const workLogs = workLogsSnap.docs.map(doc => doc.data() as WorkLog);
 
-        // 5. Get workers for enrichment
-        const workersQ = query(
-            collection(firestore, COLLECTIONS.WORKERS),
-            where('Organization_ID', '==', organizationId)
-        );
-        const workersSnap = await getDocs(workersQ);
-        const workersMap = new Map<string, Worker>();
-        workersSnap.docs.forEach(doc => {
-            const w = doc.data() as Worker;
-            workersMap.set(w.Worker_ID, w);
+        // ── Zatečeni snapshoti ovog naloga (dedup) ──────────────────────
+        const existingSnap = await getDocs(query(
+            collection(firestore, COLLECTIONS.PRODUCTION_SNAPSHOTS),
+            where('Work_Order_ID', '==', workOrderId),
+            where('Organization_ID', '==', organizationId)));
+        const existingDocs = [...existingSnap.docs].sort((a, b) =>
+            String(b.data().Created_At || '').localeCompare(String(a.data().Created_At || '')));
+        const keep = existingDocs[0];
+        // Zadrži postojeći Snapshot_ID → vanjske reference (Rezime naloga) ostaju važeće
+        const snapshotId = (keep?.data().Snapshot_ID as string) || generateUUID();
+
+        const snapshot = buildProductionSnapshot({
+            workOrder, project, offer, offerProducts, workLogs, workers,
+            productsById, materialsByProduct, materialCatalogById,
+            graph, productTypes: taxonomy, materialTypes: matTaxonomy, snapshotId,
         });
 
-        // 6. Build snapshot items
-        const snapshotItems: ProductionSnapshotItem[] = [];
-        let totalMaterialCost = 0;
-        let totalSellingPrice = 0;
-        let totalQuantity = 0;
-        let totalSurfaceM2 = 0;
-        let totalVolumeM3 = 0;
-
-        for (const item of workOrder.items || []) {
-            // Get product details
-            const product = await getProduct(item.Product_ID, organizationId);
-            const height = product?.Height || 0;
-            const width = product?.Width || 0;
-            const depth = product?.Depth || 0;
-            const volume = (height * width * depth) / 1000000000; // Convert mm³ to m³
-            const surface = (height * width) / 1000000; // Convert mm² to m²
-
-            // Infer Product Type from name
-            const productName = item.Product_Name?.toLowerCase() || '';
-            let productType = 'Ostalo';
-            if (productName.includes('kuhinja') || productName.includes('kuh')) productType = 'Kuhinja';
-            else if (productName.includes('ormar') || productName.includes('garderob')) productType = 'Ormar';
-            else if (productName.includes('komoda')) productType = 'Komoda';
-            else if (productName.includes('stol') || productName.includes('radni')) productType = 'Stol';
-            else if (productName.includes('polica')) productType = 'Polica';
-            else if (productName.includes('vrata')) productType = 'Vrata';
-
-            // Get materials
-            const materials = await getProductMaterials(item.Product_ID, organizationId);
-            const materialSnapshotTime = new Date().toISOString();
-            const snapshotMaterials: SnapshotMaterial[] = materials.map(m => ({
-                Material_ID: m.ID,
-                Material_Name: m.Material_Name,
-                Category: m.Supplier || 'Ostalo',
-                Quantity: m.Quantity,
-                Unit: m.Unit,
-                Unit_Price: m.Unit_Price,
-                Total_Price: m.Total_Price,
-                Is_Glass: (m.glassItems && m.glassItems.length > 0) || false,
-                Is_Alu_Door: (m.aluDoorItems && m.aluDoorItems.length > 0) || false,
-                Price_Captured_At: materialSnapshotTime,
-                Is_Final_Price: true  // Captured at work order completion
-            }));
-
-            const hasGlass = materials.some(m => m.glassItems && m.glassItems.length > 0);
-            const hasAluDoor = materials.some(m => m.aluDoorItems && m.aluDoorItems.length > 0);
-            // Σ product_materials = trošak PO KOMADU; ukupno = × količina (isto kao prihod).
-            const itemMaterialPerUnit = materials.reduce((sum, m) => sum + (m.Total_Price || 0), 0);
-            const itemMaterialTotalCost = itemMaterialTotal(itemMaterialPerUnit, item.Quantity);
-
-            // Material ratios su PER-KOMAD (dimenzije H×W×D su za jedan komad).
-            const materialPerM2 = surface > 0 ? itemMaterialPerUnit / surface : 0;
-            const materialPerM3 = volume > 0 ? itemMaterialPerUnit / volume : 0;
-            const materialPerUnit = itemMaterialPerUnit;
-
-            // Get workers for this item from work logs
-            const itemWorkLogs = workLogs.filter(wl => wl.Work_Order_Item_ID === item.ID);
-            const workerDaysMap = new Map<string, { days: number; cost: number; name: string }>();
-
-            itemWorkLogs.forEach(wl => {
-                const existing = workerDaysMap.get(wl.Worker_ID) || { days: 0, cost: 0, name: wl.Worker_Name };
-                existing.days += 1;
-                existing.cost += wl.Daily_Rate;
-                existing.name = wl.Worker_Name;
-                workerDaysMap.set(wl.Worker_ID, existing);
-            });
-
-            const snapshotWorkers: SnapshotWorker[] = Array.from(workerDaysMap.entries()).map(([workerId, data]) => {
-                const worker = workersMap.get(workerId);
-                return {
-                    Worker_ID: workerId,
-                    Worker_Name: data.name,
-                    Role: worker?.Role || 'Opći',
-                    Worker_Type: worker?.Worker_Type || 'Glavni',
-                    Days_Worked: data.days,
-                    Daily_Rate: data.cost / data.days,
-                    Total_Cost: data.cost
-                };
-            });
-
-            // Get process timing from item.Processes
-            const snapshotProcesses: SnapshotProcess[] = ((item as any).Processes || []).map((p: any) => {
-                let durationDays = 0;
-                if (p.Started_At && p.Completed_At) {
-                    const start = new Date(p.Started_At);
-                    const end = new Date(p.Completed_At);
-                    durationDays = Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) || 1;
-                }
-                return {
-                    Process_Name: p.Process_Name || 'Unknown',
-                    Status: p.Status || 'Unknown',
-                    Started_At: p.Started_At,
-                    Completed_At: p.Completed_At,
-                    Duration_Days: durationDays,
-                    Worker_ID: p.Worker_ID,
-                    Worker_Name: p.Worker_Name,
-                    Helpers_Count: p.Helpers?.length || 0
-                };
-            });
-
-            // Get offer data for this product
-            const offerProduct = offerProducts.find(op => op.Product_ID === item.Product_ID);
-            const ledMeters = offerProduct?.LED_Meters || 0;
-            const ledPricePerMeter = offerProduct?.LED_Price || 0;
-            const ledTotal = offerProduct?.LED_Total || 0;
-            const marginPercent = offerProduct?.Margin || 0;
-            const marginType = offerProduct?.Margin_Type || 'Percentage';
-            // KONZISTENTNOST: Profit_Overrides važe i u snapshotu — inače Rezime (snapshot)
-            // pokazuje drugačiji profit od detalja/analitike (svi ostali putevi ih primjenjuju).
-            const itemOverrides = (item as any).Profit_Overrides as { Selling_Price?: number; Transport_Share?: number } | undefined;
-            const transportShare = itemOverrides?.Transport_Share != null
-                ? itemOverrides.Transport_Share
-                : (offerProduct?.Transport_Share || 0);
-
-            // Get extras
-            const snapshotExtras: SnapshotExtra[] = (offerProduct?.extras || []).map(e => ({
-                Name: e.Name,
-                Quantity: e.Quantity,
-                Unit: e.Unit,
-                Unit_Price: e.Unit_Price,
-                Total: e.Total
-            }));
-
-            // Radnik-dani = Σ Day_Fraction (konzistentno sa Actual_Labor_Days sync-om; broj redova
-            // bi pogrešno brojao podijeljene/pola dane)
-            const actualLaborDays = Math.round(itemWorkLogs.reduce((s, wl) => s + (wl.Day_Fraction ?? 1), 0) * 100) / 100;
-            const sellingPrice = (itemOverrides?.Selling_Price != null && itemOverrides.Selling_Price > 0)
-                ? itemOverrides.Selling_Price
-                : (item.Product_Value || offerProduct?.Selling_Price || 0);
-            // STANDARDIZED: Use fresh labor from work logs and include Transport + Services
-            const freshItemLaborCost = itemWorkLogs.reduce((sum, wl) => sum + (wl.Daily_Rate || 0), 0);
-            const itemServicesTotal = (offerProduct?.extras || []).reduce((s, e) => s + (e.Total || 0), 0);
-            // prihod (sellingPrice) je UKUPAN → materijal mora biti UKUPAN (× količina).
-            const profit = sellingPrice - itemMaterialTotalCost - transportShare - itemServicesTotal - freshItemLaborCost;
-
-            snapshotItems.push({
-                Product_ID: item.Product_ID,
-                Product_Name: item.Product_Name,
-                Product_Type: productType,
-                Height: height,
-                Width: width,
-                Depth: depth,
-                Volume_M3: volume,
-                Surface_M2: surface,
-                Quantity: item.Quantity,
-                Materials: snapshotMaterials,
-                Material_Count: materials.length,
-                Has_Glass: hasGlass,
-                Has_Alu_Door: hasAluDoor,
-                Total_Material_Cost: itemMaterialTotalCost,
-                Material_Per_M2: Math.round(materialPerM2 * 100) / 100,
-                Material_Per_M3: Math.round(materialPerM3 * 100) / 100,
-                Material_Per_Unit: Math.round(materialPerUnit * 100) / 100,
-                Planned_Labor_Days: item.Planned_Labor_Days || 0,
-                Actual_Labor_Days: actualLaborDays,
-                Workers_Assigned: snapshotWorkers,
-                Processes: snapshotProcesses,
-                Selling_Price: sellingPrice,
-                Margin_Percent: marginPercent,
-                Margin_Type: marginType,
-                LED_Meters: ledMeters,
-                LED_Price_Per_Meter: ledPricePerMeter,
-                LED_Total: ledTotal,
-                Transport_Share: transportShare,
-                Extras: snapshotExtras,
-                Profit: profit,
-                Margin_Applied: marginPercent // Legacy
-            });
-
-            totalMaterialCost += itemMaterialTotalCost;
-            totalSellingPrice += sellingPrice;
-            totalQuantity += item.Quantity;
-            totalSurfaceM2 += surface * item.Quantity;
-            totalVolumeM3 += volume * item.Quantity;
-        }
-
-        // 7. Calculate aggregates
-        const plannedDays = workOrder.Planned_Labor_Cost && workOrder.Actual_Labor_Cost
-            ? Math.round(workOrder.Planned_Labor_Cost / 100)
-            : 0;
-
-        const actualStartDate = workOrder.Started_At ? new Date(workOrder.Started_At) : new Date();
-        const actualEndDate = workOrder.Completed_At ? new Date(workOrder.Completed_At) : new Date();
-        const actualDays = Math.ceil((actualEndDate.getTime() - actualStartDate.getTime()) / (1000 * 60 * 60 * 24)) || 1;
-
-        // Worker aggregates
-        const uniqueWorkers = new Set(workLogs.map(wl => wl.Worker_ID));
-        const totalWorkerDays = workLogs.length;
-        const avgDailyRate = totalWorkerDays > 0
-            ? workLogs.reduce((sum, wl) => sum + wl.Daily_Rate, 0) / totalWorkerDays
-            : 0;
-
-        // Calculate fresh labor cost from work_logs (not stale stored value)
-        const freshLaborCost = workLogs.reduce((sum, wl) => sum + (wl.Daily_Rate || 0), 0);
-
-        // Calculate Transport and Services totals from items
-        const totalTransportCost = snapshotItems.reduce((sum, i) => sum + (i.Transport_Share || 0), 0);
-        const totalServicesCost = snapshotItems.reduce((sum, i) =>
-            sum + (i.Extras?.reduce((s, e) => s + (e.Total || 0), 0) || 0), 0);
-
-        // STANDARDIZED PROFIT FORMULA (consistent with calculateProductProfitability)
-        // Gross Profit = Selling - Material - Transport (services/extras are estimates baked into selling price)
-        // Net Profit = Gross - Labor
-        const grossProfit = totalSellingPrice - totalMaterialCost - totalTransportCost;
-        const netProfit = grossProfit - freshLaborCost;
-        const profitMargin = totalSellingPrice > 0 ? (netProfit / totalSellingPrice) * 100 : 0;
-
-        // Aggregate material ratios
-        const avgMaterialPerM2 = totalSurfaceM2 > 0 ? totalMaterialCost / totalSurfaceM2 : 0;
-        const avgMaterialPerM3 = totalVolumeM3 > 0 ? totalMaterialCost / totalVolumeM3 : 0;
-
-        // 8. Create the snapshot
-        const snapshotId = generateUUID();
-        const snapshot: ProductionSnapshot = {
-            Snapshot_ID: snapshotId,
-            Organization_ID: organizationId,
-            Work_Order_ID: workOrderId,
-            Work_Order_Number: workOrder.Work_Order_Number,
-            Created_At: new Date().toISOString(),
-            Snapshot_Version: 2,   // Total_Material_Cost je UKUPAN (po komadu × količina)
-
-            Project_ID: project?.Project_ID || '',
-            Client_Name: project?.Client_Name || 'Unknown',
-            Project_Deadline: project?.Deadline || '',
-
-            // Offer Info
-            Offer_ID: offer?.Offer_ID,
-            Offer_Number: offer?.Offer_Number,
-            Offer_Total: offer?.Total,
-            Offer_Transport_Cost: offer?.Transport_Cost,
-            Offer_Has_Onsite_Assembly: offer?.Onsite_Assembly,
-
-            Items: snapshotItems,
-
-            Total_Products: snapshotItems.length,
-            Total_Quantity: totalQuantity,
-            Total_Material_Cost: totalMaterialCost,
-            Total_Selling_Price: totalSellingPrice,
-
-            Avg_Material_Per_M2: Math.round(avgMaterialPerM2 * 100) / 100,
-            Avg_Material_Per_M3: Math.round(avgMaterialPerM3 * 100) / 100,
-
-            Planned_Start: workOrder.Planned_Start_Date,
-            Planned_End: workOrder.Planned_End_Date,
-            Actual_Start: workOrder.Started_At,
-            Actual_End: workOrder.Completed_At,
-            Planned_Days: plannedDays,
-            Actual_Days: actualDays,
-            Duration_Variance: actualDays - plannedDays,
-
-            Planned_Labor_Cost: workOrder.Planned_Labor_Cost || 0,
-            Actual_Labor_Cost: workOrder.Actual_Labor_Cost || 0,
-            Labor_Cost_Variance: (workOrder.Planned_Labor_Cost || 0) - (workOrder.Actual_Labor_Cost || 0),
-            Labor_Variance_Percent: workOrder.Planned_Labor_Cost
-                ? (((workOrder.Planned_Labor_Cost - (workOrder.Actual_Labor_Cost || 0)) / workOrder.Planned_Labor_Cost) * 100)
-                : 0,
-
-            Gross_Profit: grossProfit,
-            Net_Profit: netProfit,
-            Profit_Margin_Percent: profitMargin,
-
-            Workers_Count: uniqueWorkers.size,
-            Total_Worker_Days: totalWorkerDays,
-            Avg_Daily_Rate: avgDailyRate,
-
-            Production_Steps: workOrder.Production_Steps || [],
-
-            Month: actualStartDate.getMonth() + 1,
-            Quarter: Math.ceil((actualStartDate.getMonth() + 1) / 3),
-            Day_Of_Week_Start: actualStartDate.getDay(),
-
-            // Data Quality - Calculate quality score
-            Quality_Score: 100, // Will be calculated below
-            Data_Issues: [],
-            Is_Valid_For_AI: true,
-            Normalized_Product_Types: [],
-
-            // Material Price Accuracy
-            Materials_Snapshot_Time: new Date().toISOString(),
-            Materials_Are_Final: true
-        };
-
-        // 9. Calculate Data Quality Score
-        const dataIssues: string[] = [];
-        let qualityScore = 100;
-
-        // Critical issues (-50 points)
-        if (!snapshot.Total_Material_Cost || snapshot.Total_Material_Cost <= 0) {
-            dataIssues.push('Missing material cost');
-            qualityScore -= 50;
-        }
-
-        // Important issues (-20 points each)
-        if (!snapshot.Items?.length) {
-            dataIssues.push('No products in snapshot');
-            qualityScore -= 20;
-        }
-        if (!snapshot.Actual_Start || !snapshot.Actual_End) {
-            dataIssues.push('Missing start/end dates');
-            qualityScore -= 20;
-        }
-
-        // Minor issues (-10 points each)
-        if (snapshot.Actual_Days <= 0) {
-            dataIssues.push('Invalid duration');
-            qualityScore -= 10;
-        }
-        if (snapshot.Workers_Count <= 0) {
-            dataIssues.push('No workers assigned');
-            qualityScore -= 10;
-        }
-
-        // Logical issues (-15 points each)
-        if (snapshot.Profit_Margin_Percent < -50 || snapshot.Profit_Margin_Percent > 200) {
-            dataIssues.push('Unrealistic profit margin');
-            qualityScore -= 15;
-        }
-        if (snapshot.Duration_Variance > 30) {
-            dataIssues.push('Excessive duration variance');
-            qualityScore -= 10;
-        }
-
-        // Normalize product types
-        const normalizedTypes = new Set<string>();
-        for (const item of snapshot.Items) {
-            if (item.Product_Type && item.Product_Type !== 'Ostalo') {
-                normalizedTypes.add(item.Product_Type);
+        if (keep) {
+            // setDoc bez merge = PUNA zamjena: polja koja v3 više ne piše ne smiju
+            // ostati kao zaostatak iz v2 (snapshot je izvedeni podatak, ne istorija).
+            await setDoc(keep.ref, snapshot as unknown as Record<string, unknown>);
+            for (const dup of existingDocs.slice(1)) {
+                await deleteDoc(dup.ref);
             }
+        } else {
+            await addDoc(collection(firestore, COLLECTIONS.PRODUCTION_SNAPSHOTS), snapshot);
         }
 
-        // Update snapshot with quality data
-        snapshot.Quality_Score = Math.max(0, qualityScore);
-        snapshot.Data_Issues = dataIssues;
-        snapshot.Is_Valid_For_AI = qualityScore >= 50;
-        snapshot.Normalized_Product_Types = Array.from(normalizedTypes);
+        const duplicatesRemoved = Math.max(0, existingDocs.length - 1);
+        console.log(
+            `[ProductionSnapshot] v3 ${keep ? 'ažuriran' : 'kreiran'} ${snapshotId} ` +
+            `(kvalitet ${snapshot.Quality_Score}/100` +
+            `${duplicatesRemoved ? `, obrisano ${duplicatesRemoved} duplikata` : ''})`
+        );
 
-        // Material price accuracy timestamp
-        snapshot.Materials_Snapshot_Time = new Date().toISOString();
-        snapshot.Materials_Are_Final = true; // Captured at work order completion
-
-        // 10. Save to Firestore
-        await addDoc(collection(firestore, COLLECTIONS.PRODUCTION_SNAPSHOTS), snapshot);
-
-        const qualityStatus = snapshot.Is_Valid_For_AI ? '✓ Valid for AI' : '⚠ Low quality';
-        console.log(`[ProductionSnapshot] Created snapshot ${snapshotId} (Score: ${snapshot.Quality_Score}/100, ${qualityStatus})`);
-
-        return { success: true, snapshotId, message: `Snapshot kreiran (Quality: ${snapshot.Quality_Score}/100)` };
+        return {
+            success: true,
+            snapshotId,
+            duplicatesRemoved,
+            message: `Snapshot spremljen (kvalitet ${snapshot.Quality_Score}/100)`,
+        };
     } catch (error) {
         console.error('createProductionSnapshot error:', error);
         return { success: false, message: 'Greška pri kreiranju snapshota' };
+    }
+}
+
+export interface RebuildSnapshotsResult {
+    success: boolean;
+    processed: number;          // naloga uspješno obrađeno
+    failed: number;
+    duplicatesRemoved: number;
+    orphansRemoved: number;     // snapshoti naloga kojih više nema
+    message: string;
+}
+
+/**
+ * Regeneriše SVE snapshote organizacije na v3 i čisti duplikate.
+ *
+ * Sigurno je: snapshot je IZVEDEN podatak (sloj 2), uvijek se može ponovo izračunati
+ * iz dnevnica i naloga (sloj 1). Idempotentno — drugo pokretanje prijavljuje 0 duplikata.
+ * Pokreće se ručno iz Postavki, nakon izmjene taksonomije ili pravila.
+ */
+export async function rebuildProductionSnapshots(
+    organizationId: string,
+    options?: { onProgress?: (done: number, total: number) => void }
+): Promise<RebuildSnapshotsResult> {
+    const empty: RebuildSnapshotsResult = {
+        success: false, processed: 0, failed: 0, duplicatesRemoved: 0, orphansRemoved: 0,
+        message: 'Organization ID is required',
+    };
+    if (!organizationId) return empty;
+
+    try {
+        const firestore = getDb();
+
+        // Nalozi koji uopšte zaslužuju snapshot (završeni)
+        const woSnap = await getDocs(query(
+            collection(firestore, COLLECTIONS.WORK_ORDERS),
+            where('Organization_ID', '==', organizationId),
+            where('Status', '==', 'Završeno')));
+        const workOrderIds = woSnap.docs.map(d => String(d.data().Work_Order_ID)).filter(Boolean);
+        const validIds = new Set(workOrderIds);
+
+        // Siročad: snapshoti naloga koji više ne postoje ili nisu završeni
+        const snapSnap = await getDocs(query(
+            collection(firestore, COLLECTIONS.PRODUCTION_SNAPSHOTS),
+            where('Organization_ID', '==', organizationId)));
+        let orphansRemoved = 0;
+        for (const d of snapSnap.docs) {
+            const woId = String(d.data().Work_Order_ID || '');
+            if (!woId || !validIds.has(woId)) {
+                await deleteDoc(d.ref);
+                orphansRemoved++;
+            }
+        }
+
+        // Regeneracija — SEKVENCIJALNO, namjerno: paralelno bi otvorilo stotine
+        // istovremenih upita i naletjelo na Firestore ograničenja.
+        let processed = 0;
+        let failed = 0;
+        let duplicatesRemoved = 0;
+        for (let i = 0; i < workOrderIds.length; i++) {
+            const res = await createProductionSnapshot(workOrderIds[i], organizationId);
+            if (res.success) {
+                processed++;
+                duplicatesRemoved += res.duplicatesRemoved || 0;
+            } else {
+                failed++;
+                console.warn(`[Rebuild] Nalog ${workOrderIds[i]}: ${res.message}`);
+            }
+            options?.onProgress?.(i + 1, workOrderIds.length);
+        }
+
+        const parts = [`Obrađeno ${processed}/${workOrderIds.length} naloga`];
+        if (duplicatesRemoved > 0) parts.push(`obrisano ${duplicatesRemoved} duplikata`);
+        if (orphansRemoved > 0) parts.push(`uklonjeno ${orphansRemoved} siročadi`);
+        if (failed > 0) parts.push(`${failed} neuspjelo`);
+
+        return {
+            success: true, processed, failed, duplicatesRemoved, orphansRemoved,
+            message: parts.join(', ') + '.',
+        };
+    } catch (error) {
+        console.error('rebuildProductionSnapshots error:', error);
+        return { ...empty, message: 'Greška pri regeneraciji snapshota' };
     }
 }
 
@@ -6078,6 +5929,39 @@ export async function getProductionSnapshots(
     } catch (error) {
         console.error('getProductionSnapshots error:', error);
         return [];
+    }
+}
+
+/**
+ * Spremnost sistema za precizno planiranje (panel u Postavkama).
+ *
+ * Dohvat + poziv čiste funkcije computeReadiness (lib/insights/readiness.ts).
+ * Dnevnice se broje u memoriji umjesto Firestore agregacijom: `!=` upit nad
+ * Process_Node_ID traži poseban composite index, a ovo je ručno pokrenuta
+ * radnja u Postavkama, ne vruća putanja.
+ */
+export async function getDataReadiness(organizationId: string): Promise<Readiness | null> {
+    if (!organizationId) return null;
+    try {
+        const firestore = getDb();
+        const [snapshots, woSnap, workLogs] = await Promise.all([
+            getProductionSnapshots(organizationId),
+            getDocs(query(
+                collection(firestore, COLLECTIONS.WORK_ORDERS),
+                where('Organization_ID', '==', organizationId),
+                where('Status', '==', 'Završeno'))),
+            getWorkLogs(organizationId),
+        ]);
+
+        return computeReadiness({
+            snapshots,
+            completedWorkOrders: woSnap.size,
+            workLogsTotal: workLogs.length,
+            workLogsWithProcess: workLogs.filter(l => !!l.Process_Node_ID).length,
+        });
+    } catch (error) {
+        console.error('getDataReadiness error:', error);
+        return null;
     }
 }
 
@@ -6114,7 +5998,10 @@ export async function getProductionSnapshotForWorkOrder(
 
 export async function saveOrgSettings(
     organizationId: string,
-    data: { companyInfo?: any; appSettings?: any; googleIntegration?: any }
+    data: {
+        companyInfo?: any; appSettings?: any; googleIntegration?: any;
+        productTaxonomy?: ProductType[]; materialTaxonomy?: MaterialType[];
+    }
 ): Promise<{ success: boolean; message: string }> {
     if (!organizationId) {
         return { success: false, message: 'Organization ID is required' };
@@ -6127,6 +6014,9 @@ export async function saveOrgSettings(
         if (data.companyInfo !== undefined) payload.companyInfo = data.companyInfo;
         if (data.appSettings !== undefined) payload.appSettings = data.appSettings;
         if (data.googleIntegration !== undefined) payload.googleIntegration = data.googleIntegration;
+        // Korisnikova pravila klasifikacije (potvrđeni AI prijedlozi + ručni unosi).
+        if (data.productTaxonomy !== undefined) payload.productTaxonomy = data.productTaxonomy;
+        if (data.materialTaxonomy !== undefined) payload.materialTaxonomy = data.materialTaxonomy;
         await setDoc(doc(firestore, 'org_settings', organizationId), payload, { merge: true });
 
         return { success: true, message: 'Settings saved' };
@@ -6138,7 +6028,10 @@ export async function saveOrgSettings(
 
 export async function getOrgSettings(
     organizationId: string
-): Promise<{ companyInfo: any; appSettings: any; googleIntegration: any } | null> {
+): Promise<{
+    companyInfo: any; appSettings: any; googleIntegration: any;
+    productTaxonomy: ProductType[] | null; materialTaxonomy: MaterialType[] | null;
+} | null> {
     if (!organizationId) return null;
 
     try {
@@ -6150,6 +6043,10 @@ export async function getOrgSettings(
                 companyInfo: data.companyInfo || null,
                 appSettings: data.appSettings || null,
                 googleIntegration: data.googleIntegration || null,
+                // NAPOMENA: ova funkcija propušta samo NABROJANE ključeve — novo polje
+                // se mora dodati i ovdje i u saveOrgSettings, inače tiho nestane.
+                productTaxonomy: (data.productTaxonomy as ProductType[]) || null,
+                materialTaxonomy: (data.materialTaxonomy as MaterialType[]) || null,
             };
         }
         return null;

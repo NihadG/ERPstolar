@@ -1,0 +1,719 @@
+'use client';
+
+// ════════════════════════════════════════════════════════════════════
+// PLATNO — glavni ekran.
+//
+// IZOLACIJA: ova komponenta ČITA projekte, radnike, naloge i šihtaricu, a PIŠE
+// isključivo u `planning_scenarios` kroz useScenario. Nijedan poziv odavde ne
+// mijenja nalog, narudžbu ni status. Stvarni posao se crta kao zaključana sjena.
+// ════════════════════════════════════════════════════════════════════
+
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import {
+    Plus, Copy, Undo2, Redo2, ZoomIn, ZoomOut, Calendar, Loader2,
+    Lock, AlertTriangle, Users, Trash2, Save, Link2, Package,
+} from 'lucide-react';
+import type {
+    Project, Worker, WorkOrder, Order, Supplier, WorkerAttendance,
+    PlanBlockKind, PlanGroupBy, PlanZoom, PlanScenario,
+} from '@/lib/types';
+import {
+    getScenarios, createScenario, duplicateScenario, getScenario,
+    deleteScenario, getAllAttendanceByMonth,
+} from '@/lib/services';
+import { useAuth } from '@/context/AuthContext';
+import { useScenario } from './useScenario';
+import { useCanvasDrag } from './useCanvasDrag';
+import CanvasDrawer from './CanvasDrawer';
+import CanvasDock from './CanvasDock';
+import ChainModal from './ChainModal';
+import ProductPickerModal from './ProductPickerModal';
+import MaterialOrderModal, { type CreatedPurchase } from './MaterialOrderModal';
+import { buildSupplierLeadTimes } from '@/lib/canvas/leadTime';
+import { buildSaturdayChecker, type AttendanceLite } from '@/lib/planning';
+import { buildRows, groupRowsBySection, SECTION_LABEL, type CanvasRow } from '@/lib/canvas/rows';
+import {
+    HEADER_WIDTH, TIMELINE_HEADER_HEIGHT, MIN_LABEL_WIDTH, RESIZE_HANDLE_PX,
+    blockRect, packLanes, rowHeight, laneTop, headerTicks, monthBands,
+    dateAtX, xForDate, anchorCentering, dayWidth, type Viewport,
+} from '@/lib/canvas/geometry';
+import {
+    newBlock, addDays, BLOCK_LABEL, BLOCK_HELP, ZOOM_LABEL, GROUP_BY_LABEL, blockDurationDays,
+} from '@/lib/canvas/model';
+import { todayISO } from '@/lib/planning';
+import './CanvasTab.css';
+
+interface CanvasTabProps {
+    projects: Project[];
+    workers: Worker[];
+    workOrders: WorkOrder[];
+    /** Samo za empirijske rokove dobavljača — čita se, ne mijenja. */
+    orders: Order[];
+    suppliers: Supplier[];
+    showToast: (message: string, type: 'success' | 'error' | 'info') => void;
+}
+
+const ZOOMS: PlanZoom[] = ['dan', 'sedmica', 'mjesec'];
+const GROUPS: PlanGroupBy[] = ['project', 'worker', 'supplier', 'kind'];
+/** Vrste koje se prave brzim tasterom. Nabavka i veze dolaze u Fazi 2. */
+const QUICK_KINDS: { kind: PlanBlockKind; key: string }[] = [
+    { kind: 'order', key: 'n' },
+    { kind: 'purchase', key: 'm' },
+    { kind: 'milestone', key: 'v' },
+    { kind: 'montaza', key: 'g' },
+    { kind: 'transport', key: 't' },
+];
+
+export default function CanvasTab({
+    projects, workers, workOrders, orders, suppliers, showToast,
+}: CanvasTabProps) {
+    const { organization } = useAuth();
+    const orgId = organization?.Organization_ID || '';
+
+    const [scenarios, setScenarios] = useState<PlanScenario[]>([]);
+    const [loaded, setLoaded] = useState<PlanScenario | null>(null);
+    const [loading, setLoading] = useState(true);
+    const [attendance, setAttendance] = useState<WorkerAttendance[]>([]);
+    const [showIdle, setShowIdle] = useState(false);
+    const [drawerId, setDrawerId] = useState<string | null>(null);
+    const [chainOpen, setChainOpen] = useState(false);
+    const [pickerOpen, setPickerOpen] = useState(false);
+    const [orderModalFor, setOrderModalFor] = useState<string | null>(null);
+
+    const { state, dispatch, saveState, canUndo, canRedo, saveNow, reloadRemote, forceOverwrite } =
+        useScenario(orgId, loaded);
+    const scenario = state.scenario;
+
+    // ── Vidljivi prozor ─────────────────────────────────────────
+    const gridRef = useRef<HTMLDivElement>(null);
+    const [widthPx, setWidthPx] = useState(1000);
+    useEffect(() => {
+        const el = gridRef.current;
+        if (!el) return;
+        const ro = new ResizeObserver(entries => {
+            const w = entries[0]?.contentRect.width || 0;
+            if (w > 0) setWidthPx(Math.max(320, w - HEADER_WIDTH));
+        });
+        ro.observe(el);
+        return () => ro.disconnect();
+    }, []);
+
+    const zoom = scenario.View?.zoom || 'sedmica';
+    const groupBy = scenario.View?.groupBy || 'project';
+    const anchorISO = scenario.View?.anchorISO || todayISO();
+    const vp: Viewport = useMemo(() => ({ anchorISO, zoom, widthPx }), [anchorISO, zoom, widthPx]);
+
+    // ── Učitavanje ──────────────────────────────────────────────
+    useEffect(() => {
+        if (!orgId) return;
+        let alive = true;
+        (async () => {
+            setLoading(true);
+            try {
+                const list = await getScenarios(orgId);
+                if (!alive) return;
+                setScenarios(list);
+                if (list.length > 0) setLoaded(list[0]);
+                else {
+                    const res = await createScenario('Moj plan', orgId);
+                    if (res.success && res.data && alive) {
+                        const fresh = await getScenario(res.data.Scenario_ID, orgId);
+                        if (fresh && alive) { setScenarios([fresh]); setLoaded(fresh); }
+                    }
+                }
+            } finally {
+                if (alive) setLoading(false);
+            }
+        })();
+        return () => { alive = false; };
+    }, [orgId]);
+
+    // Šihtarica za sjene odsustava — isti raspon kao stari planer (prošli/tekući/naredni)
+    useEffect(() => {
+        if (!orgId) return;
+        const now = new Date();
+        const months = [-1, 0, 1, 2].map(off => {
+            const d = new Date(now.getFullYear(), now.getMonth() + off, 1);
+            return { y: d.getFullYear(), m: d.getMonth() + 1 };
+        });
+        Promise.all(months.map(mm => getAllAttendanceByMonth(String(mm.y), String(mm.m), orgId)))
+            .then(res => setAttendance(res.flat() as WorkerAttendance[]))
+            .catch(() => { /* sjene odsustava su dodatak, ne blokiraju platno */ });
+    }, [orgId]);
+
+    // ── Redovi ──────────────────────────────────────────────────
+    const rows = useMemo(
+        () => buildRows(scenario, groupBy, { workers, workOrders, attendance, showIdleWorkers: showIdle }),
+        [scenario, groupBy, workers, workOrders, attendance, showIdle]
+    );
+    const sections = useMemo(() => groupRowsBySection(rows), [rows]);
+
+    // ── Kontekst za pravila i kapacitet ─────────────────────────
+    // Subotnja rotacija po SVIM aktivnim radnicima — ista pravila kao auto-rok naloga.
+    const isSaturdayWorking = useMemo(() => {
+        const ids = workers.filter(w => w.Status === 'Aktivan' || w.Status === 'Dostupan')
+            .map(w => w.Worker_ID);
+        return buildSaturdayChecker(ids, attendance as unknown as AttendanceLite[]);
+    }, [workers, attendance]);
+
+    const leadTimes = useMemo(() => buildSupplierLeadTimes(orders), [orders]);
+
+    const conflictCtx = useMemo(
+        () => ({ workers, workOrders, attendance, projects, todayISO: todayISO(), isSaturdayWorking }),
+        [workers, workOrders, attendance, projects, isSaturdayWorking]
+    );
+    const capacityCtx = useMemo(
+        () => ({ workers, workOrders, attendance, isSaturdayWorking }),
+        [workers, workOrders, attendance, isSaturdayWorking]
+    );
+
+    /** Skoči na blok: centriraj prikaz i otvori detalje. */
+    const jumpToBlock = useCallback((blockId: string) => {
+        const b = scenario.Blocks.find(x => x.id === blockId);
+        if (!b) return;
+        dispatch({ type: 'SET_VIEW', view: { anchorISO: anchorCentering(b.startISO, vp) } });
+        dispatch({ type: 'SELECT', ids: [blockId] });
+        setDrawerId(blockId);
+    }, [scenario.Blocks, dispatch, vp]);
+
+    // ── Povlačenje postojećih blokova ───────────────────────────
+    const drag = useCanvasDrag({
+        zoom,
+        disabled: loading,
+        onClick: id => { dispatch({ type: 'SELECT', ids: [id] }); setDrawerId(id); },
+        onCommit: ({ blockId, mode, deltaDays }) => {
+            const b = scenario.Blocks.find(x => x.id === blockId);
+            if (!b) return;
+            if (b.locked) { showToast('Blok je zaključan — otključaj ga u detaljima', 'info'); return; }
+            if (mode === 'move') {
+                dispatch({ type: 'MOVE_BLOCKS', ids: [blockId], days: deltaDays });
+            } else if (mode === 'resize-start') {
+                dispatch({ type: 'SET_DATES', id: blockId, startISO: addDays(b.startISO, deltaDays) });
+            } else {
+                dispatch({ type: 'SET_DATES', id: blockId, endISO: addDays(b.endISO, deltaDays) });
+            }
+        },
+    });
+
+    // ── Crtanje novog bloka po praznom redu ─────────────────────
+    const [draw, setDraw] = useState<{ rowId: string; fromX: number; toX: number } | null>(null);
+    const [quickKind, setQuickKind] = useState<PlanBlockKind>('order');
+
+    const rowContext = useCallback((row: CanvasRow) => {
+        // Novi blok naslijedi kontekst reda u kojem je nacrtan — bez toga bi svaki
+        // blok trebalo ručno vezati za projekt/radnika.
+        if (row.section === 'radnici') {
+            const w = workers.find(x => `radnik-${x.Worker_ID}` === row.id);
+            return w ? { workerRefs: [{ id: w.Worker_ID, name: w.Name }] } : {};
+        }
+        if (row.section === 'nalozi' && groupBy === 'project' && !row.synthetic) {
+            const p = projects.find(x => `nalozi-${x.Project_ID}` === row.id);
+            return p ? { projectRef: { id: p.Project_ID, name: p.Name?.trim() || p.Client_Name } } : {};
+        }
+        return {};
+    }, [workers, projects, groupBy]);
+
+    const commitDraw = useCallback(() => {
+        if (!draw) return;
+        const row = rows.find(r => r.id === draw.rowId);
+        setDraw(null);
+        if (!row) return;
+        const a = dateAtX(Math.min(draw.fromX, draw.toX), vp);
+        const b = dateAtX(Math.max(draw.fromX, draw.toX), vp);
+        const kind = row.section === 'obaveze' ? 'milestone' : quickKind;
+        dispatch({
+            type: 'ADD_BLOCK',
+            block: newBlock(kind, a, kind === 'milestone' ? a : b, rowContext(row)),
+        });
+    }, [draw, rows, vp, quickKind, rowContext, dispatch]);
+
+    // ── Tastatura ───────────────────────────────────────────────
+    useEffect(() => {
+        const isTyping = () => {
+            const el = document.activeElement;
+            return el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement
+                || el instanceof HTMLSelectElement || (el as HTMLElement)?.isContentEditable;
+        };
+        const onKey = (e: KeyboardEvent) => {
+            if (e.key === 'Escape' && drag.isDragging) { drag.cancel(); return; }
+            if (isTyping()) return;
+
+            const mod = e.ctrlKey || e.metaKey;
+            if (mod && e.key.toLowerCase() === 'z') {
+                e.preventDefault();
+                dispatch({ type: e.shiftKey ? 'REDO' : 'UNDO' });
+                return;
+            }
+            if (mod && e.key.toLowerCase() === 's') { e.preventDefault(); void saveNow(); return; }
+            if (mod && e.key.toLowerCase() === 'd' && state.selectedIds.length) {
+                e.preventDefault();
+                dispatch({ type: 'DUPLICATE_BLOCKS', ids: state.selectedIds });
+                return;
+            }
+            if (mod) return;
+
+            if ((e.key === 'Delete' || e.key === 'Backspace') && state.selectedIds.length) {
+                e.preventDefault();
+                dispatch({ type: 'DELETE_BLOCKS', ids: state.selectedIds });
+                setDrawerId(null);
+                return;
+            }
+            if ((e.key === 'ArrowLeft' || e.key === 'ArrowRight') && state.selectedIds.length) {
+                e.preventDefault();
+                const step = (e.key === 'ArrowLeft' ? -1 : 1) * (e.shiftKey ? 7 : 1);
+                dispatch({ type: 'MOVE_BLOCKS', ids: state.selectedIds, days: step });
+                return;
+            }
+            const quick = QUICK_KINDS.find(q => q.key === e.key.toLowerCase());
+            if (quick) {
+                e.preventDefault();
+                setQuickKind(quick.kind);
+                dispatch({ type: 'ADD_BLOCK', block: newBlock(quick.kind, todayISO()) });
+                return;
+            }
+            const zi = ZOOMS.indexOf(zoom);
+            if (e.key === '1' || e.key === '2' || e.key === '3') {
+                dispatch({ type: 'SET_VIEW', view: { zoom: ZOOMS[Number(e.key) - 1] } });
+            } else if (e.key === 'Home') {
+                dispatch({ type: 'SET_VIEW', view: { anchorISO: anchorCentering(todayISO(), vp) } });
+            }
+            void zi;
+        };
+        window.addEventListener('keydown', onKey);
+        return () => window.removeEventListener('keydown', onKey);
+    }, [dispatch, state.selectedIds, drag, saveNow, zoom, vp]);
+
+    // ── Akcije scenarija ────────────────────────────────────────
+    const onNewScenario = async () => {
+        const res = await createScenario(`Plan ${scenarios.length + 1}`, orgId);
+        if (!res.success || !res.data) { showToast(res.message, 'error'); return; }
+        const fresh = await getScenario(res.data.Scenario_ID, orgId);
+        if (fresh) { setScenarios(s => [fresh, ...s]); setLoaded(fresh); }
+    };
+
+    const onDuplicate = async () => {
+        await saveNow();
+        const res = await duplicateScenario(scenario.Scenario_ID, orgId);
+        if (!res.success || !res.data) { showToast(res.message, 'error'); return; }
+        const fresh = await getScenario(res.data.Scenario_ID, orgId);
+        if (fresh) { setScenarios(s => [fresh, ...s]); setLoaded(fresh); showToast('Scenarij dupliciran', 'success'); }
+    };
+
+    const onSwitch = async (id: string) => {
+        if (id === scenario.Scenario_ID) return;
+        await saveNow();
+        const fresh = await getScenario(id, orgId);
+        if (fresh) { setLoaded(fresh); setDrawerId(null); }
+    };
+
+    const onDeleteScenario = async () => {
+        const count = scenario.Blocks.length;
+        const ok = window.confirm(
+            `Obrisati plan „${scenario.Name}"${count ? ` sa ${count} blokova` : ''}?\n\n` +
+            'Briše se samo plan — nalozi, narudžbe i statusi ostaju netaknuti.'
+        );
+        if (!ok) return;
+
+        const res = await deleteScenario(scenario.Scenario_ID, orgId);
+        if (!res.success) { showToast(res.message, 'error'); return; }
+
+        const rest = scenarios.filter(s => s.Scenario_ID !== scenario.Scenario_ID);
+        setScenarios(rest);
+        setDrawerId(null);
+        showToast('Plan obrisan', 'success');
+
+        if (rest.length > 0) {
+            const fresh = await getScenario(rest[0].Scenario_ID, orgId);
+            if (fresh) setLoaded(fresh);
+        } else {
+            // Zadnji plan obrisan → napravi prazan da platno ne ostane bez dokumenta
+            const created = await createScenario('Moj plan', orgId);
+            if (created.success && created.data) {
+                const fresh = await getScenario(created.data.Scenario_ID, orgId);
+                if (fresh) { setScenarios([fresh]); setLoaded(fresh); }
+            }
+        }
+    };
+
+    /** Narudžbe iz sastavnice naloga; esencijalne se vežu na njegov početak. */
+    const createPurchases = useCallback((purchases: CreatedPurchase[], orderId: string) => {
+        for (const p of purchases) {
+            const block = newBlock('purchase', p.data.startISO || todayISO(), p.data.endISO, p.data);
+            dispatch({ type: 'ADD_BLOCK', block });
+            if (p.linkToOrder) {
+                dispatch({ type: 'ADD_LINK', from: block.id, to: orderId, kind: 'delivery-to-start' });
+            }
+        }
+        showToast(`Kreirano ${purchases.length} narudžbi u planu`, 'success');
+    }, [dispatch, showToast]);
+
+    // ── Render ──────────────────────────────────────────────────
+    const ticks = useMemo(() => headerTicks(vp, todayISO()), [vp]);
+    const bands = useMemo(() => monthBands(vp), [vp]);
+    const todayX = xForDate(todayISO(), vp);
+    const selected = new Set(state.selectedIds);
+
+    // Umjesto spageta strelica preko cijelog platna: kad je blok izabran, njegovi
+    // vezani partneri dobiju prsten. Čitljivije, i ne lomi se pri skrolu i grupisanju.
+    const linkedToSelection = useMemo(() => {
+        const out = new Set<string>();
+        for (const id of state.selectedIds) {
+            for (const l of scenario.Links) {
+                if (l.from === id) out.add(l.to);
+                if (l.to === id) out.add(l.from);
+            }
+        }
+        return out;
+    }, [state.selectedIds, scenario.Links]);
+
+    if (loading) {
+        return <div className="cv-center"><Loader2 size={20} className="cv-spin" /> Učitavanje platna…</div>;
+    }
+
+    return (
+        <div className="cv-root">
+            {/* Traka scenarija */}
+            <div className="cv-scenariobar">
+                <select
+                    className="cv-select"
+                    value={scenario.Scenario_ID}
+                    onChange={e => void onSwitch(e.target.value)}
+                >
+                    {scenarios.map(s => <option key={s.Scenario_ID} value={s.Scenario_ID}>{s.Name}</option>)}
+                    {!scenarios.some(s => s.Scenario_ID === scenario.Scenario_ID) && (
+                        <option value={scenario.Scenario_ID}>{scenario.Name}</option>
+                    )}
+                </select>
+                <input
+                    className="cv-name"
+                    value={scenario.Name}
+                    onChange={e => dispatch({ type: 'RENAME', name: e.target.value })}
+                    aria-label="Naziv scenarija"
+                />
+                <button className="cv-btn" onClick={() => void onNewScenario()}><Plus size={15} /> Novi</button>
+                <button className="cv-btn" onClick={() => void onDuplicate()}><Copy size={15} /> Dupliraj</button>
+                <button className="cv-btn danger" onClick={() => void onDeleteScenario()}
+                    title="Obriši plan (nalozi i narudžbe ostaju netaknuti)">
+                    <Trash2 size={15} />
+                </button>
+
+                <span className="cv-spacer" />
+
+                <span className="cv-isolation" title="Platno ne mijenja naloge, narudžbe ni statuse">
+                    <Lock size={13} /> planiranje bez uticaja
+                </span>
+                <SaveIndicator
+                    saveState={saveState}
+                    dirty={state.dirty}
+                    onSave={() => void saveNow()}
+                    onReload={() => void reloadRemote()}
+                    onForce={() => void forceOverwrite()}
+                />
+            </div>
+
+            {/* Alatna traka */}
+            <div className="cv-toolbar">
+                <div className="cv-seg">
+                    {ZOOMS.map(z => (
+                        <button key={z} className={zoom === z ? 'on' : ''}
+                            onClick={() => dispatch({ type: 'SET_VIEW', view: { zoom: z } })}>
+                            {ZOOM_LABEL[z]}
+                        </button>
+                    ))}
+                </div>
+                <button className="cv-btn" onClick={() => dispatch({ type: 'SET_VIEW', view: { anchorISO: addDays(anchorISO, zoom === 'mjesec' ? -30 : -7) } })}>
+                    <ZoomOut size={15} style={{ transform: 'rotate(90deg)' }} />
+                </button>
+                <button className="cv-btn" onClick={() => dispatch({ type: 'SET_VIEW', view: { anchorISO: anchorCentering(todayISO(), vp) } })}>
+                    <Calendar size={15} /> Danas
+                </button>
+                <button className="cv-btn" onClick={() => dispatch({ type: 'SET_VIEW', view: { anchorISO: addDays(anchorISO, zoom === 'mjesec' ? 30 : 7) } })}>
+                    <ZoomIn size={15} style={{ transform: 'rotate(90deg)' }} />
+                </button>
+
+                <span className="cv-divider" />
+
+                <label className="cv-labeled">
+                    <span>Grupiši</span>
+                    <select className="cv-select" value={groupBy}
+                        onChange={e => dispatch({ type: 'SET_VIEW', view: { groupBy: e.target.value as PlanGroupBy } })}>
+                        {GROUPS.map(g => <option key={g} value={g}>{GROUP_BY_LABEL[g]}</option>)}
+                    </select>
+                </label>
+
+                <button className="cv-btn primary" onClick={() => setPickerOpen(true)}>
+                    <Package size={15} /> Novi nalog
+                </button>
+
+                <label className="cv-labeled">
+                    <span>Crtaj</span>
+                    <select className="cv-select" value={quickKind}
+                        onChange={e => setQuickKind(e.target.value as PlanBlockKind)}
+                        title={BLOCK_HELP[quickKind]}>
+                        {QUICK_KINDS.map(q => <option key={q.kind} value={q.kind}>{BLOCK_LABEL[q.kind]}</option>)}
+                    </select>
+                </label>
+
+                <button className={`cv-btn ${showIdle ? 'on' : ''}`} onClick={() => setShowIdle(v => !v)}>
+                    <Users size={15} /> Svi radnici
+                </button>
+
+                <span className="cv-spacer" />
+
+                <button className="cv-btn primary" onClick={() => setChainOpen(true)}>
+                    <Link2 size={15} /> Lanac
+                </button>
+                <button className="cv-btn" disabled={!canUndo} onClick={() => dispatch({ type: 'UNDO' })}><Undo2 size={15} /></button>
+                <button className="cv-btn" disabled={!canRedo} onClick={() => dispatch({ type: 'REDO' })}><Redo2 size={15} /></button>
+            </div>
+
+            {state.notice && <div className="cv-notice">{state.notice}</div>}
+
+            {/* Platno */}
+            <div className="cv-grid" ref={gridRef}
+                style={{ ['--cv-header-w' as string]: `${HEADER_WIDTH}px` }}>
+                {/* Zaglavlje s datumima */}
+                <div className="cv-head" style={{ height: TIMELINE_HEADER_HEIGHT }}>
+                    <div className="cv-head-corner">{scenario.Blocks.length} blokova</div>
+                    <div className="cv-head-dates">
+                        {bands.map(b => (
+                            <div key={b.label} className="cv-band" style={{ left: b.left, width: b.width }}>{b.label}</div>
+                        ))}
+                        {ticks.map(t => (
+                            <div key={t.iso}
+                                className={`cv-tick${t.major ? ' major' : ''}${t.isToday ? ' today' : ''}${t.isNonWorking ? ' nonwork' : ''}`}
+                                style={{ left: t.left, width: t.width }}>
+                                {t.label}
+                            </div>
+                        ))}
+                    </div>
+                </div>
+
+                {/* Redovi */}
+                <div className="cv-body">
+                    {sections.length === 0 && (
+                        <div className="cv-empty">
+                            Prazno platno. Povuci mišem po desnoj strani da nacrtaš blok, ili pritisni
+                            <kbd>N</kbd> za nalog, <kbd>V</kbd> za prekretnicu.
+                        </div>
+                    )}
+                    {sections.map(sec => (
+                        <div key={sec.section} className="cv-section">
+                            <div className="cv-section-head">{SECTION_LABEL[sec.section]}</div>
+                            {sec.rows.map(row => {
+                                const packedBlocks = packLanes(row.blocks, b => b, vp);
+                                const packedShadows = packLanes(row.shadows, s => s, vp);
+                                const lanes = packedBlocks.laneCount + (row.shadows.length ? packedShadows.laneCount : 0);
+                                const h = rowHeight(lanes);
+
+                                return (
+                                    <div key={row.id} className={`cv-row${row.synthetic ? ' synthetic' : ''}`}
+                                        data-row-id={row.id} style={{ height: h }}>
+                                        <div className="cv-row-head">
+                                            <span className="cv-row-label" title={row.label}>{row.label}</span>
+                                            {row.sublabel && <span className="cv-row-sub">{row.sublabel}</span>}
+                                        </div>
+
+                                        <div className="cv-row-lane"
+                                            onPointerDown={e => {
+                                                if (e.button !== 0 || (e.target as HTMLElement).closest('.cv-block')) return;
+                                                const rect = e.currentTarget.getBoundingClientRect();
+                                                const x = e.clientX - rect.left;
+                                                setDraw({ rowId: row.id, fromX: x, toX: x });
+                                                dispatch({ type: 'SELECT', ids: [] });
+                                            }}
+                                            onPointerMove={e => {
+                                                if (!draw || draw.rowId !== row.id) return;
+                                                const rect = e.currentTarget.getBoundingClientRect();
+                                                setDraw(d => d && { ...d, toX: e.clientX - rect.left });
+                                            }}
+                                            onPointerUp={commitDraw}
+                                            onPointerLeave={() => draw?.rowId === row.id && commitDraw()}
+                                        >
+                                            {/* Sjene stvarnog posla — ispod, bez ručica */}
+                                            {packedShadows.placed.map(({ item, lane, rect }) => (
+                                                <div key={item.id}
+                                                    className={`cv-shadow ${item.kind}`}
+                                                    title={item.hint}
+                                                    style={{
+                                                        left: rect.left, width: rect.width,
+                                                        top: laneTop(packedBlocks.laneCount + lane),
+                                                    }}>
+                                                    <Lock size={10} />
+                                                    {rect.width > MIN_LABEL_WIDTH && <span>{item.label}</span>}
+                                                </div>
+                                            ))}
+
+                                            {/* Blokovi scenarija */}
+                                            {packedBlocks.placed.map(({ item, lane, rect }) => {
+                                                const isDragged = drag.preview?.blockId === item.id;
+                                                const shift = isDragged && drag.preview?.mode === 'move'
+                                                    ? drag.preview.deltaDays * dayWidth(zoom) : 0;
+                                                const growLeft = isDragged && drag.preview?.mode === 'resize-start'
+                                                    ? drag.preview.deltaDays * dayWidth(zoom) : 0;
+                                                const growRight = isDragged && drag.preview?.mode === 'resize-end'
+                                                    ? drag.preview.deltaDays * dayWidth(zoom) : 0;
+
+                                                return (
+                                                    <div key={item.id}
+                                                        className={`cv-block k-${item.kind}${selected.has(item.id) ? ' selected' : ''}${linkedToSelection.has(item.id) ? ' linked' : ''}${item.locked ? ' locked' : ''}${item.isSent ? ' sent' : ''}${isDragged ? ' dragging' : ''}${rect.clippedStart ? ' clip-start' : ''}${rect.clippedEnd ? ' clip-end' : ''}`}
+                                                        style={{
+                                                            left: rect.left + shift + growLeft,
+                                                            width: Math.max(6, rect.width - growLeft + growRight),
+                                                            top: laneTop(lane),
+                                                            ...(item.color ? { ['--cv-block-color' as string]: item.color } : {}),
+                                                        }}
+                                                        onPointerDown={e => drag.onPointerDown(e, item.id, row.id, 'move')}
+                                                        onPointerMove={drag.onPointerMove}
+                                                        onPointerUp={drag.onPointerUp}
+                                                        onPointerCancel={drag.onPointerCancel}
+                                                        title={`${item.title} · ${item.startISO} → ${item.endISO} (${blockDurationDays(item)} d)`}
+                                                    >
+                                                        {item.kind !== 'milestone' && !item.locked && (
+                                                            <span className="cv-handle left"
+                                                                style={{ width: RESIZE_HANDLE_PX }}
+                                                                onPointerDown={e => drag.onPointerDown(e, item.id, row.id, 'resize-start')}
+                                                                onPointerMove={drag.onPointerMove}
+                                                                onPointerUp={drag.onPointerUp} />
+                                                        )}
+                                                        <span className="cv-block-label">
+                                                            {item.locked && <Lock size={10} />}
+                                                            {rect.width > MIN_LABEL_WIDTH ? item.title : ''}
+                                                        </span>
+                                                        {item.kind !== 'milestone' && !item.locked && (
+                                                            <span className="cv-handle right"
+                                                                style={{ width: RESIZE_HANDLE_PX }}
+                                                                onPointerDown={e => drag.onPointerDown(e, item.id, row.id, 'resize-end')}
+                                                                onPointerMove={drag.onPointerMove}
+                                                                onPointerUp={drag.onPointerUp} />
+                                                        )}
+                                                    </div>
+                                                );
+                                            })}
+
+                                            {/* Nacrt novog bloka */}
+                                            {draw?.rowId === row.id && (
+                                                <div className="cv-draw"
+                                                    style={{
+                                                        left: Math.min(draw.fromX, draw.toX),
+                                                        width: Math.max(4, Math.abs(draw.toX - draw.fromX)),
+                                                        top: laneTop(0),
+                                                    }} />
+                                            )}
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    ))}
+
+                    {/* Linija današnjeg dana — preko svega */}
+                    {todayX >= 0 && todayX <= widthPx && (
+                        <div className="cv-today" style={{ left: HEADER_WIDTH + todayX }} />
+                    )}
+                </div>
+            </div>
+
+            <CanvasDock
+                scenario={scenario}
+                conflictCtx={conflictCtx}
+                capacityCtx={capacityCtx}
+                fromISO={anchorISO}
+                days={Math.min(90, Math.max(14, Math.ceil(widthPx / dayWidth(zoom))))}
+                onJumpToBlock={jumpToBlock}
+                onMarkSent={id => dispatch({ type: 'UPDATE_BLOCK', id, patch: { isSent: true } })}
+            />
+
+            <ChainModal
+                isOpen={chainOpen}
+                scenario={scenario}
+                todayISO={todayISO()}
+                isSaturdayWorking={isSaturdayWorking}
+                onClose={() => setChainOpen(false)}
+                onApply={changes => dispatch({ type: 'APPLY_DATE_DIFF', changes })}
+            />
+
+            <ProductPickerModal
+                isOpen={pickerOpen}
+                projects={projects}
+                workers={workers}
+                workOrders={workOrders}
+                startISO={todayISO()}
+                isSaturdayWorking={isSaturdayWorking}
+                onClose={() => setPickerOpen(false)}
+                onCreate={data => {
+                    const block = newBlock('order', data.startISO || todayISO(), data.endISO, data);
+                    dispatch({ type: 'ADD_BLOCK', block });
+                    setDrawerId(block.id);
+                }}
+            />
+
+            <MaterialOrderModal
+                isOpen={!!orderModalFor}
+                orderBlock={scenario.Blocks.find(b => b.id === orderModalFor) || null}
+                projects={projects}
+                suppliers={suppliers}
+                leadTimes={leadTimes}
+                onClose={() => setOrderModalFor(null)}
+                onCreate={purchases => {
+                    if (orderModalFor) createPurchases(purchases, orderModalFor);
+                }}
+            />
+
+            {drawerId && (
+                <CanvasDrawer
+                    block={scenario.Blocks.find(b => b.id === drawerId) || null}
+                    allBlocks={scenario.Blocks}
+                    links={scenario.Links}
+                    projects={projects}
+                    workers={workers}
+                    suppliers={suppliers}
+                    leadTimes={leadTimes}
+                    onClose={() => setDrawerId(null)}
+                    onChange={patch => dispatch({ type: 'UPDATE_BLOCK', id: drawerId, patch })}
+                    onDelete={() => { dispatch({ type: 'DELETE_BLOCKS', ids: [drawerId] }); setDrawerId(null); }}
+                    onAddLink={(from, to, kind) => dispatch({ type: 'ADD_LINK', from, to, kind })}
+                    onDeleteLink={id => dispatch({ type: 'DELETE_LINK', id })}
+                    onSelectBlock={jumpToBlock}
+                    onCreateOrders={() => setOrderModalFor(drawerId)}
+                />
+            )}
+        </div>
+    );
+}
+
+// ── Indikator spremanja ─────────────────────────────────────────────
+
+function SaveIndicator({ saveState, dirty, onSave, onReload, onForce }: {
+    saveState: ReturnType<typeof useScenario>['saveState'];
+    dirty: boolean;
+    onSave: () => void;
+    onReload: () => void;
+    onForce: () => void;
+}) {
+    if (saveState.kind === 'conflict') {
+        return (
+            <div className="cv-conflict">
+                <AlertTriangle size={14} />
+                <span>Scenarij je promijenjen drugdje.</span>
+                <button className="cv-btn sm" onClick={onReload}>Učitaj ponovo</button>
+                <button className="cv-btn sm danger" onClick={onForce}>Prepiši</button>
+            </div>
+        );
+    }
+    if (saveState.kind === 'error') {
+        return <span className="cv-save err"><AlertTriangle size={13} /> {saveState.message}</span>;
+    }
+    if (saveState.kind === 'saving') {
+        return <span className="cv-save"><Loader2 size={13} className="cv-spin" /> spremam…</span>;
+    }
+    if (dirty) {
+        return <button className="cv-btn sm" onClick={onSave}><Save size={13} /> Spremi</button>;
+    }
+    if (saveState.kind === 'saved') {
+        return <span className="cv-save ok">snimljeno {saveState.at.toLocaleTimeString('hr-HR', { hour: '2-digit', minute: '2-digit' })}</span>;
+    }
+    return <span className="cv-save" />;
+}
+
+export { Trash2 };

@@ -277,3 +277,160 @@
     .pwc-av { width: 22px; height: 22px; font-size: 9px; margin-left: -7px; }
     .pwc-cprod { display: none; }
 }
+
+/* ══════════════════════════════════════════════════════════════════
+   PROFILI (tab „Profili") — prefiks `pf-`.
+   Opis prošlosti, ne prognoza: svaki broj se prikazuje UZ uzorak (n),
+   pa je `.pf-muted` nosivi element dizajna, a ne ukras.
+   ══════════════════════════════════════════════════════════════════ */
+
+.pf-seg {
+    margin-bottom: 16px;
+}
+
+.pf-warn {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 10px 13px;
+    border-radius: 10px;
+    background: #fff4e5;
+    border: 1px solid rgba(255, 149, 0, 0.28);
+    font-size: 12.5px;
+    line-height: 1.45;
+    margin-bottom: 14px;
+}
+
+.pf-warn svg {
+    color: #ff9500;
+    flex-shrink: 0;
+    margin-top: 1px;
+}
+
+.pf-muted {
+    color: #86868b;
+    font-weight: 400;
+    font-size: 0.92em;
+}
+
+.pf-range strong {
+    font-variant-numeric: tabular-nums;
+}
+
+/* ── Kartice radnika ──────────────────────────────────────────── */
+.pf-cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+    gap: 14px;
+}
+
+.pf-card {
+    border: 1px solid #e5e5ea;
+    border-radius: 12px;
+    padding: 14px 16px;
+    background: #fff;
+}
+
+.pf-card-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 10px;
+    margin-bottom: 10px;
+    flex-wrap: wrap;
+}
+
+.pf-card-head strong {
+    font-size: 14px;
+}
+
+/* ── KPI ──────────────────────────────────────────────────────── */
+.pf-kpis {
+    display: flex;
+    gap: 18px;
+    flex-wrap: wrap;
+    margin-bottom: 12px;
+}
+
+.pf-kpis-wide {
+    gap: 28px;
+    padding: 14px 16px;
+    border: 1px solid #e5e5ea;
+    border-radius: 12px;
+    background: #fff;
+    margin-bottom: 18px;
+}
+
+.pf-kpi {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.pf-kpi-val {
+    font-size: 20px;
+    font-weight: 700;
+    line-height: 1.1;
+    font-variant-numeric: tabular-nums;
+}
+
+.pf-kpi-lbl {
+    font-size: 11.5px;
+    color: #86868b;
+    line-height: 1.35;
+}
+
+/* ── Blokovi ──────────────────────────────────────────────────── */
+.pf-block {
+    margin-top: 12px;
+}
+
+.pf-block h5 {
+    margin: 0 0 7px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: #86868b;
+}
+
+.pf-note {
+    margin: 0 0 10px;
+    font-size: 12px;
+    color: #86868b;
+    line-height: 1.45;
+}
+
+.pf-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.pf-chip {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 5px;
+    padding: 3px 9px;
+    border-radius: 8px;
+    background: #f5f5f7;
+    font-size: 12px;
+}
+
+.pf-chip em {
+    font-style: normal;
+    font-weight: 600;
+    color: #86868b;
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 767px) {
+    .pf-cards {
+        grid-template-columns: 1fr;
+    }
+
+    .pf-kpis-wide {
+        gap: 16px;
+    }
+}

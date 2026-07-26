@@ -1,0 +1,256 @@
+/* ══════════════════════════════════════════════════════════════════
+   PETLJA UČENJA — pregled i potvrda AI prijedloga pravila.
+   Prefiks `ncr-`; boje/radijusi iz dizajn-tokena u globals.css.
+   ══════════════════════════════════════════════════════════════════ */
+
+.ncr-kind {
+    display: flex;
+    gap: 6px;
+    padding: 4px;
+    background: var(--surface);
+    border-radius: var(--radius-md);
+    margin-bottom: 14px;
+    width: fit-content;
+    max-width: 100%;
+    flex-wrap: wrap;
+}
+
+.ncr-kind-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    padding: 7px 14px;
+    border: none;
+    background: transparent;
+    border-radius: var(--radius-sm);
+    font-size: 13px;
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: var(--transition);
+}
+
+.ncr-kind-btn.active {
+    background: var(--background);
+    color: var(--text-primary);
+    font-weight: 600;
+    box-shadow: 0 1px 3px var(--shadow);
+}
+
+.ncr-count {
+    font-size: 11px;
+    font-weight: 600;
+    padding: 1px 6px;
+    border-radius: 8px;
+    background: var(--surface-active);
+    color: var(--text-secondary);
+    font-variant-numeric: tabular-nums;
+}
+
+.ncr-kind-btn.active .ncr-count {
+    background: var(--accent);
+    color: #fff;
+}
+
+.ncr-actions {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-bottom: 14px;
+}
+
+.ncr-actions .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.ncr-actions .material-icons-round {
+    font-size: 18px;
+}
+
+.ncr-note {
+    padding: 10px 14px;
+    border-radius: var(--radius-sm);
+    font-size: 13px;
+    margin-bottom: 14px;
+    line-height: 1.45;
+}
+
+.ncr-note-success { background: var(--success-bg); color: #1b5e20; }
+.ncr-note-error { background: var(--error-bg); color: #a1120a; }
+.ncr-note-info { background: var(--accent-light); color: var(--text-primary); }
+
+/* ── Lista neprepoznatog ───────────────────────────────────────── */
+.ncr-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    gap: 1px;
+    background: var(--border-light);
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius-md);
+    overflow: hidden;
+}
+
+.ncr-list li {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    padding: 9px 14px;
+    background: var(--background);
+    font-size: 13px;
+}
+
+.ncr-name {
+    font-weight: 500;
+}
+
+.ncr-times {
+    font-size: 11.5px;
+    color: var(--text-secondary);
+    font-variant-numeric: tabular-nums;
+    flex-shrink: 0;
+}
+
+.ncr-ex {
+    font-size: 11.5px;
+    color: var(--text-tertiary);
+    margin-left: auto;
+    text-align: right;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 45%;
+}
+
+.ncr-empty {
+    font-size: 13px;
+    color: var(--text-secondary);
+}
+
+/* ── Prijedlozi ────────────────────────────────────────────────── */
+.ncr-rows {
+    display: grid;
+    gap: 10px;
+}
+
+.ncr-row {
+    display: flex;
+    gap: 12px;
+    padding: 12px 14px;
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius-md);
+    background: var(--background);
+    transition: var(--transition);
+}
+
+.ncr-row.accepted {
+    border-color: var(--accent);
+    background: var(--accent-light);
+}
+
+.ncr-check {
+    padding-top: 2px;
+}
+
+.ncr-check input {
+    width: 17px;
+    height: 17px;
+    cursor: pointer;
+    accent-color: var(--accent);
+}
+
+.ncr-row-body {
+    flex: 1;
+    min-width: 0;
+}
+
+.ncr-row-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-bottom: 8px;
+}
+
+.ncr-row-head strong {
+    font-size: 13.5px;
+}
+
+.ncr-conf {
+    font-size: 11.5px;
+    font-weight: 600;
+    color: var(--success);
+    font-variant-numeric: tabular-nums;
+}
+
+/* Nisko povjerenje = nagađanje; mora se vidjeti prije potvrde */
+.ncr-conf.low {
+    color: var(--warning);
+}
+
+.ncr-badge {
+    font-size: 10.5px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    padding: 2px 7px;
+    border-radius: 6px;
+    background: var(--warning-bg);
+    color: #8a5000;
+}
+
+.ncr-row-fields {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr);
+    gap: 10px;
+}
+
+.ncr-row-fields label {
+    display: grid;
+    gap: 3px;
+    min-width: 0;
+}
+
+.ncr-row-fields span {
+    font-size: 11px;
+    color: var(--text-secondary);
+}
+
+.ncr-row-fields input {
+    width: 100%;
+    padding: 6px 9px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    font-size: 13px;
+    background: var(--background);
+    font-family: inherit;
+}
+
+.ncr-row-fields input:focus {
+    outline: none;
+    border-color: var(--accent);
+}
+
+.ncr-reason {
+    margin: 7px 0 0;
+    font-size: 12px;
+    color: var(--text-secondary);
+    line-height: 1.45;
+}
+
+@media (max-width: 767px) {
+    .ncr-row-fields {
+        grid-template-columns: 1fr;
+    }
+
+    .ncr-ex {
+        display: none;
+    }
+
+    .ncr-actions .btn {
+        flex: 1 1 auto;
+        justify-content: center;
+    }
+}

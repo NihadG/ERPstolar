@@ -18,6 +18,7 @@ import {
     Lock,
     CheckSquare,
     GanttChart,
+    LayoutDashboard,
     FileUp,
     Factory,
     Briefcase,
@@ -129,6 +130,7 @@ const Sidebar: React.FC<SidebarProps> = ({ activeTab, onTabChange, isOpen, onClo
                 { id: 'procesi', icon: Workflow, label: 'Procesi' },
                 { id: 'attendance', icon: CalendarDays, label: 'Šihtarica' },
                 { id: 'planer', icon: GanttChart, label: 'Planer' },
+                { id: 'platno', icon: LayoutDashboard, label: 'Platno' },
             ]
         },
         {

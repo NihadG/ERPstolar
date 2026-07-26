@@ -1,0 +1,586 @@
+/* ══════════════════════════════════════════════════════════════════
+   PLATNO — prefiks `cv-`.
+   Mjere koje moraju biti iste u JS-u i CSS-u (širina reda, visina trake)
+   dolaze kroz inline stil iz lib/canvas/geometry.ts — NE dupliraju se ovdje.
+   To je greška starog planera: 200px širina reda postoji samo u CSS-u,
+   na dva mjesta, i JS o njoj ne zna ništa.
+   ══════════════════════════════════════════════════════════════════ */
+
+.cv-root {
+    display: flex;
+    flex-direction: column;
+    height: calc(100dvh - 48px);
+    min-height: 480px;
+    gap: 10px;
+}
+
+.cv-center {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 60px 20px;
+    color: var(--text-secondary);
+    font-size: 14px;
+}
+
+.cv-spin { animation: cv-rot 1s linear infinite; }
+@keyframes cv-rot { to { transform: rotate(360deg); } }
+
+/* ── Trake ────────────────────────────────────────────────────── */
+.cv-scenariobar,
+.cv-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    padding: 10px 14px;
+    border-radius: var(--radius-lg);
+    background: var(--glass-bg);
+    backdrop-filter: var(--glass-blur);
+    border: 1px solid var(--border-light);
+    flex-shrink: 0;
+}
+
+.cv-scenariobar { padding-block: 8px; }
+.cv-spacer { flex: 1 1 auto; }
+
+.cv-divider {
+    width: 1px;
+    height: 22px;
+    background: var(--border-light);
+}
+
+.cv-name {
+    flex: 0 1 240px;
+    min-width: 120px;
+    padding: 6px 10px;
+    border: 1px solid transparent;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    font-size: 14px;
+    font-weight: 600;
+    font-family: inherit;
+    color: var(--text-primary);
+}
+
+.cv-name:hover { background: var(--surface); }
+.cv-name:focus { outline: none; background: var(--background); border-color: var(--accent); }
+
+.cv-select {
+    padding: 6px 10px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--background);
+    font-size: 13px;
+    font-family: inherit;
+    max-width: 200px;
+}
+
+.cv-labeled {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11.5px;
+    color: var(--text-secondary);
+}
+
+/* Izolacija mora biti VIDLJIVA — bez ovoga ljudi misle da platno zakazuje naloge */
+.cv-isolation {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 4px 10px;
+    border-radius: 20px;
+    background: var(--surface);
+    color: var(--text-secondary);
+    font-size: 11.5px;
+    font-weight: 500;
+    white-space: nowrap;
+}
+
+/* ── Dugmad ───────────────────────────────────────────────────── */
+.cv-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 7px 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--background);
+    font-size: 13px;
+    font-family: inherit;
+    color: var(--text-primary);
+    cursor: pointer;
+    transition: var(--transition);
+    white-space: nowrap;
+}
+
+.cv-btn:hover:not(:disabled) { background: var(--surface-hover); }
+.cv-btn:disabled { opacity: .4; cursor: default; }
+.cv-btn.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+.cv-btn.sm { padding: 4px 9px; font-size: 12px; }
+.cv-btn.full { width: 100%; justify-content: center; }
+.cv-btn.danger { color: var(--error); border-color: #f5c6c2; }
+.cv-btn.danger:hover:not(:disabled) { background: var(--error-bg); }
+
+.cv-icon-btn {
+    display: inline-flex;
+    padding: 5px;
+    border: none;
+    background: transparent;
+    border-radius: var(--radius-sm);
+    color: var(--text-secondary);
+    cursor: pointer;
+}
+.cv-icon-btn:hover { background: var(--surface-hover); color: var(--text-primary); }
+
+.cv-seg {
+    display: inline-flex;
+    gap: 2px;
+    padding: 3px;
+    background: var(--surface);
+    border-radius: var(--radius-sm);
+}
+.cv-seg button {
+    padding: 5px 11px;
+    border: none;
+    background: transparent;
+    border-radius: 6px;
+    font-size: 12.5px;
+    font-family: inherit;
+    color: var(--text-secondary);
+    cursor: pointer;
+}
+.cv-seg button.on {
+    background: var(--background);
+    color: var(--text-primary);
+    font-weight: 600;
+    box-shadow: 0 1px 3px var(--shadow);
+}
+
+/* ── Spremanje ────────────────────────────────────────────────── */
+.cv-save {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 11.5px;
+    color: var(--text-tertiary);
+    min-width: 90px;
+    justify-content: flex-end;
+}
+.cv-save.ok { color: var(--success); }
+.cv-save.err { color: var(--error); }
+
+.cv-conflict {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 5px 10px;
+    border-radius: var(--radius-sm);
+    background: var(--warning-bg);
+    font-size: 12px;
+}
+.cv-conflict svg { color: var(--warning); flex-shrink: 0; }
+
+.cv-notice {
+    padding: 8px 14px;
+    border-radius: var(--radius-sm);
+    background: var(--accent-light);
+    font-size: 12.5px;
+    flex-shrink: 0;
+}
+
+/* ── Mreža ────────────────────────────────────────────────────── */
+.cv-grid {
+    flex: 1 1 auto;
+    min-height: 0;
+    position: relative;
+    overflow: auto;
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius-lg);
+    background: var(--background);
+    overscroll-behavior: contain;
+}
+
+.cv-head {
+    display: flex;
+    position: sticky;
+    top: 0;
+    z-index: 6;
+    background: var(--background);
+    border-bottom: 1px solid var(--border);
+}
+
+.cv-head-corner {
+    width: var(--cv-header-w);
+    min-width: var(--cv-header-w);
+    position: sticky;
+    left: 0;
+    z-index: 2;
+    display: flex;
+    align-items: flex-end;
+    padding: 0 12px 8px;
+    background: var(--background);
+    border-right: 1px solid var(--border);
+    font-size: 11px;
+    color: var(--text-tertiary);
+}
+
+.cv-head-dates { position: relative; flex: 1 1 auto; }
+
+.cv-band {
+    position: absolute;
+    top: 4px;
+    height: 18px;
+    display: flex;
+    align-items: center;
+    padding-left: 6px;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    border-left: 1px solid var(--border-light);
+    white-space: nowrap;
+    overflow: hidden;
+}
+
+.cv-tick {
+    position: absolute;
+    top: 26px;
+    bottom: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 11px;
+    color: var(--text-tertiary);
+    font-variant-numeric: tabular-nums;
+}
+.cv-tick.major { color: var(--text-primary); font-weight: 600; }
+.cv-tick.nonwork { color: var(--text-tertiary); opacity: .5; }
+.cv-tick.today {
+    color: #fff;
+    background: var(--accent);
+    border-radius: 5px;
+    font-weight: 600;
+}
+
+/* ── Redovi ───────────────────────────────────────────────────── */
+.cv-body { position: relative; }
+
+.cv-section-head {
+    position: sticky;
+    left: 0;
+    z-index: 3;
+    padding: 7px 12px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border-light);
+    font-size: 10.5px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .05em;
+    color: var(--text-secondary);
+    width: max-content;
+    min-width: 100%;
+}
+
+.cv-row {
+    display: flex;
+    border-bottom: 1px solid var(--border-light);
+    position: relative;
+}
+.cv-row:hover { background: rgba(0, 113, 227, .02); }
+.cv-row.synthetic .cv-row-label { font-style: italic; color: var(--text-secondary); }
+
+.cv-row-head {
+    width: var(--cv-header-w);
+    min-width: var(--cv-header-w);
+    position: sticky;
+    left: 0;
+    z-index: 2;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 2px;
+    padding: 0 12px;
+    background: var(--background);
+    border-right: 1px solid var(--border);
+}
+.cv-row:hover .cv-row-head { background: #fafafd; }
+
+.cv-row-label {
+    font-size: 13px;
+    font-weight: 500;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.cv-row-sub { font-size: 11px; color: var(--text-tertiary); }
+
+.cv-row-lane {
+    position: relative;
+    flex: 1 1 auto;
+    /* Mreža dana — čisto vizuelna, geometrija je u JS-u */
+    background-image: linear-gradient(to right, var(--border-light) 1px, transparent 1px);
+    background-size: 22px 100%;
+    cursor: crosshair;
+    touch-action: pan-y;
+}
+
+/* ── Blokovi ──────────────────────────────────────────────────── */
+.cv-block {
+    position: absolute;
+    height: 34px;
+    display: flex;
+    align-items: center;
+    border-radius: 7px;
+    background: var(--cv-block-color, var(--accent));
+    color: #fff;
+    font-size: 12px;
+    cursor: grab;
+    user-select: none;
+    overflow: hidden;
+    box-shadow: 0 1px 3px var(--shadow-md);
+    transition: box-shadow var(--transition), transform var(--transition);
+}
+
+.cv-block:hover { box-shadow: 0 3px 10px var(--shadow-md); z-index: 3; }
+.cv-block.dragging { cursor: grabbing; opacity: .85; z-index: 5; }
+.cv-block.selected { outline: 2px solid var(--text-primary); outline-offset: 1px; z-index: 4; }
+.cv-block.locked { cursor: default; }
+
+/* Odsječen blok dobija ravnu ivicu — vidi se da se nastavlja izvan prozora */
+.cv-block.clip-start { border-top-left-radius: 0; border-bottom-left-radius: 0; }
+.cv-block.clip-end { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+
+.cv-block-label {
+    flex: 1 1 auto;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 0 8px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.cv-handle {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    cursor: ew-resize;
+    z-index: 2;
+}
+.cv-handle.left { left: 0; }
+.cv-handle.right { right: 0; }
+.cv-block:hover .cv-handle { background: rgba(255, 255, 255, .25); }
+
+/* Boja po vrsti — značenje, ne ukras */
+.cv-block.k-order { --cv-block-color: var(--accent); }
+.cv-block.k-montaza { --cv-block-color: #5856d6; }
+.cv-block.k-transport { --cv-block-color: #8e8e93; }
+.cv-block.k-purchase { --cv-block-color: var(--warning); }
+.cv-block.k-note { --cv-block-color: #a2845e; }
+.cv-block.k-milestone {
+    --cv-block-color: var(--error);
+    border-radius: 4px;
+}
+
+/* ── Sjene stvarnog posla ─────────────────────────────────────── */
+.cv-shadow {
+    position: absolute;
+    height: 22px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 0 6px;
+    border-radius: 5px;
+    font-size: 11px;
+    overflow: hidden;
+    white-space: nowrap;
+    /* Isprekidana ivica + prigušenost = „ovo se ne dira" */
+    border: 1px dashed var(--border);
+    background: repeating-linear-gradient(
+        135deg,
+        var(--surface) 0 6px,
+        var(--surface-hover) 6px 12px
+    );
+    color: var(--text-secondary);
+    cursor: default;
+    pointer-events: auto;
+}
+
+.cv-shadow.absence {
+    border-color: #f0c8a0;
+    background: repeating-linear-gradient(
+        135deg,
+        var(--warning-bg) 0 6px,
+        #ffe9cc 6px 12px
+    );
+    color: #8a5000;
+}
+
+.cv-shadow svg { flex-shrink: 0; opacity: .6; }
+
+/* ── Crtanje novog bloka ──────────────────────────────────────── */
+.cv-draw {
+    position: absolute;
+    height: 34px;
+    border: 2px dashed var(--accent);
+    border-radius: 7px;
+    background: var(--accent-light);
+    pointer-events: none;
+}
+
+/* ── Linija današnjeg dana ────────────────────────────────────── */
+.cv-today {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 2px;
+    background: var(--accent);
+    opacity: .35;
+    pointer-events: none;
+    z-index: 1;
+}
+
+.cv-empty {
+    padding: 48px 24px;
+    text-align: center;
+    color: var(--text-secondary);
+    font-size: 13.5px;
+    line-height: 1.7;
+}
+.cv-empty kbd {
+    display: inline-block;
+    margin: 0 3px;
+    padding: 1px 6px;
+    border: 1px solid var(--border);
+    border-bottom-width: 2px;
+    border-radius: 4px;
+    background: var(--surface);
+    font-family: inherit;
+    font-size: 11.5px;
+    font-weight: 600;
+}
+
+/* ── Bočna ploča ──────────────────────────────────────────────── */
+.cv-drawer {
+    position: fixed;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: 340px;
+    max-width: 92vw;
+    z-index: 950;
+    display: flex;
+    flex-direction: column;
+    background: var(--background);
+    border-left: 1px solid var(--border);
+    box-shadow: -8px 0 32px rgba(0, 0, 0, .1);
+    animation: cv-slide .16s ease-out;
+}
+
+@keyframes cv-slide {
+    from { transform: translateX(16px); opacity: 0; }
+    to { transform: translateX(0); opacity: 1; }
+}
+
+.cv-drawer-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 14px;
+    border-bottom: 1px solid var(--border-light);
+    flex-shrink: 0;
+}
+
+.cv-drawer-body {
+    flex: 1 1 auto;
+    overflow-y: auto;
+    padding: 14px;
+    display: grid;
+    gap: 14px;
+    align-content: start;
+}
+
+.cv-drawer-foot {
+    padding: 12px 14px;
+    border-top: 1px solid var(--border-light);
+    flex-shrink: 0;
+}
+
+.cv-kind-chip {
+    display: inline-flex;
+    align-items: center;
+    padding: 3px 10px;
+    border-radius: 20px;
+    background: var(--accent);
+    color: #fff;
+    font-size: 11.5px;
+    font-weight: 600;
+}
+.cv-kind-chip.k-montaza { background: #5856d6; }
+.cv-kind-chip.k-transport { background: #8e8e93; }
+.cv-kind-chip.k-purchase { background: var(--warning); }
+.cv-kind-chip.k-milestone { background: var(--error); }
+.cv-kind-chip.k-note { background: #a2845e; }
+
+.cv-field { display: grid; gap: 5px; }
+.cv-field > span {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 11.5px;
+    color: var(--text-secondary);
+}
+.cv-field input,
+.cv-field select,
+.cv-field textarea {
+    width: 100%;
+    padding: 8px 10px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    font-size: 13px;
+    font-family: inherit;
+    background: var(--background);
+    color: var(--text-primary);
+}
+.cv-field input:focus,
+.cv-field select:focus,
+.cv-field textarea:focus { outline: none; border-color: var(--accent); }
+.cv-field textarea { resize: vertical; }
+
+.cv-field-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+}
+
+.cv-hint {
+    margin: -6px 0 0;
+    font-size: 11.5px;
+    color: var(--text-secondary);
+    line-height: 1.45;
+}
+
+.cv-chips { display: flex; flex-wrap: wrap; gap: 5px; }
+.cv-chip {
+    padding: 5px 10px;
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    background: var(--background);
+    font-size: 12px;
+    font-family: inherit;
+    cursor: pointer;
+    transition: var(--transition);
+}
+.cv-chip:hover { background: var(--surface-hover); }
+.cv-chip.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+/* ── Mobilni ──────────────────────────────────────────────────── */
+@media (max-width: 767px) {
+    .cv-root { height: auto; }
+    .cv-drawer { width: 100%; top: auto; height: 72vh; border-left: none; border-top: 1px solid var(--border); }
+    .cv-field-row { grid-template-columns: 1fr; }
+    .cv-name { flex-basis: 100%; order: -1; }
+}

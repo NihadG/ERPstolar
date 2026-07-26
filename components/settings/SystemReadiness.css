@@ -1,0 +1,258 @@
+/* ══════════════════════════════════════════════════════════════════
+   SPREMNOST SISTEMA — panel u Postavkama.
+   Prefiks `sr-` (globalni CSS scope u ovom projektu je stvaran).
+   Boje i radijusi idu iz dizajn-tokena u globals.css.
+   ══════════════════════════════════════════════════════════════════ */
+
+.sr-actions {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-bottom: 10px;
+}
+
+.sr-actions .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.sr-actions .material-icons-round {
+    font-size: 18px;
+}
+
+.sr-hint {
+    font-size: 12px;
+    color: var(--text-secondary);
+    margin: 0 0 16px;
+    max-width: 640px;
+    line-height: 1.5;
+}
+
+.sr-note {
+    padding: 10px 14px;
+    border-radius: var(--radius-sm);
+    font-size: 13px;
+    margin-bottom: 16px;
+}
+
+.sr-note-ok {
+    background: var(--success-bg);
+    color: #1b5e20;
+}
+
+.sr-note-error {
+    background: var(--error-bg);
+    color: #a1120a;
+}
+
+/* ── Hero ─────────────────────────────────────────────────────── */
+.sr-hero {
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    padding: 20px 22px;
+    border-radius: var(--radius-lg);
+    border: 1px solid var(--border-light);
+    background: var(--surface);
+    margin-bottom: 14px;
+}
+
+.sr-hero-score {
+    display: flex;
+    align-items: baseline;
+    gap: 3px;
+    flex-shrink: 0;
+}
+
+.sr-hero-number {
+    font-size: 44px;
+    font-weight: 700;
+    line-height: 1;
+    letter-spacing: -0.02em;
+}
+
+.sr-hero-max {
+    font-size: 14px;
+    color: var(--text-secondary);
+}
+
+.sr-hero-body h3 {
+    margin: 0 0 4px;
+    font-size: 16px;
+    font-weight: 600;
+}
+
+.sr-hero-body p {
+    margin: 0;
+    font-size: 13px;
+    color: var(--text-secondary);
+    line-height: 1.5;
+}
+
+.sr-hero-next {
+    margin-top: 6px !important;
+    font-size: 12px !important;
+    color: var(--text-tertiary) !important;
+}
+
+/* Nivo boji samo BROJ i lijevu ivicu — panel ostaje miran */
+.sr-level-low { border-left: 4px solid var(--text-tertiary); }
+.sr-level-low .sr-hero-number { color: var(--text-secondary); }
+.sr-level-mid { border-left: 4px solid var(--warning); }
+.sr-level-mid .sr-hero-number { color: var(--warning); }
+.sr-level-good { border-left: 4px solid var(--accent); }
+.sr-level-good .sr-hero-number { color: var(--accent); }
+.sr-level-best { border-left: 4px solid var(--success); }
+.sr-level-best .sr-hero-number { color: var(--success); }
+
+/* ── Ograničenje nivoa (stabilnost) ───────────────────────────── */
+.sr-capped {
+    display: flex;
+    gap: 12px;
+    padding: 14px 16px;
+    border-radius: var(--radius-md);
+    background: var(--warning-bg);
+    border: 1px solid rgba(255, 149, 0, 0.3);
+    margin-bottom: 16px;
+}
+
+.sr-capped .material-icons-round {
+    color: var(--warning);
+    font-size: 20px;
+    flex-shrink: 0;
+}
+
+.sr-capped strong {
+    display: block;
+    font-size: 13px;
+    margin-bottom: 3px;
+}
+
+.sr-capped p {
+    margin: 0;
+    font-size: 12.5px;
+    line-height: 1.5;
+    color: var(--text-primary);
+}
+
+/* ── Lista radnji ─────────────────────────────────────────────── */
+.sr-todo {
+    padding: 16px 18px;
+    border-radius: var(--radius-md);
+    background: var(--accent-light);
+    margin-bottom: 20px;
+}
+
+.sr-todo h4 {
+    margin: 0 0 8px;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.sr-todo ol {
+    margin: 0;
+    padding-left: 18px;
+    display: grid;
+    gap: 5px;
+}
+
+.sr-todo li {
+    font-size: 13px;
+    line-height: 1.45;
+}
+
+/* ── Mjerila ──────────────────────────────────────────────────── */
+.sr-metrics {
+    display: grid;
+    gap: 14px;
+}
+
+.sr-metric {
+    padding: 14px 16px;
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius-md);
+    background: var(--background);
+}
+
+.sr-metric-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: 8px;
+}
+
+.sr-metric-label {
+    font-size: 13.5px;
+    font-weight: 600;
+}
+
+.sr-metric-score {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    font-variant-numeric: tabular-nums;
+}
+
+.sr-track {
+    height: 6px;
+    border-radius: 3px;
+    background: var(--surface-hover);
+    overflow: hidden;
+    margin-bottom: 8px;
+}
+
+.sr-fill {
+    height: 100%;
+    border-radius: 3px;
+    transition: width var(--transition);
+}
+
+.sr-bar-low { background: var(--error); }
+.sr-bar-mid { background: var(--warning); }
+.sr-bar-good { background: var(--accent); }
+.sr-bar-best { background: var(--success); }
+
+.sr-metric-value {
+    font-size: 12.5px;
+    color: var(--text-primary);
+    margin-bottom: 3px;
+    font-variant-numeric: tabular-nums;
+}
+
+.sr-metric-why {
+    font-size: 12px;
+    color: var(--text-secondary);
+    line-height: 1.45;
+}
+
+.sr-metric-actions {
+    margin: 8px 0 0;
+    padding-left: 16px;
+    display: grid;
+    gap: 4px;
+}
+
+.sr-metric-actions li {
+    font-size: 12.5px;
+    color: var(--text-primary);
+    line-height: 1.4;
+}
+
+.sr-empty {
+    font-size: 13px;
+    color: var(--text-secondary);
+}
+
+@media (max-width: 767px) {
+    .sr-hero {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 12px;
+    }
+
+    .sr-actions .btn {
+        flex: 1 1 auto;
+        justify-content: center;
+    }
+}

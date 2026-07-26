@@ -11,6 +11,7 @@
 import type { WorkOrderItem, ProcessNode, ProcessEdge } from '@/lib/types';
 import { nodeMatchesProcess, computeProcessGating } from '@/lib/productProcesses';
 import { layoutProcessGraph } from '@/lib/processLayout';
+import { SPECIAL_LETTERS } from '@/lib/classify/patternNormalize';
 
 export type ProcRowState = 'done' | 'active' | 'blocked';
 
@@ -55,7 +56,11 @@ const HOMOGLYPHS: Record<string, string> = {
  */
 export function dedupeProcessKey(s: string): string {
     let out = '';
-    for (const ch of (s || '').normalize('NFKD')) out += HOMOGLYPHS[ch] ?? ch;
+    // SPECIAL_LETTERS prije NFKD: `đ` je jedan kodni znak koji se NE razlaže, pa bi
+    // inače preživio i pravio zaseban ključ („Vođice" ≠ „Vodice").
+    let pre = '';
+    for (const ch of (s || '')) pre += SPECIAL_LETTERS[ch] ?? ch;
+    for (const ch of pre.normalize('NFKD')) out += HOMOGLYPHS[ch] ?? ch;
     return out
         .replace(/[\p{C}\p{M}]/gu, '')   // kontrolni/format/nevidljivi + kombinujući znakovi
         .replace(/\s+/g, ' ')

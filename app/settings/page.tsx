@@ -11,6 +11,8 @@ import { isGoogleConfigured } from '@/lib/google/config';
 import { pickExistingFolder, createRealDriveClient, folderLink } from '@/lib/google/driveClient';
 import Toast from '@/components/ui/Toast';
 import Link from 'next/link';
+import SystemReadiness from '@/components/settings/SystemReadiness';
+import NameClassificationReview from '@/components/settings/NameClassificationReview';
 
 const PLAN_NAMES: Record<string, { name: string; color: string; icon: string }> = {
     free: { name: 'Besplatni', color: '#86868b', icon: 'star_outline' },
@@ -369,6 +371,14 @@ export default function SettingsPage() {
                             <span className="sidebar-item-label">Profit</span>
                         </button>
 
+                        <button
+                            className={`sidebar-item ${activeSection === 'podaci' ? 'active' : ''}`}
+                            onClick={() => setActiveSection('podaci')}
+                        >
+                            <span className="material-icons-round">insights</span>
+                            <span className="sidebar-item-label">Podaci i spremnost</span>
+                        </button>
+
                         <span className="nav-eyebrow">Integracije</span>
                         <button
                             className={`sidebar-item ${activeSection === 'integracije' ? 'active' : ''}`}
@@ -388,6 +398,13 @@ export default function SettingsPage() {
 
                 {/* Content */}
                 <main className="settings-content">
+                    {activeSection === 'podaci' && (
+                        <>
+                            <SystemReadiness />
+                            <NameClassificationReview />
+                        </>
+                    )}
+
                     {activeSection === 'company' && (
                         <section className="settings-section">
                             <div className="settings-section-header">

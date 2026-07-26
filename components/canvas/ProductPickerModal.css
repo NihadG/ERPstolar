@@ -1,0 +1,528 @@
+/* ══════════════════════════════════════════════════════════════════
+   PLATNO — modali „Novi nalog" i „Narudžbe iz sastavnice".
+   Prefiks `pp-`. Isti obrazac za oba: LIJEVO biraš, DESNO vidiš šta gradiš.
+
+   DVA NEUTRALISANJA GLOBALNOG CSS-a (bez njih se layout raspada):
+   1. `.modal-xl .modal-body` je `display:flex; justify-content:center` —
+      napravljeno za jedno centrirano dijete (.offer-form). Zato je sav sadržaj
+      umotan u JEDAN `.pp-shell`, inače siblinzi postanu kolone.
+   2. `.modal label` forsira UPPERCASE 11px — zato se za redove izbora
+      NE koristi <label>, a tekst se eksplicitno vraća u normalu.
+   ══════════════════════════════════════════════════════════════════ */
+
+.pp-shell {
+    display: grid;
+    grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr);
+    gap: 14px;
+    text-align: left;
+
+    /* Roditelj (.modal-xl .modal-body) je `display:flex; justify-content:center`.
+       Sam `width:100%` tu nije dovoljan — bez `flex` i `align-self` dijete bi se
+       skupilo na širinu sadržaja i ostalo centrirano kao uska traka. */
+    flex: 1 1 auto;
+    align-self: stretch;
+    width: 100%;
+    min-width: 0;
+    min-height: 0;
+}
+
+/* Vrati sve što `.modal label` i `.modal *` nameću */
+.pp-shell label,
+.pp-shell span,
+.pp-shell strong {
+    text-transform: none;
+    letter-spacing: normal;
+}
+
+.pp-pane {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius-md);
+    background: var(--background);
+    overflow: hidden;
+}
+
+.pp-pane-cart { background: var(--surface); }
+
+.pp-pane-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--border-light);
+    flex-shrink: 0;
+}
+
+.pp-scroll {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 8px;
+}
+
+/* ── Pretraga ─────────────────────────────────────────────────── */
+.pp-search {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    flex: 1 1 auto;
+    min-width: 0;
+    padding: 7px 10px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--background);
+}
+
+.pp-search.sm { padding: 5px 9px; margin-bottom: 6px; }
+.pp-search:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-light); }
+.pp-search svg { color: var(--text-tertiary); flex-shrink: 0; }
+
+.pp-search input {
+    flex: 1 1 auto;
+    min-width: 0;
+    border: none;
+    outline: none;
+    background: transparent;
+    font-size: 13px;
+    font-family: inherit;
+    color: var(--text-primary);
+}
+
+.pp-clear {
+    display: inline-flex;
+    padding: 2px;
+    border: none;
+    background: transparent;
+    color: var(--text-tertiary);
+    cursor: pointer;
+    border-radius: 4px;
+}
+.pp-clear:hover { background: var(--surface-hover); }
+
+.pp-toggle {
+    padding: 6px 11px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--background);
+    font-size: 12px;
+    font-family: inherit;
+    color: var(--text-secondary);
+    cursor: pointer;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+.pp-toggle.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+/* ── Grupe projekata ──────────────────────────────────────────── */
+.pp-group { margin-bottom: 3px; }
+
+.pp-group-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    padding: 8px 9px;
+    border: none;
+    border-radius: var(--radius-sm);
+    background: var(--surface);
+    font-family: inherit;
+    font-size: 12.5px;
+    color: var(--text-primary);
+    cursor: pointer;
+    text-align: left;
+}
+.pp-group-head:hover { background: var(--surface-hover); }
+.pp-group-head strong { font-size: 13px; flex-shrink: 0; }
+.pp-group-head svg { color: var(--text-tertiary); flex-shrink: 0; transition: transform var(--transition); }
+.pp-group-head svg.rot { transform: rotate(90deg); }
+
+.pp-group-meta {
+    color: var(--text-tertiary);
+    font-size: 11.5px;
+    font-variant-numeric: tabular-nums;
+    margin-left: auto;
+    white-space: nowrap;
+}
+
+.pp-group-count {
+    min-width: 19px;
+    padding: 1px 6px;
+    border-radius: 10px;
+    background: var(--accent);
+    color: #fff;
+    font-size: 11px;
+    font-weight: 700;
+    text-align: center;
+    font-variant-numeric: tabular-nums;
+    flex-shrink: 0;
+}
+
+/* ── Red proizvoda / radnika ──────────────────────────────────── */
+.pp-row,
+.pp-crew-row {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    padding: 7px 9px 7px 26px;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    font-size: 12.5px;
+}
+
+.pp-crew-row { padding-left: 9px; }
+.pp-row:hover, .pp-crew-row:hover { background: var(--surface-hover); }
+.pp-row.on, .pp-crew-row.on { background: var(--accent-light); }
+.pp-row:focus-visible, .pp-crew-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+/* Vlastiti checkbox — nativni unutar .modal nasljeđuje neželjene stilove */
+.pp-box {
+    width: 15px;
+    height: 15px;
+    border: 1.5px solid var(--border);
+    border-radius: 4px;
+    background: var(--background);
+    flex-shrink: 0;
+    position: relative;
+    transition: var(--transition);
+}
+.pp-box.on { background: var(--accent); border-color: var(--accent); }
+.pp-box.on::after {
+    content: '';
+    position: absolute;
+    left: 4px;
+    top: 1px;
+    width: 4px;
+    height: 8px;
+    border: solid #fff;
+    border-width: 0 2px 2px 0;
+    transform: rotate(45deg);
+}
+
+.pp-name {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 12.5px;
+}
+
+.pp-avail {
+    font-size: 11.5px;
+    color: var(--text-secondary);
+    font-variant-numeric: tabular-nums;
+    flex-shrink: 0;
+}
+
+.pp-tag {
+    padding: 1px 7px;
+    border-radius: 10px;
+    background: var(--surface-active);
+    color: var(--text-secondary);
+    font-size: 10.5px;
+    font-weight: 600;
+    white-space: nowrap;
+    flex-shrink: 0;
+    font-variant-numeric: tabular-nums;
+}
+.pp-tag.warn { background: var(--warning-bg); color: #8a5000; }
+
+/* ── Desna ploča: izabrano ────────────────────────────────────── */
+.pp-cart-title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 0;
+    font-size: 12px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .04em;
+    color: var(--text-secondary);
+}
+
+.pp-cart {
+    list-style: none;
+    margin: 0 0 12px;
+    padding: 0;
+    display: grid;
+    gap: 4px;
+}
+
+.pp-cart li {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 9px;
+    border-radius: var(--radius-sm);
+    background: var(--background);
+    border: 1px solid var(--border-light);
+}
+
+.pp-cart-main { flex: 1 1 auto; min-width: 0; display: grid; gap: 1px; }
+
+.pp-cart-sub {
+    font-size: 11px;
+    color: var(--text-tertiary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.pp-stepper {
+    display: inline-flex;
+    align-items: center;
+    gap: 1px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+    flex-shrink: 0;
+}
+
+.pp-stepper button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    border: none;
+    background: var(--background);
+    color: var(--text-secondary);
+    cursor: pointer;
+}
+.pp-stepper button:hover:not(:disabled) { background: var(--surface-hover); color: var(--text-primary); }
+.pp-stepper button:disabled { opacity: .3; cursor: default; }
+
+.pp-stepper span {
+    min-width: 26px;
+    text-align: center;
+    font-size: 12.5px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+}
+
+.pp-remove {
+    display: inline-flex;
+    padding: 3px;
+    border: none;
+    background: transparent;
+    color: var(--text-tertiary);
+    border-radius: 4px;
+    cursor: pointer;
+    flex-shrink: 0;
+}
+.pp-remove:hover { background: var(--error-bg); color: var(--error); }
+
+/* ── Ekipa ────────────────────────────────────────────────────── */
+.pp-crew {
+    border-top: 1px solid var(--border-light);
+    padding-top: 10px;
+}
+
+.pp-crew-head {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    margin-bottom: 7px;
+    font-size: 12px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .04em;
+    color: var(--text-secondary);
+}
+.pp-crew-head svg { color: var(--text-tertiary); }
+
+/* Lista umjesto čipova: 17 radnika kao čipovi pojede pola ekrana */
+.pp-crew-list {
+    max-height: 190px;
+    overflow-y: auto;
+    display: grid;
+    gap: 1px;
+}
+
+/* ── Poruke ───────────────────────────────────────────────────── */
+.pp-empty {
+    padding: 24px 10px;
+    text-align: center;
+    font-size: 12.5px;
+    color: var(--text-secondary);
+    line-height: 1.6;
+}
+.pp-empty.sm { padding: 10px; font-size: 12px; }
+
+.pp-note {
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+    margin: 0 0 12px;
+    padding: 8px 10px;
+    border-radius: var(--radius-sm);
+    font-size: 11.5px;
+    line-height: 1.5;
+}
+.pp-note.warn { background: var(--warning-bg); color: #8a5000; }
+.pp-note svg { flex-shrink: 0; margin-top: 1px; }
+
+/* ── Podnožje: računica uz akcije ─────────────────────────────── */
+.pp-foot {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    width: 100%;
+    flex-wrap: wrap;
+}
+
+.pp-foot-calc {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex: 1 1 auto;
+    min-width: 0;
+    font-size: 13px;
+    color: var(--text-primary);
+    flex-wrap: wrap;
+}
+.pp-foot-calc strong { font-variant-numeric: tabular-nums; }
+
+.pp-sep { color: var(--text-tertiary); }
+
+.pp-foot-dates {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    margin-left: 8px;
+    padding: 3px 9px;
+    border-radius: 10px;
+    background: var(--accent-light);
+    color: var(--text-primary);
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+}
+
+.pp-foot-hint { color: var(--text-tertiary); font-size: 12.5px; }
+.pp-foot-hint.warn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    color: #8a5000;
+}
+
+.pp-foot-actions { display: flex; gap: 8px; flex-shrink: 0; }
+
+/* ── Narudžbe: stavke materijala ──────────────────────────────── */
+.pp-lines {
+    display: grid;
+    gap: 1px;
+    padding: 2px 0 6px 26px;
+}
+
+.pp-line {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    padding: 3px 8px;
+    font-size: 11.5px;
+    color: var(--text-secondary);
+}
+
+/* Esencijalni materijal gate-uje početak — mora se vidjeti na prvi pogled */
+.pp-line .ess { color: var(--text-primary); font-weight: 600; }
+.pp-line .ess::after { content: '•'; margin-left: 5px; color: var(--warning); }
+
+.pp-line-name {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.pp-line-qty,
+.pp-line-price {
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+.pp-line-price { color: var(--text-tertiary); }
+
+.pp-essential {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    padding: 1px 7px;
+    border-radius: 10px;
+    background: var(--warning-bg);
+    color: #8a5000;
+    font-size: 10.5px;
+    font-weight: 600;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
+.pp-lead {
+    font-size: 11px;
+    color: var(--text-tertiary);
+    white-space: nowrap;
+    flex-shrink: 0;
+    font-variant-numeric: tabular-nums;
+}
+.pp-lead em { font-style: normal; opacity: .8; }
+
+/* ── Proizvodi u bočnoj ploči platna ──────────────────────────── */
+.cv-products {
+    list-style: none;
+    margin: 0 0 8px;
+    padding: 0;
+    display: grid;
+    gap: 2px;
+}
+
+.cv-products li {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 8px;
+    border-radius: var(--radius-sm);
+    background: var(--surface);
+    font-size: 12px;
+}
+
+.cv-prod-name {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.cv-prod-qty {
+    color: var(--text-secondary);
+    font-variant-numeric: tabular-nums;
+    flex-shrink: 0;
+}
+
+/* Objašnjenje vrste bloka — uklanja nagađanje šta je „Rok" */
+.cv-kind-help {
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+    margin: 0;
+    padding: 8px 10px;
+    border-radius: var(--radius-sm);
+    background: var(--surface);
+    font-size: 11.5px;
+    line-height: 1.5;
+    color: var(--text-secondary);
+}
+.cv-kind-help svg { flex-shrink: 0; margin-top: 1px; }
+
+/* ── Mobilni: ploče jedna ispod druge ─────────────────────────── */
+@media (max-width: 860px) {
+    .pp-shell {
+        grid-template-columns: 1fr;
+        grid-template-rows: minmax(0, 1.2fr) minmax(0, 1fr);
+    }
+    .pp-foot { flex-direction: column; align-items: stretch; gap: 10px; }
+    .pp-foot-actions { justify-content: flex-end; }
+}

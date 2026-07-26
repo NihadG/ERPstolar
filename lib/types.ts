@@ -1103,7 +1103,14 @@ export interface ProductProfitability {
 export interface SnapshotMaterial {
     Material_ID: string;
     Material_Name: string;
-    Category: string;              // "Ploče", "Okovi", "Staklo"...
+    // v3: KATEGORIJA iz kataloga ("Ploče i trake", "Okovi", "Staklo"...).
+    // Do v2 je ovdje greškom pisao DOBAVLJAČ — zato je grupisanje po materijalu davalo
+    // dobavljače umjesto vrsta. Dobavljač sada ima svoje polje ispod.
+    Category: string;
+    Supplier?: string;             // v3
+    // v3: tip iz NAZIVA (materialTypeFromName): 'iveral' | 'mdf' | 'lak' | 'kant'...
+    // Kategorije kataloga su preširoke za analitiku; tip je ono što opisuje posao.
+    Material_Type?: string;
     Quantity: number;
     Unit: string;
     Unit_Price: number;
@@ -1121,7 +1128,22 @@ export interface SnapshotWorker {
     Worker_Name: string;
     Role: string;
     Worker_Type: 'Glavni' | 'Pomoćnik';
+    /**
+     * v3: broj RAZLIČITIH DATUMA na kojima je radnik radio na stavci.
+     * Do v2 je ovo brojalo REDOVE logova (pa je pola dana vrijedilo 1, a isti dan
+     * s dva proizvoda 2) — zbog čega se nije slagalo s Actual_Labor_Days.
+     */
     Days_Worked: number;
+    /**
+     * v3: Σ Day_Fraction — RADNIK-DANI, ista jedinica kao Actual_Labor_Days i payroll.
+     * INVARIJANTA: Σ Worker_Days svih radnika === Actual_Labor_Days stavke.
+     * Ovo je polje na koje se oslanja svaka statistika po radniku.
+     */
+    Worker_Days: number;
+    /** v3: Σ Day_Fraction po nazivu procesa (iz WorkLog.Process_Node_ID). */
+    Process_Days?: Record<string, number>;
+    /** v3: Worker_Days / Actual_Labor_Days stavke ∈ [0,1] — koliki dio posla je nosio. */
+    Share_Of_Item?: number;
     Daily_Rate: number;
     Total_Cost: number;
 }
@@ -1138,6 +1160,57 @@ export interface SnapshotProcess {
     Helpers_Count: number;
 }
 
+/**
+ * v3: POKRETAČI RADA iz sastavnice — mjerljive količine koje stvarno određuju trajanje.
+ * Gradi ih lib/snapshot/materialProfile.ts.
+ *
+ * Ovo je razlog zašto se posao može procijeniti i za proizvod koji se PRVI PUT pravi:
+ * ne treba istorija „biblioteka", treba 16 m² furnira i 150 m kant trake — a to je
+ * rađeno hiljadu puta. Odsutan ključ = NEMA PODATKA (0 i „ne znam" nisu isto).
+ */
+export interface WorkDrivers {
+    edge_m?: number;        // kant traka, m       → kantiranje
+    veneer_m2?: number;     // furnir, m²          → furniranje/presovanje
+    lacquer_m2?: number;    // lakiranje, m²       → lakirnica
+    glass_m2?: number;      // staklo/ogledalo, m²
+    boards?: number;        // ploče, kom          → krojenje
+    hinges?: number;        // baglame/šarke, kom  → ~2 po vratima
+    slides?: number;        // vodilice, kom       → broj ladica
+    handles?: number;       // ručke, kom
+    legs?: number;          // nogice, kom         → stojeći element
+}
+
+// ── v3: TOK PROCESA ─────────────────────────────────────────────────
+// Gradi ih lib/snapshot/processTrace.ts iz work_logs (koji su već event log).
+// JEDINICE se ne miješaju: Worker_Days = rad, Active_Days = dani rada, Span = proteklo.
+
+export interface SnapshotProcessRun {
+    Node_ID: string;              // id čvora grafa, ili "name:<ključ>" kad log nema čvor
+    Process_Name: string;
+    Resolved_By: 'node' | 'name'; // 'name' = log bez Process_Node_ID (slabiji podatak)
+    First_Day: string;            // YYYY-MM-DD
+    Last_Day: string;
+    Worker_Days: number;          // Σ Day_Fraction — RAD
+    Active_Days: number;          // broj različitih datuma s radom
+    Span_Days: number;            // Last − First + 1 — PROTEKLO (uključuje prekide)
+    Workers: { Worker_ID: string; Worker_Name?: string; Worker_Days: number }[];
+}
+
+export interface SnapshotTransition {
+    From_Node_ID: string;
+    From_Name: string;
+    To_Node_ID: string;
+    To_Name: string;
+    /** 'graph' = veza postoji u grafu. 'observed' = stvarni redoslijed koji graf NEMA. */
+    Source: 'graph' | 'observed';
+    /** To.First − From.Last → ČEKANJE (mrtvo vrijeme). Preklapanje → 0 uz Overlapped. */
+    Wait_Days: number;
+    /** To.Last − From.Last → „od kraja jednog do kraja drugog". Znak se ZADRŽAVA:
+     *  negativno znači da je drugi proces završio prije prvog (radi se mimo grafa). */
+    End_To_End_Days: number;
+    Overlapped?: boolean;
+}
+
 // NOVO: Za praćenje extras/services
 export interface SnapshotExtra {
     Name: string;
@@ -1152,7 +1225,33 @@ export interface ProductionSnapshotItem {
     Product_Name: string;
 
     // Klasifikacija proizvoda (za grupisanje sličnih)
-    Product_Type?: string;          // "Kuhinja", "Ormar", "Komoda", "Stol"...
+    Product_Type?: string;          // legacy v2: JEDAN tip; ostaje radi kompatibilnosti
+    /**
+     * v3: SVI tipovi iz naziva (lib/classify) — proizvod zna biti „kuhinja + ormar".
+     * Ključevi iz PRODUCT_TYPES, ne prikazni nazivi.
+     */
+    Product_Types?: string[];
+    /** v3: tipovi materijala PRISUTNI u sastavnici. Prisutnost, ne udio. */
+    Material_Types?: string[];
+    /**
+     * v3: trošak po tipu materijala — DOMINACIJA, ne samo prisutnost.
+     * Komoda s masivnom lajsnom i komoda koja je 70% masiv imaju isti Material_Types,
+     * a to su poslovi različitog trajanja; tek ovo ih razlikuje.
+     * NAPOMENA: nije particija — materijal s više tipova („furnirana šperploča")
+     * doprinosi SVAKOM svom tipu, pa zbir može premašiti Total_Material_Cost.
+     */
+    Material_Cost_By_Type?: Record<string, number>;
+    /**
+     * v3: nazivi materijala koje taksonomija NIJE prepoznala.
+     * Do v2 su tiho nestajali (presentMaterialTypes preskoči null), pa se nije znalo
+     * da procjena stoji na nepotpunoj sastavnici. Ovo je i hrana za petlju učenja.
+     */
+    Unmatched_Materials?: string[];
+    /** v3: udio TROŠKA materijala koji je klasifikovan ∈ [0,1]. Nisko → svaki
+     *  zaključak na osnovu materijala je slab, i mora se tako i prikazati. */
+    Material_Type_Coverage?: number;
+    /** v3: mjerljive količine rada iz sastavnice — vidi WorkDrivers. */
+    Work_Drivers?: WorkDrivers;
 
     // Dimenzije
     Height: number;
@@ -1177,7 +1276,13 @@ export interface ProductionSnapshotItem {
     Material_Per_Unit: number;      // Total_Material_Cost / Quantity
 
     // Rad
-    Planned_Labor_Days: number;
+    Planned_Labor_Days: number;     // DANI iz ponude (bez množenja brojem radnika)
+    /**
+     * v3: planirani RADNIK-DANI = Planned_Labor_Days × Planned_Labor_Workers.
+     * Bez ovoga se plan i stvarno ne mogu porediti (Actual_Labor_Days je u radnik-danima),
+     * pa se ni procjena ne može kalibrisati.
+     */
+    Planned_Worker_Days?: number;
     Actual_Labor_Days: number;
     Workers_Assigned: SnapshotWorker[];
 
@@ -1208,7 +1313,37 @@ export interface ProductionSnapshot {
     Created_At: string;             // Timestamp kreiranja snapshota
     // Verzija semantike materijala: v2+ → Total_Material_Cost je UKUPAN (po komadu × količina).
     // Odsutan/1 = legacy (Total_Material_Cost je bio PO KOMADU) → čitaoci množe količinom.
+    // v3 → Worker_Days su radnik-dani, Category je kategorija (ne dobavljač), ima tok procesa.
     Snapshot_Version?: number;
+
+    // ── v3: KONTEKST NALOGA ─────────────────────────────────────────
+    // Bez tipa naloga se ne može odgovoriti „ko najčešće ide na montažu".
+    Work_Order_Type?: WorkOrderType;
+    // Sirov naziv naloga — izvor klasifikacije i trag za kasniju reviziju pravila.
+    Work_Order_Name?: string;
+
+    // ── v3: KLASIFIKACIJA ───────────────────────────────────────────
+    // Kod naloga „Zadaci" naziv je često JEDINI izvor tipa — zato se čuva odvojeno
+    // od tipova izvedenih iz stavki, pa se vidi odakle je zaključak došao.
+    Name_Derived_Types?: string[];
+    Classification_Source?: 'items' | 'order-name' | 'both' | 'none';
+    Classification_Method?: 'rule' | 'ai-confirmed' | 'manual' | 'none';
+    Taxonomy_Version?: number;      // čime je klasifikovano → reproducibilnost
+    Unmatched_Name_Tokens?: string[]; // hrana za petlju učenja (Postavke)
+    /** v3: neprepoznati materijali SVIH stavki (dedup) — druga polovina petlje učenja. */
+    Unmatched_Materials?: string[];
+    /** v3: udio troška materijala koji je klasifikovan, preko cijelog naloga ∈ [0,1]. */
+    Material_Type_Coverage?: number;
+    /** v3: zbir pokretača rada svih stavki naloga. */
+    Work_Drivers?: WorkDrivers;
+
+    // ── v3: TOK PROCESA (iz work_logs kao event loga) ───────────────
+    Process_Runs?: SnapshotProcessRun[];
+    Transitions?: SnapshotTransition[];
+    Lead_Days?: number;             // prvi → zadnji radni dan (kalendarski, uključivo)
+    Touch_Days?: number;            // Σ Day_Fraction (radnik-dani)
+    Active_Days?: number;           // broj različitih datuma s radom
+    Flow_Efficiency?: number | null;// Active_Days / Lead_Days ∈ (0,1]
 
     // Projekt Info
     Project_ID: string;
@@ -1306,3 +1441,100 @@ export interface GoogleIntegrationSettings {
     autoCalendarTasks?: boolean;         // auto-dodaj zadatke s rokom u kalendar
 }
 
+
+// ============================================
+// PLATNO — PLANERSKI SCENARIJI (pješčanik)
+// ============================================
+//
+// IZOLACIJA JE ARHITEKTURNA, NE DOGOVORNA: platno čita stvarnost (nalozi, narudžbe,
+// radnici, šihtarica) ali piše ISKLJUČIVO u kolekciju `planning_scenarios`.
+// Nema promjene statusa, nema scheduleWorkOrder, nema pisanja nazad u referencirane
+// entitete. Stvarni nalozi se na platnu crtaju kao ZAKLJUČANE SJENE — planiranje koje
+// ignoriše već preuzet posao je samoobmana, ali čitanje nije uticaj.
+
+/** Vrsta bloka na platnu. Jedan generički blok = jedan motor za povlačenje i jedna geometrija. */
+export type PlanBlockKind =
+    | 'order'        // planirani proizvodni nalog
+    | 'purchase'     // narudžba materijala (naruči → stiže)
+    | 'transport'    // prevoz do gradilišta
+    | 'montaza'      // ugradnja kod klijenta
+    | 'milestone'    // fiksna tačka (rok klijentu, spremnost gradilišta)
+    | 'note';        // slobodna napomena na platnu
+
+/** Referenca na stvarni entitet: ID + naziv u trenutku odabira.
+ *  Naziv je SNAPSHOT da red ostane čitljiv i ako se entitet kasnije preimenuje ili obriše.
+ *  `id` je opcion — blok se smije planirati i za posao koji još nije unesen u bazu. */
+export interface PlanRef {
+    id?: string;
+    name: string;
+}
+
+export interface PlanProductRef extends PlanRef {
+    qty: number;
+}
+
+export interface PlanBlock {
+    id: string;
+    kind: PlanBlockKind;
+    title: string;
+    startISO: string;             // YYYY-MM-DD
+    endISO: string;               // == startISO za 'milestone'
+    color?: string;
+    notes?: string;
+    /** Lančani preračun ovaj blok NE pomjera (npr. datum montaže dogovoren s klijentom). */
+    locked?: boolean;
+
+    // ── Reference (nikad se ne pišu nazad) ──
+    projectRef?: PlanRef;
+    productRefs?: PlanProductRef[];
+    workerRefs?: PlanRef[];
+    supplierRef?: PlanRef;
+
+    // ── Rad ('order' | 'montaza') ──
+    workerDays?: number;          // ukupno radnik-dana
+    crew?: number;                // broj ljudi → trajanje = workerDays / crew, po radnim danima
+
+    // ── Nabavka ('purchase') ──
+    orderByISO?: string;          // kad narudžba mora otići (startISO = isto, endISO = dolazak)
+    leadDays?: number;            // rok isporuke u kalendarskim danima
+    materialNames?: string[];
+    /** Oznaka SAMO unutar scenarija — ne kreira i ne mijenja stvarnu narudžbu. */
+    isSent?: boolean;
+}
+
+export type PlanLinkKind =
+    | 'finish-to-start'    // proizvodnja → transport
+    | 'delivery-to-start'  // narudžba stigla → proizvodnja može krenuti
+    | 'finish-to-montaza';
+
+export interface PlanLink {
+    id: string;
+    from: string;                 // PlanBlock.id
+    to: string;                   // PlanBlock.id
+    kind: PlanLinkKind;
+    lagDays?: number;             // zaštitni razmak između blokova
+}
+
+export type PlanZoom = 'dan' | 'sedmica' | 'mjesec';
+
+/** Kako se grade redovi platna — runtime pivot, ne fiksna struktura. */
+export type PlanGroupBy = 'project' | 'worker' | 'supplier' | 'kind';
+
+export interface PlanScenario {
+    Scenario_ID: string;
+    Organization_ID: string;
+    Name: string;                 // „Ako uzmemo Novaka", „Jesen 2026"
+    Description?: string;
+    Created_Date: string;
+    Modified_Date: string;
+    /** Optimistička kontrola: dva otvorena taba ne smiju tiho pregaziti jedan drugog. */
+    Version: number;
+    Is_Archived?: boolean;
+    Blocks: PlanBlock[];
+    Links: PlanLink[];
+    View?: {
+        zoom: PlanZoom;
+        anchorISO: string;        // lijeva ivica vidljivog raspona
+        groupBy: PlanGroupBy;
+    };
+}
