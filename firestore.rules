@@ -235,10 +235,13 @@ service cloud.firestore {
     // NOTIFICATIONS (Multi-tenancy enabled)
     // ============================================
     
+    // PAŽNJA: notifications koriste `organizationId` (camelCase), NE `Organization_ID`
+    // kao ostatak baze — vidi notificationService.ts. Zato ne mogu koristiti
+    // isOrgMember()/hasValidOrgId().
     match /notifications/{notificationId} {
-      allow read: if isOrgMember();
-      allow create: if hasValidOrgId();
-      allow update, delete: if isOrgMember();
+      allow read: if isAuthenticated() && resource.data.organizationId == getUserOrgId();
+      allow create: if isAuthenticated() && request.resource.data.organizationId == getUserOrgId();
+      allow update, delete: if isAuthenticated() && resource.data.organizationId == getUserOrgId();
     }
     
     // ============================================
@@ -296,6 +299,57 @@ service cloud.firestore {
     // ============================================
 
     match /planning_scenarios/{scenarioId} {
+      allow read: if isOrgMember();
+      allow create: if hasValidOrgId();
+      allow update, delete: if isOrgMember();
+    }
+
+    // ============================================
+    // ORG SETTINGS
+    // ID DOKUMENTA je organizationId — dokument NEMA polje Organization_ID,
+    // pa isOrgMember() ovdje ne radi. Veže se po ključu.
+    // ============================================
+
+    match /org_settings/{orgId} {
+      allow read, write: if isAuthenticated() && orgId == getUserOrgId();
+    }
+
+    // ============================================
+    // HOLIDAYS (praznici)
+    // Globalna kolekcija — upit u productivity.ts filtrira SAMO po datumu,
+    // bez Organization_ID. Zato je čitanje dozvoljeno svakom prijavljenom.
+    // ============================================
+
+    match /holidays/{holidayId} {
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated();
+    }
+
+    // ============================================
+    // TASK PROFILES / MATERIAL TEMPLATES /
+    // SERVICE DEFINITIONS / DAILY PROFIT ENTRIES
+    // Standardni multi-tenancy obrazac (Organization_ID na dokumentu).
+    // ============================================
+
+    match /task_profiles/{profileId} {
+      allow read: if isOrgMember();
+      allow create: if hasValidOrgId();
+      allow update, delete: if isOrgMember();
+    }
+
+    match /material_templates/{templateId} {
+      allow read: if isOrgMember();
+      allow create: if hasValidOrgId();
+      allow update, delete: if isOrgMember();
+    }
+
+    match /service_definitions/{serviceId} {
+      allow read: if isOrgMember();
+      allow create: if hasValidOrgId();
+      allow update, delete: if isOrgMember();
+    }
+
+    match /daily_profit_entries/{entryId} {
       allow read: if isOrgMember();
       allow create: if hasValidOrgId();
       allow update, delete: if isOrgMember();
