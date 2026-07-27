@@ -16,9 +16,12 @@ service cloud.firestore {
       return request.auth != null && request.auth.uid == userId;
     }
     
-    // Get user's organization ID from their profile
+    // Get user's organization ID from their profile.
+    // POLJE JE `Organization_ID` (vidi lib/auth.ts — User dokument). Ranije je ovdje
+    // stajalo `organizationId`, pa je helper vraćao null i SVAKO pravilo koje se na
+    // njega oslanja odbijalo pristup ("Missing or insufficient permissions").
     function getUserOrgId() {
-      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.organizationId;
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.Organization_ID;
     }
     
     // Check if user belongs to the document's organization
