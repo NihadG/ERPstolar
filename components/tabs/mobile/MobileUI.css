@@ -325,3 +325,18 @@
 .mui-gap14 { gap: 14px; }
 .mui-pt14 { padding-top: 14px; }
 .mui-spacer { flex: 1; }
+
+/* Inline select u ćeliji (npr. izbor plana na Platnu) — desno poravnat,
+   bez okvira, da se ne razlikuje od ostalih vrijednosti u listi. */
+.mui-inline-select {
+    margin-left: auto;
+    max-width: 55%;
+    border: none;
+    background: transparent;
+    font-family: inherit;
+    font-size: 15px;
+    color: var(--mui-blue);
+    text-align: right;
+    text-align-last: right;
+    padding: 0;
+}

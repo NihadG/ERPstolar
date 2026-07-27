@@ -97,6 +97,31 @@ function startForEnd(block: PlanBlock, endISO: string, opts: ChainOptions): stri
 }
 
 /**
+ * Svi PRECI bloka (tranzitivno, kroz veze) — ne uključuje sam blok.
+ * Dijeli je computeBackwardChain i captureChainTemplate (lib/canvas/templates.ts),
+ * da hodanje kroz graf postoji na jednom mjestu.
+ */
+export function chainAncestors(scenario: PlanScenario, anchorId: string): Set<string> {
+    const incoming = new Map<string, string[]>();
+    for (const l of scenario.Links) {
+        const arr = incoming.get(l.to) || [];
+        arr.push(l.from);
+        incoming.set(l.to, arr);
+    }
+    const ancestors = new Set<string>();
+    const stack = [anchorId];
+    while (stack.length) {
+        const cur = stack.pop()!;
+        for (const from of incoming.get(cur) || []) {
+            if (ancestors.has(from) || from === anchorId) continue;
+            ancestors.add(from);
+            stack.push(from);
+        }
+    }
+    return ancestors;
+}
+
+/**
  * Unazadni preračun od `anchorId`.
  *
  * Sidro se NE pomjera (to je datum koji je klijent dao). Svi njegovi preci se
@@ -181,22 +206,7 @@ export function computeBackwardChain(
     };
 
     // Svi preci sidra (tranzitivno) — samo oni ulaze u preračun
-    const ancestors = new Set<string>();
-    const incoming = new Map<string, string[]>();
-    for (const l of scenario.Links) {
-        const arr = incoming.get(l.to) || [];
-        arr.push(l.from);
-        incoming.set(l.to, arr);
-    }
-    const stack = [anchorId];
-    while (stack.length) {
-        const cur = stack.pop()!;
-        for (const from of incoming.get(cur) || []) {
-            if (ancestors.has(from) || from === anchorId) continue;
-            ancestors.add(from);
-            stack.push(from);
-        }
-    }
+    const ancestors = chainAncestors(scenario, anchorId);
 
     const changes: ScheduleChange[] = [];
     const blockedByLock: ScheduleChange[] = [];

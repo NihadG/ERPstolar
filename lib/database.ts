@@ -62,6 +62,7 @@ import {
 // Production snapshot v3 — čista računica (testirana) živi izvan ovog fajla
 import { buildProductionSnapshot } from './snapshot/buildSnapshot';
 import { PRODUCT_TYPES, type ProductType } from './classify/taxonomy';
+import type { PlanChainTemplate } from './types';
 import { MATERIAL_TYPES, type MaterialType } from './productProcesses';
 import { computeReadiness, type Readiness } from './insights/readiness';
 
@@ -6001,6 +6002,7 @@ export async function saveOrgSettings(
     data: {
         companyInfo?: any; appSettings?: any; googleIntegration?: any;
         productTaxonomy?: ProductType[]; materialTaxonomy?: MaterialType[];
+        planTemplates?: PlanChainTemplate[];
     }
 ): Promise<{ success: boolean; message: string }> {
     if (!organizationId) {
@@ -6017,6 +6019,8 @@ export async function saveOrgSettings(
         // Korisnikova pravila klasifikacije (potvrđeni AI prijedlozi + ručni unosi).
         if (data.productTaxonomy !== undefined) payload.productTaxonomy = data.productTaxonomy;
         if (data.materialTaxonomy !== undefined) payload.materialTaxonomy = data.materialTaxonomy;
+        // Šabloni lanaca (Platno) — korisnikovo znanje radionice, isti obrazac kao taksonomije.
+        if (data.planTemplates !== undefined) payload.planTemplates = data.planTemplates;
         await setDoc(doc(firestore, 'org_settings', organizationId), payload, { merge: true });
 
         return { success: true, message: 'Settings saved' };
@@ -6031,6 +6035,7 @@ export async function getOrgSettings(
 ): Promise<{
     companyInfo: any; appSettings: any; googleIntegration: any;
     productTaxonomy: ProductType[] | null; materialTaxonomy: MaterialType[] | null;
+    planTemplates: PlanChainTemplate[] | null;
 } | null> {
     if (!organizationId) return null;
 
@@ -6047,6 +6052,7 @@ export async function getOrgSettings(
                 // se mora dodati i ovdje i u saveOrgSettings, inače tiho nestane.
                 productTaxonomy: (data.productTaxonomy as ProductType[]) || null,
                 materialTaxonomy: (data.materialTaxonomy as MaterialType[]) || null,
+                planTemplates: (data.planTemplates as PlanChainTemplate[]) || null,
             };
         }
         return null;

@@ -14,6 +14,7 @@
 
 import type { Project, Product, WorkOrder, PlanBlock, PlanProductRef } from '../types';
 import { materialTypesFromName } from '../productProcesses';
+import { productTypesFromName } from '../classify/classify';
 
 export interface ProductCandidate {
     productId: string;
@@ -35,8 +36,12 @@ export interface ProductCandidate {
     /** Ima li ijedan esencijalni materijal — takva narudžba gate-uje početak. */
     hasEssential: boolean;
     status: string;
-    /** Nema podatka o radu u ponudi → trajanje se mora unijeti ručno. */
+    /** Nema podatka o radu u ponudi → trajanje se mora unijeti ručno (ili predložiti iz istorije). */
     missingLabor: boolean;
+    /** Tipovi iz naziva proizvoda — ulaz za prijedlog trajanja iz istorije (suggest.ts). */
+    productTypes: string[];
+    /** Tipovi materijala iz sastavnice — isti razlog. */
+    materialTypes: string[];
 }
 
 /** Iskorištena količina kroz sve NE-otkazane naloge — isti kriterij kao WorkOrderWizard. */
@@ -109,6 +114,8 @@ export function collectProductCandidates(
                 hasEssential: materials.some(m => m.Is_Essential),
                 status: product.Status || '',
                 missingLabor: labor.days <= 0,
+                productTypes: productTypesFromName(product.Name).types,
+                materialTypes: Array.from(new Set(materials.flatMap(m => materialTypesFromName(m.Material_Name)))),
             });
         }
     }

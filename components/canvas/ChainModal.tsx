@@ -12,7 +12,7 @@
 // ════════════════════════════════════════════════════════════════════
 
 import { useState, useMemo } from 'react';
-import { Link2, AlertTriangle, Lock, ArrowRight, ShoppingCart } from 'lucide-react';
+import { Link2, AlertTriangle, Lock, ArrowRight, ShoppingCart, BookmarkPlus } from 'lucide-react';
 import Modal from '@/components/ui/Modal';
 import type { PlanScenario } from '@/lib/types';
 import { computeBackwardChain, anchorCandidates, type ScheduleChange } from '@/lib/canvas/schedule';
@@ -25,6 +25,8 @@ interface ChainModalProps {
     isSaturdayWorking?: (d: Date) => boolean;
     onClose: () => void;
     onApply: (changes: { id: string; startISO: string; endISO: string }[]) => void;
+    /** Uhvati anchor + njegove pretke kao šablon za ponovnu upotrebu (org_settings.planTemplates). */
+    onSaveTemplate: (anchorId: string, name: string) => void;
 }
 
 const dm = (iso: string) => {
@@ -56,11 +58,18 @@ function ChangeRow({ c }: { c: ScheduleChange }) {
 }
 
 export default function ChainModal({
-    isOpen, scenario, todayISO, isSaturdayWorking, onClose, onApply,
+    isOpen, scenario, todayISO, isSaturdayWorking, onClose, onApply, onSaveTemplate,
 }: ChainModalProps) {
     const anchors = useMemo(() => anchorCandidates(scenario), [scenario]);
     const [anchorId, setAnchorId] = useState<string>('');
     const effectiveAnchor = anchorId || anchors[0]?.id || '';
+
+    const saveAsTemplate = () => {
+        if (!effectiveAnchor || typeof window === 'undefined') return;
+        const name = window.prompt('Naziv šablona (npr. „Kuhinja standard"):')?.trim();
+        if (!name) return;
+        onSaveTemplate(effectiveAnchor, name);
+    };
 
     const result = useMemo(
         () => effectiveAnchor
@@ -79,6 +88,13 @@ export default function ChainModal({
             size="large"
             footer={
                 <>
+                    {anchors.length > 0 && (
+                        <button className="btn btn-secondary" onClick={saveAsTemplate}
+                            title="Sačuvaj oblik ovog lanca za ponovnu upotrebu (npr. nova kuhinja)">
+                            <BookmarkPlus size={14} /> Sačuvaj kao šablon
+                        </button>
+                    )}
+                    <span className="cv-spacer" />
                     <button className="btn btn-secondary" onClick={onClose}>Odustani</button>
                     <button className="btn btn-primary" disabled={!canApply}
                         onClick={() => {

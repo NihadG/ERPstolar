@@ -11,15 +11,16 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import {
     Plus, Copy, Undo2, Redo2, ZoomIn, ZoomOut, Calendar, Loader2,
-    Lock, AlertTriangle, Users, Trash2, Save, Link2, Package,
+    Lock, AlertTriangle, Users, Trash2, Save, Link2, Package, Bookmark, Printer,
+    GitCompareArrows,
 } from 'lucide-react';
 import type {
     Project, Worker, WorkOrder, Order, Supplier, WorkerAttendance,
-    PlanBlockKind, PlanGroupBy, PlanZoom, PlanScenario,
+    PlanBlockKind, PlanGroupBy, PlanZoom, PlanScenario, PlanChainTemplate,
 } from '@/lib/types';
 import {
     getScenarios, createScenario, duplicateScenario, getScenario,
-    deleteScenario, getAllAttendanceByMonth,
+    deleteScenario, getAllAttendanceByMonth, getOrgSettings, saveOrgSettings,
 } from '@/lib/services';
 import { useAuth } from '@/context/AuthContext';
 import { useScenario } from './useScenario';
@@ -29,6 +30,13 @@ import CanvasDock from './CanvasDock';
 import ChainModal from './ChainModal';
 import ProductPickerModal from './ProductPickerModal';
 import MaterialOrderModal, { type CreatedPurchase } from './MaterialOrderModal';
+import ChainTemplatesModal from './ChainTemplatesModal';
+import CompareModal from './CompareModal';
+import { captureChainTemplate, applyChainTemplate } from '@/lib/canvas/templates';
+import { buildPlanDocument } from '@/lib/print/planDocument';
+import { detectConflicts } from '@/lib/canvas/conflicts';
+import { useIsMobile } from '@/hooks/useIsMobile';
+import MobileCanvasView from '@/components/tabs/mobile/MobileCanvasView';
 import { buildSupplierLeadTimes } from '@/lib/canvas/leadTime';
 import { buildSaturdayChecker, type AttendanceLite } from '@/lib/planning';
 import { buildRows, groupRowsBySection, SECTION_LABEL, type CanvasRow } from '@/lib/canvas/rows';
@@ -69,6 +77,7 @@ export default function CanvasTab({
 }: CanvasTabProps) {
     const { organization } = useAuth();
     const orgId = organization?.Organization_ID || '';
+    const isMobile = useIsMobile();
 
     const [scenarios, setScenarios] = useState<PlanScenario[]>([]);
     const [loaded, setLoaded] = useState<PlanScenario | null>(null);
@@ -79,6 +88,9 @@ export default function CanvasTab({
     const [chainOpen, setChainOpen] = useState(false);
     const [pickerOpen, setPickerOpen] = useState(false);
     const [orderModalFor, setOrderModalFor] = useState<string | null>(null);
+    const [templatesOpen, setTemplatesOpen] = useState(false);
+    const [templates, setTemplates] = useState<PlanChainTemplate[]>([]);
+    const [compareOpen, setCompareOpen] = useState(false);
 
     const { state, dispatch, saveState, canUndo, canRedo, saveNow, reloadRemote, forceOverwrite } =
         useScenario(orgId, loaded);
@@ -125,6 +137,16 @@ export default function CanvasTab({
                 if (alive) setLoading(false);
             }
         })();
+        return () => { alive = false; };
+    }, [orgId]);
+
+    // Šabloni lanaca — korisnikovo znanje radionice, živi u org_settings
+    useEffect(() => {
+        if (!orgId) return;
+        let alive = true;
+        getOrgSettings(orgId)
+            .then(s => { if (alive) setTemplates(s?.planTemplates || []); })
+            .catch(() => { /* šabloni su dodatak, ne blokiraju platno */ });
         return () => { alive = false; };
     }, [orgId]);
 
@@ -335,6 +357,55 @@ export default function CanvasTab({
         }
     };
 
+    /** Sačuvaj oblik lanca (bez referenci) u org_settings — znanje radionice. */
+    const saveTemplate = useCallback(async (anchorId: string, name: string) => {
+        const tpl = captureChainTemplate(scenario, anchorId, name);
+        if (!tpl) {
+            showToast('Taj blok nema ništa vezano ispred sebe — nema lanca za sačuvati', 'info');
+            return;
+        }
+        const next = [...templates, tpl];
+        const res = await saveOrgSettings(orgId, { planTemplates: next });
+        if (!res.success) { showToast(res.message, 'error'); return; }
+        setTemplates(next);
+        showToast(`Šablon „${tpl.name}" sačuvan (${tpl.steps.length} koraka)`, 'success');
+    }, [scenario, templates, orgId, showToast]);
+
+    const deleteTemplate = useCallback(async (templateId: string) => {
+        const next = templates.filter(t => t.id !== templateId);
+        const res = await saveOrgSettings(orgId, { planTemplates: next });
+        if (!res.success) { showToast(res.message, 'error'); return; }
+        setTemplates(next);
+        showToast('Šablon obrisan', 'success');
+    }, [templates, orgId, showToast]);
+
+    /** Baci šablon na platno — novi blokovi i veze, jedan po jedan (undo radi normalno). */
+    const useTemplate = useCallback((tpl: PlanChainTemplate, firstStepStartISO: string) => {
+        const { blocks, links } = applyChainTemplate(tpl, firstStepStartISO, { isSaturdayWorking });
+        for (const b of blocks) dispatch({ type: 'ADD_BLOCK', block: b });
+        for (const l of links) {
+            dispatch({ type: 'ADD_LINK', from: l.from, to: l.to, kind: l.kind, lagDays: l.lagDays });
+        }
+        showToast(`Šablon „${tpl.name}" bačen na platno`, 'success');
+    }, [dispatch, isSaturdayWorking, showToast]);
+
+    /** Ispis plana za zid radionice — isti obrazac kao ponuda/narudžba/krojna lista. */
+    const printPlan = useCallback(() => {
+        if (typeof window === 'undefined') return;
+        const doc = buildPlanDocument({
+            scenario,
+            conflicts: detectConflicts(scenario, conflictCtx),
+            companyName: organization?.Name,
+        });
+        const w = window.open('', '_blank');
+        if (!w) { showToast('Preglednik je blokirao prozor za štampu', 'error'); return; }
+        w.document.write(doc.html);
+        w.document.close();
+        w.focus();
+        // Bez odgode Chrome ponekad štampa prije nego se stilovi primijene
+        setTimeout(() => w.print(), 250);
+    }, [scenario, conflictCtx, organization?.Name, showToast]);
+
     /** Narudžbe iz sastavnice naloga; esencijalne se vežu na njegov početak. */
     const createPurchases = useCallback((purchases: CreatedPurchase[], orderId: string) => {
         for (const p of purchases) {
@@ -370,6 +441,19 @@ export default function CanvasTab({
         return <div className="cv-center"><Loader2 size={20} className="cv-spin" /> Učitavanje platna…</div>;
     }
 
+    // Telefon dobija agendu, ne platno: dan je ~20px, blok se ne pogodi prstom,
+    // a promašen potez bi pomjerio plan. Uređivanje ostaje na računaru.
+    if (isMobile) {
+        return (
+            <MobileCanvasView
+                scenario={scenario}
+                scenarios={scenarios}
+                conflictCtx={conflictCtx}
+                onSwitchScenario={id => void onSwitch(id)}
+            />
+        );
+    }
+
     return (
         <div className="cv-root">
             {/* Traka scenarija */}
@@ -392,6 +476,10 @@ export default function CanvasTab({
                 />
                 <button className="cv-btn" onClick={() => void onNewScenario()}><Plus size={15} /> Novi</button>
                 <button className="cv-btn" onClick={() => void onDuplicate()}><Copy size={15} /> Dupliraj</button>
+                <button className="cv-btn" onClick={() => setCompareOpen(true)}
+                    title="Uporedi s drugim planom — šta te košta odluka">
+                    <GitCompareArrows size={15} /> Uporedi
+                </button>
                 <button className="cv-btn danger" onClick={() => void onDeleteScenario()}
                     title="Obriši plan (nalozi i narudžbe ostaju netaknuti)">
                     <Trash2 size={15} />
@@ -460,6 +548,14 @@ export default function CanvasTab({
 
                 <span className="cv-spacer" />
 
+                <button className="cv-btn" onClick={() => setTemplatesOpen(true)}
+                    title="Sačuvani oblici lanaca (npr. nova kuhinja)">
+                    <Bookmark size={15} /> Šabloni
+                    {templates.length > 0 && <span className="cv-badge">{templates.length}</span>}
+                </button>
+                <button className="cv-btn" onClick={printPlan} title="Ispis plana za zid radionice">
+                    <Printer size={15} />
+                </button>
                 <button className="cv-btn primary" onClick={() => setChainOpen(true)}>
                     <Link2 size={15} /> Lanac
                 </button>
@@ -631,6 +727,28 @@ export default function CanvasTab({
                 isSaturdayWorking={isSaturdayWorking}
                 onClose={() => setChainOpen(false)}
                 onApply={changes => dispatch({ type: 'APPLY_DATE_DIFF', changes })}
+                onSaveTemplate={(anchorId, name) => void saveTemplate(anchorId, name)}
+            />
+
+            <ChainTemplatesModal
+                isOpen={templatesOpen}
+                templates={templates}
+                isSaturdayWorking={isSaturdayWorking}
+                onClose={() => setTemplatesOpen(false)}
+                onApply={useTemplate}
+                onDelete={id => void deleteTemplate(id)}
+            />
+
+            <CompareModal
+                isOpen={compareOpen}
+                current={scenario}
+                scenarios={scenarios}
+                organizationId={orgId}
+                conflictCtx={conflictCtx}
+                capacityCtx={capacityCtx}
+                fromISO={anchorISO}
+                days={Math.min(90, Math.max(14, Math.ceil(widthPx / dayWidth(zoom))))}
+                onClose={() => setCompareOpen(false)}
             />
 
             <ProductPickerModal

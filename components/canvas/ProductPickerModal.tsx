@@ -17,15 +17,18 @@
 
 import { useState, useMemo, useEffect } from 'react';
 import {
-    Search, Package, Users, AlertTriangle, ChevronRight, X, Minus, Plus, Calendar,
+    Search, Package, Users, AlertTriangle, ChevronRight, X, Minus, Plus, Calendar, Check,
 } from 'lucide-react';
 import Modal from '@/components/ui/Modal';
-import type { Project, Worker, WorkOrder, PlanBlock } from '@/lib/types';
+import type { Project, Worker, WorkOrder, PlanBlock, ProductionSnapshot } from '@/lib/types';
 import {
     collectProductCandidates, groupCandidatesByProject, blockDataFromProducts,
-    type SelectedProduct,
+    type SelectedProduct, type ProductCandidate,
 } from '@/lib/canvas/fromProducts';
+import { suggestDurationForCandidate, type DurationSuggestion } from '@/lib/canvas/suggest';
 import { workingDaysNeeded, endFromWork } from '@/lib/canvas/model';
+import { getProductionSnapshots } from '@/lib/services';
+import { useAuth } from '@/context/AuthContext';
 import './ProductPickerModal.css';
 
 interface ProductPickerModalProps {
@@ -47,19 +50,36 @@ const dm = (iso: string) => {
 export default function ProductPickerModal({
     isOpen, projects, workers, workOrders, startISO, isSaturdayWorking, onClose, onCreate,
 }: ProductPickerModalProps) {
+    const { organization } = useAuth();
+    const orgId = organization?.Organization_ID || '';
+
     const [search, setSearch] = useState('');
     const [workerSearch, setWorkerSearch] = useState('');
     const [onlyAvailable, setOnlyAvailable] = useState(true);
     const [picked, setPicked] = useState<Map<string, number>>(new Map());
     const [workerIds, setWorkerIds] = useState<Set<string>>(new Set());
     const [expanded, setExpanded] = useState<Set<string>>(new Set());
+    // Ručna/predložena zamjena radnik-dana po komadu — SAMO za ovu sesiju modala,
+    // ne mijenja ponudu ni proizvod u bazi.
+    const [overrides, setOverrides] = useState<Map<string, number>>(new Map());
+    const [snapshots, setSnapshots] = useState<ProductionSnapshot[]>([]);
 
     useEffect(() => {
         if (!isOpen) {
             setPicked(new Map()); setWorkerIds(new Set());
             setSearch(''); setWorkerSearch(''); setExpanded(new Set());
+            setOverrides(new Map()); setSnapshots([]);
         }
     }, [isOpen]);
+
+    // Snapshoti se učitavaju samo kad zatrebaju (proizvod bez plana u ponudi) —
+    // modal se ne mora otvarati na kompletnu istoriju organizacije.
+    useEffect(() => {
+        if (!isOpen || !orgId) return;
+        let alive = true;
+        getProductionSnapshots(orgId).then(s => { if (alive) setSnapshots(s); }).catch(() => {});
+        return () => { alive = false; };
+    }, [isOpen, orgId]);
 
     const candidates = useMemo(
         () => collectProductCandidates(projects, workOrders),
@@ -76,11 +96,38 @@ export default function ProductPickerModal({
     const selected: SelectedProduct[] = useMemo(() => {
         const byId = new Map(candidates.map(c => [c.productId, c]));
         return Array.from(picked.entries())
-            .map(([id, qty]) => ({ candidate: byId.get(id)!, qty }))
-            .filter(s => s.candidate && s.qty > 0);
-    }, [picked, candidates]);
+            .map(([id, qty]) => {
+                const candidate = byId.get(id);
+                if (!candidate) return null;
+                const override = overrides.get(id);
+                // Prijedlog/ručni unos mijenja SAMO ovaj odabir, ne ponudu ni proizvod.
+                return {
+                    candidate: override !== undefined
+                        ? { ...candidate, workerDaysPerUnit: override, missingLabor: false }
+                        : candidate,
+                    qty,
+                };
+            })
+            .filter((s): s is SelectedProduct => !!s && s.qty > 0);
+    }, [picked, candidates, overrides]);
 
     const data = useMemo(() => blockDataFromProducts(selected), [selected]);
+
+    // Prijedlog se traži SAMO za ono što je stvarno u nalogu i bez plana —
+    // ne za svih 74 proizvoda projekta.
+    const suggestions = useMemo(() => {
+        const out = new Map<string, DurationSuggestion | null>();
+        for (const [id] of picked) {
+            const original = candidates.find(c => c.productId === id);
+            if (original?.missingLabor && !overrides.has(id)) {
+                out.set(id, suggestDurationForCandidate(original, snapshots));
+            }
+        }
+        return out;
+    }, [picked, candidates, overrides, snapshots]);
+
+    const applySuggestion = (productId: string, workerDaysPerUnit: number) =>
+        setOverrides(prev => new Map(prev).set(productId, workerDaysPerUnit));
 
     const activeWorkers = useMemo(() => {
         const q = workerSearch.trim().toLowerCase();
@@ -257,33 +304,55 @@ export default function ProductPickerModal({
                             <p className="pp-empty">Još ništa nije izabrano.</p>
                         ) : (
                             <ul className="pp-cart">
-                                {selected.map(s => (
-                                    <li key={s.candidate.productId}>
-                                        <div className="pp-cart-main">
-                                            <span className="pp-name" title={s.candidate.productName}>
-                                                {s.candidate.productName}
-                                            </span>
-                                            <span className="pp-cart-sub">
-                                                {s.candidate.projectName}
-                                                {s.candidate.workerDaysPerUnit > 0 && (
-                                                    <> · {s.candidate.workerDaysPerUnit * s.qty} rd</>
-                                                )}
-                                            </span>
-                                        </div>
-                                        <div className="pp-stepper">
-                                            <button onClick={() => setQty(s.candidate.productId, s.qty - 1, s.candidate.availableQty)}
-                                                disabled={s.qty <= 1} aria-label="Manje"><Minus size={12} /></button>
-                                            <span>{s.qty}</span>
-                                            <button onClick={() => setQty(s.candidate.productId, s.qty + 1, s.candidate.availableQty)}
-                                                disabled={s.qty >= Math.max(1, s.candidate.availableQty)} aria-label="Više">
-                                                <Plus size={12} />
-                                            </button>
-                                        </div>
-                                        <button className="pp-remove"
-                                            onClick={() => toggle(s.candidate.productId, s.candidate.availableQty)}
-                                            aria-label="Ukloni"><X size={14} /></button>
-                                    </li>
-                                ))}
+                                {selected.map(s => {
+                                    const suggestion = suggestions.get(s.candidate.productId);
+                                    return (
+                                        <li key={s.candidate.productId} className="pp-cart-item">
+                                            <div className="pp-cart-row">
+                                                <div className="pp-cart-main">
+                                                    <span className="pp-name" title={s.candidate.productName}>
+                                                        {s.candidate.productName}
+                                                    </span>
+                                                    <span className="pp-cart-sub">
+                                                        {s.candidate.projectName}
+                                                        {s.candidate.workerDaysPerUnit > 0 && (
+                                                            <> · {s.candidate.workerDaysPerUnit * s.qty} rd</>
+                                                        )}
+                                                    </span>
+                                                </div>
+                                                <div className="pp-stepper">
+                                                    <button onClick={() => setQty(s.candidate.productId, s.qty - 1, s.candidate.availableQty)}
+                                                        disabled={s.qty <= 1} aria-label="Manje"><Minus size={12} /></button>
+                                                    <span>{s.qty}</span>
+                                                    <button onClick={() => setQty(s.candidate.productId, s.qty + 1, s.candidate.availableQty)}
+                                                        disabled={s.qty >= Math.max(1, s.candidate.availableQty)} aria-label="Više">
+                                                        <Plus size={12} />
+                                                    </button>
+                                                </div>
+                                                <button className="pp-remove"
+                                                    onClick={() => toggle(s.candidate.productId, s.candidate.availableQty)}
+                                                    aria-label="Ukloni"><X size={14} /></button>
+                                            </div>
+
+                                            {/* Proizvod bez plana u ponudi — prijedlog iz istorije, primjenjuje se
+                                                jednim klikom i mijenja SAMO ovaj odabir, ne ponudu ni proizvod. */}
+                                            {s.candidate.missingLabor && (
+                                                suggestion ? (
+                                                    <button className="pp-suggest"
+                                                        onClick={() => applySuggestion(s.candidate.productId, suggestion.workerDaysPerUnit)}>
+                                                        <Check size={11} />
+                                                        Iz istorije: <strong>{suggestion.workerDaysPerUnit} rd/kom</strong>
+                                                        <span className="pp-suggest-desc">({suggestion.description})</span>
+                                                    </button>
+                                                ) : (
+                                                    <p className="pp-cart-nosuggest">
+                                                        <AlertTriangle size={11} /> Nema uporedivog posla u istoriji — unesi ručno u detaljima.
+                                                    </p>
+                                                )
+                                            )}
+                                        </li>
+                                    );
+                                })}
                             </ul>
                         )}
 

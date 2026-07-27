@@ -1520,6 +1520,34 @@ export type PlanZoom = 'dan' | 'sedmica' | 'mjesec';
 /** Kako se grade redovi platna — runtime pivot, ne fiksna struktura. */
 export type PlanGroupBy = 'project' | 'worker' | 'supplier' | 'kind';
 
+/**
+ * Šablon lanca — REUSABLE OBLIK (vrsta, redoslijed, tipična trajanja), ne
+ * konkretan posao. Zato NEMA projectRef/productRefs/workerRefs/supplierRef —
+ * te reference gube smisao izvan naloga iz kojeg su uhvaćene.
+ *
+ * offsetDays je relativan prema PRVOM (najranijem) koraku — primjena šablona
+ * traži samo JEDAN datum (početak prvog koraka), ne datum po koraku.
+ */
+export interface PlanChainTemplateStep {
+    kind: PlanBlockKind;
+    title: string;
+    offsetDays: number;           // 0 za prvi korak
+    durationDays?: number;        // transport/purchase bez leadDays
+    workerDays?: number;
+    crew?: number;
+    leadDays?: number;            // purchase
+    /** Veza KA SLJEDEĆEM koraku u nizu (undefined za zadnji korak). */
+    linkKind?: PlanLinkKind;
+    lagDays?: number;
+}
+
+export interface PlanChainTemplate {
+    id: string;
+    name: string;
+    steps: PlanChainTemplateStep[];   // hronološki, steps[0] je najraniji
+    Created_Date: string;
+}
+
 export interface PlanScenario {
     Scenario_ID: string;
     Organization_ID: string;

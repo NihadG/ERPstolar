@@ -251,13 +251,18 @@
 }
 
 .pp-cart li {
-    display: flex;
-    align-items: center;
-    gap: 8px;
     padding: 7px 9px;
     border-radius: var(--radius-sm);
     background: var(--background);
     border: 1px solid var(--border-light);
+    display: grid;
+    gap: 5px;
+}
+
+.pp-cart-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
 }
 
 .pp-cart-main { flex: 1 1 auto; min-width: 0; display: grid; gap: 1px; }
@@ -313,6 +318,46 @@
     flex-shrink: 0;
 }
 .pp-remove:hover { background: var(--error-bg); color: var(--error); }
+
+/* Prijedlog trajanja iz istorije — primjenjuje se jednim klikom, mijenja
+   SAMO ovaj odabir na platnu, nikad ponudu ni proizvod u bazi. */
+.pp-suggest {
+    display: flex;
+    align-items: baseline;
+    gap: 5px;
+    width: 100%;
+    padding: 5px 8px;
+    border: 1px dashed var(--accent);
+    border-radius: var(--radius-sm);
+    background: var(--accent-light);
+    font-size: 11px;
+    font-family: inherit;
+    color: var(--text-primary);
+    cursor: pointer;
+    text-align: left;
+}
+.pp-suggest:hover { background: #d9ebff; }
+.pp-suggest svg { color: var(--accent); flex-shrink: 0; align-self: center; }
+.pp-suggest strong { font-variant-numeric: tabular-nums; }
+
+.pp-suggest-desc {
+    color: var(--text-tertiary);
+    font-size: 10.5px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.pp-cart-nosuggest {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    margin: 0;
+    font-size: 10.5px;
+    color: var(--text-tertiary);
+    line-height: 1.4;
+}
+.pp-cart-nosuggest svg { color: var(--warning); flex-shrink: 0; }
 
 /* ── Ekipa ────────────────────────────────────────────────────── */
 .pp-crew {

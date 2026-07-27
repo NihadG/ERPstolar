@@ -170,7 +170,8 @@ describe('proizvodi → blok naloga', () => {
         productId: 'p1', productName: 'Kuhinja', projectId: 'pr1', projectName: 'Novak',
         totalQty: 2, usedQty: 0, availableQty: 2,
         laborDays: 2, laborWorkers: 2, workerDaysPerUnit: 4,
-        materialCount: 0, hasEssential: false, status: '', missingLabor: false, ...over,
+        materialCount: 0, hasEssential: false, status: '', missingLabor: false,
+        productTypes: [], materialTypes: [], ...over,
     });
 
     test('KORISNIKOV PRIMJER: ponuda 2 radnika × 2 dana, 4 radnika → 1 dan', () => {
