@@ -114,6 +114,8 @@ export default function TeamSection({ showMessage }: Props) {
             const { member } = await apiPost<{ member: TeamMember }>('/api/team/users', {
                 name: form.name, email: form.email, password: form.password,
                 role: form.role, phone: form.phone, workerId: form.workerId,
+                // Popunjeno samo kad se radnik pravi u istom koraku.
+                newWorkerName: form.newWorkerName, newWorkerRole: form.newWorkerRole,
             });
             setCredentials({ name: member.name, email: member.email, password: form.password });
             showMessage(`Nalog za ${member.name} je kreiran.`, 'success');
@@ -164,12 +166,12 @@ export default function TeamSection({ showMessage }: Props) {
 
     if (!isAdmin) {
         return (
-            <section className="settings-section">
-                <div className="settings-section-header">
+            <section className="team-section">
+                <div className="team-section-head">
                     <h2>Korisnici</h2>
                     <p>Nalozi za radnike i kontrolore.</p>
                 </div>
-                <div className="settings-banner settings-banner--warning">
+                <div className="team-banner warn">
                     <span className="material-icons-round">lock</span>
                     <div>
                         <strong>Nemate dozvolu</strong>
@@ -182,12 +184,12 @@ export default function TeamSection({ showMessage }: Props) {
 
     if (!unlocked) {
         return (
-            <section className="settings-section">
-                <div className="settings-section-header">
+            <section className="team-section">
+                <div className="team-section-head">
                     <h2>Korisnici</h2>
                     <p>Dajte radnicima i kontrolorima vlastitu prijavu na telefonu.</p>
                 </div>
-                <div className="settings-banner settings-banner--locked">
+                <div className="team-banner locked">
                     <span className="material-icons-round">workspace_premium</span>
                     <div>
                         <strong>Radnici i kontrolori su dio Enterprise paketa</strong>
@@ -205,8 +207,8 @@ export default function TeamSection({ showMessage }: Props) {
     // ── Sadržaj ──────────────────────────────────────────────────────
 
     return (
-        <section className="settings-section">
-            <div className="settings-section-header">
+        <section className="team-section">
+            <div className="team-section-head">
                 <h2>Korisnici</h2>
                 <p>Nalozi za prijavu. Radnik i kontrolor vide samo svoj posao — nikad cijene, ponude ni narudžbe.</p>
             </div>
@@ -245,7 +247,7 @@ export default function TeamSection({ showMessage }: Props) {
                 </div>
             )}
 
-            <div className="settings-card">
+            <div className="team-card">
                 <div className="team-toolbar">
                     <div className="team-seats">
                         <strong>{seats ? `${seats.used} / ${seats.limit}` : '—'}</strong>

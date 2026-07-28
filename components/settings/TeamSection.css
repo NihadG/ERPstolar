@@ -1,8 +1,89 @@
-/* ════════════════════════════════════════════════════════════════════
+/* ═══════════════════════════════════════════════════════════════════
    POSTAVKE → KORISNICI
-   Nadovezuje se na klase iz app/settings/page.tsx (.settings-card,
-   .settings-form-group, .btn…) i koristi iste tokene iz globals.css.
-   ════════════════════════════════════════════════════════════════════ */
+
+   SVE klase su `team-*` i definisane OVDJE, u pravom CSS fajlu.
+
+   Ranije su komponente koristile `settings-form-group`, `settings-card` i
+   slično iz app/settings/page.tsx. To ne radi: te klase su u `<style jsx>`
+   bloku te stranice, a scoped stilovi se primjenjuju SAMO na JSX te
+   komponente — ne i na djecu. Polja su zbog toga ostajala potpuno
+   nestilizovana i raspadala se u red.
+
+   Iznimka su `.btn`, `.btn-primary`, `.btn-secondary`, `.btn-sm` — one su
+   stvarno globalne (app/globals.css) i smiju se koristiti.
+   ═══════════════════════════════════════════════════════════════════ */
+
+/* ── Okvir sekcije ─────────────────────────────────────────────────── */
+
+.team-section {
+    background: var(--surface, #fff);
+    border: 1px solid var(--border-light, #ececec);
+    border-radius: var(--radius-lg, 16px);
+    padding: 26px 28px;
+}
+
+.team-section-head { margin-bottom: 22px; }
+
+.team-section-head h2 {
+    margin: 0 0 5px;
+    font-size: 20px;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    color: var(--text-primary);
+}
+
+.team-section-head p {
+    margin: 0;
+    font-size: 14px;
+    line-height: 1.5;
+    color: var(--text-secondary);
+}
+
+.team-card {
+    border: 1px solid var(--border-light, #ececec);
+    border-radius: var(--radius-lg, 14px);
+    padding: 6px 18px 10px;
+}
+
+/* ── Baneri ────────────────────────────────────────────────────────── */
+
+.team-banner {
+    display: flex;
+    align-items: flex-start;
+    gap: 14px;
+    padding: 18px 20px;
+    border-radius: var(--radius-lg, 14px);
+    background: rgba(60, 60, 67, 0.05);
+}
+
+.team-banner .material-icons-round { font-size: 24px; flex: none; }
+.team-banner > div { flex: 1; min-width: 0; }
+
+.team-banner strong {
+    display: block;
+    font-size: 15px;
+    color: var(--text-primary);
+    margin-bottom: 3px;
+}
+
+.team-banner p {
+    margin: 0;
+    font-size: 13.5px;
+    line-height: 1.5;
+    color: var(--text-secondary);
+}
+
+.team-banner.warn { background: rgba(255, 149, 0, 0.1); }
+.team-banner.warn .material-icons-round { color: #b5610a; }
+
+.team-banner.locked {
+    background: linear-gradient(135deg, rgba(102, 126, 234, 0.1), rgba(175, 82, 222, 0.1));
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+.team-banner.locked .material-icons-round { color: #667eea; }
+.team-banner.locked .btn { flex: none; }
 
 /* ── Podaci za prijavu (prikaz jednom) ─────────────────────────────── */
 
@@ -69,10 +150,7 @@
     word-break: break-all;
 }
 
-.team-creds-actions {
-    display: flex;
-    gap: 8px;
-}
+.team-creds-actions { display: flex; gap: 8px; }
 
 .team-creds-note {
     margin: 12px 0 0;
@@ -87,16 +165,11 @@
     align-items: center;
     justify-content: space-between;
     gap: 16px;
-    padding: 4px 0 16px;
+    padding: 14px 0 16px;
     border-bottom: 1px solid var(--border-light, #eee);
-    margin-bottom: 4px;
 }
 
-.team-seats {
-    display: flex;
-    align-items: baseline;
-    gap: 7px;
-}
+.team-seats { display: flex; align-items: baseline; gap: 7px; }
 
 .team-seats strong {
     font-size: 19px;
@@ -104,10 +177,7 @@
     color: var(--text-primary);
 }
 
-.team-seats span {
-    font-size: 13px;
-    color: var(--text-secondary);
-}
+.team-seats span { font-size: 13px; color: var(--text-secondary); }
 
 /* ── Red korisnika ─────────────────────────────────────────────────── */
 
@@ -115,7 +185,7 @@
     display: flex;
     align-items: center;
     gap: 13px;
-    padding: 13px 0;
+    padding: 14px 0;
     border-bottom: 1px solid var(--border-light, #f0f0f0);
 }
 
@@ -136,8 +206,8 @@
     background: #86868b;
 }
 
-.team-avatar.blue   { background: linear-gradient(135deg, #0a84ff, #409cff); }
-.team-avatar.green  { background: linear-gradient(135deg, #2bb24c, #34c759); }
+.team-avatar.blue { background: linear-gradient(135deg, #0a84ff, #409cff); }
+.team-avatar.green { background: linear-gradient(135deg, #2bb24c, #34c759); }
 .team-avatar.orange { background: linear-gradient(135deg, #ff9500, #ffb340); }
 .team-avatar.purple { background: linear-gradient(135deg, #af52de, #c77dff); }
 
@@ -150,16 +220,13 @@
     flex-wrap: wrap;
 }
 
-.team-row-title strong {
-    font-size: 14.5px;
-    color: var(--text-primary);
-}
+.team-row-title strong { font-size: 14.5px; color: var(--text-primary); }
 
 .team-row-sub {
     display: block;
     font-size: 12.5px;
     color: var(--text-secondary);
-    margin-top: 2px;
+    margin-top: 3px;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -182,9 +249,9 @@
     white-space: nowrap;
 }
 
-.team-pill.blue   { background: rgba(0, 122, 255, 0.12);  color: #0067da; }
-.team-pill.green  { background: rgba(52, 199, 89, 0.14);  color: #248a3d; }
-.team-pill.orange { background: rgba(255, 149, 0, 0.14);  color: #b5610a; }
+.team-pill.blue { background: rgba(0, 122, 255, 0.12); color: #0067da; }
+.team-pill.green { background: rgba(52, 199, 89, 0.14); color: #248a3d; }
+.team-pill.orange { background: rgba(255, 149, 0, 0.14); color: #b5610a; }
 .team-pill.purple { background: rgba(175, 82, 222, 0.13); color: #8a35c0; }
 
 /* ── Meni akcija ───────────────────────────────────────────────────── */
@@ -192,11 +259,11 @@
 .team-menu-wrap { position: relative; flex: none; }
 
 .team-menu-btn {
-    width: 32px;
-    height: 32px;
+    width: 34px;
+    height: 34px;
     border: none;
     background: transparent;
-    border-radius: 8px;
+    border-radius: 9px;
     color: var(--text-secondary);
     cursor: pointer;
     display: flex;
@@ -208,18 +275,14 @@
 .team-menu-btn:hover { background: rgba(60, 60, 67, 0.07); }
 .team-menu-btn:disabled { opacity: 0.4; cursor: default; }
 
-.team-menu-scrim {
-    position: fixed;
-    inset: 0;
-    z-index: 10;
-}
+.team-menu-scrim { position: fixed; inset: 0; z-index: 10; }
 
 .team-menu {
     position: absolute;
     right: 0;
-    top: 36px;
+    top: 38px;
     z-index: 11;
-    min-width: 194px;
+    min-width: 196px;
     background: var(--surface, #fff);
     border: 1px solid var(--border-light, #e8e8e8);
     border-radius: var(--radius-md, 10px);
@@ -235,10 +298,11 @@
     align-items: center;
     gap: 9px;
     width: 100%;
-    padding: 9px 10px;
+    padding: 10px;
     border: none;
     background: transparent;
     border-radius: 7px;
+    font-family: inherit;
     font-size: 13.5px;
     color: var(--text-primary);
     text-align: left;
@@ -264,49 +328,50 @@
 .team-empty--error { color: #d70015; }
 
 .team-foot {
-    margin: 14px 2px 0;
+    margin: 16px 2px 0;
     font-size: 12.5px;
     color: var(--text-tertiary, #8a8a8e);
     line-height: 1.5;
 }
 
-/* ── Modal ─────────────────────────────────────────────────────────── */
+/* ═══════════════════════════════════════════════════════════════════
+   MODAL
+   ═══════════════════════════════════════════════════════════════════ */
 
 .team-modal-scrim {
     position: fixed;
     inset: 0;
     z-index: 1000;
-    background: rgba(0, 0, 0, 0.36);
+    background: rgba(0, 0, 0, 0.4);
     backdrop-filter: blur(3px);
     display: flex;
     align-items: center;
     justify-content: center;
-    padding: 20px;
+    padding: 24px;
 }
 
 .team-modal {
     width: 100%;
-    max-width: 480px;
-    max-height: 90vh;
-    overflow-y: auto;
+    max-width: 460px;
+    max-height: 88vh;
+    display: flex;
+    flex-direction: column;
     background: var(--surface, #fff);
     border-radius: var(--radius-lg, 16px);
     box-shadow: 0 24px 60px rgba(0, 0, 0, 0.24);
+    overflow: hidden;
 }
 
 .team-modal-head {
+    flex: none;
     display: flex;
     align-items: center;
     justify-content: space-between;
     padding: 18px 22px;
     border-bottom: 1px solid var(--border-light, #eee);
-    position: sticky;
-    top: 0;
-    background: var(--surface, #fff);
-    border-radius: var(--radius-lg, 16px) var(--radius-lg, 16px) 0 0;
 }
 
-.team-modal-head h3 { margin: 0; font-size: 17px; }
+.team-modal-head h3 { margin: 0; font-size: 17px; font-weight: 600; }
 
 .team-modal-head button {
     border: none;
@@ -314,41 +379,156 @@
     cursor: pointer;
     color: var(--text-secondary);
     display: flex;
-    padding: 4px;
-    border-radius: 6px;
+    padding: 5px;
+    border-radius: 7px;
 }
 
 .team-modal-head button:hover { background: rgba(60, 60, 67, 0.07); }
 
-.team-modal-body { padding: 18px 22px 22px; }
-.team-modal-body .settings-form-group { margin-bottom: 15px; }
+.team-modal-body {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 20px 22px 22px;
+}
 
-.team-modal-body small {
+/* ── Polje: labela IZNAD, input pune širine ────────────────────────── */
+
+.team-field { margin-bottom: 16px; }
+
+.team-field label {
     display: block;
-    margin-top: 5px;
-    font-size: 12px;
-    color: var(--text-secondary);
-    line-height: 1.45;
+    margin-bottom: 6px;
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: -0.005em;
+    color: var(--text-primary);
 }
 
-.team-pass-row {
-    display: flex;
-    gap: 7px;
-    align-items: center;
+.team-field input,
+.team-field select {
+    display: block;
+    width: 100%;
+    box-sizing: border-box;
+    height: 42px;
+    padding: 0 12px;
+    border: 1px solid var(--border-light, #d8d8dc);
+    border-radius: var(--radius-md, 10px);
+    background: var(--surface, #fff);
+    font-family: inherit;
+    font-size: 14.5px;
+    color: var(--text-primary);
+    transition: border-color 0.15s, box-shadow 0.15s;
 }
+
+.team-field select {
+    appearance: none;
+    -webkit-appearance: none;
+    /* Strelica kao pozadinski SVG — `appearance:none` skida nativnu. */
+    background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8' fill='none' stroke='%236b6b70' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M1 1.5L6 6.5L11 1.5'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 13px center;
+    padding-right: 36px;
+    cursor: pointer;
+}
+
+.team-field input:focus,
+.team-field select:focus {
+    outline: none;
+    border-color: var(--accent, #0071e3);
+    box-shadow: 0 0 0 3px rgba(0, 113, 227, 0.13);
+}
+
+.team-field input:disabled {
+    background: rgba(60, 60, 67, 0.05);
+    color: var(--text-secondary);
+    cursor: not-allowed;
+}
+
+.team-field small {
+    display: block;
+    margin-top: 6px;
+    font-size: 12px;
+    line-height: 1.45;
+    color: var(--text-secondary);
+}
+
+/* Oznake obaveznosti u labeli — kratke, da ne razbijaju red. */
+.team-req,
+.team-opt {
+    font-size: 11px;
+    font-weight: 600;
+    padding: 1px 6px;
+    border-radius: 999px;
+    margin-left: 5px;
+    vertical-align: 1px;
+}
+
+.team-req { background: rgba(255, 59, 48, 0.12); color: #d70015; }
+.team-opt { background: rgba(60, 60, 67, 0.08); color: var(--text-secondary); font-weight: 500; }
+
+.team-divider {
+    height: 1px;
+    background: var(--border-light, #eee);
+    margin: 4px 0 18px;
+}
+
+/* Ugniježdena forma (novi radnik) — uvučena da se vidi da pripada polju iznad. */
+.team-subform {
+    margin: -6px 0 16px;
+    padding: 14px 14px 4px;
+    border-left: 3px solid var(--accent, #0071e3);
+    border-radius: 0 var(--radius-md, 10px) var(--radius-md, 10px) 0;
+    background: rgba(0, 113, 227, 0.05);
+}
+
+.team-subform .team-field:last-of-type { margin-bottom: 10px; }
+
+.team-subform > small {
+    display: block;
+    padding-bottom: 12px;
+    font-size: 12px;
+    line-height: 1.45;
+    color: var(--text-secondary);
+}
+
+/* ── Lozinka ───────────────────────────────────────────────────────── */
+
+.team-pass-row { display: flex; gap: 7px; align-items: center; }
 
 .team-pass-row input {
     flex: 1;
+    min-width: 0;
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
     letter-spacing: 0.02em;
 }
+
+.team-icon-btn {
+    flex: none;
+    width: 42px;
+    height: 42px;
+    border: 1px solid var(--border-light, #d8d8dc);
+    border-radius: var(--radius-md, 10px);
+    background: var(--surface, #fff);
+    color: var(--text-secondary);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.team-icon-btn:hover { background: rgba(60, 60, 67, 0.05); color: var(--text-primary); }
+.team-icon-btn .material-icons-round { font-size: 19px; }
+
+/* ── Greška i akcije ───────────────────────────────────────────────── */
 
 .team-modal-error {
     background: rgba(255, 59, 48, 0.1);
     color: #d70015;
     border-radius: var(--radius-md, 10px);
-    padding: 10px 13px;
+    padding: 11px 13px;
     font-size: 13px;
+    line-height: 1.45;
     margin-bottom: 14px;
 }
 
@@ -356,12 +536,19 @@
     display: flex;
     justify-content: flex-end;
     gap: 9px;
-    padding-top: 4px;
+    padding-top: 6px;
 }
 
+/* ── Uski ekrani ───────────────────────────────────────────────────── */
+
 @media (max-width: 640px) {
+    .team-section { padding: 20px 16px; }
+    .team-card { padding: 4px 12px 8px; }
     .team-toolbar { flex-direction: column; align-items: stretch; gap: 12px; }
     .team-row-sub { white-space: normal; }
+
     .team-modal-scrim { padding: 0; align-items: flex-end; }
-    .team-modal { max-width: none; max-height: 92vh; border-radius: 18px 18px 0 0; }
+    .team-modal { max-width: none; max-height: 94vh; border-radius: 18px 18px 0 0; }
+    .team-modal-actions { flex-direction: column-reverse; }
+    .team-modal-actions .btn { width: 100%; justify-content: center; }
 }

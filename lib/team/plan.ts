@@ -62,9 +62,17 @@ export function isAssignableRole(role: string): role is UserRole {
     return (ASSIGNABLE_ROLES as string[]).includes(role);
 }
 
-/** Radnik i kontrolor MORAJU biti vezani za Worker — bez toga nemaju pogonski identitet. */
+/**
+ * Radnik MORA biti vezan za zapis radnika — bez toga mu ekran ne zna šta je
+ * „njegov posao", pa je nalog beskoristan.
+ *
+ * Kontrolor NE MORA. On nadgleda tuđi rad: šihtarica, nalozi, narudžbe i
+ * projekti su mu svi vidljivi bez vlastitog pogonskog identiteta. Veza mu
+ * koristi samo ako i sam radi, pa je ponuđena ali nije uslov — ranije je bila
+ * obavezna i firma bez slobodnog radnika nije mogla napraviti kontrolora.
+ */
 export function requiresWorkerLink(role: UserRole): boolean {
-    return role === 'worker' || role === 'controller';
+    return role === 'worker';
 }
 
 export interface PasswordCheck { ok: boolean; reason?: string }

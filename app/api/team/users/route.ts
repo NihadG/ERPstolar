@@ -15,12 +15,12 @@ import { NextResponse } from 'next/server';
 import { adminAuth, adminDb } from '@/lib/server/firebaseAdmin';
 import { errorResponse, HttpError, requireOrgAdmin } from '@/lib/server/requireUser';
 import {
-    assertSeatAvailable, assertTeamModule, getOrganization, listOrgUsers, listOrgWorkers,
-    resolveWorkerLink, setUserClaims, toMemberDTO, writeWorkerLink,
+    assertSeatAvailable, assertTeamModule, createWorkerForUser, getOrganization,
+    listOrgUsers, listOrgWorkers, resolveWorkerLink, setUserClaims, toMemberDTO, writeWorkerLink,
 } from '@/lib/server/teamRepo';
 import { seatLimitFor } from '@/lib/team/plan';
 import { checkPassword, isAssignableRole, isValidEmail, normalizeEmail } from '@/lib/team/plan';
-import type { User } from '@/lib/types';
+import type { User, Worker } from '@/lib/types';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -75,7 +75,19 @@ export async function POST(req: Request) {
         const pw = checkPassword(password);
         if (!pw.ok) throw new HttpError(400, pw.reason!);
 
-        const worker = await resolveWorkerLink(caller.orgId, workerId, role);
+        // „Kreiraj novog radnika" iz modala — pravi zapis pa ga odmah veže.
+        // Bez ovoga firma bez slobodnog radnika ne bi mogla napraviti nalog.
+        let linkWorkerId = workerId;
+        let createdWorker: Worker | null = null;
+        if (!linkWorkerId && typeof body.newWorkerName === 'string' && body.newWorkerName.trim()) {
+            createdWorker = await createWorkerForUser(caller.orgId, {
+                name: body.newWorkerName,
+                role: typeof body.newWorkerRole === 'string' ? body.newWorkerRole : undefined,
+            });
+            linkWorkerId = createdWorker.Worker_ID;
+        }
+
+        const worker = createdWorker || await resolveWorkerLink(caller.orgId, linkWorkerId, role);
 
         // ── Auth korisnik ────────────────────────────────────────────
         let uid: string;
@@ -107,12 +119,12 @@ export async function POST(req: Request) {
             Is_Active: true,
             Must_Change_Password: true,   // vlasnik zna lozinku dok je radnik ne zamijeni
             Created_By: caller.uid,
-            ...(workerId ? { Worker_ID: workerId } : {}),
+            ...(linkWorkerId ? { Worker_ID: linkWorkerId } : {}),
             ...(phone ? { Phone: phone } : {}),
         };
         await adminDb().collection('users').doc(uid).set(profile);
-        await setUserClaims(uid, caller.orgId, role, workerId);
-        await writeWorkerLink({ orgId: caller.orgId, uid, email, newWorkerId: workerId });
+        await setUserClaims(uid, caller.orgId, role, linkWorkerId);
+        await writeWorkerLink({ orgId: caller.orgId, uid, email, newWorkerId: linkWorkerId });
 
         return NextResponse.json({ member: toMemberDTO(profile, worker?.Name ?? null) }, { status: 201 });
     } catch (e) {

@@ -85,9 +85,19 @@ describe('uloge', () => {
         expect(isAssignableRole('')).toBe(false);
     });
 
-    it('radnik i kontrolor moraju biti vezani za zapis radnika', () => {
+    it('radnik MORA biti vezan za zapis radnika', () => {
+        // Bez veze mu ekran ne zna šta je „njegov posao" — nalog je beskoristan.
         expect(requiresWorkerLink('worker')).toBe(true);
-        expect(requiresWorkerLink('controller')).toBe(true);
+    });
+
+    it('kontrolor NE mora — on nadgleda tuđi rad', () => {
+        // Ranije je bio obavezan, pa firma bez slobodnog radnika nije mogla
+        // napraviti kontrolora. Šihtarica, nalozi i narudžbe su mu vidljivi
+        // bez vlastitog pogonskog identiteta.
+        expect(requiresWorkerLink('controller')).toBe(false);
+    });
+
+    it('staff uloge nikad ne traže vezu', () => {
         expect(requiresWorkerLink('manager')).toBe(false);
         expect(requiresWorkerLink('admin')).toBe(false);
     });

@@ -6,6 +6,7 @@
 // kreiranju i pri izmjeni.
 // ════════════════════════════════════════════════════════════════════
 
+import { randomUUID } from 'node:crypto';
 import { adminAuth, adminDb } from './firebaseAdmin';
 import { HttpError } from './requireUser';
 import { seatLimitFor, checkSeatAvailable, planHasTeamModule, requiresWorkerLink } from '@/lib/team/plan';
@@ -105,6 +106,37 @@ export async function resolveWorkerLink(
     if (worker.User_ID && worker.User_ID !== excludeUid) {
         throw new HttpError(409, `Radnik ${worker.Name} već ima nalog za prijavu.`);
     }
+    return worker;
+}
+
+/**
+ * Napravi zapis radnika u hodu, iz modala za novog korisnika.
+ *
+ * Postoji da se ukloni slijepa ulica: firma koja nema nijednog slobodnog
+ * radnika nije mogla kreirati radnički nalog, nego je morala izaći u tab
+ * Radnici, dodati radnika i vratiti se. Sad se to radi u istom koraku.
+ *
+ * `Organization_ID` se upisuje UVIJEK — radnik bez njega je nevidljiv svakom
+ * upitu u aplikaciji (svi filtriraju po organizaciji) i praktično izgubljen.
+ */
+export async function createWorkerForUser(
+    orgId: string,
+    input: { name: string; role?: string; workerType?: string }
+): Promise<Worker> {
+    const name = input.name.trim();
+    if (!name) throw new HttpError(400, 'Radnik mora imati ime.');
+
+    const worker: Worker = {
+        Worker_ID: randomUUID(),
+        Organization_ID: orgId,
+        Name: name,
+        Role: input.role?.trim() || 'Opći',
+        Worker_Type: input.workerType === 'Pomoćnik' ? 'Pomoćnik' : 'Glavni',
+        Phone: '',
+        Status: 'Aktivan',
+    };
+
+    await adminDb().collection('workers').add(worker as unknown as Record<string, unknown>);
     return worker;
 }
 
