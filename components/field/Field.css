@@ -66,11 +66,18 @@
     position: absolute;
 }
 
-/* Sve akcije u pregledu su mrtve — vlasnik gleda, ne dira tuđi nalog. */
+/* Sve akcije u pregledu su mrtve — vlasnik gleda, ne dira tuđi nalog.
+   Pri dodavanju novih interaktivnih klasa MORAJU se dopisati ovdje. */
 .fld-preview .mui-abtn,
 .fld-preview .mui-btn,
 .fld-preview .mui-cbx,
-.fld-preview .mui-actbtn {
+.fld-preview .mui-actbtn,
+.fld-preview .fat-card,
+.fld-preview .fat-unbooked,
+.fld-preview .fat-bulk,
+.fld-preview .fbk-order,
+.fld-preview .fbk-confirm,
+.fld-preview .fbk-presence {
     pointer-events: none;
 }
 

@@ -1,0 +1,647 @@
+/* ═══════════════════════════════════════════════════════════════════
+   KONTROLOR — pogonski ekrani
+   Nadogradnja nad MobileUI.css. Sve boje i tipografija dolaze odatle;
+   `.mui` mora ostati na korijenu jer nosi CSS varijable.
+
+   JEDINO ODSTUPANJE od mobilnih pravila: mete su veće. Ostatak aplikacije
+   ide 46-50px; ovdje glavne mete idu 56px+ jer se koristi stojeći, jednom
+   rukom, često u rukavicama.
+   ═══════════════════════════════════════════════════════════════════ */
+
+/* ── Profil (gore desno, ne troši tab) ─────────────────────────────── */
+
+.fctl-profile {
+    position: absolute;
+    top: calc(14px + env(safe-area-inset-top, 0px));
+    right: 16px;
+    z-index: 5;
+    width: 38px;
+    height: 38px;
+    border: none;
+    border-radius: 50%;
+    background: linear-gradient(135deg, #0a84ff, #5e5ce6);
+    color: #fff;
+    font-size: 13.5px;
+    font-weight: 600;
+    font-family: inherit;
+    letter-spacing: -0.01em;
+    cursor: pointer;
+    box-shadow: 0 4px 12px -4px rgba(10, 132, 255, 0.6);
+}
+
+.fctl-profile:active { transform: scale(0.94); }
+
+/* ── Toast ─────────────────────────────────────────────────────────── */
+
+.fctl-toast {
+    position: fixed;
+    left: 16px;
+    right: 16px;
+    bottom: calc(84px + env(safe-area-inset-bottom, 0px));
+    z-index: 1300;
+    padding: 13px 16px;
+    border-radius: 13px;
+    font-size: 14.5px;
+    letter-spacing: -0.01em;
+    color: #fff;
+    background: rgba(28, 28, 30, 0.95);
+    backdrop-filter: blur(12px);
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+    animation: fctl-toast-in 0.22s cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+.fctl-toast.success { background: rgba(36, 138, 61, 0.96); }
+.fctl-toast.error { background: rgba(215, 0, 21, 0.96); }
+
+@keyframes fctl-toast-in {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: none; }
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   ŠIHTARICA
+   ═══════════════════════════════════════════════════════════════════ */
+
+/* ── Navigacija dana ───────────────────────────────────────────────── */
+
+.fat-daynav {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 2px 0 10px;
+}
+
+.fat-navbtn {
+    flex: none;
+    width: 40px;
+    height: 46px;
+    border: none;
+    background: transparent;
+    color: var(--mui-blue);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    border-radius: 11px;
+}
+
+.fat-navbtn:active { background: rgba(0, 122, 255, 0.1); }
+
+.fat-week {
+    flex: 1;
+    display: flex;
+    gap: 4px;
+}
+
+.fat-pill {
+    flex: 1;
+    min-width: 0;
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    padding: 7px 0 8px;
+    border: none;
+    border-radius: 12px;
+    background: transparent;
+    font-family: inherit;
+    color: var(--mui-label2);
+    cursor: pointer;
+    transition: background 0.15s;
+}
+
+.fat-pill-dow {
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.01em;
+}
+
+.fat-pill-num {
+    font-size: 17px;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    font-variant-numeric: tabular-nums;
+    color: var(--mui-label);
+}
+
+.fat-pill.today .fat-pill-num { color: var(--mui-blue); }
+
+.fat-pill.on {
+    background: var(--mui-blue);
+}
+
+.fat-pill.on .fat-pill-dow,
+.fat-pill.on .fat-pill-num { color: #fff; }
+
+/* Dan ima prisutne bez dnevnice — to je jedino upozorenje u traci. */
+.fat-pill-dot {
+    position: absolute;
+    bottom: 3px;
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: var(--mui-orange);
+}
+
+.fat-pill.on .fat-pill-dot { background: #fff; }
+
+.fat-today {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    width: 100%;
+    padding: 9px;
+    margin-bottom: 10px;
+    border: none;
+    border-radius: 11px;
+    background: rgba(0, 122, 255, 0.1);
+    color: var(--mui-blue);
+    font-family: inherit;
+    font-size: 14px;
+    letter-spacing: -0.01em;
+    cursor: pointer;
+}
+
+/* ── Istaknute radnje ──────────────────────────────────────────────── */
+
+/* Najvažnija radnja dana — zato je najveća i narandžasta (nešto čeka). */
+.fat-unbooked {
+    display: flex;
+    align-items: center;
+    gap: 11px;
+    width: 100%;
+    min-height: 58px;
+    padding: 12px 14px;
+    margin-bottom: 10px;
+    border: none;
+    border-radius: 15px;
+    background: linear-gradient(135deg, #ff9500, #ffb340);
+    color: #fff;
+    font-family: inherit;
+    font-size: 15px;
+    letter-spacing: -0.015em;
+    text-align: left;
+    cursor: pointer;
+    box-shadow: 0 6px 18px -8px rgba(255, 149, 0, 0.9);
+}
+
+.fat-unbooked > span:nth-of-type(1) { flex: 1; }
+.fat-unbooked b { font-weight: 700; }
+.fat-unbooked:disabled { opacity: 0.6; }
+
+.fat-unbooked-cta {
+    flex: none;
+    padding: 6px 12px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.25);
+    font-size: 14px;
+    font-weight: 600;
+}
+
+.fat-bulk {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    width: 100%;
+    min-height: 50px;
+    margin-bottom: 12px;
+    border: none;
+    border-radius: 13px;
+    background: rgba(0, 122, 255, 0.13);
+    color: var(--mui-blue);
+    font-family: inherit;
+    font-size: 15.5px;
+    font-weight: 500;
+    letter-spacing: -0.015em;
+    cursor: pointer;
+}
+
+.fat-bulk:active { opacity: 0.75; }
+.fat-bulk:disabled { opacity: 0.5; }
+
+.fat-search { padding-bottom: 12px; }
+
+.fat-loading {
+    padding: 40px 0;
+    text-align: center;
+    font-size: 14.5px;
+    color: var(--mui-label2);
+}
+
+/* ── Kartice radnika ───────────────────────────────────────────────── */
+
+.fat-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+/* Meta je cijela kartica (min 64px) — u pogonu se ne cilja sitno. */
+.fat-card {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    width: 100%;
+    min-height: 64px;
+    padding: 11px 14px;
+    border: none;
+    border-left: 4px solid transparent;
+    border-radius: 14px;
+    background: var(--mui-cell);
+    font-family: inherit;
+    text-align: left;
+    cursor: pointer;
+    box-shadow: 0 1px 2px rgba(20, 30, 60, 0.05), 0 12px 28px -20px rgba(20, 30, 60, 0.25);
+    transition: transform 0.12s;
+}
+
+.fat-card:active { transform: scale(0.985); }
+.fat-card:disabled { opacity: 0.7; cursor: default; }
+
+/* Boja lijeve ivice = status. Nikad ukras. */
+.fat-card.green { border-left-color: var(--mui-green); }
+.fat-card.blue { border-left-color: var(--mui-blue); }
+.fat-card.orange { border-left-color: var(--mui-orange); }
+.fat-card.purple { border-left-color: var(--mui-purple); }
+.fat-card.gray { border-left-color: rgba(60, 60, 67, 0.3); }
+.fat-card.none { border-left-color: transparent; }
+
+.fat-card-main {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.fat-card-name {
+    font-size: 16px;
+    font-weight: 500;
+    letter-spacing: -0.022em;
+    color: var(--mui-label);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.fat-card-role {
+    font-size: 13.5px;
+    color: var(--mui-label2);
+    letter-spacing: -0.01em;
+}
+
+.fat-card-right {
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.fat-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--mui-orange);
+}
+
+.fat-status {
+    font-size: 13px;
+    font-weight: 600;
+    padding: 6px 11px;
+    border-radius: 999px;
+    background: rgba(60, 60, 67, 0.08);
+    color: rgba(60, 60, 67, 0.55);
+    white-space: nowrap;
+}
+
+.fat-status.green { background: rgba(52, 199, 89, 0.15); color: var(--mui-green-t); }
+.fat-status.blue { background: rgba(0, 122, 255, 0.13); color: var(--mui-blue-t); }
+.fat-status.orange { background: rgba(255, 149, 0, 0.15); color: var(--mui-orange-t); }
+.fat-status.purple { background: rgba(175, 82, 222, 0.14); color: var(--mui-purple-t); }
+.fat-status.none { background: rgba(0, 122, 255, 0.1); color: var(--mui-blue); }
+
+/* ── Sheet za status ───────────────────────────────────────────────── */
+
+.fat-sheet-sub {
+    margin: -4px 0 14px;
+    font-size: 14px;
+    color: var(--mui-label2);
+    letter-spacing: -0.01em;
+}
+
+.fat-primary {
+    display: flex;
+    flex-direction: column;
+    gap: 9px;
+}
+
+/* Tri najčešća statusa — 62px, pogađaju se palcem bez gledanja. */
+.fat-big {
+    display: flex;
+    align-items: center;
+    gap: 13px;
+    min-height: 62px;
+    padding: 10px 16px;
+    border: 1.5px solid transparent;
+    border-radius: 15px;
+    font-family: inherit;
+    text-align: left;
+    cursor: pointer;
+    transition: transform 0.12s;
+}
+
+.fat-big:active { transform: scale(0.98); }
+.fat-big:disabled { opacity: 0.55; }
+
+.fat-big-label {
+    flex: 1;
+    font-size: 17px;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+}
+
+.fat-big-hint {
+    font-size: 13px;
+    opacity: 0.75;
+    letter-spacing: -0.01em;
+}
+
+.fat-big.green { background: rgba(52, 199, 89, 0.14); color: var(--mui-green-t); }
+.fat-big.blue { background: rgba(0, 122, 255, 0.12); color: var(--mui-blue-t); }
+.fat-big.gray { background: rgba(60, 60, 67, 0.08); color: rgba(60, 60, 67, 0.7); }
+
+.fat-big.on.green { border-color: var(--mui-green); }
+.fat-big.on.blue { border-color: var(--mui-blue); }
+.fat-big.on.gray { border-color: rgba(60, 60, 67, 0.45); }
+
+.fat-yesterday {
+    width: 100%;
+    margin-top: 10px;
+    padding: 12px;
+    border: none;
+    border-radius: 12px;
+    background: rgba(60, 60, 67, 0.06);
+    color: var(--mui-label2);
+    font-family: inherit;
+    font-size: 14.5px;
+    letter-spacing: -0.01em;
+    cursor: pointer;
+}
+
+.fat-yesterday b { color: var(--mui-label); font-weight: 600; }
+
+.fat-secondary {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding-bottom: 4px;
+}
+
+.fat-secondary .mui-chip { min-height: 42px; padding: 0 16px; }
+
+.fat-note {
+    margin-top: 12px;
+    padding: 12px 14px;
+    border-radius: 12px;
+    background: var(--mui-cell);
+}
+
+.fat-note input {
+    width: 100%;
+    border: none;
+    outline: none;
+    background: transparent;
+    font-family: inherit;
+    font-size: 16px;   /* ispod 16px iOS zumira ekran */
+    color: var(--mui-label);
+}
+
+.fat-note-toggle {
+    width: 100%;
+    margin-top: 12px;
+    padding: 11px;
+    border: none;
+    background: none;
+    color: var(--mui-blue);
+    font-family: inherit;
+    font-size: 15px;
+    cursor: pointer;
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   DODJELA NALOGA (knjiženje)
+   ═══════════════════════════════════════════════════════════════════ */
+
+.fbk {
+    position: fixed;
+    inset: 0;
+    z-index: 900;
+    display: flex;
+    flex-direction: column;
+    background: linear-gradient(178deg, #eef1f6, #e7eaf1);
+    padding: calc(14px + env(safe-area-inset-top, 0px)) 16px 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+}
+
+.fbk-head { padding: 4px 4px 14px; }
+
+.fbk-head h1 {
+    margin: 0;
+    font-size: 30px;
+    font-weight: 700;
+    letter-spacing: -0.025em;
+    line-height: 1.08;
+}
+
+.fbk-head p {
+    margin: 6px 0 0;
+    font-size: 14.5px;
+    color: var(--mui-label2);
+    letter-spacing: -0.01em;
+}
+
+.fbk-list {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    /* Prostor za fiksiranu potvrdu na dnu. */
+    padding-bottom: calc(140px + env(safe-area-inset-bottom, 0px));
+}
+
+.fbk-card {
+    background: var(--mui-cell);
+    border-radius: 16px;
+    padding: 14px;
+    box-shadow: 0 1px 2px rgba(20, 30, 60, 0.05), 0 14px 30px -22px rgba(20, 30, 60, 0.3);
+}
+
+.fbk-card-head {
+    display: flex;
+    align-items: center;
+    gap: 11px;
+    flex-wrap: wrap;
+}
+
+.fbk-card-name {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+}
+
+.fbk-card-name strong {
+    font-size: 16.5px;
+    font-weight: 600;
+    letter-spacing: -0.022em;
+}
+
+.fbk-card-name span {
+    font-size: 13px;
+    color: var(--mui-label2);
+}
+
+/* ½ / cijeli dan — segmentna kontrola */
+.fbk-presence {
+    display: flex;
+    background: rgba(60, 60, 67, 0.07);
+    border-radius: 10px;
+    padding: 2px;
+}
+
+.fbk-presence button {
+    border: none;
+    background: transparent;
+    border-radius: 8px;
+    padding: 8px 12px;
+    font-family: inherit;
+    font-size: 13.5px;
+    font-weight: 500;
+    color: var(--mui-label2);
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+.fbk-presence button.on {
+    background: var(--mui-cell);
+    color: var(--mui-label);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.fbk-none {
+    margin: 12px 0 0;
+    font-size: 13.5px;
+    color: var(--mui-label2);
+    line-height: 1.45;
+}
+
+/* Red naloga — meta 56px */
+.fbk-order {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    width: 100%;
+    min-height: 56px;
+    margin-top: 8px;
+    padding: 10px 12px;
+    border: 1.5px solid transparent;
+    border-radius: 13px;
+    background: rgba(60, 60, 67, 0.05);
+    font-family: inherit;
+    text-align: left;
+    cursor: pointer;
+}
+
+.fbk-order.on {
+    background: rgba(0, 122, 255, 0.09);
+    border-color: rgba(0, 122, 255, 0.35);
+}
+
+.fbk-check {
+    flex: none;
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    border: 2px solid rgba(60, 60, 67, 0.28);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #fff;
+}
+
+.fbk-check.on {
+    background: var(--mui-blue);
+    border-color: var(--mui-blue);
+}
+
+.fbk-order-main {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.fbk-order-name {
+    font-size: 15.5px;
+    letter-spacing: -0.02em;
+    color: var(--mui-label);
+}
+
+.fbk-order-meta {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+    font-size: 13px;
+    color: var(--mui-label2);
+}
+
+/* ── Potvrda ───────────────────────────────────────────────────────── */
+
+.fbk-foot {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    padding: 12px 16px calc(14px + env(safe-area-inset-bottom, 0px));
+    background: rgba(249, 249, 251, 0.94);
+    backdrop-filter: saturate(180%) blur(20px);
+    -webkit-backdrop-filter: saturate(180%) blur(20px);
+    border-top: 0.5px solid rgba(60, 60, 67, 0.2);
+}
+
+.fbk-confirm {
+    width: 100%;
+    min-height: 56px;
+    border: none;
+    border-radius: 15px;
+    background: var(--mui-blue);
+    color: #fff;
+    font-family: inherit;
+    font-size: 17px;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    cursor: pointer;
+}
+
+.fbk-confirm:active { transform: scale(0.99); opacity: 0.9; }
+
+.fbk-confirm:disabled {
+    background: rgba(60, 60, 67, 0.12);
+    color: rgba(60, 60, 67, 0.45);
+    cursor: default;
+    transform: none;
+}
+
+.fbk-foot-note {
+    margin: 9px 2px 0;
+    font-size: 12.5px;
+    color: var(--mui-label2);
+    text-align: center;
+    line-height: 1.4;
+}

@@ -3,19 +3,22 @@
 // ════════════════════════════════════════════════════════════════════
 // DONJA NAVIGACIJA POGONSKOG EKRANA
 //
-// Isti obrazac kao MobileTabBar (klase `.mtb`), ali s vlastitim tabovima po
-// ulozi. Odvojena komponenta jer se skup tabova razlikuje i jer pogonski
-// korisnik nikad ne vidi Ponude/Narudžbe.
+// Isti obrazac i iste klase (`.mtb`) kao MobileTabBar — pogonska aplikacija
+// mora izgledati kao ostatak aplikacije, samo s drugim sadržajem.
 //
-// Osim početne, tabovi su za sada prazna stanja — vidi FieldShell.
+// Kontrolor ima četiri taba koja pokrivaju njegov dan; radnik samo ono što
+// se njega tiče. Profil i odjava NE troše tab — sjede u dugmetu s inicijalima
+// gore desno (vidi ControllerApp).
 // ════════════════════════════════════════════════════════════════════
 
-import { CheckSquare, ClipboardCheck, ClipboardList, Home, User } from 'lucide-react';
+import { ClipboardList, FolderOpen, Home, CalendarCheck, ShoppingCart, User, CheckSquare } from 'lucide-react';
 import { haptic } from '@/components/tabs/mobile/useSwipe';
 import type { UserRole } from '@/lib/types';
 import '@/components/tabs/mobile/MobileTabBar.css';
 
-export type FieldTabId = 'home' | 'work' | 'tasks' | 'checks' | 'me';
+export type FieldTabId =
+    | 'orders' | 'attendance' | 'purchases' | 'projects'   // kontrolor
+    | 'home' | 'work' | 'tasks' | 'me';                    // radnik
 
 export interface FieldTab {
     id: FieldTabId;
@@ -23,17 +26,18 @@ export interface FieldTab {
     Icon: typeof Home;
 }
 
+/** Redoslijed prati kontrolorov dan: šta se radi → ko radi → šta je stiglo → za koga. */
+const CONTROLLER_TABS: FieldTab[] = [
+    { id: 'orders', label: 'Nalozi', Icon: ClipboardList },
+    { id: 'attendance', label: 'Šihtarica', Icon: CalendarCheck },
+    { id: 'purchases', label: 'Narudžbe', Icon: ShoppingCart },
+    { id: 'projects', label: 'Projekti', Icon: FolderOpen },
+];
+
 const WORKER_TABS: FieldTab[] = [
     { id: 'home', label: 'Danas', Icon: Home },
     { id: 'work', label: 'Moj posao', Icon: ClipboardList },
     { id: 'tasks', label: 'Zadaci', Icon: CheckSquare },
-    { id: 'me', label: 'Ja', Icon: User },
-];
-
-const CONTROLLER_TABS: FieldTab[] = [
-    { id: 'home', label: 'Kontrola', Icon: ClipboardCheck },
-    { id: 'work', label: 'Nalozi', Icon: ClipboardList },
-    { id: 'checks', label: 'Nedostaci', Icon: CheckSquare },
     { id: 'me', label: 'Ja', Icon: User },
 ];
 

@@ -14,6 +14,7 @@ import { generateUUID, createWorkLog, workLogExists, getWorkers, createProductio
 import type { Worker, WorkerAttendance, WorkOrder, WorkOrderItem, WorkLog } from './types';
 import { itemMaterialTotal } from './materialCost';
 import { computeMissingAttendanceDays } from './attendanceHistory';
+import { aggregateLaborFromLogs, laborCostOf, laborDaysOf, type ItemLabor } from './laborAggregate';
 
 // Helper: Get Firestore with null check
 function getDb() {
@@ -3190,18 +3191,16 @@ export async function recalculateWorkOrder(
         // EFIKASNOST: JEDAN upit svih logova naloga → trošak rada po stavci iz memorije
         // (umjesto calculateActualLaborCost = 1 upit po stavci). Σ Daily_Rate po
         // Work_Order_Item_ID je identičan staroj per-item logici (vidi calculateActualLaborCost).
-        const laborByItem = new Map<string, number>();
-        // Radnik-dani po stavci (Σ Day_Fraction) — hrani Actual_Labor_Days za "planirano vs potrošeno" na kartici
-        const daysByItem = new Map<string, number>();
+        // Agregacija je izdvojena u lib/laborAggregate.ts jer je od uvođenja
+        // pogonskih uloga dijeli i serverski put knjiženja (kontrolor s telefona,
+        // lib/server/fieldAttendance.ts). Dvije kopije ove aritmetike bi značile
+        // da se isti dan obračuna različito ovisno o tome ko ga je unio.
+        let laborAgg = new Map<string, ItemLabor>();
         {
             const logConstraints: any[] = [where('Work_Order_ID', '==', workOrderId)];
             if (workOrder.Organization_ID) logConstraints.push(where('Organization_ID', '==', workOrder.Organization_ID));
             const woLogsSnap = await getDocs(query(collection(firestore, 'work_logs'), ...logConstraints));
-            woLogsSnap.docs.forEach(d => {
-                const x = d.data();
-                laborByItem.set(x.Work_Order_Item_ID, (laborByItem.get(x.Work_Order_Item_ID) || 0) + (x.Daily_Rate || 0));
-                daysByItem.set(x.Work_Order_Item_ID, (daysByItem.get(x.Work_Order_Item_ID) || 0) + (x.Day_Fraction ?? 1));
-            });
+            laborAgg = aggregateLaborFromLogs(woLogsSnap.docs.map(d => d.data() as any));
         }
         // EFIKASNOST: sve per-item sync izmjene idu u jedan writeBatch (umjesto N updateDoc-a).
         const itemUpdates: { ref: any; payload: Record<string, any> }[] = [];
@@ -3362,8 +3361,8 @@ export async function recalculateWorkOrder(
 
             // INVARIJANTA: trošak rada proizvoda = Σ Daily_Rate iz work logova (jedini izvor istine).
             // Nema "manual_override" izuzetka — sve izmjene (knjiga rada, timeline) idu kroz work logove.
-            const freshItemLaborCost = Math.round((laborByItem.get(item.ID) || 0) * 100) / 100;
-            const freshItemLaborDays = Math.round((daysByItem.get(item.ID) || 0) * 100) / 100;
+            const freshItemLaborCost = laborCostOf(laborAgg, item.ID);
+            const freshItemLaborDays = laborDaysOf(laborAgg, item.ID);
 
             return {
                 item, itemValue, itemMaterialCost, itemTransport,

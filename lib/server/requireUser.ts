@@ -101,6 +101,24 @@ export async function requireStaff(req: Request): Promise<AuthedUser> {
     return user;
 }
 
+/**
+ * Kontrolor + sve jače uloge.
+ *
+ * Kontrolor je jedina pogonska uloga koja SMIJE pisati (prisustvo, knjiženje,
+ * čekiranje procesa, zadaci). Radnik za sada samo čita — kad dobije svoje
+ * radnje, dobiće vlastiti guard, ne proširenje ovoga.
+ *
+ * Staff prolazi jer vlasnik mora moći isprobati kontrolorov ekran
+ * („Pogledaj kao") i jer je svaka kontrolorova radnja podskup njegovih.
+ */
+export async function requireController(req: Request): Promise<AuthedUser> {
+    const user = await requireUser(req);
+    if (user.role !== 'controller' && !isStaffRole(user.role) && !user.isSuperAdmin) {
+        throw new HttpError(403, 'Nemate dozvolu za ovu radnju.');
+    }
+    return user;
+}
+
 /** Upravljanje korisnicima smiju samo vlasnik i administrator — ne i menadžer. */
 export async function requireOrgAdmin(req: Request): Promise<AuthedUser> {
     const user = await requireUser(req);

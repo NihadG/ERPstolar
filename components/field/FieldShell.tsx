@@ -19,7 +19,7 @@ import { MEmpty, MList, MItem, MCell, MText, MValue, MButton } from '@/component
 import FieldTabBar, { type FieldTabId } from './FieldTabBar';
 import SetPasswordScreen from './SetPasswordScreen';
 import WorkerHome from './WorkerHome';
-import ControllerHome from './ControllerHome';
+import ControllerApp from './ControllerApp';
 import '@/components/tabs/mobile/MobileUI.css';
 import './Field.css';
 
@@ -74,7 +74,21 @@ export default function FieldShell({ previewUid = null }: Props) {
     }
 
     const role = data.user.role;
-    const isController = role === 'controller';
+
+    // Kontrolor ima vlastitu aplikaciju s četiri taba — šihtarica, nalozi,
+    // narudžbe, projekti. Radnik ostaje na jednostavnijem ekranu ispod.
+    if (role === 'controller') {
+        return (
+            <div className={`mui fld${data.preview ? ' fld-preview' : ''}`}>
+                {data.preview && (
+                    <div className="fld-preview-bar">
+                        Pregled: <b>{data.user.name}</b> ({data.user.roleLabel}) — samo za čitanje
+                    </div>
+                )}
+                <ControllerApp data={data} readOnly={data.preview} />
+            </div>
+        );
+    }
 
     return (
         <div className={`mui fld${data.preview ? ' fld-preview' : ''}`}>
@@ -85,21 +99,18 @@ export default function FieldShell({ previewUid = null }: Props) {
             )}
 
             <div className="fld-body">
-                {tab === 'home' && (isController ? <ControllerHome data={data} /> : <WorkerHome data={data} />)}
+                {tab === 'home' && <WorkerHome data={data} />}
 
-                {/* Ostali tabovi dolaze sa modulom kontrole — do tada su iskrena
-                    prazna stanja, ne poluradne liste. */}
+                {/* Radnikovi ostali tabovi dolaze u sljedećoj fazi — do tada su
+                    iskrena prazna stanja, ne poluradne liste. */}
                 {tab === 'work' && (
                     <MEmpty
-                        title={isController ? 'Nalozi' : 'Moj posao'}
+                        title="Moj posao"
                         sub="Puna lista s detaljima naloga dolazi u sljedećoj fazi. Ono što vam treba danas je na početnoj."
                     />
                 )}
                 {tab === 'tasks' && (
                     <MEmpty title="Zadaci" sub="Označavanje zadataka dolazi u sljedećoj fazi." />
-                )}
-                {tab === 'checks' && (
-                    <MEmpty title="Nedostaci" sub="Evidencija nedostataka s fotografijom dolazi u sljedećoj fazi." />
                 )}
 
                 {tab === 'me' && (
