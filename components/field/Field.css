@@ -77,7 +77,10 @@
 .fld-preview .fat-bulk,
 .fld-preview .fbk-order,
 .fld-preview .fbk-confirm,
-.fld-preview .fbk-presence {
+.fld-preview .fbk-presence,
+.fld-preview .fod-item,
+.fld-preview .fod-act,
+.fld-preview .fod-chip button {
     pointer-events: none;
 }
 

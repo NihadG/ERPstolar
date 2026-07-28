@@ -18,6 +18,8 @@ import { MEmpty, MList, MItem, MCell, MText, MValue, MButton, MSheet } from '@/c
 import FieldTabBar, { type FieldTabId } from './FieldTabBar';
 import AttendanceScreen from './attendance/AttendanceScreen';
 import OrdersScreen from './orders/OrdersScreen';
+import PurchasesScreen from './purchases/PurchasesScreen';
+import ProjectsScreen from './projects/ProjectsScreen';
 import './Controller.css';
 
 const initials = (name: string) =>
@@ -62,18 +64,10 @@ export default function ControllerApp({ data, readOnly }: Props) {
                 )}
 
                 {tab === 'purchases' && (
-                    <MEmpty
-                        title="Narudžbe"
-                        sub="Pregled narudžbi i evidencija prijema materijala dolaze u sljedećoj fazi."
-                    />
+                    <PurchasesScreen showToast={showToast} readOnly={readOnly} />
                 )}
 
-                {tab === 'projects' && (
-                    <MEmpty
-                        title="Projekti"
-                        sub="Pregled projekata i proizvoda dolazi u sljedećoj fazi."
-                    />
-                )}
+                {tab === 'projects' && <ProjectsScreen />}
             </div>
 
             <FieldTabBar role="controller" activeTab={tab} onTabChange={setTab} />
