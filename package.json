@@ -12,6 +12,10 @@
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage"
   },
+  "_comment_overrides": "jose@6 je SAMO ESM (type: module, bez `require` uslova u exports). jwks-rsa@4 je CJS i radi require('jose'), pa svaka ruta koja uvuce firebase-admin pukne na Vercelu s ERR_REQUIRE_ESM jos pri ucitavanju modula (HTTP 500 prije ijedne linije naseg koda). Lokalno se ne vidi jer Node 22.12+ podrzava require(esm). jose@5 ima CJS izlaz, a jwks-rsa iz njega koristi samo importJWK/exportSPKI/decodeJwt/decodeProtectedHeader — sve nepromijenjeno izmedju v5 i v6.",
+  "overrides": {
+    "jose": "^5.10.0"
+  },
   "dependencies": {
     "@google/generative-ai": "^0.24.1",
     "@hello-pangea/dnd": "^18.0.1",

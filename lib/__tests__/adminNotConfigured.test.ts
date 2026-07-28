@@ -17,24 +17,11 @@
 // — greška mora preživjeti cijeli put od adminAuth() do odgovora.
 // ════════════════════════════════════════════════════════════════════
 
-// firebase-admin uvlači ESM zavisnost (jose) koju jest ne transformiše, a i nema
-// šta da radi u ovom testu: sve što se ovdje provjerava dešava se PRIJE ijednog
-// poziva prema Googleu. Mock ostaje namjerno glup — čim ga test dotakne, znači da
-// je klasifikacija greške propuštena dalje nego što smije.
-jest.mock('firebase-admin/app', () => ({
-    initializeApp: jest.fn(() => ({ name: 'erp-admin' })),
-    getApps: jest.fn(() => []),
-    getApp: jest.fn(),
-    cert: jest.fn((o: unknown) => o),
-}));
-jest.mock('firebase-admin/auth', () => ({
-    getAuth: jest.fn(() => ({
-        verifyIdToken: jest.fn(async () => { throw new Error('mock ne verifikuje tokene'); }),
-        setCustomUserClaims: jest.fn(),
-    })),
-}));
-jest.mock('firebase-admin/firestore', () => ({ getFirestore: jest.fn() }));
-
+// firebase-admin se NAMJERNO ne mokuje. Ruta je u produkciji vraćala 500 zato što
+// je cijeli modul pucao pri učitavanju (ERR_REQUIRE_ESM: jwks-rsa je CJS i radi
+// require('jose'), a jose@6 je samo ESM). Mock bi tu grešku sakrio, a upravo nju
+// treba čuvati — zato test učitava pravi lanac. Nema mrežnog poziva: readCredentials()
+// pukne prije nego što adminAuth() stigne bilo šta poslati Googleu.
 const ADMIN_VARS = [
     'FIREBASE_ADMIN_PROJECT_ID',
     'FIREBASE_ADMIN_CLIENT_EMAIL',
@@ -50,6 +37,20 @@ function postTo(handlerModule: string, headers: Record<string, string>) {
     const { POST } = require(handlerModule);
     return POST(new Request('http://localhost/api/auth/sync-claims', { method: 'POST', headers }));
 }
+
+describe('lanac zavisnosti se učitava CJS require-om', () => {
+    // Regresija na stvarni produkcijski kvar: ERR_REQUIRE_ESM na Vercelu, dok je
+    // lokalno radilo jer Node 22.12+ podržava require(esm). Test hvata razliku
+    // koju razvojna mašina sakrije. Ako ovo padne, provjeri `overrides.jose`.
+    test('jose koji vidi jwks-rsa ima CJS izlaz', () => {
+        const resolved = require.resolve('jose', { paths: [require.resolve('jwks-rsa')] });
+        expect(resolved).toContain('cjs');
+    });
+
+    test('firebase-admin/auth se učitava bez ERR_REQUIRE_ESM', () => {
+        expect(() => require('firebase-admin/auth')).not.toThrow();
+    });
+});
 
 describe('sync-claims bez FIREBASE_ADMIN_* varijabli', () => {
     beforeEach(() => {
