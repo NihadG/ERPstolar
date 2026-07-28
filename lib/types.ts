@@ -445,6 +445,13 @@ export interface Worker {
     Daily_Rate?: number;      // Dnevnica u KM (trenutna/posljednja)
     Daily_Rate_History?: { Effective_From: string; Rate: number }[];  // efektivno-datirana istorija dnevnice
     Specializations?: string[];
+
+    // NALOG ZA PRIJAVU (od 2026-07): radnik u pogonu ≠ korisnički nalog. Ova veza
+    // spaja to dvoje — bez nje prijavljen korisnik nema pogonski identitet, pa se
+    // ne može razriješiti u "svoje" stavke naloga, dnevnice ni zadatke.
+    // Prazno = radnik postoji u evidenciji, ali se ne može prijaviti u aplikaciju.
+    User_ID?: string;         // users/{uid} — piše se ISKLJUČIVO preko admin SDK-a
+    Email?: string;           // email naloga (denormalizovan, za prikaz u listi radnika)
 }
 
 export interface Notification {
@@ -949,6 +956,8 @@ export interface AppState {
 // AUTH & LICENSING TYPES
 // ============================================
 
+export type SubscriptionPlan = 'free' | 'basic' | 'professional' | 'enterprise';
+
 export interface Organization {
     Organization_ID: string;
     Name: string;
@@ -957,10 +966,11 @@ export interface Organization {
     Address: string;
     Logo_URL?: string;
     Created_Date: string;
-    Subscription_Plan: 'free' | 'basic' | 'professional' | 'enterprise';
+    Subscription_Plan: SubscriptionPlan;
     Modules: ModuleAccess;
     Billing_Email: string;
     Is_Active: boolean;
+    Seat_Limit?: number;  // Broj korisničkih naloga u paketu; provjerava se na SERVERU pri kreiranju
 }
 
 export interface ModuleAccess {
@@ -969,18 +979,75 @@ export interface ModuleAccess {
     reports: boolean;
     api_access: boolean;
     google_integration?: boolean;  // Plaćeni paket: Google Drive + Kalendar integracija
+    team?: boolean;                // Plaćeni paket: radnici i kontrolori s vlastitim nalozima
+}
+
+// ════════════════════════════════════════════════════════════════════
+// ULOGE
+//
+// Dvije porodice, namjerno razdvojene:
+//   STAFF  (owner, admin, manager) — puna aplikacija, desktop shell na `/`
+//   POGON  (controller, worker)    — samo pogonski ekran na `/pogon`
+//
+// Uloga je autoritativna u CUSTOM CLAIM-u tokena, ne u ovom dokumentu:
+// users/{uid} korisnik smije pisati sam, claim ne. Vidi lib/server/requireUser.ts.
+// ════════════════════════════════════════════════════════════════════
+
+export type UserRole = 'owner' | 'admin' | 'manager' | 'controller' | 'worker';
+
+/** Redoslijed = rastuće ovlaštenje. Indeks se koristi za "najmanje X" provjere. */
+export const ROLE_HIERARCHY: UserRole[] = ['worker', 'controller', 'manager', 'admin', 'owner'];
+
+/** Uloge koje vide punu aplikaciju. */
+export const STAFF_ROLES: UserRole[] = ['owner', 'admin', 'manager'];
+
+/** Uloge koje idu na pogonski ekran (`/pogon`) i NEMAJU direktan pristup Firestoreu. */
+export const FIELD_ROLES: UserRole[] = ['controller', 'worker'];
+
+export const ROLE_LABELS: Record<UserRole, string> = {
+    owner: 'Vlasnik',
+    admin: 'Administrator',
+    manager: 'Menadžer',
+    controller: 'Kontrolor',
+    worker: 'Radnik',
+};
+
+export function isStaffRole(role?: string | null): boolean {
+    return STAFF_ROLES.includes(role as UserRole);
+}
+
+export function isFieldRole(role?: string | null): boolean {
+    return FIELD_ROLES.includes(role as UserRole);
 }
 
 export interface User {
     User_ID: string;
     Email: string;
     Name: string;
-    Role: 'owner' | 'admin' | 'manager' | 'worker';
+    Role: UserRole;
     Organization_ID: string;
     Created_Date: string;
     Last_Login: string;
     Is_Active: boolean;
     Is_Super_Admin?: boolean;  // Set only via Firestore console, never from client
+
+    // POGONSKI IDENTITET — obavezno za 'worker' i 'controller' (vidi Worker.User_ID)
+    Worker_ID?: string;
+    Phone?: string;
+
+    // Vlasnik zada početnu lozinku i preda je radniku. Ovo tjera radnika da je
+    // pri prvoj prijavi zamijeni — time vlasnikovo poznavanje lozinke prestaje da važi.
+    Must_Change_Password?: boolean;
+
+    Disabled_At?: string;      // deaktivacija; nalog se NIKAD ne briše (istorija rada)
+    Created_By?: string;       // uid vlasnika/admina koji je kreirao nalog
+}
+
+/** Podaci koje token nosi u custom claim-ovima. */
+export interface AuthClaims {
+    orgId: string;
+    role: UserRole;
+    workerId?: string;
 }
 
 export interface SubscriptionEvent {

@@ -148,8 +148,11 @@ interface DataProviderProps {
 }
 
 export function DataProvider({ children }: DataProviderProps) {
-    const { organization } = useAuth();
-    const organizationId = organization?.Organization_ID || null;
+    const { organization, isStaff } = useAuth();
+    // Pogonske uloge nemaju pristup poslovnim kolekcijama (firestore.rules) i
+    // ne koriste ovaj store — njihov ekran ide kroz /api/field/home. Bez ovoga
+    // bi svaka njihova prijava ispalila upite koje pravila odbiju.
+    const organizationId = isStaff ? (organization?.Organization_ID || null) : null;
 
     // Activate the event-driven sync pipeline once
     useEffect(() => {

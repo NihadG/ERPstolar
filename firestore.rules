@@ -16,49 +16,123 @@ service cloud.firestore {
       return request.auth != null && request.auth.uid == userId;
     }
     
-    // Get user's organization ID from their profile.
-    // POLJE JE `Organization_ID` (vidi lib/auth.ts — User dokument). Ranije je ovdje
-    // stajalo `organizationId`, pa je helper vraćao null i SVAKO pravilo koje se na
-    // njega oslanja odbijalo pristup ("Missing or insufficient permissions").
+    // Organizacija korisnika.
+    //
+    // PRVENSTVO IMA CUSTOM CLAIM (`request.auth.token.orgId`), koji upisuje admin
+    // SDK pri kreiranju naloga. Razlog nije samo brzina: `get()` na users/{uid} je
+    // NAPLAĆENO ČITANJE pri svakoj evaluaciji pravila, a uz 2000 firmi to je
+    // najveća pojedinačna stavka na računu.
+    //
+    // Fallback na Firestore postoji za naloge napravljene prije uvođenja claimova.
+    // Njih AuthContext šalje na /api/auth/sync-claims pri prvoj prijavi, pa se
+    // fallback s vremenom prestane koristiti.
+    //
+    // POLJE JE `Organization_ID` (vidi lib/auth.ts). Ranije je ovdje stajalo
+    // `organizationId`, pa je helper vraćao null i SVAKO pravilo koje se na njega
+    // oslanja odbijalo pristup ("Missing or insufficient permissions").
     function getUserOrgId() {
-      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.Organization_ID;
+      return request.auth.token.orgId != null
+        ? request.auth.token.orgId
+        : get(/databases/$(database)/documents/users/$(request.auth.uid)).data.Organization_ID;
     }
-    
+
+    function userRole() {
+      return request.auth.token.role != null
+        ? request.auth.token.role
+        : get(/databases/$(database)/documents/users/$(request.auth.uid)).data.Role;
+    }
+
+    // STAFF = uloge koje smiju direktno u bazu (puna aplikacija).
+    // Kontrolor i radnik NISU ovdje: njihov telefon ne dodiruje Firestore nego
+    // ide kroz /api/field/home, koji vraća projekciju bez ijednog iznosa.
+    // Razlog: pravila umiju zabraniti DOKUMENT, ali ne i POLJE — a work_orders
+    // nosi Total_Value, Profit i Material_Cost.
+    function isStaff() {
+      return isAuthenticated() && userRole() in ['owner', 'admin', 'manager'];
+    }
+
+    // ISKLJUČIVO iz claima — namjerno BEZ fallbacka na Firestore. Claim postavlja
+    // /api/auth/sync-claims čitajući users/{uid}.Is_Super_Admin, a to polje se od
+    // sada ne može upisati s klijenta (vidi match /users). Time se lanac zatvara:
+    // super admin se ne može sam sebi proglasiti.
+    function isSuperAdmin() {
+      return isAuthenticated() && request.auth.token.superAdmin == true;
+    }
+
     // Check if user belongs to the document's organization
     function isOrgMember() {
-      return isAuthenticated() && 
+      return isStaff() &&
              resource.data.Organization_ID == getUserOrgId();
     }
-    
+
     // Check if new document has correct organization ID
     function hasValidOrgId() {
-      return isAuthenticated() && 
+      return isStaff() &&
              request.resource.data.Organization_ID == getUserOrgId();
     }
-    
+
+    // Skup polja koje mijenja ovaj zahtjev (radi i uz merge:true).
+    function changedKeys() {
+      return request.resource.data.diff(resource.data).affectedKeys();
+    }
+
     // ============================================
     // ORGANIZATIONS
     // ============================================
     
     match /organizations/{orgId} {
-      // Users can read their own organization
-      allow read: if isAuthenticated() && getUserOrgId() == orgId;
-      // Only allow write if user belongs to this organization
-      allow write: if isAuthenticated() && getUserOrgId() == orgId;
+      // Čitanje: svaki član, uključujući pogonske uloge — AuthContext treba naziv
+      // firme i aktivni paket. Dokument ne nosi podatke o klijentima ni cijene.
+      // Super admin čita sve (konzola /admin nabraja organizacije).
+      allow read: if isSuperAdmin() || (isAuthenticated() && getUserOrgId() == orgId);
+
+      // SAMOREGISTRACIJA: signUp (lib/auth.ts) piše organizaciju i korisnika u
+      // jednom batchu. Pravila svaki upis u batchu ocjenjuju protiv stanja PRIJE
+      // batcha — users/{uid} tada još ne postoji, pa getUserOrgId() nema šta
+      // pročitati i create bi bio odbijen. Zato create ide po determinističkom
+      // ključu `<uid>_org`: korisnik može napraviti isključivo VLASTITU firmu.
+      allow create: if isAuthenticated()
+                    && orgId == request.auth.uid + '_org'
+                    && request.resource.data.Organization_ID == orgId;
+
+      // Paket, moduli i broj mjesta se PLAĆAJU — mijenja ih samo super admin
+      // (konzola /admin). Bez ovoga bi svaki član firme sam sebi otključao
+      // plaćene module jednim pozivom iz konzole browsera.
+      allow update: if isSuperAdmin()
+                    || (isStaff()
+                        && getUserOrgId() == orgId
+                        && !changedKeys().hasAny(['Subscription_Plan', 'Modules', 'Is_Active', 'Seat_Limit']));
+
+      allow delete: if false;
     }
-    
+
     // ============================================
     // USERS
     // ============================================
-    
+
     match /users/{userId} {
       // Users can read their own profile
       // OR users in the same organization (for worker lists, user pickers, etc.)
-      allow read: if isOwner(userId) || 
-                     (isAuthenticated() && 
+      allow read: if isSuperAdmin() || isOwner(userId) ||
+                     (isAuthenticated() &&
                       get(/databases/$(database)/documents/users/$(userId)).data.Organization_ID == getUserOrgId());
-      // Users can only write to their own profile
-      allow write: if isOwner(userId);
+
+      // Samoregistracija vlasnika — isti razlog i isti ključ kao gore.
+      // Is_Super_Admin se postavlja SAMO kroz Firestore konzolu.
+      allow create: if isOwner(userId)
+                    && request.resource.data.Organization_ID == request.auth.uid + '_org'
+                    && request.resource.data.Role == 'owner'
+                    && request.resource.data.Is_Super_Admin != true;
+
+      // SRŽ MODELA ULOGA: korisnik smije mijenjati samo bezopasna polja svog
+      // dokumenta. Prije ove izmjene je `allow write: if isOwner(userId)`
+      // dozvoljavalo radniku da sam sebi upiše Role:'owner' i preuzme firmu.
+      // Role, Organization_ID, Worker_ID, Is_Active i Is_Super_Admin piše
+      // isključivo admin SDK kroz /api/team/*.
+      allow update: if isOwner(userId)
+                    && changedKeys().hasOnly(['Name', 'Phone', 'Last_Login']);
+
+      allow delete: if false;   // nalozi se deaktiviraju, ne brišu (istorija rada)
     }
     
     // ============================================
@@ -239,9 +313,9 @@ service cloud.firestore {
     // kao ostatak baze — vidi notificationService.ts. Zato ne mogu koristiti
     // isOrgMember()/hasValidOrgId().
     match /notifications/{notificationId} {
-      allow read: if isAuthenticated() && resource.data.organizationId == getUserOrgId();
-      allow create: if isAuthenticated() && request.resource.data.organizationId == getUserOrgId();
-      allow update, delete: if isAuthenticated() && resource.data.organizationId == getUserOrgId();
+      allow read: if isStaff() && resource.data.organizationId == getUserOrgId();
+      allow create: if isStaff() && request.resource.data.organizationId == getUserOrgId();
+      allow update, delete: if isStaff() && resource.data.organizationId == getUserOrgId();
     }
     
     // ============================================
@@ -311,18 +385,24 @@ service cloud.firestore {
     // ============================================
 
     match /org_settings/{orgId} {
-      allow read, write: if isAuthenticated() && orgId == getUserOrgId();
+      allow read, write: if isStaff() && orgId == getUserOrgId();
     }
 
     // ============================================
     // HOLIDAYS (praznici)
     // Globalna kolekcija — upit u productivity.ts filtrira SAMO po datumu,
-    // bez Organization_ID. Zato je čitanje dozvoljeno svakom prijavljenom.
+    // bez Organization_ID. Zato čitanje ostaje otvoreno svakom prijavljenom.
+    //
+    // PISANJE JE BILO OTVORENO SVIMA: bilo koja firma je mogla mijenjati ili
+    // brisati praznike svim ostalima, a praznici ulaze u obračun radnih dana i
+    // rokova. Sada piše samo staff, i samo dokumente svoje organizacije
+    // (postojeći dokumenti bez Organization_ID ostaju samo za čitanje).
     // ============================================
 
     match /holidays/{holidayId} {
       allow read: if isAuthenticated();
-      allow write: if isAuthenticated();
+      allow create: if isStaff() && request.resource.data.Organization_ID == getUserOrgId();
+      allow update, delete: if isStaff() && resource.data.Organization_ID == getUserOrgId();
     }
 
     // ============================================

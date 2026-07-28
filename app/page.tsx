@@ -48,7 +48,7 @@ const ProcessesTab = nextDynamic(() => import('@/components/tabs/ProcessesTab'),
 
 export default function Home() {
     const router = useRouter();
-    const { user, organization, loading: authLoading, hasModule, firebaseUser } = useAuth();
+    const { user, organization, loading: authLoading, hasModule, firebaseUser, isStaff, isField } = useAuth();
 
     // Mobile detection for responsive component switching
     const [isMobile, setIsMobile] = useState(false);
@@ -228,11 +228,21 @@ export default function Home() {
         }
     }, [authLoading, firebaseUser, router]);
 
+    // Pogonske uloge (radnik, kontrolor) nemaju šta tražiti u punoj aplikaciji —
+    // ni pravo pristupa (firestore.rules ih odsijeca), ni ekran za to. Idu na /pogon.
+    useEffect(() => {
+        if (!authLoading && isField) {
+            router.replace('/pogon');
+        }
+    }, [authLoading, isField, router]);
+
     // Track if startup sync has already run this session
     const startupSyncDone = useRef(false);
 
     useEffect(() => {
-        if (firebaseUser && organization?.Organization_ID) {
+        // `isStaff` je uslov, ne ukras: bez njega bi pogonski korisnik u trenutku
+        // prije preusmjeravanja ispalio 10 upita koje pravila odbiju.
+        if (firebaseUser && isStaff && organization?.Organization_ID) {
             refreshCollections();
 
             // Run startup sync once per session (background, non-blocking)
@@ -262,7 +272,7 @@ export default function Home() {
                 });
             }
         }
-    }, [firebaseUser, organization]);
+    }, [firebaseUser, isStaff, organization]);
 
     // Collection-level loaders for targeted refresh
     const collectionLoaders: Record<string, (orgId: string) => Promise<any[]>> = {
@@ -439,6 +449,12 @@ export default function Home() {
 
     // Don't render if not authenticated
     if (!firebaseUser) {
+        return null;
+    }
+
+    // Pogonska uloga — ne crtaj punu aplikaciju ni na jedan frejm dok
+    // preusmjeravanje na /pogon ne odradi svoje.
+    if (isField) {
         return null;
     }
 

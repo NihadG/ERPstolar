@@ -1,0 +1,367 @@
+/* ════════════════════════════════════════════════════════════════════
+   POSTAVKE → KORISNICI
+   Nadovezuje se na klase iz app/settings/page.tsx (.settings-card,
+   .settings-form-group, .btn…) i koristi iste tokene iz globals.css.
+   ════════════════════════════════════════════════════════════════════ */
+
+/* ── Podaci za prijavu (prikaz jednom) ─────────────────────────────── */
+
+.team-creds {
+    border: 1px solid #ffd28a;
+    background: linear-gradient(180deg, #fffaf0, #fff6e6);
+    border-radius: var(--radius-lg, 14px);
+    padding: 18px 20px;
+    margin-bottom: 20px;
+}
+
+.team-creds-head {
+    display: flex;
+    gap: 12px;
+    align-items: flex-start;
+}
+
+.team-creds-head .material-icons-round {
+    color: #b5610a;
+    font-size: 22px;
+    margin-top: 1px;
+}
+
+.team-creds-head strong {
+    display: block;
+    font-size: 15px;
+    color: var(--text-primary);
+}
+
+.team-creds-head p {
+    margin: 3px 0 0;
+    font-size: 13px;
+    color: var(--text-secondary);
+}
+
+.team-creds-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 10px;
+    margin: 14px 0 12px;
+}
+
+.team-creds-grid > div {
+    background: #fff;
+    border: 1px solid var(--border-light, #eee);
+    border-radius: var(--radius-md, 10px);
+    padding: 9px 12px;
+}
+
+.team-creds-grid span {
+    display: block;
+    font-size: 11.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-tertiary, #999);
+    margin-bottom: 2px;
+}
+
+.team-creds-grid code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 15px;
+    color: var(--text-primary);
+    user-select: all;
+    word-break: break-all;
+}
+
+.team-creds-actions {
+    display: flex;
+    gap: 8px;
+}
+
+.team-creds-note {
+    margin: 12px 0 0;
+    font-size: 12.5px;
+    color: var(--text-secondary);
+}
+
+/* ── Alatna traka ──────────────────────────────────────────────────── */
+
+.team-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 4px 0 16px;
+    border-bottom: 1px solid var(--border-light, #eee);
+    margin-bottom: 4px;
+}
+
+.team-seats {
+    display: flex;
+    align-items: baseline;
+    gap: 7px;
+}
+
+.team-seats strong {
+    font-size: 19px;
+    font-variant-numeric: tabular-nums;
+    color: var(--text-primary);
+}
+
+.team-seats span {
+    font-size: 13px;
+    color: var(--text-secondary);
+}
+
+/* ── Red korisnika ─────────────────────────────────────────────────── */
+
+.team-row {
+    display: flex;
+    align-items: center;
+    gap: 13px;
+    padding: 13px 0;
+    border-bottom: 1px solid var(--border-light, #f0f0f0);
+}
+
+.team-row:last-of-type { border-bottom: none; }
+.team-row.is-inactive { opacity: 0.55; }
+
+.team-avatar {
+    flex: none;
+    width: 38px;
+    height: 38px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 13.5px;
+    font-weight: 600;
+    color: #fff;
+    background: #86868b;
+}
+
+.team-avatar.blue   { background: linear-gradient(135deg, #0a84ff, #409cff); }
+.team-avatar.green  { background: linear-gradient(135deg, #2bb24c, #34c759); }
+.team-avatar.orange { background: linear-gradient(135deg, #ff9500, #ffb340); }
+.team-avatar.purple { background: linear-gradient(135deg, #af52de, #c77dff); }
+
+.team-row-main { flex: 1; min-width: 0; }
+
+.team-row-title {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    flex-wrap: wrap;
+}
+
+.team-row-title strong {
+    font-size: 14.5px;
+    color: var(--text-primary);
+}
+
+.team-row-sub {
+    display: block;
+    font-size: 12.5px;
+    color: var(--text-secondary);
+    margin-top: 2px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.team-row-note {
+    font-size: 12.5px;
+    color: var(--text-tertiary, #999);
+    padding-right: 6px;
+}
+
+/* Boja nosi ulogu — isti ključ kao mobilni prikaz. */
+.team-pill {
+    font-size: 11.5px;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: rgba(60, 60, 67, 0.08);
+    color: rgba(60, 60, 67, 0.7);
+    white-space: nowrap;
+}
+
+.team-pill.blue   { background: rgba(0, 122, 255, 0.12);  color: #0067da; }
+.team-pill.green  { background: rgba(52, 199, 89, 0.14);  color: #248a3d; }
+.team-pill.orange { background: rgba(255, 149, 0, 0.14);  color: #b5610a; }
+.team-pill.purple { background: rgba(175, 82, 222, 0.13); color: #8a35c0; }
+
+/* ── Meni akcija ───────────────────────────────────────────────────── */
+
+.team-menu-wrap { position: relative; flex: none; }
+
+.team-menu-btn {
+    width: 32px;
+    height: 32px;
+    border: none;
+    background: transparent;
+    border-radius: 8px;
+    color: var(--text-secondary);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: var(--transition, 0.15s ease);
+}
+
+.team-menu-btn:hover { background: rgba(60, 60, 67, 0.07); }
+.team-menu-btn:disabled { opacity: 0.4; cursor: default; }
+
+.team-menu-scrim {
+    position: fixed;
+    inset: 0;
+    z-index: 10;
+}
+
+.team-menu {
+    position: absolute;
+    right: 0;
+    top: 36px;
+    z-index: 11;
+    min-width: 194px;
+    background: var(--surface, #fff);
+    border: 1px solid var(--border-light, #e8e8e8);
+    border-radius: var(--radius-md, 10px);
+    box-shadow: 0 10px 32px rgba(0, 0, 0, 0.14);
+    padding: 5px;
+    display: flex;
+    flex-direction: column;
+}
+
+.team-menu button,
+.team-menu a {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    width: 100%;
+    padding: 9px 10px;
+    border: none;
+    background: transparent;
+    border-radius: 7px;
+    font-size: 13.5px;
+    color: var(--text-primary);
+    text-align: left;
+    text-decoration: none;
+    cursor: pointer;
+}
+
+.team-menu button:hover,
+.team-menu a:hover { background: rgba(60, 60, 67, 0.07); }
+.team-menu .material-icons-round { font-size: 18px; color: var(--text-secondary); }
+.team-menu .danger { color: #d70015; }
+.team-menu .danger .material-icons-round { color: #d70015; }
+
+/* ── Prazna stanja i podnožje ──────────────────────────────────────── */
+
+.team-empty {
+    padding: 26px 0;
+    text-align: center;
+    font-size: 13.5px;
+    color: var(--text-secondary);
+}
+
+.team-empty--error { color: #d70015; }
+
+.team-foot {
+    margin: 14px 2px 0;
+    font-size: 12.5px;
+    color: var(--text-tertiary, #8a8a8e);
+    line-height: 1.5;
+}
+
+/* ── Modal ─────────────────────────────────────────────────────────── */
+
+.team-modal-scrim {
+    position: fixed;
+    inset: 0;
+    z-index: 1000;
+    background: rgba(0, 0, 0, 0.36);
+    backdrop-filter: blur(3px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+}
+
+.team-modal {
+    width: 100%;
+    max-width: 480px;
+    max-height: 90vh;
+    overflow-y: auto;
+    background: var(--surface, #fff);
+    border-radius: var(--radius-lg, 16px);
+    box-shadow: 0 24px 60px rgba(0, 0, 0, 0.24);
+}
+
+.team-modal-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 18px 22px;
+    border-bottom: 1px solid var(--border-light, #eee);
+    position: sticky;
+    top: 0;
+    background: var(--surface, #fff);
+    border-radius: var(--radius-lg, 16px) var(--radius-lg, 16px) 0 0;
+}
+
+.team-modal-head h3 { margin: 0; font-size: 17px; }
+
+.team-modal-head button {
+    border: none;
+    background: transparent;
+    cursor: pointer;
+    color: var(--text-secondary);
+    display: flex;
+    padding: 4px;
+    border-radius: 6px;
+}
+
+.team-modal-head button:hover { background: rgba(60, 60, 67, 0.07); }
+
+.team-modal-body { padding: 18px 22px 22px; }
+.team-modal-body .settings-form-group { margin-bottom: 15px; }
+
+.team-modal-body small {
+    display: block;
+    margin-top: 5px;
+    font-size: 12px;
+    color: var(--text-secondary);
+    line-height: 1.45;
+}
+
+.team-pass-row {
+    display: flex;
+    gap: 7px;
+    align-items: center;
+}
+
+.team-pass-row input {
+    flex: 1;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    letter-spacing: 0.02em;
+}
+
+.team-modal-error {
+    background: rgba(255, 59, 48, 0.1);
+    color: #d70015;
+    border-radius: var(--radius-md, 10px);
+    padding: 10px 13px;
+    font-size: 13px;
+    margin-bottom: 14px;
+}
+
+.team-modal-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 9px;
+    padding-top: 4px;
+}
+
+@media (max-width: 640px) {
+    .team-toolbar { flex-direction: column; align-items: stretch; gap: 12px; }
+    .team-row-sub { white-space: normal; }
+    .team-modal-scrim { padding: 0; align-items: flex-end; }
+    .team-modal { max-width: none; max-height: 92vh; border-radius: 18px 18px 0 0; }
+}

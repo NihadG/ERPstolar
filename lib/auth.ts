@@ -46,11 +46,16 @@ export async function signUp(
             Address: '',
             Created_Date: new Date().toISOString(),
             Subscription_Plan: 'free',
+            // Mora nabrojati SVE module iz ModuleAccess — nedostajući ključ znači
+            // `undefined`, pa hasModule() vraća false i modul se ne može uključiti
+            // kroz /admin bez ručnog popravljanja dokumenta.
             Modules: {
                 offers: false,
                 orders: false,
                 reports: false,
                 api_access: false,
+                google_integration: false,
+                team: false,
             },
             Billing_Email: email,
             Is_Active: true,

@@ -13,9 +13,11 @@ import Toast from '@/components/ui/Toast';
 import Link from 'next/link';
 import SystemReadiness from '@/components/settings/SystemReadiness';
 import NameClassificationReview from '@/components/settings/NameClassificationReview';
+import TeamSection from '@/components/settings/TeamSection';
 
 const PLAN_NAMES: Record<string, { name: string; color: string; icon: string }> = {
     free: { name: 'Besplatni', color: '#86868b', icon: 'star_outline' },
+    basic: { name: 'Basic', color: '#34c759', icon: 'star' },
     professional: { name: 'Professional', color: '#667eea', icon: 'workspace_premium' },
     enterprise: { name: 'Enterprise', color: '#34c759', icon: 'verified' },
 };
@@ -75,7 +77,7 @@ const DEFAULT_SETTINGS: AppSettings = {
 
 export default function SettingsPage() {
     const router = useRouter();
-    const { user, loading: authLoading, firebaseUser, organization, signOut, hasModule } = useAuth();
+    const { user, loading: authLoading, firebaseUser, organization, signOut, hasModule, isField, isAdmin } = useAuth();
     const { refreshOrgSettings } = useData();
     const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -152,6 +154,13 @@ export default function SettingsPage() {
             router.push('/login');
         }
     }, [authLoading, firebaseUser, router]);
+
+    // Postavke su vlasnikov ekran — pogonske uloge nazad na svoj.
+    useEffect(() => {
+        if (!authLoading && isField) {
+            router.replace('/pogon');
+        }
+    }, [authLoading, isField, router]);
 
     function showMessage(text: string, type: 'success' | 'error') {
         setMessage({ text, type });
@@ -312,9 +321,10 @@ export default function SettingsPage() {
         return null;
     }
 
-    // Sekcije koje koriste glavno dugme "Sačuvaj postavke". Integracije se čuvaju
-    // odmah po akciji (Poveži/Odaberi folder/toggle), pa tu prikazujemo napomenu umjesto dugmeta.
-    const usesGlobalSave = activeSection !== 'integracije';
+    // Sekcije koje koriste glavno dugme "Sačuvaj postavke". Integracije i Korisnici
+    // se čuvaju odmah po akciji (Poveži/Kreiraj nalog/Deaktiviraj), pa tu prikazujemo
+    // napomenu umjesto dugmeta — glavno dugme bi tamo bilo prazno obećanje.
+    const usesGlobalSave = activeSection !== 'integracije' && activeSection !== 'korisnici';
 
     return (
         <div className="settings-page">
@@ -379,6 +389,16 @@ export default function SettingsPage() {
                             <span className="sidebar-item-label">Podaci i spremnost</span>
                         </button>
 
+                        <span className="nav-eyebrow">Organizacija</span>
+                        <button
+                            className={`sidebar-item ${activeSection === 'korisnici' ? 'active' : ''}`}
+                            onClick={() => setActiveSection('korisnici')}
+                        >
+                            <span className="material-icons-round">manage_accounts</span>
+                            <span className="sidebar-item-label">Korisnici</span>
+                            {!hasModule('team') && <span className="nav-pro-badge">PRO</span>}
+                        </button>
+
                         <span className="nav-eyebrow">Integracije</span>
                         <button
                             className={`sidebar-item ${activeSection === 'integracije' ? 'active' : ''}`}
@@ -403,6 +423,10 @@ export default function SettingsPage() {
                             <SystemReadiness />
                             <NameClassificationReview />
                         </>
+                    )}
+
+                    {activeSection === 'korisnici' && (
+                        <TeamSection showMessage={showMessage} />
                     )}
 
                     {activeSection === 'company' && (

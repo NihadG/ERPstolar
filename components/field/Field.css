@@ -1,0 +1,150 @@
+/* ═══════════════════════════════════════════════════════════════════
+   POGONSKI EKRAN (/pogon)
+   Nadogradnja nad MobileUI.css — sve boje i tipografija dolaze odatle
+   (`.mui` mora ostati na korijenu, on nosi CSS varijable).
+   Ovdje su SAMO stvari kojih u primitivima nema: okvir ekrana, traka
+   pregleda, obavijesti i ekran za lozinku.
+   ═══════════════════════════════════════════════════════════════════ */
+
+.fld {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    background: linear-gradient(178deg, #eef1f6, #e7eaf1);
+    overscroll-behavior: none;
+}
+
+/* Jedini skroler ekrana — donja tab-traka (.mtb, z-index 800) stoji iznad,
+   pa sadržaj mora imati prostora ispod sebe. */
+.fld-body {
+    flex: 1;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+    padding: calc(14px + env(safe-area-inset-top, 0px)) 16px calc(92px + env(safe-area-inset-bottom, 0px));
+}
+
+/* Ekrani bez tab-trake (lozinka, greška, učitavanje). */
+.fld-solo .fld-body { padding-bottom: calc(32px + env(safe-area-inset-bottom, 0px)); }
+
+.fld-center {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 14px;
+    color: rgba(60, 60, 67, 0.6);
+    font-size: 14.5px;
+}
+
+/* ── Traka pregleda („Pogledaj kao") ───────────────────────────────── */
+
+.fld-preview-bar {
+    flex: none;
+    padding: calc(9px + env(safe-area-inset-top, 0px)) 16px 9px;
+    background: linear-gradient(135deg, #af52de, #8a35c0);
+    color: #fff;
+    font-size: 13px;
+    letter-spacing: -0.01em;
+    text-align: center;
+}
+
+/* Na desktopu se pregled crta u okviru veličine telefona (vidi app/pogon). */
+.fld-preview {
+    position: relative;
+    inset: auto;
+    height: 100%;
+    border-radius: inherit;
+    overflow: hidden;
+}
+
+/* Donja traka je inače fiksirana za viewport; u okviru telefona mora biti
+   vezana za okvir, inače na desktopu odleti na dno prozora. */
+.fld-preview .mtb {
+    position: absolute;
+}
+
+/* Sve akcije u pregledu su mrtve — vlasnik gleda, ne dira tuđi nalog. */
+.fld-preview .mui-abtn,
+.fld-preview .mui-btn,
+.fld-preview .mui-cbx,
+.fld-preview .mui-actbtn {
+    pointer-events: none;
+}
+
+/* ── Obavijest u toku ekrana ───────────────────────────────────────── */
+
+.fld-notice {
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+    margin: 4px 0 6px;
+    padding: 12px 14px;
+    border-radius: 13px;
+    background: rgba(255, 149, 0, 0.13);
+    color: var(--mui-orange-t);
+    font-size: 13.5px;
+    line-height: 1.45;
+    letter-spacing: -0.01em;
+}
+
+.fld-notice svg { flex: none; margin-top: 1px; }
+.fld-notice b { font-weight: 600; }
+
+.fld-notice--info {
+    background: rgba(0, 122, 255, 0.1);
+    color: var(--mui-blue-t);
+}
+
+/* ── Sitni dodaci na karticama ─────────────────────────────────────── */
+
+.fld-seg { padding: 10px 0 2px; }
+
+.fld-card-sub {
+    padding: 2px 2px 8px;
+    font-size: 13px;
+    color: var(--mui-label2);
+    letter-spacing: -0.01em;
+}
+
+/* ── Ekran za postavljanje lozinke ─────────────────────────────────── */
+
+.fld-keyicon {
+    width: 52px;
+    height: 52px;
+    margin: 18px 0 8px;
+    border-radius: 15px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #fff;
+    background: linear-gradient(135deg, #0a84ff, #5e5ce6);
+    box-shadow: 0 8px 20px -8px rgba(10, 132, 255, 0.7);
+}
+
+.fld-hint {
+    margin: 10px 4px 0;
+    font-size: 13px;
+    color: var(--mui-label2);
+    letter-spacing: -0.01em;
+}
+
+.fld-error {
+    margin: 12px 0 0;
+    padding: 11px 14px;
+    border-radius: 12px;
+    background: rgba(255, 59, 48, 0.12);
+    color: var(--mui-red-t);
+    font-size: 13.5px;
+    line-height: 1.45;
+}
+
+.fld-submit { padding: 18px 0 4px; }
+
+/* Polja unosa: ≥16px, inače iOS zumira ekran pri fokusu. */
+.fld .mui-field input,
+.fld .mui-field select {
+    font-size: 16px;
+}

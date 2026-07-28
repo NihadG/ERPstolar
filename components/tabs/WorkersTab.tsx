@@ -159,6 +159,20 @@ export default function WorkersTab({ workers, onRefresh, showToast }: WorkersTab
                                     }}>
                                         {worker.Worker_Type || 'Glavni'}
                                     </span>
+                                    {/* Radnik u evidenciji ≠ nalog za prijavu. Bez ove naznake se
+                                        dvije liste (Radnici i Postavke → Korisnici) razilaze u glavi. */}
+                                    {worker.User_ID && (
+                                        <span
+                                            title={`Ima nalog za prijavu${worker.Email ? `: ${worker.Email}` : ''}`}
+                                            style={{
+                                                background: '#ede9fe', color: '#5b21b6',
+                                                padding: '2px 6px', borderRadius: '4px',
+                                                fontSize: '10px', fontWeight: 600, marginRight: '6px',
+                                            }}
+                                        >
+                                            Ima nalog
+                                        </span>
+                                    )}
                                     {worker.Role} • {worker.Phone || 'Bez telefona'}
                                     {worker.Daily_Rate && (
                                         <span style={{ marginLeft: '8px', color: '#10b981', fontWeight: 600 }}>

@@ -10,7 +10,8 @@ import {
     updateLastLogin,
     signOut,
 } from '@/lib/auth';
-import type { User, Organization, ModuleAccess } from '@/lib/types';
+import type { User, Organization, ModuleAccess, UserRole } from '@/lib/types';
+import { ROLE_HIERARCHY, isStaffRole, isFieldRole } from '@/lib/types';
 
 // ============================================
 // AUTH CONTEXT TYPES
@@ -28,12 +29,43 @@ interface AuthContextType {
     isOwner: boolean;
     isAdmin: boolean;
 
+    // Uloge: `staff` vidi punu aplikaciju na `/`, `field` ide na `/pogon`.
+    role: UserRole | null;
+    isStaff: boolean;
+    isField: boolean;
+    /** Mora postaviti vlastitu lozinku prije bilo čega drugog. */
+    mustChangePassword: boolean;
+
     refreshUser: () => Promise<void>;
     refreshOrganization: () => Promise<void>;
     signOut: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
+
+/**
+ * Osigura da token nosi `orgId` i `role`.
+ *
+ * Zove server rutu koja claims čita iz users/{uid} (nikad iz zahtjeva), pa
+ * osvježi token. Tiho odustaje ako server sloj nije podešen — postojeći
+ * vlasnici i dalje rade preko fallbacka u firestore.rules, samo skuplje.
+ */
+async function ensureClaims(fbUser: FirebaseUser): Promise<void> {
+    try {
+        const token = await fbUser.getIdTokenResult();
+        if (token.claims.orgId && token.claims.role) return;
+
+        const res = await fetch('/api/auth/sync-claims', {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${token.token}` },
+        });
+        if (!res.ok) return;
+
+        await fbUser.getIdToken(true);   // povuci novi token s claimovima
+    } catch (e) {
+        console.warn('Sinhronizacija uloge nije uspjela (nastavljam s fallbackom):', e);
+    }
+}
 
 // ============================================
 // AUTH PROVIDER
@@ -61,6 +93,11 @@ export function AuthProvider({ children }: AuthProviderProps) {
             setFirebaseUser(fbUser);
 
             if (fbUser) {
+                // MIGRACIJA CLAIMOVA — nalozi napravljeni prije uvođenja uloga nemaju
+                // orgId/role u tokenu, a firestore.rules ih odatle čita. Ovo mora proći
+                // PRIJE prvog čitanja iz Firestorea, inače pravila odbiju zahtjev.
+                await ensureClaims(fbUser);
+
                 // Fetch user profile and organization
                 const userProfile = await getUserProfile(fbUser.uid);
                 setUser(userProfile);
@@ -105,8 +142,12 @@ export function AuthProvider({ children }: AuthProviderProps) {
     };
 
     // Role checks
-    const isOwner = user?.Role === 'owner';
-    const isAdmin = user?.Role === 'owner' || user?.Role === 'admin';
+    const role = (user?.Role as UserRole | undefined) ?? null;
+    const isOwner = role === 'owner';
+    const isAdmin = role === 'owner' || role === 'admin';
+    const isStaff = isStaffRole(role) || isSuperAdmin;
+    const isField = isFieldRole(role) && !isSuperAdmin;
+    const mustChangePassword = user?.Must_Change_Password === true;
 
     // Refresh user data
     const refreshUser = async () => {
@@ -137,6 +178,10 @@ export function AuthProvider({ children }: AuthProviderProps) {
         hasModule,
         isOwner,
         isAdmin,
+        role,
+        isStaff,
+        isField,
+        mustChangePassword,
         refreshUser,
         refreshOrganization,
         signOut: handleSignOut,
@@ -167,7 +212,7 @@ export function useAuth(): AuthContextType {
 
 interface ProtectedRouteProps {
     children: ReactNode;
-    requiredRole?: 'owner' | 'admin' | 'manager' | 'worker';
+    requiredRole?: UserRole;
 }
 
 export function ProtectedRoute({ children, requiredRole }: ProtectedRouteProps) {
@@ -188,9 +233,8 @@ export function ProtectedRoute({ children, requiredRole }: ProtectedRouteProps) 
     }
 
     if (requiredRole) {
-        const roleHierarchy = ['worker', 'manager', 'admin', 'owner'];
-        const userRoleIndex = roleHierarchy.indexOf(user.Role);
-        const requiredRoleIndex = roleHierarchy.indexOf(requiredRole);
+        const userRoleIndex = ROLE_HIERARCHY.indexOf(user.Role);
+        const requiredRoleIndex = ROLE_HIERARCHY.indexOf(requiredRole);
 
         if (userRoleIndex < requiredRoleIndex) {
             return (

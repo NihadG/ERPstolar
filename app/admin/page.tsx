@@ -34,11 +34,13 @@ const PLANS: { value: Organization['Subscription_Plan']; label: string; color: s
     { value: 'enterprise', label: 'Enterprise', color: '#af52de' },
 ];
 
+// `team` = radnici i kontrolori s vlastitim nalozima za prijavu. Namjerno samo
+// u Enterprise paketu — to je ono što se naplaćuje po mjestu.
 const DEFAULT_MODULES: Record<Organization['Subscription_Plan'], ModuleAccess> = {
-    free: { offers: false, orders: false, reports: false, api_access: false, google_integration: false },
-    basic: { offers: true, orders: false, reports: false, api_access: false, google_integration: false },
-    professional: { offers: true, orders: true, reports: true, api_access: false, google_integration: true },
-    enterprise: { offers: true, orders: true, reports: true, api_access: true, google_integration: true },
+    free: { offers: false, orders: false, reports: false, api_access: false, google_integration: false, team: false },
+    basic: { offers: true, orders: false, reports: false, api_access: false, google_integration: false, team: false },
+    professional: { offers: true, orders: true, reports: true, api_access: false, google_integration: true, team: false },
+    enterprise: { offers: true, orders: true, reports: true, api_access: true, google_integration: true, team: true },
 };
 
 // ============================================
