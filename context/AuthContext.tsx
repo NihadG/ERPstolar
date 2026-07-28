@@ -68,11 +68,13 @@ async function ensureClaims(fbUser: FirebaseUser, force = false): Promise<void> 
             method: 'POST',
             headers: { Authorization: `Bearer ${token.token}` },
         });
-        // Neuspjeh se GLASNO javlja. Ranije je bio tih `return`, pa je jedini trag
-        // ostajao odbijeno čitanje bez ijednog objašnjenja zašto.
+        // Neuspjeh se GLASNO javlja, sa serverovim razlogom. Ranije je bio tih
+        // `return`, pa je jedini trag ostajao odbijeno čitanje bez objašnjenja.
         if (!res.ok) {
+            const body = await res.json().catch(() => null);
             console.warn(
-                `Sinhronizacija uloge nije uspjela (HTTP ${res.status}) — pravila padaju na fallback preko users/{uid}.`
+                `Sinhronizacija uloge nije uspjela (HTTP ${res.status}${body?.code ? `, ${body.code}` : ''})` +
+                `${body?.error ? `: ${body.error}` : ''} — pravila padaju na fallback preko users/{uid}.`
             );
             return;
         }

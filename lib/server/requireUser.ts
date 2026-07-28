@@ -134,12 +134,15 @@ export function errorResponse(e: unknown): NextResponse {
         return NextResponse.json({ error: e.message }, { status: e.status });
     }
     if (e instanceof AdminNotConfiguredError) {
+        // Detalj (koja varijabla fali i zašto) ostaje u serverskom logu — klijent
+        // dobija samo stabilan `code`, dovoljan da se u konzoli razlikuje
+        // „server nije podešen" od stvarnog kvara.
         console.error('[api]', e.message);
         return NextResponse.json(
-            { error: 'Server nije podešen za upravljanje korisnicima. Kontaktirajte podršku.' },
+            { error: 'Server nije podešen za upravljanje korisnicima. Kontaktirajte podršku.', code: 'admin-not-configured' },
             { status: 503 }
         );
     }
     console.error('[api] neočekivana greška:', e);
-    return NextResponse.json({ error: 'Došlo je do greške na serveru.' }, { status: 500 });
+    return NextResponse.json({ error: 'Došlo je do greške na serveru.', code: 'server-error' }, { status: 500 });
 }
