@@ -48,6 +48,10 @@ export default function RootLayout({
                 <meta name="apple-mobile-web-app-status-bar-style" content="default" />
                 <meta name="apple-mobile-web-app-title" content="ERP Stolar" />
                 <link rel="apple-touch-icon" href="/icons/icon-192x192.png" />
+                {/* Bez eksplicitnog rel="icon" browser traži /favicon.ico, kojeg nema —
+                    otud stalni 404 u konzoli. Koristi se postojeća PWA ikona. */}
+                <link rel="icon" type="image/svg+xml" href="/icons/icon.svg" />
+                <link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192x192.png" />
                 <meta name="mobile-web-app-capable" content="yes" />
                 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
             </head>

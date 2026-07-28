@@ -145,12 +145,19 @@ export function errorResponse(e: unknown): NextResponse {
     }
     console.error('[api] neočekivana greška:', e);
     // ŠIFRA greške ide i klijentu, poruka i stack ne. Firebase i Google biblioteke
-    // nose kratke, bezopasne šifre tipa `auth/insufficient-permission` ili
-    // `permission-denied` — one same po sebi kažu gdje tražiti, a bez njih se za
-    // svaki 500 mora u serverske logove. Sve duže od šifre se odbacuje da poruka
-    // servera ne procuri u browser.
-    const raw = (e as { code?: unknown })?.code;
-    const cause = typeof raw === 'string' && raw.length <= 60 ? raw : undefined;
+    // nose kratke, bezopasne oznake tipa `auth/insufficient-permission` — one same
+    // po sebi kažu gdje tražiti, a bez njih se za svaki 500 mora u serverske logove.
+    //
+    // Pokrivena su OBA oblika: Auth greške nose string (`auth/...`), a Firestore
+    // brojčani gRPC status (7 = PERMISSION_DENIED, 16 = UNAUTHENTICATED). Prvi
+    // pokušaj je hvatao samo string, pa je 500 iz Firestorea stizao bez ijednog
+    // traga. Ako ni koda nema, šalje se ime klase greške — i to suzi pretragu.
+    const err = e as { code?: unknown; name?: unknown };
+    const cause =
+        typeof err?.code === 'string' && err.code.length <= 60 ? err.code
+            : typeof err?.code === 'number' ? `grpc-${err.code}`
+                : typeof err?.name === 'string' && err.name.length <= 60 ? err.name
+                    : undefined;
     return NextResponse.json(
         { error: 'Došlo je do greške na serveru.', code: 'server-error', ...(cause ? { cause } : {}) },
         { status: 500 }
