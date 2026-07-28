@@ -48,7 +48,7 @@ const ProcessesTab = nextDynamic(() => import('@/components/tabs/ProcessesTab'),
 
 export default function Home() {
     const router = useRouter();
-    const { user, organization, loading: authLoading, hasModule, firebaseUser, isStaff, isField } = useAuth();
+    const { user, organization, loading: authLoading, hasModule, firebaseUser, isStaff, isField, authError, retryAuth } = useAuth();
 
     // Mobile detection for responsive component switching
     const [isMobile, setIsMobile] = useState(false);
@@ -271,8 +271,14 @@ export default function Home() {
                     } catch { /* localStorage nedostupan — preskoči */ }
                 });
             }
+        } else if (!authLoading) {
+            // SIGURNOSNA MREŽA: `loading` počinje kao true, a skida ga isključivo
+            // refreshCollections(). Ako organizacije nema, ono se nikad ne pozove i
+            // overlay ostane zauvijek. Ovdje se spušta čim je jasno da se ništa
+            // neće učitati — pa se vidi poruka umjesto beskonačnog spinnera.
+            setLoading(false);
         }
-    }, [firebaseUser, isStaff, organization]);
+    }, [firebaseUser, isStaff, organization, authLoading]);
 
     // Collection-level loaders for targeted refresh
     const collectionLoaders: Record<string, (orgId: string) => Promise<any[]>> = {
@@ -456,6 +462,30 @@ export default function Home() {
     // preusmjeravanje na /pogon ne odradi svoje.
     if (isField) {
         return null;
+    }
+
+    // PRIJAVA PROŠLA, PODACI NISU. Dok ovog nije bilo, aplikacija je u ovom stanju
+    // vrtjela LoadingOverlay unedogled: `refreshCollections()` se zove tek kad
+    // organizacija postoji, a jedino ona skida `loading`. Kvar se vidio samo kao
+    // jedan red u konzoli. Sada se kaže šta je palo i nudi izlaz.
+    if (authError) {
+        return (
+            <div className="auth-loading">
+                <span className="material-icons-round" style={{ fontSize: 48, color: 'var(--error)' }}>lock</span>
+                <h2 style={{ margin: '16px 0 4px', fontSize: 20 }}>
+                    {authError === 'profile' ? 'Korisnički profil nije dostupan' : 'Podaci firme nisu dostupni'}
+                </h2>
+                <p style={{ maxWidth: 460, lineHeight: 1.6 }}>
+                    {authError === 'profile'
+                        ? 'Prijava je prošla, ali profil ovog naloga se ne može pročitati. Ako je nalog tek napravljen, pokušaj ponovo za koji trenutak.'
+                        : 'Prijava je prošla, ali baza je odbila čitanje podataka firme. Najčešće je uzrok da token nema upisanu ulogu — „Pokušaj ponovo" ga osvježava.'}
+                </p>
+                <div style={{ display: 'flex', gap: 10, marginTop: 20 }}>
+                    <button className="btn btn-primary" onClick={() => { void retryAuth(); }}>Pokušaj ponovo</button>
+                    <button className="btn btn-secondary" onClick={() => { void handleLogout(); }}>Odjavi se</button>
+                </div>
+            </div>
+        );
     }
 
     return (

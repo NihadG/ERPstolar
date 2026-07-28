@@ -16,6 +16,34 @@ service cloud.firestore {
       return request.auth != null && request.auth.uid == userId;
     }
     
+    // CLAIM SE ČITA ISKLJUČIVO PREKO OVE PROVJERE.
+    //
+    // Direktan pristup nepostojećem ključu mape (`request.auth.token.orgId` kad
+    // claim nije postavljen) NIJE siguran izraz: umjesto `null` završi kao GREŠKA
+    // u evaluaciji, a greška u pravilu znači ODBIJEN pristup — ne prelazak na
+    // drugu granu ternara. Zato je fallback na users/{uid} bio mrtav kod: nalozi
+    // napravljeni prije uvođenja uloga nisu mogli pročitati NIŠTA, jer je izraz
+    // pukao prije nego što je do fallbacka uopšte došlo. Simptom je bio
+    // "Missing or insufficient permissions" na organizations/{orgId} i beskonačno
+    // učitavanje aplikacije.
+    function hasClaim(name) {
+      return request.auth != null
+             && request.auth.token != null
+             && request.auth.token.keys().hasAny([name]);
+    }
+
+    // Profil korisnika kao fallback izvor. `exists()` je nužan iz istog razloga:
+    // `get()` na nepostojeći dokument vraća null, pa bi `.data.X` bila greška.
+    // Ponovljeni `get()` na isti dokument u istoj evaluaciji je jedno čitanje.
+    function profileData() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function profileHas(field) {
+      return exists(/databases/$(database)/documents/users/$(request.auth.uid))
+             && profileData().keys().hasAny([field]);
+    }
+
     // Organizacija korisnika.
     //
     // PRVENSTVO IMA CUSTOM CLAIM (`request.auth.token.orgId`), koji upisuje admin
@@ -29,17 +57,17 @@ service cloud.firestore {
     //
     // POLJE JE `Organization_ID` (vidi lib/auth.ts). Ranije je ovdje stajalo
     // `organizationId`, pa je helper vraćao null i SVAKO pravilo koje se na njega
-    // oslanja odbijalo pristup ("Missing or insufficient permissions").
+    // oslanja odbijalo pristup.
     function getUserOrgId() {
-      return request.auth.token.orgId != null
+      return hasClaim('orgId')
         ? request.auth.token.orgId
-        : get(/databases/$(database)/documents/users/$(request.auth.uid)).data.Organization_ID;
+        : (profileHas('Organization_ID') ? profileData().Organization_ID : null);
     }
 
     function userRole() {
-      return request.auth.token.role != null
+      return hasClaim('role')
         ? request.auth.token.role
-        : get(/databases/$(database)/documents/users/$(request.auth.uid)).data.Role;
+        : (profileHas('Role') ? profileData().Role : null);
     }
 
     // STAFF = uloge koje smiju direktno u bazu (puna aplikacija).
@@ -56,7 +84,7 @@ service cloud.firestore {
     // sada ne može upisati s klijenta (vidi match /users). Time se lanac zatvara:
     // super admin se ne može sam sebi proglasiti.
     function isSuperAdmin() {
-      return isAuthenticated() && request.auth.token.superAdmin == true;
+      return isAuthenticated() && hasClaim('superAdmin') && request.auth.token.superAdmin == true;
     }
 
     // Check if user belongs to the document's organization

@@ -36,6 +36,15 @@ interface AuthContextType {
     /** Mora postaviti vlastitu lozinku prije bilo čega drugog. */
     mustChangePassword: boolean;
 
+    /**
+     * Prijava je prošla, ali se profil ili organizacija NISU učitali (najčešće
+     * odbijeno čitanje iz firestore.rules). Bez ovoga se kvar vidio samo kao
+     * poruka u konzoli, dok je aplikacija vrtjela spinner unedogled.
+     */
+    authError: 'profile' | 'organization' | null;
+    /** Ponovi učitavanje, uz PRISILNO osvježenje tokena (claimovi). */
+    retryAuth: () => Promise<void>;
+
     refreshUser: () => Promise<void>;
     refreshOrganization: () => Promise<void>;
     signOut: () => Promise<void>;
@@ -50,16 +59,23 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
  * osvježi token. Tiho odustaje ako server sloj nije podešen — postojeći
  * vlasnici i dalje rade preko fallbacka u firestore.rules, samo skuplje.
  */
-async function ensureClaims(fbUser: FirebaseUser): Promise<void> {
+async function ensureClaims(fbUser: FirebaseUser, force = false): Promise<void> {
     try {
-        const token = await fbUser.getIdTokenResult();
+        const token = await fbUser.getIdTokenResult(force);
         if (token.claims.orgId && token.claims.role) return;
 
         const res = await fetch('/api/auth/sync-claims', {
             method: 'POST',
             headers: { Authorization: `Bearer ${token.token}` },
         });
-        if (!res.ok) return;
+        // Neuspjeh se GLASNO javlja. Ranije je bio tih `return`, pa je jedini trag
+        // ostajao odbijeno čitanje bez ijednog objašnjenja zašto.
+        if (!res.ok) {
+            console.warn(
+                `Sinhronizacija uloge nije uspjela (HTTP ${res.status}) — pravila padaju na fallback preko users/{uid}.`
+            );
+            return;
+        }
 
         await fbUser.getIdToken(true);   // povuci novi token s claimovima
     } catch (e) {
@@ -80,6 +96,38 @@ export function AuthProvider({ children }: AuthProviderProps) {
     const [user, setUser] = useState<User | null>(null);
     const [organization, setOrganization] = useState<Organization | null>(null);
     const [loading, setLoading] = useState(true);
+    const [authError, setAuthError] = useState<'profile' | 'organization' | null>(null);
+
+    /**
+     * Učitaj profil i organizaciju za prijavljenog korisnika.
+     *
+     * Izvučeno iz slušaoca jer isti tok treba i dugme „Pokušaj ponovo": kad
+     * claimovi tek što su upisani, ponovni pokušaj s PRISILNIM osvježenjem tokena
+     * je tačno ono što nedostaje da pravila prođu.
+     */
+    async function loadFor(fbUser: FirebaseUser, force = false): Promise<void> {
+        // MIGRACIJA CLAIMOVA — nalozi napravljeni prije uvođenja uloga nemaju
+        // orgId/role u tokenu, a firestore.rules ih odatle čita. Ovo mora proći
+        // PRIJE prvog čitanja iz Firestorea, inače pravila odbiju zahtjev.
+        await ensureClaims(fbUser, force);
+
+        const userProfile = await getUserProfile(fbUser.uid);
+        setUser(userProfile);
+
+        if (!userProfile) {
+            setOrganization(null);
+            setAuthError('profile');
+            return;
+        }
+
+        const org = await getOrganization(userProfile.Organization_ID);
+        setOrganization(org);
+        // `null` znači odbijeno čitanje ili nepostojeći dokument — oba su fatalna
+        // za aplikaciju (hasModule() zaključa sve module), pa se moraju vidjeti.
+        setAuthError(org ? null : 'organization');
+
+        if (org) await updateLastLogin(fbUser.uid);
+    }
 
     // Listen to Firebase auth state changes
     useEffect(() => {
@@ -93,32 +141,29 @@ export function AuthProvider({ children }: AuthProviderProps) {
             setFirebaseUser(fbUser);
 
             if (fbUser) {
-                // MIGRACIJA CLAIMOVA — nalozi napravljeni prije uvođenja uloga nemaju
-                // orgId/role u tokenu, a firestore.rules ih odatle čita. Ovo mora proći
-                // PRIJE prvog čitanja iz Firestorea, inače pravila odbiju zahtjev.
-                await ensureClaims(fbUser);
-
-                // Fetch user profile and organization
-                const userProfile = await getUserProfile(fbUser.uid);
-                setUser(userProfile);
-
-                if (userProfile) {
-                    const org = await getOrganization(userProfile.Organization_ID);
-                    setOrganization(org);
-
-                    // Update last login
-                    await updateLastLogin(fbUser.uid);
-                }
+                await loadFor(fbUser);
             } else {
                 setUser(null);
                 setOrganization(null);
+                setAuthError(null);
             }
 
             setLoading(false);
         });
 
         return () => unsubscribe();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
+
+    const retryAuth = async () => {
+        if (!firebaseUser) return;
+        setLoading(true);
+        try {
+            await loadFor(firebaseUser, true);
+        } finally {
+            setLoading(false);
+        }
+    };
 
     // Check super admin status from user profile (stored securely in Firestore)
     // Note: Is_Super_Admin should only be set via Firestore Console, never from client
@@ -162,6 +207,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
         if (user) {
             const org = await getOrganization(user.Organization_ID);
             setOrganization(org);
+            setAuthError(org ? null : 'organization');
         }
     };
 
@@ -182,6 +228,8 @@ export function AuthProvider({ children }: AuthProviderProps) {
         isStaff,
         isField,
         mustChangePassword,
+        authError,
+        retryAuth,
         refreshUser,
         refreshOrganization,
         signOut: handleSignOut,
