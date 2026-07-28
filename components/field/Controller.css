@@ -645,3 +645,302 @@
     text-align: center;
     line-height: 1.4;
 }
+
+/* ═══════════════════════════════════════════════════════════════════
+   NALOZI — lista i detalj
+   ═══════════════════════════════════════════════════════════════════ */
+
+.fld-search { padding-bottom: 10px; }
+
+.fld-loading {
+    padding: 40px 0;
+    text-align: center;
+    font-size: 14.5px;
+    color: var(--mui-label2);
+}
+
+.fld-taskbadge {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 9px;
+    border-radius: 999px;
+    background: rgba(255, 149, 0, 0.14);
+    color: var(--mui-orange-t);
+    font-size: 12.5px;
+    font-weight: 600;
+}
+
+/* ── Detalj naloga ─────────────────────────────────────────────────── */
+
+.fod {
+    position: fixed;
+    inset: 0;
+    z-index: 900;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    background: linear-gradient(178deg, #eef1f6, #e7eaf1);
+    padding: calc(14px + env(safe-area-inset-top, 0px)) 16px
+             calc(92px + env(safe-area-inset-bottom, 0px));
+}
+
+/* ── Tok procesa ───────────────────────────────────────────────────── */
+
+.fod-flow {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding-top: 4px;
+}
+
+.fod-row {
+    background: var(--mui-cell);
+    border-radius: 15px;
+    padding: 12px 14px 14px;
+    box-shadow: 0 1px 2px rgba(20, 30, 60, 0.05), 0 12px 28px -20px rgba(20, 30, 60, 0.25);
+}
+
+/* Boja lijeve ivice = stanje procesa. Gejtovanje se PRIKAZUJE, ne blokira. */
+.fod-row.done { border-left: 4px solid var(--mui-green); }
+.fod-row.active { border-left: 4px solid var(--mui-blue); }
+.fod-row.blocked { border-left: 4px solid rgba(60, 60, 67, 0.22); }
+
+.fod-row-head {
+    display: flex;
+    align-items: center;
+    gap: 11px;
+    width: 100%;
+    min-height: 48px;
+    border: none;
+    background: none;
+    padding: 0;
+    font-family: inherit;
+    text-align: left;
+    color: var(--mui-label);
+    cursor: pointer;
+}
+
+.fod-row-icon {
+    flex: none;
+    width: 30px;
+    height: 30px;
+    border-radius: 9px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(60, 60, 67, 0.07);
+    color: var(--mui-label2);
+}
+
+.fod-row.done .fod-row-icon { background: rgba(52, 199, 89, 0.15); color: var(--mui-green-t); }
+.fod-row.active .fod-row-icon { background: rgba(0, 122, 255, 0.12); color: var(--mui-blue-t); }
+
+.fod-row-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+
+.fod-row-name {
+    font-size: 16px;
+    font-weight: 600;
+    letter-spacing: -0.022em;
+}
+
+.fod-row-meta {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+    font-size: 13px;
+    color: var(--mui-label2);
+}
+
+.fod-row-body {
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 0.5px solid var(--mui-sep);
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+}
+
+/* Red proizvoda unutar procesa — meta 52px */
+.fod-item {
+    display: flex;
+    align-items: center;
+    gap: 11px;
+    width: 100%;
+    min-height: 52px;
+    padding: 9px 11px;
+    border: 1.5px solid transparent;
+    border-radius: 12px;
+    background: rgba(60, 60, 67, 0.045);
+    font-family: inherit;
+    text-align: left;
+    cursor: pointer;
+}
+
+.fod-item.on { background: rgba(0, 122, 255, 0.09); border-color: rgba(0, 122, 255, 0.32); }
+.fod-item.done .fod-item-name { color: var(--mui-label2); }
+.fod-item:disabled { opacity: 0.6; cursor: default; }
+
+.fod-item-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+
+.fod-item-name {
+    font-size: 15px;
+    letter-spacing: -0.02em;
+    color: var(--mui-label);
+}
+
+.fod-item-meta { font-size: 12.5px; color: var(--mui-label2); }
+
+/* ── Akcije ────────────────────────────────────────────────────────── */
+
+.fod-actions {
+    display: flex;
+    gap: 8px;
+    padding-top: 4px;
+}
+
+.fod-act {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    min-height: 48px;
+    border: none;
+    border-radius: 12px;
+    background: rgba(60, 60, 67, 0.07);
+    color: var(--mui-label2);
+    font-family: inherit;
+    font-size: 15px;
+    font-weight: 500;
+    letter-spacing: -0.015em;
+    cursor: pointer;
+}
+
+.fod-act.primary { background: rgba(52, 199, 89, 0.16); color: var(--mui-green-t); }
+.fod-act:disabled { opacity: 0.45; cursor: default; }
+.fod-act:active { opacity: 0.75; }
+
+.fod-hint {
+    margin: 10px 0 0;
+    font-size: 12.5px;
+    color: var(--mui-label2);
+    line-height: 1.45;
+}
+
+.fod-warn {
+    margin: 10px 0 0;
+    font-size: 13px;
+    color: var(--mui-orange-t);
+    line-height: 1.45;
+}
+
+/* ── Proizvodi ─────────────────────────────────────────────────────── */
+
+.fod-product {
+    background: var(--mui-cell);
+    border-radius: 15px;
+    padding: 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    box-shadow: 0 1px 2px rgba(20, 30, 60, 0.05), 0 12px 28px -20px rgba(20, 30, 60, 0.25);
+}
+
+.fod-product-head {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    justify-content: space-between;
+}
+
+.fod-product-name {
+    font-size: 16px;
+    font-weight: 600;
+    letter-spacing: -0.022em;
+}
+
+.fod-product-meta { font-size: 13px; color: var(--mui-label2); }
+
+/* ── Sheet: radnici, polja, potvrda ────────────────────────────────── */
+
+.fod-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 7px;
+    padding-bottom: 10px;
+}
+
+.fod-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 8px 8px 13px;
+    border-radius: 999px;
+    background: rgba(60, 60, 67, 0.08);
+    font-size: 14px;
+    letter-spacing: -0.01em;
+}
+
+/* Prvi radnik je GLAVNI — vidljivo drugačiji, jer redoslijed nosi značenje. */
+.fod-chip.main {
+    background: rgba(0, 122, 255, 0.13);
+    color: var(--mui-blue-t);
+    font-weight: 600;
+}
+
+.fod-chip button {
+    border: none;
+    background: rgba(60, 60, 67, 0.12);
+    color: inherit;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    padding: 0;
+}
+
+.fod-pick {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 7px;
+    padding-bottom: 4px;
+}
+
+.fod-pick .mui-chip { min-height: 42px; padding: 0 14px; }
+
+.fod-field {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 13px 16px;
+    margin-top: 8px;
+    border-radius: 12px;
+    background: var(--mui-cell);
+}
+
+.fod-field label {
+    flex: 0 0 38%;
+    font-size: 15.5px;
+    letter-spacing: -0.02em;
+}
+
+.fod-field input {
+    flex: 1;
+    min-width: 0;
+    border: none;
+    outline: none;
+    background: transparent;
+    font-family: inherit;
+    font-size: 16px;   /* ispod 16px iOS zumira ekran */
+    color: var(--mui-label);
+    text-align: right;
+}
+
+.fod-confirm-wrap { padding: 18px 0 4px; }
+
+.fod-addtask { padding: 4px 0 12px; }

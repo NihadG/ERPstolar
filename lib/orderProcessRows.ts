@@ -8,8 +8,8 @@
 // jedan red — bez diranja snimljenog grafa.
 // ════════════════════════════════════════════════════════════════════
 
-import type { WorkOrderItem, ProcessNode, ProcessEdge } from '@/lib/types';
-import { nodeMatchesProcess, computeProcessGating } from '@/lib/productProcesses';
+import type { WorkOrderItem, ProcessNode, ProcessEdge, ProcessGraph } from '@/lib/types';
+import { nodeMatchesProcess, computeProcessGating, planToStages, synthesizeOrderGraph } from '@/lib/productProcesses';
 import { layoutProcessGraph } from '@/lib/processLayout';
 import { SPECIAL_LETTERS } from '@/lib/classify/patternNormalize';
 
@@ -157,4 +157,51 @@ export function buildOrderProcessRows(nodes: ProcessNode[], edges: ProcessEdge[]
     const gating = computeProcessGating(base.map(b => b.id), edges, doneById);
     const withState: ProcRow[] = base.map(r => ({ ...r, state: gating.get(r.id) || 'blocked' }));
     return mergeDuplicateNameRows(withState);
+}
+
+/**
+ * TOK NALOGA — jedini ispravan način da se dobiju redovi procesa.
+ *
+ * Izvučeno iz OrderProcessBoard jer od uvođenja kontrolora isti tok crtaju DVA
+ * mjesta: desktop komponenta i serverska projekcija za telefon
+ * (lib/field/fieldOrders.ts). Dvije kopije ove logike značile bi da vlasnik i
+ * kontrolor gledaju različit tok na istom nalogu.
+ *
+ * NE čitati `item.Processes` direktno umjesto ovoga — tamo postoje samo procesi
+ * koji su već dirani, pa procesi fale, sve izgleda završeno, a legacy „Rad" se
+ * prikazuje kao pravi korak. To je već jednom bio bug.
+ *
+ * Hibrid: snimljeni graf je autoritativan za gating (ručne veze iz
+ * ProcessGraphModal), a procesi na stavkama koje graf ne pokriva (dodani nakon
+ * zadnjeg snimanja) dopunjuju se iz sinteze — da se rad ne sakrije.
+ */
+export function buildOrderFlowRows(items: WorkOrderItem[], savedGraph?: ProcessGraph | null): ProcRow[] {
+    const synthItems = items
+        .map(it => ({
+            itemId: it.ID,
+            stages: planToStages(
+                it.Process_Stages,
+                (it.Processes || []).map(p => p.Process_Name).filter(Boolean) as string[]
+            ),
+        }))
+        .filter(si => si.stages.length > 0);
+    const synth = synthesizeOrderGraph(synthItems).graph;
+
+    if (savedGraph && savedGraph.nodes?.length) {
+        const out = buildOrderProcessRows(savedGraph.nodes, savedGraph.edges, items);
+
+        const coveredKeys = new Set(out.map(r => dedupeProcessKey(r.name)));
+        const extraNodes = synth.nodes.filter(n => !coveredKeys.has(dedupeProcessKey(n.name)));
+        if (extraNodes.length) {
+            const extraIds = new Set(extraNodes.map(n => n.id));
+            const extraEdges = synth.edges.filter(e => extraIds.has(e.source) && extraIds.has(e.target));
+            out.push(...buildOrderProcessRows(extraNodes, extraEdges, items));
+        }
+
+        // Završni spoj preko OBA izvora — čuva „isti proces = jedan red" i kad
+        // duplikat dolazi iz različitih puteva.
+        return mergeDuplicateNameRows(out);
+    }
+
+    return buildOrderProcessRows(synth.nodes, synth.edges, items);
 }

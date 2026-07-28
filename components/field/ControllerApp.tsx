@@ -17,6 +17,7 @@ import type { FieldHomePayload } from '@/lib/field/fieldHome';
 import { MEmpty, MList, MItem, MCell, MText, MValue, MButton, MSheet } from '@/components/tabs/mobile/MobileUI';
 import FieldTabBar, { type FieldTabId } from './FieldTabBar';
 import AttendanceScreen from './attendance/AttendanceScreen';
+import OrdersScreen from './orders/OrdersScreen';
 import './Controller.css';
 
 const initials = (name: string) =>
@@ -30,7 +31,8 @@ interface Props {
 
 export default function ControllerApp({ data, readOnly }: Props) {
     const { signOut } = useAuth();
-    const [tab, setTab] = useState<FieldTabId>('attendance');
+    // Nalozi su prvo što kontrolor treba kad uzme telefon — šta se danas radi.
+    const [tab, setTab] = useState<FieldTabId>('orders');
     const [profileOpen, setProfileOpen] = useState(false);
     const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null);
 
@@ -56,10 +58,7 @@ export default function ControllerApp({ data, readOnly }: Props) {
                 )}
 
                 {tab === 'orders' && (
-                    <MEmpty
-                        title="Nalozi"
-                        sub="Pregled naloga i čekiranje procesa dolaze u sljedećoj fazi."
-                    />
+                    <OrdersScreen showToast={showToast} readOnly={readOnly} />
                 )}
 
                 {tab === 'purchases' && (

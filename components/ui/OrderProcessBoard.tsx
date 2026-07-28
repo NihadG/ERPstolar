@@ -7,9 +7,8 @@ import {
 } from 'lucide-react';
 import type { WorkOrderItem, Worker, WorkLog, ItemProcessStatus, ProcessCatalogItem, ProcessGraph } from '@/lib/types';
 import { updateItemProcess, addProcessToOrderItem, getProcessCatalog, getProcessGraph } from '@/lib/services';
-import { planToStages, synthesizeOrderGraph } from '@/lib/productProcesses';
 import {
-    buildOrderProcessRows, mergeDuplicateNameRows, dedupeProcessKey,
+    buildOrderFlowRows,
     type ProcRow as Row, type ProcPerItem as PerItem,
 } from '@/lib/orderProcessRows';
 import './OrderProcessBoard.css';
@@ -117,35 +116,10 @@ export default function OrderProcessBoard({
 
     // ── Projekcija: procesi ujedinjeni preko proizvoda, u redoslijedu toka ──
     // Gradnja redova + gating + dedup duplih naziva je u lib/orderProcessRows (testirano).
-    const rows = useMemo<Row[]>(() => {
-        const synthItems = items.map(it => ({
-            itemId: it.ID,
-            stages: planToStages((it as any).Process_Stages, (it.Processes || []).map(p => p.Process_Name).filter(Boolean) as string[]),
-        })).filter(si => si.stages.length > 0);
-        const synth = synthesizeOrderGraph(synthItems).graph;
-
-        // 1) SNIMLJENI graf (ručne veze iz ProcessGraphModal) je AUTORITATIVAN za gating.
-        //    Npr. kantiranje se otvara ČIM je krojenje (njegov jedini prethodnik) gotovo — a ne
-        //    kad su SVE stavke prve faze gotove (što daje dense sinteza).
-        if (savedGraph && savedGraph.nodes.length) {
-            const out = buildOrderProcessRows(savedGraph.nodes, savedGraph.edges, items);
-            // Hibrid: procesi na stavkama koje snimljeni graf NE pokriva (dodani nakon zadnjeg snimanja)
-            // → dopuni iz sinteze (među sobom gate-uju po fazama; ne skrivaj rad).
-            const coveredKeys = new Set(out.map(r => dedupeProcessKey(r.name)));
-            const extraNodes = synth.nodes.filter(n => !coveredKeys.has(dedupeProcessKey(n.name)));
-            if (extraNodes.length) {
-                const extraIds = new Set(extraNodes.map(n => n.id));
-                const extraEdges = synth.edges.filter(e => extraIds.has(e.source) && extraIds.has(e.target));
-                out.push(...buildOrderProcessRows(extraNodes, extraEdges, items));
-            }
-            // Završni spoj preko OBA izvora — čuva „isti proces = jedan red" i kad duplikat
-            // dolazi iz različitih puteva (snimljeni + sinteza).
-            return mergeDuplicateNameRows(out);
-        }
-
-        // 2) Fallback: sinteza iz faznih planova (nema snimljenog grafa).
-        return buildOrderProcessRows(synth.nodes, synth.edges, items);
-    }, [items, savedGraph]);
+    // Snimljeni graf je autoritativan za gating, sinteza dopunjuje nepokrivene
+    // procese. Sama logika je u lib/orderProcessRows jer je dijeli i pogonski
+    // ekran (kontrolor na telefonu) — vlasnik i kontrolor moraju vidjeti isti tok.
+    const rows = useMemo<Row[]>(() => buildOrderFlowRows(items, savedGraph), [items, savedGraph]);
 
     const toggleExpand = (row: Row) => {
         if (expanded === row.id) { setExpanded(null); setSel(new Set()); setFormOpen(false); return; }
