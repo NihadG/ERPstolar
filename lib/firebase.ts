@@ -1,5 +1,11 @@
 import { initializeApp, getApps, FirebaseApp } from 'firebase/app';
-import { getFirestore, Firestore, enableIndexedDbPersistence } from 'firebase/firestore';
+import {
+    getFirestore,
+    initializeFirestore,
+    persistentLocalCache,
+    persistentMultipleTabManager,
+    Firestore,
+} from 'firebase/firestore';
 import { getAuth, Auth } from 'firebase/auth';
 
 const firebaseConfig = {
@@ -18,20 +24,26 @@ let _auth: Auth | undefined;
 
 if (typeof window !== 'undefined') {
     app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0];
-    _db = getFirestore(app);
-    _auth = getAuth(app);
 
-    // Enable offline persistence — data is cached in IndexedDB so
-    // reads and writes work while the device is offline.
-    enableIndexedDbPersistence(_db).catch((err) => {
-        if (err.code === 'failed-precondition') {
-            // Multiple tabs open — persistence can only be enabled in one tab at a time
-            console.warn('Firestore persistence failed: Multiple tabs open');
-        } else if (err.code === 'unimplemented') {
-            // The current browser does not support all features required for persistence
-            console.warn('Firestore persistence failed: Browser not supported');
-        }
-    });
+    // OFFLINE KEŠ SE PODEŠAVA PRI INICIJALIZACIJI, ne naknadno.
+    //
+    // Ranije je ovdje stajao `enableIndexedDbPersistence(_db)`, koji je zastario i
+    // usput dozvoljava keš u SAMO JEDNOM tabu: drugi otvoreni tab je padao na
+    // memorijski keš uz grešku „Failed to obtain exclusive access to the
+    // persistence layer". `persistentMultipleTabManager` dijeli isti IndexedDB
+    // među tabovima, pa oba upozorenja nestaju, a keš radi u svakom tabu.
+    try {
+        _db = initializeFirestore(app, {
+            localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }),
+        });
+    } catch {
+        // initializeFirestore odbija drugi poziv na istoj instanci aplikacije
+        // (hot reload, dvostruko učitavanje modula). Tada preuzmi već postojeću —
+        // keš je tada onakav kakav je prvi poziv postavio, ali ništa ne puca.
+        _db = getFirestore(app);
+    }
+
+    _auth = getAuth(app);
 }
 
 // Export with type assertions - these will only be used in browser context
