@@ -144,5 +144,15 @@ export function errorResponse(e: unknown): NextResponse {
         );
     }
     console.error('[api] neočekivana greška:', e);
-    return NextResponse.json({ error: 'Došlo je do greške na serveru.', code: 'server-error' }, { status: 500 });
+    // ŠIFRA greške ide i klijentu, poruka i stack ne. Firebase i Google biblioteke
+    // nose kratke, bezopasne šifre tipa `auth/insufficient-permission` ili
+    // `permission-denied` — one same po sebi kažu gdje tražiti, a bez njih se za
+    // svaki 500 mora u serverske logove. Sve duže od šifre se odbacuje da poruka
+    // servera ne procuri u browser.
+    const raw = (e as { code?: unknown })?.code;
+    const cause = typeof raw === 'string' && raw.length <= 60 ? raw : undefined;
+    return NextResponse.json(
+        { error: 'Došlo je do greške na serveru.', code: 'server-error', ...(cause ? { cause } : {}) },
+        { status: 500 }
+    );
 }

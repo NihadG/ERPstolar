@@ -73,7 +73,8 @@ async function ensureClaims(fbUser: FirebaseUser, force = false): Promise<void> 
         if (!res.ok) {
             const body = await res.json().catch(() => null);
             console.warn(
-                `Sinhronizacija uloge nije uspjela (HTTP ${res.status}${body?.code ? `, ${body.code}` : ''})` +
+                `Sinhronizacija uloge nije uspjela (HTTP ${res.status}${body?.code ? `, ${body.code}` : ''}` +
+                `${body?.cause ? `, uzrok: ${body.cause}` : ''})` +
                 `${body?.error ? `: ${body.error}` : ''} — pravila padaju na fallback preko users/{uid}.`
             );
             return;
