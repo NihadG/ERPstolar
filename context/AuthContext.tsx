@@ -77,6 +77,8 @@ async function ensureClaims(fbUser: FirebaseUser, force = false): Promise<void> 
                 `${body?.cause ? `, uzrok: ${body.cause}` : ''})` +
                 `${body?.error ? `: ${body.error}` : ''} — pravila padaju na fallback preko users/{uid}.`
             );
+            // Otisak kredencijala servera (bez tajni) — uporediv s lokalnim.
+            if (body?.credentials) console.warn('Kredencijali servera:', body.credentials);
             return;
         }
 

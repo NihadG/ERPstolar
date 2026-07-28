@@ -11,7 +11,7 @@
 // ════════════════════════════════════════════════════════════════════
 
 import { NextResponse } from 'next/server';
-import { adminAuth, adminDb } from '@/lib/server/firebaseAdmin';
+import { adminAuth, adminDb, credentialFingerprint } from '@/lib/server/firebaseAdmin';
 import { errorResponse, HttpError } from '@/lib/server/requireUser';
 import type { UserRole } from '@/lib/types';
 
@@ -51,6 +51,18 @@ export async function POST(req: Request) {
 
         return NextResponse.json({ ok: true, updated: !alreadyCorrect, role, orgId: profile.Organization_ID });
     } catch (e) {
-        return errorResponse(e);
+        const res = errorResponse(e);
+
+        // OTISAK IDE UZ NEOČEKIVANU GREŠKU, i to samo ovdje.
+        //
+        // Do ove tačke se stiže tek nakon provjerenog tokena, pa otisak ne vidi
+        // niko neprijavljen. Bez njega je jedini trag gRPC brojka, a kredencijali
+        // u deploy okruženju su skriveni — pa se ne može ni utvrditi je li tamo
+        // uopšte isti ključ. Otisak je SHA-256 javnog dijela: uporediv, a bezopasan.
+        if (res.status === 500) {
+            const body = await res.json();
+            return NextResponse.json({ ...body, credentials: credentialFingerprint() }, { status: 500 });
+        }
+        return res;
     }
 }

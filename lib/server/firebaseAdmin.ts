@@ -14,7 +14,7 @@
 // ruta padne tek kad je stvarno pozvana bez konfiguracije.
 // ════════════════════════════════════════════════════════════════════
 
-import { createPrivateKey } from 'node:crypto';
+import { createHash, createPrivateKey, createPublicKey } from 'node:crypto';
 import { initializeApp, getApps, getApp, cert, type App } from 'firebase-admin/app';
 import { getAuth, type Auth } from 'firebase-admin/auth';
 import { getFirestore, type Firestore } from 'firebase-admin/firestore';
@@ -143,5 +143,39 @@ export function isAdminConfigured(): boolean {
         return true;
     } catch {
         return false;
+    }
+}
+
+/**
+ * OTISAK kredencijala — ono što se smije reći o tajni a da se tajna ne oda.
+ *
+ * Postoji zbog kvara koji se drukčije ne da riješiti: kredencijali u deploy
+ * okruženju su skriveni (Vercel ih označava Sensitive), a greška Firestorea je
+ * gola brojka — gRPC 16 (UNAUTHENTICATED). Ta brojka znači da je ključ ISPRAVAN
+ * RSA ključ (inače bi pao ranije, na createPrivateKey), ali ga Google ne priznaje:
+ * gotovo uvijek zato što ne pripada nalogu iz `clientEmail`, tj. zalijepljen je
+ * ključ nekog drugog servisnog naloga.
+ *
+ * Otisak je SHA-256 JAVNOG dijela ključa. Iz njega se privatni ključ ne može
+ * izvesti, a poređenje s lokalnim otiskom odmah kaže je li u okruženju isti ključ.
+ */
+export function credentialFingerprint(): {
+    projectId?: string;
+    clientEmail?: string;
+    keyLines?: number;
+    keyFingerprint?: string;
+    error?: string;
+} {
+    try {
+        const { projectId, clientEmail, privateKey } = readCredentials();
+        const spki = createPublicKey(privateKey).export({ type: 'spki', format: 'der' });
+        return {
+            projectId,
+            clientEmail,
+            keyLines: (privateKey.match(/\n/g) || []).length,
+            keyFingerprint: createHash('sha256').update(spki).digest('hex').slice(0, 16),
+        };
+    } catch (e) {
+        return { error: e instanceof Error ? e.message : String(e) };
     }
 }
