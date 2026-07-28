@@ -22,6 +22,16 @@
 // require('jose'), a jose@6 je samo ESM). Mock bi tu grešku sakrio, a upravo nju
 // treba čuvati — zato test učitava pravi lanac. Nema mrežnog poziva: readCredentials()
 // pukne prije nego što adminAuth() stigne bilo šta poslati Googleu.
+import { createPrivateKey, generateKeyPairSync } from 'node:crypto';
+
+// Pravi RSA ključ, generisan u testu. Lažni PEM („MIIE…") ne bi dokazao ništa:
+// popravka i validacija imaju smisla samo nad ključem koji OpenSSL stvarno prima.
+const REAL_PEM = generateKeyPairSync('rsa', {
+    modulusLength: 2048,
+    privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
+    publicKeyEncoding: { type: 'spki', format: 'pem' },
+}).privateKey as string;
+
 const ADMIN_VARS = [
     'FIREBASE_ADMIN_PROJECT_ID',
     'FIREBASE_ADMIN_CLIENT_EMAIL',
@@ -100,18 +110,60 @@ describe('oblik privatnog ključa', () => {
     });
 
     test('base64 cijelog PEM-a se prihvata — izlaz za okruženja bez višereda', () => {
-        const pem = '-----BEGIN PRIVATE KEY-----\nMIIE\n-----END PRIVATE KEY-----\n';
-        process.env.FIREBASE_ADMIN_PRIVATE_KEY = Buffer.from(pem).toString('base64');
+        process.env.FIREBASE_ADMIN_PRIVATE_KEY = Buffer.from(REAL_PEM).toString('base64');
         // eslint-disable-next-line @typescript-eslint/no-var-requires
         const { isAdminConfigured } = require('@/lib/server/firebaseAdmin');
         expect(isAdminConfigured()).toBe(true);
     });
 
     test('doslovni \\n iz .env-a se pretvara u prave nove redove', () => {
-        process.env.FIREBASE_ADMIN_PRIVATE_KEY =
-            '"-----BEGIN PRIVATE KEY-----\\nMIIE\\n-----END PRIVATE KEY-----\\n"';
+        process.env.FIREBASE_ADMIN_PRIVATE_KEY = `"${REAL_PEM.replace(/\n/g, '\\n')}"`;
         // eslint-disable-next-line @typescript-eslint/no-var-requires
         const { isAdminConfigured } = require('@/lib/server/firebaseAdmin');
         expect(isAdminConfigured()).toBe(true);
+    });
+});
+
+// ════════════════════════════════════════════════════════════════════
+// PEM BEZ PRELOMÂ REDOVA — kvar koji je stvarno oborio produkciju.
+//
+// Kad okruženje „pojede" `\n`, ključ zadrži BEGIN/END pa prođe svaku provjeru
+// oblika, ali ga OpenSSL odbija. Posljedica je bila HTTP 500 bez ijednog traga:
+// cert() ključ ne parsira pa init prođe, verifyIdToken koristi Googleove JAVNE
+// certifikate pa i on prođe, a puca tek prvi poziv kojem treba OAuth token.
+// ════════════════════════════════════════════════════════════════════
+describe('izgubljeni prelomi redova u PEM-u', () => {
+    beforeEach(() => {
+        jest.resetModules();
+        ADMIN_VARS.forEach(k => { saved[k] = process.env[k]; });
+        process.env.FIREBASE_ADMIN_PROJECT_ID = 'p';
+        process.env.FIREBASE_ADMIN_CLIENT_EMAIL = 'a@b.c';
+    });
+
+    afterEach(() => {
+        ADMIN_VARS.forEach(k => {
+            if (saved[k] === undefined) delete process.env[k];
+            else process.env[k] = saved[k];
+        });
+    });
+
+    test('ključ SLIJEPLJEN u jedan red se popravlja i prihvata', () => {
+        // Prvo dokaži da je ulaz stvarno neispravan — inače test ne dokazuje ništa.
+        const squashed = REAL_PEM.replace(/\n/g, '');
+        expect(squashed).toContain('-----BEGIN');          // prolazi provjeru oblika
+        expect(() => createPrivateKey(squashed)).toThrow(); // a kriptografski je mrtav
+
+        process.env.FIREBASE_ADMIN_PRIVATE_KEY = squashed;
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const { isAdminConfigured } = require('@/lib/server/firebaseAdmin');
+        expect(isAdminConfigured()).toBe(true);
+    });
+
+    test('POKVAREN sadržaj u ispravnom omotu se ODBIJA (503, ne tihi 500)', async () => {
+        process.env.FIREBASE_ADMIN_PRIVATE_KEY =
+            '-----BEGIN PRIVATE KEY-----\nOVOnijeKljucNegoSmece\n-----END PRIVATE KEY-----\n';
+        const res = await postTo('@/app/api/auth/sync-claims/route', { Authorization: 'Bearer bilo-sta' });
+        expect(res.status).toBe(503);
+        expect((await res.json()).code).toBe('admin-not-configured');
     });
 });

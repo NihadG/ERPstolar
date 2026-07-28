@@ -14,6 +14,7 @@
 // ruta padne tek kad je stvarno pozvana bez konfiguracije.
 // ════════════════════════════════════════════════════════════════════
 
+import { createPrivateKey } from 'node:crypto';
 import { initializeApp, getApps, getApp, cert, type App } from 'firebase-admin/app';
 import { getAuth, type Auth } from 'firebase-admin/auth';
 import { getFirestore, type Firestore } from 'firebase-admin/firestore';
@@ -39,14 +40,40 @@ export class AdminNotConfiguredError extends Error {
  */
 function decodePrivateKey(raw: string): string {
     const unwrapped = raw.replace(/^["']|["']$/g, '').replace(/\\n/g, '\n');
-    if (unwrapped.includes('-----BEGIN')) return unwrapped;
+    if (unwrapped.includes('-----BEGIN')) return normalizePem(unwrapped);
 
     try {
         const decoded = Buffer.from(unwrapped, 'base64').toString('utf8');
-        if (decoded.includes('-----BEGIN')) return decoded;
+        if (decoded.includes('-----BEGIN')) return normalizePem(decoded);
     } catch { /* nije base64 — pada na provjeru ispod */ }
 
     return unwrapped;
+}
+
+/**
+ * Vrati PEM-u prelome redova.
+ *
+ * NAJPODMUKLIJI OBLIK KVARA: ako okruženje „pojede" `\n` bez traga, ključ i dalje
+ * ima `-----BEGIN-----` i `-----END-----`, pa prođe svaku provjeru oblika — ali
+ * mu je base64 tijelo u jednom redu i OpenSSL ga odbija
+ * (`DECODER routines::unsupported`).
+ *
+ * Zašto se to vidi tek duboko: `cert()` ključ ne parsira, pa inicijalizacija
+ * prođe. `verifyIdToken` provjerava korisnikov token Googleovim JAVNIM
+ * certifikatima i privatni ključ uopšte ne dira, pa i on prođe. Pukne tek prvi
+ * poziv kojem treba OAuth token (čitanje Firestorea, setCustomUserClaims) — i to
+ * greškom bez `code` polja, dakle bez ijednog traga u odgovoru.
+ *
+ * Popravka je deterministička: uzmi base64 tijelo, izbaci sav razmak, prelomi na
+ * 64 znaka. Za ispravan ključ je ovo identiteta.
+ */
+function normalizePem(key: string): string {
+    const match = key.match(/-----BEGIN ([A-Z ]+)-----([\s\S]*?)-----END \1-----/);
+    if (!match) return key;
+
+    const [, label, body] = match;
+    const lines = body.replace(/\s+/g, '').match(/.{1,64}/g) || [];
+    return `-----BEGIN ${label}-----\n${lines.join('\n')}\n-----END ${label}-----\n`;
 }
 
 function readCredentials() {
@@ -66,6 +93,19 @@ function readCredentials() {
     // ali joj nedostaju novi redovi.
     else if (!privateKey.includes('-----BEGIN') || !privateKey.includes('-----END')) {
         missing.push('FIREBASE_ADMIN_PRIVATE_KEY (postoji, ali nije važeći PEM — provjeri nove redove / \\n)');
+    }
+    // ZAVRŠNA PROVJERA: da li ključ uopšte može biti učitan kao ključ. Provjera
+    // oblika (BEGIN/END) nije dovoljna — ključ s ispravnim omotom a pokvarenim
+    // sadržajem prolazi nju, a puca tek pri prvom potpisivanju, daleko odavde i
+    // bez upotrebljive poruke. Ovdje je to jeftino (bez mreže) i kaže se odmah.
+    else {
+        try {
+            createPrivateKey(privateKey);
+        } catch (e) {
+            missing.push(
+                `FIREBASE_ADMIN_PRIVATE_KEY (PEM se ne može učitati: ${e instanceof Error ? e.message : String(e)})`
+            );
+        }
     }
     if (missing.length) throw new AdminNotConfiguredError(missing);
 
