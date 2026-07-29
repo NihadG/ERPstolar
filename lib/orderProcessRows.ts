@@ -105,7 +105,21 @@ export function mergeDuplicateNameRows(list: ProcRow[]): ProcRow[] {
             state,
         });
     });
-    return merged;
+
+    // JEDINSTVEN `id` JE OBEĆANJE OVE FUNKCIJE, ne posljedica ulaza. Spajanje iznad
+    // garantuje jedinstveno IME, ali id dolazi iz čvora — a čvorovi mogu doći iz dvije
+    // sinteze s nezavisnim brojačima, ili iz snimljenog grafa koji i sam nosi duplikat.
+    // Pozivaoci id koriste kao identitet reda (React ključ, otvorena harmonika, meta
+    // čekiranja procesa), pa se sudar razrješava ovdje umjesto da curi u UI.
+    const seen = new Set<string>();
+    return merged.map(r => {
+        if (!seen.has(r.id)) { seen.add(r.id); return r; }
+        let i = 2;
+        while (seen.has(`${r.id}#${i}`)) i++;
+        const id = `${r.id}#${i}`;
+        seen.add(id);
+        return { ...r, id };
+    });
 }
 
 /**
@@ -195,7 +209,19 @@ export function buildOrderFlowRows(items: WorkOrderItem[], savedGraph?: ProcessG
         if (extraNodes.length) {
             const extraIds = new Set(extraNodes.map(n => n.id));
             const extraEdges = synth.edges.filter(e => extraIds.has(e.source) && extraIds.has(e.target));
-            out.push(...buildOrderProcessRows(extraNodes, extraEdges, items));
+            // DOPUNE DOBIJAJU VLASTITI PROSTOR IMENA. `synthesizeOrderGraph` gradi id kao
+            // `n-<seq>-<slug>`, gdje je `seq` brojač LOKALAN za jedan poziv, a slug briše sve
+            // ne-alfanumeričke znakove. Snimljeni graf je nastao ranijom sintezom, pa dolaze iz
+            // dva nezavisna brojača i isti id se može ponoviti — npr. čvor „Farbanje 1" iz grafa
+            // i „Farbanje-1" sa stavke oba daju `n-1-farbanje-1` (spajanje po imenu ih s pravom
+            // razlikuje, slug ne). Dvostruki id nije samo React ključ: `expanded` i traženje reda
+            // pri čekiranju procesa idu po njemu, pa bi se završetak upisao na pogrešan red.
+            const NS = 'x:';
+            out.push(...buildOrderProcessRows(
+                extraNodes.map(n => ({ ...n, id: NS + n.id })),
+                extraEdges.map(e => ({ ...e, source: NS + e.source, target: NS + e.target })),
+                items,
+            ));
         }
 
         // Završni spoj preko OBA izvora — čuva „isti proces = jedan red" i kad

@@ -1,4 +1,4 @@
-import { buildOrderProcessRows, mergeDuplicateNameRows, dedupeProcessKey, type ProcRow } from '../orderProcessRows';
+import { buildOrderProcessRows, buildOrderFlowRows, mergeDuplicateNameRows, dedupeProcessKey, type ProcRow } from '../orderProcessRows';
 import type { WorkOrderItem, ProcessNode, ProcessEdge } from '../types';
 
 // Nevidljivi znakovi kroz eksplicitne \u escape-ove (ne literali u izvoru).
@@ -107,5 +107,35 @@ describe('mergeDuplicateNameRows — direktno', () => {
         expect(out).toHaveLength(1);
         expect(out[0].total).toBe(2);
         expect(out[0].state).toBe('active');
+    });
+});
+
+describe('jedinstven id reda', () => {
+    // Regresija: id čvora je `n-<seq>-<slug>` — `seq` je brojač lokalan za jednu sintezu,
+    // a slug briše ne-alfanumeričke znakove. Snimljeni graf i svježa dopuna dolaze iz
+    // dva nezavisna brojača, pa se isti id znao pojaviti dvaput. Pogađalo je i podatke:
+    // OrderDetail red za čekiranje procesa traži po id-u i dobijao bi pogrešan.
+    it('dopuna iz sinteze ne preuzima id iz snimljenog grafa', () => {
+        const items = [item('A', 'Ormar', [{ Process_Name: 'Farbanje-1', Status: 'Na čekanju' }])];
+        const saved = {
+            nodes: [{ id: 'n-1-farbanje-1', name: 'Farbanje 1', itemIds: ['A'], aliases: ['Farbanje 1'] }],
+            edges: [],
+        } as unknown as Parameters<typeof buildOrderFlowRows>[1];
+
+        const rows = buildOrderFlowRows(items, saved);
+        const ids = rows.map(r => r.id);
+        expect(new Set(ids).size).toBe(ids.length);
+        // Oba procesa ostaju vidljiva — dopuna se ne smije progutati.
+        expect(rows).toHaveLength(2);
+    });
+
+    it('mergeDuplicateNameRows razrješava sudar id-a i kad ulaz nosi duplikat', () => {
+        const mk = (id: string, name: string): ProcRow => ({
+            id, key: dedupeProcessKey(name), name, perItem: [], done: 0, total: 0,
+            workers: [], predIds: [], state: 'blocked',
+        });
+        const out = mergeDuplicateNameRows([mk('dup', 'Rezanje'), mk('dup', 'Brušenje')]);
+        expect(out).toHaveLength(2);
+        expect(new Set(out.map(r => r.id)).size).toBe(2);
     });
 });
