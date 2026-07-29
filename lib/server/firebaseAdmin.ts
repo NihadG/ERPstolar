@@ -76,15 +76,56 @@ function normalizePem(key: string): string {
     return `-----BEGIN ${label}-----\n${lines.join('\n')}\n-----END ${label}-----\n`;
 }
 
+/**
+ * Email servisnog naloga iz env varijable.
+ *
+ * ZAŠTO OVO POSTOJI: pri lijepljenju u Vercel se vrijednost zna udvostručiti —
+ * isti email dva puta, spojen prelomom reda. Takav `clientEmail` prolazi svaku
+ * provjeru postojanja, ali Google njime potpisan JWT odbija jer `iss` ne
+ * odgovara nijednom nalogu. Jedini trag je gola brojka `grpc-16
+ * (UNAUTHENTICATED)`, bez naznake da je kriv email — pa se sat vremena traži
+ * greška u ključu, koji je ispravan.
+ *
+ * Ponovljena ista vrijednost je nedvosmislen trag lijepljenja i tiho se svodi
+ * na jednu (uz upozorenje u logu). Razlike među redovima nisu — to je stvarna
+ * zabuna i mora puknuti glasno.
+ */
+function normalizeClientEmail(raw: string): string {
+    const lines = raw.split(/[\r\n]+/).map(l => l.trim()).filter(Boolean);
+    if (lines.length <= 1) return raw.trim();
+
+    const unique = Array.from(new Set(lines));
+    if (unique.length === 1) {
+        console.warn(
+            '[firebaseAdmin] FIREBASE_ADMIN_CLIENT_EMAIL sadrži isti email',
+            lines.length,
+            'puta — koristim jedan. Očistite vrijednost u okruženju.'
+        );
+        return unique[0];
+    }
+
+    // Više RAZLIČITIH vrijednosti — ne pogađaj koja je prava.
+    return raw.trim();
+}
+
 function readCredentials() {
-    const projectId = process.env.FIREBASE_ADMIN_PROJECT_ID;
-    const clientEmail = process.env.FIREBASE_ADMIN_CLIENT_EMAIL;
+    const projectId = process.env.FIREBASE_ADMIN_PROJECT_ID?.trim();
+    const rawEmail = process.env.FIREBASE_ADMIN_CLIENT_EMAIL;
+    const clientEmail = rawEmail ? normalizeClientEmail(rawEmail) : undefined;
     const rawKey = process.env.FIREBASE_ADMIN_PRIVATE_KEY;
     const privateKey = rawKey ? decodePrivateKey(rawKey) : undefined;
 
     const missing: string[] = [];
     if (!projectId) missing.push('FIREBASE_ADMIN_PROJECT_ID');
     if (!clientEmail) missing.push('FIREBASE_ADMIN_CLIENT_EMAIL');
+    // OBLIK EMAILA SE PROVJERAVA OVDJE, a ne tek kad Google odbije potpis.
+    // Bez ove provjere neispravan email daje HTTP 500 s brojkom grpc-16 umjesto
+    // 503 s imenom varijable koja je kriva.
+    else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(clientEmail)) {
+        missing.push(
+            `FIREBASE_ADMIN_CLIENT_EMAIL (nije jedna email adresa — provjeri je li vrijednost zalijepljena dva puta): "${clientEmail.slice(0, 120)}"`
+        );
+    }
     if (!privateKey) missing.push('FIREBASE_ADMIN_PRIVATE_KEY');
     // OBLIK KLJUČA SE PROVJERAVA ZAJEDNO S POSTOJANJEM. Bez ovoga izlomljen ključ
     // prođe dovde, pa pukne u `cert()` kao obična greška — a to daje HTTP 500
