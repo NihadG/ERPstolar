@@ -15,6 +15,7 @@ import type { Worker, WorkerAttendance, WorkOrder, WorkOrderItem, WorkLog } from
 import { itemMaterialTotal } from './materialCost';
 import { computeMissingAttendanceDays } from './attendanceHistory';
 import { aggregateLaborFromLogs, laborCostOf, laborDaysOf, type ItemLabor } from './laborAggregate';
+import { orgConstraint } from './orgScope';
 
 // Helper: Get Firestore with null check
 function getDb() {
@@ -32,7 +33,8 @@ async function getItemRef(itemId: string) {
     const firestore = getDb();
     const q = query(
         collection(firestore, COLLECTIONS.WORK_ORDER_ITEMS),
-        where('ID', '==', itemId)
+        where('ID', '==', itemId),
+        orgConstraint()
     );
     const snapshot = await getDocs(q);
 
@@ -59,7 +61,8 @@ export async function saveWorkerAttendance(attendance: Partial<WorkerAttendance>
             const existingQuery = query(
                 collection(firestore, COLLECTIONS.WORKER_ATTENDANCE),
                 where('Worker_ID', '==', attendance.Worker_ID),
-                where('Date', '==', attendance.Date)
+                where('Date', '==', attendance.Date),
+                orgConstraint(attendance.Organization_ID)
             );
             const existingSnap = await getDocs(existingQuery);
             if (!existingSnap.empty) {
@@ -949,8 +952,8 @@ export async function recalcAllWorkLogSplits(
             await Promise.all(chunk.map(async (woId) => {
                 try {
                     const [itemsSnap, woSnap] = await Promise.all([
-                        getDocs(query(collection(firestore, COLLECTIONS.WORK_ORDER_ITEMS), where('Work_Order_ID', '==', woId))),
-                        getDocs(query(collection(firestore, COLLECTIONS.WORK_ORDERS), where('Work_Order_ID', '==', woId))),
+                        getDocs(query(collection(firestore, COLLECTIONS.WORK_ORDER_ITEMS), where('Work_Order_ID', '==', woId), orgConstraint(organizationId))),
+                        getDocs(query(collection(firestore, COLLECTIONS.WORK_ORDERS), where('Work_Order_ID', '==', woId), orgConstraint(organizationId))),
                     ]);
                     const ib = writeBatch(firestore);
                     let woLabor = 0;
@@ -2139,7 +2142,8 @@ export async function getWorkerAttendanceByMonth(workerId: string, year: string,
             collection(firestore, COLLECTIONS.WORKER_ATTENDANCE),
             where('Worker_ID', '==', workerId),
             where('Date', '>=', startDate),
-            where('Date', '<=', endDate)
+            where('Date', '<=', endDate),
+            orgConstraint()
         );
 
         const snapshot = await getDocs(q);
@@ -2224,23 +2228,13 @@ export async function getAllAttendanceByMonth(year: string, month: string, organ
         const startDate = `${year}-${month.padStart(2, '0')}-01`;
         const endDate = `${year}-${month.padStart(2, '0')}-31`;
 
-        // If organizationId provided, filter by it
-        if (organizationId) {
-            const q = query(
-                collection(firestore, COLLECTIONS.WORKER_ATTENDANCE),
-                where('Organization_ID', '==', organizationId),
-                where('Date', '>=', startDate),
-                where('Date', '<=', endDate)
-            );
-            const snapshot = await getDocs(q);
-            return snapshot.docs.map(doc => doc.data() as WorkerAttendance);
-        }
-
-        // Fallback for backward compatibility (no org filter)
+        // Firestore odbija upit bez org uslova (firestore.rules), pa "bez organizacije"
+        // više nije opcija — orgConstraint sam padne na sesijsku ako `organizationId` fali.
         const q = query(
             collection(firestore, COLLECTIONS.WORKER_ATTENDANCE),
             where('Date', '>=', startDate),
-            where('Date', '<=', endDate)
+            where('Date', '<=', endDate),
+            orgConstraint(organizationId)
         );
 
         const snapshot = await getDocs(q);
@@ -2265,7 +2259,8 @@ export async function getWorkerMonthlyAttendance(
             collection(firestore, COLLECTIONS.WORKER_ATTENDANCE),
             where('Worker_ID', '==', workerId),
             where('Date', '>=', startDate),
-            where('Date', '<=', endDate)
+            where('Date', '<=', endDate),
+            orgConstraint()
         );
 
         const snapshot = await getDocs(q);
@@ -3290,7 +3285,8 @@ export async function recalculateWorkOrder(
                             if (opId) {
                                 const exSnap = await getDocs(query(
                                     collection(firestore, 'offer_extras'),
-                                    where('Offer_Product_ID', '==', opId)
+                                    where('Offer_Product_ID', '==', opId),
+                                    orgConstraint(workOrder.Organization_ID)
                                 ));
                                 services = exSnap.docs.reduce((s, d) => s + (d.data().Total || 0), 0);
                             }
@@ -3630,7 +3626,8 @@ async function syncProductStatuses(items: any[]): Promise<void> {
         for (const [projectId, productStatuses] of entries) {
             const productsQuery = query(
                 collection(firestore, 'products'),
-                where('Project_ID', '==', projectId)
+                where('Project_ID', '==', projectId),
+                orgConstraint()
             );
             const productsSnap = await getDocs(productsQuery);
             if (productsSnap.empty) continue;
@@ -3670,17 +3667,13 @@ export async function syncProjectStatus(projectId: string, organizationId?: stri
     try {
         const firestore = getDb();
 
-        // Get project - optionally filter by organizationId if provided
-        const projectQuery = organizationId
-            ? query(
-                collection(firestore, 'projects'),
-                where('Project_ID', '==', projectId),
-                where('Organization_ID', '==', organizationId)
-            )
-            : query(
-                collection(firestore, 'projects'),
-                where('Project_ID', '==', projectId)
-            );
+        // Organizacija je OBAVEZAN uslov (firestore.rules) — organizationId ako je
+        // proslijeđen, inače sesijska (vidi lib/orgScope).
+        const projectQuery = query(
+            collection(firestore, 'projects'),
+            where('Project_ID', '==', projectId),
+            orgConstraint(organizationId)
+        );
         const projectSnap = await getDocs(projectQuery);
 
         if (projectSnap.empty) return;
@@ -3695,16 +3688,11 @@ export async function syncProjectStatus(projectId: string, organizationId?: stri
         }
 
         // Get all products for this project
-        const productsQuery = organizationId
-            ? query(
-                collection(firestore, 'products'),
-                where('Project_ID', '==', projectId),
-                where('Organization_ID', '==', organizationId)
-            )
-            : query(
-                collection(firestore, 'products'),
-                where('Project_ID', '==', projectId)
-            );
+        const productsQuery = query(
+            collection(firestore, 'products'),
+            where('Project_ID', '==', projectId),
+            orgConstraint(organizationId)
+        );
         const productsSnap = await getDocs(productsQuery);
 
         if (productsSnap.empty) return;
@@ -3918,7 +3906,8 @@ async function getWorkOrderWithItems(workOrderId: string): Promise<WorkOrder | n
     // Query by Work_Order_ID field (not doc ID) for consistency
     const woQuery = query(
         collection(firestore, COLLECTIONS.WORK_ORDERS),
-        where('Work_Order_ID', '==', workOrderId)
+        where('Work_Order_ID', '==', workOrderId),
+        orgConstraint()
     );
     const woSnap = await getDocs(woQuery);
 
@@ -3933,7 +3922,8 @@ async function getWorkOrderWithItems(workOrderId: string): Promise<WorkOrder | n
     // Get items from root collection using the Work_Order_ID
     const itemsQuery = query(
         collection(firestore, COLLECTIONS.WORK_ORDER_ITEMS),
-        where('Work_Order_ID', '==', workOrderId)
+        where('Work_Order_ID', '==', workOrderId),
+        orgConstraint(data.Organization_ID)
     );
     const itemsSnap = await getDocs(itemsQuery);
 

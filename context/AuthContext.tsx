@@ -12,6 +12,7 @@ import {
 } from '@/lib/auth';
 import type { User, Organization, ModuleAccess, UserRole } from '@/lib/types';
 import { ROLE_HIERARCHY, isStaffRole, isFieldRole } from '@/lib/types';
+import { setCurrentOrgId } from '@/lib/orgScope';
 
 // ============================================
 // AUTH CONTEXT TYPES
@@ -120,10 +121,15 @@ export function AuthProvider({ children }: AuthProviderProps) {
         setUser(userProfile);
 
         if (!userProfile) {
+            setCurrentOrgId(null);
             setOrganization(null);
             setAuthError('profile');
             return;
         }
+
+        // PRIJE prvog upita: bez ovoga upiti koji organizaciju ne primaju kao
+        // argument nemaju čime zadovoljiti firestore.rules (vidi lib/orgScope).
+        setCurrentOrgId(userProfile.Organization_ID);
 
         const org = await getOrganization(userProfile.Organization_ID);
         setOrganization(org);
@@ -148,6 +154,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
             if (fbUser) {
                 await loadFor(fbUser);
             } else {
+                setCurrentOrgId(null);
                 setUser(null);
                 setOrganization(null);
                 setAuthError(null);

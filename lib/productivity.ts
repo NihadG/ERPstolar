@@ -138,7 +138,7 @@ export async function calculateWorkerProductivity(
             const chunks: string[][] = [];
             for (let i = 0; i < itemIds.length; i += 10) chunks.push(itemIds.slice(i, i + 10));
             const snaps = await Promise.all(chunks.map(chunk =>
-                getDocs(query(collection(db, 'work_order_items'), where('ID', 'in', chunk)))
+                getDocs(query(collection(db, 'work_order_items'), where('ID', 'in', chunk), where('Organization_ID', '==', organizationId)))
             ));
             const items = snaps.flatMap(s => s.docs.map(d => d.data() as WorkOrderItem));
 

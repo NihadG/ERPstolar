@@ -72,7 +72,8 @@ export default function PriceEditModal({ workOrder, onClose, onSaved, showToast 
             for (const price of prices) {
                 const q = query(
                     collection(firestore, 'work_order_items'),
-                    where('ID', '==', price.ID)
+                    where('ID', '==', price.ID),
+                    where('Organization_ID', '==', workOrder.Organization_ID)
                 );
                 const snap = await getDocs(q);
                 if (!snap.empty) {

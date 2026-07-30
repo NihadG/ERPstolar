@@ -54,6 +54,7 @@ import { assembleProjectGraph, assembleOrders, assembleWorkOrders } from './serv
 import { naturalCompare } from './naturalCompare';
 import { itemMaterialTotal } from './materialCost';
 import { groupBasisReviewByProject, type ItemMaterialChange, type ProjectBasisReview } from './profitBasis';
+import { orgConstraint } from './orgScope';
 import { workOrderDisplayName } from './utils';
 import {
     generateOrderNumber as _generateOrderNumber,
@@ -2280,7 +2281,7 @@ export async function recalculateOrderTotal(orderId: string, organizationId: str
 
 export async function updateOfferProduct(data: Partial<OfferProduct>): Promise<{ success: boolean; message: string }> {
     try {
-        const q = query(collection(db, COLLECTIONS.OFFER_PRODUCTS), where('ID', '==', data.ID));
+        const q = query(collection(db, COLLECTIONS.OFFER_PRODUCTS), where('ID', '==', data.ID), orgConstraint());
         const snapshot = await getDocs(q);
 
         if (snapshot.empty) {
@@ -2493,7 +2494,7 @@ export async function updateGlassMaterial(data: UpdateGlassMaterialData, organiz
         }
 
         // Update the product material totals
-        const pmQ = query(collection(db, COLLECTIONS.PRODUCT_MATERIALS), where('ID', '==', productMaterialId));
+        const pmQ = query(collection(db, COLLECTIONS.PRODUCT_MATERIALS), where('ID', '==', productMaterialId), orgConstraint());
         const pmSnap = await getDocs(pmQ);
 
         let productId = '';
@@ -2528,7 +2529,7 @@ export async function updateGlassMaterial(data: UpdateGlassMaterialData, organiz
 }
 
 export async function deleteGlassItemsByMaterial(productMaterialId: string): Promise<void> {
-    const q = query(collection(db, COLLECTIONS.GLASS_ITEMS), where('Product_Material_ID', '==', productMaterialId));
+    const q = query(collection(db, COLLECTIONS.GLASS_ITEMS), where('Product_Material_ID', '==', productMaterialId), orgConstraint());
     const snapshot = await getDocs(q);
 
     const batch = writeBatch(db);
@@ -2747,7 +2748,7 @@ export async function updateAluDoorMaterial(data: UpdateAluDoorMaterialData, org
         }
 
         // Update the product material totals
-        const pmQ = query(collection(db, COLLECTIONS.PRODUCT_MATERIALS), where('ID', '==', productMaterialId));
+        const pmQ = query(collection(db, COLLECTIONS.PRODUCT_MATERIALS), where('ID', '==', productMaterialId), orgConstraint());
         const pmSnap = await getDocs(pmQ);
 
         let productId = '';
@@ -2783,7 +2784,7 @@ export async function updateAluDoorMaterial(data: UpdateAluDoorMaterialData, org
 }
 
 export async function deleteAluDoorItemsByMaterial(productMaterialId: string): Promise<void> {
-    const q = query(collection(db, COLLECTIONS.ALU_DOOR_ITEMS), where('Product_Material_ID', '==', productMaterialId));
+    const q = query(collection(db, COLLECTIONS.ALU_DOOR_ITEMS), where('Product_Material_ID', '==', productMaterialId), orgConstraint());
     const snapshot = await getDocs(q);
 
     const batch = writeBatch(db);
