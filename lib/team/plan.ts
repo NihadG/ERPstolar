@@ -55,8 +55,15 @@ export function planHasTeamModule(
     return modules?.team === true;
 }
 
-/** Uloge koje vlasnik/admin smije dodijeliti. `owner` se ne dodjeljuje kroz UI. */
-export const ASSIGNABLE_ROLES: UserRole[] = ['admin', 'manager', 'controller', 'worker'];
+/**
+ * Uloge koje vlasnik smije dodijeliti kroz „Novi korisnik". `owner` se ne
+ * dodjeljuje kroz UI — to je nalog kojim se firma registrovala.
+ *
+ * `admin`/`manager` postoje u tipu (UserRole, isStaffRole) i dalje rade ako ih
+ * neko postavi direktno u bazi, ali korisnik ih ne traži u padajućem meniju —
+ * samo pogonske uloge (radnik, kontrolor) imaju smisla kao dodatni nalozi.
+ */
+export const ASSIGNABLE_ROLES: UserRole[] = ['controller', 'worker'];
 
 export function isAssignableRole(role: string): role is UserRole {
     return (ASSIGNABLE_ROLES as string[]).includes(role);

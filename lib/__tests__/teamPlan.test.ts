@@ -74,10 +74,17 @@ describe('uloge', () => {
         expect(ASSIGNABLE_ROLES).not.toContain('owner');
     });
 
-    it('pogonske i staff uloge su dodjeljive', () => {
-        for (const r of ['admin', 'manager', 'controller', 'worker']) {
+    it('pogonske uloge su dodjeljive kroz UI', () => {
+        for (const r of ['controller', 'worker']) {
             expect(isAssignableRole(r)).toBe(true);
         }
+    });
+
+    it('admin/manager postoje u tipu ali se ne nude kroz UI (nisu dodjeljivi)', () => {
+        expect(isAssignableRole('admin')).toBe(false);
+        expect(isAssignableRole('manager')).toBe(false);
+        expect(ASSIGNABLE_ROLES).not.toContain('admin');
+        expect(ASSIGNABLE_ROLES).not.toContain('manager');
     });
 
     it('izmišljena uloga se odbija', () => {
