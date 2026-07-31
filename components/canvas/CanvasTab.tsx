@@ -12,7 +12,7 @@ import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import {
     Plus, Copy, Undo2, Redo2, ZoomIn, ZoomOut, Calendar, Loader2,
     Lock, AlertTriangle, Users, Trash2, Save, Link2, Package, Bookmark, Printer,
-    GitCompareArrows,
+    GitCompareArrows, ClipboardList, Sparkles,
 } from 'lucide-react';
 import type {
     Project, Worker, WorkOrder, Order, Supplier, WorkerAttendance,
@@ -32,6 +32,9 @@ import ProductPickerModal from './ProductPickerModal';
 import MaterialOrderModal, { type CreatedPurchase } from './MaterialOrderModal';
 import ChainTemplatesModal from './ChainTemplatesModal';
 import CompareModal from './CompareModal';
+import BatchPlanModal from './BatchPlanModal';
+import ScheduleReviewModal from './ScheduleReviewModal';
+import { autoSchedule, type AutoScheduleResult } from '@/lib/canvas/autoSchedule';
 import { captureChainTemplate, applyChainTemplate } from '@/lib/canvas/templates';
 import { buildPlanDocument } from '@/lib/print/planDocument';
 import { detectConflicts } from '@/lib/canvas/conflicts';
@@ -91,6 +94,8 @@ export default function CanvasTab({
     const [templatesOpen, setTemplatesOpen] = useState(false);
     const [templates, setTemplates] = useState<PlanChainTemplate[]>([]);
     const [compareOpen, setCompareOpen] = useState(false);
+    const [batchOpen, setBatchOpen] = useState(false);
+    const [reviewResult, setReviewResult] = useState<AutoScheduleResult | null>(null);
 
     const { state, dispatch, saveState, canUndo, canRedo, saveNow, reloadRemote, forceOverwrite } =
         useScenario(orgId, loaded);
@@ -418,6 +423,30 @@ export default function CanvasTab({
         showToast(`Kreirano ${purchases.length} narudžbi u planu`, 'success');
     }, [dispatch, showToast]);
 
+    /** Batch unos: dodaj sve naloge odjednom (jedan undo). */
+    const createBatch = useCallback((blocks: typeof scenario.Blocks) => {
+        if (!blocks.length) return;
+        dispatch({ type: 'ADD_BLOCKS', blocks });
+        showToast(`Dodano ${blocks.length} naloga u plan`, 'success');
+    }, [dispatch, showToast]);
+
+    /**
+     * Auto-raspored → prijedlog za pregled. NIŠTA se ne mijenja dok korisnik ne
+     * primijeni; izlaz je čist diff (isti obrazac kao lanac).
+     */
+    const runSchedule = useCallback(() => {
+        const result = autoSchedule(
+            scenario,
+            { workers, workOrders, attendance, projects, isSaturdayWorking },
+            { startISO: todayISO() }
+        );
+        if (!result.scheduled.length && !result.unscheduled.length) {
+            showToast('Nijedan nalog nema kandidat-ekipe za raspored — dodaj ih u batch unosu ili detaljima', 'info');
+            return;
+        }
+        setReviewResult(result);
+    }, [scenario, workers, workOrders, attendance, projects, isSaturdayWorking, showToast]);
+
     // ── Render ──────────────────────────────────────────────────
     const ticks = useMemo(() => headerTicks(vp, todayISO()), [vp]);
     const bands = useMemo(() => monthBands(vp), [vp]);
@@ -531,6 +560,14 @@ export default function CanvasTab({
 
                 <button className="cv-btn primary" onClick={() => setPickerOpen(true)}>
                     <Package size={15} /> Novi nalog
+                </button>
+                <button className="cv-btn" onClick={() => setBatchOpen(true)}
+                    title="Unesi više naloga odjednom (proizvodni, montaža, razni)">
+                    <ClipboardList size={15} /> Batch unos
+                </button>
+                <button className="cv-btn primary" onClick={runSchedule}
+                    title="Automatski rasporedi naloge s kandidat-ekipama kroz vrijeme i radnike">
+                    <Sparkles size={15} /> Rasporedi
                 </button>
 
                 <label className="cv-labeled">
@@ -764,6 +801,25 @@ export default function CanvasTab({
                     dispatch({ type: 'ADD_BLOCK', block });
                     setDrawerId(block.id);
                 }}
+            />
+
+            <BatchPlanModal
+                isOpen={batchOpen}
+                projects={projects}
+                workOrders={workOrders}
+                workers={workers}
+                startISO={todayISO()}
+                isSaturdayWorking={isSaturdayWorking}
+                onClose={() => setBatchOpen(false)}
+                onCreate={createBatch}
+            />
+
+            <ScheduleReviewModal
+                isOpen={reviewResult !== null}
+                scenario={scenario}
+                result={reviewResult}
+                onClose={() => setReviewResult(null)}
+                onApply={assignments => dispatch({ type: 'APPLY_SCHEDULE', assignments })}
             />
 
             <MaterialOrderModal

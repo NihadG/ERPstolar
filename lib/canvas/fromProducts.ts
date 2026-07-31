@@ -16,6 +16,15 @@ import type { Project, Product, WorkOrder, PlanBlock, PlanProductRef } from '../
 import { materialTypesFromName } from '../productProcesses';
 import { productTypesFromName } from '../classify/classify';
 
+/**
+ * Ekipa na koju se ponuda OBIČNO planira (glavni + pomoćnik). Koristi se SAMO
+ * kad ponuda ima dane a nema broj radnika (`crewAssumed`) — da se izvedu
+ * radnik-dani. Nikad se ne uzima 1 tiho (to bi prepolovilo posao); umjesto toga
+ * norma radionice, i to VIDLJIVO (kandidat nosi `crewAssumed`, UI dozvoljava
+ * izmjenu broja radnika).
+ */
+export const DEFAULT_OFFER_CREW = 2;
+
 export interface ProductCandidate {
     productId: string;
     productName: string;
@@ -27,17 +36,28 @@ export interface ProductCandidate {
     usedQty: number;
     /** Ono što se još može planirati. */
     availableQty: number;
-    /** Dani iz ponude (bez množenja radnicima). */
+    /** Dani iz ponude (SIROVO, bez množenja radnicima). */
     laborDays: number;
+    /** Broj radnika iz ponude (SIROVO; 0 ako ponuda nije upisala). */
     laborWorkers: number;
-    /** laborDays × laborWorkers × količina — jedinica kojom platno računa trajanje. */
+    /**
+     * radnik-dani po komadu = laborDays × radnika. Kad je broj radnika poznat,
+     * to je tačno ono; kad nije (`crewAssumed`), koristi se DEFAULT_OFFER_CREW (2).
+     * Jedinica kojom platno računa trajanje (÷ veličina izabrane ekipe).
+     */
     workerDaysPerUnit: number;
     materialCount: number;
     /** Ima li ijedan esencijalni materijal — takva narudžba gate-uje početak. */
     hasEssential: boolean;
     status: string;
-    /** Nema podatka o radu u ponudi → trajanje se mora unijeti ručno (ili predložiti iz istorije). */
+    /** Ponuda NEMA dane rada → trajanje se mora unijeti ručno (ili predložiti iz istorije). */
     missingLabor: boolean;
+    /**
+     * Ponuda IMA dane ali NEMA broj radnika. „6 dana" je tada dvosmisleno (2 rad × 6 = 12
+     * rd, ili 1 × 6 = 6). Radnik-dani su izvedeni s pretpostavljenom ekipom (2) — UI to
+     * mora označiti i dozvoliti izmjenu, nikad tiho uzeti 1 i prepoloviti posao.
+     */
+    crewAssumed: boolean;
     /** Tipovi iz naziva proizvoda — ulaz za prijedlog trajanja iz istorije (suggest.ts). */
     productTypes: string[];
     /** Tipovi materijala iz sastavnice — isti razlog. */
@@ -99,6 +119,15 @@ export function collectProductCandidates(
             const labor = laborFromOffers(project, product.Product_ID);
             const materials = product.materials || [];
 
+            // KANONSKA JEDINICA: radnik-dani = dani × radnici. Kad ponuda ima dane a
+            // nema broj radnika, NE uzima se 1 (to bi tiho prepolovilo posao koji je
+            // autor planirao na 2 radnika) — uzima se norma radionice (2), i kandidat
+            // nosi `crewAssumed` da UI to označi i dozvoli izmjenu.
+            const missingLabor = labor.days <= 0;
+            const crewAssumed = labor.days > 0 && labor.workers < 1;
+            const effectiveWorkers = labor.workers >= 1 ? labor.workers : DEFAULT_OFFER_CREW;
+            const workerDaysPerUnit = missingLabor ? 0 : labor.days * effectiveWorkers;
+
             out.push({
                 productId: product.Product_ID,
                 productName: product.Name,
@@ -109,11 +138,12 @@ export function collectProductCandidates(
                 availableQty: Math.max(0, totalQty - usedQty),
                 laborDays: labor.days,
                 laborWorkers: labor.workers,
-                workerDaysPerUnit: labor.days * Math.max(1, labor.workers || 1),
+                workerDaysPerUnit,
                 materialCount: materials.length,
                 hasEssential: materials.some(m => m.Is_Essential),
                 status: product.Status || '',
-                missingLabor: labor.days <= 0,
+                missingLabor,
+                crewAssumed,
                 productTypes: productTypesFromName(product.Name).types,
                 materialTypes: Array.from(new Set(materials.flatMap(m => materialTypesFromName(m.Material_Name)))),
             });

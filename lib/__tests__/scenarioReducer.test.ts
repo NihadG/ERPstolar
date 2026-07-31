@@ -284,3 +284,68 @@ describe('spremanje', () => {
         expect(s.dirty).toBe(true);
     });
 });
+
+describe('batch dodavanje (ADD_BLOCKS)', () => {
+    test('dodaje sve odjednom, JEDAN undo ih sve vrati', () => {
+        const blocks = [block({ id: 'a' }), block({ id: 'b' }), block({ id: 'c' })];
+        const s = run(base(), { type: 'ADD_BLOCKS', blocks });
+        expect(s.scenario.Blocks).toHaveLength(3);
+        expect(s.selectedIds).toHaveLength(3);
+        const undone = scenarioReducer(s, { type: 'UNDO' });
+        expect(undone.scenario.Blocks).toHaveLength(0);
+    });
+
+    test('prazan niz ne dira stanje', () => {
+        const s = base();
+        expect(scenarioReducer(s, { type: 'ADD_BLOCKS', blocks: [] })).toBe(s);
+    });
+
+    test('preko granice — dodaje do granice, ostatak prijavi', () => {
+        // Napuni skoro do granice pa pokušaj dodati previše
+        const near = Array.from({ length: MAX_BLOCKS_PER_SCENARIO - 2 }, (_, i) => block({ id: `x${i}` }));
+        let s = run(base(), { type: 'ADD_BLOCKS', blocks: near });
+        const extra = [block({ id: 'e1' }), block({ id: 'e2' }), block({ id: 'e3' })];
+        s = scenarioReducer(s, { type: 'ADD_BLOCKS', blocks: extra });
+        expect(s.scenario.Blocks).toHaveLength(MAX_BLOCKS_PER_SCENARIO);
+        expect(s.notice).toMatch(/nije dodano/);
+    });
+});
+
+describe('primjena rasporeda (APPLY_SCHEDULE)', () => {
+    test('upiše datume, ekipu i radnike; jedan undo vraća', () => {
+        const b = block({ id: 'a', workerDays: 12, crew: 2 });
+        let s = run(base(), { type: 'ADD_BLOCK', block: b });
+        s = scenarioReducer(s, {
+            type: 'APPLY_SCHEDULE',
+            assignments: [{
+                blockId: 'a', startISO: '2026-08-10', endISO: '2026-08-15',
+                crew: 2, workerRefs: [{ id: 'w1', name: 'Ismet' }, { id: 'w2', name: 'Adnan' }],
+                assignedCrewId: 'crew-1',
+            }],
+        });
+        const nb = s.scenario.Blocks[0];
+        expect(nb.startISO).toBe('2026-08-10');
+        expect(nb.endISO).toBe('2026-08-15');
+        expect(nb.workerRefs?.map(w => w.name)).toEqual(['Ismet', 'Adnan']);
+        expect(nb.assignedCrewId).toBe('crew-1');
+
+        const undone = scenarioReducer(s, { type: 'UNDO' });
+        expect(undone.scenario.Blocks[0].startISO).toBe('2026-08-03');
+        expect(undone.scenario.Blocks[0].assignedCrewId).toBeUndefined();
+    });
+
+    test('ZAKLJUČAN blok se NE dira', () => {
+        const b = block({ id: 'a', locked: true });
+        let s = run(base(), { type: 'ADD_BLOCK', block: b });
+        s = scenarioReducer(s, {
+            type: 'APPLY_SCHEDULE',
+            assignments: [{ blockId: 'a', startISO: '2026-09-01', endISO: '2026-09-05', crew: 1, workerRefs: [] }],
+        });
+        expect(s.scenario.Blocks[0].startISO).toBe('2026-08-03');   // nepomjeren
+    });
+
+    test('prazne dodjele ne diraju stanje', () => {
+        const s = run(base(), { type: 'ADD_BLOCK', block: block() });
+        expect(scenarioReducer(s, { type: 'APPLY_SCHEDULE', assignments: [] })).toBe(s);
+    });
+});

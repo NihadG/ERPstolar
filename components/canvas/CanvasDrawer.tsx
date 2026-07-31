@@ -8,17 +8,23 @@
 // kad korisniku treba kontekst oko bloka koji mijenja.
 // ════════════════════════════════════════════════════════════════════
 
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
     X, Trash2, Lock, Unlock, Users, FolderKanban, Truck, Link2, Plus, Check,
-    Package, ShoppingCart, Info,
+    Package, ShoppingCart, Info, Sparkles,
 } from 'lucide-react';
-import type { PlanBlock, PlanLink, PlanLinkKind, Project, Worker, Supplier } from '@/lib/types';
+import type {
+    PlanBlock, PlanLink, PlanLinkKind, Project, Worker, Supplier, TaskPriority,
+} from '@/lib/types';
+import { TASK_PRIORITY_LABELS } from '@/lib/types';
 import {
     BLOCK_LABEL, BLOCK_HELP, blockDurationDays, endFromWork, workingDaysNeeded,
     addDays, orderByFromDelivery,
 } from '@/lib/canvas/model';
 import { suggestLeadDays, type SupplierLeadTime } from '@/lib/canvas/leadTime';
+import CrewPicker from './CrewPicker';
+
+const PRIORITIES: TaskPriority[] = ['low', 'medium', 'high', 'urgent'];
 
 interface CanvasDrawerProps {
     block: PlanBlock | null;
@@ -57,6 +63,8 @@ export default function CanvasDrawer({
     block, allBlocks, links, projects, workers, suppliers, leadTimes,
     onClose, onChange, onDelete, onAddLink, onDeleteLink, onSelectBlock, onCreateOrders,
 }: CanvasDrawerProps) {
+    const [crewPickerOpen, setCrewPickerOpen] = useState(false);
+
     useEffect(() => {
         const onKey = (e: KeyboardEvent) => {
             if (e.key !== 'Escape') return;
@@ -315,7 +323,7 @@ export default function CanvasDrawer({
 
                 {isWork && (
                     <div className="cv-field">
-                        <span><Users size={12} /> Radnici</span>
+                        <span><Users size={12} /> Radnici (ručna dodjela)</span>
                         <div className="cv-chips">
                             {activeWorkers.map(w => (
                                 <button key={w.Worker_ID}
@@ -326,6 +334,45 @@ export default function CanvasDrawer({
                             ))}
                             {activeWorkers.length === 0 && <span className="cv-hint">Nema aktivnih radnika.</span>}
                         </div>
+                    </div>
+                )}
+
+                {/* ── Auto-raspored ────────────────────────────── */}
+                {isWork && (
+                    <div className="cv-field cv-auto">
+                        <span><Sparkles size={12} /> Auto-raspored</span>
+                        <label className="cv-field">
+                            <span>Prioritet</span>
+                            <select value={block.priority || 'medium'}
+                                onChange={e => onChange({ priority: e.target.value as TaskPriority })}>
+                                {PRIORITIES.map(p => <option key={p} value={p}>{TASK_PRIORITY_LABELS[p]}</option>)}
+                            </select>
+                        </label>
+
+                        <span className="cv-sub">Kandidat-ekipe (algoritam bira jednu)</span>
+                        <div className="cv-chips">
+                            {(block.crewOptions || []).map(c => (
+                                <span key={c.id} className="cv-crew-chip">
+                                    <Users size={11} />
+                                    {c.lead.name}{c.helper ? ` + ${c.helper.name}` : ''}
+                                    <X size={11} className="cv-crew-x"
+                                        onClick={() => onChange({ crewOptions: (block.crewOptions || []).filter(x => x.id !== c.id) })} />
+                                </span>
+                            ))}
+                            <button className="cv-chip add" onClick={() => setCrewPickerOpen(true)}>
+                                <Plus size={12} /> ekipa
+                            </button>
+                        </div>
+
+                        {(block.crewOptions?.length || 0) === 0 ? (
+                            <p className="cv-hint">
+                                Bez kandidat-ekipa ovaj nalog je RUČNI — „Rasporedi" ga preskače. Dodaj ekipe da uđe u auto-raspored.
+                            </p>
+                        ) : block.assignedCrewId ? (
+                            <p className="cv-hint">
+                                Zadnji raspored dodijelio: <strong>{(block.workerRefs || []).map(w => w.name).join(' + ') || '—'}</strong>
+                            </p>
+                        ) : null}
                     </div>
                 )}
 
@@ -401,6 +448,14 @@ export default function CanvasDrawer({
                     <Trash2 size={14} /> Obriši blok
                 </button>
             </footer>
+
+            <CrewPicker
+                isOpen={crewPickerOpen}
+                workers={workers}
+                onClose={() => setCrewPickerOpen(false)}
+                onAdd={crew => onChange({ crewOptions: [...(block.crewOptions || []), crew] })}
+                title="Dodaj kandidat-ekipu"
+            />
         </aside>
     );
 }

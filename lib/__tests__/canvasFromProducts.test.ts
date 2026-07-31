@@ -107,14 +107,38 @@ describe('rad iz ponude', () => {
     test('proizvod bez rada u ponudi se OZNAČI — trajanje se mora unijeti ručno', () => {
         const c = collectProductCandidates([project({ products: [product()] })], []);
         expect(c[0].missingLabor).toBe(true);
+        expect(c[0].crewAssumed).toBe(false);   // nema ni dana — nije stvar broja radnika
         expect(c[0].workerDaysPerUnit).toBe(0);
     });
 
-    test('0 radnika se tretira kao 1 (dani su ipak podatak)', () => {
+    // KLJUČNO (napomena korisnika): „6 dana" bez broja radnika je dvosmisleno.
+    // Ranije se tiho uzimao 1 radnik i posao se PREPOLOVIO. Sada se izvodi s
+    // normom radionice (2) i kandidat se OZNAČI `crewAssumed` da UI to pokaže.
+    test('dani bez broja radnika → crewAssumed, radnik-dani po normi (2), NE tiho ×1', () => {
         const c = collectProductCandidates(
-            [project({ products: [product()], offers: [offer('p1', 3, 0)] })], []
+            [project({ products: [product()], offers: [offer('p1', 6, 0)] })], []
         );
-        expect(c[0].workerDaysPerUnit).toBe(3);
+        expect(c[0].laborDays).toBe(6);
+        expect(c[0].laborWorkers).toBe(0);        // sirovo iz ponude
+        expect(c[0].crewAssumed).toBe(true);
+        expect(c[0].missingLabor).toBe(false);
+        expect(c[0].workerDaysPerUnit).toBe(12);  // 6 × 2 (norma), NE 6 (tihi ×1)
+    });
+
+    test('radnik-dani = dani × radnici kad je broj radnika poznat', () => {
+        const c = collectProductCandidates(
+            [project({ products: [product()], offers: [offer('p1', 6, 2)] })], []
+        );
+        expect(c[0].crewAssumed).toBe(false);
+        expect(c[0].workerDaysPerUnit).toBe(12);  // 6 × 2, iz ponude
+    });
+
+    test('jedan radnik u ponudi se poštuje (nije crewAssumed)', () => {
+        const c = collectProductCandidates(
+            [project({ products: [product()], offers: [offer('p1', 6, 1)] })], []
+        );
+        expect(c[0].crewAssumed).toBe(false);
+        expect(c[0].workerDaysPerUnit).toBe(6);   // 6 × 1, baš kako ponuda kaže
     });
 });
 
@@ -170,7 +194,7 @@ describe('proizvodi → blok naloga', () => {
         productId: 'p1', productName: 'Kuhinja', projectId: 'pr1', projectName: 'Novak',
         totalQty: 2, usedQty: 0, availableQty: 2,
         laborDays: 2, laborWorkers: 2, workerDaysPerUnit: 4,
-        materialCount: 0, hasEssential: false, status: '', missingLabor: false,
+        materialCount: 0, hasEssential: false, status: '', missingLabor: false, crewAssumed: false,
         productTypes: [], materialTypes: [], ...over,
     });
 

@@ -1,0 +1,45 @@
+/* ScheduleReviewModal — pregled prijedloga rasporeda */
+
+.sr-shell { display: flex; flex-direction: column; gap: 14px; width: 100%; min-width: 480px; }
+
+.sr-summary { display: flex; gap: 22px; padding: 4px 2px; }
+.sr-stat { display: flex; flex-direction: column; }
+.sr-stat-num { font-size: 22px; font-weight: 700; color: var(--text-primary); font-variant-numeric: tabular-nums; }
+.sr-stat-lbl { font-size: 11.5px; color: var(--text-secondary); }
+.sr-stat.warn .sr-stat-num { color: var(--warning); }
+
+.sr-empty { color: var(--text-secondary); font-size: 13.5px; line-height: 1.6; padding: 20px; text-align: center; }
+
+.sr-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; max-height: 52vh; overflow-y: auto; }
+.sr-item {
+    padding: 10px 12px; border: 1px solid var(--border-light); border-radius: var(--radius-md);
+    background: var(--surface);
+}
+.sr-item-head { display: flex; align-items: center; gap: 8px; }
+.sr-item-head svg { color: var(--text-tertiary); }
+.sr-item-title { font-weight: 600; font-size: 13.5px; color: var(--text-primary); flex: 1; }
+.sr-item-crew { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--text-secondary); }
+
+.sr-item-dates { display: flex; align-items: center; gap: 8px; margin: 6px 0; font-variant-numeric: tabular-nums; }
+.sr-item-dates svg { color: var(--text-tertiary); }
+.sr-old { font-size: 12.5px; color: var(--text-tertiary); text-decoration: line-through; opacity: .7; }
+.sr-new { font-size: 13px; font-weight: 600; color: var(--accent); }
+
+.sr-reasons { display: flex; flex-wrap: wrap; gap: 5px; }
+.sr-reason {
+    font-size: 11px; padding: 2px 8px; border-radius: 10px;
+    background: var(--surface-active); color: var(--text-secondary);
+}
+.sr-reason.r-crew { background: var(--accent-light); color: var(--accent); }
+.sr-reason.r-prio { background: var(--warning-bg); color: var(--warning); }
+
+.sr-unsched { border-top: 1px solid var(--border-light); padding-top: 10px; }
+.sr-unsched h4 { display: flex; align-items: center; gap: 6px; margin: 0 0 8px; font-size: 12.5px; color: var(--warning); }
+.sr-unsched ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 5px; }
+.sr-unsched li { display: flex; flex-direction: column; gap: 1px; padding: 7px 10px; border-radius: var(--radius-sm); background: var(--warning-bg); }
+.sr-unsched li strong { font-size: 12.5px; color: var(--text-primary); }
+.sr-unsched li span { font-size: 11.5px; color: var(--text-secondary); }
+
+.sr-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; }
+.sr-foot-note { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-secondary); }
+.sr-foot-actions { display: flex; gap: 8px; }

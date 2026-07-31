@@ -10,7 +10,7 @@
 // undo koji vraća zum umjesto brisanja je gori od nikakvog undo-a.
 // ════════════════════════════════════════════════════════════════════
 
-import type { PlanScenario, PlanBlock, PlanLink, PlanLinkKind, PlanZoom, PlanGroupBy } from '../types';
+import type { PlanScenario, PlanBlock, PlanLink, PlanLinkKind, PlanZoom, PlanGroupBy, PlanRef } from '../types';
 import {
     MAX_BLOCKS_PER_SCENARIO, addDays, normalizeBlock, newBlock, newLink,
     wouldCreateCycle, emptyScenario,
@@ -31,9 +31,21 @@ export interface ScenarioState {
     notice: string | null;
 }
 
+/** Jedna dodjela iz auto-rasporeda — spremna za APPLY_SCHEDULE. */
+export interface ScheduleAssignment {
+    blockId: string;
+    startISO: string;
+    endISO: string;
+    crew: number;
+    workerRefs: PlanRef[];
+    assignedCrewId?: string;
+}
+
 export type ScenarioAction =
     | { type: 'LOAD'; scenario: PlanScenario }
     | { type: 'ADD_BLOCK'; block: PlanBlock }
+    | { type: 'ADD_BLOCKS'; blocks: PlanBlock[] }
+    | { type: 'APPLY_SCHEDULE'; assignments: ScheduleAssignment[] }
     | { type: 'UPDATE_BLOCK'; id: string; patch: Partial<PlanBlock> }
     | { type: 'MOVE_BLOCKS'; ids: string[]; days: number }
     | { type: 'SET_DATES'; id: string; startISO?: string; endISO?: string }
@@ -96,6 +108,28 @@ export function scenarioReducer(state: ScenarioState, action: ScenarioAction): S
             return {
                 ...commit(state, { ...state.scenario, Blocks: [...state.scenario.Blocks, block] }),
                 selectedIds: [block.id],
+            };
+        }
+
+        case 'ADD_BLOCKS': {
+            if (!action.blocks.length) return state;
+            const room = MAX_BLOCKS_PER_SCENARIO - state.scenario.Blocks.length;
+            if (room <= 0) {
+                return passive(state, {
+                    notice: `Dosegnuta granica od ${MAX_BLOCKS_PER_SCENARIO} blokova — podijeli scenarij na dva.`,
+                });
+            }
+            const toAdd = action.blocks.slice(0, room).map(normalizeBlock);
+            const overflow = action.blocks.length - toAdd.length;
+            return {
+                ...commit(
+                    state,
+                    { ...state.scenario, Blocks: [...state.scenario.Blocks, ...toAdd] },
+                    overflow > 0
+                        ? `Dodano ${toAdd.length}; ${overflow} preko granice od ${MAX_BLOCKS_PER_SCENARIO} nije dodano.`
+                        : null
+                ),
+                selectedIds: toAdd.map(b => b.id),
             };
         }
 
@@ -222,6 +256,28 @@ export function scenarioReducer(state: ScenarioState, action: ScenarioAction): S
                     return normalizeBlock({ ...b, startISO: c.startISO, endISO: c.endISO });
                 }),
             }, `Primijenjeno ${action.changes.length} izmjena — Ctrl+Z vraća.`);
+        }
+
+        // ── Auto-raspored ─────────────────────────────────────────
+        case 'APPLY_SCHEDULE': {
+            if (!action.assignments.length) return state;
+            const byId = new Map(action.assignments.map(a => [a.blockId, a]));
+            return commit(state, {
+                ...state.scenario,
+                Blocks: state.scenario.Blocks.map(b => {
+                    const a = byId.get(b.id);
+                    // Zaključan blok se NE dira — ni datum ni ekipa (dogovoren termin).
+                    if (!a || b.locked) return b;
+                    return normalizeBlock({
+                        ...b,
+                        startISO: a.startISO,
+                        endISO: a.endISO,
+                        crew: a.crew,
+                        workerRefs: a.workerRefs,
+                        assignedCrewId: a.assignedCrewId,
+                    });
+                }),
+            }, `Raspoređeno ${action.assignments.length} naloga — Ctrl+Z vraća.`);
         }
 
         case 'RENAME': {

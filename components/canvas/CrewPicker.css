@@ -1,0 +1,69 @@
+/* CrewPicker — glavni + opcioni pomoćnik */
+
+.crp-shell { display: flex; flex-direction: column; gap: 12px; min-width: 320px; }
+
+.crp-slots { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+
+.crp-slot {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 10px 12px;
+    border: 1.5px solid var(--border-light);
+    border-radius: var(--radius-md);
+    background: var(--surface);
+    cursor: pointer;
+    text-align: left;
+    font-family: inherit;
+    position: relative;
+}
+.crp-slot.active { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-light); }
+.crp-slot.filled { background: var(--background); }
+.crp-slot:disabled { opacity: .5; cursor: not-allowed; }
+.crp-slot svg { color: var(--text-tertiary); flex-shrink: 0; }
+
+.crp-slot-role {
+    font-size: 10.5px; text-transform: uppercase; letter-spacing: .03em;
+    color: var(--text-tertiary); position: absolute; top: 5px; left: 34px;
+}
+.crp-slot-role em { font-style: normal; text-transform: none; opacity: .7; }
+.crp-slot-name {
+    font-size: 13px; font-weight: 600; color: var(--text-primary);
+    margin-top: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.crp-slot-clear { margin-left: auto; color: var(--text-tertiary) !important; cursor: pointer; }
+.crp-slot-clear:hover { color: var(--error) !important; }
+
+.crp-search {
+    display: flex; align-items: center; gap: 8px;
+    padding: 8px 11px; border: 1px solid var(--border-light);
+    border-radius: var(--radius-md); background: var(--surface);
+}
+.crp-search svg { color: var(--text-tertiary); }
+.crp-search input { flex: 1; border: none; background: none; outline: none; font-size: 13.5px; color: var(--text-primary); font-family: inherit; }
+
+.crp-list { display: flex; flex-direction: column; gap: 3px; max-height: 320px; overflow-y: auto; }
+.crp-empty { color: var(--text-secondary); font-size: 13px; padding: 12px; text-align: center; }
+
+.crp-row {
+    display: flex; align-items: center; gap: 8px;
+    padding: 9px 11px; border: none; border-radius: var(--radius-sm);
+    background: var(--surface); cursor: pointer; font-family: inherit; text-align: left;
+}
+.crp-row:hover { background: var(--surface-hover); }
+.crp-row.lead { background: var(--accent-light); }
+.crp-row.helper { background: var(--surface-active); }
+.crp-name { font-size: 13.5px; color: var(--text-primary); flex: 1; }
+.crp-tag {
+    font-size: 11px; color: var(--text-secondary);
+    background: var(--surface-active); padding: 1px 7px; border-radius: 6px;
+}
+.crp-badge {
+    display: inline-flex; align-items: center; gap: 3px;
+    font-size: 11px; font-weight: 700; color: var(--accent);
+}
+.crp-badge.sec { color: var(--text-secondary); }
+
+.crp-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; }
+.crp-foot-hint { font-size: 12.5px; color: var(--text-secondary); }
+.crp-foot-actions { display: flex; gap: 8px; }
