@@ -21,6 +21,7 @@ import { useWorkerMe } from '@/lib/field/useFieldWorker';
 import {
     MList, MItem, MCell, MText, MValue, MButton, MSection, MEmpty,
 } from '@/components/tabs/mobile/MobileUI';
+import CutlistLauncher from '../cutlist/CutlistLauncher';
 
 interface Props {
     data: FieldHomePayload;
@@ -43,6 +44,9 @@ export default function WorkerMe({ data, previewUid, readOnly }: Props) {
                     <MItem><MCell><MText title="Radnik" /><MValue num={false}>{data.user.workerName}</MValue></MCell></MItem>
                 )}
             </MList>
+
+            <MSection title="Alati" />
+            <CutlistLauncher />
 
             {efficiency && <EfficiencyPanel eff={efficiency} />}
             {loading && !efficiency && <div className="fld-loading">Učitavanje…</div>}

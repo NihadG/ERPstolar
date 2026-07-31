@@ -17,6 +17,7 @@ import type { FieldHomePayload } from '@/lib/field/fieldHome';
 import { useApproverRequests } from '@/lib/useApproverRequests';
 import { requestKindLabel } from '@/lib/changeRequests';
 import { MEmpty, MList, MItem, MCell, MText, MValue, MButton, MSheet, MPill, MActions, MAction } from '@/components/tabs/mobile/MobileUI';
+import CutlistLauncher from './cutlist/CutlistLauncher';
 import FieldTabBar, { type FieldTabId } from './FieldTabBar';
 import AttendanceScreen from './attendance/AttendanceScreen';
 import OrdersScreen from './orders/OrdersScreen';
@@ -102,6 +103,11 @@ export default function ControllerApp({ data, readOnly }: Props) {
                         <MItem><MCell><MText title="Radnik" /><MValue num={false}>{data.user.workerName}</MValue></MCell></MItem>
                     )}
                 </MList>
+
+                <div style={{ padding: '12px 0 2px' }}>
+                    <CutlistLauncher />
+                </div>
+
                 {!readOnly && (
                     <div className="fld-submit">
                         <MButton variant="danger" onClick={() => signOut()}>

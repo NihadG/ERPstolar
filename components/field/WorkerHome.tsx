@@ -15,6 +15,7 @@ import { AlertCircle, CalendarCheck, ClipboardList, Wrench, Hourglass } from 'lu
 import type { FieldHomePayload } from '@/lib/field/fieldHome';
 import { useWorkerRequests } from '@/lib/field/useWorkerRequests';
 import { requestKindLabel } from '@/lib/changeRequests';
+import CutlistLauncher from './cutlist/CutlistLauncher';
 import {
     MLarge, MHero, MSection, MList, MItem, MCell, MText, MValue, MPill,
     MCard, MCardHead, MCardBody, MIcon, MProgress, MEmpty, MCheck,
@@ -89,6 +90,11 @@ export default function WorkerHome({ data }: { data: FieldHomePayload }) {
                 pct={totalPct}
                 green={assignments.length > 0 && totalPct >= 100}
             />
+
+            {/* ── Alat: krojna lista (lagan pristup iz Danas) ─────────── */}
+            <div style={{ padding: '2px 0 10px' }}>
+                <CutlistLauncher />
+            </div>
 
             {/* ── Moje stavke ─────────────────────────────────────────── */}
             <MSection title="Moj posao" right={<span className="mui-dim">{assignments.length}</span>} />
