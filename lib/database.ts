@@ -5515,6 +5515,32 @@ export async function getWorkLogs(organizationId: string): Promise<WorkLog[]> {
 }
 
 /**
+ * Dnevnice OD datuma naovamo (YYYY-MM-DD). Za eager učitavanje: `work_logs` raste
+ * neograničeno, pa se u startu vuče samo prozor (npr. zadnjih 12 mjeseci) — pokriva
+ * sve aktivne naloge i nedavnu istoriju. Logove starijeg naloga dovlači
+ * `getWorkLogsForWorkOrder` na zahtjev (kad se otvori njegova Knjiga rada).
+ * Koristi indeks work_logs(Organization_ID, Date).
+ */
+export async function getWorkLogsSince(organizationId: string, sinceDate: string): Promise<WorkLog[]> {
+    if (!organizationId) return [];
+
+    try {
+        const firestore = getDb();
+        const q = query(
+            collection(firestore, COLLECTIONS.WORK_LOGS),
+            where('Organization_ID', '==', organizationId),
+            where('Date', '>=', sinceDate)
+        );
+        const snapshot = await getDocs(q);
+        return snapshot.docs.map(doc => doc.data() as WorkLog);
+    } catch (error) {
+        console.error('getWorkLogsSince error:', error);
+        // Fallback na puno učitavanje — bolje sporije nego prazno.
+        return getWorkLogs(organizationId);
+    }
+}
+
+/**
  * Get all work logs for an entire work order — UKLJUČUJE i logove POVEZANIH "raznih poslova"
  * čiji je trošak preusmjeren na proizvod u OVOM nalogu (Source_Work_Order_ID = ovaj nalog),
  * tako da izvorni Zadaci-nalog i dalje može prikazati (informativno) da je rad urađen i gdje

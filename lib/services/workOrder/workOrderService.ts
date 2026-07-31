@@ -352,6 +352,11 @@ export async function getWorkLogs(organizationId: string): Promise<any[]> {
     return _get(organizationId);
 }
 
+export async function getWorkLogsSince(organizationId: string, sinceDate: string): Promise<any[]> {
+    const { getWorkLogsSince: _get } = await import('../../database');
+    return _get(organizationId, sinceDate);
+}
+
 export async function getWorkLogsForItem(workOrderItemId: string, organizationId: string): Promise<any[]> {
     const { getWorkLogsForItem: _get } = await import('../../database');
     return _get(workOrderItemId, organizationId);

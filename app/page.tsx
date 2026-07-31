@@ -1,8 +1,8 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
-import { getProjects, getMaterialsCatalog, getSuppliers, getWorkers, getOffers, getOrders, getWorkOrders, getTasks, getWorkLogs, getTaskProfiles } from '@/lib/services';
+import { getProjects, getMaterialsCatalog, getSuppliers, getWorkers, getOffers, getOrders, getWorkOrders, getTasks, getWorkLogsSince, getWorkLogsForWorkOrder, getTaskProfiles } from '@/lib/services';
 
 import { signOut } from '@/lib/auth';
 import { useAuth } from '@/context/AuthContext';
@@ -45,6 +45,13 @@ const PlannerTab = nextDynamic(() => import('@/components/tabs/PlannerTab'), { l
 // planning_scenarios; ne mijenja nijedan status ni datum stvarnog naloga.
 const CanvasTab = nextDynamic(() => import('@/components/canvas/CanvasTab'), { loading: TabLoading });
 const ProcessesTab = nextDynamic(() => import('@/components/tabs/ProcessesTab'), { loading: TabLoading });
+
+/** Početak prozora eager-učitavanja dnevnica: prije 12 mjeseci (YYYY-MM-DD). */
+function workLogsWindowStart(): string {
+    const d = new Date();
+    d.setMonth(d.getMonth() - 12);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
 
 export default function Home() {
     const router = useRouter();
@@ -157,6 +164,10 @@ export default function Home() {
         tasks: [],
         taskProfiles: [],
     });
+
+    // Nalozi čiji su PUNI logovi već dovučeni na zahtjev (van 12-mjesečnog prozora).
+    // Resetuje se kad se prozor ponovo učita, da se stariji nalog može re-spojiti.
+    const ensuredWorkOrderLogs = useRef<Set<string>>(new Set());
 
     // Refs for click-outside detection
     const userMenuRef = useRef<HTMLDivElement>(null);
@@ -289,7 +300,8 @@ export default function Home() {
         offers: getOffers,
         orders: getOrders,
         workOrders: getWorkOrders,
-        workLogs: getWorkLogs,
+        // Isti prozor kao eager load — ciljano osvježavanje ne vraća neograničenu istoriju.
+        workLogs: (orgId: string) => getWorkLogsSince(orgId, workLogsWindowStart()),
         tasks: getTasks,
         taskProfiles: getTaskProfiles,
     };
@@ -343,8 +355,12 @@ export default function Home() {
                 setLoading(false);   // aplikacija je upotrebljiva i bez work_logs
             }
 
-            // POZADINSKI: dnevnice se dovlače bez blokiranja prvog prikaza.
-            getWorkLogs(orgId)
+            // POZADINSKI: dnevnice se dovlače bez blokiranja prvog prikaza, i to
+            // samo PROZOR (zadnjih 12 mjeseci) — `work_logs` raste neograničeno, a
+            // ovo pokriva sve aktivne naloge i nedavnu istoriju. Logove starijeg
+            // naloga dovuče `ensureWorkOrderLogs` tek kad se otvori njegov detalj.
+            ensuredWorkOrderLogs.current.clear();   // prozor se ponovo puni
+            getWorkLogsSince(orgId, workLogsWindowStart())
                 .then(workLogs => setAppState(prev => ({ ...prev, workLogs })))
                 .catch(e => console.warn('Pozadinsko učitavanje dnevnica nije uspjelo:', e));
 
@@ -363,6 +379,10 @@ export default function Home() {
         const expanded = new Set(collections);
         collections.forEach(c => deps[c]?.forEach(d => expanded.add(d)));
         const toLoad = Array.from(expanded);
+
+        // Ciljano osvježavanje dnevnica prepisuje prozor — resetuj skup dovučenih
+        // starijih naloga da se mogu ponovo spojiti kad im se otvori detalj.
+        if (toLoad.includes('workLogs')) ensuredWorkOrderLogs.current.clear();
 
         try {
             const results = await Promise.all(
@@ -397,6 +417,29 @@ export default function Home() {
             await refreshCollections();
         }
     }
+
+    /**
+     * Osiguraj da su u `appState.workLogs` PUNI logovi datog naloga — za slučaj da
+     * je nalog stariji od eager prozora (Knjiga rada / timeline bi inače bili
+     * nepotpuni). Dohvat je jednokratan po nalogu i spaja se bez dupliranja.
+     */
+    const ensureWorkOrderLogs = useCallback(async (workOrderId: string) => {
+        const orgId = organization?.Organization_ID;
+        if (!workOrderId || !orgId || ensuredWorkOrderLogs.current.has(workOrderId)) return;
+        ensuredWorkOrderLogs.current.add(workOrderId);
+        try {
+            const logs = await getWorkLogsForWorkOrder(workOrderId, orgId);
+            if (logs.length === 0) return;
+            setAppState(prev => {
+                const have = new Set(prev.workLogs.map(l => l.WorkLog_ID));
+                const missing = logs.filter((l: any) => !have.has(l.WorkLog_ID));
+                return missing.length > 0 ? { ...prev, workLogs: [...prev.workLogs, ...missing] } : prev;
+            });
+        } catch (e) {
+            ensuredWorkOrderLogs.current.delete(workOrderId);   // dozvoli ponovni pokušaj
+            console.warn('Dohvat dnevnica naloga nije uspio:', e);
+        }
+    }, [organization?.Organization_ID]);
 
     /**
      * Optimistični lokalni patch jedne stavke u appState kolekciji — BEZ refetcha.
@@ -536,6 +579,7 @@ export default function Home() {
                             orders={appState.orders}
                             tasks={appState.tasks}
                             onRefresh={refreshCollections}
+                            onEnsureWorkOrderLogs={ensureWorkOrderLogs}
                             showToast={showToast}
                             onNavigateToTasks={handleNavigateToTasks}
                             onCreateWorkOrder={handleCreateWorkOrderFromProjects}

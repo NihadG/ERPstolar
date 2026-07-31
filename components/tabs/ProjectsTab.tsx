@@ -65,6 +65,8 @@ interface ProjectsTabProps {
     orders?: Order[];
     tasks?: Task[];
     onRefresh: (...collections: string[]) => void;
+    /** Dovuče pune logove naloga (za slučaj da je stariji od eager prozora). */
+    onEnsureWorkOrderLogs?: (workOrderId: string) => void;
     showToast: (message: string, type: 'success' | 'error' | 'info') => void;
     onNavigateToTasks?: (projectId: string) => void;
     onCreateWorkOrder?: (projectId: string, projectName: string, products: { productId: string; productName: string; quantity: number }[]) => void;
@@ -75,7 +77,7 @@ interface ProjectsTabProps {
     onClearAutoExpand?: () => void;
 }
 
-export default function ProjectsTab({ projects, materials, workOrders = [], offers = [], workLogs = [], orders = [], tasks = [], onRefresh, showToast, onNavigateToTasks, onCreateWorkOrder, autoExpandProjectId, autoExpandProductId, returnToOfferId, onReturnToOffer, onClearAutoExpand }: ProjectsTabProps) {
+export default function ProjectsTab({ projects, materials, workOrders = [], offers = [], workLogs = [], orders = [], tasks = [], onRefresh, onEnsureWorkOrderLogs, showToast, onNavigateToTasks, onCreateWorkOrder, autoExpandProjectId, autoExpandProductId, returnToOfferId, onReturnToOffer, onClearAutoExpand }: ProjectsTabProps) {
     const { organizationId, appState } = useData();
     const gi = useGoogleIntegration();
     const allWorkers = appState.workers || [];
@@ -199,6 +201,13 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
         originalTransport?: number;
         hasOverrides?: boolean;
     } | null>(null);
+
+    // Kad se otvori timeline proizvoda, osiguraj pune logove njegovog naloga —
+    // ako je nalog stariji od eager prozora, dnevni prikaz bi inače bio nepotpun.
+    useEffect(() => {
+        const woId = timelineProduct?.workOrderItem?.Work_Order_ID;
+        if (woId) onEnsureWorkOrderLogs?.(woId);
+    }, [timelineProduct, onEnsureWorkOrderLogs]);
 
 
     // Filter projects

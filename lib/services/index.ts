@@ -111,7 +111,7 @@ export {
     startWorkOrder, deleteWorkOrder,
     scheduleWorkOrder, rescheduleWorkOrder, unscheduleWorkOrder, getScheduledWorkOrders,
     updateDueDate, updatePlannedStartDate, checkWorkerConflicts, autoCreateOrdersForWorkOrder,
-    getWorkLogs, getWorkLogsForItem, getWorkLogsForWorkOrder, createWorkLog,
+    getWorkLogs, getWorkLogsSince, getWorkLogsForItem, getWorkLogsForWorkOrder, createWorkLog,
     planWorkOrderRenumbering, applyWorkOrderRenumbering,
     buildMaterialOrderPlan, createSelectedMaterialOrders,
 } from './workOrder/workOrderService';
