@@ -156,7 +156,7 @@ export default function FieldCutlist({ onClose }: Props) {
                 )}
             </header>
 
-            <div className="mui-large">
+            <div className="fcl-title">
                 <h1>Krojna lista</h1>
                 <p>{view === 'input'
                     ? <>{parts.length} {parts.length === 1 ? 'stavka' : 'stavki'} · {totalPieces} kom</>
@@ -174,18 +174,18 @@ export default function FieldCutlist({ onClose }: Props) {
             {view === 'input' && (
                 <>
                     {/* Brzi unos — širina, visina, količina, dodaj */}
-                    <div className="fcl-quick">
+                    <div className="fcl-card fcl-quick">
                         {showName && (
-                            <input className="fcl-in fcl-in-name" placeholder="Naziv (opcionalno)" value={qa.name}
+                            <input className="fcl-field name" placeholder="Naziv (opcionalno)" value={qa.name}
                                 onChange={e => setQa({ ...qa, name: e.target.value })} />
                         )}
                         <div className="fcl-quick-row">
-                            <input ref={wRef} className="fcl-in" type="number" inputMode="numeric" placeholder="Širina" value={qa.w}
+                            <input ref={wRef} className="fcl-field" type="number" inputMode="numeric" placeholder="Širina" value={qa.w}
                                 onChange={e => setQa({ ...qa, w: e.target.value })} />
                             <span className="fcl-x">×</span>
-                            <input className="fcl-in" type="number" inputMode="numeric" placeholder="Visina" value={qa.h}
+                            <input className="fcl-field" type="number" inputMode="numeric" placeholder="Visina" value={qa.h}
                                 onChange={e => setQa({ ...qa, h: e.target.value })} />
-                            <input className="fcl-in fcl-in-qty" type="number" inputMode="numeric" placeholder="Kom" value={qa.qty}
+                            <input className="fcl-field qty" type="number" inputMode="numeric" placeholder="Kom" value={qa.qty}
                                 onChange={e => setQa({ ...qa, qty: e.target.value })}
                                 onKeyDown={e => { if (e.key === 'Enter') addQuick(); }} />
                             <button type="button" className="fcl-add" onClick={addQuick} aria-label="Dodaj komad"><Plus size={22} strokeWidth={2.6} /></button>
@@ -208,17 +208,17 @@ export default function FieldCutlist({ onClose }: Props) {
                     {/* Podešavanja ploče/reza */}
                     <button type="button" className="fcl-settings-toggle" onClick={() => setSettingsOpen(v => !v)}>
                         <Settings2 size={17} />
-                        <span>Ploča {board.width}×{board.height} · rez {kerf} · obrez {trim} · {allowRotation ? 'rotacija' : 'bez rotacije'}</span>
+                        <span className="fcl-sum">Ploča {board.width}×{board.height} · rez {kerf} · obrez {trim} · {allowRotation ? 'rotacija' : 'bez rotacije'}</span>
                         <span className="fcl-chev">{settingsOpen ? '▲' : '▼'}</span>
                     </button>
                     {settingsOpen && (
-                        <div className="fcl-settings">
+                        <div className="fcl-card fcl-settings">
                             <div className="fcl-set-label"><Ruler size={14} /> Dimenzije ploče (mm)</div>
                             <div className="fcl-quick-row">
-                                <input className="fcl-in" type="number" inputMode="numeric" value={board.width}
+                                <input className="fcl-field" type="number" inputMode="numeric" value={board.width}
                                     onChange={e => setBoard({ ...board, width: Math.round(num(e.target.value)) })} />
                                 <span className="fcl-x">×</span>
-                                <input className="fcl-in" type="number" inputMode="numeric" value={board.height}
+                                <input className="fcl-field" type="number" inputMode="numeric" value={board.height}
                                     onChange={e => setBoard({ ...board, height: Math.round(num(e.target.value)) })} />
                             </div>
                             <div className="fcl-presets">
@@ -228,15 +228,16 @@ export default function FieldCutlist({ onClose }: Props) {
                                         onClick={() => setBoard({ width: p.w, height: p.h })}>{p.label}</button>
                                 ))}
                             </div>
+                            <div className="fcl-set-label"><Settings2 size={14} /> Rez i obrez</div>
                             <div className="fcl-set-grid">
                                 <label className="fcl-set-field">
                                     <span>Rez / pila (mm)</span>
-                                    <input className="fcl-in" type="number" inputMode="numeric" value={kerf}
+                                    <input className="fcl-field" type="number" inputMode="numeric" value={kerf}
                                         onChange={e => setKerf(Math.max(0, num(e.target.value)))} />
                                 </label>
                                 <label className="fcl-set-field">
                                     <span>Obrez ruba (mm)</span>
-                                    <input className="fcl-in" type="number" inputMode="numeric" value={trim}
+                                    <input className="fcl-field" type="number" inputMode="numeric" value={trim}
                                         onChange={e => setTrim(Math.max(0, num(e.target.value)))} />
                                 </label>
                             </div>
@@ -250,6 +251,8 @@ export default function FieldCutlist({ onClose }: Props) {
                     {parts.length === 0 ? (
                         <MEmpty title="Nema komada" sub="Unesi širinu × visinu × količinu pa pritisni +." />
                     ) : (
+                        <>
+                        <div className="fcl-list-head"><span>Komadi</span><b>{totalPieces} kom</b></div>
                         <div className="fcl-list">
                             {parts.map((p, i) => (
                                 <div key={p.id} className="fcl-part">
@@ -258,9 +261,9 @@ export default function FieldCutlist({ onClose }: Props) {
                                         <span className="fcl-part-dim">{p.width} × {p.height}</span>
                                         {p.name && !/^Komad \d+$/.test(p.name) && <span className="fcl-part-name">{p.name}</span>}
                                     </div>
-                                    <div className="fcl-qtybox">
+                                    <div className="fcl-qty">
                                         <button type="button" onClick={() => editQty(p.id, p.qty - 1)} aria-label="Manje">−</button>
-                                        <input className="fcl-qtyin" type="number" inputMode="numeric" value={p.qty}
+                                        <input type="number" inputMode="numeric" value={p.qty}
                                             onChange={e => editQty(p.id, num(e.target.value))} />
                                         <button type="button" onClick={() => editQty(p.id, p.qty + 1)} aria-label="Više">+</button>
                                     </div>
@@ -269,6 +272,7 @@ export default function FieldCutlist({ onClose }: Props) {
                                 </div>
                             ))}
                         </div>
+                        </>
                     )}
 
                     {parts.length > 0 && (
