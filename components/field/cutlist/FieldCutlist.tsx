@@ -11,7 +11,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
-    ArrowLeft, Plus, Copy, Trash2, Settings2, Play, ClipboardPaste, Ruler, Check, X, Maximize2,
+    ArrowLeft, Plus, Copy, Trash2, Settings2, Play, ClipboardPaste, Ruler, X, Maximize2,
 } from 'lucide-react';
 import { packGroup } from '@/lib/cutlist/optimizer';
 import { parseCutlistText } from '@/lib/cutlist/parse';
@@ -141,6 +141,7 @@ export default function FieldCutlist({ onClose }: Props) {
 
     const avgEff = result && result.sheets.length
         ? Math.round(result.sheets.reduce((s, sh) => s + sh.efficiency, 0) / result.sheets.length) : 0;
+    const colors = useMemo(() => result ? buildSizeColors(result) : null, [result]);
 
     return (
         <div className="mui fcl" ref={swipeRef}>
@@ -174,6 +175,7 @@ export default function FieldCutlist({ onClose }: Props) {
             {view === 'input' && (
                 <>
                     {/* Brzi unos — širina, visina, količina, dodaj */}
+                    <div className="fcl-lbl">Dodaj komad</div>
                     <div className="fcl-card fcl-quick">
                         {showName && (
                             <input className="fcl-field name" placeholder="Naziv (opcionalno)" value={qa.name}
@@ -213,7 +215,7 @@ export default function FieldCutlist({ onClose }: Props) {
                     </button>
                     {settingsOpen && (
                         <div className="fcl-card fcl-settings">
-                            <div className="fcl-set-label"><Ruler size={14} /> Dimenzije ploče (mm)</div>
+                            <div className="fcl-lbl"><Ruler size={14} /> Dimenzije ploče (mm)</div>
                             <div className="fcl-quick-row">
                                 <input className="fcl-field" type="number" inputMode="numeric" value={board.width}
                                     onChange={e => setBoard({ ...board, width: Math.round(num(e.target.value)) })} />
@@ -228,7 +230,7 @@ export default function FieldCutlist({ onClose }: Props) {
                                         onClick={() => setBoard({ width: p.w, height: p.h })}>{p.label}</button>
                                 ))}
                             </div>
-                            <div className="fcl-set-label"><Settings2 size={14} /> Rez i obrez</div>
+                            <div className="fcl-lbl"><Settings2 size={14} /> Rez i obrez</div>
                             <div className="fcl-set-grid">
                                 <label className="fcl-set-field">
                                     <span>Rez / pila (mm)</span>
@@ -241,9 +243,14 @@ export default function FieldCutlist({ onClose }: Props) {
                                         onChange={e => setTrim(Math.max(0, num(e.target.value)))} />
                                 </label>
                             </div>
-                            <button type="button" className={`fcl-rot${allowRotation ? ' on' : ''}`} onClick={() => setAllowRotation(v => !v)}>
-                                {allowRotation ? <Check size={16} /> : <X size={16} />} Dozvoli rotaciju komada 90°
-                            </button>
+                            <div className="fcl-set-spacer" />
+                            <div className="fcl-switch" role="switch" aria-checked={allowRotation} onClick={() => setAllowRotation(v => !v)}>
+                                <span className="fcl-switch-txt">
+                                    <b>Rotacija komada</b>
+                                    <small>Okreni komad 90° ako bolje stane</small>
+                                </span>
+                                <span className={`fcl-track${allowRotation ? ' on' : ''}`}><span className="fcl-knob" /></span>
+                            </div>
                         </div>
                     )}
 
@@ -252,7 +259,7 @@ export default function FieldCutlist({ onClose }: Props) {
                         <MEmpty title="Nema komada" sub="Unesi širinu × visinu × količinu pa pritisni +." />
                     ) : (
                         <>
-                        <div className="fcl-list-head"><span>Komadi</span><b>{totalPieces} kom</b></div>
+                        <div className="fcl-lbl">Komadi<span className="fcl-lbl-r">{totalPieces} kom</span></div>
                         <div className="fcl-list">
                             {parts.map((p, i) => (
                                 <div key={p.id} className="fcl-part">
@@ -286,18 +293,18 @@ export default function FieldCutlist({ onClose }: Props) {
             )}
 
             {view === 'result' && (
-                result ? (
-                    <ResultView result={result} onExpand={setExpanded} />
+                result && colors ? (
+                    <ResultView result={result} board={board} colors={colors} onExpand={setExpanded} />
                 ) : (
                     <MEmpty title="Nema rezultata" sub="Dodaj komade i pritisni Izračunaj." />
                 )
             )}
 
-            {expanded !== null && result?.sheets[expanded] && (
+            {expanded !== null && result?.sheets[expanded] && colors && (
                 <div className="fcl-zoom" onClick={() => setExpanded(null)}>
                     <button type="button" className="fcl-zoom-close" aria-label="Zatvori"><X size={22} /></button>
                     <div className="fcl-zoom-inner" onClick={e => e.stopPropagation()}>
-                        <SheetSVG sheet={result.sheets[expanded]} usable={result.usable} big />
+                        <SheetSVG sheet={result.sheets[expanded]} usable={result.usable} colorByKey={colors.colorByKey} big />
                     </div>
                 </div>
             )}
@@ -309,11 +316,31 @@ export default function FieldCutlist({ onClose }: Props) {
 
 // ─── Rezultat ─────────────────────────────────────────────────────────
 
-function ResultView({ result, onExpand }: {
-    result: GroupPackResult; onExpand: (i: number) => void;
+// Mekša, „komercijalna" paleta — ista boja = ista veličina komada.
+const PALETTE = ['#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#06b6d4', '#65a30d', '#f97316'];
+
+/** Ključ veličine neovisan o rotaciji (600×400 = 400×600). */
+const sizeKey = (w: number, h: number) => `${Math.round(Math.min(w, h))}×${Math.round(Math.max(w, h))}`;
+
+interface SizeColors {
+    colorByKey: Map<string, string>;
+    legend: { key: string; color: string; count: number }[];
+}
+function buildSizeColors(result: GroupPackResult): SizeColors {
+    const counts = new Map<string, number>();
+    for (const sh of result.sheets) for (const p of sh.placements) counts.set(sizeKey(p.w, p.h), (counts.get(sizeKey(p.w, p.h)) || 0) + 1);
+    const keys = [...counts.keys()];
+    const colorByKey = new Map(keys.map((k, i) => [k, PALETTE[i % PALETTE.length]]));
+    const legend = keys.map(k => ({ key: k, color: colorByKey.get(k)!, count: counts.get(k)! }));
+    return { colorByKey, legend };
+}
+
+function ResultView({ result, board, colors, onExpand }: {
+    result: GroupPackResult; board: { width: number; height: number }; colors: SizeColors; onExpand: (i: number) => void;
 }) {
     const placed = result.sheets.reduce((s, sh) => s + sh.placements.length, 0);
     const totalCutLen = result.sheets.reduce((s, sh) => s + sh.cutLength, 0);
+    const { colorByKey, legend } = colors;
 
     return (
         <>
@@ -334,49 +361,57 @@ function ResultView({ result, onExpand }: {
                 {result.sheets.map((sheet, i) => (
                     <div key={i} className="fcl-sheet">
                         <div className="fcl-sheet-head">
-                            <span className="fcl-sheet-title">Ploča {i + 1}</span>
+                            <div>
+                                <div className="fcl-sheet-title">Ploča {i + 1}</div>
+                                <div className="fcl-sheet-sub">{board.width}×{board.height} · {sheet.placements.length} kom</div>
+                            </div>
                             <span className={`fcl-eff${sheet.efficiency >= 80 ? ' good' : sheet.efficiency >= 60 ? ' ok' : ' low'}`}>
                                 {Math.round(sheet.efficiency)}%
                             </span>
                             <button type="button" className="fcl-sheet-zoom" onClick={() => onExpand(i)} aria-label="Uvećaj"><Maximize2 size={16} /></button>
                         </div>
-                        <SheetSVG sheet={sheet} usable={result.usable} />
+                        <SheetSVG sheet={sheet} usable={result.usable} colorByKey={colorByKey} />
                     </div>
                 ))}
             </div>
+
+            {legend.length > 0 && (
+                <div className="fcl-legend">
+                    {legend.map(l => (
+                        <span key={l.key}><i style={{ background: l.color }} />{l.key} · {l.count}×</span>
+                    ))}
+                </div>
+            )}
         </>
     );
 }
 
 // ─── SVG jedne ploče ──────────────────────────────────────────────────
 
-const PALETTE = ['#0a84ff', '#34c759', '#ff9500', '#af52de', '#ff375f', '#5ac8fa', '#ffcc00', '#5e5ce6'];
-
-function SheetSVG({ sheet, usable, big }: { sheet: SheetLayout; usable: { width: number; height: number }; big?: boolean }) {
-    // Crtamo KORISNU površinu (nakon obreza) jer su koordinate komada u njoj.
+function SheetSVG({ sheet, usable, colorByKey, big }: {
+    sheet: SheetLayout; usable: { width: number; height: number }; colorByKey: Map<string, string>; big?: boolean;
+}) {
+    // Koordinate komada su u KORISNOJ površini (nakon obreza).
     const extentW = Math.max(1, ...sheet.placements.map(p => p.x + p.w));
     const extentH = Math.max(1, ...sheet.placements.map(p => p.y + p.h));
     const W = Math.max(usable.width || 0, extentW);
     const H = Math.max(usable.height || 0, extentH);
-    const colorOf = (name: string) => {
-        let hash = 0; for (let i = 0; i < name.length; i++) hash = (hash * 31 + name.charCodeAt(i)) >>> 0;
-        return PALETTE[hash % PALETTE.length];
-    };
-    // Font skaliran na dimenzije ploče da labela stane.
-    const fs = Math.max(W, H) / (big ? 45 : 32);
+    const stroke = Math.max(1.5, W / 500);
+    const fs = Math.max(W, H) / (big ? 46 : 34);
 
     return (
-        <svg className="fcl-svg" viewBox={`-20 -20 ${W + 40} ${H + 40}`} preserveAspectRatio="xMidYMid meet">
-            <rect x={0} y={0} width={W} height={H} className="fcl-svg-board" />
-            {sheet.offcuts.map((o, i) => (
-                <rect key={`o${i}`} x={o.x} y={o.y} width={o.w} height={o.h} className="fcl-svg-offcut" />
+        <svg className="fcl-svg" viewBox={`-16 -16 ${W + 32} ${H + 32}`} preserveAspectRatio="xMidYMid meet">
+            <rect x={0} y={0} width={W} height={H} className="fcl-svg-board" strokeWidth={stroke} rx={W / 200} />
+            {sheet.cuts.map((c, i) => (
+                <line key={`c${i}`} x1={c.x1} y1={c.y1} x2={c.x2} y2={c.y2} className="fcl-svg-cut" strokeWidth={stroke * 0.6} strokeOpacity={0.35} />
             ))}
             {sheet.placements.map((p, i) => {
-                const c = colorOf(p.name);
+                const c = colorByKey.get(sizeKey(p.w, p.h)) || '#3b82f6';
+                const short = Math.min(p.w, p.h);
                 return (
                     <g key={i}>
-                        <rect x={p.x} y={p.y} width={p.w} height={p.h} fill={c} fillOpacity={0.85} stroke="#fff" strokeWidth={Math.max(1, W / 600)} rx={Math.min(p.w, p.h) * 0.03} />
-                        {Math.min(p.w, p.h) > fs * 3 && (
+                        <rect x={p.x} y={p.y} width={p.w} height={p.h} fill={c} fillOpacity={0.9} stroke="#fff" strokeWidth={stroke} rx={Math.min(6, short * 0.04)} />
+                        {short > fs * 2.6 && (
                             <text x={p.x + p.w / 2} y={p.y + p.h / 2} fontSize={fs} fill="#fff" fontWeight={600}
                                 textAnchor="middle" dominantBaseline="central">
                                 {Math.round(p.rotated ? p.h : p.w)}×{Math.round(p.rotated ? p.w : p.h)}
@@ -385,9 +420,6 @@ function SheetSVG({ sheet, usable, big }: { sheet: SheetLayout; usable: { width:
                     </g>
                 );
             })}
-            {sheet.cuts.map((c, i) => (
-                <line key={`c${i}`} x1={c.x1} y1={c.y1} x2={c.x2} y2={c.y2} className="fcl-svg-cut" strokeWidth={Math.max(1.5, W / 500)} />
-            ))}
         </svg>
     );
 }
