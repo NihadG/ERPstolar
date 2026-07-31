@@ -10,9 +10,9 @@
 
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import {
-    Plus, Copy, Undo2, Redo2, ChevronLeft, ChevronRight, Loader2,
+    Plus, Copy, Undo2, Redo2, ChevronLeft, ChevronRight, ChevronDown, Loader2,
     Lock, AlertTriangle, Users, Trash2, Save, Link2, Package, Bookmark, Printer,
-    GitCompareArrows, ClipboardList, Sparkles, Rows3, Pencil,
+    GitCompareArrows, ClipboardList, Sparkles, Rows3, Pencil, MoreHorizontal,
 } from 'lucide-react';
 import type {
     Project, Worker, WorkOrder, Order, Supplier, WorkerAttendance,
@@ -34,6 +34,7 @@ import ChainTemplatesModal from './ChainTemplatesModal';
 import CompareModal from './CompareModal';
 import BatchPlanModal from './BatchPlanModal';
 import ScheduleReviewModal from './ScheduleReviewModal';
+import CanvasMenu from './CanvasMenu';
 import { autoSchedule, type AutoScheduleResult } from '@/lib/canvas/autoSchedule';
 import { captureChainTemplate, applyChainTemplate } from '@/lib/canvas/templates';
 import { buildPlanDocument } from '@/lib/print/planDocument';
@@ -485,51 +486,38 @@ export default function CanvasTab({
 
     return (
         <div className="cv-root">
-            {/* Traka scenarija */}
-            <div className="cv-scenariobar">
-                <select
-                    className="cv-select"
-                    value={scenario.Scenario_ID}
-                    onChange={e => void onSwitch(e.target.value)}
-                >
-                    {scenarios.map(s => <option key={s.Scenario_ID} value={s.Scenario_ID}>{s.Name}</option>)}
-                    {!scenarios.some(s => s.Scenario_ID === scenario.Scenario_ID) && (
-                        <option value={scenario.Scenario_ID}>{scenario.Name}</option>
-                    )}
-                </select>
+            {/* Jedna traka: SCENARIJ · POGLED ——— KREIRANJE/RASPORED · JOŠ · ISTORIJA */}
+            <div className="cv-bar">
+                {/* ── Scenarij (naziv + meni planova) ─────────── */}
                 <input
                     className="cv-name"
                     value={scenario.Name}
                     onChange={e => dispatch({ type: 'RENAME', name: e.target.value })}
-                    aria-label="Naziv scenarija"
+                    aria-label="Naziv plana"
                 />
-                <button className="cv-btn" onClick={() => void onNewScenario()}><Plus size={15} /> Novi</button>
-                <button className="cv-btn" onClick={() => void onDuplicate()}><Copy size={15} /> Dupliraj</button>
-                <button className="cv-btn" onClick={() => setCompareOpen(true)}
-                    title="Uporedi s drugim planom — šta te košta odluka">
-                    <GitCompareArrows size={15} /> Uporedi
-                </button>
-                <button className="cv-btn danger" onClick={() => void onDeleteScenario()}
-                    title="Obriši plan (nalozi i narudžbe ostaju netaknuti)">
-                    <Trash2 size={15} />
-                </button>
-
-                <span className="cv-spacer" />
-
-                <span className="cv-isolation" title="Platno ne mijenja naloge, narudžbe ni statuse">
-                    <Lock size={13} /> planiranje bez uticaja
-                </span>
-                <SaveIndicator
-                    saveState={saveState}
-                    dirty={state.dirty}
-                    onSave={() => void saveNow()}
-                    onReload={() => void reloadRemote()}
-                    onForce={() => void forceOverwrite()}
+                <CanvasMenu
+                    align="left"
+                    title="Planovi"
+                    trigger={open => (
+                        <button className={`cv-icon-btn lg${open ? ' on' : ''}`} title="Prebaci / upravljaj planovima">
+                            <ChevronDown size={16} />
+                        </button>
+                    )}
+                    items={[
+                        ...scenarios.map(s => ({
+                            key: s.Scenario_ID,
+                            label: s.Name,
+                            active: s.Scenario_ID === scenario.Scenario_ID,
+                            onClick: () => void onSwitch(s.Scenario_ID),
+                        })),
+                        { key: 'new', label: 'Novi plan', icon: <Plus size={14} />, divider: true, onClick: () => void onNewScenario() },
+                        { key: 'dup', label: 'Dupliraj plan', icon: <Copy size={14} />, onClick: () => void onDuplicate() },
+                        { key: 'del', label: 'Obriši plan', icon: <Trash2 size={14} />, danger: true, onClick: () => void onDeleteScenario() },
+                    ]}
                 />
-            </div>
 
-            {/* Alatna traka — tri zone: POGLED · KREIRANJE/RASPORED · ALATI */}
-            <div className="cv-toolbar">
+                <span className="cv-divider" />
+
                 {/* ── Pogled ─────────────────────────────────── */}
                 <div className="cv-seg" role="group" aria-label="Zum">
                     {ZOOMS.map(z => (
@@ -555,13 +543,32 @@ export default function CanvasTab({
                     </button>
                 </div>
 
-                <span className="cv-inline-select" title="Grupiši redove po…">
-                    <Rows3 size={14} />
-                    <select className="cv-select bare" value={groupBy} aria-label="Grupiši"
-                        onChange={e => dispatch({ type: 'SET_VIEW', view: { groupBy: e.target.value as PlanGroupBy } })}>
-                        {GROUPS.map(g => <option key={g} value={g}>{GROUP_BY_LABEL[g]}</option>)}
-                    </select>
-                </span>
+                <CanvasMenu
+                    align="left"
+                    trigger={open => (
+                        <button className={`cv-btn ghost${open ? ' on' : ''}`} title="Grupiši redove">
+                            <Rows3 size={14} /> {GROUP_BY_LABEL[groupBy]} <ChevronDown size={13} className="cv-caret" />
+                        </button>
+                    )}
+                    items={GROUPS.map(g => ({
+                        key: g, label: GROUP_BY_LABEL[g], active: groupBy === g,
+                        onClick: () => dispatch({ type: 'SET_VIEW', view: { groupBy: g } }),
+                    }))}
+                />
+
+                <CanvasMenu
+                    align="left"
+                    title="Crtaj povlačenjem"
+                    trigger={open => (
+                        <button className={`cv-icon-btn lg${open ? ' on' : ''}`} title={`Šta se crta: ${BLOCK_LABEL[quickKind]}`}>
+                            <Pencil size={15} />
+                        </button>
+                    )}
+                    items={QUICK_KINDS.map(q => ({
+                        key: q.kind, label: BLOCK_LABEL[q.kind], active: quickKind === q.kind,
+                        onClick: () => setQuickKind(q.kind),
+                    }))}
+                />
 
                 <span className="cv-spacer" />
 
@@ -573,45 +580,45 @@ export default function CanvasTab({
                     title="Unesi više naloga odjednom (proizvodni, montaža, razni)">
                     <ClipboardList size={15} /> Batch
                 </button>
-
-                <span className="cv-divider" />
-
                 <button className="cv-btn accent" onClick={runSchedule}
                     title="Automatski rasporedi naloge s kandidat-ekipama kroz vrijeme i radnike">
                     <Sparkles size={15} /> Rasporedi
                 </button>
-                <button className="cv-btn accent" onClick={() => setChainOpen(true)}
-                    title="Preračunaj lanac unazad od roka">
-                    <Link2 size={15} /> Lanac
-                </button>
 
-                <span className="cv-divider" />
-
-                {/* ── Alati (ikone) ──────────────────────────── */}
-                <span className="cv-inline-select" title="Šta se crta povlačenjem po praznom redu">
-                    <Pencil size={14} />
-                    <select className="cv-select bare" value={quickKind} aria-label="Šta se crta"
-                        onChange={e => setQuickKind(e.target.value as PlanBlockKind)}>
-                        {QUICK_KINDS.map(q => <option key={q.kind} value={q.kind}>{BLOCK_LABEL[q.kind]}</option>)}
-                    </select>
-                </span>
-                <button className={`cv-icon-btn lg${showIdle ? ' on' : ''}`} onClick={() => setShowIdle(v => !v)}
-                    title="Prikaži sve radnike (i one bez posla)">
-                    <Users size={16} />
-                </button>
-                <button className="cv-icon-btn lg" onClick={() => setTemplatesOpen(true)}
-                    title="Šabloni lanaca (npr. nova kuhinja)">
-                    <Bookmark size={16} />
-                    {templates.length > 0 && <span className="cv-badge">{templates.length}</span>}
-                </button>
-                <button className="cv-icon-btn lg" onClick={printPlan} title="Štampaj plan za zid radionice">
-                    <Printer size={16} />
-                </button>
+                {/* ── Još (overflow) ─────────────────────────── */}
+                <CanvasMenu
+                    align="right"
+                    trigger={open => (
+                        <button className={`cv-icon-btn lg${open ? ' on' : ''}`} title="Još radnji">
+                            <MoreHorizontal size={18} />
+                        </button>
+                    )}
+                    items={[
+                        { key: 'chain', label: 'Lanac — preračun unazad', icon: <Link2 size={14} />, onClick: () => setChainOpen(true) },
+                        { key: 'compare', label: 'Uporedi planove', icon: <GitCompareArrows size={14} />, onClick: () => setCompareOpen(true) },
+                        { key: 'templates', label: 'Šabloni lanaca', icon: <Bookmark size={14} />, badge: templates.length, onClick: () => setTemplatesOpen(true) },
+                        { key: 'idle', label: showIdle ? 'Sakrij prazne radnike' : 'Prikaži sve radnike', icon: <Users size={14} />, active: showIdle, divider: true, onClick: () => setShowIdle(v => !v) },
+                        { key: 'print', label: 'Štampaj plan', icon: <Printer size={14} />, onClick: printPlan },
+                    ]}
+                />
 
                 <span className="cv-divider" />
 
                 <button className="cv-icon-btn lg" disabled={!canUndo} onClick={() => dispatch({ type: 'UNDO' })} title="Poništi (Ctrl+Z)"><Undo2 size={16} /></button>
                 <button className="cv-icon-btn lg" disabled={!canRedo} onClick={() => dispatch({ type: 'REDO' })} title="Ponovi (Ctrl+Shift+Z)"><Redo2 size={16} /></button>
+
+                <span className="cv-divider" />
+
+                <span className="cv-isolation icon-only" title="Platno ne mijenja naloge, narudžbe ni statuse — samo planiranje">
+                    <Lock size={14} />
+                </span>
+                <SaveIndicator
+                    saveState={saveState}
+                    dirty={state.dirty}
+                    onSave={() => void saveNow()}
+                    onReload={() => void reloadRemote()}
+                    onForce={() => void forceOverwrite()}
+                />
             </div>
 
             {state.notice && <div className="cv-notice">{state.notice}</div>}

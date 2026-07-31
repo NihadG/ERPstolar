@@ -27,14 +27,14 @@
 .cv-spin { animation: cv-rot 1s linear infinite; }
 @keyframes cv-rot { to { transform: rotate(360deg); } }
 
-/* ── Trake ────────────────────────────────────────────────────── */
-.cv-scenariobar,
-.cv-toolbar {
+/* ── Traka (jedan red) ────────────────────────────────────────── */
+.cv-bar {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 7px;
     flex-wrap: wrap;
-    padding: 10px 14px;
+    row-gap: 8px;
+    padding: 8px 12px;
     border-radius: var(--radius-lg);
     background: var(--glass-bg);
     backdrop-filter: var(--glass-blur);
@@ -42,7 +42,6 @@
     flex-shrink: 0;
 }
 
-.cv-scenariobar { padding-block: 8px; }
 .cv-spacer { flex: 1 1 auto; }
 
 .cv-divider {
@@ -68,14 +67,8 @@
 .cv-name:hover { background: var(--surface); }
 .cv-name:focus { outline: none; background: var(--background); border-color: var(--accent); }
 
-/* Prekidač scenarija — VIZUELNO drukčiji od naziva, da dva ista teksta ne
-   izgledaju kao greška. Tiši, uži, s površinskom podlogom. */
-.cv-scenariobar .cv-select {
-    max-width: 168px;
-    background: var(--surface);
-    color: var(--text-secondary);
-    font-weight: 500;
-}
+/* Naziv plana kao naslov, ali u jednoj traci — kompaktan. */
+.cv-bar .cv-name { flex: 0 1 190px; }
 
 .cv-select {
     height: 34px;
@@ -110,6 +103,77 @@
     font-size: 11.5px;
     font-weight: 500;
     white-space: nowrap;
+}
+/* U jednoj traci nema mjesta za tekst — samo katanac, značenje ide u tooltip. */
+.cv-isolation.icon-only {
+    width: 30px;
+    height: 30px;
+    padding: 0;
+    justify-content: center;
+    border-radius: 50%;
+    color: var(--text-tertiary);
+}
+
+/* ── Meni (CanvasMenu) ───────────────────────────────────────── */
+.cv-menu-wrap { position: relative; display: inline-flex; }
+.cv-menu {
+    position: absolute;
+    top: calc(100% + 6px);
+    z-index: 40;
+    min-width: 200px;
+    max-height: 60vh;
+    overflow-y: auto;
+    padding: 5px;
+    background: var(--background);
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius-md);
+    box-shadow: 0 8px 28px var(--shadow-lg, rgba(0, 0, 0, .16));
+    animation: cv-menu-in .12s ease;
+}
+.cv-menu.left { left: 0; }
+.cv-menu.right { right: 0; }
+@keyframes cv-menu-in { from { opacity: 0; transform: translateY(-4px); } }
+
+.cv-menu-title {
+    padding: 5px 10px 6px;
+    font-size: 10.5px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .04em;
+    color: var(--text-tertiary);
+}
+.cv-menu-divider { height: 1px; background: var(--border-light); margin: 5px 4px; }
+
+.cv-menu-item {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    width: 100%;
+    padding: 8px 10px;
+    border: none;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    font-size: 13px;
+    font-family: inherit;
+    color: var(--text-primary);
+    cursor: pointer;
+    text-align: left;
+    transition: var(--transition);
+}
+.cv-menu-item:hover:not(:disabled) { background: var(--surface-hover); }
+.cv-menu-item:disabled { opacity: .4; cursor: default; }
+.cv-menu-item.active { color: var(--accent); font-weight: 600; }
+.cv-menu-item.danger { color: var(--error); }
+.cv-menu-item.danger:hover:not(:disabled) { background: var(--error-bg); }
+.cv-menu-ico { display: inline-flex; width: 16px; justify-content: center; color: var(--text-tertiary); flex-shrink: 0; }
+.cv-menu-item.active .cv-menu-ico { color: var(--accent); }
+.cv-menu-item.danger .cv-menu-ico { color: var(--error); }
+.cv-menu-lbl { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cv-menu-check { color: var(--accent); flex-shrink: 0; }
+.cv-menu-badge {
+    min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px;
+    background: var(--surface-active); color: var(--text-secondary);
+    font-size: 11px; font-weight: 700; display: grid; place-items: center;
 }
 
 /* ── Dugmad ───────────────────────────────────────────────────────
@@ -161,6 +225,18 @@
 .cv-btn.on { background: var(--accent); border-color: var(--accent); color: #fff; }
 .cv-btn.sm { height: 30px; padding: 0 10px; font-size: 12px; }
 .cv-btn.full { width: 100%; }
+
+/* Ghost — okidač menija (Grupiši): izgleda kao tekst s caretom, ne kao dugme. */
+.cv-btn.ghost {
+    border-color: transparent;
+    background: transparent;
+    color: var(--text-secondary);
+    font-weight: 500;
+    gap: 5px;
+}
+.cv-btn.ghost:hover:not(:disabled) { background: var(--surface); color: var(--text-primary); }
+.cv-btn.ghost.on { background: var(--surface); color: var(--text-primary); }
+.cv-caret { color: var(--text-tertiary); margin-left: -1px; }
 .cv-btn.danger { color: var(--error); border-color: #f5c6c2; }
 .cv-btn.danger:hover:not(:disabled) { background: var(--error-bg); }
 
