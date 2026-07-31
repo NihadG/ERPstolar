@@ -1,0 +1,1710 @@
+<!DOCTYPE html>
+<html lang="hr">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OptiCut Pro - Napredna Optimizacija Rezanja v2.0</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+
+        .sheet-grid {
+            background-size: 50px 50px;
+            background-image: linear-gradient(to right, rgba(0, 0, 0, 0.03) 1px, transparent 1px), linear-gradient(to bottom, rgba(0, 0, 0, 0.03) 1px, transparent 1px);
+        }
+
+        .piece-hover:hover {
+            filter: brightness(1.05);
+            transform: scale(1.01);
+            transition: all 0.2s;
+            z-index: 10;
+        }
+
+        .cut-line {
+            stroke: #dc2626;
+            stroke-width: 2;
+        }
+
+        .waste-area {
+            fill: repeating-linear-gradient(45deg, #fee2e2, #fee2e2 10px, #fecaca 10px, #fecaca 20px);
+        }
+
+        .hatch-pattern {
+            background-color: #f8fafc;
+            background-image: repeating-linear-gradient(45deg, #e2e8f0 25%, transparent 25%, transparent 75%, #e2e8f0 75%, #e2e8f0), repeating-linear-gradient(45deg, #e2e8f0 25%, #f8fafc 25%, #f8fafc 75%, #e2e8f0 75%, #e2e8f0);
+            background-position: 0 0, 10px 10px;
+            background-size: 20px 20px;
+        }
+    </style>
+    <base target="_blank">
+</head>
+
+<body class="bg-slate-50 min-h-screen">
+    <header class="bg-slate-900 text-white shadow-xl">
+        <div class="max-w-7xl mx-auto px-4 py-6">
+            <div class="flex items-center justify-between">
+                <div class="flex items-center space-x-3">
+                    <div
+                        class="w-12 h-12 bg-gradient-to-br from-orange-500 to-red-600 rounded-xl flex items-center justify-center shadow-lg">
+                        <svg class="w-7 h-7 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M14 10l-2 1m0 0l-2-1m2 1v2.5M20 7l-2 1m2-1l-2-1m2 1v2.5M14 4l-2-1-2 1M4 7l2-1M4 7l2 1M4 7v2.5M12 21l-2-1m2 1l2-1m-2 1v-2.5M6 18l-2-1v-2.5M18 18l2-1v-2.5" />
+                        </svg>
+                    </div>
+                    <div>
+                        <h1 class="text-2xl font-bold tracking-tight">OptiCut Pro</h1>
+                        <p class="text-slate-400 text-sm">Napredna optimizacija guillotine rezanja v2.0</p>
+                    </div>
+                </div>
+                <div class="flex items-center space-x-4">
+                    <div class="text-right">
+                        <div class="text-xs text-slate-400">Algoritam</div>
+                        <div class="text-sm font-semibold text-orange-400">G4 + FFD + SA + GRASP</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <main class="max-w-7xl mx-auto px-4 py-8 space-y-6">
+
+        <!-- Import Section -->
+        <section class="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
+            <div
+                class="bg-gradient-to-r from-gray-50 to-gray-100 px-6 py-4 border-b border-gray-200 flex items-center justify-between">
+                <h2 class="text-lg font-semibold text-gray-800 flex items-center">
+                    <span
+                        class="w-8 h-8 bg-blue-600 text-white rounded-lg flex items-center justify-center text-sm font-bold mr-3">1</span>
+                    Import Dijelova
+                </h2>
+                <div class="flex space-x-2">
+                    <button onclick="loadExampleData()"
+                        class="text-sm bg-white border border-gray-300 hover:bg-gray-50 px-4 py-2 rounded-lg font-medium text-gray-700 transition-colors">
+                        Učitaj primjer
+                    </button>
+                    <button onclick="clearData()"
+                        class="text-sm bg-red-50 border border-red-200 hover:bg-red-100 px-4 py-2 rounded-lg font-medium text-red-700 transition-colors">
+                        Očisti
+                    </button>
+                </div>
+            </div>
+
+            <div class="p-6">
+                <div id="dropZone"
+                    class="border-2 border-dashed border-gray-300 rounded-xl p-8 text-center hover:border-blue-500 hover:bg-blue-50 transition-all cursor-pointer bg-gray-50">
+                    <input type="file" id="csvInput" accept=".csv" class="hidden" onchange="handleFileSelect(event)">
+                    <svg class="mx-auto h-12 w-12 text-gray-400" stroke="currentColor" fill="none" viewBox="0 0 48 48">
+                        <path
+                            d="M28 8H12a4 4 0 00-4 4v20m32-12v8m0 0v8a4 4 0 01-4 4H12a4 4 0 01-4-4v-4m32-4l-3.172-3.172a4 4 0 00-5.656 0L28 28M8 32l9.172-9.172a4 4 0 015.656 0L28 28m0 0l4 4m4-24h8m-4-4v8m-12 4h.02"
+                            stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                    </svg>
+                    <p class="mt-4 text-sm text-gray-600">
+                        <span class="font-semibold text-blue-600">Klikni za upload</span> ili povuci CSV
+                    </p>
+                    <p class="mt-2 text-xs text-gray-500">naziv, širina, visina, količina, materijal</p>
+                </div>
+
+                <div id="dataPreview" class="hidden mt-6">
+                    <div class="flex items-center justify-between mb-3">
+                        <h3 class="font-medium text-gray-700">Pregled dijelova</h3>
+                        <span id="pieceCount"
+                            class="text-sm bg-blue-100 text-blue-800 px-3 py-1 rounded-full font-medium"></span>
+                    </div>
+                    <div class="overflow-x-auto border rounded-xl shadow-sm">
+                        <table class="min-w-full divide-y divide-gray-200">
+                            <thead class="bg-gray-50">
+                                <tr>
+                                    <th
+                                        class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                                        Naziv</th>
+                                    <th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">
+                                        Dimenzije</th>
+                                    <th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Kol.
+                                    </th>
+                                    <th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">
+                                        Površina</th>
+                                    <th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">
+                                        Materijal</th>
+                                </tr>
+                            </thead>
+                            <tbody id="piecesTable" class="bg-white divide-y divide-gray-200"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Configuration -->
+        <section class="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
+            <div class="bg-gradient-to-r from-gray-50 to-gray-100 px-6 py-4 border-b border-gray-200">
+                <h2 class="text-lg font-semibold text-gray-800 flex items-center">
+                    <span
+                        class="w-8 h-8 bg-blue-600 text-white rounded-lg flex items-center justify-center text-sm font-bold mr-3">2</span>
+                    Parametri Optimizacije
+                </h2>
+            </div>
+
+            <div class="p-6 grid grid-cols-1 lg:grid-cols-3 gap-8">
+                <div class="space-y-4">
+                    <h3 class="font-semibold text-gray-900 border-b pb-2 flex items-center">
+                        <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />
+                        </svg>
+                        Dimenzije Ploče
+                    </h3>
+
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Preset</label>
+                        <select id="sheetPreset" onchange="updateSheetDimensions()"
+                            class="w-full border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 border p-2.5 bg-white">
+                            <option value="custom">Prilagođeno...</option>
+                            <option value="2500x1250" selected>2500 x 1250 mm (standard)</option>
+                            <option value="2800x2070">2800 x 2070 mm (velika)</option>
+                            <option value="3000x1500">3000 x 1500 mm</option>
+                            <option value="2440x1220">2440 x 1220 mm (8x4)</option>
+                        </select>
+                    </div>
+
+                    <div class="grid grid-cols-2 gap-3">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Širina (mm)</label>
+                            <input type="number" id="sheetWidth" value="2500"
+                                class="w-full border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 border p-2.5">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Visina (mm)</label>
+                            <input type="number" id="sheetHeight" value="1250"
+                                class="w-full border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 border p-2.5">
+                        </div>
+                    </div>
+                </div>
+
+                <div class="space-y-4">
+                    <h3 class="font-semibold text-gray-900 border-b pb-2 flex items-center">
+                        <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M14.121 14.121L19 19m-7-7l7-7m-7 7l-2.879 2.879M12 12L9.121 9.121m0 5.758a3 3 0 10-4.243 4.243 3 3 0 004.243-4.243zm0-5.758a3 3 0 10-4.243-4.243 3 3 0 004.243 4.243z" />
+                        </svg>
+                        Parametri Noža
+                    </h3>
+
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Debljina noža (mm)</label>
+                        <input type="number" id="bladeWidth" value="4" step="0.5" min="0"
+                            class="w-full border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 border p-2.5">
+                    </div>
+
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Offset ruba (mm)</label>
+                        <input type="number" id="edgeOffset" value="0" min="0"
+                            class="w-full border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 border p-2.5">
+                        <p class="text-xs text-gray-500 mt-1">Razmak od ruba ploče</p>
+                    </div>
+                </div>
+
+                <div class="space-y-4">
+                    <h3 class="font-semibold text-gray-900 border-b pb-2 flex items-center">
+                        <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z" />
+                        </svg>
+                        Napredno
+                    </h3>
+
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Iteracije optimizacije</label>
+                        <select id="iterations"
+                            class="w-full border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 border p-2.5">
+                            <option value="500">Brzo (500)</option>
+                            <option value="2000" selected>Balansirano (2000)</option>
+                            <option value="5000">Maksimalno (5000)</option>
+                            <option value="10000">Ultra (10000)</option>
+                        </select>
+                    </div>
+
+                    <div class="space-y-2 pt-2">
+                        <label class="flex items-center space-x-3 cursor-pointer">
+                            <input type="checkbox" id="allowRotation" checked
+                                class="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500">
+                            <span class="text-sm text-gray-700">Dozvoli rotaciju 90°</span>
+                        </label>
+                        <label class="flex items-center space-x-3 cursor-pointer">
+                            <input type="checkbox" id="preferLongCuts" checked
+                                class="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500">
+                            <span class="text-sm text-gray-700">Preferiraj duge rezove</span>
+                        </label>
+                    </div>
+                </div>
+            </div>
+
+            <div class="px-6 py-5 bg-gradient-to-r from-blue-50 to-indigo-50 border-t border-gray-200">
+                <button onclick="runOptimization()" id="optimizeBtn"
+                    class="w-full md:w-auto bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-bold py-3.5 px-8 rounded-xl shadow-lg hover:shadow-xl transition-all transform hover:-translate-y-0.5 flex items-center justify-center space-x-2">
+                    <svg class="w-5 h-5 animate-pulse" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                            d="M13 10V3L4 14h7v7l9-11h-7z" />
+                    </svg>
+                    <span>Pokreni Naprednu Optimizaciju</span>
+                </button>
+            </div>
+        </section>
+
+        <!-- Results -->
+        <section id="resultsSection" class="hidden space-y-6">
+
+            <!-- Stats Cards -->
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <div class="bg-white p-6 rounded-2xl shadow-sm border border-gray-200">
+                    <div class="text-sm font-medium text-gray-500 mb-1">Ploča potrebno</div>
+                    <div class="text-4xl font-bold text-gray-900" id="statSheets">0</div>
+                    <div class="text-xs text-gray-400 mt-1">optimalni broj</div>
+                </div>
+                <div class="bg-white p-6 rounded-2xl shadow-sm border border-gray-200">
+                    <div class="text-sm font-medium text-gray-500 mb-1">Prosječna iskorištenost</div>
+                    <div class="text-4xl font-bold text-green-600" id="statEfficiency">0%</div>
+                    <div class="text-xs text-gray-400 mt-1">po ploči</div>
+                </div>
+                <div class="bg-white p-6 rounded-2xl shadow-sm border border-gray-200">
+                    <div class="text-sm font-medium text-gray-500 mb-1">Ukupni otpad</div>
+                    <div class="text-4xl font-bold text-orange-600" id="statWaste">0%</div>
+                    <div class="text-xs text-gray-400 mt-1">neiskorišteno</div>
+                </div>
+                <div class="bg-white p-6 rounded-2xl shadow-sm border border-gray-200">
+                    <div class="text-sm font-medium text-gray-500 mb-1">Duljina reza</div>
+                    <div class="text-4xl font-bold text-blue-600" id="statCutLength">0m</div>
+                    <div class="text-xs text-gray-400 mt-1">ukupno</div>
+                </div>
+            </div>
+
+            <!-- Visualization -->
+            <div class="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
+                <div
+                    class="bg-gradient-to-r from-gray-50 to-gray-100 px-6 py-4 border-b border-gray-200 flex items-center justify-between flex-wrap gap-4">
+                    <h2 class="text-lg font-semibold text-gray-800">Optimalni Raspored Rezanja</h2>
+                    <div class="flex space-x-2">
+                        <button onclick="exportResults()"
+                            class="text-sm bg-white border border-gray-300 hover:bg-gray-50 px-4 py-2 rounded-lg font-medium text-gray-700 shadow-sm transition-colors">
+                            Export CSV
+                        </button>
+                        <button onclick="exportCutList()"
+                            class="text-sm bg-white border border-gray-300 hover:bg-gray-50 px-4 py-2 rounded-lg font-medium text-gray-700 shadow-sm transition-colors">
+                            Lista Rezova
+                        </button>
+                        <button onclick="exportToPDF()"
+                            class="text-sm bg-red-600 border border-red-700 hover:bg-red-700 text-white px-4 py-2 rounded-lg font-medium shadow-sm transition-colors flex items-center">
+                            <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                    d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z">
+                                </path>
+                            </svg>
+                            Export PDF
+                        </button>
+                    </div>
+                </div>
+
+                <div id="sheetsContainer" class="p-6 space-y-8">
+                    <!-- Rendered by JS -->
+                </div>
+            </div>
+
+            <!-- Detailed Stats -->
+            <div class="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
+                <div class="bg-gradient-to-r from-gray-50 to-gray-100 px-6 py-4 border-b border-gray-200">
+                    <h2 class="text-lg font-semibold text-gray-800">Detaljna Analiza</h2>
+                </div>
+                <div class="p-6">
+                    <div class="overflow-x-auto">
+                        <table class="min-w-full divide-y divide-gray-200">
+                            <thead class="bg-gray-50">
+                                <tr>
+                                    <th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Ploča
+                                    </th>
+                                    <th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">
+                                        Dijelova</th>
+                                    <th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">
+                                        Iskorištenost</th>
+                                    <th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Otpad
+                                    </th>
+                                    <th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">
+                                        Horizontalni rezovi</th>
+                                    <th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">
+                                        Vertikalni rezovi</th>
+                                </tr>
+                            </thead>
+                            <tbody id="analysisTable" class="bg-white divide-y divide-gray-200"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <script>
+        let pieces = [];
+        let optimizationResult = null;
+
+        // Event Listeners
+        document.getElementById('dropZone').addEventListener('click', () => document.getElementById('csvInput').click());
+        document.getElementById('dropZone').addEventListener('dragover', (e) => {
+            e.preventDefault();
+            e.currentTarget.classList.add('border-blue-500', 'bg-blue-50');
+        });
+        document.getElementById('dropZone').addEventListener('dragleave', (e) => {
+            e.currentTarget.classList.remove('border-blue-500', 'bg-blue-50');
+        });
+        document.getElementById('dropZone').addEventListener('drop', (e) => {
+            e.preventDefault();
+            e.currentTarget.classList.remove('border-blue-500', 'bg-blue-50');
+            if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
+        });
+
+        // Global paste listener for "Smart Paste"
+        document.addEventListener('paste', handlePaste);
+
+        function handleFileSelect(event) {
+            if (event.target.files[0]) handleFile(event.target.files[0]);
+        }
+
+        function handleFile(file) {
+            const reader = new FileReader();
+            reader.onload = (e) => parseCSV(e.target.result);
+            reader.readAsText(file);
+        }
+
+        function handlePaste(e) {
+            // Only handle paste if we are not inside an input field (unless specific logic needed)
+            // But for "Smart Paste" over the table, we might want to allow it anywhere if it looks like CSV/TSV
+            // For now, let's just try to parse if it looks like tabular data
+
+            const clipboardData = e.clipboardData || window.clipboardData;
+            const pastedData = clipboardData.getData('Text');
+
+            if (!pastedData) return;
+
+            // Simple heuristic to detect tabular data: multiple lines or tabs
+            if (pastedData.includes('\t') || pastedData.includes('\n')) {
+                // Try to parse as CSV/TSV
+                // If it's valid data, we append it.
+                // We need to be careful not to trigger this when pasting into a single input field 
+                // if specifically targeting just that field. 
+                // logic: if active element is not an input of our table, OR if the data is multi-line
+
+                if (document.activeElement.tagName === 'INPUT' && !pastedData.includes('\n')) {
+                    return; // Regular paste into an input
+                }
+
+                e.preventDefault();
+                parseCSV(pastedData, true); // true = append
+
+                // Show feedback
+                const originalTitle = document.querySelector('#dataPreview h3').textContent;
+                document.querySelector('#dataPreview h3').textContent = 'Podaci zalijepljeni!';
+                setTimeout(() => {
+                    document.querySelector('#dataPreview h3').textContent = originalTitle;
+                }, 2000);
+            }
+        }
+
+        // Helper: parse a number that may use European formatting (1.200,50 or 1200,50)
+        function parseNumber(str) {
+            if (!str) return NaN;
+            str = str.trim().replace(/\r/g, '');
+            // If it has both dots and commas, determine which is decimal separator
+            const hasDot = str.includes('.');
+            const hasComma = str.includes(',');
+            if (hasDot && hasComma) {
+                // European: 1.200,50 -> 1200.50
+                if (str.lastIndexOf(',') > str.lastIndexOf('.')) {
+                    str = str.replace(/\./g, '').replace(',', '.');
+                } else {
+                    // US: 1,200.50 -> 1200.50
+                    str = str.replace(/,/g, '');
+                }
+            } else if (hasComma) {
+                // Could be decimal comma (3,5) or thousands (1,200)
+                const parts = str.split(',');
+                if (parts.length === 2 && parts[1].length === 3 && parts[0].length > 0) {
+                    // Likely thousands separator: 1,200 -> 1200
+                    str = str.replace(',', '');
+                } else {
+                    // Likely decimal comma: 3,5 -> 3.5
+                    str = str.replace(',', '.');
+                }
+            }
+            return parseFloat(str);
+        }
+
+        function parseCSV(text, append = false) {
+            // Normalize line endings
+            text = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+            const lines = text.trim().split('\n');
+            if (!append) pieces = [];
+
+            // Detect delimiter: if tabs are present, use tabs (Excel always pastes tabs).
+            // Only use commas if NO tabs are found anywhere in the text.
+            const hasTab = text.includes('\t');
+            const delimiter = hasTab ? '\t' : ',';
+
+            // Split with the detected delimiter
+            function splitLine(line) {
+                return line.split(delimiter).map(s => s.trim().replace(/\r/g, ''));
+            }
+
+            // Detect header
+            const firstLineCols = splitLine(lines[0]);
+            const hasHeader = isNaN(parseNumber(firstLineCols[1])) && isNaN(parseNumber(firstLineCols[2]));
+            const startIdx = hasHeader ? 1 : 0;
+
+            let skippedRows = 0;
+
+            for (let i = startIdx; i < lines.length; i++) {
+                if (!lines[i].trim()) continue;
+
+                const cols = splitLine(lines[i]);
+                // Support various formats:
+                // 3 columns: W, H, Qty (Defaults: Name="Dio X", Mat="Iveral")
+                // 4 columns: Name, W, H, Qty
+                // 5+ columns: Name, W, H, Qty, Mat, [extra ignored]
+
+                let name, width, height, qty, material;
+
+                if (cols.length === 3) {
+                    // Assume: Width, Height, Qty
+                    if (isNaN(parseNumber(cols[0]))) {
+                        skippedRows++;
+                        continue;
+                    }
+                    name = `Dio ${pieces.length + 1}`;
+                    width = parseNumber(cols[0]);
+                    height = parseNumber(cols[1]);
+                    qty = parseInt(cols[2]) || 1;
+                    material = document.getElementById('defaultMaterial')?.value || 'Iveral';
+                } else if (cols.length >= 4) {
+                    // Check if first column is numeric (no name column)
+                    const firstIsNum = !isNaN(parseNumber(cols[0]));
+                    if (firstIsNum && cols.length === 4) {
+                        // Could be: W, H, Qty, Mat
+                        // But also could be: Name(numeric), W, H, Qty
+                        // Heuristic: if col[3] is not a number, treat as W, H, Qty, Mat
+                        if (isNaN(parseNumber(cols[3]))) {
+                            name = `Dio ${pieces.length + 1}`;
+                            width = parseNumber(cols[0]);
+                            height = parseNumber(cols[1]);
+                            qty = parseInt(cols[2]) || 1;
+                            material = cols[3] || 'Iveral';
+                        } else {
+                            name = cols[0] || `Dio ${pieces.length + 1}`;
+                            width = parseNumber(cols[1]);
+                            height = parseNumber(cols[2]);
+                            qty = parseInt(cols[3]) || 1;
+                            material = document.getElementById('defaultMaterial')?.value || 'Iveral';
+                        }
+                    } else {
+                        // Standard: Name, W, H, Qty, [Mat], [extra...]
+                        name = cols[0] || `Dio ${pieces.length + 1}`;
+                        width = parseNumber(cols[1]);
+                        height = parseNumber(cols[2]);
+                        qty = parseInt(cols[3]) || 1;
+                        material = cols[4] || document.getElementById('defaultMaterial')?.value || 'Iveral';
+                    }
+                } else if (cols.length < 3) {
+                    skippedRows++;
+                    continue;
+                }
+
+                if (width && height && width > 0 && height > 0 && qty > 0) {
+                    for (let j = 0; j < qty; j++) {
+                        pieces.push({
+                            id: Date.now() + Math.random(),
+                            name: name,
+                            width: width,
+                            height: height,
+                            material: material,
+                            area: width * height
+                        });
+                    }
+                } else {
+                    skippedRows++;
+                }
+            }
+
+            if (skippedRows > 0) {
+                console.warn(`Preskočeno ${skippedRows} redova koji nisu mogli biti parsirani.`);
+            }
+
+            renderPiecesTable();
+        }
+
+        function renderPiecesTable() {
+            const tbody = document.getElementById('piecesTable');
+            tbody.innerHTML = '';
+
+            const grouped = {};
+            let totalArea = 0;
+
+            // Group pieces for display
+            pieces.forEach(p => {
+                const key = `${p.name}::${p.width}::${p.height}::${p.material}`;
+                if (!grouped[key]) grouped[key] = { ...p, count: 0, ids: [] };
+                grouped[key].count++;
+                grouped[key].ids.push(p.id);
+                totalArea += p.area;
+            });
+
+            // Convert to array for stable ordering if needed, or just iterate values
+            Object.values(grouped).forEach((p, index) => {
+                const row = tbody.insertRow();
+                row.className = "hover:bg-gray-50 transition-colors";
+
+                // Fields to edit: Name, Width, Height, Quantity, Material
+                // We use data-attributes to identify the group for updating
+
+                const inputClass = "w-full bg-transparent border-0 border-b border-transparent hover:border-gray-300 focus:border-blue-500 focus:ring-0 px-2 py-1 transition-colors text-sm";
+                const numInputClass = inputClass + " text-right font-mono";
+
+                // Identification for update: original values
+                const keyParams = `'${p.name}', ${p.width}, ${p.height}, '${p.material}'`;
+
+                row.innerHTML = `
+                    <td class="px-2 py-2">
+                        <input type="text" value="${p.name}" 
+                            class="${inputClass} font-medium text-gray-900" 
+                            onchange="updatePieceGroup(${keyParams}, 'name', this.value)">
+                    </td>
+                    <td class="px-2 py-2">
+                        <div class="flex items-center space-x-1">
+                            <input type="number" value="${p.width}" 
+                                class="${numInputClass} text-gray-600 w-20" 
+                                onchange="updatePieceGroup(${keyParams}, 'width', this.value)">
+                            <span class="text-gray-400">×</span>
+                            <input type="number" value="${p.height}" 
+                                class="${numInputClass} text-gray-600 w-20" 
+                                onchange="updatePieceGroup(${keyParams}, 'height', this.value)">
+                        </div>
+                    </td>
+                    <td class="px-2 py-2">
+                         <input type="number" value="${p.count}" min="1"
+                                class="${numInputClass} text-gray-900 font-semibold w-16" 
+                                onchange="updatePieceGroup(${keyParams}, 'quantity', this.value)">
+                    </td>
+                    <td class="px-4 py-3 text-sm text-gray-600">
+                        ${(p.width * p.height / 1000000).toFixed(3)} m²
+                    </td>
+                    <td class="px-2 py-2">
+                         <input type="text" value="${p.material}" 
+                            class="${inputClass} text-gray-500" 
+                            onchange="updatePieceGroup(${keyParams}, 'material', this.value)">
+                    </td>
+                    <td class="px-2 py-2 text-center">
+                        <button onclick="deletePieceGroup(${keyParams})" 
+                            class="text-red-400 hover:text-red-600 p-1 rounded-full hover:bg-red-50 transition-colors">
+                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                        </button>
+                    </td>
+                `;
+            });
+
+            document.getElementById('pieceCount').textContent = `${pieces.length} dijelova • ${(totalArea / 1000000).toFixed(2)} m²`;
+            document.getElementById('dataPreview').classList.remove('hidden');
+        }
+
+        function updatePieceGroup(oldName, oldW, oldH, oldMat, field, newValue) {
+            // Convert types
+            if (field === 'width' || field === 'height' || field === 'quantity') {
+                newValue = parseFloat(newValue);
+            }
+            // Standardize old values for comparison
+            oldW = parseFloat(oldW);
+            oldH = parseFloat(oldH);
+
+            // Find matching pieces
+            const matchingIndices = [];
+            pieces.forEach((p, idx) => {
+                if (p.name === oldName && Math.abs(p.width - oldW) < 0.01 && Math.abs(p.height - oldH) < 0.01 && p.material === oldMat) {
+                    matchingIndices.push(idx);
+                }
+            });
+
+            if (field === 'quantity') {
+                const currentCount = matchingIndices.length;
+                const newCount = parseInt(newValue);
+
+                if (newCount > currentCount) {
+                    // Add more copies
+                    const template = pieces[matchingIndices[0]];
+                    for (let i = 0; i < newCount - currentCount; i++) {
+                        pieces.push({ ...template, id: Date.now() + Math.random() });
+                    }
+                } else if (newCount < currentCount) {
+                    // Remove excess
+                    // Remove from the end of the matches to avoid index shift issues if we processed normally, 
+                    // but filter is safer.
+                    const idsToRemove = matchingIndices.slice(0, currentCount - newCount).map(idx => pieces[idx].id);
+                    pieces = pieces.filter(p => !idsToRemove.includes(p.id));
+                }
+            } else {
+                // Update specific property for all matches
+                matchingIndices.forEach(idx => {
+                    pieces[idx][field] = newValue;
+                    if (field === 'width' || field === 'height') {
+                        pieces[idx].area = pieces[idx].width * pieces[idx].height;
+                    }
+                });
+            }
+
+            renderPiecesTable();
+        }
+
+        function deletePieceGroup(name, w, h, mat) {
+            if (confirm('Jeste li sigurni da želite obrisati ovu grupu dijelova?')) {
+                pieces = pieces.filter(p => !(p.name === name && Math.abs(p.width - w) < 0.01 && Math.abs(p.height - h) < 0.01 && p.material === mat));
+                renderPiecesTable();
+            }
+        }
+
+        function loadExampleData() {
+            const example = `Naziv,Sirina,Visina,Kolicina,Materijal
+Fronta 1,1200,600,10,Iveral
+Fronta 2,1400,600,10,Iveral
+Fronta 3,2400,600,10,Iveral
+Bočnica lijeva,580,600,10,Iveral
+Bočnica desna,580,600,10,Iveral
+Polica 1,1000,300,10,Iveral
+Polica 2,500,300,10,Iveral
+Vrata,450,1200,10,Iveral
+Ladica dno,350,550,10,Iveral
+Ladica prednja,350,150,10,Iveral
+Ladica stražnja,350,150,10,Iveral
+Sokl,2400,100,10,Iveral
+Gornja ploča,2400,600,10,Iveral
+Donja ploča,2400,600,10,Iveral`;
+            parseCSV(example);
+        }
+
+        function clearData() {
+            pieces = [];
+            document.getElementById('dataPreview').classList.add('hidden');
+            document.getElementById('resultsSection').classList.add('hidden');
+        }
+
+        function updateSheetDimensions() {
+            const preset = document.getElementById('sheetPreset').value;
+            if (preset !== 'custom') {
+                const [w, h] = preset.split('x').map(Number);
+                document.getElementById('sheetWidth').value = w;
+                document.getElementById('sheetHeight').value = h;
+            }
+        }
+
+        // ==================== ADVANCED GUILLOTINE OPTIMIZER v2.0 ====================
+
+        class GuillotineOptimizerV2 {
+            constructor(sheetWidth, sheetHeight, bladeWidth, edgeOffset) {
+                this.sheetWidth = sheetWidth - 2 * edgeOffset;
+                this.sheetHeight = sheetHeight - 2 * edgeOffset;
+                this.bladeWidth = bladeWidth;
+                this.edgeOffset = edgeOffset;
+            }
+
+            // Helper: yield to browser so it doesn't freeze
+            _yield() {
+                return new Promise(resolve => setTimeout(resolve, 0));
+            }
+
+            async optimize(pieces, allowRotation, iterations = 2000) {
+                let bestSolution = null;
+                let bestScore = Infinity;
+
+                // Multiple sorting strategies for initial population
+                const strategies = [
+                    (a, b) => b.area - a.area, // Area descending
+                    (a, b) => Math.max(b.width, b.height) - Math.max(a.width, a.height), // Max side
+                    (a, b) => (b.width + b.height) - (a.width + a.height), // Perimeter
+                    (a, b) => b.width - a.width, // Width descending
+                    (a, b) => b.height - a.height, // Height descending
+                    (a, b) => (b.width * b.height) / (Math.max(b.width, b.height) || 1) -
+                        (a.width * a.height) / (Math.max(a.width, a.height) || 1), // Aspect ratio
+                ];
+
+                // Generate initial solutions with different strategies
+                const initialSolutions = [];
+
+                for (let strategy of strategies) {
+                    const sorted = [...pieces].sort(strategy);
+                    const solution = this.packWithGuillotine(sorted, allowRotation);
+                    initialSolutions.push(solution);
+
+                    if (solution.score < bestScore) {
+                        bestScore = solution.score;
+                        bestSolution = solution;
+                    }
+                }
+
+                await this._yield();
+
+                // Try different shelf algorithms
+                const shelfSolution = this.packWithShelf(pieces, allowRotation);
+                if (shelfSolution.score < bestScore) {
+                    bestScore = shelfSolution.score;
+                    bestSolution = shelfSolution;
+                }
+
+                // GRASP - Greedy Randomized Adaptive Search
+                const graspIterations = Math.floor(iterations * 0.3);
+                for (let i = 0; i < graspIterations; i++) {
+                    const graspSolution = this.packWithGRASP(pieces, allowRotation);
+                    if (graspSolution.score < bestScore) {
+                        bestScore = graspSolution.score;
+                        bestSolution = graspSolution;
+                    }
+                    // Yield every 50 iterations to keep browser responsive
+                    if (i % 50 === 0) await this._yield();
+                }
+
+                // Simulated Annealing refinement on best solution
+                if (iterations > 0 && bestSolution) {
+                    const saSolution = await this.simulatedAnnealing(pieces, allowRotation, iterations, bestSolution);
+                    if (saSolution.score < bestScore) {
+                        bestSolution = saSolution;
+                    }
+                }
+
+                // Local search improvement
+                bestSolution = this.localSearchImprovement(bestSolution, pieces, allowRotation);
+
+                return bestSolution;
+            }
+
+            // GRASP - Greedy Randomized Adaptive Search Procedure
+            packWithGRASP(pieces, allowRotation) {
+                const candidates = [...pieces];
+                const sheets = [];
+
+                while (candidates.length > 0) {
+                    const sheet = this.createEmptySheet();
+                    const remaining = [];
+                    const piecesBeforeCount = sheet.pieces.length;
+
+                    // Sort candidates by area
+                    candidates.sort((a, b) => b.area - a.area);
+
+                    while (candidates.length > 0) {
+                        // Build RCL (Restricted Candidate List) - top 30%
+                        const rclSize = Math.max(1, Math.floor(candidates.length * 0.3));
+                        const rcl = candidates.slice(0, rclSize);
+
+                        // Randomly select from RCL
+                        const idx = Math.floor(Math.random() * rcl.length);
+                        const piece = rcl[idx];
+
+                        const placement = this.findBestPlacement(sheet, piece, allowRotation);
+
+                        if (placement) {
+                            this.placePiece(sheet, piece, placement);
+                            candidates.splice(candidates.indexOf(piece), 1);
+                        } else {
+                            remaining.push(piece);
+                            candidates.splice(candidates.indexOf(piece), 1);
+                        }
+                    }
+
+                    sheets.push(sheet);
+
+                    // If no pieces were placed on this sheet, remaining pieces can't fit — break to avoid infinite loop
+                    if (sheet.pieces.length === piecesBeforeCount) {
+                        break;
+                    }
+                    candidates.push(...remaining);
+                }
+
+                return this.createSolution(sheets, pieces);
+            }
+
+            // Shelf-based guillotine packing
+            packWithShelf(pieces, allowRotation) {
+                const sorted = [...pieces].sort((a, b) => b.height - a.height);
+                const sheets = [];
+                let remaining = [...sorted];
+
+                while (remaining.length > 0) {
+                    const sheet = this.createEmptySheet();
+                    let currentY = 0;
+                    let shelfHeight = 0;
+                    const piecesBeforeCount = sheet.pieces.length;
+
+                    const stillRemaining = [];
+
+                    for (let piece of remaining) {
+                        const orientations = allowRotation ?
+                            [{ w: piece.width, h: piece.height, rot: false },
+                            { w: piece.height, h: piece.width, rot: true }] :
+                            [{ w: piece.width, h: piece.height, rot: false }];
+
+                        let placed = false;
+
+                        for (let orient of orientations) {
+                            // Start new shelf if needed
+                            if (currentY + orient.h > this.sheetHeight) {
+                                stillRemaining.push(piece);
+                                placed = true;
+                                break;
+                            }
+
+                            // Find position in current shelf
+                            let currentX = 0;
+                            for (let p of sheet.pieces) {
+                                if (Math.abs(p.y - currentY) < 1) {
+                                    currentX = Math.max(currentX, p.x + p.width + this.bladeWidth);
+                                }
+                            }
+
+                            if (currentX + orient.w <= this.sheetWidth) {
+                                this.placePiece(sheet, piece, {
+                                    x: currentX,
+                                    y: currentY,
+                                    width: orient.w,
+                                    height: orient.h,
+                                    rotated: orient.rot
+                                });
+                                shelfHeight = Math.max(shelfHeight, orient.h);
+                                placed = true;
+                                break;
+                            }
+                        }
+
+                        if (!placed) {
+                            // Move to next shelf
+                            currentY += shelfHeight + this.bladeWidth;
+                            shelfHeight = 0;
+
+                            // Try again on new shelf
+                            for (let orient of orientations) {
+                                if (currentY + orient.h <= this.sheetHeight && orient.w <= this.sheetWidth) {
+                                    this.placePiece(sheet, piece, {
+                                        x: 0,
+                                        y: currentY,
+                                        width: orient.w,
+                                        height: orient.h,
+                                        rotated: orient.rot
+                                    });
+                                    shelfHeight = orient.h;
+                                    placed = true;
+                                    break;
+                                }
+                            }
+
+                            if (!placed) {
+                                stillRemaining.push(piece);
+                            }
+                        }
+                    }
+
+                    sheets.push(sheet);
+
+                    // If no pieces were placed on this sheet, remaining pieces can't fit — break to avoid infinite loop
+                    if (sheet.pieces.length === piecesBeforeCount) {
+                        break;
+                    }
+                    remaining = stillRemaining;
+                }
+
+                return this.createSolution(sheets, pieces);
+            }
+
+            // Main guillotine packing with multiple heuristics
+            packWithGuillotine(pieces, allowRotation) {
+                const sheets = [];
+                let remaining = [...pieces];
+
+                while (remaining.length > 0) {
+                    const sheet = this.createEmptySheet();
+                    const stillRemaining = [];
+
+                    for (let piece of remaining) {
+                        const placement = this.findBestPlacement(sheet, piece, allowRotation);
+
+                        if (placement) {
+                            this.placePiece(sheet, piece, placement);
+                        } else {
+                            stillRemaining.push(piece);
+                        }
+                    }
+
+                    sheets.push(sheet);
+
+                    // If no pieces were placed on this sheet, remaining pieces can't fit — break to avoid infinite loop
+                    if (sheet.pieces.length === 0) {
+                        break;
+                    }
+                    remaining = stillRemaining;
+                }
+
+                return this.createSolution(sheets, pieces);
+            }
+
+            createEmptySheet() {
+                return {
+                    width: this.sheetWidth,
+                    height: this.sheetHeight,
+                    pieces: [],
+                    freeZones: [{
+                        x: 0, y: 0,
+                        width: this.sheetWidth,
+                        height: this.sheetHeight
+                    }],
+                    cuts: []
+                };
+            }
+
+            findBestPlacement(sheet, piece, allowRotation) {
+                const orientations = allowRotation ?
+                    [{ w: piece.width, h: piece.height, rot: false },
+                    { w: piece.height, h: piece.width, rot: true }] :
+                    [{ w: piece.width, h: piece.height, rot: false }];
+
+                let bestPlacement = null;
+                let bestScore = Infinity;
+
+                for (let zone of sheet.freeZones) {
+                    for (let orient of orientations) {
+                        if (orient.w <= zone.width && orient.h <= zone.height) {
+                            const score = this.calculatePlacementScore(sheet, zone, orient.w, orient.h);
+
+                            if (score < bestScore) {
+                                bestScore = score;
+                                bestPlacement = {
+                                    zone: zone,
+                                    x: zone.x,
+                                    y: zone.y,
+                                    width: orient.w,
+                                    height: orient.h,
+                                    rotated: orient.rot,
+                                    score: score
+                                };
+                            }
+                        }
+                    }
+                }
+
+                return bestPlacement;
+            }
+
+            calculatePlacementScore(sheet, zone, pieceW, pieceH) {
+                // Calculate remainders after placement
+                const rightWidth = zone.width - pieceW - this.bladeWidth;
+                const topHeight = zone.height - pieceH - this.bladeWidth;
+
+                // Score components
+                const areaUsed = pieceW * pieceH;
+                const areaZone = zone.width * zone.height;
+
+                // Prefer placements that leave large, usable remainders
+                const rightArea = rightWidth > 0 ? rightWidth * pieceH : 0;
+                const topArea = topHeight > 0 ? zone.width * topHeight : 0;
+
+                // Prefer corner placements
+                let cornerBonus = 0;
+                if (zone.x === 0 && zone.y === 0) cornerBonus = -5000;
+                else if (zone.x === 0 || zone.y === 0) cornerBonus = -1000;
+
+                // Penalize fragmentation (small remainders)
+                let fragmentationPenalty = 0;
+                if (rightWidth > 0 && rightWidth < 100) fragmentationPenalty += 2000;
+                if (topHeight > 0 && topHeight < 100) fragmentationPenalty += 2000;
+
+                // Prefer placements that align with existing pieces
+                let alignmentBonus = 0;
+                for (let p of sheet.pieces) {
+                    if (Math.abs(p.x + p.width - zone.x) < 1 || Math.abs(zone.x + pieceW - p.x) < 1) {
+                        alignmentBonus -= 500;
+                    }
+                    if (Math.abs(p.y + p.height - zone.y) < 1 || Math.abs(zone.y + pieceH - p.y) < 1) {
+                        alignmentBonus -= 500;
+                    }
+                }
+
+                // Prefer longer cuts for efficiency
+                const cutQuality = -(pieceW + pieceH) * 0.5;
+
+                return (areaZone - areaUsed) + fragmentationPenalty + cornerBonus + alignmentBonus + cutQuality;
+            }
+
+            placePiece(sheet, piece, placement) {
+                const placedPiece = {
+                    ...piece,
+                    x: placement.x,
+                    y: placement.y,
+                    width: placement.width,
+                    height: placement.height,
+                    rotated: placement.rotated
+                };
+
+                sheet.pieces.push(placedPiece);
+
+                if (!placement.zone) return;
+
+                // Record guillotine cuts (must span full width/height of the zone)
+                if (placement.x + placement.width < placement.zone.x + placement.zone.width) {
+                    sheet.cuts.push({
+                        type: 'vertical',
+                        x: placement.x + placement.width + this.bladeWidth / 2,
+                        y: placement.zone.y,
+                        length: placement.zone.height,
+                        from: placement.zone.y,
+                        to: placement.zone.y + placement.zone.height
+                    });
+                }
+
+                if (placement.y + placement.height < placement.zone.y + placement.zone.height) {
+                    sheet.cuts.push({
+                        type: 'horizontal',
+                        x: placement.zone.x,
+                        y: placement.y + placement.height + this.bladeWidth / 2,
+                        length: placement.zone.width,
+                        from: placement.zone.x,
+                        to: placement.zone.x + placement.zone.width
+                    });
+                }
+
+                // Update free zones using guillotine split
+                this.updateFreeZones(sheet, placement);
+            }
+
+            updateFreeZones(sheet, placement) {
+                const zone = placement.zone;
+                const newZones = [];
+
+                // Remove used zone
+                sheet.freeZones = sheet.freeZones.filter(z => z !== zone);
+
+                // Guillotine split: right side (same height as placed piece)
+                const rightWidth = zone.width - placement.width - this.bladeWidth;
+                if (rightWidth > 0) {
+                    newZones.push({
+                        x: zone.x + placement.width + this.bladeWidth,
+                        y: zone.y,
+                        width: rightWidth,
+                        height: placement.height
+                    });
+                }
+
+                // Guillotine split: top side (full width)
+                const topHeight = zone.height - placement.height - this.bladeWidth;
+                if (topHeight > 0) {
+                    newZones.push({
+                        x: zone.x,
+                        y: zone.y + placement.height + this.bladeWidth,
+                        width: zone.width,
+                        height: topHeight
+                    });
+                }
+
+                sheet.freeZones.push(...newZones);
+                this.mergeZones(sheet.freeZones);
+            }
+
+            mergeZones(zones) {
+                // Remove zones completely contained in others
+                for (let i = zones.length - 1; i >= 0; i--) {
+                    for (let j = zones.length - 1; j >= 0; j--) {
+                        if (i !== j && this.zoneContains(zones[j], zones[i])) {
+                            zones.splice(i, 1);
+                            break;
+                        }
+                    }
+                }
+
+                // Sort zones by area (largest first) for better placement
+                zones.sort((a, b) => (b.width * b.height) - (a.width * a.height));
+            }
+
+            zoneContains(outer, inner) {
+                return inner.x >= outer.x &&
+                    inner.y >= outer.y &&
+                    inner.x + inner.width <= outer.x + outer.width &&
+                    inner.y + inner.height <= outer.y + outer.height;
+            }
+
+            createSolution(sheets, allPieces) {
+                let totalWaste = 0;
+                let totalCutLength = 0;
+
+                sheets.forEach(sheet => {
+                    const usedArea = sheet.pieces.reduce((sum, p) => sum + p.width * p.height, 0);
+                    sheet.waste = (this.sheetWidth * this.sheetHeight) - usedArea;
+                    sheet.efficiency = (usedArea / (this.sheetWidth * this.sheetHeight)) * 100;
+                    totalWaste += sheet.waste;
+                    totalCutLength += sheet.cuts.reduce((sum, c) => sum + c.length, 0);
+                });
+
+                const totalArea = this.sheetWidth * this.sheetHeight * sheets.length;
+                const packedPieces = sheets.reduce((sum, s) => sum + s.pieces.length, 0);
+
+                // Score: lower is better (combination of sheets, waste, and unpacked pieces)
+                const unpackedPenalty = (allPieces.length - packedPieces) * 1000000;
+                const score = sheets.length * 10000 + totalWaste + unpackedPenalty;
+
+                return {
+                    sheets,
+                    waste: totalWaste,
+                    score,
+                    totalCutLength,
+                    packedPieces,
+                    totalPieces: allPieces.length
+                };
+            }
+
+            // Simulated Annealing for refinement (async to yield to browser)
+            async simulatedAnnealing(pieces, allowRotation, iterations, initialSolution) {
+                let current = JSON.parse(JSON.stringify(initialSolution));
+                let best = JSON.parse(JSON.stringify(initialSolution));
+                let temperature = 100;
+                const coolingRate = Math.pow(0.001, 1 / iterations);
+
+                for (let i = 0; i < iterations; i++) {
+                    const neighbor = this.generateNeighbor(current, pieces, allowRotation);
+
+                    const delta = neighbor.score - current.score;
+
+                    if (delta < 0 || Math.random() < Math.exp(-delta / temperature)) {
+                        current = neighbor;
+                        if (current.score < best.score) {
+                            best = JSON.parse(JSON.stringify(current));
+                        }
+                    }
+
+                    temperature *= coolingRate;
+
+                    // Yield every 50 iterations to keep browser responsive
+                    if (i % 50 === 0) await this._yield();
+                }
+
+                return best;
+            }
+
+            generateNeighbor(solution, allPieces, allowRotation) {
+                // Targeted perturbations — small changes for better SA convergence
+                const strategy = Math.random();
+                let shuffled = [...allPieces];
+
+                if (strategy < 0.35) {
+                    // Swap 2 random pieces
+                    const i = Math.floor(Math.random() * shuffled.length);
+                    const j = Math.floor(Math.random() * shuffled.length);
+                    if (i !== j) [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+                } else if (strategy < 0.6) {
+                    // Move one piece to a different position
+                    const from = Math.floor(Math.random() * shuffled.length);
+                    const piece = shuffled.splice(from, 1)[0];
+                    const to = Math.floor(Math.random() * (shuffled.length + 1));
+                    shuffled.splice(to, 0, piece);
+                } else if (strategy < 0.8) {
+                    // Reverse a small segment (2-5 pieces)
+                    const start = Math.floor(Math.random() * shuffled.length);
+                    const len = 2 + Math.floor(Math.random() * 4);
+                    const end = Math.min(start + len, shuffled.length);
+                    const segment = shuffled.slice(start, end).reverse();
+                    shuffled.splice(start, end - start, ...segment);
+                } else {
+                    // Swap 2-3 adjacent pairs for slightly bigger perturbation
+                    const numSwaps = 2 + Math.floor(Math.random() * 2);
+                    for (let s = 0; s < numSwaps; s++) {
+                        const i = Math.floor(Math.random() * (shuffled.length - 1));
+                        [shuffled[i], shuffled[i + 1]] = [shuffled[i + 1], shuffled[i]];
+                    }
+                }
+
+                return this.packWithGuillotine(shuffled, allowRotation);
+            }
+
+            // Local search to improve solution
+            localSearchImprovement(solution, pieces, allowRotation) {
+                let improved = true;
+                let current = JSON.parse(JSON.stringify(solution));
+
+                // Try to merge pieces from multiple sheets
+                while (improved) {
+                    improved = false;
+
+                    for (let i = 0; i < current.sheets.length; i++) {
+                        for (let j = i + 1; j < current.sheets.length; j++) {
+                            // Try to move pieces from sheet j to sheet i
+                            const movable = [...current.sheets[j].pieces];
+
+                            for (let piece of movable) {
+                                const placement = this.findBestPlacement(current.sheets[i], piece, allowRotation);
+                                if (placement) {
+                                    this.placePiece(current.sheets[i], piece, placement);
+                                    current.sheets[j].pieces = current.sheets[j].pieces.filter(p => p.id !== piece.id);
+                                    improved = true;
+                                }
+                            }
+
+                            // Remove empty sheets
+                            if (current.sheets[j].pieces.length === 0) {
+                                current.sheets.splice(j, 1);
+                                j--;
+                            }
+                        }
+                    }
+                }
+
+                return this.createSolution(current.sheets, pieces);
+            }
+        }
+
+        // ==================== UI FUNCTIONS ====================
+
+        async function runOptimization() {
+            if (pieces.length === 0) {
+                alert('Prvo učitajte dijelove!');
+                return;
+            }
+
+            const btn = document.getElementById('optimizeBtn');
+            const originalText = btn.innerHTML;
+            btn.innerHTML = '<svg class="animate-spin h-5 w-5 mr-2" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"/></svg> Optimiziram...';
+            btn.disabled = true;
+
+            // Yield once so the browser can render the spinner before heavy work starts
+            await new Promise(r => setTimeout(r, 50));
+
+            try {
+                const sheetW = parseInt(document.getElementById('sheetWidth').value);
+                const sheetH = parseInt(document.getElementById('sheetHeight').value);
+                const bladeW = parseFloat(document.getElementById('bladeWidth').value);
+                const edgeOff = parseFloat(document.getElementById('edgeOffset').value);
+                const allowRot = document.getElementById('allowRotation').checked;
+                const iters = parseInt(document.getElementById('iterations').value);
+
+                const optimizer = new GuillotineOptimizerV2(sheetW, sheetH, bladeW, edgeOff);
+                optimizationResult = await optimizer.optimize(pieces, allowRot, iters);
+
+                renderResults(sheetW, sheetH, edgeOff);
+            } catch (err) {
+                alert('Greška u optimizaciji: ' + err.message);
+                console.error(err);
+            }
+
+            btn.innerHTML = originalText;
+            btn.disabled = false;
+        }
+
+        function renderResults(sheetW, sheetH, edgeOff) {
+            document.getElementById('resultsSection').classList.remove('hidden');
+
+            const result = optimizationResult;
+
+            // Stats
+            const totalSheets = result.sheets.length;
+            const avgEfficiency = result.sheets.reduce((a, s) => a + s.efficiency, 0) / totalSheets;
+            const totalWaste = result.sheets.reduce((a, s) => a + s.waste, 0);
+            const totalArea = totalSheets * (sheetW - 2 * edgeOff) * (sheetH - 2 * edgeOff);
+
+            document.getElementById('statSheets').textContent = totalSheets;
+            document.getElementById('statEfficiency').textContent = avgEfficiency.toFixed(1) + '%';
+            document.getElementById('statWaste').textContent = ((totalWaste / totalArea) * 100).toFixed(1) + '%';
+            document.getElementById('statCutLength').textContent = (result.totalCutLength / 1000).toFixed(2) + 'm';
+
+            // Render sheets
+            const container = document.getElementById('sheetsContainer');
+            container.innerHTML = '';
+
+            const maxDisplayWidth = Math.min(900, window.innerWidth - 80);
+            const scale = maxDisplayWidth / sheetW;
+
+            result.sheets.forEach((sheet, idx) => {
+                const sheetDiv = document.createElement('div');
+                sheetDiv.className = 'border border-gray-200 rounded-xl p-6 bg-white shadow-sm';
+
+                const canvasW = sheetW * scale;
+                const canvasH = sheetH * scale;
+
+                // Generate pieces HTML
+                let piecesHTML = '';
+
+                sheet.pieces.forEach((p, pIdx) => {
+                    // Professional "Wood/Material" Look
+                    // Light background, dark identifiable border, crisp text
+                    const isRotated = p.rotated;
+
+                    piecesHTML += `
+                        <div class="absolute bg-amber-50 border border-amber-600 shadow-sm flex flex-col items-center justify-center text-xs text-amber-900 group overflow-hidden transition-all hover:bg-amber-100 hover:shadow-md hover:scale-[1.002] z-10"
+                             style="left: ${(p.x + edgeOff) * scale}px; top: ${(p.y + edgeOff) * scale}px; 
+                                    width: ${p.width * scale}px; height: ${p.height * scale}px;">
+                            
+                            <div class="font-semibold truncate max-w-full px-1 text-[10px] sm:text-xs tracking-tight">${p.name}</div>
+                            <div class="text-[9px] sm:text-[10px] opacity-70 font-mono">${p.width.toFixed(0)} × ${p.height.toFixed(0)}</div>
+                            
+                            ${isRotated ? `
+                                <div class="absolute top-0 right-0 p-0.5">
+                                    <svg class="w-3 h-3 text-amber-700 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
+                                </div>
+                            ` : ''}
+                        </div>
+                    `;
+                });
+
+                // Generate waste areas
+                let wasteHTML = '';
+                sheet.freeZones.forEach(zone => {
+                    // Only show significant waste to keep it clean
+                    if (zone.width * zone.height > 1000) {
+                        wasteHTML += `
+                            <div class="absolute hatch-pattern border border-gray-200 border-dashed opacity-60"
+                                 style="left: ${(zone.x + edgeOff) * scale}px; top: ${(zone.y + edgeOff) * scale}px;
+                                        width: ${zone.width * scale}px; height: ${zone.height * scale}px;">
+                            </div>
+                        `;
+                    }
+                });
+
+                // Generate cut lines
+                let cutsHTML = '';
+                sheet.cuts.forEach(cut => {
+                    if (cut.type === 'vertical') {
+                        cutsHTML += `<div class="absolute border-l-2 border-red-500 border-dashed opacity-40 mix-blend-multiply pointer-events-none" 
+                                          style="left: ${(cut.x + edgeOff) * scale}px; top: ${(cut.from + edgeOff) * scale}px; height: ${(cut.to - cut.from) * scale}px;"></div>`;
+                    } else {
+                        cutsHTML += `<div class="absolute border-t-2 border-red-500 border-dashed opacity-40 mix-blend-multiply pointer-events-none" 
+                                          style="left: ${(cut.from + edgeOff) * scale}px; top: ${(cut.y + edgeOff) * scale}px; width: ${(cut.to - cut.from) * scale}px;"></div>`;
+                    }
+                });
+
+                sheetDiv.innerHTML = `
+                    <div class="flex justify-between items-center mb-4 pb-2 border-b border-gray-100">
+                        <div class="flex items-center space-x-3">
+                            <span class="bg-gray-800 text-white text-xs font-bold px-2 py-1 rounded">#${idx + 1}</span>
+                            <div>
+                                <h3 class="font-bold text-gray-800 text-sm uppercasetracking-wide">Ploča ${idx + 1}</h3>
+                                <p class="text-[10px] text-gray-500 font-mono">${sheet.material || 'Standard'}</p>
+                            </div>
+                        </div>
+                        <div class="text-right">
+                             <div class="text-xs text-gray-400 uppercase tracking-wider font-medium mb-0.5">Iskorištenost</div>
+                            <div class="text-xl font-bold ${sheet.efficiency > 90 ? 'text-green-600' : (sheet.efficiency > 80 ? 'text-blue-600' : 'text-orange-500')}">
+                                ${sheet.efficiency.toFixed(1)}%
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="relative bg-white border border-gray-300 shadow-inner overflow-hidden mx-auto" 
+                         style="width: ${canvasW}px; height: ${canvasH}px;">
+                        ${wasteHTML}
+                        ${piecesHTML}
+                        ${cutsHTML}
+                    </div>
+
+                    <div class="mt-4 flex items-center justify-between text-xs text-gray-500 border-t border-gray-100 pt-3">
+                        <div class="flex space-x-4">
+                            <span class="flex items-center"><svg class="w-3 h-3 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z"></path></svg> ${sheet.pieces.length} dijelova</span>
+                            <span class="flex items-center"><svg class="w-3 h-3 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg> ${(sheet.waste / 1000000).toFixed(3)} m² otpada</span>
+                        </div>
+                        <div class="font-mono bg-gray-100 px-2 py-1 rounded text-[10px]">
+                            ${sheetW} x ${sheetH}
+                        </div>
+                    </div>
+                `;
+
+                container.appendChild(sheetDiv);
+            });
+
+            // Analysis table
+            const analysisTable = document.getElementById('analysisTable');
+            analysisTable.innerHTML = '';
+
+            result.sheets.forEach((sheet, idx) => {
+                const hCuts = sheet.cuts.filter(c => c.type === 'horizontal').length;
+                const vCuts = sheet.cuts.filter(c => c.type === 'vertical').length;
+
+                const row = analysisTable.insertRow();
+                row.innerHTML = `
+                    <td class="px-4 py-3 text-sm font-medium text-gray-900">#${idx + 1}</td>
+                    <td class="px-4 py-3 text-sm text-gray-900">${sheet.pieces.length}</td>
+                    <td class="px-4 py-3 text-sm">
+                        <div class="flex items-center">
+                            <div class="w-16 bg-gray-200 rounded-full h-2 mr-2">
+                                <div class="bg-green-500 h-2 rounded-full" style="width: ${sheet.efficiency}%"></div>
+                            </div>
+                            <span class="font-medium">${sheet.efficiency.toFixed(1)}%</span>
+                        </div>
+                    </td>
+                    <td class="px-4 py-3 text-sm text-orange-600 font-medium">${(sheet.waste / 1000000).toFixed(4)} m²</td>
+                    <td class="px-4 py-3 text-sm text-gray-600">${hCuts}</td>
+                    <td class="px-4 py-3 text-sm text-gray-600">${vCuts}</td>
+                `;
+            });
+
+            document.getElementById('resultsSection').scrollIntoView({ behavior: 'smooth' });
+        }
+
+        function exportResults() {
+            if (!optimizationResult) return;
+
+            let csv = 'Ploča,Materijal,Dio,Širina,Visina,X,Y,Rotiran\n';
+            optimizationResult.sheets.forEach((sheet, idx) => {
+                sheet.pieces.forEach(p => {
+                    csv += `${idx + 1},${sheet.material || 'Standard'},${p.name},${p.width},${p.height},${p.x},${p.y},${p.rotated ? 'Da' : 'Ne'}\n`;
+                });
+            });
+
+            downloadCSV(csv, 'optimalno_rezanje.csv');
+        }
+
+        function exportCutList() {
+            if (!optimizationResult) return;
+
+            let csv = 'Redni br.,Ploča,Tip,X,Y,Duljina\n';
+            let num = 1;
+            optimizationResult.sheets.forEach((sheet, sIdx) => {
+                sheet.cuts.forEach(cut => {
+                    csv += `${num++},${sIdx + 1},${cut.type},${cut.x.toFixed(1)},${cut.y.toFixed(1)},${cut.length.toFixed(1)}\n`;
+                });
+            });
+
+            downloadCSV(csv, 'lista_rezova.csv');
+        }
+
+        function downloadCSV(content, filename) {
+            const blob = new Blob([content], { type: 'text/csv;charset=utf-8;' });
+            const link = document.createElement('a');
+            link.href = URL.createObjectURL(blob);
+            link.download = filename;
+            link.click();
+        }
+
+
+        async function exportToPDF() {
+            if (!optimizationResult) {
+                alert('Prvo pokrenite optimizaciju!');
+                return;
+            }
+
+            const btn = document.querySelector('button[onclick="exportToPDF()"]');
+            const originalText = btn.innerHTML;
+            btn.disabled = true;
+
+            // Loading overlay
+            const loadingOverlay = document.createElement('div');
+            loadingOverlay.id = 'pdf-loading';
+            loadingOverlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;z-index:10000;background:rgba(255,255,255,0.95);display:flex;flex-direction:column;align-items:center;justify-content:center;font-size:20px;font-weight:bold;color:#333;';
+            loadingOverlay.innerHTML = '<div id="pdf-progress-text">Generiranje PDF-a...</div><div style="margin-top:10px;font-size:14px;color:#6b7280;" id="pdf-progress-detail">Pripremam...</div>';
+            document.body.appendChild(loadingOverlay);
+
+            const sheetW = parseInt(document.getElementById('sheetWidth').value);
+            const sheetH = parseInt(document.getElementById('sheetHeight').value);
+            const edgeOff = parseFloat(document.getElementById('edgeOffset').value);
+            const totalSheets = optimizationResult.sheets.length;
+
+            try {
+                // Create jsPDF instance directly
+                const { jsPDF } = window.jspdf || {};
+                let pdf;
+
+                // Process each sheet one at a time
+                for (let idx = 0; idx < totalSheets; idx++) {
+                    const sheet = optimizationResult.sheets[idx];
+
+                    // Update progress
+                    document.getElementById('pdf-progress-detail').textContent =
+                        `Ploča ${idx + 1} od ${totalSheets}...`;
+
+                    // Create a single-page container
+                    const pageEl = document.createElement('div');
+                    pageEl.style.cssText = `
+                        position:absolute;top:0;left:0;z-index:9998;
+                        width:1122px;height:793px;padding:30px;box-sizing:border-box;
+                        display:flex;flex-direction:column;
+                        font-family:'Inter',sans-serif;background:white;color:#1f2937;
+                    `;
+                    document.body.appendChild(pageEl);
+
+                    // Header
+                    const header = document.createElement('div');
+                    header.style.cssText = 'display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;border-bottom:2px solid #e5e7eb;padding-bottom:5px;';
+                    header.innerHTML = `
+                        <div>
+                            <h1 style="font-size:18px;font-weight:bold;margin:0;color:#111827;">OptiCut Pro - Izvještaj</h1>
+                            <div style="font-size:14px;color:#6b7280;">Ploča #${idx + 1} od ${totalSheets} • ${sheet.material || 'Standard'} • ${sheetW}x${sheetH} mm</div>
+                        </div>
+                        <div style="text-align:right;">
+                            <div style="font-size:12px;text-transform:uppercase;color:#9ca3af;font-weight:600;">Iskorištenost</div>
+                            <div style="font-size:24px;font-weight:bold;color:${sheet.efficiency > 90 ? '#16a34a' : (sheet.efficiency > 80 ? '#2563eb' : '#ea580c')};">
+                                ${sheet.efficiency.toFixed(1)}%
+                            </div>
+                        </div>
+                    `;
+                    pageEl.appendChild(header);
+
+                    // Content area
+                    const contentArea = document.createElement('div');
+                    contentArea.style.cssText = 'display:flex;flex:1;gap:15px;overflow:hidden;';
+
+                    // Visual section — takes most of the width
+                    const visualSection = document.createElement('div');
+                    visualSection.style.cssText = 'flex:1;display:flex;flex-direction:column;justify-content:center;align-items:center;min-width:0;';
+
+                    const availableW = 790;
+                    const availableH = 640;
+                    const scale = Math.min(availableW / sheetW, availableH / sheetH);
+                    const canvasW = sheetW * scale;
+                    const canvasH = sheetH * scale;
+
+                    const visualCanvas = document.createElement('div');
+                    visualCanvas.style.cssText = `position:relative;width:${canvasW}px;height:${canvasH}px;border:1px solid #d1d5db;background:white;`;
+
+                    // Pieces
+                    sheet.pieces.forEach(p => {
+                        const el = document.createElement('div');
+                        const pieceW = p.width * scale;
+                        const pieceH = p.height * scale;
+                        const minDim = Math.min(pieceW, pieceH);
+                        const fontSize = Math.max(8, Math.min(13, minDim / 3.5));
+                        const showDims = pieceW > 45 && pieceH > 28;
+
+                        el.style.cssText = `
+                            position:absolute;
+                            left:${(p.x + edgeOff) * scale}px;
+                            top:${(p.y + edgeOff) * scale}px;
+                            width:${pieceW}px;
+                            height:${pieceH}px;
+                            background:#fffbeb;border:1px solid #d97706;
+                            box-sizing:border-box;
+                            display:flex;flex-direction:column;
+                            align-items:center;justify-content:center;
+                            overflow:hidden;
+                            font-size:${fontSize}px;
+                            line-height:1.15;
+                            color:#78350f;
+                            padding:1px 2px;
+                            text-align:center;
+                        `;
+                        el.innerHTML = `
+                            <div style="font-weight:600;text-align:center;max-width:100%;">${p.name}</div>
+                            ${showDims ? `<div style="font-family:monospace;opacity:0.7;font-size:${Math.max(7, fontSize * 0.8)}px;">${p.width.toFixed(0)}×${p.height.toFixed(0)}</div>` : ''}
+                            ${p.rotated ? `<div style="position:absolute;top:0;right:1px;color:#b45309;font-size:${Math.max(7, fontSize * 0.75)}px;">⟳</div>` : ''}
+                        `;
+                        visualCanvas.appendChild(el);
+                    });
+
+                    // Cut lines
+                    sheet.cuts.forEach(cut => {
+                        const line = document.createElement('div');
+                        line.style.position = 'absolute';
+                        line.style.borderStyle = 'dashed';
+                        line.style.borderColor = '#ef4444';
+                        line.style.opacity = '0.5';
+                        if (cut.type === 'vertical') {
+                            line.style.cssText += `border-left-width:1px;left:${(cut.x + edgeOff) * scale}px;top:${(cut.from + edgeOff) * scale}px;height:${(cut.to - cut.from) * scale}px;`;
+                        } else {
+                            line.style.cssText += `border-top-width:1px;left:${(cut.from + edgeOff) * scale}px;top:${(cut.y + edgeOff) * scale}px;width:${(cut.to - cut.from) * scale}px;`;
+                        }
+                        visualCanvas.appendChild(line);
+                    });
+
+                    visualSection.appendChild(visualCanvas);
+                    contentArea.appendChild(visualSection);
+
+                    // Table section — compact, fixed width
+                    const tableSection = document.createElement('div');
+                    tableSection.style.cssText = 'width:250px;flex-shrink:0;border-left:1px solid #e5e7eb;padding-left:10px;overflow:hidden;';
+                    tableSection.innerHTML = `
+                        <h3 style="font-size:13px;font-weight:600;margin:0 0 10px 0;color:#374151;">Elementi (${sheet.pieces.length})</h3>
+                        <table style="width:100%;border-collapse:collapse;font-size:10px;">
+                            <thead>
+                                <tr style="background:#f9fafb;color:#6b7280;">
+                                    <th style="text-align:left;padding:6px 4px;">Naziv</th>
+                                    <th style="text-align:right;padding:6px 4px;white-space:nowrap;">Dim.</th>
+                                    <th style="text-align:center;padding:6px 2px;">R</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${sheet.pieces.map((p, i) => `
+                                    <tr>
+                                        <td style="padding:5px 4px;font-weight:500;color:#1f2937;word-break:break-word;line-height:1.3;">${i + 1}. ${p.name}</td>
+                                        <td style="padding:5px 4px;text-align:right;font-family:monospace;white-space:nowrap;vertical-align:top;">${p.width.toFixed(0)}×${p.height.toFixed(0)}</td>
+                                        <td style="padding:5px 2px;text-align:center;vertical-align:top;">${p.rotated ? 'Da' : '-'}</td>
+                                    </tr>
+                                `).join('')}
+                            </tbody>
+                        </table>
+                    `;
+
+                    contentArea.appendChild(tableSection);
+                    pageEl.appendChild(contentArea);
+
+                    // Wait for DOM render
+                    await new Promise(r => setTimeout(r, 100));
+
+                    // Render this single page to canvas
+                    // scale 2 (ne 4): na scale 4 svaka strana je ~14MP PNG-a, pa
+                    // jsPDF pri spajanju stranica prekorači maksimalnu dužinu JS
+                    // stringa (RangeError: Invalid string length) i export pukne.
+                    const canvas = await html2canvas(pageEl, {
+                        scale: 2,
+                        useCORS: true,
+                        logging: false,
+                        width: 1122,
+                        height: 793,
+                        windowWidth: 1122,
+                        onclone: (doc) => {
+                            // Ensure fonts are loaded in clone
+                            const link = document.createElement('link');
+                            link.href = 'https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap';
+                            link.rel = 'stylesheet';
+                            doc.head.appendChild(link);
+                        }
+                    });
+
+                    // Add to PDF — JPEG umjesto PNG: 10-20× manji string po strani,
+                    // dovoljno oštro za štampu, a ne obara jsPDF na više stranica.
+                    const imgData = canvas.toDataURL('image/jpeg', 0.92);
+
+                    if (idx === 0) {
+                        // First page — create the PDF
+                        pdf = new jsPDF({
+                            orientation: 'landscape',
+                            unit: 'mm',
+                            format: 'a4'
+                        });
+                    } else {
+                        // Subsequent pages
+                        pdf.addPage('a4', 'landscape');
+                    }
+
+                    // A4 landscape: 297mm x 210mm
+                    pdf.addImage(imgData, 'JPEG', 0, 0, 297, 210);
+
+                    // Clean up this page element
+                    document.body.removeChild(pageEl);
+                }
+
+                // Save the PDF
+                pdf.save('OptiCut_Pro_Izvjestaj.pdf');
+
+                // Clean up
+                document.body.removeChild(loadingOverlay);
+                btn.innerHTML = originalText;
+                btn.disabled = false;
+
+            } catch (err) {
+                console.error('PDF Export Error:', err);
+                alert('Greška pri generiranju PDF-a: ' + err.message);
+                if (document.getElementById('pdf-loading')) {
+                    document.body.removeChild(document.getElementById('pdf-loading'));
+                }
+                btn.innerHTML = originalText;
+                btn.disabled = false;
+            }
+        }
+    </script>
+</body>
+
+</html>
