@@ -40,6 +40,12 @@
     backdrop-filter: var(--glass-blur);
     border: 1px solid var(--border-light);
     flex-shrink: 0;
+    /* Traka i njena SESTRA .cv-grid su flex-djeca .cv-root-a s z-index:auto —
+       bez ovoga timeline (kasnije u DOM-u) prekrije padajuće menije koji ispadaju
+       iz trake. Podizanjem cijele trake iznad grida, meni (dijete trake) se crta
+       preko timeline-a. `backdrop-filter` gore ionako pravi stacking-kontekst. */
+    position: relative;
+    z-index: 30;
 }
 
 .cv-spacer { flex: 1 1 auto; }
