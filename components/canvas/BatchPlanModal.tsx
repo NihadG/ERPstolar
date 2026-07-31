@@ -183,9 +183,13 @@ export default function BatchPlanModal({
             footer={
                 <div className="bp-foot">
                     <div className="bp-foot-sum">
-                        <strong>{summary.rowCount}</strong> {summary.rowCount === 1 ? 'nalog' : 'naloga'}
+                        <span className="bp-foot-metric">
+                            <strong>{summary.rowCount}</strong>&nbsp;{summary.rowCount === 1 ? 'nalog' : 'naloga'}
+                        </span>
                         <span className="bp-sep">·</span>
-                        <strong>{summary.totalWorkerDays}</strong> radnik-dana
+                        <span className="bp-foot-metric">
+                            <strong>{summary.totalWorkerDays}</strong>&nbsp;radnik-dana
+                        </span>
                         {summary.crewAssumedCount > 0 && (
                             <span className="bp-foot-warn" title="Proizvodi bez broja radnika u ponudi — provjeri">
                                 <AlertTriangle size={12} /> {summary.crewAssumedCount} pretpostavljena ekipa

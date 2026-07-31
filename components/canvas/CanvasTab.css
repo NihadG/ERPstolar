@@ -54,11 +54,12 @@
 .cv-name {
     flex: 0 1 240px;
     min-width: 120px;
-    padding: 6px 10px;
+    height: 34px;
+    padding: 0 10px;
     border: 1px solid transparent;
     border-radius: var(--radius-sm);
     background: transparent;
-    font-size: 14px;
+    font-size: 15px;
     font-weight: 600;
     font-family: inherit;
     color: var(--text-primary);
@@ -67,14 +68,26 @@
 .cv-name:hover { background: var(--surface); }
 .cv-name:focus { outline: none; background: var(--background); border-color: var(--accent); }
 
+/* Prekidač scenarija — VIZUELNO drukčiji od naziva, da dva ista teksta ne
+   izgledaju kao greška. Tiši, uži, s površinskom podlogom. */
+.cv-scenariobar .cv-select {
+    max-width: 168px;
+    background: var(--surface);
+    color: var(--text-secondary);
+    font-weight: 500;
+}
+
 .cv-select {
-    padding: 6px 10px;
+    height: 34px;
+    padding: 0 10px;
     border: 1px solid var(--border);
     border-radius: var(--radius-sm);
     background: var(--background);
     font-size: 13px;
     font-family: inherit;
+    color: var(--text-primary);
     max-width: 200px;
+    cursor: pointer;
 }
 
 .cv-labeled {
@@ -99,16 +112,23 @@
     white-space: nowrap;
 }
 
-/* ── Dugmad ───────────────────────────────────────────────────── */
+/* ── Dugmad ───────────────────────────────────────────────────────
+   JEDINSTVENA VISINA (34px) i tipografija za SVE kontrole trake — bez toga
+   se dugmad, segmenti i selecti ne poravnaju i traka izgleda „nabacano".
+   Hijerarhija boje je stroga: JEDNO puno (primary), par toniranih (accent),
+   ostalo neutralno ili ikona-duh. ─────────────────────────────────────── */
 .cv-btn {
     display: inline-flex;
     align-items: center;
+    justify-content: center;
     gap: 6px;
-    padding: 7px 12px;
+    height: 34px;
+    padding: 0 13px;
     border: 1px solid var(--border);
     border-radius: var(--radius-sm);
     background: var(--background);
     font-size: 13px;
+    font-weight: 500;
     font-family: inherit;
     color: var(--text-primary);
     cursor: pointer;
@@ -118,46 +138,163 @@
 
 .cv-btn:hover:not(:disabled) { background: var(--surface-hover); }
 .cv-btn:disabled { opacity: .4; cursor: default; }
+.cv-btn svg { flex-shrink: 0; }
+
+/* Puno — jedina glavna radnja (kreiranje naloga). */
+.cv-btn.primary {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
+    font-weight: 600;
+}
+.cv-btn.primary:hover:not(:disabled) { background: var(--accent-hover, var(--accent)); filter: brightness(.96); }
+
+/* Tonirano — radnje nad postojećim (Rasporedi, Lanac). */
+.cv-btn.accent {
+    background: var(--accent-light);
+    border-color: transparent;
+    color: var(--accent);
+    font-weight: 600;
+}
+.cv-btn.accent:hover:not(:disabled) { background: var(--accent-light); filter: brightness(.95); }
+
 .cv-btn.on { background: var(--accent); border-color: var(--accent); color: #fff; }
-.cv-btn.sm { padding: 4px 9px; font-size: 12px; }
-.cv-btn.full { width: 100%; justify-content: center; }
+.cv-btn.sm { height: 30px; padding: 0 10px; font-size: 12px; }
+.cv-btn.full { width: 100%; }
 .cv-btn.danger { color: var(--error); border-color: #f5c6c2; }
 .cv-btn.danger:hover:not(:disabled) { background: var(--error-bg); }
 
+/* Ikona-duh: utilitarne radnje bez teksta (print, undo, šabloni…). */
 .cv-icon-btn {
     display: inline-flex;
+    align-items: center;
+    justify-content: center;
     padding: 5px;
     border: none;
     background: transparent;
     border-radius: var(--radius-sm);
     color: var(--text-secondary);
     cursor: pointer;
+    transition: var(--transition);
 }
-.cv-icon-btn:hover { background: var(--surface-hover); color: var(--text-primary); }
+.cv-icon-btn:hover:not(:disabled) { background: var(--surface-hover); color: var(--text-primary); }
+.cv-icon-btn:disabled { opacity: .35; cursor: default; }
 
+.cv-icon-btn.lg {
+    position: relative;
+    width: 34px;
+    height: 34px;
+    border: 1px solid transparent;
+}
+.cv-icon-btn.lg:hover:not(:disabled) { border-color: var(--border-light); }
+.cv-icon-btn.lg.on { background: var(--accent-light); color: var(--accent); border-color: transparent; }
+
+.cv-badge {
+    position: absolute;
+    top: -3px;
+    right: -3px;
+    min-width: 15px;
+    height: 15px;
+    padding: 0 4px;
+    border-radius: 8px;
+    background: var(--accent);
+    color: #fff;
+    font-size: 10px;
+    font-weight: 700;
+    display: grid;
+    place-items: center;
+    line-height: 1;
+}
+
+/* Segment (zoom) — poravnat na istu visinu kao dugmad. */
 .cv-seg {
     display: inline-flex;
+    align-items: center;
     gap: 2px;
+    height: 34px;
     padding: 3px;
     background: var(--surface);
+    border: 1px solid var(--border-light);
     border-radius: var(--radius-sm);
 }
 .cv-seg button {
-    padding: 5px 11px;
+    height: 26px;
+    padding: 0 11px;
     border: none;
     background: transparent;
     border-radius: 6px;
     font-size: 12.5px;
+    font-weight: 500;
     font-family: inherit;
     color: var(--text-secondary);
     cursor: pointer;
 }
+.cv-seg button:hover:not(.on) { color: var(--text-primary); }
 .cv-seg button.on {
     background: var(--background);
     color: var(--text-primary);
     font-weight: 600;
-    box-shadow: 0 1px 3px var(--shadow);
+    box-shadow: 0 1px 2px var(--shadow);
 }
+
+/* Navigacija (‹ Danas ›) — jedan spojen segment, jasne strelice (ne lupe). */
+.cv-nav {
+    display: inline-flex;
+    align-items: center;
+    height: 34px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--background);
+    overflow: hidden;
+}
+.cv-nav button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    border: none;
+    background: transparent;
+    color: var(--text-secondary);
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 13px;
+    transition: var(--transition);
+}
+.cv-nav button:hover { background: var(--surface-hover); color: var(--text-primary); }
+.cv-nav .cv-nav-arrow { width: 30px; }
+.cv-nav .cv-nav-today {
+    padding: 0 13px;
+    font-weight: 500;
+    color: var(--text-primary);
+    border-left: 1px solid var(--border-light);
+    border-right: 1px solid var(--border-light);
+}
+
+/* Kompaktni select s ikonom (Grupiši, Crtaj) — bez zasebne sive riječi-etikete. */
+.cv-inline-select {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 34px;
+    padding: 0 10px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--background);
+    color: var(--text-secondary);
+}
+.cv-inline-select:hover { background: var(--surface-hover); }
+.cv-inline-select svg { flex-shrink: 0; }
+.cv-select.bare {
+    height: auto;
+    padding: 0;
+    border: none;
+    background: transparent;
+    max-width: 140px;
+    color: var(--text-primary);
+    font-weight: 500;
+    cursor: pointer;
+}
+.cv-select.bare:focus { outline: none; }
 
 /* ── Spremanje ────────────────────────────────────────────────── */
 .cv-save {

@@ -10,9 +10,9 @@
 
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import {
-    Plus, Copy, Undo2, Redo2, ZoomIn, ZoomOut, Calendar, Loader2,
+    Plus, Copy, Undo2, Redo2, ChevronLeft, ChevronRight, Loader2,
     Lock, AlertTriangle, Users, Trash2, Save, Link2, Package, Bookmark, Printer,
-    GitCompareArrows, ClipboardList, Sparkles,
+    GitCompareArrows, ClipboardList, Sparkles, Rows3, Pencil,
 } from 'lucide-react';
 import type {
     Project, Worker, WorkOrder, Order, Supplier, WorkerAttendance,
@@ -49,7 +49,7 @@ import {
     dateAtX, xForDate, anchorCentering, dayWidth, type Viewport,
 } from '@/lib/canvas/geometry';
 import {
-    newBlock, addDays, BLOCK_LABEL, BLOCK_HELP, ZOOM_LABEL, GROUP_BY_LABEL, blockDurationDays,
+    newBlock, addDays, BLOCK_LABEL, ZOOM_LABEL, GROUP_BY_LABEL, blockDurationDays,
 } from '@/lib/canvas/model';
 import { todayISO } from '@/lib/planning';
 import './CanvasTab.css';
@@ -528,9 +528,10 @@ export default function CanvasTab({
                 />
             </div>
 
-            {/* Alatna traka */}
+            {/* Alatna traka — tri zone: POGLED · KREIRANJE/RASPORED · ALATI */}
             <div className="cv-toolbar">
-                <div className="cv-seg">
+                {/* ── Pogled ─────────────────────────────────── */}
+                <div className="cv-seg" role="group" aria-label="Zum">
                     {ZOOMS.map(z => (
                         <button key={z} className={zoom === z ? 'on' : ''}
                             onClick={() => dispatch({ type: 'SET_VIEW', view: { zoom: z } })}>
@@ -538,66 +539,79 @@ export default function CanvasTab({
                         </button>
                     ))}
                 </div>
-                <button className="cv-btn" onClick={() => dispatch({ type: 'SET_VIEW', view: { anchorISO: addDays(anchorISO, zoom === 'mjesec' ? -30 : -7) } })}>
-                    <ZoomOut size={15} style={{ transform: 'rotate(90deg)' }} />
-                </button>
-                <button className="cv-btn" onClick={() => dispatch({ type: 'SET_VIEW', view: { anchorISO: anchorCentering(todayISO(), vp) } })}>
-                    <Calendar size={15} /> Danas
-                </button>
-                <button className="cv-btn" onClick={() => dispatch({ type: 'SET_VIEW', view: { anchorISO: addDays(anchorISO, zoom === 'mjesec' ? 30 : 7) } })}>
-                    <ZoomIn size={15} style={{ transform: 'rotate(90deg)' }} />
-                </button>
 
-                <span className="cv-divider" />
+                <div className="cv-nav" role="group" aria-label="Pomjeri prikaz">
+                    <button className="cv-nav-arrow" aria-label="Ranije"
+                        onClick={() => dispatch({ type: 'SET_VIEW', view: { anchorISO: addDays(anchorISO, zoom === 'mjesec' ? -30 : -7) } })}>
+                        <ChevronLeft size={16} />
+                    </button>
+                    <button className="cv-nav-today"
+                        onClick={() => dispatch({ type: 'SET_VIEW', view: { anchorISO: anchorCentering(todayISO(), vp) } })}>
+                        Danas
+                    </button>
+                    <button className="cv-nav-arrow" aria-label="Kasnije"
+                        onClick={() => dispatch({ type: 'SET_VIEW', view: { anchorISO: addDays(anchorISO, zoom === 'mjesec' ? 30 : 7) } })}>
+                        <ChevronRight size={16} />
+                    </button>
+                </div>
 
-                <label className="cv-labeled">
-                    <span>Grupiši</span>
-                    <select className="cv-select" value={groupBy}
+                <span className="cv-inline-select" title="Grupiši redove po…">
+                    <Rows3 size={14} />
+                    <select className="cv-select bare" value={groupBy} aria-label="Grupiši"
                         onChange={e => dispatch({ type: 'SET_VIEW', view: { groupBy: e.target.value as PlanGroupBy } })}>
                         {GROUPS.map(g => <option key={g} value={g}>{GROUP_BY_LABEL[g]}</option>)}
                     </select>
-                </label>
+                </span>
 
+                <span className="cv-spacer" />
+
+                {/* ── Kreiranje / raspored ───────────────────── */}
                 <button className="cv-btn primary" onClick={() => setPickerOpen(true)}>
                     <Package size={15} /> Novi nalog
                 </button>
                 <button className="cv-btn" onClick={() => setBatchOpen(true)}
                     title="Unesi više naloga odjednom (proizvodni, montaža, razni)">
-                    <ClipboardList size={15} /> Batch unos
+                    <ClipboardList size={15} /> Batch
                 </button>
-                <button className="cv-btn primary" onClick={runSchedule}
+
+                <span className="cv-divider" />
+
+                <button className="cv-btn accent" onClick={runSchedule}
                     title="Automatski rasporedi naloge s kandidat-ekipama kroz vrijeme i radnike">
                     <Sparkles size={15} /> Rasporedi
                 </button>
-
-                <label className="cv-labeled">
-                    <span>Crtaj</span>
-                    <select className="cv-select" value={quickKind}
-                        onChange={e => setQuickKind(e.target.value as PlanBlockKind)}
-                        title={BLOCK_HELP[quickKind]}>
-                        {QUICK_KINDS.map(q => <option key={q.kind} value={q.kind}>{BLOCK_LABEL[q.kind]}</option>)}
-                    </select>
-                </label>
-
-                <button className={`cv-btn ${showIdle ? 'on' : ''}`} onClick={() => setShowIdle(v => !v)}>
-                    <Users size={15} /> Svi radnici
-                </button>
-
-                <span className="cv-spacer" />
-
-                <button className="cv-btn" onClick={() => setTemplatesOpen(true)}
-                    title="Sačuvani oblici lanaca (npr. nova kuhinja)">
-                    <Bookmark size={15} /> Šabloni
-                    {templates.length > 0 && <span className="cv-badge">{templates.length}</span>}
-                </button>
-                <button className="cv-btn" onClick={printPlan} title="Ispis plana za zid radionice">
-                    <Printer size={15} />
-                </button>
-                <button className="cv-btn primary" onClick={() => setChainOpen(true)}>
+                <button className="cv-btn accent" onClick={() => setChainOpen(true)}
+                    title="Preračunaj lanac unazad od roka">
                     <Link2 size={15} /> Lanac
                 </button>
-                <button className="cv-btn" disabled={!canUndo} onClick={() => dispatch({ type: 'UNDO' })}><Undo2 size={15} /></button>
-                <button className="cv-btn" disabled={!canRedo} onClick={() => dispatch({ type: 'REDO' })}><Redo2 size={15} /></button>
+
+                <span className="cv-divider" />
+
+                {/* ── Alati (ikone) ──────────────────────────── */}
+                <span className="cv-inline-select" title="Šta se crta povlačenjem po praznom redu">
+                    <Pencil size={14} />
+                    <select className="cv-select bare" value={quickKind} aria-label="Šta se crta"
+                        onChange={e => setQuickKind(e.target.value as PlanBlockKind)}>
+                        {QUICK_KINDS.map(q => <option key={q.kind} value={q.kind}>{BLOCK_LABEL[q.kind]}</option>)}
+                    </select>
+                </span>
+                <button className={`cv-icon-btn lg${showIdle ? ' on' : ''}`} onClick={() => setShowIdle(v => !v)}
+                    title="Prikaži sve radnike (i one bez posla)">
+                    <Users size={16} />
+                </button>
+                <button className="cv-icon-btn lg" onClick={() => setTemplatesOpen(true)}
+                    title="Šabloni lanaca (npr. nova kuhinja)">
+                    <Bookmark size={16} />
+                    {templates.length > 0 && <span className="cv-badge">{templates.length}</span>}
+                </button>
+                <button className="cv-icon-btn lg" onClick={printPlan} title="Štampaj plan za zid radionice">
+                    <Printer size={16} />
+                </button>
+
+                <span className="cv-divider" />
+
+                <button className="cv-icon-btn lg" disabled={!canUndo} onClick={() => dispatch({ type: 'UNDO' })} title="Poništi (Ctrl+Z)"><Undo2 size={16} /></button>
+                <button className="cv-icon-btn lg" disabled={!canRedo} onClick={() => dispatch({ type: 'REDO' })} title="Ponovi (Ctrl+Shift+Z)"><Redo2 size={16} /></button>
             </div>
 
             {state.notice && <div className="cv-notice">{state.notice}</div>}
