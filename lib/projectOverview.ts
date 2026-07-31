@@ -52,11 +52,13 @@ export interface OverviewItemInput {
     Project_ID?: string;
     Quantity?: number;
     Item_Type?: 'product' | 'custom';
+    Linked_Item_ID?: string;        // custom zadatak vezan na proizvod → rad ide proizvodu, ne u „razni"
     Status?: string;
     Started_At?: string;
     Completed_At?: string;
     Product_Value?: number;
     Material_Cost?: number;
+    Other_Costs?: number;
     Services_Total?: number;
     Transport_Share?: number;
     Planned_Labor_Cost?: number;
@@ -119,6 +121,7 @@ export interface ProductOverviewRow {
     labor: number;
     services: number;
     transport: number;
+    other: number;                  // ostali troškovi (razni nalozi); 0 za proizvode
     profit: number;
     margin: number;
     missingPrice: boolean;
@@ -284,7 +287,7 @@ export function buildProjectOverview(args: {
     const productAcc = new Map<string, {
         productName: string; quantity: number; isCustom: boolean;
         statuses: string[]; woNumbers: Set<string>;
-        rev: number; mat: number; lab: number; ser: number; tra: number;
+        rev: number; mat: number; lab: number; ser: number; tra: number; oth: number;
         plannedLabor: number; plannedMaterial: number; missingPrice: boolean;
     }>();
     const woRows: WorkOrderOverviewRow[] = [];
@@ -299,6 +302,7 @@ export function buildProjectOverview(args: {
         for (const item of items) {
             projectItemIds.add(item.ID);
             const labor = laborByItem.get(item.ID) || 0;
+            const isCustom = item.Item_Type === 'custom';
             const breakdown = isMontaza
                 ? itemProfitBreakdown({ laborTotal: labor })
                 : itemProfitBreakdown({
@@ -310,24 +314,27 @@ export function buildProjectOverview(args: {
                     servicesTotal: item.Services_Total,
                     transportShare: item.Transport_Share,
                     transportOverride: item.Profit_Overrides?.Transport_Share,
+                    otherCosts: item.Other_Costs,   // ostali troškovi raznih naloga
                 });
             woAcc.push(breakdown);
 
-            // Per-proizvod agregacija (proizvod može biti u više naloga/stavki).
-            const pid = item.Product_ID || `custom:${item.ID}`;
+            // Per-proizvod agregacija. SVE custom stavke (razni poslovi) padaju u JEDAN
+            // red „Razni nalozi" — korisnik ih tako i posmatra (jedna stalna stavka).
+            const pid = isCustom ? '__razni__' : (item.Product_ID || `custom:${item.ID}`);
             let pa = productAcc.get(pid);
             if (!pa) {
                 pa = {
-                    productName: item.Product_Name || 'Proizvod',
-                    quantity: 0, isCustom: item.Item_Type === 'custom',
+                    productName: isCustom ? 'Razni nalozi' : (item.Product_Name || 'Proizvod'),
+                    quantity: 0, isCustom,
                     statuses: [], woNumbers: new Set(),
-                    rev: 0, mat: 0, lab: 0, ser: 0, tra: 0,
+                    rev: 0, mat: 0, lab: 0, ser: 0, tra: 0, oth: 0,
                     plannedLabor: 0, plannedMaterial: 0, missingPrice: false,
                 };
                 productAcc.set(pid, pa);
             }
-            // Količina: montaža/ponovni nalozi ne duplaju količinu proizvoda — uzmi najveću viđenu.
-            pa.quantity = Math.max(pa.quantity, item.Quantity || 0);
+            // Količina: proizvod → najveća viđena (montaža/ponovni nalozi ne duplaju);
+            // razni → BROJ poslova (svaka custom stavka je jedan posao).
+            pa.quantity = isCustom ? pa.quantity + (item.Quantity || 1) : Math.max(pa.quantity, item.Quantity || 0);
             pa.statuses.push(item.Status || 'Na čekanju');
             if (wo.Work_Order_Number) pa.woNumbers.add(wo.Work_Order_Number);
             pa.rev += breakdown.revenue;
@@ -335,7 +342,8 @@ export function buildProjectOverview(args: {
             pa.lab += breakdown.labor;
             pa.ser += breakdown.services;
             pa.tra += breakdown.transport;
-            if (breakdown.missingPrice && !isMontaza) pa.missingPrice = true;
+            pa.oth += breakdown.other;
+            if (breakdown.missingPrice && !isMontaza && !isCustom) pa.missingPrice = true;
             // PLAN: rad iz snapshot-a stavke (po komadu × kol.); materijal iz ponude (fallback: stavka).
             if (!isMontaza) {
                 pa.plannedLabor += (item.Planned_Labor_Cost || 0) * (item.Quantity && item.Quantity > 0 ? item.Quantity : 1);
@@ -433,7 +441,7 @@ export function buildProjectOverview(args: {
     // U proizvodnji (bar jedan nalog) — nose finansije.
     const inProductionRows: ProductOverviewRow[] = Array.from(productAcc.entries())
         .map(([pid, pa]) => {
-            const fin = profitFromTotals({ revenue: pa.rev, material: pa.mat, labor: pa.lab, services: pa.ser, transport: pa.tra });
+            const fin = profitFromTotals({ revenue: pa.rev, material: pa.mat, labor: pa.lab, services: pa.ser, transport: pa.tra, other: pa.oth });
             return {
                 productId: pid,
                 productName: pa.productName,
@@ -444,6 +452,7 @@ export function buildProjectOverview(args: {
                 labor: fin.labor,
                 services: fin.services,
                 transport: fin.transport,
+                other: fin.other,
                 profit: fin.profit,
                 margin: fin.margin,
                 missingPrice: pa.missingPrice,
@@ -471,7 +480,7 @@ export function buildProjectOverview(args: {
                 productName: p.Name || 'Proizvod',
                 quantity: p.Quantity || 0,
                 status: 'Na čekanju',
-                revenue: 0, material, labor: 0, services: 0, transport: 0,
+                revenue: 0, material, labor: 0, services: 0, transport: 0, other: 0,
                 profit: 0, margin: 0, missingPrice: false,
                 plannedLabor: 0, plannedMaterial: material,
                 workerDays: 0, workerCount: 0,
@@ -535,7 +544,7 @@ export function buildProjectOverview(args: {
     // ── Finansije projekta (Σ proizvoda U PROIZVODNJI == Σ svih naloga) ───────
     const financial = sumBreakdownsLocal(inProductionRows.map(p => ({
         revenue: p.revenue, material: p.material, labor: p.labor, services: p.services, transport: p.transport,
-        profit: p.profit, margin: p.margin, missingPrice: p.missingPrice, missingMaterial: p.material <= 0,
+        other: p.other, profit: p.profit, margin: p.margin, missingPrice: p.missingPrice, missingMaterial: p.material <= 0,
     })));
 
     const plannedMaterial = r2(inProductionRows.reduce((s, p) => s + p.plannedMaterial, 0));
@@ -599,13 +608,76 @@ export function buildProjectOverview(args: {
     };
 }
 
+// ════════════════════════════════════════════════════════════════════
+// RAZNI NALOZI BEZ PROJEKTA — globalni sažetak.
+//
+// Razni nalog kome nije dodijeljen projekat ne pripada nijednom pregledu projekta.
+// Ovdje se svi takvi (Zadaci / custom stavke bez Project_ID i bez veze na proizvod)
+// sabiraju u jednu stavku, istom formulom (vrijednost − materijal − rad − ostalo).
+// Vezani custom zadaci se ISKLJUČUJU: njihov rad već ide troškovima proizvoda.
+// ════════════════════════════════════════════════════════════════════
+export interface MiscOverview {
+    financial: ProfitBreakdown;
+    orderCount: number;         // broj Zadaci naloga koji doprinose
+    taskCount: number;          // broj pojedinačnih poslova (custom stavki)
+    workerDays: number;         // Σ Day_Fraction
+}
+
+export function buildMiscOverview(args: {
+    workOrders: OverviewWorkOrderInput[];
+    workLogs: OverviewLogInput[];
+}): MiscOverview {
+    const { workOrders, workLogs } = args;
+
+    const laborByItem = new Map<string, number>();
+    for (const wl of workLogs) {
+        if (!wl.Work_Order_Item_ID) continue;
+        laborByItem.set(wl.Work_Order_Item_ID, (laborByItem.get(wl.Work_Order_Item_ID) || 0) + (wl.Daily_Rate || 0));
+    }
+
+    const breakdowns: ProfitBreakdown[] = [];
+    const itemIds = new Set<string>();
+    let orderCount = 0;
+    let taskCount = 0;
+
+    for (const wo of workOrders) {
+        if (wo.Status === 'Otkazano') continue;
+        const custom = (wo.items || []).filter(it =>
+            it.Item_Type === 'custom' && !it.Project_ID && !it.Linked_Item_ID);
+        if (custom.length === 0) continue;
+        orderCount++;
+        for (const item of custom) {
+            taskCount++;
+            itemIds.add(item.ID);
+            breakdowns.push(itemProfitBreakdown({
+                productValue: item.Product_Value,
+                sellingOverride: item.Profit_Overrides?.Selling_Price,
+                materialPerUnit: item.Material_Cost,
+                quantity: item.Quantity,
+                laborTotal: laborByItem.get(item.ID) || 0,
+                servicesTotal: item.Services_Total,
+                transportShare: item.Transport_Share,
+                transportOverride: item.Profit_Overrides?.Transport_Share,
+                otherCosts: item.Other_Costs,
+            }));
+        }
+    }
+
+    let workerDays = 0;
+    for (const wl of workLogs) {
+        if (wl.Work_Order_Item_ID && itemIds.has(wl.Work_Order_Item_ID)) workerDays += wl.Day_Fraction ?? 1;
+    }
+
+    return { financial: sumBreakdownsLocal(breakdowns), orderCount, taskCount, workerDays: r2(workerDays) };
+}
+
 /**
  * Lokalni sumBreakdowns (kao lib/profit.ts) — sabira komponente i OR-uje missing flagove.
  * Ne uvozi se iz profit.ts jer tamošnji radi nad ProfitBreakdown[]; ovdje ista semantika,
  * ali s eksplicitnim poljima da se izbjegne međuzavisnost pri refaktoru.
  */
 function sumBreakdownsLocal(items: ProfitBreakdown[]): ProfitBreakdown {
-    const acc = { revenue: 0, material: 0, labor: 0, services: 0, transport: 0 };
+    const acc = { revenue: 0, material: 0, labor: 0, services: 0, transport: 0, other: 0 };
     let missingPrice = false;
     let missingMaterial = false;
     for (const b of items) {
@@ -614,6 +686,7 @@ function sumBreakdownsLocal(items: ProfitBreakdown[]): ProfitBreakdown {
         acc.labor += b.labor;
         acc.services += b.services;
         acc.transport += b.transport;
+        acc.other += b.other || 0;
         if (b.missingPrice) missingPrice = true;
         if (b.missingMaterial) missingMaterial = true;
     }

@@ -1,7 +1,7 @@
 // ════════════════════════════════════════════════════════════════════
 // JEDINSTVENA PROFIT FORMULA — čista logika (bez Firebase), jedini izvor istine.
 //
-//   profit = prihod − materijal − rad − usluge − transport
+//   profit = prihod − materijal − rad − usluge − transport − ostalo
 //
 // Do sada su ovu formulu nezavisno implementirali WorkOrderExpandedDetail (itemFin),
 // lib/productivity.ts i lib/analytics.ts — svaka izmjena se morala ponoviti na 3
@@ -26,9 +26,13 @@ export interface ProfitTotals {
     labor: number;
     services: number;
     transport: number;
+    /** Ostali troškovi (razni nalozi). Opcion, default 0 — proizvodi ga nemaju. */
+    other?: number;
 }
 
 export interface ProfitBreakdown extends ProfitTotals {
+    /** Uvijek prisutan u izlazu (default 0), za razliku od opcionog ulaza. */
+    other: number;
     profit: number;
     margin: number;             // % od prihoda (0 kad prihoda nema)
     missingPrice: boolean;      // prihod ≤ 0 → profit nepotpun (nema prihvaćene ponude?)
@@ -42,9 +46,10 @@ export function profitFromTotals(t: ProfitTotals): ProfitBreakdown {
     const labor = r2(t.labor || 0);
     const services = r2(t.services || 0);
     const transport = r2(t.transport || 0);
-    const profit = r2(revenue - material - labor - services - transport);
+    const other = r2(t.other || 0);
+    const profit = r2(revenue - material - labor - services - transport - other);
     return {
-        revenue, material, labor, services, transport, profit,
+        revenue, material, labor, services, transport, other, profit,
         margin: revenue > 0 ? r2((profit / revenue) * 100) : 0,
         missingPrice: revenue <= 0,
         missingMaterial: material <= 0,
@@ -61,6 +66,7 @@ export interface ItemProfitInput {
     servicesTotal?: number;             // Services_Total
     transportShare?: number;            // Transport_Share
     transportOverride?: number | null;  // Profit_Overrides.Transport_Share (važi čim != null)
+    otherCosts?: number;                // Other_Costs (razni nalozi) — UKUPAN iznos, ne po komadu
 }
 
 export function itemProfitBreakdown(i: ItemProfitInput): ProfitBreakdown {
@@ -76,6 +82,7 @@ export function itemProfitBreakdown(i: ItemProfitInput): ProfitBreakdown {
         labor: i.laborTotal || 0,
         services: i.servicesTotal || 0,
         transport,
+        other: i.otherCosts || 0,
     });
 }
 
@@ -84,7 +91,7 @@ export function itemProfitBreakdown(i: ItemProfitInput): ProfitBreakdown {
  * do centa — komponente su već zaokružene per-stavka). Missing flagovi se OR-uju.
  */
 export function sumBreakdowns(items: ProfitBreakdown[]): ProfitBreakdown {
-    const acc: ProfitTotals = { revenue: 0, material: 0, labor: 0, services: 0, transport: 0 };
+    const acc: ProfitTotals = { revenue: 0, material: 0, labor: 0, services: 0, transport: 0, other: 0 };
     let missingPrice = false;
     let missingMaterial = false;
     for (const b of items) {
@@ -93,6 +100,7 @@ export function sumBreakdowns(items: ProfitBreakdown[]): ProfitBreakdown {
         acc.labor += b.labor;
         acc.services += b.services;
         acc.transport += b.transport;
+        acc.other! += b.other || 0;
         if (b.missingPrice) missingPrice = true;
         if (b.missingMaterial) missingMaterial = true;
     }

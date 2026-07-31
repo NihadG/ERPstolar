@@ -231,6 +231,7 @@ export function buildProductionSnapshot(input: BuildSnapshotInput): ProductionSn
             servicesTotal,
             transportShare: op?.Transport_Share,
             transportOverride: overrides?.Transport_Share,
+            otherCosts: (item as any).Other_Costs,
         });
 
         snapshotItems.push({

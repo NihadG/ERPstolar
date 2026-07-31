@@ -851,6 +851,9 @@ export interface WorkOrderItem {
     // VRIJEDNOST I MATERIJAL
     Product_Value?: number;    // Cijena proizvoda iz ponude
     Material_Cost?: number;    // Trošak materijala za ovaj proizvod
+    // OSTALI TROŠKOVI — za razne naloge (Zadaci): prevoz, sitni materijal van BOM-a, i sl.
+    // Trošak koji se u profitu oduzima uz materijal i rad. Za proizvode je 0.
+    Other_Costs?: number;
 
     // PROFIT OVERRIDES — Prilagodbe koje ne mijenjaju originalnu ponudu
     Profit_Overrides?: {

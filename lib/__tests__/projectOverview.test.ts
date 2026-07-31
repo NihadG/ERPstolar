@@ -1,4 +1,4 @@
-import { buildProjectOverview } from '../projectOverview';
+import { buildProjectOverview, buildMiscOverview } from '../projectOverview';
 import { projectProfitBreakdown } from '../projectProfit';
 
 // Minimalne fiksture — uski ulazni tipovi (samo čitana polja).
@@ -171,5 +171,94 @@ describe('buildProjectOverview — materijali', () => {
         expect(iveral.products.length).toBe(2);
         expect(iveral.remaining).toBe(8);          // needed − stock − received
         expect(ov.materialCatalogCost).toBe(420);  // 250 + 150 + 20
+    });
+});
+
+describe('buildProjectOverview — razni nalozi (custom)', () => {
+    // Razni nalog vezan za projekat: vrijednost 500, materijal 120, ostalo 30, rad 180.
+    const razniWO = (over: any = {}) => ({
+        Work_Order_ID: 'WOZ', Work_Order_Number: 'Z1', Status: 'U toku', Work_Order_Type: 'Zadaci',
+        items: [{
+            ID: 'Z-I1', Product_ID: 'custom-1', Product_Name: 'Izrada paleta', Project_ID: 'P1',
+            Item_Type: 'custom', Quantity: 1, Product_Value: 500, Material_Cost: 120, Other_Costs: 30, Status: 'U toku',
+        }],
+        ...over,
+    });
+    const razniLog = { Work_Order_Item_ID: 'Z-I1', Worker_ID: 'W1', Worker_Name: 'Ivan', Daily_Rate: 180, Day_Fraction: 1, Date: '2026-07-01' };
+
+    test('red „Razni nalozi": vrijednost − materijal − ostalo − rad', () => {
+        const ov = buildProjectOverview({ project: baseProject(), workOrders: [razniWO()], workLogs: [razniLog] });
+        const razni = ov.products.find(p => p.isCustom)!;
+        expect(razni.productName).toBe('Razni nalozi');
+        expect(razni.revenue).toBe(500);
+        expect(razni.material).toBe(120);
+        expect(razni.other).toBe(30);
+        expect(razni.labor).toBe(180);
+        expect(razni.profit).toBe(500 - 120 - 30 - 180);   // 170
+    });
+
+    test('više raznih naloga se KONSOLIDUJE u JEDAN red', () => {
+        const wo2 = razniWO({
+            Work_Order_ID: 'WOZ2', Work_Order_Number: 'Z2',
+            items: [{ ID: 'Z-I2', Product_ID: 'custom-2', Product_Name: 'Čišćenje', Project_ID: 'P1', Item_Type: 'custom', Quantity: 1, Product_Value: 200, Material_Cost: 0, Other_Costs: 0, Status: 'U toku' }],
+        });
+        const ov = buildProjectOverview({ project: baseProject(), workOrders: [razniWO(), wo2], workLogs: [razniLog] });
+        const customRows = ov.products.filter(p => p.isCustom);
+        expect(customRows.length).toBe(1);                 // jedan konsolidovan red
+        expect(customRows[0].revenue).toBe(700);           // 500 + 200
+        expect(customRows[0].quantity).toBe(2);            // broj poslova
+    });
+
+    test('projekat bez raznih naloga nema taj red', () => {
+        const ov = buildProjectOverview({
+            project: baseProject(),
+            workOrders: [{ Work_Order_ID: 'WO1', Work_Order_Number: 'RN1', Status: 'U toku', Work_Order_Type: 'Proizvodnja', items: [{ ID: 'I1', Product_ID: 'PR1', Product_Name: 'Ormar', Project_ID: 'P1', Product_Value: 1000, Material_Cost: 0, Quantity: 1, Status: 'U toku' }] }],
+            workLogs: [],
+        });
+        expect(ov.products.some(p => p.isCustom)).toBe(false);
+    });
+
+    test('financial projekta uključuje razni nalog (== Σ redova)', () => {
+        const ov = buildProjectOverview({ project: baseProject(), workOrders: [razniWO()], workLogs: [razniLog] });
+        expect(ov.financial.profit).toBe(500 - 120 - 30 - 180);
+        expect(ov.financial.other).toBe(30);
+    });
+});
+
+describe('buildMiscOverview — razni bez projekta', () => {
+    test('sabira Zadaci bez projekta; formula ista', () => {
+        const misc = buildMiscOverview({
+            workOrders: [{
+                Work_Order_ID: 'WOZ', Work_Order_Number: 'Z1', Status: 'U toku', Work_Order_Type: 'Zadaci',
+                items: [{ ID: 'M1', Product_ID: 'custom-x', Product_Name: 'Popravka', Project_ID: '', Item_Type: 'custom', Quantity: 1, Product_Value: 300, Material_Cost: 50, Other_Costs: 20, Status: 'U toku' }],
+            }],
+            workLogs: [{ Work_Order_Item_ID: 'M1', Worker_ID: 'W1', Daily_Rate: 100, Day_Fraction: 1, Date: '2026-07-01' }],
+        });
+        expect(misc.orderCount).toBe(1);
+        expect(misc.taskCount).toBe(1);
+        expect(misc.financial.profit).toBe(300 - 50 - 20 - 100);   // 130
+        expect(misc.workerDays).toBe(1);
+    });
+
+    test('razni SA projektom se NE broji u globalne', () => {
+        const misc = buildMiscOverview({
+            workOrders: [{
+                Work_Order_ID: 'WOZ', Work_Order_Number: 'Z1', Status: 'U toku', Work_Order_Type: 'Zadaci',
+                items: [{ ID: 'M1', Product_ID: 'custom-x', Project_ID: 'P1', Item_Type: 'custom', Quantity: 1, Product_Value: 300, Status: 'U toku' }],
+            }],
+            workLogs: [],
+        });
+        expect(misc.orderCount).toBe(0);
+    });
+
+    test('vezani custom zadatak (Linked_Item_ID) se isključuje', () => {
+        const misc = buildMiscOverview({
+            workOrders: [{
+                Work_Order_ID: 'WOZ', Work_Order_Number: 'Z1', Status: 'U toku', Work_Order_Type: 'Zadaci',
+                items: [{ ID: 'M1', Product_ID: 'custom-x', Project_ID: '', Item_Type: 'custom', Linked_Item_ID: 'PROD-1', Quantity: 1, Product_Value: 0, Status: 'U toku' }],
+            }],
+            workLogs: [],
+        });
+        expect(misc.orderCount).toBe(0);
     });
 });

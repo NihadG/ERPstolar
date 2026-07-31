@@ -2898,6 +2898,7 @@ export async function createWorkOrder(data: {
         Quantity: number;
         Product_Value?: number;
         Material_Cost?: number;
+        Other_Costs?: number;
         Planned_Labor_Cost?: number;
         Planned_Labor_Days?: number;
         Planned_Labor_Workers?: number;
@@ -2995,6 +2996,7 @@ export async function createWorkOrder(data: {
                 Planned_Labor_Rate: item.Planned_Labor_Rate ?? 0,
                 Services_Total: item.Services_Total ?? 0,   // usluge = trošak (iz ponude)
                 Transport_Share: item.Transport_Share ?? 0,
+                ...(item.Other_Costs != null && { Other_Costs: item.Other_Costs }),
                 ...(item.Source_Work_Order_ID && { Source_Work_Order_ID: item.Source_Work_Order_ID }),
                 ...(item.Item_Type && { Item_Type: item.Item_Type }),
                 ...(item.Linked_Item_ID && { Linked_Item_ID: item.Linked_Item_ID }),

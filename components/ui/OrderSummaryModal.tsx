@@ -115,6 +115,7 @@ function fromLive(wo: WorkOrder, logs: WorkLog[]): SummaryData {
                 servicesTotal: (item as any).Services_Total,
                 transportShare: (item as any).Transport_Share,
                 transportOverride: (item as any).Profit_Overrides?.Transport_Share,
+                otherCosts: (item as any).Other_Costs,
             });
         return { item, actualDays, fin };
     });

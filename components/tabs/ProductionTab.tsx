@@ -1064,6 +1064,7 @@ export default function ProductionTab({ workOrders, projects, workers, tasks, wo
                 onClose={() => setTasksModal(false)}
                 workOrders={workOrders}
                 workers={workers}
+                projects={projects}
                 tasks={tasks}
                 organizationId={organizationId || ''}
                 onCreated={onRefresh}

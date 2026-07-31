@@ -33,6 +33,18 @@ describe('profitFromTotals', () => {
         expect(b.material).toBe(33.33);
         expect(b.profit).toBe(66.68);
     });
+
+    it('ostali troškovi (other) se oduzimaju', () => {
+        const b = profitFromTotals({ revenue: 500, material: 120, labor: 100, services: 0, transport: 0, other: 30 });
+        expect(b.other).toBe(30);
+        expect(b.profit).toBe(500 - 120 - 100 - 30);   // 250
+    });
+
+    it('bez other polja → other=0, formula nepromijenjena', () => {
+        const b = profitFromTotals({ revenue: 1000, material: 300, labor: 200, services: 50, transport: 50 });
+        expect(b.other).toBe(0);
+        expect(b.profit).toBe(400);
+    });
 });
 
 describe('itemProfitBreakdown', () => {
@@ -97,5 +109,22 @@ describe('sumBreakdowns', () => {
         const total = sumBreakdowns([]);
         expect(total.profit).toBe(0);
         expect(total.missingPrice).toBe(false);
+    });
+
+    it('other se akumulira preko stavki', () => {
+        const a = itemProfitBreakdown({ productValue: 500, laborTotal: 0, otherCosts: 30 });
+        const b = itemProfitBreakdown({ productValue: 300, laborTotal: 0, otherCosts: 20 });
+        expect(sumBreakdowns([a, b]).other).toBe(50);
+    });
+});
+
+describe('razni nalog (otherCosts)', () => {
+    it('vrijednost − materijal − rad − ostalo', () => {
+        // razni nalog: 500 vrijednost, 120 materijal, 260 rad (dnevnice), 30 ostalo
+        const b = itemProfitBreakdown({
+            productValue: 500, materialPerUnit: 120, quantity: 1, laborTotal: 260, otherCosts: 30,
+        });
+        expect(b.other).toBe(30);
+        expect(b.profit).toBe(500 - 120 - 260 - 30);   // 90
     });
 });

@@ -164,7 +164,7 @@ export default function ProjectOverviewScreen({
     const fmt0 = (n: number) => Math.round(n).toLocaleString('hr-HR');
 
     const fin = ov.financial;
-    const cost = fin.material + fin.labor + fin.services + fin.transport;
+    const cost = fin.material + fin.labor + fin.services + fin.transport + fin.other;
     const marginClass = fin.profit < 0 ? 'bad' : fin.margin >= 30 ? 'good' : fin.margin >= 15 ? 'mid' : 'bad';
 
     // ── Radnje nad nalogom (ISTE kao ProductionTab: pišu kroz iste servise +
@@ -411,6 +411,7 @@ function PregledTab({ ov, cost, fmt, fmt0, marginClass }: {
         { key: 'labor', label: 'Rad', value: fin.labor, color: COLORS.labor },
         { key: 'services', label: 'Usluge', value: fin.services, color: COLORS.services },
         { key: 'transport', label: 'Transport', value: fin.transport, color: COLORS.transport },
+        { key: 'other', label: 'Ostalo', value: fin.other, color: COLORS.transport },
     ].filter(s => s.value > 0.005);
     if (fin.profit >= 0) allocSegments.push({ key: 'profit', label: 'Profit', value: fin.profit, color: COLORS.profit });
     const costSegments = allocSegments.filter(s => s.key !== 'profit');
@@ -588,7 +589,7 @@ function ProizvodiTab({ ov, fmt, onCreateWorkOrder }: {
                                 <div className="pov-mcard-title">
                                     <div className="pov-mcard-name">{p.productName}</div>
                                     <div className="pov-mcard-badges">
-                                        {p.isCustom && <span className="pov-tag custom">zadatak</span>}
+                                        {p.isCustom && <span className="pov-tag custom">razni</span>}
                                         {p.notInProduction && <span className="pov-tag wait">nije u nalogu</span>}
                                         <span className={`pov-chip s-${statusSlug(p.status)}`}>{p.status}</span>
                                         {p.quantity ? <span className="pov-mcard-qty">×{p.quantity}</span> : null}
@@ -605,6 +606,7 @@ function ProizvodiTab({ ov, fmt, onCreateWorkOrder }: {
                                 <div className="pov-mcard-detail">
                                     <Detail label="Materijal" value={fmt(p.material)} />
                                     {!p.notInProduction && <Detail label="Rad" value={fmt(p.labor)} />}
+                                    {p.other > 0 && <Detail label="Ostali troškovi" value={fmt(p.other)} />}
                                     <Detail label="Usluge" value={fmt(p.services)} />
                                     <Detail label="Transport" value={fmt(p.transport)} />
                                     <Detail label="Radnih dana" value={`${p.workerDays}`} />
@@ -664,7 +666,7 @@ function ProizvodiTab({ ov, fmt, onCreateWorkOrder }: {
                                         )}
                                         <td>
                                             <div className="pov-prod-name">
-                                                {p.isCustom && <span className="pov-tag custom">zadatak</span>}
+                                                {p.isCustom && <span className="pov-tag custom">razni</span>}
                                                 {p.notInProduction && <span className="pov-tag wait">nije u nalogu</span>}
                                                 {p.productName}
                                             </div>

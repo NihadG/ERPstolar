@@ -7,13 +7,15 @@ import { SearchableSelect } from './SearchableSelect';
 import TaskAttachEditor from './TaskAttachEditor';
 import { createWorkOrder } from '@/lib/services';
 import { emptyTaskSelection, taskSelectionCount, type TaskAttachSelection } from '@/lib/workOrderTasks';
-import type { WorkOrder, Worker, Task } from '@/lib/types';
+import type { WorkOrder, Worker, Task, Project } from '@/lib/types';
 
 interface CustomTasksModalProps {
     isOpen: boolean;
     onClose: () => void;
     workOrders: WorkOrder[];
     workers: Worker[];
+    /** Projekti — za opciono vezivanje raznog naloga (profit ide u „Razni nalozi" tog projekta). */
+    projects?: Project[];
     /** Svi zadaci organizacije — za „Poveži postojeći" na ovom nalogu. */
     tasks?: Task[];
     organizationId: string;
@@ -33,11 +35,16 @@ interface TaskRow {
 
 const uid = () => (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `id-${Date.now()}-${Math.random()}`);
 
-export default function CustomTasksModal({ isOpen, onClose, workOrders, workers, tasks = [], organizationId, onCreated, showToast, zIndex, initialWorkerId, onOrderCreated }: CustomTasksModalProps) {
+export default function CustomTasksModal({ isOpen, onClose, workOrders, workers, projects = [], tasks = [], organizationId, onCreated, showToast, zIndex, initialWorkerId, onOrderCreated }: CustomTasksModalProps) {
     const [rows, setRows] = useState<TaskRow[]>([{ id: uid(), text: '', workerIds: initialWorkerId ? [initialWorkerId] : [] }]);
     const [notes, setNotes] = useState('');
     const [dueDate, setDueDate] = useState('');
     const [saving, setSaving] = useState(false);
+    // Finansije raznog naloga (za profit) — opciono. Vrijednost iz ponude, materijal, ostali troškovi.
+    const [projectId, setProjectId] = useState('');
+    const [offerValue, setOfferValue] = useState('');
+    const [materialCost, setMaterialCost] = useState('');
+    const [otherCosts, setOtherCosts] = useState('');
     // Zadaci iz taba Zadaci (evidencija/praćenje) — ODVOJENO od poslova gore,
     // koji su stavke naloga i nose trošak rada. Vidi .ctm-note ispod.
     const [taskSelection, setTaskSelection] = useState<TaskAttachSelection>(emptyTaskSelection);
@@ -50,6 +57,7 @@ export default function CustomTasksModal({ isOpen, onClose, workOrders, workers,
             setNotes('');
             setDueDate('');
             setTaskSelection(emptyTaskSelection());
+            setProjectId(''); setOfferValue(''); setMaterialCost(''); setOtherCosts('');
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [isOpen]);
@@ -63,6 +71,15 @@ export default function CustomTasksModal({ isOpen, onClose, workOrders, workers,
         workers.forEach(w => m.set(w.Worker_ID, w));
         return m;
     }, [workers]);
+
+    const projectOptions = useMemo(
+        () => projects
+            .filter(p => !p.Hidden)
+            .map(p => ({ value: p.Project_ID, label: p.Name?.trim() || p.Client_Name, subLabel: p.Client_Name }))
+            .sort((a, b) => a.label.localeCompare(b.label, 'hr')),
+        [projects]
+    );
+    const selectedProject = useMemo(() => projects.find(p => p.Project_ID === projectId), [projects, projectId]);
 
     // Real products (across all work orders, including finished) — for optional linking
     const linkOptions = useMemo(() => {
@@ -99,24 +116,39 @@ export default function CustomTasksModal({ isOpen, onClose, workOrders, workers,
 
     const validRows = rows.filter(r => r.text.trim().length > 0);
     const hasAnyWorker = validRows.some(r => r.workerIds.length > 0);
-    const reset = () => { setRows([{ id: uid(), text: '', workerIds: [] }]); setNotes(''); setDueDate(''); setTaskSelection(emptyTaskSelection()); };
+    const reset = () => { setRows([{ id: uid(), text: '', workerIds: [] }]); setNotes(''); setDueDate(''); setTaskSelection(emptyTaskSelection()); setProjectId(''); setOfferValue(''); setMaterialCost(''); setOtherCosts(''); };
 
     const handleCreate = async () => {
         if (!organizationId || saving) return;
         if (validRows.length === 0) { showToast('Dodaj barem jedan zadatak', 'error'); return; }
         setSaving(true);
         try {
-            const items = validRows.map(r => {
+            // Finansije se upisuju SAMO na prvu custom stavku (order-level jedan set);
+            // ostale nose 0. Razni nalozi se u profitu konsoliduju u jedan red, pa je
+            // zbir tačan. Vrijednost/materijal/ostalo su brojevi (prazno = 0).
+            const num = (s: string) => { const n = parseFloat(s.replace(',', '.')); return isFinite(n) && n > 0 ? n : 0; };
+            const fin = { value: num(offerValue), material: num(materialCost), other: num(otherCosts) };
+            const projName = selectedProject ? (selectedProject.Name?.trim() || selectedProject.Client_Name) : 'Razni poslovi';
+
+            const items = validRows.map((r, idx) => {
                 const link = r.linkedItemId ? linkLookup.get(r.linkedItemId) : undefined;
                 const chosen = r.workerIds.map(id => workerLookup.get(id)).filter((w): w is Worker => !!w);
                 const [main, ...helpers] = chosen;
+                const isFirst = idx === 0;
                 return {
                     Product_ID: `custom-${uid()}`,
                     Product_Name: r.text.trim(),
-                    Project_ID: '',
-                    Project_Name: 'Razni poslovi',
+                    Project_ID: projectId || '',
+                    Project_Name: projName,
                     Quantity: 1,
                     Item_Type: 'custom' as const,
+                    // Vrijednost/materijal/ostalo idu na PRVU stavku (samo ako je unesen projekat
+                    // ili neka vrijednost — inače nalog ostaje čisto radni bez prihoda).
+                    ...(isFirst ? {
+                        Product_Value: fin.value,
+                        Material_Cost: fin.material,
+                        Other_Costs: fin.other,
+                    } : {}),
                     // Implicitni proces "Rad": prvi radnik = glavni, ostali = pomoćnici. Svi u
                     // Assigned_Workers (izvor za auto-knjiženje iz šihtarice za SVAKOG radnika).
                     ...(chosen.length > 0 ? {
@@ -267,6 +299,43 @@ export default function CustomTasksModal({ isOpen, onClose, workOrders, workers,
                 </section>
 
                 <section className="ctm-section">
+                    <div className="ctm-section-head">
+                        <span>Vrijednost i troškovi</span>
+                        <em className="ctm-section-note">za profit — opciono</em>
+                    </div>
+                    <label className="ctm-field">
+                        <span>Projekat <em>(profit ide u „Razni nalozi" tog projekta)</em></span>
+                        <SearchableSelect
+                            options={projectOptions}
+                            value={projectId}
+                            onChange={v => setProjectId(v || '')}
+                            placeholder="Bez projekta — globalni razni nalozi"
+                        />
+                    </label>
+                    <div className="ctm-grid3">
+                        <label className="ctm-field">
+                            <span>Vrijednost (iz ponude)</span>
+                            <input type="number" min={0} step="0.01" inputMode="decimal"
+                                value={offerValue} onChange={e => setOfferValue(e.target.value)} placeholder="KM" />
+                        </label>
+                        <label className="ctm-field">
+                            <span>Materijal</span>
+                            <input type="number" min={0} step="0.01" inputMode="decimal"
+                                value={materialCost} onChange={e => setMaterialCost(e.target.value)} placeholder="KM" />
+                        </label>
+                        <label className="ctm-field">
+                            <span>Ostali troškovi</span>
+                            <input type="number" min={0} step="0.01" inputMode="decimal"
+                                value={otherCosts} onChange={e => setOtherCosts(e.target.value)} placeholder="KM" />
+                        </label>
+                    </div>
+                    <p className="ctm-fin-note">
+                        Profit = vrijednost − materijal − ostalo − <strong>rad</strong> (dnevnice iz šihtarice).
+                        Ostavi prazno ako je ovo čisto radni posao bez vlastite vrijednosti.
+                    </p>
+                </section>
+
+                <section className="ctm-section">
                     <div className="ctm-section-head"><span>Detalji naloga</span></div>
                     <div className="ctm-grid2">
                         <label className="ctm-field">
@@ -346,6 +415,9 @@ export default function CustomTasksModal({ isOpen, onClose, workOrders, workers,
 
                 .ctm-task-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; padding-left: 38px; }
                 .ctm-grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+                .ctm-grid3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
+                .ctm-fin-note { margin: 0; font-size: 12px; color: var(--text-tertiary); line-height: 1.6; }
+                .ctm-fin-note strong { color: var(--text-secondary); }
 
                 /* Field caption + control — shared by native inputs (Rok, Napomena)
                    and the SearchableSelect fields (Radnik, Poveži s proizvodom).
@@ -440,6 +512,7 @@ export default function CustomTasksModal({ isOpen, onClose, workOrders, workers,
                 @media (max-width: 640px) {
                     .ctm-task-fields { grid-template-columns: 1fr; padding-left: 0; }
                     .ctm-grid2 { grid-template-columns: 1fr; }
+                    .ctm-grid3 { grid-template-columns: 1fr; }
                 }
             `}</style>
         </Modal>

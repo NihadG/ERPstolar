@@ -282,6 +282,7 @@ export async function calculateProductProfitability(
             servicesTotal: item.Services_Total,
             transportShare: item.Transport_Share,
             transportOverride: overrides?.Transport_Share,
+            otherCosts: (item as any).Other_Costs,
         });
         const netProfit = breakdown.profit;
         const grossProfit = Math.round((netProfit + breakdown.labor) * 100) / 100;

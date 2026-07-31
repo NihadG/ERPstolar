@@ -385,6 +385,7 @@ export default function WorkOrderExpandedDetail({
                 servicesTotal: (item as any).Services_Total,
                 transportShare: (item as any).Transport_Share,
                 transportOverride: (item as any).Profit_Overrides?.Transport_Share,
+                otherCosts: (item as any).Other_Costs,   // ostali troškovi raznih naloga
             }));
         }
         return map;

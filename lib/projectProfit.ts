@@ -30,7 +30,7 @@ export interface ProjectProfitResult extends ProfitBreakdown {
 }
 
 type ProjectProfitWorkOrder = Pick<WorkOrder, 'Work_Order_ID' | 'Status' | 'Work_Order_Type'> & {
-    items?: Pick<WorkOrderItem, 'ID' | 'Project_ID' | 'Product_Value' | 'Material_Cost' | 'Quantity' | 'Services_Total' | 'Transport_Share' | 'Profit_Overrides'>[];
+    items?: Pick<WorkOrderItem, 'ID' | 'Project_ID' | 'Product_Value' | 'Material_Cost' | 'Other_Costs' | 'Quantity' | 'Services_Total' | 'Transport_Share' | 'Profit_Overrides'>[];
 };
 type ProjectProfitWorkLog = Pick<WorkLog, 'Work_Order_Item_ID' | 'Daily_Rate'>;
 
@@ -65,6 +65,7 @@ export function projectProfitBreakdown(args: {
                     servicesTotal: item.Services_Total,
                     transportShare: item.Transport_Share,
                     transportOverride: item.Profit_Overrides?.Transport_Share,
+                    otherCosts: item.Other_Costs,   // ostali troškovi raznih naloga
                 });
             perItem.set(item.ID, breakdown);
         }
