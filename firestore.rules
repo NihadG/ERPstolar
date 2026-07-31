@@ -345,6 +345,21 @@ service cloud.firestore {
       allow create: if isStaff() && request.resource.data.organizationId == getUserOrgId();
       allow update, delete: if isStaff() && resource.data.organizationId == getUserOrgId();
     }
+
+    // ============================================
+    // CHANGE_REQUESTS — prijedlozi izmjena radnika
+    // ============================================
+    //
+    // Radnik NE piše ovdje s klijenta (pogonske uloge nemaju Firestore) — kreira
+    // ih Admin SDK kroz /api/field/requests. Kontrolor odobrava kroz /api/requests
+    // (opet Admin SDK), pa mu ni ovdje ne treba pristup. Vlasnik/staff čita spisak
+    // za desktop modal i može ga po potrebi počistiti; klijentski CREATE je
+    // zabranjen svima (samo server preko Admin SDK-a, koji pravila zaobilazi).
+    match /change_requests/{requestId} {
+      allow read: if isOrgMember();
+      allow update, delete: if isOrgMember();
+      allow create: if false;
+    }
     
     // ============================================
     // TASKS (Multi-tenancy enabled)

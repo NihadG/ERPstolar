@@ -11,10 +11,12 @@
 // ════════════════════════════════════════════════════════════════════
 
 import { useState } from 'react';
-import { LogOut } from 'lucide-react';
+import { LogOut, Inbox, Check, X } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import type { FieldHomePayload } from '@/lib/field/fieldHome';
-import { MEmpty, MList, MItem, MCell, MText, MValue, MButton, MSheet } from '@/components/tabs/mobile/MobileUI';
+import { useApproverRequests } from '@/lib/useApproverRequests';
+import { requestKindLabel } from '@/lib/changeRequests';
+import { MEmpty, MList, MItem, MCell, MText, MValue, MButton, MSheet, MPill, MActions, MAction } from '@/components/tabs/mobile/MobileUI';
 import FieldTabBar, { type FieldTabId } from './FieldTabBar';
 import AttendanceScreen from './attendance/AttendanceScreen';
 import OrdersScreen from './orders/OrdersScreen';
@@ -36,11 +38,23 @@ export default function ControllerApp({ data, readOnly }: Props) {
     // Nalozi su prvo što kontrolor treba kad uzme telefon — šta se danas radi.
     const [tab, setTab] = useState<FieldTabId>('orders');
     const [profileOpen, setProfileOpen] = useState(false);
+    const [approvalsOpen, setApprovalsOpen] = useState(false);
+    const [busyId, setBusyId] = useState<string | null>(null);
     const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null);
 
     const showToast = (message: string, type: 'success' | 'error' | 'info' = 'info') => {
         setToast({ message, type });
         window.setTimeout(() => setToast(null), 3200);
+    };
+
+    // Kontrolor odobrava samo nenovčane prijedloge (server filtrira po ulozi).
+    const { requests: proposals, approve, reject } = useApproverRequests(!readOnly);
+
+    const decide = async (id: string, fn: () => Promise<void>, okMsg: string) => {
+        setBusyId(id);
+        try { await fn(); showToast(okMsg, 'success'); }
+        catch (e: any) { showToast(e?.message || 'Radnja nije uspjela.', 'error'); }
+        finally { setBusyId(null); }
     };
 
     return (
@@ -54,6 +68,14 @@ export default function ControllerApp({ data, readOnly }: Props) {
                 >
                     {initials(data.user.name)}
                 </button>
+
+                {!readOnly && proposals.length > 0 && (
+                    <button type="button" className="fld-notice fld-notice--info" style={{ width: '100%', cursor: 'pointer' }}
+                        onClick={() => setApprovalsOpen(true)}>
+                        <Inbox size={17} />
+                        <span><b>{proposals.length}</b> {proposals.length === 1 ? 'prijedlog radnika čeka' : 'prijedloga radnika čeka'} odobrenje — otvori</span>
+                    </button>
+                )}
 
                 {tab === 'attendance' && (
                     <AttendanceScreen showToast={showToast} readOnly={readOnly} />
@@ -86,6 +108,38 @@ export default function ControllerApp({ data, readOnly }: Props) {
                             <LogOut size={18} /> Odjavi se
                         </MButton>
                     </div>
+                )}
+            </MSheet>
+
+            <MSheet open={approvalsOpen} title="Prijedlozi za odobrenje" onClose={() => setApprovalsOpen(false)}>
+                {proposals.length === 0 ? (
+                    <MEmpty title="Nema prijedloga" sub="Trenutno nema ničega za odobriti." />
+                ) : (
+                    <MList lead>
+                        {proposals.map(r => (
+                            <MItem key={r.Request_ID}>
+                                <MCell>
+                                    <MText
+                                        title={r.Summary || requestKindLabel(r.Kind)}
+                                        sub={<>
+                                            <MPill tone="orange">{r.Created_By_Name || 'Radnik'}</MPill>
+                                            {r.Work_Order_Name && <span>{r.Work_Order_Name}</span>}
+                                        </>}
+                                    />
+                                </MCell>
+                                <MActions>
+                                    <MAction tone="rtint" disabled={busyId === r.Request_ID}
+                                        onClick={() => decide(r.Request_ID, () => reject(r.Request_ID), 'Prijedlog odbijen')}>
+                                        <X size={16} /> Odbij
+                                    </MAction>
+                                    <MAction tone="gtint" disabled={busyId === r.Request_ID}
+                                        onClick={() => decide(r.Request_ID, () => approve(r.Request_ID), 'Prijedlog potvrđen')}>
+                                        <Check size={16} /> Potvrdi
+                                    </MAction>
+                                </MActions>
+                            </MItem>
+                        ))}
+                    </MList>
                 )}
             </MSheet>
 

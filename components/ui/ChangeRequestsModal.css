@@ -1,0 +1,154 @@
+/* ═══════════════════════════════════════════════════════════════════
+   PRIJEDLOZI RADNIKA — modal (desktop)
+   ═══════════════════════════════════════════════════════════════════ */
+
+.crm-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 10000;
+    background: rgba(15, 23, 42, 0.32);
+    backdrop-filter: blur(2px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    animation: crm-fade 0.14s ease;
+}
+
+@keyframes crm-fade { from { opacity: 0; } to { opacity: 1; } }
+
+.crm-panel {
+    width: 100%;
+    max-width: 580px;
+    max-height: 84vh;
+    display: flex;
+    flex-direction: column;
+    background: #fff;
+    border-radius: 16px;
+    box-shadow: 0 24px 60px -12px rgba(15, 23, 42, 0.4);
+    overflow: hidden;
+    animation: crm-pop 0.16s cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+@keyframes crm-pop { from { transform: translateY(8px) scale(0.98); opacity: 0; } to { transform: none; opacity: 1; } }
+
+.crm-head {
+    flex: none;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px 18px;
+    border-bottom: 1px solid #eef1f5;
+}
+
+.crm-head-title { display: flex; align-items: center; gap: 9px; }
+.crm-head-title h3 { margin: 0; font-size: 17px; font-weight: 700; color: #0f172a; letter-spacing: -0.01em; }
+
+.crm-count {
+    min-width: 22px; height: 22px; padding: 0 7px; border-radius: 11px;
+    background: #0071e3; color: #fff; font-size: 12.5px; font-weight: 700;
+    display: inline-flex; align-items: center; justify-content: center;
+}
+
+.crm-close {
+    width: 32px; height: 32px; border: none; border-radius: 8px; background: none;
+    color: #64748b; cursor: pointer; display: flex; align-items: center; justify-content: center;
+}
+.crm-close:hover { background: #f1f5f9; }
+
+.crm-err {
+    margin: 12px 18px 0;
+    padding: 9px 12px;
+    border-radius: 9px;
+    background: rgba(239, 68, 68, 0.1);
+    color: #b91c1c;
+    font-size: 13px;
+}
+
+.crm-body { flex: 1; overflow-y: auto; padding: 8px 18px 12px; }
+
+.crm-empty {
+    display: flex; flex-direction: column; align-items: center; gap: 10px;
+    padding: 44px 0; color: #16a34a;
+}
+.crm-empty p { margin: 0; color: #64748b; font-size: 14px; }
+
+.crm-group { margin-top: 14px; }
+.crm-group-head {
+    font-size: 12.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em;
+    color: #64748b; padding: 4px 2px 8px;
+}
+
+.crm-row {
+    padding: 12px 13px;
+    border-radius: 12px;
+    background: #f8fafc;
+    margin-bottom: 8px;
+}
+
+.crm-row-main { display: flex; flex-direction: column; gap: 2px; }
+.crm-kind {
+    align-self: flex-start;
+    font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em;
+    color: #0071e3; background: rgba(0, 113, 227, 0.1); padding: 2px 7px; border-radius: 6px;
+}
+.crm-summary { font-size: 14px; font-weight: 600; color: #0f172a; letter-spacing: -0.01em; margin-top: 5px; }
+.crm-meta { font-size: 12.5px; color: #64748b; }
+
+.crm-actions { display: flex; gap: 7px; justify-content: flex-end; margin-top: 10px; }
+
+.crm-btn {
+    display: inline-flex; align-items: center; gap: 3px;
+    padding: 7px 13px; border-radius: 8px; border: 1px solid #e2e8f0; background: #fff;
+    color: #334155; font-size: 13px; font-weight: 600; cursor: pointer; white-space: nowrap;
+}
+.crm-btn:hover { background: #f1f5f9; }
+.crm-btn:disabled { opacity: 0.5; cursor: default; }
+.crm-btn.ghost { border-color: transparent; background: none; color: #64748b; }
+.crm-btn.primary { border-color: transparent; background: #0071e3; color: #fff; }
+.crm-btn.primary:hover { background: #0062c4; }
+.crm-btn.danger { border-color: transparent; background: #ef4444; color: #fff; }
+.crm-btn.danger:hover { background: #dc2626; }
+
+/* Prilagodba materijala / razlog odbijanja. */
+.crm-adjust { margin-top: 10px; display: flex; flex-direction: column; gap: 7px; }
+
+.crm-adjust-row { display: flex; align-items: center; gap: 6px; }
+.crm-adjust-name { flex: 1; min-width: 0; font-size: 13.5px; color: #0f172a; }
+.crm-x, .crm-km { font-size: 12.5px; color: #64748b; }
+
+.crm-num, .crm-reason {
+    padding: 6px 9px; border: 1px solid #cbd5e1; border-radius: 8px; font-size: 13.5px; font-family: inherit;
+}
+.crm-num { width: 74px; text-align: right; }
+.crm-reason { width: 100%; }
+.crm-num:focus, .crm-reason:focus { outline: none; border-color: #0071e3; }
+
+.crm-iconbtn {
+    width: 28px; height: 28px; border: none; border-radius: 7px; background: none; color: #94a3b8;
+    display: flex; align-items: center; justify-content: center; cursor: pointer;
+}
+.crm-iconbtn:hover { background: #eef2f7; color: #ef4444; }
+
+.crm-foot {
+    flex: none; display: flex; align-items: center; gap: 6px;
+    padding: 10px 18px; border-top: 1px solid #eef1f5;
+    font-size: 12px; color: #94a3b8;
+}
+
+/* ── Tamna tema ─────────────────────────────────────────────────────── */
+@media (prefers-color-scheme: dark) {
+    .crm-panel { background: #1c1c1e; }
+    .crm-head, .crm-foot { border-color: #2c2c2e; }
+    .crm-head-title h3 { color: #f2f2f7; }
+    .crm-close { color: #98989d; }
+    .crm-close:hover { background: #2c2c2e; }
+    .crm-row { background: #2c2c2e; }
+    .crm-summary { color: #f2f2f7; }
+    .crm-meta, .crm-group-head { color: #98989d; }
+    .crm-btn { background: #3a3a3c; border-color: #48484a; color: #e5e5ea; }
+    .crm-btn:hover { background: #48484a; }
+    .crm-btn.ghost { background: none; }
+    .crm-num, .crm-reason { background: #2c2c2e; border-color: #48484a; color: #f2f2f7; }
+    .crm-empty p { color: #98989d; }
+}

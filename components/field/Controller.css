@@ -648,29 +648,9 @@
 
 /* ═══════════════════════════════════════════════════════════════════
    NALOZI — lista i detalj
+   (.fld-search / .fld-loading / .fld-taskbadge žive u Field.css jer ih
+   dijele i radnikovi ekrani)
    ═══════════════════════════════════════════════════════════════════ */
-
-.fld-search { padding-bottom: 10px; }
-
-.fld-loading {
-    padding: 40px 0;
-    text-align: center;
-    font-size: 14.5px;
-    color: var(--mui-label2);
-}
-
-.fld-taskbadge {
-    flex: none;
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    padding: 4px 9px;
-    border-radius: 999px;
-    background: rgba(255, 149, 0, 0.14);
-    color: var(--mui-orange-t);
-    font-size: 12.5px;
-    font-weight: 600;
-}
 
 /* ── Detalj naloga ─────────────────────────────────────────────────── */
 

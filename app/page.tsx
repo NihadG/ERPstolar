@@ -310,9 +310,15 @@ export default function Home() {
         // No args = full reload (backward compatible)
         if (collections.length === 0) {
             setLoading(true);
+            const orgId = organization.Organization_ID;
             try {
-                const orgId = organization.Organization_ID;
-                const [projects, materials, suppliers, workers, offers, orders, workOrders, workLogs, tasks, taskProfiles] = await Promise.all([
+                // KRITIČNO ZA PRVI PRIKAZ: sve OSIM work_logs. `work_logs` raste
+                // neograničeno (jedna po radniku × proizvodu × danu) i na firmi s
+                // istorijom dominira vremenom učitavanja — pa se ne čeka na njega.
+                // Aplikacija postane upotrebljiva čim stigne ostatak; detalji koji
+                // traže logove (Knjiga rada, timeline) ih dobiju čim pozadinski
+                // load završi (obično prije nego ih korisnik otvori).
+                const [projects, materials, suppliers, workers, offers, orders, workOrders, tasks, taskProfiles] = await Promise.all([
                     getProjects(orgId),
                     getMaterialsCatalog(orgId),
                     getSuppliers(orgId),
@@ -320,21 +326,28 @@ export default function Home() {
                     getOffers(orgId),
                     getOrders(orgId),
                     getWorkOrders(orgId),
-                    getWorkLogs(orgId),
                     getTasks(orgId),
                     getTaskProfiles(orgId),
                 ]);
-                setAppState({
+                setAppState(prev => ({
+                    ...prev,
                     projects, materials, suppliers, workers, offers, orders,
-                    workOrders, workLogs, tasks, taskProfiles,
+                    workOrders, tasks, taskProfiles,
                     products: [], productMaterials: [], glassItems: [], aluDoorItems: [],
-                });
+                    workLogs: prev.workLogs,   // zadrži postojeće dok pozadinski load ne stigne
+                }));
             } catch (error) {
                 console.error('Error loading all data:', error);
                 showToast('Greška pri učitavanju podataka', 'error');
             } finally {
-                setLoading(false);
+                setLoading(false);   // aplikacija je upotrebljiva i bez work_logs
             }
+
+            // POZADINSKI: dnevnice se dovlače bez blokiranja prvog prikaza.
+            getWorkLogs(orgId)
+                .then(workLogs => setAppState(prev => ({ ...prev, workLogs })))
+                .catch(e => console.warn('Pozadinsko učitavanje dnevnica nije uspjelo:', e));
+
             return;
         }
 

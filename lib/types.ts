@@ -468,6 +468,89 @@ export interface Notification {
     metadata?: Record<string, unknown>;
 }
 
+// ════════════════════════════════════════════════════════════════════
+// PRIJEDLOZI IZMJENA (change_requests)
+//
+// Radnik ne piše direktno u naloge — svaka njegova radnja je PRIJEDLOG koji
+// vlasnik ili kontrolor potvrđuje. Tek na potvrdu se izmjena stvarno primijeni.
+//
+// Podjela po novcu (Touches_Money): kontrolor smije odobriti samo ono što NE
+// dira novac; ono što dira (zatvaranje proizvoda/naloga, ugradnja materijala,
+// prijedlog narudžbe) ide isključivo vlasniku, jer kontrolor iznose i ne vidi.
+// `Touches_Money` se računa NA SERVERU iz `Kind`, nikad iz tijela zahtjeva.
+// ════════════════════════════════════════════════════════════════════
+
+export type ChangeRequestKind =
+    | 'process_check'       // završi / pokreni / poništi proces
+    | 'process_add'
+    | 'process_remove'
+    | 'order_start'
+    | 'order_pause'
+    | 'order_complete'
+    | 'item_complete'
+    | 'task_create'
+    | 'task_status'
+    | 'task_delete'
+    | 'material_usage'      // „ugradio sam" — dira materijal/kalkulaciju
+    | 'material_order';     // prijedlog narudžbe
+
+export const CHANGE_REQUEST_KINDS: ChangeRequestKind[] = [
+    'process_check', 'process_add', 'process_remove',
+    'order_start', 'order_pause', 'order_complete', 'item_complete',
+    'task_create', 'task_status', 'task_delete',
+    'material_usage', 'material_order',
+];
+
+/** Vrste koje diraju novac/kalkulaciju — smije ih odobriti samo vlasnik/staff. */
+export const MONEY_KINDS: ChangeRequestKind[] = [
+    'item_complete', 'order_complete', 'material_usage', 'material_order',
+];
+
+/**
+ * Vrste koje se moraju primijeniti na DESKTOPU (ne na serveru): mijenjaju
+ * materijale na proizvodu koji je već na nalogu, pa moraju proći kroz gejt
+ * zamrznute osnovice profita (lib/profitBasis.ts). Ostale novčane vrste
+ * (zatvaranje proizvoda/naloga) samo zamrzavaju rad — njih server smije
+ * primijeniti (isto što kontrolor već radi kroz completeItem).
+ */
+export const DESKTOP_APPLY_KINDS: ChangeRequestKind[] = ['material_usage', 'material_order'];
+
+export type ChangeRequestStatus = 'pending' | 'approved' | 'rejected' | 'failed';
+
+export interface ChangeRequest {
+    Request_ID: string;
+    Organization_ID: string;
+    Kind: ChangeRequestKind;
+    Status: ChangeRequestStatus;
+    /** Izračunato na serveru iz Kind — ne dolazi iz klijenta. */
+    Touches_Money: boolean;
+
+    Created_At: string;
+    Created_By_UID: string;
+    Created_By_Name: string;
+    Worker_ID: string;
+
+    Work_Order_ID?: string;
+    Work_Order_Name?: string;
+    Item_ID?: string;
+    Product_ID?: string;
+    Product_Name?: string;
+    Project_Name?: string;
+
+    /** Ljudska rečenica sastavljena na serveru — šta radnik predlaže. */
+    Summary: string;
+    /** Oblik zavisi od Kind (vidi lib/changeRequests.ts validaciju). */
+    Payload: unknown;
+    /** Šta je vlasnik STVARNO primijenio (kad je prilagodio prije potvrde). */
+    Applied_Payload?: unknown;
+
+    Resolved_At?: string;
+    Resolved_By_UID?: string;
+    Resolved_By_Name?: string;
+    Reject_Reason?: string;
+    Error?: string;
+}
+
 // ============================================
 // TASK TYPES (Enhanced)
 // ============================================
@@ -1540,6 +1623,32 @@ export interface PlanProductRef extends PlanRef {
     qty: number;
 }
 
+/**
+ * Ekipa za automatski raspored: glavni radnik + opcioni pomoćnik.
+ *
+ * Osnovna jedinica kojom `autoSchedule` bira izvršioca. Nalog nosi LISTU
+ * kandidat-ekipa (`PlanBlock.crewOptions`) — negdje 1, negdje 3 — a algoritam
+ * izabere JEDNU (`assignedCrewId`) i upiše njene radnike u obični `workerRefs`,
+ * pa kapacitet/redovi/pravila rade nepromijenjeno.
+ *
+ * `helper` je opcion: „samo glavni" je legitimna ekipa veličine 1.
+ */
+export interface PlanCrew {
+    id: string;
+    lead: PlanRef;
+    helper?: PlanRef;
+}
+
+/** Broj ljudi u ekipi (glavni + pomoćnik ako postoji). */
+export function crewSize(crew: PlanCrew): number {
+    return crew.helper ? 2 : 1;
+}
+
+/** Radnici ekipe kao PlanRef[] — spremno za `PlanBlock.workerRefs`. */
+export function crewWorkerRefs(crew: PlanCrew): PlanRef[] {
+    return crew.helper ? [crew.lead, crew.helper] : [crew.lead];
+}
+
 export interface PlanBlock {
     id: string;
     kind: PlanBlockKind;
@@ -1548,7 +1657,7 @@ export interface PlanBlock {
     endISO: string;               // == startISO za 'milestone'
     color?: string;
     notes?: string;
-    /** Lančani preračun ovaj blok NE pomjera (npr. datum montaže dogovoren s klijentom). */
+    /** Lančani preračun i auto-raspored ovaj blok NE pomjeraju (dogovoren termin). */
     locked?: boolean;
 
     // ── Reference (nikad se ne pišu nazad) ──
@@ -1560,6 +1669,14 @@ export interface PlanBlock {
     // ── Rad ('order' | 'montaza') ──
     workerDays?: number;          // ukupno radnik-dana
     crew?: number;                // broj ljudi → trajanje = workerDays / crew, po radnim danima
+
+    // ── Automatski raspored ('order' | 'montaza') ──
+    /** Prioritet u auto-rasporedu (viši = ranije). Reuse TaskPriority ljestvice. */
+    priority?: TaskPriority;
+    /** Kandidat-ekipe: algoritam bira JEDNU. Prisustvo ovog polja čini blok „auto". */
+    crewOptions?: PlanCrew[];
+    /** ID ekipe (crewOptions[].id) izabrane u zadnjem rasporedu — za prikaz i ponovni run. */
+    assignedCrewId?: string;
 
     // ── Nabavka ('purchase') ──
     orderByISO?: string;          // kad narudžba mora otići (startISO = isto, endISO = dolazak)

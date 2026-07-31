@@ -84,6 +84,7 @@ export function buildFieldOrdersList(input: FieldOrdersListInput): FieldOrderRow
 
 export interface FieldOrderItemRow {
     itemId: string;
+    productId: string;
     productName: string;
     projectName: string;
     quantity: number;
@@ -157,6 +158,7 @@ export function buildFieldOrderDetail(input: FieldOrderDetailInput): FieldOrderD
         const done = procs.filter(p => p.Status === 'Završeno').length;
         return {
             itemId: it.ID,
+            productId: it.Product_ID || '',
             productName: it.Product_Name || 'Proizvod',
             projectName: it.Project_Name || '',
             quantity: it.Quantity || 0,

@@ -204,6 +204,28 @@ export async function getWorkLogsInRange(orgId: string, from: string, to: string
     return snap.docs.map(d => d.data() as WorkLog);
 }
 
+/** Dnevnice jednog radnika kroz raspon — indeks work_logs(Worker_ID, Organization_ID, Date). */
+export async function getWorkLogsForWorkerRange(orgId: string, workerId: string, from: string, to: string): Promise<WorkLog[]> {
+    const snap = await adminDb().collection('work_logs')
+        .where('Worker_ID', '==', workerId)
+        .where('Organization_ID', '==', orgId)
+        .where('Date', '>=', from)
+        .where('Date', '<=', to)
+        .get();
+    return snap.docs.map(d => d.data() as WorkLog);
+}
+
+/** Prisustvo jednog radnika kroz raspon — indeks worker_attendance(Worker_ID, Organization_ID, Date). */
+export async function getAttendanceForWorkerRange(orgId: string, workerId: string, from: string, to: string): Promise<WorkerAttendance[]> {
+    const snap = await adminDb().collection('worker_attendance')
+        .where('Worker_ID', '==', workerId)
+        .where('Organization_ID', '==', orgId)
+        .where('Date', '>=', from)
+        .where('Date', '<=', to)
+        .get();
+    return snap.docs.map(d => d.data() as WorkerAttendance);
+}
+
 export async function getWorkLogsForWorkerDate(orgId: string, workerId: string, date: string): Promise<WorkLog[]> {
     const snap = await adminDb().collection('work_logs')
         .where('Organization_ID', '==', orgId)

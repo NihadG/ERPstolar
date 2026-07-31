@@ -119,6 +119,22 @@ export async function requireController(req: Request): Promise<AuthedUser> {
     return user;
 }
 
+/**
+ * Bilo koja pogonska ili jača uloga — za ČITANJE vlastitih podataka.
+ *
+ * Radnik ovdje prolazi (za razliku od `requireController`) jer su rute pod
+ * /api/field/worker/* samo pregled: njegovi nalozi, njegovi projekti, njegov
+ * kalendar, njegova efikasnost. Nijedan upis ne visi o ovom guardu — upisi
+ * radnika idu kroz prijedloge (change_requests), ne direktno.
+ *
+ * Pojedinačna ruta koja gradi radnikov lični pregled dodatno mora provjeriti
+ * da `caller.workerId` postoji (bez veze s radnikom nema šta prikazati) — inače
+ * bi kontrolor/staff bez `workerId`-ja pao na prazan skup umjesto na jasnu grešku.
+ */
+export async function requireFieldUser(req: Request): Promise<AuthedUser> {
+    return requireUser(req);
+}
+
 /** Upravljanje korisnicima smiju samo vlasnik i administrator — ne i menadžer. */
 export async function requireOrgAdmin(req: Request): Promise<AuthedUser> {
     const user = await requireUser(req);

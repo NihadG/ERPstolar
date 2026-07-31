@@ -36,6 +36,8 @@ export const COLLECTIONS = {
     DAILY_PROFIT_ENTRIES: 'daily_profit_entries',
     INVOICES: 'invoices',
     INVOICE_ITEMS: 'invoice_items',
+    // Prijedlozi izmjena radnika — čekaju odobrenje vlasnika/kontrolora.
+    CHANGE_REQUESTS: 'change_requests',
 } as const;
 
 export type CollectionKey = keyof typeof COLLECTIONS;

@@ -11,12 +11,21 @@
 // komponenta radi (lib/field/fieldHome.ts) iznose ni ne sadrži.
 // ════════════════════════════════════════════════════════════════════
 
-import { AlertCircle, CalendarCheck, ClipboardList, Wrench } from 'lucide-react';
+import { AlertCircle, CalendarCheck, ClipboardList, Wrench, Hourglass } from 'lucide-react';
 import type { FieldHomePayload } from '@/lib/field/fieldHome';
+import { useWorkerRequests } from '@/lib/field/useWorkerRequests';
+import { requestKindLabel } from '@/lib/changeRequests';
 import {
     MLarge, MHero, MSection, MList, MItem, MCell, MText, MValue, MPill,
     MCard, MCardHead, MCardBody, MIcon, MProgress, MEmpty, MCheck,
 } from '@/components/tabs/mobile/MobileUI';
+
+const REQ_STATUS: Record<string, { tone: 'orange' | 'green' | 'red' | 'gray'; label: string }> = {
+    pending: { tone: 'orange', label: 'čeka' },
+    approved: { tone: 'green', label: 'prihvaćeno' },
+    rejected: { tone: 'red', label: 'odbijeno' },
+    failed: { tone: 'red', label: 'greška' },
+};
 
 const ATTENDANCE_TONE: Record<string, 'green' | 'blue' | 'orange' | 'gray'> = {
     'Prisutan': 'green', 'Teren': 'blue', 'Odmor': 'orange',
@@ -45,6 +54,10 @@ function greeting(): string {
 export default function WorkerHome({ data }: { data: FieldHomePayload }) {
     const { user, assignments, tasks, attendance, week } = data;
     const firstName = user.name.split(' ')[0] || user.name;
+    const { requests } = useWorkerRequests(data.preview);
+    // Najnoviji prijedlozi (čeka + skoro riješeni) — da radnik vidi ishod.
+    const recentRequests = requests.slice(0, 5);
+    const pendingCount = requests.filter(r => r.Status === 'pending').length;
 
     const totalPct = assignments.length
         ? Math.round(assignments.reduce((s, a) => s + a.progressPct, 0) / assignments.length)
@@ -145,6 +158,36 @@ export default function WorkerHome({ data }: { data: FieldHomePayload }) {
                                 </MCell>
                             </MItem>
                         ))}
+                    </MList>
+                </>
+            )}
+
+            {/* ── Moji prijedlozi ─────────────────────────────────────── */}
+            {recentRequests.length > 0 && (
+                <>
+                    <MSection
+                        title="Moji prijedlozi"
+                        right={pendingCount > 0 ? <span className="mui-dim">{pendingCount} čeka</span> : undefined}
+                    />
+                    <MList lead>
+                        {recentRequests.map(r => {
+                            const st = REQ_STATUS[r.Status] || REQ_STATUS.pending;
+                            return (
+                                <MItem key={r.Request_ID}>
+                                    <MCell>
+                                        <MIcon tone={st.tone}><Hourglass size={17} /></MIcon>
+                                        <MText
+                                            title={r.Summary || requestKindLabel(r.Kind)}
+                                            sub={<>
+                                                <MPill tone={st.tone}>{st.label}</MPill>
+                                                {r.Status === 'rejected' && r.Reject_Reason && <span>{r.Reject_Reason}</span>}
+                                                {r.Work_Order_Name && <span>{r.Work_Order_Name}</span>}
+                                            </>}
+                                        />
+                                    </MCell>
+                                </MItem>
+                            );
+                        })}
                     </MList>
                 </>
             )}

@@ -12,13 +12,12 @@
 // ════════════════════════════════════════════════════════════════════
 
 import { useState } from 'react';
-import { LogOut, RefreshCw } from 'lucide-react';
+import { RefreshCw } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { useFieldHome } from '@/lib/field/useFieldHome';
-import { MEmpty, MList, MItem, MCell, MText, MValue, MButton } from '@/components/tabs/mobile/MobileUI';
-import FieldTabBar, { type FieldTabId } from './FieldTabBar';
+import { MEmpty, MButton } from '@/components/tabs/mobile/MobileUI';
 import SetPasswordScreen from './SetPasswordScreen';
-import WorkerHome from './WorkerHome';
+import WorkerApp from './worker/WorkerApp';
 import ControllerApp from './ControllerApp';
 import '@/components/tabs/mobile/MobileUI.css';
 import './Field.css';
@@ -29,9 +28,8 @@ interface Props {
 }
 
 export default function FieldShell({ previewUid = null }: Props) {
-    const { user, signOut, refreshUser } = useAuth();
+    const { user, refreshUser } = useAuth();
     const { data, loading, error, reload } = useFieldHome(previewUid);
-    const [tab, setTab] = useState<FieldTabId>('home');
     const [passwordDone, setPasswordDone] = useState(false);
 
     // Gejt lozinke se NE primjenjuje u pregledu — vlasnik gleda tuđi ekran,
@@ -75,21 +73,8 @@ export default function FieldShell({ previewUid = null }: Props) {
 
     const role = data.user.role;
 
-    // Kontrolor ima vlastitu aplikaciju s četiri taba — šihtarica, nalozi,
-    // narudžbe, projekti. Radnik ostaje na jednostavnijem ekranu ispod.
-    if (role === 'controller') {
-        return (
-            <div className={`mui fld${data.preview ? ' fld-preview' : ''}`}>
-                {data.preview && (
-                    <div className="fld-preview-bar">
-                        Pregled: <b>{data.user.name}</b> ({data.user.roleLabel}) — samo za čitanje
-                    </div>
-                )}
-                <ControllerApp data={data} readOnly={data.preview} />
-            </div>
-        );
-    }
-
+    // Kontrolor i radnik imaju vlastite aplikacije. Obje se crtaju u istom
+    // okviru (`.fld`), s trakom pregleda kad vlasnik gleda kroz „Pogledaj kao".
     return (
         <div className={`mui fld${data.preview ? ' fld-preview' : ''}`}>
             {data.preview && (
@@ -97,42 +82,9 @@ export default function FieldShell({ previewUid = null }: Props) {
                     Pregled: <b>{data.user.name}</b> ({data.user.roleLabel}) — samo za čitanje
                 </div>
             )}
-
-            <div className="fld-body">
-                {tab === 'home' && <WorkerHome data={data} />}
-
-                {/* Radnikovi ostali tabovi dolaze u sljedećoj fazi — do tada su
-                    iskrena prazna stanja, ne poluradne liste. */}
-                {tab === 'work' && (
-                    <MEmpty
-                        title="Moj posao"
-                        sub="Puna lista s detaljima naloga dolazi u sljedećoj fazi. Ono što vam treba danas je na početnoj."
-                    />
-                )}
-                {tab === 'tasks' && (
-                    <MEmpty title="Zadaci" sub="Označavanje zadataka dolazi u sljedećoj fazi." />
-                )}
-
-                {tab === 'me' && (
-                    <>
-                        <div className="mui-large"><h1>Ja</h1><p>{data.organization.name}</p></div>
-                        <MList>
-                            <MItem><MCell><MText title="Ime" /><MValue num={false}>{data.user.name}</MValue></MCell></MItem>
-                            <MItem><MCell><MText title="Uloga" /><MValue num={false}>{data.user.roleLabel}</MValue></MCell></MItem>
-                            {data.user.workerName && (
-                                <MItem><MCell><MText title="Radnik" /><MValue num={false}>{data.user.workerName}</MValue></MCell></MItem>
-                            )}
-                        </MList>
-                        {!data.preview && (
-                            <div className="fld-submit">
-                                <MButton variant="danger" onClick={() => signOut()}><LogOut size={18} /> Odjavi se</MButton>
-                            </div>
-                        )}
-                    </>
-                )}
-            </div>
-
-            <FieldTabBar role={role} activeTab={tab} onTabChange={setTab} />
+            {role === 'controller'
+                ? <ControllerApp data={data} readOnly={data.preview} />
+                : <WorkerApp data={data} previewUid={previewUid} />}
         </div>
     );
 }
