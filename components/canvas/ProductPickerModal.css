@@ -1,6 +1,7 @@
 /* ══════════════════════════════════════════════════════════════════
    PLATNO — modali „Novi nalog" i „Narudžbe iz sastavnice".
    Prefiks `pp-`. Isti obrazac za oba: LIJEVO biraš, DESNO vidiš šta gradiš.
+   Sve dimenzije iz --cm-* skale (globals.css) → srazmjerno kroz sve modale.
 
    DVA NEUTRALISANJA GLOBALNOG CSS-a (bez njih se layout raspada):
    1. `.modal-xl .modal-body` je `display:flex; justify-content:center` —
@@ -13,7 +14,7 @@
 .pp-shell {
     display: grid;
     grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr);
-    gap: 14px;
+    gap: var(--cm-sp-4);
     text-align: left;
 
     /* Roditelj (.modal-xl .modal-body) je `display:flex; justify-content:center`.
@@ -34,49 +35,50 @@
     letter-spacing: normal;
 }
 
+/* ── Ploče ─────────────────────────────────────────────────────── */
 .pp-pane {
     display: flex;
     flex-direction: column;
     min-height: 0;
     border: 1px solid var(--border-light);
-    border-radius: var(--radius-md);
+    border-radius: var(--cm-r-card);
     background: var(--background);
     overflow: hidden;
 }
-
 .pp-pane-cart { background: var(--surface); }
 
 .pp-pane-head {
     display: flex;
     align-items: center;
-    gap: 8px;
-    padding: 10px 12px;
+    gap: var(--cm-sp-2);
+    padding: var(--cm-sp-3);
     border-bottom: 1px solid var(--border-light);
     flex-shrink: 0;
+    flex-wrap: wrap;
 }
 
 .pp-scroll {
     flex: 1 1 auto;
     min-height: 0;
     overflow-y: auto;
-    padding: 8px;
+    padding: var(--cm-sp-2);
 }
 
 /* ── Pretraga ─────────────────────────────────────────────────── */
 .pp-search {
     display: flex;
     align-items: center;
-    gap: 7px;
+    gap: var(--cm-sp-2);
     flex: 1 1 auto;
     min-width: 0;
-    padding: 7px 10px;
+    height: var(--cm-h-control);
+    padding: 0 var(--cm-sp-3);
     border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
+    border-radius: var(--cm-r-control);
     background: var(--background);
 }
-
-.pp-search.sm { padding: 5px 9px; margin-bottom: 6px; }
-.pp-search:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-light); }
+.pp-search.sm { height: var(--cm-h-sm); padding: 0 var(--cm-sp-2); margin-bottom: var(--cm-sp-2); }
+.pp-search:focus-within { border-color: var(--accent); box-shadow: var(--cm-focus-ring); }
 .pp-search svg { color: var(--text-tertiary); flex-shrink: 0; }
 
 .pp-search input {
@@ -85,7 +87,7 @@
     border: none;
     outline: none;
     background: transparent;
-    font-size: 13px;
+    font-size: var(--cm-fs-sm);
     font-family: inherit;
     color: var(--text-primary);
 }
@@ -97,62 +99,70 @@
     background: transparent;
     color: var(--text-tertiary);
     cursor: pointer;
-    border-radius: 4px;
+    border-radius: var(--cm-r-control);
 }
-.pp-clear:hover { background: var(--surface-hover); }
+.pp-clear:hover { background: var(--surface-hover); color: var(--text-primary); }
 
+/* Toggle + <select> filteri dijele isti izgled/visinu */
 .pp-toggle {
-    padding: 6px 11px;
+    display: inline-flex;
+    align-items: center;
+    height: var(--cm-h-control);
+    padding: 0 var(--cm-sp-3);
     border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
+    border-radius: var(--cm-r-control);
     background: var(--background);
-    font-size: 12px;
+    font-size: var(--cm-fs-xs);
     font-family: inherit;
     color: var(--text-secondary);
     cursor: pointer;
     white-space: nowrap;
     flex-shrink: 0;
+    transition: var(--transition);
 }
+.pp-toggle:hover { background: var(--surface-hover); }
 .pp-toggle.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+select.pp-toggle { min-width: 0; max-width: 180px; }
 
 /* ── Grupe projekata ──────────────────────────────────────────── */
-.pp-group { margin-bottom: 3px; }
+.pp-group { margin-bottom: 2px; }
 
 .pp-group-head {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: var(--cm-sp-2);
     width: 100%;
-    padding: 8px 9px;
+    min-height: var(--cm-h-control);
+    padding: var(--cm-sp-2);
     border: none;
-    border-radius: var(--radius-sm);
+    border-radius: var(--cm-r-control);
     background: var(--surface);
     font-family: inherit;
-    font-size: 12.5px;
+    font-size: var(--cm-fs-sm);
     color: var(--text-primary);
     cursor: pointer;
     text-align: left;
 }
 .pp-group-head:hover { background: var(--surface-hover); }
-.pp-group-head strong { font-size: 13px; flex-shrink: 0; }
+.pp-group-head strong { font-size: var(--cm-fs-sm); font-weight: 600; flex-shrink: 0; }
 .pp-group-head svg { color: var(--text-tertiary); flex-shrink: 0; transition: transform var(--transition); }
 .pp-group-head svg.rot { transform: rotate(90deg); }
 
 .pp-group-meta {
     color: var(--text-tertiary);
-    font-size: 11.5px;
+    font-size: var(--cm-fs-micro);
     font-variant-numeric: tabular-nums;
     margin-left: auto;
     white-space: nowrap;
 }
 
 .pp-group-count {
-    min-width: 19px;
+    min-width: 20px;
     padding: 1px 6px;
-    border-radius: 10px;
+    border-radius: var(--cm-r-pill);
     background: var(--accent);
     color: #fff;
-    font-size: 11px;
+    font-size: var(--cm-fs-micro);
     font-weight: 700;
     text-align: center;
     font-variant-numeric: tabular-nums;
@@ -164,24 +174,25 @@
 .pp-crew-row {
     display: flex;
     align-items: center;
-    gap: 9px;
-    padding: 7px 9px 7px 26px;
-    border-radius: var(--radius-sm);
+    gap: var(--cm-sp-2);
+    min-height: var(--cm-h-control);
+    padding: var(--cm-sp-1) var(--cm-sp-2) var(--cm-sp-1) 28px;
+    border-radius: var(--cm-r-control);
     cursor: pointer;
-    font-size: 12.5px;
+    font-size: var(--cm-fs-sm);
 }
 
-.pp-crew-row { padding-left: 9px; }
+.pp-crew-row { padding-left: var(--cm-sp-2); }
 .pp-row:hover, .pp-crew-row:hover { background: var(--surface-hover); }
 .pp-row.on, .pp-crew-row.on { background: var(--accent-light); }
 .pp-row:focus-visible, .pp-crew-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 
 /* Vlastiti checkbox — nativni unutar .modal nasljeđuje neželjene stilove */
 .pp-box {
-    width: 15px;
-    height: 15px;
+    width: var(--cm-box);
+    height: var(--cm-box);
     border: 1.5px solid var(--border);
-    border-radius: 4px;
+    border-radius: 5px;
     background: var(--background);
     flex-shrink: 0;
     position: relative;
@@ -191,8 +202,8 @@
 .pp-box.on::after {
     content: '';
     position: absolute;
-    left: 4px;
-    top: 1px;
+    left: 5px;
+    top: 2px;
     width: 4px;
     height: 8px;
     border: solid #fff;
@@ -206,36 +217,37 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-size: 12.5px;
+    font-size: var(--cm-fs-sm);
+    color: var(--text-primary);
 }
 
 .pp-avail {
-    font-size: 11.5px;
+    font-size: var(--cm-fs-micro);
     color: var(--text-secondary);
     font-variant-numeric: tabular-nums;
     flex-shrink: 0;
 }
 
 .pp-tag {
-    padding: 1px 7px;
-    border-radius: 10px;
+    padding: 2px 8px;
+    border-radius: var(--cm-r-pill);
     background: var(--surface-active);
     color: var(--text-secondary);
-    font-size: 10.5px;
+    font-size: var(--cm-fs-micro);
     font-weight: 600;
     white-space: nowrap;
     flex-shrink: 0;
     font-variant-numeric: tabular-nums;
 }
-.pp-tag.warn { background: var(--warning-bg); color: #8a5000; }
+.pp-tag.warn { background: var(--warning-bg); color: var(--cm-warn-text); }
 
 /* ── Desna ploča: izabrano ────────────────────────────────────── */
 .pp-cart-title {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: var(--cm-sp-2);
     margin: 0;
-    font-size: 12px;
+    font-size: var(--cm-fs-micro);
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: .04em;
@@ -244,31 +256,31 @@
 
 .pp-cart {
     list-style: none;
-    margin: 0 0 12px;
+    margin: 0 0 var(--cm-sp-3);
     padding: 0;
     display: grid;
-    gap: 4px;
+    gap: var(--cm-sp-1);
 }
 
 .pp-cart li {
-    padding: 7px 9px;
-    border-radius: var(--radius-sm);
+    padding: var(--cm-sp-2);
+    border-radius: var(--cm-r-control);
     background: var(--background);
     border: 1px solid var(--border-light);
     display: grid;
-    gap: 5px;
+    gap: var(--cm-sp-1);
 }
 
 .pp-cart-row {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: var(--cm-sp-2);
 }
 
 .pp-cart-main { flex: 1 1 auto; min-width: 0; display: grid; gap: 1px; }
 
 .pp-cart-sub {
-    font-size: 11px;
+    font-size: var(--cm-fs-xs);
     color: var(--text-tertiary);
     overflow: hidden;
     text-overflow: ellipsis;
@@ -280,7 +292,7 @@
     align-items: center;
     gap: 1px;
     border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
+    border-radius: var(--cm-r-control);
     overflow: hidden;
     flex-shrink: 0;
 }
@@ -289,31 +301,31 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 24px;
-    height: 24px;
+    width: var(--cm-h-sm);
+    height: var(--cm-h-sm);
     border: none;
     background: var(--background);
     color: var(--text-secondary);
     cursor: pointer;
 }
 .pp-stepper button:hover:not(:disabled) { background: var(--surface-hover); color: var(--text-primary); }
-.pp-stepper button:disabled { opacity: .3; cursor: default; }
+.pp-stepper button:disabled { opacity: .35; cursor: default; }
 
 .pp-stepper span {
     min-width: 26px;
     text-align: center;
-    font-size: 12.5px;
+    font-size: var(--cm-fs-sm);
     font-weight: 600;
     font-variant-numeric: tabular-nums;
 }
 
 .pp-remove {
     display: inline-flex;
-    padding: 3px;
+    padding: var(--cm-sp-1);
     border: none;
     background: transparent;
     color: var(--text-tertiary);
-    border-radius: 4px;
+    border-radius: var(--cm-r-control);
     cursor: pointer;
     flex-shrink: 0;
 }
@@ -323,26 +335,26 @@
    SAMO ovaj odabir na platnu, nikad ponudu ni proizvod u bazi. */
 .pp-suggest {
     display: flex;
-    align-items: baseline;
-    gap: 5px;
+    align-items: center;
+    gap: var(--cm-sp-1);
     width: 100%;
-    padding: 5px 8px;
+    padding: var(--cm-sp-1) var(--cm-sp-2);
     border: 1px dashed var(--accent);
-    border-radius: var(--radius-sm);
+    border-radius: var(--cm-r-control);
     background: var(--accent-light);
-    font-size: 11px;
+    font-size: var(--cm-fs-xs);
     font-family: inherit;
     color: var(--text-primary);
     cursor: pointer;
     text-align: left;
 }
 .pp-suggest:hover { background: #d9ebff; }
-.pp-suggest svg { color: var(--accent); flex-shrink: 0; align-self: center; }
+.pp-suggest svg { color: var(--accent); flex-shrink: 0; }
 .pp-suggest strong { font-variant-numeric: tabular-nums; }
 
 .pp-suggest-desc {
     color: var(--text-tertiary);
-    font-size: 10.5px;
+    font-size: var(--cm-fs-micro);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -351,9 +363,9 @@
 .pp-cart-nosuggest {
     display: flex;
     align-items: center;
-    gap: 5px;
+    gap: var(--cm-sp-1);
     margin: 0;
-    font-size: 10.5px;
+    font-size: var(--cm-fs-micro);
     color: var(--text-tertiary);
     line-height: 1.4;
 }
@@ -362,15 +374,15 @@
 /* ── Ekipa ────────────────────────────────────────────────────── */
 .pp-crew {
     border-top: 1px solid var(--border-light);
-    padding-top: 10px;
+    padding-top: var(--cm-sp-3);
 }
 
 .pp-crew-head {
     display: flex;
     align-items: center;
-    gap: 7px;
-    margin-bottom: 7px;
-    font-size: 12px;
+    gap: var(--cm-sp-2);
+    margin-bottom: var(--cm-sp-2);
+    font-size: var(--cm-fs-micro);
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: .04em;
@@ -388,32 +400,32 @@
 
 /* ── Poruke ───────────────────────────────────────────────────── */
 .pp-empty {
-    padding: 24px 10px;
+    padding: var(--cm-sp-5) var(--cm-sp-3);
     text-align: center;
-    font-size: 12.5px;
+    font-size: var(--cm-fs-sm);
     color: var(--text-secondary);
     line-height: 1.6;
 }
-.pp-empty.sm { padding: 10px; font-size: 12px; }
+.pp-empty.sm { padding: var(--cm-sp-3); font-size: var(--cm-fs-xs); }
 
 .pp-note {
     display: flex;
     align-items: flex-start;
-    gap: 6px;
-    margin: 0 0 12px;
-    padding: 8px 10px;
-    border-radius: var(--radius-sm);
-    font-size: 11.5px;
+    gap: var(--cm-sp-2);
+    margin: 0 0 var(--cm-sp-3);
+    padding: var(--cm-sp-2) var(--cm-sp-3);
+    border-radius: var(--cm-r-control);
+    font-size: var(--cm-fs-xs);
     line-height: 1.5;
 }
-.pp-note.warn { background: var(--warning-bg); color: #8a5000; }
+.pp-note.warn { background: var(--warning-bg); color: var(--cm-warn-text); }
 .pp-note svg { flex-shrink: 0; margin-top: 1px; }
 
 /* ── Podnožje: računica uz akcije ─────────────────────────────── */
 .pp-foot {
     display: flex;
     align-items: center;
-    gap: 16px;
+    gap: var(--cm-sp-4);
     width: 100%;
     flex-wrap: wrap;
 }
@@ -421,10 +433,10 @@
 .pp-foot-calc {
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: var(--cm-sp-2);
     flex: 1 1 auto;
     min-width: 0;
-    font-size: 13px;
+    font-size: var(--cm-fs-sm);
     color: var(--text-primary);
     flex-wrap: wrap;
 }
@@ -435,39 +447,41 @@
 .pp-foot-dates {
     display: inline-flex;
     align-items: center;
-    gap: 5px;
-    margin-left: 8px;
-    padding: 3px 9px;
-    border-radius: 10px;
+    gap: var(--cm-sp-1);
+    margin-left: var(--cm-sp-1);
+    height: var(--cm-h-sm);
+    padding: 0 var(--cm-sp-3);
+    border-radius: var(--cm-r-pill);
     background: var(--accent-light);
     color: var(--text-primary);
-    font-size: 12px;
+    font-size: var(--cm-fs-xs);
     font-variant-numeric: tabular-nums;
 }
 
-.pp-foot-hint { color: var(--text-tertiary); font-size: 12.5px; }
+.pp-foot-hint { color: var(--text-tertiary); font-size: var(--cm-fs-xs); }
 .pp-foot-hint.warn {
     display: inline-flex;
     align-items: center;
-    gap: 6px;
-    color: #8a5000;
+    gap: var(--cm-sp-1);
+    color: var(--cm-warn-text);
 }
 
-.pp-foot-actions { display: flex; gap: 8px; flex-shrink: 0; }
+.pp-foot-actions { display: flex; gap: var(--cm-sp-2); flex-shrink: 0; }
 
 /* ── Narudžbe: stavke materijala ──────────────────────────────── */
 .pp-lines {
     display: grid;
     gap: 1px;
-    padding: 2px 0 6px 26px;
+    padding: 2px 0 var(--cm-sp-1) 28px;
 }
 
 .pp-line {
     display: flex;
     align-items: center;
-    gap: 9px;
-    padding: 3px 8px;
-    font-size: 11.5px;
+    gap: var(--cm-sp-2);
+    min-height: var(--cm-h-sm);
+    padding: 0 var(--cm-sp-2);
+    font-size: var(--cm-fs-xs);
     color: var(--text-secondary);
 }
 
@@ -495,18 +509,18 @@
     display: inline-flex;
     align-items: center;
     gap: 3px;
-    padding: 1px 7px;
-    border-radius: 10px;
+    padding: 2px 8px;
+    border-radius: var(--cm-r-pill);
     background: var(--warning-bg);
-    color: #8a5000;
-    font-size: 10.5px;
+    color: var(--cm-warn-text);
+    font-size: var(--cm-fs-micro);
     font-weight: 600;
     white-space: nowrap;
     flex-shrink: 0;
 }
 
 .pp-lead {
-    font-size: 11px;
+    font-size: var(--cm-fs-xs);
     color: var(--text-tertiary);
     white-space: nowrap;
     flex-shrink: 0;
@@ -517,7 +531,7 @@
 /* ── Proizvodi u bočnoj ploči platna ──────────────────────────── */
 .cv-products {
     list-style: none;
-    margin: 0 0 8px;
+    margin: 0 0 var(--cm-sp-2);
     padding: 0;
     display: grid;
     gap: 2px;
@@ -526,11 +540,12 @@
 .cv-products li {
     display: flex;
     align-items: center;
-    gap: 8px;
-    padding: 4px 8px;
-    border-radius: var(--radius-sm);
+    gap: var(--cm-sp-2);
+    min-height: var(--cm-h-sm);
+    padding: 0 var(--cm-sp-2);
+    border-radius: var(--cm-r-control);
     background: var(--surface);
-    font-size: 12px;
+    font-size: var(--cm-fs-xs);
 }
 
 .cv-prod-name {
@@ -551,12 +566,12 @@
 .cv-kind-help {
     display: flex;
     align-items: flex-start;
-    gap: 6px;
+    gap: var(--cm-sp-2);
     margin: 0;
-    padding: 8px 10px;
-    border-radius: var(--radius-sm);
+    padding: var(--cm-sp-2) var(--cm-sp-3);
+    border-radius: var(--cm-r-control);
     background: var(--surface);
-    font-size: 11.5px;
+    font-size: var(--cm-fs-xs);
     line-height: 1.5;
     color: var(--text-secondary);
 }
@@ -568,6 +583,7 @@
         grid-template-columns: 1fr;
         grid-template-rows: minmax(0, 1.2fr) minmax(0, 1fr);
     }
-    .pp-foot { flex-direction: column; align-items: stretch; gap: 10px; }
+    .pp-foot { flex-direction: column; align-items: stretch; gap: var(--cm-sp-2); }
     .pp-foot-actions { justify-content: flex-end; }
+    select.pp-toggle { max-width: none; flex: 1 1 auto; }
 }

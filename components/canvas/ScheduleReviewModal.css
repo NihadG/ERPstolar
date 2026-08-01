@@ -1,45 +1,64 @@
-/* ScheduleReviewModal — pregled prijedloga rasporeda */
+/* ScheduleReviewModal — pregled prijedloga rasporeda. --cm-* skala. */
 
-.sr-shell { display: flex; flex-direction: column; gap: 14px; width: 100%; min-width: 480px; }
+.sr-shell { display: flex; flex-direction: column; gap: var(--cm-sp-4); width: 100%; min-width: 480px; }
 
-.sr-summary { display: flex; gap: 22px; padding: 4px 2px; }
-.sr-stat { display: flex; flex-direction: column; }
-.sr-stat-num { font-size: 22px; font-weight: 700; color: var(--text-primary); font-variant-numeric: tabular-nums; }
-.sr-stat-lbl { font-size: 11.5px; color: var(--text-secondary); }
-.sr-stat.warn .sr-stat-num { color: var(--warning); }
-
-.sr-empty { color: var(--text-secondary); font-size: 13.5px; line-height: 1.6; padding: 20px; text-align: center; }
-
-.sr-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; max-height: 52vh; overflow-y: auto; }
-.sr-item {
-    padding: 10px 12px; border: 1px solid var(--border-light); border-radius: var(--radius-md);
+/* ── Statistika ────────────────────────────────────────────────── */
+.sr-summary {
+    display: flex; gap: var(--cm-sp-3);
+    padding: var(--cm-sp-1) 0;
+}
+.sr-stat {
+    display: flex; flex-direction: column; gap: 2px;
+    flex: 1 1 0; min-width: 0;
+    padding: var(--cm-sp-3);
+    border: 1px solid var(--border-light); border-radius: var(--cm-r-card);
     background: var(--surface);
 }
-.sr-item-head { display: flex; align-items: center; gap: 8px; }
-.sr-item-head svg { color: var(--text-tertiary); }
-.sr-item-title { font-weight: 600; font-size: 13.5px; color: var(--text-primary); flex: 1; }
-.sr-item-crew { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--text-secondary); }
+.sr-stat-num { font-size: var(--cm-fs-stat); font-weight: 700; line-height: 1.1; color: var(--text-primary); font-variant-numeric: tabular-nums; }
+.sr-stat-lbl { font-size: var(--cm-fs-xs); color: var(--text-secondary); }
+.sr-stat.warn { background: var(--warning-bg); border-color: transparent; }
+.sr-stat.warn .sr-stat-num { color: var(--warning); }
 
-.sr-item-dates { display: flex; align-items: center; gap: 8px; margin: 6px 0; font-variant-numeric: tabular-nums; }
+.sr-empty { color: var(--text-secondary); font-size: var(--cm-fs-sm); line-height: 1.6; padding: var(--cm-sp-5); text-align: center; }
+
+/* ── Lista naloga ──────────────────────────────────────────────── */
+.sr-list { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--cm-sp-2); max-height: 52vh; overflow-y: auto; }
+.sr-item {
+    padding: var(--cm-sp-3); border: 1px solid var(--border-light); border-radius: var(--cm-r-card);
+    background: var(--surface);
+}
+.sr-item-head { display: flex; align-items: center; gap: var(--cm-sp-2); }
+.sr-item-head svg { color: var(--text-tertiary); flex-shrink: 0; }
+.sr-item-title { font-weight: 600; font-size: var(--cm-fs-md); color: var(--text-primary); flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sr-item-crew { display: inline-flex; align-items: center; gap: var(--cm-sp-1); font-size: var(--cm-fs-xs); color: var(--text-secondary); flex-shrink: 0; }
+.sr-item-crew svg { color: var(--text-tertiary); }
+
+.sr-item-dates { display: flex; align-items: center; gap: var(--cm-sp-2); margin: var(--cm-sp-2) 0; font-variant-numeric: tabular-nums; }
 .sr-item-dates svg { color: var(--text-tertiary); }
-.sr-old { font-size: 12.5px; color: var(--text-tertiary); text-decoration: line-through; opacity: .7; }
-.sr-new { font-size: 13px; font-weight: 600; color: var(--accent); }
+.sr-old { font-size: var(--cm-fs-xs); color: var(--text-tertiary); text-decoration: line-through; opacity: .7; }
+.sr-new { font-size: var(--cm-fs-sm); font-weight: 600; color: var(--accent); }
 
-.sr-reasons { display: flex; flex-wrap: wrap; gap: 5px; }
+.sr-reasons { display: flex; flex-wrap: wrap; gap: var(--cm-sp-1); }
 .sr-reason {
-    font-size: 11px; padding: 2px 8px; border-radius: 10px;
+    font-size: var(--cm-fs-micro); font-weight: 600; padding: 2px 8px; border-radius: var(--cm-r-pill);
     background: var(--surface-active); color: var(--text-secondary);
 }
 .sr-reason.r-crew { background: var(--accent-light); color: var(--accent); }
-.sr-reason.r-prio { background: var(--warning-bg); color: var(--warning); }
+.sr-reason.r-prio { background: var(--warning-bg); color: var(--cm-warn-text); }
 
-.sr-unsched { border-top: 1px solid var(--border-light); padding-top: 10px; }
-.sr-unsched h4 { display: flex; align-items: center; gap: 6px; margin: 0 0 8px; font-size: 12.5px; color: var(--warning); }
-.sr-unsched ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 5px; }
-.sr-unsched li { display: flex; flex-direction: column; gap: 1px; padding: 7px 10px; border-radius: var(--radius-sm); background: var(--warning-bg); }
-.sr-unsched li strong { font-size: 12.5px; color: var(--text-primary); }
-.sr-unsched li span { font-size: 11.5px; color: var(--text-secondary); }
+/* ── Neraspoređeno ─────────────────────────────────────────────── */
+.sr-unsched { border-top: 1px solid var(--border-light); padding-top: var(--cm-sp-3); }
+.sr-unsched h4 {
+    display: flex; align-items: center; gap: var(--cm-sp-1); margin: 0 0 var(--cm-sp-2);
+    font-size: var(--cm-fs-micro); font-weight: 700; text-transform: uppercase; letter-spacing: .04em;
+    color: var(--warning);
+}
+.sr-unsched ul { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--cm-sp-1); }
+.sr-unsched li { display: flex; flex-direction: column; gap: 1px; padding: var(--cm-sp-2) var(--cm-sp-3); border-radius: var(--cm-r-control); background: var(--warning-bg); }
+.sr-unsched li strong { font-size: var(--cm-fs-sm); color: var(--text-primary); }
+.sr-unsched li span { font-size: var(--cm-fs-xs); color: var(--text-secondary); }
 
-.sr-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; }
-.sr-foot-note { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-secondary); }
-.sr-foot-actions { display: flex; gap: 8px; }
+/* ── Podnožje ──────────────────────────────────────────────────── */
+.sr-foot { display: flex; align-items: center; justify-content: space-between; gap: var(--cm-sp-3); width: 100%; }
+.sr-foot-note { display: inline-flex; align-items: center; gap: var(--cm-sp-1); font-size: var(--cm-fs-xs); color: var(--text-secondary); }
+.sr-foot-actions { display: flex; gap: var(--cm-sp-2); }

@@ -44,7 +44,7 @@
     border: none;
     background: transparent;
     border-radius: var(--radius-sm);
-    font-size: 12.5px;
+    font-size: var(--cm-fs-xs);
     font-family: inherit;
     color: var(--text-secondary);
     cursor: pointer;
@@ -64,7 +64,7 @@
 .cv-badge {
     min-width: 18px;
     padding: 1px 6px;
-    border-radius: 9px;
+    border-radius: var(--cm-r-pill);
     background: var(--surface-active);
     color: var(--text-secondary);
     font-size: 11px;
@@ -82,13 +82,13 @@
 
 .cv-dock-empty {
     margin: 6px 0;
-    font-size: 12.5px;
+    font-size: var(--cm-fs-xs);
     color: var(--text-secondary);
 }
 
 .cv-dock-note {
     margin: 8px 0 0;
-    font-size: 11.5px;
+    font-size: var(--cm-fs-xs);
     color: var(--text-tertiary);
     line-height: 1.5;
 }
@@ -111,7 +111,7 @@
     padding: 6px 9px;
     border-radius: var(--radius-sm);
     background: var(--surface);
-    font-size: 12.5px;
+    font-size: var(--cm-fs-xs);
 }
 
 .cv-conflicts li.error { background: var(--error-bg); }
@@ -141,7 +141,7 @@
     border: none;
     background: transparent;
     border-radius: 5px;
-    font-size: 11.5px;
+    font-size: var(--cm-fs-xs);
     font-family: inherit;
     color: var(--accent);
     cursor: pointer;
@@ -164,7 +164,7 @@
 .cv-due-when {
     min-width: 62px;
     font-weight: 700;
-    font-size: 11.5px;
+    font-size: var(--cm-fs-xs);
     color: var(--warning);
     flex-shrink: 0;
 }
@@ -172,12 +172,12 @@
 .cv-due li.late .cv-due-when { color: var(--error); }
 
 .cv-due-title { font-weight: 500; }
-.cv-due-sup { color: var(--text-secondary); font-size: 11.5px; }
+.cv-due-sup { color: var(--text-secondary); font-size: var(--cm-fs-xs); }
 
 .cv-due-date {
     margin-left: auto;
     color: var(--text-tertiary);
-    font-size: 11.5px;
+    font-size: var(--cm-fs-xs);
     white-space: nowrap;
 }
 
@@ -251,35 +251,36 @@
 
 .cv-cap-lbl.off { opacity: .4; }
 
-/* ── Modal lanca ──────────────────────────────────────────────── */
+/* ── Modal lanca (--cm-* skala) ────────────────────────────────── */
 .cv-chain-alert {
     display: flex;
-    gap: 10px;
-    padding: 12px 14px;
-    border-radius: var(--radius-md);
-    margin: 12px 0;
+    gap: var(--cm-sp-2);
+    padding: var(--cm-sp-3);
+    border-radius: var(--cm-r-card);
+    margin: var(--cm-sp-3) 0;
 }
 
 .cv-chain-alert svg { flex-shrink: 0; margin-top: 1px; }
-.cv-chain-alert strong { display: block; font-size: 13.5px; margin-bottom: 3px; }
-.cv-chain-alert p { margin: 0; font-size: 12.5px; line-height: 1.5; }
+.cv-chain-alert strong { display: block; font-size: var(--cm-fs-md); margin-bottom: 3px; }
+.cv-chain-alert p { margin: 0; font-size: var(--cm-fs-xs); line-height: 1.5; }
 .cv-chain-alert.err { background: var(--error-bg); }
 .cv-chain-alert.err svg { color: var(--error); }
 .cv-chain-alert.warn { background: var(--warning-bg); }
 .cv-chain-alert.warn svg { color: var(--warning); }
 
 .cv-chain-warn {
-    margin: 8px 0;
-    font-size: 12.5px;
+    margin: var(--cm-sp-2) 0;
+    font-size: var(--cm-fs-xs);
     color: var(--text-secondary);
+    line-height: 1.5;
 }
 
 .cv-chain-h {
     display: flex;
     align-items: center;
-    gap: 5px;
-    margin: 16px 0 8px;
-    font-size: 11.5px;
+    gap: var(--cm-sp-1);
+    margin: var(--cm-sp-4) 0 var(--cm-sp-2);
+    font-size: var(--cm-fs-micro);
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: .04em;
@@ -291,7 +292,7 @@
     margin: 0;
     padding: 0;
     display: grid;
-    gap: 5px;
+    gap: var(--cm-sp-1);
 }
 
 .cv-chain-list.locked { opacity: .6; }
@@ -299,12 +300,13 @@
 .cv-chain-row {
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: var(--cm-sp-2);
     flex-wrap: wrap;
-    padding: 8px 11px;
-    border-radius: var(--radius-sm);
+    min-height: var(--cm-h-control);
+    padding: var(--cm-sp-2) var(--cm-sp-3);
+    border-radius: var(--cm-r-control);
     background: var(--surface);
-    font-size: 12.5px;
+    font-size: var(--cm-fs-sm);
 }
 
 .cv-chain-title { font-weight: 600; }
@@ -312,7 +314,7 @@
 .cv-chain-dates {
     display: inline-flex;
     align-items: center;
-    gap: 6px;
+    gap: var(--cm-sp-1);
     color: var(--text-secondary);
     font-variant-numeric: tabular-nums;
 }
@@ -321,11 +323,11 @@
 .cv-chain-dates strong { color: var(--text-primary); }
 
 .cv-chain-delta {
-    padding: 1px 7px;
-    border-radius: 10px;
+    padding: 2px 8px;
+    border-radius: var(--cm-r-pill);
     background: var(--warning-bg);
-    color: #8a5000;
-    font-size: 11.5px;
+    color: var(--cm-warn-text);
+    font-size: var(--cm-fs-micro);
     font-weight: 700;
     font-variant-numeric: tabular-nums;
 }
@@ -335,15 +337,15 @@
 .cv-chain-orderby {
     display: inline-flex;
     align-items: center;
-    gap: 4px;
+    gap: var(--cm-sp-1);
     margin-left: auto;
-    font-size: 11.5px;
+    font-size: var(--cm-fs-micro);
     color: var(--text-secondary);
 }
 
 .cv-chain-empty {
-    padding: 18px 0;
-    font-size: 13px;
+    padding: var(--cm-sp-4) 0;
+    font-size: var(--cm-fs-sm);
     color: var(--text-secondary);
     line-height: 1.6;
 }
@@ -405,7 +407,7 @@
     border: 1px dashed var(--border);
     border-radius: var(--radius-sm);
     background: var(--background);
-    font-size: 12.5px;
+    font-size: var(--cm-fs-xs);
     font-family: inherit;
     color: var(--text-secondary);
     cursor: pointer;
@@ -421,7 +423,7 @@
     border: 1px solid var(--accent);
     border-radius: var(--radius-sm);
     background: var(--accent-light);
-    font-size: 12.5px;
+    font-size: var(--cm-fs-xs);
     font-family: inherit;
     color: var(--text-primary);
     cursor: pointer;
@@ -443,22 +445,22 @@
 .cv-tpl-grid {
     display: grid;
     grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
-    gap: 12px;
-    margin-bottom: 16px;
+    gap: var(--cm-sp-3);
+    margin-bottom: var(--cm-sp-4);
 }
 
 /* ── Tabela poređenja ─────────────────────────────────────────── */
 .cv-cmp {
     width: 100%;
     border-collapse: collapse;
-    font-size: 13px;
+    font-size: var(--cm-fs-sm);
 }
 
 .cv-cmp th {
     text-align: left;
-    padding: 7px 9px;
+    padding: var(--cm-sp-2);
     border-bottom: 1px solid var(--border);
-    font-size: 11px;
+    font-size: var(--cm-fs-micro);
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: .04em;
@@ -466,7 +468,7 @@
 }
 
 .cv-cmp td {
-    padding: 8px 9px;
+    padding: var(--cm-sp-2);
     border-bottom: 1px solid var(--border-light);
 }
 
@@ -498,6 +500,6 @@
 
 @media (max-width: 767px) {
     .cv-tpl-grid { grid-template-columns: 1fr; }
-    .cv-cmp { font-size: 12px; }
-    .cv-cmp th, .cv-cmp td { padding: 6px 5px; }
+    .cv-cmp { font-size: var(--cm-fs-xs); }
+    .cv-cmp th, .cv-cmp td { padding: var(--cm-sp-1); }
 }

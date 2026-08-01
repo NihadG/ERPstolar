@@ -28,6 +28,36 @@
   --radius-xl: 20px;
   --transition: 0.15s ease;
 
+  /* ── Canvas ("Platno") modal design scale ──────────────────────────
+     Jedna skala za SVE modale platna (batch, nalog, narudžbe, lanac,
+     raspored, ekipa). Prije ovoga su fontovi i boxovi bili nesrazmjerni
+     (10/10.5/11/11.5/12/12.5/13/13.5px, radijusi 4/5/6/9/10/20px).      */
+  /* Tipografija — 6 koraka, bez pola-piksela */
+  --cm-fs-micro: 11px;   /* tagovi, badževi, meta, delta */
+  --cm-fs-xs: 12px;      /* sekundarni tekst, čipovi, hintovi */
+  --cm-fs-sm: 13px;      /* tijelo: redovi, inputi, vrijednosti */
+  --cm-fs-md: 14px;      /* naglašeni naslovi redova */
+  --cm-fs-lg: 15px;      /* naslovi ploča */
+  --cm-fs-stat: 24px;    /* veliki brojevi */
+  /* Razmaci — baza 4px */
+  --cm-sp-1: 4px;
+  --cm-sp-2: 8px;
+  --cm-sp-3: 12px;
+  --cm-sp-4: 16px;
+  --cm-sp-5: 20px;
+  /* Radijusi */
+  --cm-r-control: 8px;   /* inputi, dugmad, redovi */
+  --cm-r-card: 12px;     /* ploče, kartice */
+  --cm-r-pill: 999px;    /* čipovi, tagovi, badževi */
+  /* Kontrole — jedinstvene visine da se header poravna */
+  --cm-h-control: 34px;  /* search, select, toggle */
+  --cm-h-sm: 26px;       /* stepper, mali toggle */
+  --cm-box: 18px;        /* checkbox */
+  /* Semantika */
+  --cm-warn-text: #8a5000;
+  --cm-focus-ring: 0 0 0 3px var(--accent-light);
+  --cm-shadow-card: 0 1px 2px rgba(0, 0, 0, 0.04);
+
   /* Liquid Glass Variables */
   --glass-bg: rgba(255, 255, 255, 0.7);
   --glass-bg-hover: rgba(255, 255, 255, 0.85);
