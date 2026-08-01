@@ -1,32 +1,33 @@
 /* ═══════════════════════════════════════════════════════════════════
-   KROJNA LISTA — mobilni kalkulator (redizajn, SwiftUI/iOS stil)
+   KROJNA LISTA — mobilni kalkulator (svijetli premium / SwiftUI)
 
-   Pogonska app je SVIJETLA-only. Naslanja se na `mui` sistem (boje/font iz
-   `.mui`), ali sve mjere su ovdje zaključane u JEDNU skalu (`--fcl-*`) da
-   bi razmaci, radijusi, visine polja i tipografija bili proporcionalni i
-   isti kroz cijeli ekran — to je bio izričit zahtjev.
+   Pogonska app je SVIJETLA-only. Sve mjere su zaključane u jednu `--fcl-`
+   skalu (razmaci/radijusi/visine polja/tipografija) radi proporcionalnosti.
+   Punjena polja (fill, bez praznih outline-kutija), velike tabular brojke,
+   jedan plavi akcenat, lista komada dominira. Postavke su bottom-sheet.
 
-   Skala:
-     razmak   .......... 8 / 10 / 12 / 14 / 20 px
-     radijus  .......... polje 12 · kartica 16 · pločica 999
-     polje    .......... visina 52 · font 17 (iOS ne zumira)
-     naslov ekrana ..... 28 / 700
-     sekcija  .......... 13 / 590   (label2)
-     mikro-labela ...... 12 / 590   (label2)
-
-   Specifičnost: globalni `input[type=number]` (globals.css, 0,1,1) gazi golu
-   klasu, zato su svi unos-selektori prefiksirani s `.fcl `.
+   SVE klase su `.fcl-` prefiksirane — mobilni ekran se crta nezavisno i NE
+   može pokvariti ostatak app-a. Globalni `input[type=number]` (globals.css,
+   0,1,1) se nadjačava scope-om `.fcl .fcl-… input`.
    ═══════════════════════════════════════════════════════════════════ */
 
 .fcl {
-    --fcl-pad: 14px;
-    --fcl-radius: 16px;
-    --fcl-field-h: 52px;
-    --fcl-field-r: 12px;
-    --fcl-tint: rgba(0, 122, 255, 0.11);
-    --fcl-fill: #ffffff;
-    --fcl-bg: #f2f2f7;
-    --fcl-shadow: 0 1px 2px rgba(20, 30, 60, 0.05), 0 12px 26px -18px rgba(20, 30, 60, 0.22);
+    --fcl-bg: #EBEDF2;
+    --fcl-card: #FFFFFF;
+    --fcl-fill: #EBEEF4;
+    --fcl-fill2: #F3F5F9;
+    --fcl-ink: #0E1420;
+    --fcl-ink2: #5A6577;
+    --fcl-ink3: #98A2B3;
+    --fcl-line: rgba(14, 20, 32, 0.07);
+    --fcl-accent: #0A84FF;
+    --fcl-green: #30C558;
+    --fcl-green-d: #1E7A3C;
+    --fcl-amber-d: #9A5B00;
+    --fcl-red: #FF453A;
+    --fcl-red-d: #C11F14;
+    --fcl-sh: 0 1px 2px rgba(16, 22, 40, 0.05), 0 10px 26px -16px rgba(16, 22, 40, 0.28);
+    --fcl-sh-lg: 0 1px 2px rgba(16, 22, 40, 0.06), 0 24px 48px -22px rgba(16, 22, 40, 0.4);
 }
 
 /* ── Pokretač (kartica na Danas / Ja / profil) ─────────────────────── */
@@ -45,285 +46,233 @@
 .fcl-launch-txt small { font-size: 12.5px; color: var(--mui-label2); }
 .fcl-launch-chev { flex: none; color: var(--mui-label3); }
 
-/* ── Okvir (fiksni preko cijelog ekrana, skrola vertikalno) ────────── */
+/* ── Okvir ─────────────────────────────────────────────────────────── */
 .fcl {
     position: fixed; inset: 0; z-index: 1000; overflow-y: auto;
     overscroll-behavior: contain; -webkit-overflow-scrolling: touch;
-    background: var(--fcl-bg); color: var(--mui-label);
+    background: var(--fcl-bg); color: var(--fcl-ink);
 }
-/* Čisti brojčani unosi — bez spin strelica. */
 .fcl input[type=number] { -moz-appearance: textfield; appearance: textfield; }
 .fcl input[type=number]::-webkit-outer-spin-button,
 .fcl input[type=number]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.fcl-num { font-variant-numeric: tabular-nums; font-feature-settings: 'tnum' 1; }
 
-/* ── Nav traka (sticky, prozirno-zamućena kao iOS) ─────────────────── */
+/* ── Nav traka (sticky, prozirno-zamućena) ─────────────────────────── */
 .fcl-nav {
-    position: sticky; top: 0; z-index: 6;
-    display: flex; align-items: center; justify-content: space-between; gap: 8px;
-    padding: calc(env(safe-area-inset-top, 0px) + 7px) 10px 7px;
-    background: rgba(242, 242, 247, 0.82);
-    -webkit-backdrop-filter: saturate(180%) blur(20px);
-    backdrop-filter: saturate(180%) blur(20px);
-    border-bottom: 0.5px solid transparent;
+    position: sticky; top: 0; z-index: 20; display: flex; align-items: center; gap: 8px;
+    padding: calc(env(safe-area-inset-top, 0px) + 9px) 12px 9px;
+    background: rgba(235, 237, 242, 0.8);
+    -webkit-backdrop-filter: saturate(180%) blur(18px); backdrop-filter: saturate(180%) blur(18px);
+    border-bottom: 0.5px solid var(--fcl-line);
 }
 .fcl-back {
-    display: flex; align-items: center; gap: 2px; padding: 6px 8px 6px 4px;
+    display: flex; align-items: center; gap: 3px; padding: 6px 6px 6px 2px;
     background: none; border: none; cursor: pointer; font-family: inherit;
-    color: var(--mui-blue); font-size: 16.5px; letter-spacing: -0.02em;
+    color: var(--fcl-accent); font-size: 16.5px; letter-spacing: -0.02em;
 }
-.fcl-back:active { opacity: 0.55; }
+.fcl-back:active { opacity: 0.5; }
+.fcl-nav-title { flex: 1; text-align: center; font-size: 16px; font-weight: 600; letter-spacing: -0.02em; color: var(--fcl-ink); }
 .fcl-navbtn {
-    flex: none; width: 36px; height: 36px; border-radius: 50%; border: none;
-    background: rgba(120, 120, 128, 0.14); color: var(--mui-blue);
+    flex: none; width: 38px; height: 38px; border-radius: 50%; border: none;
+    background: rgba(120, 120, 128, 0.14); color: var(--fcl-accent);
     display: flex; align-items: center; justify-content: center; cursor: pointer;
 }
 .fcl-navbtn:active { background: rgba(120, 120, 128, 0.26); }
-.fcl-navbtn-ghost { flex: none; width: 36px; height: 36px; }
+.fcl-navbtn-ghost { flex: none; width: 38px; height: 38px; }
 
-/* ── Sadržaj (jednake bočne margine kroz cijeli ekran) ─────────────── */
-.fcl-body {
-    padding: 2px var(--fcl-pad) calc(env(safe-area-inset-bottom, 0px) + 24px);
-}
-
-/* ── Veliki naslov + živa statistika ───────────────────────────────── */
-.fcl-hd { padding: 4px 2px 0; }
-.fcl-hd h1 { margin: 0; font-size: 28px; font-weight: 700; letter-spacing: -0.03em; line-height: 1.1; color: var(--mui-label); }
-.fcl-hd p { margin: 4px 0 0; font-size: 14.5px; color: var(--mui-label2); letter-spacing: -0.01em; }
+/* ── Sadržaj ───────────────────────────────────────────────────────── */
+.fcl-body { padding: 2px 16px calc(24px + env(safe-area-inset-bottom, 0px)); }
+.fcl-hd { padding: 6px 2px 2px; }
+.fcl-hd h1 { margin: 0; font-size: 30px; font-weight: 700; letter-spacing: -0.035em; line-height: 1.05; color: var(--fcl-ink); }
+.fcl-hd p { margin: 6px 0 0; font-size: 14.5px; color: var(--fcl-ink2); letter-spacing: -0.01em; }
+.fcl-hd p b { color: var(--fcl-ink); font-weight: 600; }
 
 /* ── Segmentna kontrola ────────────────────────────────────────────── */
-.fcl-seg { padding: 14px 0 4px; }
+.fcl-seg { display: flex; background: rgba(118, 118, 128, 0.12); border-radius: 11px; padding: 3px; margin: 16px 0 6px; }
+.fcl-seg button {
+    flex: 1; border: none; background: none; padding: 9px 4px; border-radius: 9px;
+    font-family: inherit; font-size: 14px; font-weight: 500; letter-spacing: -0.02em; color: var(--fcl-ink);
+    cursor: pointer; transition: background 0.15s;
+}
+.fcl-seg button.on { background: #fff; box-shadow: 0 1px 4px rgba(16, 22, 40, 0.14); font-weight: 600; }
 
 /* ── Sekcijski naslov ──────────────────────────────────────────────── */
-.fcl-sec {
-    display: flex; align-items: baseline; gap: 8px; padding: 20px 4px 8px;
-    font-size: 13px; font-weight: 590; letter-spacing: -0.01em; color: var(--mui-label2);
-}
-.fcl-sec-r { margin-left: auto; font-weight: 500; color: var(--mui-label3); font-variant-numeric: tabular-nums; }
+.fcl-sec { display: flex; align-items: baseline; gap: 8px; padding: 22px 4px 9px; font-size: 13px; font-weight: 600; letter-spacing: -0.01em; color: var(--fcl-ink2); }
+.fcl-sec-r { margin-left: auto; font-weight: 500; color: var(--fcl-ink3); }
+.fcl-sec-r b { color: var(--fcl-ink2); font-weight: 600; }
 
-/* ── Kartica ───────────────────────────────────────────────────────── */
-.fcl-card {
-    background: var(--fcl-fill); border-radius: var(--fcl-radius); padding: var(--fcl-pad);
-    box-shadow: var(--fcl-shadow);
+/* ── Punjena polja (Širina / Visina / Kom …) ───────────────────────── */
+.fcl-fields { display: flex; align-items: center; gap: 8px; }
+.fcl-fld {
+    flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px;
+    background: var(--fcl-fill); border-radius: 14px; padding: 9px 12px 10px;
+    border: 1.5px solid transparent; transition: border-color 0.15s, background 0.15s;
 }
+.fcl-fld.k { flex: 0 0 84px; }
+.fcl-fld > span { font-size: 11px; font-weight: 600; letter-spacing: 0.055em; text-transform: uppercase; color: var(--fcl-ink3); }
+.fcl .fcl-fld input {
+    width: 100%; border: none; background: none; outline: none; padding: 0; margin: 0;
+    font-family: inherit; font-size: 25px; font-weight: 600; letter-spacing: -0.02em;
+    color: var(--fcl-ink); font-variant-numeric: tabular-nums; text-align: left;
+}
+.fcl .fcl-fld input::placeholder { color: #C2C9D4; }
+.fcl-fld:focus-within { border-color: var(--fcl-accent); background: #fff; }
+.fcl-x { flex: none; color: var(--fcl-ink3); font-size: 17px; padding-top: 14px; }
 
-/* ── Unos-polje s mikro-labelom (Širina / Visina / Kom …) ──────────── */
-.fcl-row { display: flex; align-items: flex-end; gap: 8px; }
-.fcl-in { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
-.fcl-in > span {
-    font-size: 12px; font-weight: 590; letter-spacing: -0.005em; color: var(--mui-label2); padding-left: 3px;
+/* ── Add modul ─────────────────────────────────────────────────────── */
+.fcl-add { background: var(--fcl-card); border-radius: 20px; padding: 14px; box-shadow: var(--fcl-sh); }
+.fcl-add-btn {
+    width: 100%; height: 54px; margin-top: 12px; border: none; border-radius: 15px;
+    background: var(--fcl-accent); color: #fff; font-family: inherit; font-size: 16.5px; font-weight: 600; letter-spacing: -0.02em;
+    display: flex; align-items: center; justify-content: center; gap: 8px;
+    box-shadow: 0 6px 16px -6px rgba(10, 132, 255, 0.7); transition: transform 0.1s;
 }
-.fcl .fcl-in > input {
-    height: var(--fcl-field-h); padding: 0 8px; box-sizing: border-box; width: 100%;
-    border: 1px solid var(--mui-sep); border-radius: var(--fcl-field-r); background: #fff;
-    font-size: 17px; font-family: inherit; color: var(--mui-label);
-    text-align: center; letter-spacing: -0.01em; font-variant-numeric: tabular-nums;
-    transition: border-color 0.15s;
-}
-.fcl .fcl-in > input::placeholder { color: var(--mui-label3); }
-.fcl .fcl-in > input:focus { outline: none; border-color: var(--mui-blue); box-shadow: 0 0 0 3px rgba(0, 122, 255, 0.12); }
-.fcl-in.qty { flex: 0 0 64px; }
-
-/* Kvadratno „+" dugme, poravnato s dnom polja. */
-.fcl-add {
-    flex: none; width: var(--fcl-field-h); height: var(--fcl-field-h); border: none;
-    border-radius: var(--fcl-field-r); background: var(--mui-blue); color: #fff;
-    display: flex; align-items: center; justify-content: center; cursor: pointer;
-    box-shadow: 0 2px 8px -2px rgba(0, 122, 255, 0.6);
-}
-.fcl-add:active { transform: scale(0.93); }
-
-/* Naziv (opcionalno) — puna širina iznad reda. */
+.fcl-add-btn:active { transform: scale(0.985); }
 .fcl .fcl-name {
-    width: 100%; box-sizing: border-box; height: 48px; padding: 0 12px; margin-bottom: 10px;
-    border: 1px solid var(--mui-sep); border-radius: var(--fcl-field-r); background: #fff;
-    font-size: 16px; font-family: inherit; color: var(--mui-label); letter-spacing: -0.01em;
+    width: 100%; box-sizing: border-box; height: 46px; margin-bottom: 10px; padding: 0 14px;
+    border: 1.5px solid transparent; border-radius: 13px; background: var(--fcl-fill);
+    font-family: inherit; font-size: 16px; color: var(--fcl-ink); outline: none;
 }
-.fcl .fcl-name::placeholder { color: var(--mui-label3); }
-.fcl .fcl-name:focus { outline: none; border-color: var(--mui-blue); }
-
-/* Alatni čipovi (naziv / zalijepi) */
+.fcl .fcl-name::placeholder { color: var(--fcl-ink3); }
+.fcl .fcl-name:focus { border-color: var(--fcl-accent); background: #fff; }
 .fcl-tools { display: flex; gap: 8px; margin-top: 12px; }
 .fcl-tool {
-    display: inline-flex; align-items: center; gap: 6px; padding: 8px 13px;
-    border: none; border-radius: 10px; cursor: pointer; font-family: inherit;
-    font-size: 13.5px; font-weight: 590; letter-spacing: -0.01em;
-    background: rgba(120, 120, 128, 0.12); color: var(--mui-label2);
+    display: inline-flex; align-items: center; gap: 6px; padding: 8px 13px; border: none; border-radius: 10px;
+    background: var(--fcl-fill2); color: var(--fcl-ink2); font-family: inherit; font-size: 13.5px; font-weight: 590; letter-spacing: -0.01em;
+    cursor: pointer;
 }
+.fcl-tool.on { background: rgba(10, 132, 255, 0.12); color: var(--fcl-accent); }
 .fcl-tool:active { transform: scale(0.97); }
-.fcl-tool.on { background: var(--fcl-tint); color: var(--mui-blue); }
 
-/* Zalijepi listu */
-.fcl-paste { margin-top: 12px; padding-top: 12px; border-top: 0.5px solid var(--mui-sep); }
+.fcl-paste { margin-top: 12px; padding-top: 12px; border-top: 0.5px solid var(--fcl-line); }
 .fcl .fcl-ta {
-    width: 100%; box-sizing: border-box; padding: 11px 12px; min-height: 96px;
-    border: 1px solid var(--mui-sep); border-radius: var(--fcl-field-r); background: #fff;
-    font-size: 16px; font-family: inherit; color: var(--mui-label); resize: vertical; margin-bottom: 10px;
+    width: 100%; box-sizing: border-box; min-height: 92px; padding: 12px;
+    border: 1.5px solid transparent; border-radius: 13px; background: var(--fcl-fill);
+    font-family: inherit; font-size: 15.5px; color: var(--fcl-ink); outline: none; resize: vertical; margin-bottom: 10px;
 }
-.fcl .fcl-ta:focus { outline: none; border-color: var(--mui-blue); }
-.fcl-paste-btn {
-    width: 100%; height: 46px; border: none; border-radius: var(--fcl-field-r); cursor: pointer;
-    font-family: inherit; font-size: 15.5px; font-weight: 590; letter-spacing: -0.01em;
-    background: var(--fcl-tint); color: var(--mui-blue);
-}
-.fcl-paste-btn:active { transform: scale(0.98); }
+.fcl .fcl-ta:focus { border-color: var(--fcl-accent); background: #fff; }
+.fcl-paste-btn { width: 100%; height: 46px; border: none; border-radius: 13px; background: rgba(10, 132, 255, 0.12); color: var(--fcl-accent); font-family: inherit; font-size: 15.5px; font-weight: 600; cursor: pointer; }
 
-/* ── Postavke ploče (sažetak + rasklapanje) ────────────────────────── */
-.fcl-settings-toggle {
-    width: 100%; display: flex; align-items: center; gap: 12px; margin-top: 12px;
-    padding: 11px 13px; border: none; border-radius: var(--fcl-radius); background: var(--fcl-fill);
-    cursor: pointer; text-align: left; font-family: inherit; box-shadow: var(--fcl-shadow);
+/* ── Postavke (trigger za bottom-sheet) ────────────────────────────── */
+.fcl-setbtn {
+    width: 100%; display: flex; align-items: center; gap: 13px; margin-top: 12px;
+    padding: 12px 14px; border: none; border-radius: 18px; background: var(--fcl-card);
+    box-shadow: var(--fcl-sh); text-align: left; font-family: inherit; cursor: pointer;
 }
-.fcl-st-ic {
-    flex: none; width: 34px; height: 34px; border-radius: 10px;
-    display: flex; align-items: center; justify-content: center;
-    background: rgba(120, 120, 128, 0.14); color: var(--mui-label2);
-}
-.fcl-st-txt { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
-.fcl-st-txt b { font-size: 15px; font-weight: 600; letter-spacing: -0.01em; color: var(--mui-label); }
-.fcl-st-txt small {
-    font-size: 12.5px; color: var(--mui-label2); letter-spacing: -0.01em;
-    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-variant-numeric: tabular-nums;
-}
-.fcl-st-chev { flex: none; color: var(--mui-label3); transition: transform 0.2s ease; }
-.fcl-st-chev.open { transform: rotate(180deg); }
-
-.fcl-settings { margin-top: 10px; }
-.fcl-fsec {
-    font-size: 13px; font-weight: 590; letter-spacing: -0.01em; color: var(--mui-label2);
-    margin: 18px 2px 10px;
-}
-.fcl-fsec:first-child { margin-top: 2px; }
-
-.fcl-presets { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-top: 10px; }
-.fcl-preset {
-    height: 44px; border-radius: 10px; border: 1px solid var(--mui-sep); background: #fff;
-    color: var(--mui-label); font-family: inherit; font-size: 14px; cursor: pointer;
-    font-variant-numeric: tabular-nums; letter-spacing: -0.01em;
-}
-.fcl-preset:active { transform: scale(0.98); }
-.fcl-preset.on { background: var(--mui-blue); border-color: transparent; color: #fff; font-weight: 590; }
-
-/* Prekidač rotacije — pravi iOS toggle. */
-.fcl-switch {
-    display: flex; align-items: center; gap: 12px; margin-top: 18px;
-    padding: 11px 12px; border-radius: var(--fcl-field-r); background: rgba(120, 120, 128, 0.08); cursor: pointer;
-}
-.fcl-switch-txt { flex: 1; min-width: 0; }
-.fcl-switch-txt b { display: block; font-size: 14.5px; font-weight: 500; color: var(--mui-label); letter-spacing: -0.01em; }
-.fcl-switch-txt small { display: block; font-size: 12px; color: var(--mui-label2); margin-top: 1px; }
-.fcl-track {
-    flex: none; width: 51px; height: 31px; border-radius: 999px; background: rgba(120, 120, 128, 0.25);
-    position: relative; transition: background 0.2s;
-}
-.fcl-track.on { background: var(--mui-green); }
-.fcl-knob {
-    position: absolute; top: 2px; left: 2px; width: 27px; height: 27px; border-radius: 50%; background: #fff;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3); transition: transform 0.2s;
-}
-.fcl-track.on .fcl-knob { transform: translateX(20px); }
+.fcl-setbtn-ic { flex: none; width: 38px; height: 38px; border-radius: 11px; background: rgba(120, 120, 128, 0.13); color: var(--fcl-ink2); display: flex; align-items: center; justify-content: center; }
+.fcl-setbtn-tx { flex: 1; min-width: 0; }
+.fcl-setbtn-tx b { display: block; font-size: 15.5px; font-weight: 600; letter-spacing: -0.01em; color: var(--fcl-ink); }
+.fcl-setbtn-tx small { display: block; font-size: 12.5px; color: var(--fcl-ink2); margin-top: 1px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fcl-setbtn-chev { flex: none; color: var(--fcl-ink3); }
 
 /* ── Lista komada ──────────────────────────────────────────────────── */
-.fcl-list { display: flex; flex-direction: column; gap: 8px; }
-.fcl-part {
-    display: flex; align-items: center; gap: 8px; min-height: 60px;
-    background: var(--fcl-fill); border-radius: 14px; padding: 8px 10px; box-shadow: var(--fcl-shadow);
-}
-.fcl-part-idx { flex: none; width: 20px; text-align: center; font-size: 13px; color: var(--mui-label3); font-variant-numeric: tabular-nums; }
-.fcl-part-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
-.fcl-part-dim { font-size: 17px; font-weight: 600; color: var(--mui-label); letter-spacing: -0.01em; font-variant-numeric: tabular-nums; }
-.fcl-part-name { font-size: 12.5px; color: var(--mui-label2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-
-.fcl-qty { flex: none; display: flex; align-items: center; height: 36px; background: rgba(120, 120, 128, 0.1); border-radius: 10px; }
-.fcl-qty button {
-    width: 34px; height: 36px; border: none; background: none; color: var(--mui-blue);
-    font-size: 22px; line-height: 1; cursor: pointer; display: flex; align-items: center; justify-content: center; padding: 0;
-}
-.fcl-qty button:active { opacity: 0.5; }
+.fcl-list { display: flex; flex-direction: column; gap: 9px; }
+.fcl-part { display: flex; align-items: center; gap: 12px; background: var(--fcl-card); border-radius: 16px; padding: 11px 12px; box-shadow: var(--fcl-sh); }
+.fcl-sw { flex: none; width: 6px; align-self: stretch; min-height: 40px; border-radius: 99px; }
+.fcl-part-main { flex: 1; min-width: 0; }
+.fcl-part-dim { font-size: 19px; font-weight: 600; letter-spacing: -0.025em; color: var(--fcl-ink); font-variant-numeric: tabular-nums; }
+.fcl-part-dim i { font-style: normal; color: var(--fcl-ink3); font-weight: 400; margin: 0 3px; }
+.fcl-part-sub { font-size: 12.5px; color: var(--fcl-ink2); margin-top: 1px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fcl-qty { flex: none; display: flex; align-items: center; height: 38px; background: var(--fcl-fill); border-radius: 12px; }
+.fcl-qty button { width: 36px; height: 38px; border: none; background: none; color: var(--fcl-accent); font-size: 21px; line-height: 1; display: flex; align-items: center; justify-content: center; padding: 0; cursor: pointer; }
+.fcl-qty button:active { opacity: 0.4; }
 .fcl .fcl-qty input {
-    width: 30px; height: 36px; border: none; background: none; text-align: center; border-radius: 0; padding: 0;
-    font-size: 16px; font-family: inherit; color: var(--mui-label); font-variant-numeric: tabular-nums;
+    width: 34px; height: 38px; border: none; background: none; text-align: center; padding: 0;
+    font-family: inherit; font-size: 16px; font-weight: 600; color: var(--fcl-ink); font-variant-numeric: tabular-nums;
 }
 .fcl .fcl-qty input:focus { outline: none; }
+.fcl-part-del { flex: none; width: 34px; height: 34px; border: none; border-radius: 10px; background: transparent; color: var(--fcl-ink3); display: flex; align-items: center; justify-content: center; cursor: pointer; }
+.fcl-part-del:active { background: rgba(255, 69, 58, 0.12); color: var(--fcl-red); }
 
-.fcl-part-btn {
-    flex: none; width: 34px; height: 34px; border: none; border-radius: 9px; background: rgba(120, 120, 128, 0.1);
-    color: var(--mui-label2); display: flex; align-items: center; justify-content: center; cursor: pointer;
-}
-.fcl-part-btn.danger { color: var(--mui-red); }
-.fcl-part-btn:active { background: rgba(120, 120, 128, 0.22); }
+/* ── Prazno stanje ─────────────────────────────────────────────────── */
+.fcl-empty { display: flex; flex-direction: column; align-items: center; gap: 9px; padding: 46px 24px; text-align: center; }
+.fcl-empty-ic { width: 56px; height: 56px; border-radius: 17px; background: rgba(10, 132, 255, 0.1); color: var(--fcl-accent); display: flex; align-items: center; justify-content: center; margin-bottom: 2px; }
+.fcl-empty b { font-size: 17px; font-weight: 600; letter-spacing: -0.02em; color: var(--fcl-ink); }
+.fcl-empty small { font-size: 14px; color: var(--fcl-ink2); line-height: 1.45; max-width: 230px; }
 
-/* ── Sticky primarna akcija (Izračunaj) ────────────────────────────── */
-.fcl-cta {
-    position: sticky; bottom: 0; z-index: 6;
-    padding: 12px var(--fcl-pad) calc(env(safe-area-inset-bottom, 0px) + 14px);
-    background: linear-gradient(to top, var(--fcl-bg) 62%, rgba(242, 242, 247, 0));
-}
+/* ── Sticky primarna akcija ────────────────────────────────────────── */
+.fcl-cta { position: sticky; bottom: 0; z-index: 20; padding: 14px 16px calc(16px + env(safe-area-inset-bottom, 0px)); background: linear-gradient(to top, var(--fcl-bg) 58%, rgba(235, 237, 242, 0)); }
 .fcl-go {
-    width: 100%; height: 54px; display: flex; align-items: center; justify-content: center; gap: 8px;
-    border: none; border-radius: 14px; cursor: pointer; font-family: inherit;
-    font-size: 17px; font-weight: 600; letter-spacing: -0.02em;
-    background: var(--mui-blue); color: #fff; box-shadow: 0 6px 18px -6px rgba(0, 122, 255, 0.7);
+    width: 100%; height: 60px; border: none; border-radius: 17px; background: var(--fcl-accent); color: #fff;
+    font-family: inherit; display: flex; align-items: center; justify-content: center; gap: 11px;
+    box-shadow: 0 10px 26px -8px rgba(10, 132, 255, 0.75); transition: transform 0.1s; cursor: pointer;
 }
-.fcl-go:active { transform: scale(0.98); }
-.fcl-go:disabled { opacity: 0.6; box-shadow: none; }
-.fcl-spin {
-    width: 17px; height: 17px; border-radius: 50%; border: 2.4px solid rgba(255, 255, 255, 0.4);
-    border-top-color: #fff; animation: fcl-spin 0.7s linear infinite;
-}
+.fcl-go:active { transform: scale(0.985); }
+.fcl-go:disabled { opacity: 0.55; box-shadow: none; }
+.fcl-go-lbl { font-size: 17px; font-weight: 600; letter-spacing: -0.02em; }
+.fcl-go-est { font-size: 14px; font-weight: 500; opacity: 0.82; letter-spacing: -0.01em; padding-left: 11px; border-left: 1px solid rgba(255, 255, 255, 0.35); }
+.fcl-spin { width: 18px; height: 18px; border-radius: 50%; border: 2.4px solid rgba(255, 255, 255, 0.4); border-top-color: #fff; animation: fcl-spin 0.7s linear infinite; }
 @keyframes fcl-spin { to { transform: rotate(360deg); } }
 
-/* ── Rezultat: statistika ──────────────────────────────────────────── */
-.fcl-stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 8px; margin-bottom: 6px; }
-.fcl-stat { background: var(--fcl-fill); border-radius: 14px; padding: 15px 6px; text-align: center; box-shadow: var(--fcl-shadow); }
-.fcl-stat-n { font-size: 26px; font-weight: 700; color: var(--mui-label); letter-spacing: -0.02em; font-variant-numeric: tabular-nums; line-height: 1.05; }
-.fcl-stat-n small { font-size: 14px; font-weight: 600; color: var(--mui-label2); }
-.fcl-stat-l { font-size: 11.5px; color: var(--mui-label2); margin-top: 4px; letter-spacing: -0.005em; }
+/* ── Rezultat: sažetak s prstenom ──────────────────────────────────── */
+.fcl-summary { display: flex; align-items: center; gap: 16px; background: var(--fcl-card); border-radius: 20px; padding: 16px 18px; box-shadow: var(--fcl-sh); margin-top: 8px; }
+.fcl-ring { flex: none; width: 76px; height: 76px; border-radius: 50%; display: grid; place-items: center; position: relative; }
+.fcl-ring::before { content: ''; position: absolute; inset: 7px; background: var(--fcl-card); border-radius: 50%; }
+.fcl-ring-v { position: relative; font-size: 20px; font-weight: 700; letter-spacing: -0.03em; font-variant-numeric: tabular-nums; color: var(--fcl-ink); }
+.fcl-summary-tx { flex: 1; min-width: 0; }
+.fcl-summary-tx .rl { font-size: 11px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: var(--fcl-ink3); }
+.fcl-summary-tx .big { font-size: 24px; font-weight: 700; letter-spacing: -0.03em; color: var(--fcl-ink); }
+.fcl-summary-tx .big small { font-size: 15px; font-weight: 600; color: var(--fcl-ink2); letter-spacing: -0.01em; }
+.fcl-summary-tx .sub { font-size: 13px; color: var(--fcl-ink2); margin-top: 3px; letter-spacing: -0.01em; }
 
-.fcl-warn {
-    background: rgba(255, 59, 48, 0.1); color: var(--mui-red-t); border-radius: 14px;
-    padding: 12px 14px; font-size: 13.5px; line-height: 1.45; margin-top: 12px;
-}
+.fcl-warn { margin-top: 12px; padding: 13px 15px; border-radius: 15px; background: rgba(255, 159, 10, 0.12); color: var(--fcl-amber-d); font-size: 13.5px; line-height: 1.45; }
 .fcl-warn b { font-weight: 700; }
 
-.fcl-sheets { display: flex; flex-direction: column; gap: 12px; margin-top: 12px; }
-.fcl-sheet { background: var(--fcl-fill); border-radius: var(--fcl-radius); padding: 12px; box-shadow: var(--fcl-shadow); }
-.fcl-sheet-head { display: flex; align-items: center; gap: 8px; padding: 0 2px 10px; }
-.fcl-sheet-title { font-size: 15px; font-weight: 600; color: var(--mui-label); }
-.fcl-sheet-sub { font-size: 12.5px; color: var(--mui-label2); font-variant-numeric: tabular-nums; }
-.fcl-eff { margin-left: auto; font-size: 13px; font-weight: 700; padding: 3px 9px; border-radius: 999px; font-variant-numeric: tabular-nums; }
-.fcl-eff.good { background: rgba(52, 199, 89, 0.15); color: var(--mui-green-t); }
-.fcl-eff.ok { background: rgba(255, 149, 0, 0.15); color: var(--mui-orange-t); }
-.fcl-eff.low { background: rgba(255, 59, 48, 0.13); color: var(--mui-red-t); }
-.fcl-sheet-zoom { flex: none; width: 34px; height: 34px; border: none; border-radius: 9px; background: rgba(120, 120, 128, 0.1); color: var(--mui-label2); display: flex; align-items: center; justify-content: center; cursor: pointer; }
-.fcl-sheet-zoom:active { background: rgba(120, 120, 128, 0.22); }
+.fcl-sheets { display: flex; flex-direction: column; gap: 13px; margin-top: 14px; }
+.fcl-sheet { background: var(--fcl-card); border-radius: 20px; padding: 13px 13px 11px; box-shadow: var(--fcl-sh); }
+.fcl-sheet-h { display: flex; align-items: center; gap: 9px; padding: 2px 3px 11px; }
+.fcl-sheet-t { font-size: 15.5px; font-weight: 600; letter-spacing: -0.02em; color: var(--fcl-ink); }
+.fcl-sheet-s { font-size: 12.5px; color: var(--fcl-ink2); font-variant-numeric: tabular-nums; }
+.fcl-eff { margin-left: auto; font-size: 12.5px; font-weight: 700; padding: 4px 10px; border-radius: 99px; font-variant-numeric: tabular-nums; }
+.fcl-eff.good { background: rgba(48, 197, 88, 0.16); color: var(--fcl-green-d); }
+.fcl-eff.ok { background: rgba(255, 159, 10, 0.18); color: var(--fcl-amber-d); }
+.fcl-eff.low { background: rgba(255, 69, 58, 0.14); color: var(--fcl-red-d); }
+.fcl-sheet-zoom { flex: none; width: 34px; height: 34px; border: none; border-radius: 10px; background: var(--fcl-fill); color: var(--fcl-ink2); display: flex; align-items: center; justify-content: center; cursor: pointer; }
 
-/* ── SVG ploče ─────────────────────────────────────────────────────── */
-.fcl-svg { width: 100%; height: auto; display: block; border-radius: 8px; background: #eef1f5; }
-.fcl-svg-board { fill: #fbfcfe; stroke: #c3ccd6; }
+.fcl-svg { width: 100%; height: auto; display: block; border-radius: 11px; background: #F1F4F9; }
+.fcl-svg-board { fill: #FBFCFE; stroke: #C7D0DC; }
 .fcl-svg-cut { stroke: #e0563a; }
 
-.fcl-legend { display: flex; flex-wrap: wrap; gap: 7px 14px; padding: 14px 4px 2px; }
-.fcl-legend span { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--mui-label2); font-variant-numeric: tabular-nums; }
-.fcl-legend i { width: 12px; height: 12px; border-radius: 3px; flex: none; }
+.fcl-legend { display: flex; flex-wrap: wrap; gap: 8px 14px; padding: 15px 4px 4px; }
+.fcl-legend span { display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px; color: var(--fcl-ink2); font-variant-numeric: tabular-nums; }
+.fcl-legend i { width: 11px; height: 11px; border-radius: 3px; flex: none; }
 
-/* ── Zoom (uvećana ploča preko ekrana) ─────────────────────────────── */
-.fcl-zoom {
-    position: fixed; inset: 0; z-index: 1200; background: rgba(20, 22, 28, 0.92);
-    display: flex; align-items: center; justify-content: center; padding: 16px; animation: fcl-fade 0.15s ease;
+/* ── Bottom sheet (postavke) ───────────────────────────────────────── */
+.fcl-scrim { position: fixed; inset: 0; z-index: 1100; background: rgba(10, 15, 25, 0.4); opacity: 0; pointer-events: none; transition: opacity 0.25s; }
+.fcl-scrim.on { opacity: 1; pointer-events: auto; }
+.fcl-sheetm {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 1101; width: 100%;
+    transform: translateY(100%); background: var(--fcl-bg); border-radius: 26px 26px 0 0;
+    padding: 8px 18px calc(24px + env(safe-area-inset-bottom, 0px));
+    box-shadow: var(--fcl-sh-lg); transition: transform 0.32s cubic-bezier(0.32, 0.72, 0, 1);
+    max-height: 90dvh; overflow-y: auto;
 }
+.fcl-sheetm.on { transform: translateY(0); }
+.fcl-grab { width: 38px; height: 5px; border-radius: 3px; background: var(--fcl-ink3); opacity: 0.5; margin: 6px auto 14px; }
+.fcl-sheetm h3 { margin: 0 0 16px; font-size: 19px; font-weight: 700; letter-spacing: -0.03em; text-align: center; color: var(--fcl-ink); }
+.fcl-fsec { font-size: 12px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: var(--fcl-ink3); margin: 18px 2px 10px; }
+.fcl-fsec.first { margin-top: 4px; }
+.fcl-presets { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 2px; }
+.fcl-preset { flex: 1 1 calc(50% - 4px); height: 46px; border: 1.5px solid var(--fcl-line); border-radius: 13px; background: #fff; font-family: inherit; color: var(--fcl-ink); font-size: 14.5px; font-weight: 500; font-variant-numeric: tabular-nums; cursor: pointer; }
+.fcl-preset.on { background: var(--fcl-accent); border-color: transparent; color: #fff; font-weight: 600; }
+.fcl-switch { display: flex; align-items: center; gap: 12px; margin-top: 16px; padding: 13px 14px; border-radius: 15px; background: #fff; box-shadow: var(--fcl-sh); cursor: pointer; }
+.fcl-switch-tx { flex: 1; min-width: 0; }
+.fcl-switch-tx b { display: block; font-size: 15px; font-weight: 500; letter-spacing: -0.01em; color: var(--fcl-ink); }
+.fcl-switch-tx small { display: block; font-size: 12.5px; color: var(--fcl-ink2); margin-top: 1px; }
+.fcl-track { flex: none; width: 51px; height: 31px; border-radius: 99px; background: rgba(120, 120, 128, 0.28); position: relative; transition: background 0.2s; }
+.fcl-track.on { background: var(--fcl-green); }
+.fcl-knob { position: absolute; top: 2px; left: 2px; width: 27px; height: 27px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3); transition: transform 0.2s; }
+.fcl-track.on .fcl-knob { transform: translateX(20px); }
+.fcl-done { width: 100%; height: 52px; margin-top: 22px; border: none; border-radius: 15px; background: var(--fcl-accent); color: #fff; font-family: inherit; font-size: 16.5px; font-weight: 600; cursor: pointer; }
+
+/* ── Zoom (uvećana ploča) ──────────────────────────────────────────── */
+.fcl-zoom { position: fixed; inset: 0; z-index: 1200; background: rgba(12, 16, 24, 0.94); display: flex; align-items: center; justify-content: center; padding: 18px; animation: fcl-fade 0.15s ease; }
 @keyframes fcl-fade { from { opacity: 0; } to { opacity: 1; } }
-.fcl-zoom-inner { width: 100%; max-height: 86vh; overflow: auto; }
+.fcl-zoom-inner { width: 100%; max-height: 88dvh; overflow: auto; }
 .fcl-zoom-inner .fcl-svg { background: #fff; }
-.fcl-zoom-close {
-    position: absolute; top: calc(14px + env(safe-area-inset-top, 0px)); right: 16px; z-index: 1;
-    width: 42px; height: 42px; border-radius: 50%; border: none; background: rgba(255, 255, 255, 0.18);
-    color: #fff; display: flex; align-items: center; justify-content: center; cursor: pointer;
-}
+.fcl-zoom-close { position: absolute; top: calc(16px + env(safe-area-inset-top, 0px)); right: 18px; z-index: 1; width: 42px; height: 42px; border-radius: 50%; border: none; background: rgba(255, 255, 255, 0.16); color: #fff; display: flex; align-items: center; justify-content: center; cursor: pointer; }
 
 /* ── Toast ─────────────────────────────────────────────────────────── */
-.fcl-toast {
-    position: fixed; left: 50%; bottom: calc(90px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%);
-    z-index: 1300; max-width: 84%; padding: 11px 18px; border-radius: 12px;
-    background: #1c1c1e; color: #fff; font-size: 14.5px; text-align: center; letter-spacing: -0.01em;
-    box-shadow: 0 10px 30px -8px rgba(0, 0, 0, 0.45); animation: fcl-fade 0.18s ease;
-}
+.fcl-toast { position: fixed; left: 50%; bottom: calc(104px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); z-index: 1300; max-width: 84%; padding: 11px 18px; border-radius: 13px; background: #12161E; color: #fff; font-size: 14.5px; text-align: center; letter-spacing: -0.01em; box-shadow: 0 12px 34px -10px rgba(0, 0, 0, 0.5); animation: fcl-fade 0.18s ease; }
+
+@media (prefers-reduced-motion: reduce) { .fcl-scrim, .fcl-sheetm, .fcl-go, .fcl-add-btn { transition: none; } }
