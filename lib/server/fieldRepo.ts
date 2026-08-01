@@ -262,3 +262,12 @@ export async function getTasksForWorker(orgId: string, workerId: string): Promis
         .get();
     return snap.docs.map(d => d.data() as Task);
 }
+
+export async function getTaskById(orgId: string, taskId: string): Promise<Task | null> {
+    const snap = await adminDb().collection('tasks')
+        .where('Organization_ID', '==', orgId)
+        .where('Task_ID', '==', taskId)
+        .limit(1)
+        .get();
+    return snap.empty ? null : (snap.docs[0].data() as Task);
+}

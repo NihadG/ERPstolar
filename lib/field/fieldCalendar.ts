@@ -20,6 +20,16 @@ export interface CalendarWork {
     processName: string | null;
 }
 
+/** Nalog na kalendaru: raspon dana koji pokriva + status (za boju trake). */
+export interface CalendarOrderSpan {
+    orderId: string;
+    name: string;
+    status: string;                  // Na čekanju | U toku | …
+    isPaused: boolean;
+    startDate: string;               // YYYY-MM-DD (prvi dan trake, može biti < mjesec)
+    endDate: string;                 // YYYY-MM-DD (zadnji dan trake, može biti > mjesec)
+}
+
 export interface CalendarDay {
     date: string;                    // YYYY-MM-DD
     dow: number;                     // 0 = ponedjeljak … 6 = nedjelja
@@ -37,6 +47,8 @@ export interface WorkerCalendarMonth {
     /** Broj praznih ćelija prije prvog dana (poravnanje na ponedjeljak). */
     leadBlanks: number;
     days: CalendarDay[];
+    /** Aktivni nalozi kao višednevne trake (presijecaju ovaj mjesec). */
+    orders: CalendarOrderSpan[];
     summary: {
         presentDays: number;         // Prisutan + Teren
         workedDays: number;          // dani s bar jednom dnevnicom
@@ -44,15 +56,52 @@ export interface WorkerCalendarMonth {
     };
 }
 
+/** Sirovi nalog za projekciju na kalendar (bez novca). */
+export interface WorkerCalendarOrderInput {
+    orderId: string;
+    name: string;
+    status: string;
+    isPaused: boolean;
+    plannedStart: string | null;     // Planned_Start_Date
+    plannedEnd: string | null;       // Planned_End_Date
+    startedAt: string | null;        // Started_At
+    dueDate: string | null;          // Due_Date
+}
+
 export interface WorkerCalendarInput {
     month: string;                   // YYYY-MM
     workerId: string;
+    /** Današnji datum (YYYY-MM-DD) — za fallback raspon nezakazanih naloga. */
+    today: string;
     /** Sve dnevnice organizacije za mjesec (za razrješenje kolega). */
     allLogs: WorkLog[];
     /** Prisustvo radnika za mjesec. */
     attendance: WorkerAttendance[];
     /** Product_ID → naziv (WorkLog ne nosi naziv proizvoda). Puni ga ruta. */
     productNameById: Map<string, string>;
+    /** Radnikovi aktivni nalozi — projektuju se u višednevne trake. */
+    orders?: WorkerCalendarOrderInput[];
+}
+
+/**
+ * Raspon trake naloga na kalendaru:
+ *   • zakazan (Planned_Start + Planned_End) → tačno kako je planirano;
+ *   • inače od danas (ili Started_At u budućnosti) do roka (Due_Date).
+ * Bez ijednog upotrebljivog datuma → null (nalog se ne crta).
+ */
+export function computeOrderSpan(
+    o: WorkerCalendarOrderInput, today: string
+): { startDate: string; endDate: string } | null {
+    const ps = dOnly(o.plannedStart);
+    const pe = dOnly(o.plannedEnd);
+    if (ps && pe) return { startDate: ps, endDate: ps <= pe ? pe : ps };
+
+    const due = dOnly(o.dueDate);
+    if (!due) return null;
+    const started = dOnly(o.startedAt);
+    // Traka kreće od danas (ili budućeg Started_At), ne od davne prošlosti.
+    const start = started && started > today ? started : today;
+    return { startDate: start, endDate: due >= start ? due : start };
 }
 
 /** Broj dana u mjesecu i granice. */
@@ -138,12 +187,33 @@ export function buildWorkerCalendar(input: WorkerCalendarInput): WorkerCalendarM
         });
     }
 
+    // ── Nalozi kao trake (samo oni koji presijecaju ovaj mjesec) ─────
+    const orderSpans: CalendarOrderSpan[] = [];
+    for (const o of input.orders || []) {
+        const span = computeOrderSpan(o, input.today);
+        if (!span) continue;
+        if (span.endDate < from || span.startDate > to) continue;   // van mjeseca
+        orderSpans.push({
+            orderId: o.orderId,
+            name: o.name,
+            status: o.status,
+            isPaused: o.isPaused,
+            startDate: span.startDate,
+            endDate: span.endDate,
+        });
+    }
+    // Raniji početak prvi; stabilno po nazivu (predvidiv raspored traka).
+    orderSpans.sort((a, b) =>
+        a.startDate.localeCompare(b.startDate) || a.name.localeCompare(b.name, 'bs')
+    );
+
     return {
         month,
         from,
         to,
         leadBlanks: dowMon(from),
         days: dayCells,
+        orders: orderSpans,
         summary: { presentDays, workedDays, fieldDays },
     };
 }

@@ -187,6 +187,115 @@
     cursor: pointer;
 }
 
+/* ── Kartice posla / naloga (boja = status, meki gradijent) ─────────
+   Koristi se u „Danas" (proizvodi po projektu) i „Nalozi". Boja nosi
+   status: crveno gori, narandžasto stoji, zeleno gotovo, plavo u toku.
+   Tonovi se postavljaju preko --j-* varijabli po klasi .fwk-job--*. */
+.fwk-jobs { display: flex; flex-direction: column; gap: 10px; }
+
+.fwk-job {
+    position: relative;
+    display: block;
+    width: 100%;
+    text-align: left;
+    border: none;
+    border-radius: 16px;
+    padding: 13px 15px 14px;
+    font-family: inherit;
+    color: var(--mui-label);
+    cursor: pointer;
+    overflow: hidden;
+    box-shadow: 0 1px 2px rgba(20, 30, 60, 0.05), 0 14px 30px -20px rgba(20, 30, 60, 0.28);
+    -webkit-tap-highlight-color: transparent;
+    --j-accent: var(--mui-blue);
+    --j-tintA: rgba(0, 122, 255, 0.14);
+    --j-tintB: rgba(0, 122, 255, 0.02);
+    background: linear-gradient(135deg, var(--j-tintA), var(--j-tintB) 62%), var(--mui-cell);
+}
+
+/* Obojeni rail uz lijevu ivicu — status na prvi pogled. */
+.fwk-job::before {
+    content: '';
+    position: absolute;
+    left: 0; top: 0; bottom: 0;
+    width: 4px;
+    background: var(--j-accent);
+}
+
+.fwk-job:active { transform: scale(0.985); }
+.fwk-job:disabled { cursor: default; }
+
+.fwk-job--blue { --j-accent: var(--mui-blue); --j-tintA: rgba(0, 122, 255, 0.14); --j-tintB: rgba(0, 122, 255, 0.02); }
+.fwk-job--orange { --j-accent: var(--mui-orange); --j-tintA: rgba(255, 149, 0, 0.16); --j-tintB: rgba(255, 149, 0, 0.02); }
+.fwk-job--red { --j-accent: var(--mui-red); --j-tintA: rgba(255, 59, 48, 0.15); --j-tintB: rgba(255, 59, 48, 0.02); }
+.fwk-job--green { --j-accent: var(--mui-green); --j-tintA: rgba(52, 199, 89, 0.16); --j-tintB: rgba(52, 199, 89, 0.02); }
+.fwk-job--gray { --j-accent: rgba(120, 120, 128, 0.5); --j-tintA: rgba(120, 120, 128, 0.1); --j-tintB: rgba(120, 120, 128, 0.01); }
+
+.fwk-job-top { display: flex; align-items: center; gap: 11px; }
+
+.fwk-job-ic {
+    flex: none;
+    width: 38px; height: 38px;
+    border-radius: 11px;
+    display: flex; align-items: center; justify-content: center;
+    background: var(--j-accent);
+    color: #fff;
+    box-shadow: 0 4px 10px -3px var(--j-accent);
+}
+
+.fwk-job-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+
+.fwk-job-name {
+    font-size: 16px; font-weight: 640; letter-spacing: -0.02em; color: var(--mui-label);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+.fwk-job-sub {
+    font-size: 13px; color: var(--mui-label2); letter-spacing: -0.01em;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+.fwk-job-chev { flex: none; color: var(--mui-label3); }
+
+.fwk-job-badge {
+    flex: none;
+    display: inline-flex; align-items: center; gap: 3px;
+    padding: 3px 8px;
+    border-radius: 999px;
+    font-size: 12px; font-weight: 600;
+    background: var(--j-accent); color: #fff;
+}
+
+.fwk-job-bar {
+    position: relative;
+    height: 7px; border-radius: 4px;
+    margin: 12px 0 7px;
+    background: rgba(120, 120, 128, 0.16);
+    overflow: hidden;
+}
+
+.fwk-job-fill {
+    position: absolute; inset: 0 auto 0 0;
+    border-radius: 4px;
+    background: var(--j-accent);
+}
+
+.fwk-job-foot {
+    display: flex; align-items: center; gap: 9px; flex-wrap: wrap;
+    font-size: 12.5px; color: var(--mui-label2); letter-spacing: -0.01em;
+}
+
+.fwk-job-foot b { color: var(--mui-label); font-weight: 680; font-variant-numeric: tabular-nums; }
+.fwk-job-due.soon { color: var(--mui-orange-t); font-weight: 600; }
+.fwk-job-due.late { color: var(--mui-red-t); font-weight: 600; }
+
+.fwk-job-tag {
+    padding: 1.5px 8px; border-radius: 6px; font-size: 12px; font-weight: 600;
+    background: rgba(255, 149, 0, 0.16); color: var(--mui-orange-t);
+}
+
+.fwk-job-mat { margin-left: auto; color: var(--j-accent); font-weight: 600; }
+
 /* ── Kalendar ──────────────────────────────────────────────────────── */
 
 .fwk-cal-bar {
@@ -220,90 +329,111 @@
 .fwk-cal-arrow:active { background: rgba(120, 120, 128, 0.22); }
 .fwk-cal-arrow:disabled { opacity: 0.35; pointer-events: none; }
 
-.fwk-cal-grid {
+/* Mjesec kao mreža sedmica. Gore brojevi dana (+ podvlaka prisustva), ispod
+   „lanes" sa trakama naloga koje se protežu preko koliko god dana traju. */
+.fwk-mc {
+    background: var(--mui-cell);
+    border-radius: 16px;
+    padding: 8px 8px 10px;
+    box-shadow: 0 1px 2px rgba(20, 30, 60, 0.05), 0 14px 30px -20px rgba(20, 30, 60, 0.28);
+}
+
+.fwk-mc-dow {
     display: grid;
     grid-template-columns: repeat(7, 1fr);
-    gap: 5px;
+    margin-bottom: 2px;
 }
-
-.fwk-cal-dow {
+.fwk-mc-dow div {
     text-align: center;
-    font-size: 11.5px;
+    font-size: 11px;
     font-weight: 600;
     color: var(--mui-label3);
-    padding-bottom: 4px;
+    padding-bottom: 3px;
 }
 
-.fwk-cal-cell {
-    position: relative;
-    aspect-ratio: 1;
+.fwk-mc-wk { border-top: 1px solid var(--mui-sep); padding-top: 3px; }
+.fwk-mc-wk:first-of-type { border-top: none; }
+
+.fwk-mc-days { display: grid; grid-template-columns: repeat(7, 1fr); }
+
+.fwk-mc-day {
+    height: 26px;
     border: none;
-    background: var(--mui-cell);
-    border-radius: 12px;
+    background: none;
+    font-family: inherit;
     display: flex;
     flex-direction: column;
     align-items: center;
-    justify-content: center;
-    gap: 3px;
-    cursor: pointer;
+    gap: 2px;
     padding: 0;
-    font-family: inherit;
-    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+    cursor: pointer;
 }
+.fwk-mc-day:active .fwk-mc-num { opacity: 0.55; }
+.fwk-mc-day.out { cursor: default; }
 
-.fwk-cal-cell:active { transform: scale(0.94); }
-.fwk-cal-cell.blank { background: none; box-shadow: none; cursor: default; }
-.fwk-cal-cell.blank:active { transform: none; }
-
-.fwk-cal-num {
-    font-size: 16px;
+.fwk-mc-num {
+    font-size: 13px;
     font-weight: 600;
+    line-height: 1.05;
     color: var(--mui-label);
-    line-height: 1;
     font-variant-numeric: tabular-nums;
 }
-
-.fwk-cal-cell.today .fwk-cal-num {
+.fwk-mc-day.out .fwk-mc-num { color: var(--mui-label3); opacity: 0.55; }
+.fwk-mc-day.sun .fwk-mc-num { color: var(--mui-label3); }
+.fwk-mc-day.today .fwk-mc-num {
     color: #fff;
     background: var(--mui-blue);
-    width: 26px;
-    height: 26px;
+    width: 22px;
+    height: 22px;
     border-radius: 50%;
     display: flex;
     align-items: center;
     justify-content: center;
 }
 
-.fwk-cal-cell.off .fwk-cal-num { color: var(--mui-label3); }
+.fwk-mc-att { width: 15px; height: 2.5px; border-radius: 2px; background: transparent; }
+.fwk-mc-att.p { background: var(--mui-green); }
+.fwk-mc-att.r { background: var(--mui-orange); }
 
-/* Tanka traka statusa prisustva na dnu ćelije. */
-.fwk-cal-att {
-    position: absolute;
-    left: 8px;
-    right: 8px;
-    bottom: 6px;
-    height: 3px;
-    border-radius: 2px;
+.fwk-mc-lanes {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    grid-auto-rows: 18px;
+    row-gap: 3px;
+    padding: 3px 0 5px;
 }
 
-.fwk-cal-att.present { background: var(--mui-green); }
-.fwk-cal-att.field { background: var(--mui-blue); }
-.fwk-cal-att.rest { background: var(--mui-orange); }
-.fwk-cal-att.off { background: var(--mui-label3); }
-
-/* Tačkica: dan ima proknjižen rad. */
-.fwk-cal-work {
-    width: 5px;
-    height: 5px;
-    border-radius: 50%;
-    background: var(--mui-purple);
+.fwk-mc-evt {
+    height: 18px;
+    border: none;
+    border-radius: 6px;
+    font-family: inherit;
+    font-size: 10.5px;
+    font-weight: 640;
+    letter-spacing: -0.01em;
+    color: #fff;
+    display: flex;
+    align-items: center;
+    padding: 0 7px;
+    overflow: hidden;
+    cursor: pointer;
+    box-shadow: 0 2px 6px -3px rgba(0, 0, 0, 0.5);
 }
+.fwk-mc-evt:active { filter: brightness(0.94); }
+.fwk-mc-evt-t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fwk-mc-evt .a { font-weight: 800; opacity: 0.85; flex: none; }
+.fwk-mc-evt.cl { border-top-left-radius: 0; border-bottom-left-radius: 0; padding-left: 5px; }
+.fwk-mc-evt.cr { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+.fwk-mc-evt.blue { background: linear-gradient(180deg, #2b93ff, #007aff); }
+.fwk-mc-evt.orange { background: linear-gradient(180deg, #ffab33, #f38b00); }
+.fwk-mc-evt.gray { background: linear-gradient(180deg, #adadb4, #8e8e95); }
+.fwk-mc-evt.green { background: linear-gradient(180deg, #49d266, #2fb251); }
 
-/* Legenda ispod mreže. */
+/* Legenda ispod kalendara. */
 .fwk-cal-legend {
     display: flex;
     flex-wrap: wrap;
-    gap: 12px;
+    gap: 11px 13px;
     padding: 14px 4px 2px;
     font-size: 12.5px;
     color: var(--mui-label2);
@@ -312,15 +442,21 @@
 .fwk-cal-legend span {
     display: inline-flex;
     align-items: center;
-    gap: 5px;
+    gap: 6px;
 }
 
 .fwk-cal-legend i {
-    width: 10px;
+    width: 12px;
     height: 3px;
     border-radius: 2px;
     display: inline-block;
 }
+
+/* Deblji uzorak za trake naloga (razlikuje se od tanke linije prisustva). */
+.fwk-cal-legend i.fwk-mc-swatch { width: 14px; height: 8px; border-radius: 3px; }
+.fwk-mc-swatch.blue { background: linear-gradient(180deg, #2b93ff, #007aff); }
+.fwk-mc-swatch.orange { background: linear-gradient(180deg, #ffab33, #f38b00); }
+.fwk-mc-swatch.gray { background: linear-gradient(180deg, #adadb4, #8e8e95); }
 
 /* ── Dan (sheet) ───────────────────────────────────────────────────── */
 
@@ -345,6 +481,18 @@
     color: var(--mui-label);
     letter-spacing: -0.01em;
 }
+
+/* ── Napomene: veza na nalog/proizvod uz naslov ────────────────────── */
+.fwk-note-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.fwk-note-link svg { flex: none; opacity: 0.7; }
 
 /* ── Panel efikasnosti (tab „Ja") ──────────────────────────────────── */
 

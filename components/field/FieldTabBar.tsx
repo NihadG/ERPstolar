@@ -11,14 +11,14 @@
 // gore desno (vidi ControllerApp).
 // ════════════════════════════════════════════════════════════════════
 
-import { ClipboardList, FolderOpen, Home, CalendarCheck, CalendarDays, ShoppingCart, User } from 'lucide-react';
+import { ClipboardList, FolderOpen, Home, CalendarCheck, CalendarDays, ShoppingCart, StickyNote, User } from 'lucide-react';
 import { haptic } from '@/components/tabs/mobile/useSwipe';
 import type { UserRole } from '@/lib/types';
 import '@/components/tabs/mobile/MobileTabBar.css';
 
 export type FieldTabId =
     | 'orders' | 'attendance' | 'purchases' | 'projects'   // kontrolor
-    | 'home' | 'calendar' | 'me';                          // radnik
+    | 'home' | 'notes' | 'calendar' | 'me';                // radnik
 
 export interface FieldTab {
     id: FieldTabId;
@@ -37,7 +37,7 @@ const CONTROLLER_TABS: FieldTab[] = [
 const WORKER_TABS: FieldTab[] = [
     { id: 'home', label: 'Danas', Icon: Home },
     { id: 'orders', label: 'Nalozi', Icon: ClipboardList },
-    { id: 'projects', label: 'Projekti', Icon: FolderOpen },
+    { id: 'notes', label: 'Napomene', Icon: StickyNote },
     { id: 'calendar', label: 'Kalendar', Icon: CalendarDays },
     { id: 'me', label: 'Ja', Icon: User },
 ];

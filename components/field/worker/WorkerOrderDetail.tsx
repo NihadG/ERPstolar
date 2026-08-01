@@ -3,7 +3,7 @@
 // ════════════════════════════════════════════════════════════════════
 // RADNIK — DETALJ NALOGA (s prijedlozima)
 //
-// Tri taba: Tok (procesi), Proizvodi (materijali + zatvaranje), Zadaci. Svaka
+// Tri taba: Tok (procesi), Proizvodi (materijali + zatvaranje), Napomene. Svaka
 // radnja radnika je PRIJEDLOG — ništa se ne mijenja dok vlasnik/kontrolor ne
 // potvrdi. Zato nakon svake radnje: „Prijedlog poslan — čeka potvrdu", a gore
 // stoji koliko prijedloga na ovom nalogu čeka. U pregledu je sve ugašeno.
@@ -194,12 +194,12 @@ export default function WorkerOrderDetail({ orderId, productById, previewUid, sh
                             options={[
                                 { id: 'flow', label: `Tok ${detail.flow.length}` },
                                 { id: 'products', label: `Proizvodi ${detail.items.length}` },
-                                { id: 'tasks', label: `Zadaci ${detail.tasks.length}` },
+                                { id: 'tasks', label: `Napomene ${detail.tasks.length}` },
                             ]}
                         />
                     </div>
 
-                    {/* ── Tok procesa ─────────────────────────────────── */}
+                    {/* ── Tok procesa: u toku gore, gotovi ispod ──────── */}
                     {tab === 'flow' && (
                         <>
                             {!readOnly && (
@@ -211,28 +211,39 @@ export default function WorkerOrderDetail({ orderId, productById, previewUid, sh
                             )}
                             {detail.flow.length === 0 ? (
                                 <MEmpty title="Nema toka" sub="Nalog još nema definisane procese." />
-                            ) : (
-                                <MList lead>
-                                    {detail.flow.map(row => {
-                                        const meta = STATE_META[row.state];
-                                        return (
-                                            <MItem key={row.id}>
-                                                <MCell onClick={readOnly ? undefined : () => setProcSheet(row)} chevron={!readOnly}>
-                                                    <MIcon tone={meta.tone}><meta.Icon size={19} /></MIcon>
-                                                    <MText
-                                                        title={row.name}
-                                                        sub={<>
-                                                            <MPill tone={meta.tone}>{meta.label}</MPill>
-                                                            {row.total > 1 && <span>{row.done}/{row.total} proizvoda</span>}
-                                                            {row.workers.length > 0 && <span>{row.workers.join(', ')}</span>}
-                                                        </>}
-                                                    />
-                                                </MCell>
-                                            </MItem>
-                                        );
-                                    })}
-                                </MList>
-                            )}
+                            ) : (() => {
+                                const openRows = detail.flow.filter(r => r.state !== 'done');
+                                const doneRows = detail.flow.filter(r => r.state === 'done');
+                                const renderRow = (row: ProcRow) => {
+                                    const meta = STATE_META[row.state];
+                                    return (
+                                        <MItem key={row.id}>
+                                            <MCell onClick={readOnly ? undefined : () => setProcSheet(row)} chevron={!readOnly}>
+                                                <MIcon tone={meta.tone}><meta.Icon size={19} /></MIcon>
+                                                <MText
+                                                    title={row.name}
+                                                    sub={<>
+                                                        <MPill tone={meta.tone}>{meta.label}</MPill>
+                                                        {row.total > 1 && <span>{row.done}/{row.total} proizvoda</span>}
+                                                        {row.workers.length > 0 && <span>{row.workers.join(', ')}</span>}
+                                                    </>}
+                                                />
+                                            </MCell>
+                                        </MItem>
+                                    );
+                                };
+                                return (
+                                    <>
+                                        {openRows.length > 0 && <MList lead>{openRows.map(renderRow)}</MList>}
+                                        {doneRows.length > 0 && (
+                                            <>
+                                                <MSection title="Gotovo" right={<span className="mui-dim">{doneRows.length}</span>} />
+                                                <MList lead>{doneRows.map(renderRow)}</MList>
+                                            </>
+                                        )}
+                                    </>
+                                );
+                            })()}
                         </>
                     )}
 
@@ -279,18 +290,18 @@ export default function WorkerOrderDetail({ orderId, productById, previewUid, sh
                         )
                     )}
 
-                    {/* ── Zadaci ──────────────────────────────────────── */}
+                    {/* ── Napomene ────────────────────────────────────── */}
                     {tab === 'tasks' && (
                         <>
                             {!readOnly && (
                                 <div style={{ padding: '2px 0 10px' }}>
                                     <MButton variant="tinted" onClick={() => { setText(''); setAddTaskOpen(true); }}>
-                                        <Plus size={18} /> Dodaj zadatak
+                                        <Plus size={18} /> Dodaj napomenu
                                     </MButton>
                                 </div>
                             )}
                             {detail.tasks.length === 0 ? (
-                                <MEmpty title="Nema zadataka" sub="Dodaj zadatak — poslodavac ga potvrđuje." />
+                                <MEmpty title="Nema napomena" sub="Dodaj napomenu — poslodavac je potvrđuje." />
                             ) : (
                                 <MList lead>
                                     {detail.tasks.map(t => (
@@ -315,7 +326,7 @@ export default function WorkerOrderDetail({ orderId, productById, previewUid, sh
                                                 />
                                                 {!readOnly && (
                                                     <button
-                                                        type="button" className="fwk-iconbtn danger" aria-label="Obriši zadatak"
+                                                        type="button" className="fwk-iconbtn danger" aria-label="Obriši napomenu"
                                                         onClick={(e) => { e.stopPropagation(); submit({ kind: 'task_delete', payload: { taskId: t.taskId, taskTitle: t.title }, workOrderId: orderId }); }}
                                                     >
                                                         <Trash2 size={16} />
@@ -382,10 +393,10 @@ export default function WorkerOrderDetail({ orderId, productById, previewUid, sh
                 </div>
             </MSheet>
 
-            {/* ── Sheet: dodaj zadatak ────────────────────────────────── */}
-            <MSheet open={addTaskOpen} title="Novi zadatak" onClose={() => setAddTaskOpen(false)}>
+            {/* ── Sheet: dodaj napomenu ───────────────────────────────── */}
+            <MSheet open={addTaskOpen} title="Nova napomena" onClose={() => setAddTaskOpen(false)}>
                 <input
-                    className="fwk-input" placeholder="Šta treba uraditi?" value={text}
+                    className="fwk-input" placeholder="Upiši napomenu…" value={text}
                     onChange={(e) => setText(e.target.value)} autoFocus
                 />
                 <div className="fld-submit">

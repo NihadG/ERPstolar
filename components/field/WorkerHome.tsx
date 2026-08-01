@@ -1,24 +1,33 @@
 'use client';
 
 // ════════════════════════════════════════════════════════════════════
-// RADNIK — POČETNA
+// RADNIK — POČETNA („Danas")
 //
 // Prati pravila mobilnog dizajna (vidi MobileUI.css): zaključana tip-skala,
-// zasebne kartice kad red nosi više podataka, boja = status.
+// zasebne kartice kad red nosi više podataka, BOJA = STATUS.
+//
+// „Moj posao" je grupisan PO PROJEKTU (kao svuda gdje su proizvodi), a svaki
+// proizvod se otvara u materijale (isti detalj koji je koristio tab Projekti).
+// Kartice su obojene po statusu s mekim gradijentom — da radnik na prvi pogled
+// vidi šta gori (kasni/rok danas = crveno), šta stoji (pauza = narandžasto),
+// šta je gotovo (zeleno) i šta je u toku (plavo).
 //
 // NEMA NOVCA. Ni dnevnice, ni vrijednosti proizvoda, ni profita — hero nosi
-// NAPREDAK i ROK. To nije samo dizajnerska odluka: payload s kojim ova
-// komponenta radi (lib/field/fieldHome.ts) iznose ni ne sadrži.
+// NAPREDAK i ROK. Payload (lib/field/fieldHome.ts) iznose ni ne sadrži.
 // ════════════════════════════════════════════════════════════════════
 
-import { AlertCircle, CalendarCheck, ClipboardList, Wrench, Hourglass } from 'lucide-react';
-import type { FieldHomePayload } from '@/lib/field/fieldHome';
+import { useMemo, useState } from 'react';
+import { AlertCircle, CalendarCheck, ChevronRight, Package, Wrench, Hourglass } from 'lucide-react';
+import type { FieldHomePayload, FieldAssignment } from '@/lib/field/fieldHome';
+import type { FieldProductDetail } from '@/lib/field/fieldProjects';
 import { useWorkerRequests } from '@/lib/field/useWorkerRequests';
 import { requestKindLabel } from '@/lib/changeRequests';
 import CutlistLauncher from './cutlist/CutlistLauncher';
+import WorkerProductDetail from './worker/WorkerProductDetail';
+import type { ShowToast } from './worker/WorkerApp';
 import {
     MLarge, MHero, MSection, MList, MItem, MCell, MText, MValue, MPill,
-    MCard, MCardHead, MCardBody, MIcon, MProgress, MEmpty, MCheck,
+    MIcon, MEmpty,
 } from '@/components/tabs/mobile/MobileUI';
 
 const REQ_STATUS: Record<string, { tone: 'orange' | 'green' | 'red' | 'gray'; label: string }> = {
@@ -33,9 +42,16 @@ const ATTENDANCE_TONE: Record<string, 'green' | 'blue' | 'orange' | 'gray'> = {
     'Bolovanje': 'orange', 'Odsutan': 'gray', 'Vikend': 'gray',
 };
 
-const PRIORITY_TONE: Record<string, 'red' | 'orange' | 'blue' | 'gray'> = {
-    urgent: 'red', high: 'orange', medium: 'blue', low: 'gray',
-};
+type JobTone = 'blue' | 'orange' | 'red' | 'green' | 'gray';
+
+/** Boja kartice = status posla. Crveno gori, narandžasto stoji, zeleno gotovo. */
+function jobTone(a: FieldAssignment): JobTone {
+    if (a.progressPct >= 100) return 'green';
+    if (a.isPaused) return 'orange';
+    if (a.daysUntilDue !== null && a.daysUntilDue <= 0) return 'red';
+    if (a.status === 'Na čekanju' && a.progressPct === 0) return 'gray';
+    return 'blue';
+}
 
 function dueLabel(days: number | null): { text: string; cls: string } | null {
     if (days === null) return null;
@@ -52,13 +68,53 @@ function greeting(): string {
     return 'Dobro veče';
 }
 
-export default function WorkerHome({ data }: { data: FieldHomePayload }) {
-    const { user, assignments, tasks, attendance, week } = data;
+interface ProjectGroup {
+    projectId: string;
+    projectName: string;
+    items: FieldAssignment[];
+    soonest: number;                 // min daysUntilDue (za sort grupa)
+}
+
+/** Grupiši „moj posao" po projektu; grupe po hitnosti (najbliži rok prvi). */
+function groupByProject(assignments: FieldAssignment[]): ProjectGroup[] {
+    const map = new Map<string, ProjectGroup>();
+    for (const a of assignments) {
+        const key = a.projectId || a.projectName || '—';
+        let g = map.get(key);
+        if (!g) {
+            g = { projectId: key, projectName: a.projectName || a.orderName || 'Bez projekta', items: [], soonest: Infinity };
+            map.set(key, g);
+        }
+        g.items.push(a);
+        if (a.daysUntilDue !== null) g.soonest = Math.min(g.soonest, a.daysUntilDue);
+    }
+    for (const g of map.values()) {
+        g.items.sort((x, y) =>
+            (x.daysUntilDue ?? 9999) - (y.daysUntilDue ?? 9999)
+            || x.productName.localeCompare(y.productName, 'bs'));
+    }
+    return [...map.values()].sort((a, b) =>
+        a.soonest - b.soonest || a.projectName.localeCompare(b.projectName, 'bs'));
+}
+
+interface Props {
+    data: FieldHomePayload;
+    productById: Map<string, FieldProductDetail>;
+    previewUid?: string | null;
+    showToast: ShowToast;
+}
+
+export default function WorkerHome({ data, productById, previewUid, showToast }: Props) {
+    const { user, assignments, attendance, week } = data;
     const firstName = user.name.split(' ')[0] || user.name;
     const { requests } = useWorkerRequests(data.preview);
+    const [openProductId, setOpenProductId] = useState<string | null>(null);
+
     // Najnoviji prijedlozi (čeka + skoro riješeni) — da radnik vidi ishod.
     const recentRequests = requests.slice(0, 5);
     const pendingCount = requests.filter(r => r.Status === 'pending').length;
+
+    const groups = useMemo(() => groupByProject(assignments), [assignments]);
 
     const totalPct = assignments.length
         ? Math.round(assignments.reduce((s, a) => s + a.progressPct, 0) / assignments.length)
@@ -66,6 +122,20 @@ export default function WorkerHome({ data }: { data: FieldHomePayload }) {
 
     const dateText = new Date(data.today + 'T12:00:00')
         .toLocaleDateString('bs-BA', { weekday: 'long', day: 'numeric', month: 'long' });
+
+    // Poniranje u proizvod (materijali) — iz već dovučenih projekata.
+    const openProduct = openProductId ? productById.get(openProductId) : null;
+    if (openProduct) {
+        return (
+            <WorkerProductDetail
+                product={openProduct}
+                backLabel="Danas"
+                previewUid={previewUid}
+                showToast={showToast}
+                onClose={() => setOpenProductId(null)}
+            />
+        );
+    }
 
     return (
         <>
@@ -96,76 +166,62 @@ export default function WorkerHome({ data }: { data: FieldHomePayload }) {
                 <CutlistLauncher />
             </div>
 
-            {/* ── Moje stavke ─────────────────────────────────────────── */}
-            <MSection title="Moj posao" right={<span className="mui-dim">{assignments.length}</span>} />
-
+            {/* ── Moj posao (grupisan po projektu, boja = status) ─────── */}
             {assignments.length === 0 ? (
-                <MEmpty
-                    title="Nema dodijeljenog posla"
-                    sub="Kad vas poslodavac dodijeli na proizvod, pojaviće se ovdje."
-                />
-            ) : (
-                <div className="mui-elist">
-                    {assignments.map(a => {
-                        const due = dueLabel(a.daysUntilDue);
-                        const tone = a.isPaused ? 'orange' : a.orderType === 'Montaža' ? 'purple' : 'blue';
-                        return (
-                            <MCard key={a.itemId}>
-                                <MCardHead>
-                                    <MIcon tone={tone}>
-                                        {a.orderType === 'Montaža' ? <Wrench size={21} /> : <ClipboardList size={21} />}
-                                    </MIcon>
-                                    <MCardBody
-                                        name={a.productName || 'Proizvod'}
-                                        meta={<>
-                                            {a.currentProcess
-                                                ? <MPill tone={a.isPaused ? 'orange' : 'blue'}>{a.currentProcess}</MPill>
-                                                : <MPill tone="gray">{a.status}</MPill>}
-                                            <span>
-                                                {a.projectName || a.orderName}
-                                                {a.quantity > 1 ? ` · ${a.quantity} kom` : ''}
-                                            </span>
-                                        </>}
-                                    />
-                                </MCardHead>
-                                <MProgress
-                                    pct={a.progressPct}
-                                    tone={a.progressPct >= 100 ? 'green' : undefined}
-                                    label={<>
-                                        <b>{a.progressPct}%</b>
-                                        {due && <span className={due.cls}> · {due.text}</span>}
-                                        {a.isPaused && <span className="soon"> · pauzirano</span>}
-                                    </>}
-                                />
-                            </MCard>
-                        );
-                    })}
-                </div>
-            )}
-
-            {/* ── Zadaci ──────────────────────────────────────────────── */}
-            {tasks.length > 0 && (
                 <>
-                    <MSection title="Moji zadaci" right={<span className="mui-dim">{tasks.length}</span>} />
-                    <MList>
-                        {tasks.map(t => (
-                            <MItem key={t.taskId}>
-                                <MCell>
-                                    {/* Označavanje zadataka dolazi sa modulom kontrole — dotad je prikaz. */}
-                                    <MCheck on={false} disabled label={t.title} />
-                                    <MText
-                                        title={t.title}
-                                        sub={<>
-                                            <MPill tone={PRIORITY_TONE[t.priority] || 'gray'}>{t.priority}</MPill>
-                                            {t.orderName && <span>{t.orderName}</span>}
-                                            {t.checklistTotal > 0 && <span>{t.checklistDone}/{t.checklistTotal}</span>}
-                                        </>}
-                                    />
-                                </MCell>
-                            </MItem>
-                        ))}
-                    </MList>
+                    <MSection title="Moj posao" />
+                    <MEmpty
+                        title="Nema dodijeljenog posla"
+                        sub="Kad vas poslodavac dodijeli na proizvod, pojaviće se ovdje."
+                    />
                 </>
+            ) : (
+                groups.map(g => (
+                    <div key={g.projectId}>
+                        <MSection title={g.projectName} right={<span className="mui-dim">{g.items.length}</span>} />
+                        <div className="fwk-jobs">
+                            {g.items.map(a => {
+                                const tone = jobTone(a);
+                                const due = dueLabel(a.daysUntilDue);
+                                const canOpen = productById.has(a.productId);
+                                const isMontaza = a.orderType === 'Montaža';
+                                return (
+                                    <button
+                                        key={a.itemId}
+                                        type="button"
+                                        className={`fwk-job fwk-job--${tone}`}
+                                        onClick={canOpen ? () => setOpenProductId(a.productId) : undefined}
+                                        disabled={!canOpen}
+                                    >
+                                        <div className="fwk-job-top">
+                                            <span className="fwk-job-ic">
+                                                {isMontaza ? <Wrench size={19} /> : <Package size={19} />}
+                                            </span>
+                                            <div className="fwk-job-main">
+                                                <span className="fwk-job-name">{a.productName || 'Proizvod'}</span>
+                                                <span className="fwk-job-sub">
+                                                    {a.currentProcess || a.status}
+                                                    {a.quantity > 1 ? ` · ${a.quantity} kom` : ''}
+                                                </span>
+                                            </div>
+                                            {canOpen && <ChevronRight size={18} className="fwk-job-chev" />}
+                                        </div>
+
+                                        <div className="fwk-job-bar">
+                                            <span className="fwk-job-fill" style={{ width: `${Math.min(100, a.progressPct)}%` }} />
+                                        </div>
+                                        <div className="fwk-job-foot">
+                                            <b>{a.progressPct}%</b>
+                                            {a.isPaused && <span className="fwk-job-tag">pauzirano</span>}
+                                            {due && <span className={`fwk-job-due ${due.cls}`}>{due.text}</span>}
+                                            {canOpen && <span className="fwk-job-mat">materijali →</span>}
+                                        </div>
+                                    </button>
+                                );
+                            })}
+                        </div>
+                    </div>
+                ))
             )}
 
             {/* ── Moji prijedlozi ─────────────────────────────────────── */}

@@ -28,7 +28,7 @@ function att(date: string, status = 'Prisutan'): WorkerAttendance {
 
 function input(over: Partial<WorkerCalendarInput> = {}): WorkerCalendarInput {
     return {
-        month: '2026-07', workerId: 'w-1',
+        month: '2026-07', workerId: 'w-1', today: '2026-07-14',
         allLogs: [
             log({ Date: '2026-07-14' }),
             log({ WorkLog_ID: 'l2', Worker_ID: 'w-9', Worker_Name: 'Haso', Date: '2026-07-14' }),   // kolega
@@ -74,6 +74,50 @@ describe('buildWorkerCalendar', () => {
         expect(cal.summary.workedDays).toBe(2);
         expect(cal.summary.presentDays).toBe(2);
         expect(cal.summary.fieldDays).toBe(1);
+    });
+
+    it('zakazan nalog daje traku tačno po planeru (Planned_Start..Planned_End)', () => {
+        const cal = buildWorkerCalendar(input({
+            orders: [{
+                orderId: 'wo-1', name: 'Kuhinja Mujo', status: 'U toku', isPaused: false,
+                plannedStart: '2026-07-10', plannedEnd: '2026-07-15', startedAt: null, dueDate: null,
+            }],
+        }));
+        expect(cal.orders).toEqual([{
+            orderId: 'wo-1', name: 'Kuhinja Mujo', status: 'U toku', isPaused: false,
+            startDate: '2026-07-10', endDate: '2026-07-15',
+        }]);
+    });
+
+    it('nezakazan nalog: traka od danas do roka (Started_At u prošlosti se ignoriše)', () => {
+        const cal = buildWorkerCalendar(input({
+            orders: [{
+                orderId: 'wo-2', name: 'Ormar Haso', status: 'U toku', isPaused: false,
+                plannedStart: null, plannedEnd: null, startedAt: '2026-07-01', dueDate: '2026-07-20',
+            }],
+        }));
+        expect(cal.orders).toHaveLength(1);
+        expect(cal.orders[0]).toMatchObject({ startDate: '2026-07-14', endDate: '2026-07-20' });
+    });
+
+    it('nalog bez ijednog datuma se ne crta', () => {
+        const cal = buildWorkerCalendar(input({
+            orders: [{
+                orderId: 'wo-3', name: 'Bez roka', status: 'Na čekanju', isPaused: false,
+                plannedStart: null, plannedEnd: null, startedAt: null, dueDate: null,
+            }],
+        }));
+        expect(cal.orders).toEqual([]);
+    });
+
+    it('nalog van mjeseca se ne uključuje', () => {
+        const cal = buildWorkerCalendar(input({
+            orders: [{
+                orderId: 'wo-4', name: 'Prošli mjesec', status: 'U toku', isPaused: false,
+                plannedStart: '2026-06-01', plannedEnd: '2026-06-20', startedAt: null, dueDate: null,
+            }],
+        }));
+        expect(cal.orders).toEqual([]);
     });
 
     it('ne propušta dnevnicu ni ime firme', () => {

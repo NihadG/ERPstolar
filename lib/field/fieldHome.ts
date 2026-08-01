@@ -35,7 +35,9 @@ export interface FieldAssignment {
     orderName: string;
     orderNumber: string;
     orderType: string;
+    projectId: string;
     projectName: string;
+    productId: string;
     productName: string;
     quantity: number;
     status: string;
@@ -204,7 +206,9 @@ export function buildFieldHome(input: FieldHomeInput): FieldHomePayload {
                     orderName,
                     orderNumber: wo.Work_Order_Number || '',
                     orderType: wo.Work_Order_Type || 'Proizvodnja',
+                    projectId: item.Project_ID || '',
                     projectName: item.Project_Name || '',
+                    productId: item.Product_ID || '',
                     productName: item.Product_Name || '',
                     quantity: item.Quantity || 0,
                     status: item.Status,

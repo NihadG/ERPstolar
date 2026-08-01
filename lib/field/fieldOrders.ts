@@ -24,6 +24,7 @@ export interface FieldOrderRow {
     number: string;
     type: string;
     status: string;
+    projectId: string;
     projectName: string;
     itemCount: number;
     progressPct: number;
@@ -57,6 +58,7 @@ export function buildFieldOrdersList(input: FieldOrdersListInput): FieldOrderRow
             number: wo.Work_Order_Number || '',
             type: wo.Work_Order_Type || 'Proizvodnja',
             status: wo.Status,
+            projectId: items.find(i => i.Project_ID)?.Project_ID || '',
             projectName: items.find(i => i.Project_Name)?.Project_Name || '',
             itemCount: items.length,
             progressPct: orderProcessProgress(items)?.pct ?? 0,

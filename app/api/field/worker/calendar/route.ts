@@ -10,15 +10,23 @@ import { NextResponse } from 'next/server';
 import { errorResponse, HttpError, requireFieldUser } from '@/lib/server/requireUser';
 import { resolveWorkerSubject } from '@/lib/server/fieldSubject';
 import {
-    getAttendanceInRange, getItemsByIds, getWorkLogsInRange,
+    attachItems, getAttendanceInRange, getItemsByIds, getItemsForWorkOrders,
+    getOpenWorkOrders, getWorkLogsInRange,
 } from '@/lib/server/fieldRepo';
-import { buildWorkerCalendar } from '@/lib/field/fieldCalendar';
-import type { WorkOrderItem } from '@/lib/types';
+import { buildWorkerCalendar, type WorkerCalendarOrderInput } from '@/lib/field/fieldCalendar';
+import { isWorkerAssignedToAutoItem } from '@/lib/autoBook';
+import { isOrderPaused, workOrderDisplayName } from '@/lib/utils';
+import type { WorkOrder, WorkOrderItem } from '@/lib/types';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 const isMonth = (s: string) => /^\d{4}-\d{2}$/.test(s);
+
+function todayISO(): string {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
 
 function monthBounds(month: string): { from: string; to: string } {
     const [y, m] = month.split('-').map(Number);
@@ -35,9 +43,10 @@ export async function GET(req: Request) {
         if (!isMonth(month)) throw new HttpError(400, 'Neispravan mjesec.');
         const { from, to } = monthBounds(month);
 
-        const [allLogs, attendance] = await Promise.all([
+        const [allLogs, attendance, openOrders] = await Promise.all([
             getWorkLogsInRange(caller.orgId, from, to),
             getAttendanceInRange(caller.orgId, from, to),
+            getOpenWorkOrders(caller.orgId),
         ]);
 
         // Nazivi proizvoda: WorkLog ih ne nosi — razriješi ih preko stavki na
@@ -51,12 +60,31 @@ export async function GET(req: Request) {
             if (it.Product_ID) productNameById.set(it.Product_ID, it.Product_Name || 'Proizvod');
         }
 
+        // Radnikovi aktivni nalozi → trake na kalendaru.
+        const orderItems = await getItemsForWorkOrders(caller.orgId, openOrders.map(o => o.Work_Order_ID));
+        attachItems(openOrders, orderItems);
+        const orders: WorkerCalendarOrderInput[] = (openOrders as WorkOrder[])
+            .filter(wo => (wo.items || []).some(it =>
+                it.Status !== 'Završeno' && isWorkerAssignedToAutoItem(it as any, workerId)))
+            .map(wo => ({
+                orderId: wo.Work_Order_ID,
+                name: workOrderDisplayName(wo),
+                status: wo.Status,
+                isPaused: isOrderPaused(wo),
+                plannedStart: wo.Planned_Start_Date || null,
+                plannedEnd: wo.Planned_End_Date || null,
+                startedAt: wo.Started_At || null,
+                dueDate: wo.Due_Date || null,
+            }));
+
         const calendar = buildWorkerCalendar({
             month,
             workerId,
+            today: todayISO(),
             allLogs,
             attendance: attendance.filter(a => a.Worker_ID === workerId),
             productNameById,
+            orders,
         });
 
         return NextResponse.json(calendar, { headers: { 'Cache-Control': 'no-store' } });

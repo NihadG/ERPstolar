@@ -12,11 +12,12 @@
 import { NextResponse } from 'next/server';
 import { errorResponse, HttpError, requireFieldUser } from '@/lib/server/requireUser';
 import {
-    attachItems, getItemsForWorkOrders, getOpenWorkOrders, getWorkOrderById,
+    attachItems, getItemsForWorkOrders, getOpenWorkOrders, getTaskById, getWorkOrderById,
 } from '@/lib/server/fieldRepo';
 import { createRequest, listRequestsForWorker } from '@/lib/server/changeRequests';
 import { isWorkerAssignedToAutoItem } from '@/lib/autoBook';
 import { myProductIds } from '@/lib/field/fieldWorker';
+import { canWorkerTouchTask } from '@/lib/field/fieldNotes';
 import { workOrderDisplayName } from '@/lib/utils';
 import type { SummaryContext } from '@/lib/changeRequests';
 import type { ChangeRequestKind, WorkOrder, WorkOrderItem } from '@/lib/types';
@@ -29,6 +30,9 @@ const ORDER_KINDS = new Set<ChangeRequestKind>([
     'order_start', 'order_pause', 'order_complete', 'item_complete', 'task_create',
 ]);
 const PRODUCT_KINDS = new Set<ChangeRequestKind>(['material_usage', 'material_order']);
+// Izmjena postojeće napomene (Task) — autorizuje se po samom zadatku, ne po
+// nalogu: napomena može biti dodijeljena radniku bez ijednog naloga.
+const TASK_KINDS = new Set<ChangeRequestKind>(['task_status', 'task_delete']);
 
 export async function GET(req: Request) {
     try {
@@ -99,6 +103,34 @@ export async function POST(req: Request) {
             meta.projectName = item?.Project_Name;
             summaryCtx.productName = item?.Product_Name;
             summaryCtx.lineCount = Array.isArray(payload?.lines) ? payload.lines.length : 0;
+        }
+
+        // ── Izmjena postojeće napomene (toggle / brisanje) ───────────
+        else if (TASK_KINDS.has(kind)) {
+            const taskId = payload?.taskId ? String(payload.taskId) : '';
+            if (!taskId) throw new HttpError(400, 'Napomena nije određena.');
+            const task = await getTaskById(caller.orgId, taskId);
+            if (!task) throw new HttpError(404, 'Napomena nije pronađena.');
+
+            // Radnik smije dirati napomenu samo ako mu je dodijeljena ili je
+            // vezana za njegov nalog/proizvod — ista relacija kao vidljivost.
+            const openOrders = await getOpenWorkOrders(caller.orgId);
+            const orderItems = await getItemsForWorkOrders(caller.orgId, openOrders.map(o => o.Work_Order_ID));
+            attachItems(openOrders, orderItems);
+            const myOrderIds = new Set<string>();
+            for (const wo of openOrders as WorkOrder[]) {
+                if ((wo.items || []).some(it => isWorkerAssignedToAutoItem(it as any, caller.workerId!))) {
+                    myOrderIds.add(wo.Work_Order_ID);
+                }
+            }
+            const mineProducts = myProductIds(openOrders as WorkOrder[], caller.workerId!);
+            if (!canWorkerTouchTask(task, caller.workerId!, myOrderIds, mineProducts)) {
+                throw new HttpError(403, 'Nemate pristup ovoj napomeni.');
+            }
+
+            const link = (task.Links || []).find(l => l.Entity_Type === 'work_order');
+            if (link) { meta.workOrderId = link.Entity_ID; meta.workOrderName = link.Entity_Name; }
+            if (kind === 'task_status') summaryCtx.action = payload?.done === false ? 'undone' : 'done';
         } else {
             throw new HttpError(400, 'Nepoznata vrsta prijedloga.');
         }

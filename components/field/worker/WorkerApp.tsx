@@ -16,7 +16,7 @@ import { useWorkerWork } from '@/lib/field/useFieldWorker';
 import FieldTabBar, { type FieldTabId } from '../FieldTabBar';
 import WorkerHome from '../WorkerHome';
 import WorkerOrdersScreen from './WorkerOrdersScreen';
-import WorkerProjectsScreen from './WorkerProjectsScreen';
+import WorkerNotesScreen from './WorkerNotesScreen';
 import WorkerCalendarScreen from './WorkerCalendarScreen';
 import WorkerMe from './WorkerMe';
 import './Worker.css';
@@ -48,7 +48,14 @@ export default function WorkerApp({ data, previewUid }: Props) {
     return (
         <>
             <div className="fld-body">
-                {tab === 'home' && <WorkerHome data={data} />}
+                {tab === 'home' && (
+                    <WorkerHome
+                        data={data}
+                        productById={productById}
+                        previewUid={previewUid}
+                        showToast={showToast}
+                    />
+                )}
 
                 {tab === 'orders' && (
                     <WorkerOrdersScreen
@@ -62,12 +69,10 @@ export default function WorkerApp({ data, previewUid }: Props) {
                     />
                 )}
 
-                {tab === 'projects' && (
-                    <WorkerProjectsScreen
-                        projects={projects}
-                        loading={loading}
-                        error={error}
-                        reload={reload}
+                {tab === 'notes' && (
+                    <WorkerNotesScreen
+                        orders={orders}
+                        productById={productById}
                         previewUid={previewUid}
                         showToast={showToast}
                     />

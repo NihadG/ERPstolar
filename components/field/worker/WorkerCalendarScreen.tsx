@@ -1,31 +1,44 @@
 'use client';
 
 // ════════════════════════════════════════════════════════════════════
-// RADNIK — KALENDAR
+// RADNIK — KALENDAR (mjesečni)
 //
-// Mjesečna mreža: šta je koji dan radio i s kim, plus prisustvo. Dodir na dan
-// otvara sheet s detaljima. Bez novca — dan pokazuje proizvode, procese i
-// imena kolega, ne dnevnicu.
+// Mjesec kao mreža sedmica. Nalog nije sitna crtica u ćeliji nego NEPREKIDNA
+// TRAKA preko svih dana koje traje (kao događaj u kalendaru) — pa se na prvi
+// pogled vidi koliko traje i kad počinje/završava. Boja = status. Prisustvo je
+// tanka podvlaka pod brojem dana. Dodir na dan (ili traku) otvara detalje.
+//
+// Bez novca — dan pokazuje proizvode, procese i imena kolega, ne dnevnicu.
 // ════════════════════════════════════════════════════════════════════
 
 import { useMemo, useState } from 'react';
-import { ChevronLeft, ChevronRight, Users } from 'lucide-react';
+import { ChevronLeft, ChevronRight, ClipboardList, Users } from 'lucide-react';
 import { useWorkerCalendar } from '@/lib/field/useFieldWorker';
-import type { CalendarDay } from '@/lib/field/fieldCalendar';
+import type { CalendarDay, CalendarOrderSpan, WorkerCalendarMonth } from '@/lib/field/fieldCalendar';
 import {
-    MLarge, MEmpty, MSection, MList, MItem, MCell, MText, MPill, MSheet,
+    MLarge, MEmpty, MSection, MList, MItem, MCell, MText, MPill, MSheet, MButton,
 } from '@/components/tabs/mobile/MobileUI';
 
 const DOW = ['P', 'U', 'S', 'Č', 'P', 'S', 'N'];
+const MAX_LANES = 4;
 
-const ATT_META: Record<string, { cls: string; label: string }> = {
-    'Prisutan': { cls: 'present', label: 'Prisutan' },
-    'Teren': { cls: 'field', label: 'Teren' },
-    'Odmor': { cls: 'rest', label: 'Odmor' },
-    'Bolovanje': { cls: 'rest', label: 'Bolovanje' },
-    'Odsutan': { cls: 'off', label: 'Odsutan' },
-    'Vikend': { cls: 'off', label: 'Vikend' },
-};
+/** Traka naloga = status: pauza narandžasto, čekanje sivo, u toku plavo. */
+function orderBarClass(o: CalendarOrderSpan): 'orange' | 'gray' | 'green' | 'blue' {
+    if (o.isPaused) return 'orange';
+    if (o.status === 'Na čekanju') return 'gray';
+    if (o.status === 'Završeno') return 'green';
+    return 'blue';
+}
+
+/** Prisustvo → tanka podvlaka: prisutan/teren zeleno, odmor/bolovanje narandžasto. */
+function attUnderClass(status: string | null): string {
+    if (status === 'Prisutan' || status === 'Teren') return 'p';
+    if (status === 'Odmor' || status === 'Bolovanje') return 'r';
+    return '';
+}
+
+const shortDate = (iso: string) =>
+    new Date(iso + 'T12:00:00').toLocaleDateString('bs-BA', { day: 'numeric', month: 'short' });
 
 const ATT_TONE: Record<string, 'green' | 'blue' | 'orange' | 'gray'> = {
     'Prisutan': 'green', 'Teren': 'blue', 'Odmor': 'orange', 'Bolovanje': 'orange',
@@ -50,6 +63,49 @@ function currentMonth(): string {
 
 const dayNum = (iso: string) => Number(iso.split('-')[2]);
 
+function addDaysISO(iso: string, n: number): string {
+    const d = new Date(iso + 'T12:00:00');
+    d.setDate(d.getDate() + n);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+interface Cell {
+    date: string;
+    inMonth: boolean;
+    day: CalendarDay | null;
+}
+
+/** Mjesec → sedmice (redovi po 7), s vodećim/pratećim danima susjednih mjeseci. */
+function buildWeeks(cal: WorkerCalendarMonth): Cell[][] {
+    const cells: Cell[] = [];
+    for (let i = cal.leadBlanks; i > 0; i--) {
+        cells.push({ date: addDaysISO(cal.from, -i), inMonth: false, day: null });
+    }
+    for (const d of cal.days) cells.push({ date: d.date, inMonth: true, day: d });
+    while (cells.length % 7 !== 0) {
+        cells.push({ date: addDaysISO(cells[cells.length - 1].date, 1), inMonth: false, day: null });
+    }
+    const weeks: Cell[][] = [];
+    for (let i = 0; i < cells.length; i += 7) weeks.push(cells.slice(i, i + 7));
+    return weeks;
+}
+
+/** Svaki nalog dobija stabilnu „traku" (lane) da preskoči preklapanja i ostane
+ *  na istoj visini kroz sedmice — pohlepno pakovanje intervala. */
+function assignLanes(orders: CalendarOrderSpan[]): Map<string, number> {
+    const sorted = [...orders].sort((a, b) =>
+        a.startDate.localeCompare(b.startDate) || a.endDate.localeCompare(b.endDate));
+    const laneEnd: string[] = [];
+    const laneOf = new Map<string, number>();
+    for (const o of sorted) {
+        let lane = 0;
+        while (lane < laneEnd.length && laneEnd[lane] >= o.startDate) lane++;
+        laneEnd[lane] = o.endDate;
+        laneOf.set(o.orderId, lane);
+    }
+    return laneOf;
+}
+
 export default function WorkerCalendarScreen({ previewUid }: { previewUid?: string | null }) {
     const thisMonth = currentMonth();
     const [month, setMonth] = useState(thisMonth);
@@ -61,6 +117,20 @@ export default function WorkerCalendarScreen({ previewUid }: { previewUid?: stri
         return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
     }, []);
 
+    const weeks = useMemo(() => (calendar ? buildWeeks(calendar) : []), [calendar]);
+    const laneOf = useMemo(() => (calendar ? assignLanes(calendar.orders) : new Map<string, number>()), [calendar]);
+
+    // Nalozi koji pokrivaju svaki dan (za sheet dana).
+    const ordersByDay = useMemo(() => {
+        const m = new Map<string, CalendarOrderSpan[]>();
+        if (!calendar) return m;
+        for (const day of calendar.days) {
+            const list = calendar.orders.filter(o => day.date >= o.startDate && day.date <= o.endDate);
+            if (list.length) m.set(day.date, list);
+        }
+        return m;
+    }, [calendar]);
+
     const atFuture = month >= thisMonth;
 
     return (
@@ -68,7 +138,7 @@ export default function WorkerCalendarScreen({ previewUid }: { previewUid?: stri
             <MLarge title="Kalendar">
                 {calendar
                     ? `${calendar.summary.workedDays} radnih · ${calendar.summary.presentDays} prisutnih dana`
-                    : 'Tvoji radovi i prisustvo'}
+                    : 'Tvoji nalozi i prisustvo'}
             </MLarge>
 
             <div className="fwk-cal-bar">
@@ -92,47 +162,80 @@ export default function WorkerCalendarScreen({ previewUid }: { previewUid?: stri
             {error && (
                 <MEmpty title="Kalendar nije učitan" sub={error}>
                     <div style={{ width: '100%', paddingTop: 14 }}>
-                        <button type="button" className="fwk-cal-arrow" onClick={reload} aria-label="Osvježi">
-                            <ChevronRight size={22} />
-                        </button>
+                        <MButton variant="filled" onClick={reload}>Pokušaj ponovo</MButton>
                     </div>
                 </MEmpty>
             )}
 
             {calendar && (
                 <>
-                    <div className="fwk-cal-grid" role="grid">
-                        {DOW.map((d, i) => <div key={i} className="fwk-cal-dow">{d}</div>)}
+                    <div className="fwk-mc">
+                        <div className="fwk-mc-dow">
+                            {DOW.map((d, i) => <div key={i}>{d}</div>)}
+                        </div>
 
-                        {Array.from({ length: calendar.leadBlanks }).map((_, i) => (
-                            <div key={`b${i}`} className="fwk-cal-cell blank" />
-                        ))}
+                        {weeks.map((week, wi) => {
+                            const weekStart = week[0].date;
+                            const weekEnd = week[6].date;
+                            const bars = calendar.orders
+                                .filter(o => !(o.endDate < weekStart || o.startDate > weekEnd))
+                                .map(o => {
+                                    const lane = laneOf.get(o.orderId) ?? 0;
+                                    const startIdx = o.startDate <= weekStart ? 0 : Math.max(0, week.findIndex(c => c.date === o.startDate));
+                                    const endIdx = o.endDate >= weekEnd ? 6 : Math.max(startIdx, week.findIndex(c => c.date === o.endDate));
+                                    const target = week.find(c => c.inMonth && c.date >= o.startDate && c.date <= o.endDate)?.day || null;
+                                    return { o, lane, startIdx, endIdx, cl: o.startDate < weekStart, cr: o.endDate > weekEnd, target };
+                                })
+                                .filter(b => b.lane < MAX_LANES);
 
-                        {calendar.days.map(day => {
-                            const att = day.attendanceStatus ? ATT_META[day.attendanceStatus] : null;
-                            const isToday = day.date === todayISO;
-                            const isFuture = day.date > todayISO;
-                            const hasWork = day.work.length > 0;
                             return (
-                                <button
-                                    key={day.date}
-                                    type="button"
-                                    className={`fwk-cal-cell${isToday ? ' today' : ''}${isFuture ? ' off' : ''}`}
-                                    onClick={() => setOpenDay(day)}
-                                >
-                                    <span className="fwk-cal-num">{dayNum(day.date)}</span>
-                                    {hasWork && <span className="fwk-cal-work" />}
-                                    {att && <span className={`fwk-cal-att ${att.cls}`} />}
-                                </button>
+                                <div className="fwk-mc-wk" key={wi}>
+                                    <div className="fwk-mc-days">
+                                        {week.map((c, ci) => {
+                                            const isToday = c.date === todayISO;
+                                            const und = c.day ? attUnderClass(c.day.attendanceStatus) : '';
+                                            const cls = `fwk-mc-day${c.inMonth ? '' : ' out'}${ci === 6 ? ' sun' : ''}${isToday ? ' today' : ''}`;
+                                            return c.inMonth ? (
+                                                <button key={c.date} type="button" className={cls} onClick={() => c.day && setOpenDay(c.day)}>
+                                                    <span className="fwk-mc-num">{dayNum(c.date)}</span>
+                                                    <span className={`fwk-mc-att ${und}`} />
+                                                </button>
+                                            ) : (
+                                                <div key={c.date} className={cls}>
+                                                    <span className="fwk-mc-num">{dayNum(c.date)}</span>
+                                                    <span className="fwk-mc-att" />
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+
+                                    {bars.length > 0 && (
+                                        <div className="fwk-mc-lanes">
+                                            {bars.map(b => (
+                                                <button
+                                                    key={b.o.orderId}
+                                                    type="button"
+                                                    className={`fwk-mc-evt ${orderBarClass(b.o)}${b.cl ? ' cl' : ''}${b.cr ? ' cr' : ''}`}
+                                                    style={{ gridColumn: `${b.startIdx + 1} / ${b.endIdx + 2}`, gridRow: b.lane + 1 }}
+                                                    onClick={() => b.target && setOpenDay(b.target)}
+                                                >
+                                                    {b.cl && <span className="a">‹ </span>}
+                                                    <span className="fwk-mc-evt-t">{b.o.name}</span>
+                                                    {b.cr && <span className="a"> ›</span>}
+                                                </button>
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
                             );
                         })}
                     </div>
 
                     <div className="fwk-cal-legend">
+                        <span><i className="fwk-mc-swatch blue" /> U toku</span>
+                        <span><i className="fwk-mc-swatch orange" /> Pauziran</span>
+                        <span><i className="fwk-mc-swatch gray" /> U pripremi</span>
                         <span><i style={{ background: 'var(--mui-green)' }} /> Prisutan</span>
-                        <span><i style={{ background: 'var(--mui-blue)' }} /> Teren</span>
-                        <span><i style={{ background: 'var(--mui-orange)' }} /> Odmor/bolovanje</span>
-                        <span><span className="fwk-cal-work" style={{ width: 6, height: 6 }} /> Radio</span>
                     </div>
                 </>
             )}
@@ -142,20 +245,42 @@ export default function WorkerCalendarScreen({ previewUid }: { previewUid?: stri
                 title={openDay ? new Date(openDay.date + 'T12:00:00').toLocaleDateString('bs-BA', { weekday: 'long', day: 'numeric', month: 'long' }) : ''}
                 onClose={() => setOpenDay(null)}
             >
-                {openDay && <DaySheet day={openDay} />}
+                {openDay && <DaySheet day={openDay} orders={ordersByDay.get(openDay.date) || []} />}
             </MSheet>
         </>
     );
 }
 
-function DaySheet({ day }: { day: CalendarDay }) {
+function DaySheet({ day, orders }: { day: CalendarDay; orders: CalendarOrderSpan[] }) {
     const att = day.attendanceStatus;
     return (
         <>
+            {orders.length > 0 && (
+                <>
+                    <MSection title={<><ClipboardList size={14} style={{ verticalAlign: '-2px', marginRight: 5 }} />Nalozi ovog dana</>} />
+                    <MList lead>
+                        {orders.map(o => (
+                            <MItem key={o.orderId}>
+                                <MCell>
+                                    <MText
+                                        title={o.name}
+                                        sub={<>
+                                            <MPill tone={orderBarClass(o)}>{o.isPaused ? 'Pauziran' : o.status}</MPill>
+                                            <span>{shortDate(o.startDate)} – {shortDate(o.endDate)}</span>
+                                        </>}
+                                    />
+                                </MCell>
+                            </MItem>
+                        ))}
+                    </MList>
+                </>
+            )}
+
+            <MSection title="Prisustvo" />
             <MList>
                 <MItem>
                     <MCell>
-                        <MText title="Prisustvo" />
+                        <MText title="Status" />
                         {att
                             ? <MPill tone={ATT_TONE[att] || 'gray'}>{att}</MPill>
                             : <span className="mui-dim">nije evidentirano</span>}
@@ -178,10 +303,7 @@ function DaySheet({ day }: { day: CalendarDay }) {
                         {day.work.map((w, i) => (
                             <MItem key={i}>
                                 <MCell>
-                                    <MText
-                                        title={w.productName}
-                                        sub={w.processName || undefined}
-                                    />
+                                    <MText title={w.productName} sub={w.processName || undefined} />
                                 </MCell>
                             </MItem>
                         ))}
@@ -200,8 +322,8 @@ function DaySheet({ day }: { day: CalendarDay }) {
                 </>
             )}
 
-            {day.work.length === 0 && day.coworkers.length === 0 && (
-                <MEmpty title="Nema proknjiženog rada" sub="Tog dana nije evidentiran rad na proizvodu." />
+            {orders.length === 0 && day.work.length === 0 && day.coworkers.length === 0 && !att && (
+                <MEmpty title="Ničega tog dana" sub="Nema naloga, rada ni evidentiranog prisustva." />
             )}
         </>
     );

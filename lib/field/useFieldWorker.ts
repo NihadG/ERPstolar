@@ -14,6 +14,7 @@ import type { FieldOrderRow, FieldOrderDetail } from './fieldOrders';
 import type { FieldProjectDetail } from './fieldProjects';
 import type { WorkerCalendarMonth } from './fieldCalendar';
 import type { WorkerEfficiency } from './fieldWorker';
+import type { NoteRow } from './fieldNotes';
 
 function withPreview(path: string, previewUid?: string | null): string {
     if (!previewUid) return path;
@@ -99,6 +100,29 @@ export function useWorkerCalendar(month: string, previewUid?: string | null) {
     useEffect(() => { load(); }, [load]);
 
     return { calendar, loading, error, reload: load };
+}
+
+export function useWorkerNotes(previewUid?: string | null) {
+    const [notes, setNotes] = useState<NoteRow[]>([]);
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState<string | null>(null);
+
+    const load = useCallback(async () => {
+        setLoading(true);
+        setError(null);
+        try {
+            const res = await apiGet<{ notes: NoteRow[] }>(withPreview('/api/field/worker/notes', previewUid));
+            setNotes(res.notes);
+        } catch (e: any) {
+            setError(e?.message || 'Učitavanje nije uspjelo.');
+        } finally {
+            setLoading(false);
+        }
+    }, [previewUid]);
+
+    useEffect(() => { load(); }, [load]);
+
+    return { notes, loading, error, reload: load };
 }
 
 export function useWorkerMe(previewUid?: string | null) {

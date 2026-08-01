@@ -3,22 +3,32 @@
 // ════════════════════════════════════════════════════════════════════
 // RADNIK — NALOZI
 //
-// Nalozi na kojima radnik ima nezavršenu stavku. Iste kartice kao kontrolorov
-// prikaz, pogonski poredak (šta se radi danas gore). Otvaranje vodi u detalj
-// s tokom, proizvodima i zadacima.
+// Nalozi na kojima radnik ima nezavršenu stavku, GRUPISANI PO PROJEKTU.
+// Projekti se ređaju kao u generalnom pregledu: prvo oni s najviše naloga
+// U TOKU, pa oni s pauziranim, pa oni koji su tek u pripremi (na čekanju).
+// Unutar projekta zadržava se pogonski poredak (šta se radi danas gore).
+// Kartice su obojene po statusu (isto kao „Danas"). Otvaranje vodi u detalj.
 // ════════════════════════════════════════════════════════════════════
 
 import { useMemo, useState } from 'react';
-import { ClipboardList, ListChecks, Pause, Wrench } from 'lucide-react';
+import { ChevronRight, ClipboardList, ListChecks, Pause, Wrench } from 'lucide-react';
 import type { FieldOrderRow } from '@/lib/field/fieldOrders';
 import type { FieldProductDetail } from '@/lib/field/fieldProjects';
-import {
-    MLarge, MSearch, MChips, MCard, MCardHead, MCardBody, MIcon,
-    MPill, MProgress, MEmpty, MButton,
-} from '@/components/tabs/mobile/MobileUI';
+import { MLarge, MSearch, MChips, MSection, MEmpty, MButton } from '@/components/tabs/mobile/MobileUI';
 import WorkerOrderDetail from './WorkerOrderDetail';
+import type { ShowToast } from './WorkerApp';
 
 type Filter = '' | 'today' | 'late' | 'paused';
+type OrderTone = 'blue' | 'orange' | 'red' | 'green' | 'gray';
+
+/** Boja kartice = status naloga (isto mapiranje kao „Danas"). */
+function orderTone(o: FieldOrderRow): OrderTone {
+    if (o.progressPct >= 100) return 'green';
+    if (o.isPaused) return 'orange';
+    if (o.status === 'Na čekanju') return 'gray';
+    if ((o.daysUntilDue ?? 99) <= 0) return 'red';
+    return 'blue';
+}
 
 function dueLabel(days: number | null): { text: string; cls: string } | null {
     if (days === null) return null;
@@ -28,7 +38,45 @@ function dueLabel(days: number | null): { text: string; cls: string } | null {
     return { text: `rok za ${days} dana`, cls: '' };
 }
 
-import type { ShowToast } from './WorkerApp';
+interface OrderGroup {
+    projectId: string;
+    projectName: string;
+    orders: FieldOrderRow[];
+    activeCount: number;             // rank 0/1 — u toku
+    pausedCount: number;             // rank 2 — pauzirano
+    noProject: boolean;
+}
+
+/**
+ * Grupiši (već sortirane) naloge po projektu i poređaj grupe kao generalni
+ * pregled: najviše naloga u toku → pauzirani → u pripremi na kraj. Nalozi bez
+ * projekta idu u „Ostalo" na samo dno.
+ */
+function groupOrders(orders: FieldOrderRow[]): OrderGroup[] {
+    const map = new Map<string, OrderGroup>();
+    for (const o of orders) {
+        const noProject = !o.projectId && !o.projectName;
+        const key = noProject ? '__none__' : (o.projectId || o.projectName);
+        let g = map.get(key);
+        if (!g) {
+            g = {
+                projectId: key,
+                projectName: noProject ? 'Ostalo' : (o.projectName || `#${o.number}`),
+                orders: [], activeCount: 0, pausedCount: 0, noProject,
+            };
+            map.set(key, g);
+        }
+        g.orders.push(o);
+        if (o.rank <= 1) g.activeCount++;
+        else if (o.rank === 2) g.pausedCount++;
+    }
+    return [...map.values()].sort((a, b) => {
+        if (a.noProject !== b.noProject) return a.noProject ? 1 : -1;
+        return b.activeCount - a.activeCount
+            || b.pausedCount - a.pausedCount
+            || a.projectName.localeCompare(b.projectName, 'bs');
+    });
+}
 
 interface Props {
     orders: FieldOrderRow[];
@@ -62,6 +110,8 @@ export default function WorkerOrdersScreen({ orders, loading, error, reload, pro
             return true;
         });
     }, [orders, search, filter]);
+
+    const groups = useMemo(() => groupOrders(filtered), [filtered]);
 
     if (openId) {
         return (
@@ -114,48 +164,54 @@ export default function WorkerOrdersScreen({ orders, loading, error, reload, pro
                 />
             )}
 
-            <div className="mui-elist">
-                {filtered.map(o => {
-                    const due = dueLabel(o.daysUntilDue);
-                    const isMontaza = o.type === 'Montaža';
-                    const tone = o.isPaused ? 'orange' : o.status === 'Na čekanju' ? 'gray' : isMontaza ? 'purple' : 'blue';
-
-                    return (
-                        <MCard key={o.orderId} onClick={() => setOpenId(o.orderId)}>
-                            <MCardHead>
-                                <MIcon tone={tone}>
-                                    {o.isPaused ? <Pause size={21} />
-                                        : isMontaza ? <Wrench size={21} /> : <ClipboardList size={21} />}
-                                </MIcon>
-                                <MCardBody
-                                    name={o.name}
-                                    meta={<>
-                                        <MPill tone={tone}>{o.isPaused ? 'Pauziran' : o.status}</MPill>
-                                        <span>
-                                            {o.projectName || `#${o.number}`}
-                                            {o.itemCount > 0 && ` · ${o.itemCount} ${o.itemCount === 1 ? 'proizvod' : 'proizvoda'}`}
+            {groups.map(g => (
+                <div key={g.projectId}>
+                    <MSection title={g.projectName} right={<span className="mui-dim">{g.orders.length}</span>} />
+                    <div className="fwk-jobs">
+                        {g.orders.map(o => {
+                            const tone = orderTone(o);
+                            const due = dueLabel(o.daysUntilDue);
+                            const isMontaza = o.type === 'Montaža';
+                            return (
+                                <button
+                                    key={o.orderId}
+                                    type="button"
+                                    className={`fwk-job fwk-job--${tone}`}
+                                    onClick={() => setOpenId(o.orderId)}
+                                >
+                                    <div className="fwk-job-top">
+                                        <span className="fwk-job-ic">
+                                            {o.isPaused ? <Pause size={19} />
+                                                : isMontaza ? <Wrench size={19} /> : <ClipboardList size={19} />}
                                         </span>
-                                    </>}
-                                />
-                                {o.openTasks > 0 && (
-                                    <span className="fld-taskbadge" title={`${o.openTasks} otvorenih zadataka`}>
-                                        <ListChecks size={13} /> {o.openTasks}
-                                    </span>
-                                )}
-                            </MCardHead>
+                                        <div className="fwk-job-main">
+                                            <span className="fwk-job-name">{o.name}</span>
+                                            <span className="fwk-job-sub">
+                                                {o.isPaused ? 'Pauziran' : o.status}
+                                                {o.itemCount > 0 && ` · ${o.itemCount} ${o.itemCount === 1 ? 'proizvod' : 'proizvoda'}`}
+                                            </span>
+                                        </div>
+                                        {o.openTasks > 0 && (
+                                            <span className="fwk-job-badge" title={`${o.openTasks} otvorenih napomena`}>
+                                                <ListChecks size={12} /> {o.openTasks}
+                                            </span>
+                                        )}
+                                        <ChevronRight size={18} className="fwk-job-chev" />
+                                    </div>
 
-                            <MProgress
-                                pct={o.progressPct}
-                                tone={o.progressPct >= 100 ? 'green' : undefined}
-                                label={<>
-                                    <b>{o.progressPct}%</b>
-                                    {due && <span className={due.cls}> · {due.text}</span>}
-                                </>}
-                            />
-                        </MCard>
-                    );
-                })}
-            </div>
+                                    <div className="fwk-job-bar">
+                                        <span className="fwk-job-fill" style={{ width: `${Math.min(100, o.progressPct)}%` }} />
+                                    </div>
+                                    <div className="fwk-job-foot">
+                                        <b>{o.progressPct}%</b>
+                                        {due && <span className={`fwk-job-due ${due.cls}`}>{due.text}</span>}
+                                    </div>
+                                </button>
+                            );
+                        })}
+                    </div>
+                </div>
+            ))}
         </>
     );
 }
