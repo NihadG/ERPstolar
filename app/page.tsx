@@ -45,6 +45,8 @@ const PlannerTab = nextDynamic(() => import('@/components/tabs/PlannerTab'), { l
 // planning_scenarios; ne mijenja nijedan status ni datum stvarnog naloga.
 const CanvasTab = nextDynamic(() => import('@/components/canvas/CanvasTab'), { loading: TabLoading });
 const ProcessesTab = nextDynamic(() => import('@/components/tabs/ProcessesTab'), { loading: TabLoading });
+// „Ja" — mobilni ekran naloga (identitet + postavke + odjava). Na desktopu je sve to u sidebaru.
+const MobileAccountView = nextDynamic(() => import('@/components/tabs/mobile/MobileAccountView'), { loading: TabLoading });
 
 /** Početak prozora eager-učitavanja dnevnica: prije 12 mjeseci (YYYY-MM-DD). */
 function workLogsWindowStart(): string {
@@ -739,6 +741,9 @@ export default function Home() {
                             />
                         )
                     )}
+
+                    {/* „Ja" — samo telefon (glavna navigacija nema sidebar na mobitelu) */}
+                    {activeTab === 'account' && <MobileAccountView />}
                 </main>
             </div>
 

@@ -7,7 +7,7 @@
 // Ostali tabovi (radnici, materijali, šihtarica, planer…) ostaju na desktopu.
 // ════════════════════════════════════════════════════════════════════
 
-import { FolderOpen, FileText, ShoppingCart, ClipboardList } from 'lucide-react';
+import { FolderOpen, FileText, ShoppingCart, ClipboardList, User } from 'lucide-react';
 import { haptic } from './useSwipe';
 import './MobileTabBar.css';
 
@@ -17,12 +17,13 @@ export interface MobileTab {
     Icon: typeof FolderOpen;
 }
 
-/** Redoslijed prati tok posla: projekat → ponuda → narudžba → nalog. */
+/** Redoslijed prati tok posla: projekat → ponuda → narudžba → nalog; „Ja" (nalog/odjava) na kraju. */
 export const MOBILE_TABS: MobileTab[] = [
     { id: 'projects', label: 'Projekti', Icon: FolderOpen },
     { id: 'offers', label: 'Ponude', Icon: FileText },
     { id: 'orders', label: 'Narudžbe', Icon: ShoppingCart },
     { id: 'production', label: 'Nalozi', Icon: ClipboardList },
+    { id: 'account', label: 'Ja', Icon: User },
 ];
 
 interface Props {
