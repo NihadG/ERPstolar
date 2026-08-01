@@ -11,7 +11,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
-    ArrowLeft, Plus, Copy, Trash2, Settings2, Play, ClipboardPaste, Ruler, X, Maximize2,
+    ArrowLeft, Plus, Copy, Trash2, Settings2, Play, ClipboardPaste, Tag, ChevronDown, X, Maximize2,
 } from 'lucide-react';
 import { packGroup } from '@/lib/cutlist/optimizer';
 import { parseCutlistText } from '@/lib/cutlist/parse';
@@ -143,161 +143,183 @@ export default function FieldCutlist({ onClose }: Props) {
         ? Math.round(result.sheets.reduce((s, sh) => s + sh.efficiency, 0) / result.sheets.length) : 0;
     const colors = useMemo(() => result ? buildSizeColors(result) : null, [result]);
 
+    const showCopy = view === 'result' || parts.length > 0;
+
     return (
         <div className="mui fcl" ref={swipeRef}>
             <header className="fcl-nav">
                 <button type="button" className="fcl-back" onClick={goBack}>
-                    <ArrowLeft size={21} strokeWidth={2.3} /> {view === 'result' ? 'Nazad' : 'Zatvori'}
+                    <ArrowLeft size={20} strokeWidth={2.4} /> <span>{view === 'result' ? 'Nazad' : 'Zatvori'}</span>
                 </button>
-                {view === 'input' && parts.length > 0 && (
-                    <button type="button" className="fcl-navbtn" onClick={copyInput} aria-label="Kopiraj listu"><Copy size={19} /></button>
-                )}
-                {view === 'result' && (
-                    <button type="button" className="fcl-navbtn" onClick={copyResult} aria-label="Kopiraj plan"><Copy size={19} /></button>
-                )}
+                {showCopy ? (
+                    <button type="button" className="fcl-navbtn"
+                        onClick={view === 'result' ? copyResult : copyInput}
+                        aria-label={view === 'result' ? 'Kopiraj plan' : 'Kopiraj listu'}>
+                        <Copy size={18} />
+                    </button>
+                ) : <span className="fcl-navbtn-ghost" />}
             </header>
 
-            <div className="fcl-title">
-                <h1>Krojna lista</h1>
-                <p>{view === 'input'
-                    ? <>{parts.length} {parts.length === 1 ? 'stavka' : 'stavki'} · {totalPieces} kom</>
-                    : <>{result?.sheets.length} ploča · {avgEff}% iskoristivost</>}</p>
-            </div>
+            <div className="fcl-body">
+                <div className="fcl-hd">
+                    <h1>Krojna lista</h1>
+                    <p>{view === 'input'
+                        ? <>{parts.length} {parts.length === 1 ? 'stavka' : 'stavki'} · {totalPieces} kom</>
+                        : <>{result?.sheets.length} ploča · {avgEff}% iskoristivost</>}</p>
+                </div>
 
-            <div className="fcl-seg">
-                <MSegmented<'input' | 'result'>
-                    value={view}
-                    onChange={(v) => { if (v === 'result' && !result) compute(); else setView(v); }}
-                    options={[{ id: 'input', label: 'Komadi' }, { id: 'result', label: 'Rezultat' }]}
-                />
-            </div>
+                <div className="fcl-seg">
+                    <MSegmented<'input' | 'result'>
+                        value={view}
+                        onChange={(v) => { if (v === 'result' && !result) compute(); else setView(v); }}
+                        options={[{ id: 'input', label: 'Komadi' }, { id: 'result', label: 'Rezultat' }]}
+                    />
+                </div>
 
-            {view === 'input' && (
-                <>
-                    {/* Brzi unos — širina, visina, količina, dodaj */}
-                    <div className="fcl-lbl">Dodaj komad</div>
-                    <div className="fcl-card fcl-quick">
-                        {showName && (
-                            <input className="fcl-field name" placeholder="Naziv (opcionalno)" value={qa.name}
-                                onChange={e => setQa({ ...qa, name: e.target.value })} />
-                        )}
-                        <div className="fcl-quick-row">
-                            <input ref={wRef} className="fcl-field" type="number" inputMode="numeric" placeholder="Širina" value={qa.w}
-                                onChange={e => setQa({ ...qa, w: e.target.value })} />
-                            <span className="fcl-x">×</span>
-                            <input className="fcl-field" type="number" inputMode="numeric" placeholder="Visina" value={qa.h}
-                                onChange={e => setQa({ ...qa, h: e.target.value })} />
-                            <input className="fcl-field qty" type="number" inputMode="numeric" placeholder="Kom" value={qa.qty}
-                                onChange={e => setQa({ ...qa, qty: e.target.value })}
-                                onKeyDown={e => { if (e.key === 'Enter') addQuick(); }} />
-                            <button type="button" className="fcl-add" onClick={addQuick} aria-label="Dodaj komad"><Plus size={22} strokeWidth={2.6} /></button>
-                        </div>
-                        <div className="fcl-quick-tools">
-                            <button type="button" className="fcl-link" onClick={() => setShowName(v => !v)}>{showName ? '− naziv' : '+ naziv'}</button>
-                            <button type="button" className="fcl-link" onClick={() => setPasteOpen(v => !v)}>
-                                <ClipboardPaste size={14} /> Zalijepi listu
-                            </button>
-                        </div>
-                        {pasteOpen && (
-                            <div className="fcl-paste">
-                                <textarea className="fcl-ta" placeholder="Zalijepi iz Excela (širina, visina, količina, naziv)…"
-                                    value={pasteText} onChange={e => setPasteText(e.target.value)} rows={4} />
-                                <button type="button" className="fcl-btn fcl-btn-tinted" onClick={doPaste}>Dodaj iz teksta</button>
-                            </div>
-                        )}
-                    </div>
-
-                    {/* Podešavanja ploče/reza */}
-                    <button type="button" className="fcl-settings-toggle" onClick={() => setSettingsOpen(v => !v)}>
-                        <Settings2 size={17} />
-                        <span className="fcl-sum">Ploča {board.width}×{board.height} · rez {kerf} · obrez {trim} · {allowRotation ? 'rotacija' : 'bez rotacije'}</span>
-                        <span className="fcl-chev">{settingsOpen ? '▲' : '▼'}</span>
-                    </button>
-                    {settingsOpen && (
-                        <div className="fcl-card fcl-settings">
-                            <div className="fcl-lbl"><Ruler size={14} /> Dimenzije ploče (mm)</div>
-                            <div className="fcl-quick-row">
-                                <input className="fcl-field" type="number" inputMode="numeric" value={board.width}
-                                    onChange={e => setBoard({ ...board, width: Math.round(num(e.target.value)) })} />
-                                <span className="fcl-x">×</span>
-                                <input className="fcl-field" type="number" inputMode="numeric" value={board.height}
-                                    onChange={e => setBoard({ ...board, height: Math.round(num(e.target.value)) })} />
-                            </div>
-                            <div className="fcl-presets">
-                                {BOARD_PRESETS.map(p => (
-                                    <button key={p.label} type="button"
-                                        className={`fcl-preset${board.width === p.w && board.height === p.h ? ' on' : ''}`}
-                                        onClick={() => setBoard({ width: p.w, height: p.h })}>{p.label}</button>
-                                ))}
-                            </div>
-                            <div className="fcl-lbl"><Settings2 size={14} /> Rez i obrez</div>
-                            <div className="fcl-set-grid">
-                                <label className="fcl-set-field">
-                                    <span>Rez / pila (mm)</span>
-                                    <input className="fcl-field" type="number" inputMode="numeric" value={kerf}
-                                        onChange={e => setKerf(Math.max(0, num(e.target.value)))} />
+                {view === 'input' && (
+                    <>
+                        {/* Brzi unos — širina, visina, količina, dodaj */}
+                        <div className="fcl-sec">Novi komad</div>
+                        <div className="fcl-card">
+                            {showName && (
+                                <input className="fcl-name" placeholder="Naziv (opcionalno)" value={qa.name}
+                                    onChange={e => setQa({ ...qa, name: e.target.value })} />
+                            )}
+                            <div className="fcl-row">
+                                <label className="fcl-in">
+                                    <span>Širina</span>
+                                    <input ref={wRef} type="number" inputMode="numeric" placeholder="0" value={qa.w}
+                                        onChange={e => setQa({ ...qa, w: e.target.value })} />
                                 </label>
-                                <label className="fcl-set-field">
-                                    <span>Obrez ruba (mm)</span>
-                                    <input className="fcl-field" type="number" inputMode="numeric" value={trim}
-                                        onChange={e => setTrim(Math.max(0, num(e.target.value)))} />
+                                <label className="fcl-in">
+                                    <span>Visina</span>
+                                    <input type="number" inputMode="numeric" placeholder="0" value={qa.h}
+                                        onChange={e => setQa({ ...qa, h: e.target.value })} />
                                 </label>
+                                <label className="fcl-in qty">
+                                    <span>Kom</span>
+                                    <input type="number" inputMode="numeric" placeholder="1" value={qa.qty}
+                                        onChange={e => setQa({ ...qa, qty: e.target.value })}
+                                        onKeyDown={e => { if (e.key === 'Enter') addQuick(); }} />
+                                </label>
+                                <button type="button" className="fcl-add" onClick={addQuick} aria-label="Dodaj komad"><Plus size={24} strokeWidth={2.6} /></button>
                             </div>
-                            <div className="fcl-set-spacer" />
-                            <div className="fcl-switch" role="switch" aria-checked={allowRotation} onClick={() => setAllowRotation(v => !v)}>
-                                <span className="fcl-switch-txt">
-                                    <b>Rotacija komada</b>
-                                    <small>Okreni komad 90° ako bolje stane</small>
-                                </span>
-                                <span className={`fcl-track${allowRotation ? ' on' : ''}`}><span className="fcl-knob" /></span>
+                            <div className="fcl-tools">
+                                <button type="button" className={`fcl-tool${showName ? ' on' : ''}`} onClick={() => setShowName(v => !v)}>
+                                    <Tag size={15} /> Naziv
+                                </button>
+                                <button type="button" className={`fcl-tool${pasteOpen ? ' on' : ''}`} onClick={() => setPasteOpen(v => !v)}>
+                                    <ClipboardPaste size={15} /> Zalijepi listu
+                                </button>
                             </div>
-                        </div>
-                    )}
-
-                    {/* Lista komada */}
-                    {parts.length === 0 ? (
-                        <MEmpty title="Nema komada" sub="Unesi širinu × visinu × količinu pa pritisni +." />
-                    ) : (
-                        <>
-                        <div className="fcl-lbl">Komadi<span className="fcl-lbl-r">{totalPieces} kom</span></div>
-                        <div className="fcl-list">
-                            {parts.map((p, i) => (
-                                <div key={p.id} className="fcl-part">
-                                    <span className="fcl-part-idx">{i + 1}</span>
-                                    <div className="fcl-part-main">
-                                        <span className="fcl-part-dim">{p.width} × {p.height}</span>
-                                        {p.name && !/^Komad \d+$/.test(p.name) && <span className="fcl-part-name">{p.name}</span>}
-                                    </div>
-                                    <div className="fcl-qty">
-                                        <button type="button" onClick={() => editQty(p.id, p.qty - 1)} aria-label="Manje">−</button>
-                                        <input type="number" inputMode="numeric" value={p.qty}
-                                            onChange={e => editQty(p.id, num(e.target.value))} />
-                                        <button type="button" onClick={() => editQty(p.id, p.qty + 1)} aria-label="Više">+</button>
-                                    </div>
-                                    <button type="button" className="fcl-part-btn" onClick={() => duplicate(p.id)} aria-label="Dupliraj"><Copy size={16} /></button>
-                                    <button type="button" className="fcl-part-btn danger" onClick={() => remove(p.id)} aria-label="Obriši"><Trash2 size={16} /></button>
+                            {pasteOpen && (
+                                <div className="fcl-paste">
+                                    <textarea className="fcl-ta" placeholder="Zalijepi iz Excela (širina, visina, količina, naziv)…"
+                                        value={pasteText} onChange={e => setPasteText(e.target.value)} rows={4} />
+                                    <button type="button" className="fcl-paste-btn" onClick={doPaste}>Dodaj iz teksta</button>
                                 </div>
-                            ))}
+                            )}
                         </div>
-                        </>
-                    )}
 
-                    {parts.length > 0 && (
-                        <div className="fcl-cta">
-                            <button type="button" className="fcl-btn fcl-btn-filled" onClick={compute} disabled={computing}>
-                                {computing ? 'Računam…' : <><Play size={18} /> Izračunaj raspored</>}
-                            </button>
-                        </div>
-                    )}
-                </>
-            )}
+                        {/* Podešavanja ploče/reza */}
+                        <button type="button" className="fcl-settings-toggle" onClick={() => setSettingsOpen(v => !v)}>
+                            <span className="fcl-st-ic"><Settings2 size={17} /></span>
+                            <span className="fcl-st-txt">
+                                <b>Postavke ploče</b>
+                                <small>Ploča {board.width}×{board.height} · rez {kerf} · obrez {trim} · {allowRotation ? 'rotacija' : 'bez rotacije'}</small>
+                            </span>
+                            <ChevronDown className={`fcl-st-chev${settingsOpen ? ' open' : ''}`} size={18} />
+                        </button>
+                        {settingsOpen && (
+                            <div className="fcl-card fcl-settings">
+                                <div className="fcl-fsec">Dimenzije ploče (mm)</div>
+                                <div className="fcl-row">
+                                    <label className="fcl-in">
+                                        <span>Širina</span>
+                                        <input type="number" inputMode="numeric" value={board.width}
+                                            onChange={e => setBoard({ ...board, width: Math.round(num(e.target.value)) })} />
+                                    </label>
+                                    <label className="fcl-in">
+                                        <span>Visina</span>
+                                        <input type="number" inputMode="numeric" value={board.height}
+                                            onChange={e => setBoard({ ...board, height: Math.round(num(e.target.value)) })} />
+                                    </label>
+                                </div>
+                                <div className="fcl-presets">
+                                    {BOARD_PRESETS.map(p => (
+                                        <button key={p.label} type="button"
+                                            className={`fcl-preset${board.width === p.w && board.height === p.h ? ' on' : ''}`}
+                                            onClick={() => setBoard({ width: p.w, height: p.h })}>{p.label}</button>
+                                    ))}
+                                </div>
+                                <div className="fcl-fsec">Rez i obrez (mm)</div>
+                                <div className="fcl-row">
+                                    <label className="fcl-in">
+                                        <span>Rez / pila</span>
+                                        <input type="number" inputMode="numeric" value={kerf}
+                                            onChange={e => setKerf(Math.max(0, num(e.target.value)))} />
+                                    </label>
+                                    <label className="fcl-in">
+                                        <span>Obrez ruba</span>
+                                        <input type="number" inputMode="numeric" value={trim}
+                                            onChange={e => setTrim(Math.max(0, num(e.target.value)))} />
+                                    </label>
+                                </div>
+                                <div className="fcl-switch" role="switch" aria-checked={allowRotation} onClick={() => setAllowRotation(v => !v)}>
+                                    <span className="fcl-switch-txt">
+                                        <b>Rotacija komada</b>
+                                        <small>Okreni komad 90° ako bolje stane</small>
+                                    </span>
+                                    <span className={`fcl-track${allowRotation ? ' on' : ''}`}><span className="fcl-knob" /></span>
+                                </div>
+                            </div>
+                        )}
 
-            {view === 'result' && (
-                result && colors ? (
-                    <ResultView result={result} board={board} colors={colors} onExpand={setExpanded} />
-                ) : (
-                    <MEmpty title="Nema rezultata" sub="Dodaj komade i pritisni Izračunaj." />
-                )
+                        {/* Lista komada */}
+                        {parts.length === 0 ? (
+                            <MEmpty title="Još nema komada" sub="Unesi širinu, visinu i količinu pa pritisni +." />
+                        ) : (
+                            <>
+                                <div className="fcl-sec">Komadi<span className="fcl-sec-r">{totalPieces} kom</span></div>
+                                <div className="fcl-list">
+                                    {parts.map((p, i) => (
+                                        <div key={p.id} className="fcl-part">
+                                            <span className="fcl-part-idx">{i + 1}</span>
+                                            <div className="fcl-part-main">
+                                                <span className="fcl-part-dim">{p.width} × {p.height}</span>
+                                                {p.name && !/^Komad \d+$/.test(p.name) && <span className="fcl-part-name">{p.name}</span>}
+                                            </div>
+                                            <div className="fcl-qty">
+                                                <button type="button" onClick={() => editQty(p.id, p.qty - 1)} aria-label="Manje">−</button>
+                                                <input type="number" inputMode="numeric" value={p.qty}
+                                                    onChange={e => editQty(p.id, num(e.target.value))} />
+                                                <button type="button" onClick={() => editQty(p.id, p.qty + 1)} aria-label="Više">+</button>
+                                            </div>
+                                            <button type="button" className="fcl-part-btn" onClick={() => duplicate(p.id)} aria-label="Dupliraj"><Copy size={16} /></button>
+                                            <button type="button" className="fcl-part-btn danger" onClick={() => remove(p.id)} aria-label="Obriši"><Trash2 size={16} /></button>
+                                        </div>
+                                    ))}
+                                </div>
+                            </>
+                        )}
+                    </>
+                )}
+
+                {view === 'result' && (
+                    result && colors ? (
+                        <ResultView result={result} board={board} colors={colors} onExpand={setExpanded} />
+                    ) : (
+                        <MEmpty title="Nema rezultata" sub="Dodaj komade i pritisni Izračunaj." />
+                    )
+                )}
+            </div>
+
+            {view === 'input' && parts.length > 0 && (
+                <div className="fcl-cta">
+                    <button type="button" className="fcl-go" onClick={compute} disabled={computing}>
+                        {computing ? <><span className="fcl-spin" /> Računam…</> : <><Play size={19} strokeWidth={2.4} /> Izračunaj raspored</>}
+                    </button>
+                </div>
             )}
 
             {expanded !== null && result?.sheets[expanded] && colors && (
