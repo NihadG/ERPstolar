@@ -26,7 +26,7 @@ import CutlistLauncher from './cutlist/CutlistLauncher';
 import WorkerProductDetail from './worker/WorkerProductDetail';
 import type { ShowToast } from './worker/WorkerApp';
 import {
-    MLarge, MHero, MSection, MList, MItem, MCell, MText, MValue, MPill,
+    MLarge, MSection, MList, MItem, MCell, MText, MValue, MPill,
     MIcon, MEmpty,
 } from '@/components/tabs/mobile/MobileUI';
 
@@ -116,10 +116,6 @@ export default function WorkerHome({ data, productById, previewUid, showToast }:
 
     const groups = useMemo(() => groupByProject(assignments), [assignments]);
 
-    const totalPct = assignments.length
-        ? Math.round(assignments.reduce((s, a) => s + a.progressPct, 0) / assignments.length)
-        : 0;
-
     const dateText = new Date(data.today + 'T12:00:00')
         .toLocaleDateString('bs-BA', { weekday: 'long', day: 'numeric', month: 'long' });
 
@@ -152,14 +148,6 @@ export default function WorkerHome({ data, productById, previewUid, showToast }:
                     <span>Vaš nalog još nije povezan sa zapisom radnika, pa se ne vidi na čemu radite. Javite poslodavcu.</span>
                 </div>
             )}
-
-            <MHero
-                kicker="Danas radiš na"
-                value={<>{assignments.length}<small>{assignments.length === 1 ? ' proizvod' : ' proizvoda'}</small></>}
-                chip={assignments.length ? `${totalPct}% gotovo` : undefined}
-                pct={totalPct}
-                green={assignments.length > 0 && totalPct >= 100}
-            />
 
             {/* ── Alat: krojna lista (lagan pristup iz Danas) ─────────── */}
             <div style={{ padding: '2px 0 10px' }}>
