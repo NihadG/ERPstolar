@@ -20,7 +20,7 @@ import {
 } from '@/lib/server/fieldRepo';
 import { adminDb } from '@/lib/server/firebaseAdmin';
 import { createTask, setTaskStatus } from '@/lib/server/fieldWrites';
-import { createFieldNotification, deleteTask } from '@/lib/server/fieldWriteExtras';
+import { createFieldNotification, deleteTask, setTaskChecklistItem } from '@/lib/server/fieldWriteExtras';
 import { isWorkerAssignedToAutoItem } from '@/lib/autoBook';
 import { myProductIds } from '@/lib/field/fieldWorker';
 import { buildWorkerNotes, canWorkerTouchTask } from '@/lib/field/fieldNotes';
@@ -136,7 +136,7 @@ export async function POST(req: Request) {
     }
 }
 
-// ─── Čekiranje (gotovo / vrati) ───────────────────────────────────────
+// ─── Čekiranje (napomena gotova / vrati, ili stavka checkliste) ───────
 
 export async function PATCH(req: Request) {
     try {
@@ -146,6 +146,7 @@ export async function PATCH(req: Request) {
         const body = await req.json().catch(() => ({}));
         const taskId = String(body.taskId || '');
         const done = body.done !== false;
+        const checklistItemId = body.checklistItemId ? String(body.checklistItemId) : '';
         if (!taskId) throw new HttpError(400, 'Napomena nije određena.');
 
         const task = await getTaskById(caller.orgId, taskId);
@@ -155,7 +156,11 @@ export async function PATCH(req: Request) {
             throw new HttpError(403, 'Nemate pristup ovoj napomeni.');
         }
 
-        await setTaskStatus(caller.orgId, taskId, done);
+        if (checklistItemId) {
+            await setTaskChecklistItem(caller.orgId, taskId, checklistItemId, done);
+        } else {
+            await setTaskStatus(caller.orgId, taskId, done);
+        }
         return NextResponse.json({ ok: true }, { headers: { 'Cache-Control': 'no-store' } });
     } catch (e) {
         return errorResponse(e);

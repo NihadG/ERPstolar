@@ -71,6 +71,34 @@ describe('buildWorkerNotes', () => {
         expect(notes.map(n => n.taskId)).toEqual(['open', 'done']);
     });
 
+    it('projektuje opis, rok i checklistu (za expandable prikaz)', () => {
+        const notes = buildWorkerNotes(input({
+            tasks: [task({
+                Assigned_Worker_ID: 'w-1',
+                Description: 'Provjeri dimenzije prije rezanja',
+                Due_Date: '2026-08-10',
+                Checklist: [
+                    { id: 'c1', text: 'Izmjeri širinu', completed: true },
+                    { id: 'c2', text: 'Izmjeri visinu', completed: false },
+                ],
+            })],
+        }));
+        expect(notes[0]).toMatchObject({
+            description: 'Provjeri dimenzije prije rezanja',
+            dueDate: '2026-08-10',
+        });
+        expect(notes[0].checklist).toEqual([
+            { id: 'c1', text: 'Izmjeri širinu', completed: true },
+            { id: 'c2', text: 'Izmjeri visinu', completed: false },
+        ]);
+    });
+
+    it('bez detalja daje prazan opis i praznu checklistu', () => {
+        const notes = buildWorkerNotes(input({ tasks: [task({ Assigned_Worker_ID: 'w-1' })] }));
+        expect(notes[0]).toMatchObject({ description: '', notes: '', dueDate: null });
+        expect(notes[0].checklist).toEqual([]);
+    });
+
     it('ne propušta novac (nijedan broj/ključ tipa iznos)', () => {
         const notes = buildWorkerNotes(input({ tasks: [task({ Assigned_Worker_ID: 'w-1' })] }));
         const json = JSON.stringify(notes);

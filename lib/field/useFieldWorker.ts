@@ -122,7 +122,7 @@ export function useWorkerNotes(previewUid?: string | null) {
 
     useEffect(() => { load(); }, [load]);
 
-    return { notes, loading, error, reload: load };
+    return { notes, setNotes, loading, error, reload: load };
 }
 
 export interface CreateNoteInput {
@@ -152,10 +152,13 @@ export function useWorkerNoteActions() {
     const toggleNote = useCallback((taskId: string, done: boolean) =>
         run(() => apiPatch('/api/field/worker/notes', { taskId, done })), [run]);
 
+    const toggleChecklistItem = useCallback((taskId: string, checklistItemId: string, done: boolean) =>
+        run(() => apiPatch('/api/field/worker/notes', { taskId, checklistItemId, done })), [run]);
+
     const deleteNote = useCallback((taskId: string) =>
         run(() => apiDelete(`/api/field/worker/notes?taskId=${encodeURIComponent(taskId)}`)), [run]);
 
-    return { createNote, toggleNote, deleteNote, busy };
+    return { createNote, toggleNote, toggleChecklistItem, deleteNote, busy };
 }
 
 export function useWorkerMe(previewUid?: string | null) {

@@ -14,6 +14,12 @@
 import { isTaskLinkedToWorkOrder, isTaskOpen, taskProductIds } from '@/lib/workOrderTasks';
 import type { Task } from '@/lib/types';
 
+export interface NoteChecklistItem {
+    id: string;
+    text: string;
+    completed: boolean;
+}
+
 export interface NoteRow {
     taskId: string;
     title: string;
@@ -27,6 +33,11 @@ export interface NoteRow {
     productName: string | null;
     /** Kako se napomena tiče radnika — za grupisanje/prikaz. */
     source: 'assigned' | 'order' | 'product';
+    /** Puni sadržaj za expandable prikaz (opis, rok, checklista). */
+    description: string;
+    notes: string;
+    dueDate: string | null;
+    checklist: NoteChecklistItem[];
 }
 
 export interface WorkerNotesInput {
@@ -88,6 +99,10 @@ export function buildWorkerNotes(input: WorkerNotesInput): NoteRow[] {
             productId,
             productName,
             source,
+            description: t.Description || '',
+            notes: t.Notes || '',
+            dueDate: t.Due_Date || null,
+            checklist: (t.Checklist || []).map(c => ({ id: c.id, text: c.text, completed: !!c.completed })),
         });
     }
 

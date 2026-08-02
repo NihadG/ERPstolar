@@ -243,6 +243,23 @@ export async function deleteTask(orgId: string, taskId: string): Promise<void> {
     await snap.docs[0].ref.delete();
 }
 
+// ─── Čekiranje stavke checkliste ──────────────────────────────────────
+
+export async function setTaskChecklistItem(
+    orgId: string, taskId: string, itemId: string, completed: boolean
+): Promise<void> {
+    const snap = await adminDb().collection('tasks')
+        .where('Organization_ID', '==', orgId)
+        .where('Task_ID', '==', taskId)
+        .limit(1)
+        .get();
+    if (snap.empty) throw new Error('Napomena nije pronađena.');
+    const doc = snap.docs[0];
+    const data = doc.data() as { Checklist?: { id: string; text: string; completed: boolean }[] };
+    const checklist = (data.Checklist || []).map(c => (c.id === itemId ? { ...c, completed } : c));
+    await doc.ref.update({ Checklist: checklist });
+}
+
 // ─── Notifikacija (server-side, Admin SDK) ────────────────────────────
 
 export interface FieldNotificationInput {
