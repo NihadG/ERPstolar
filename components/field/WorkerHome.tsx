@@ -17,12 +17,10 @@
 // ════════════════════════════════════════════════════════════════════
 
 import { useMemo, useState, type Dispatch, type SetStateAction } from 'react';
-import { AlertCircle, CalendarCheck, ChevronRight, Package, Wrench, Hourglass } from 'lucide-react';
+import { AlertCircle, CalendarCheck, ChevronRight, Package, Wrench } from 'lucide-react';
 import type { FieldHomePayload, FieldAssignment } from '@/lib/field/fieldHome';
 import type { FieldProductDetail } from '@/lib/field/fieldProjects';
 import type { NoteRow } from '@/lib/field/fieldNotes';
-import { useWorkerRequests } from '@/lib/field/useWorkerRequests';
-import { requestKindLabel } from '@/lib/changeRequests';
 import CutlistLauncher from './cutlist/CutlistLauncher';
 import WorkerProductDetail from './worker/WorkerProductDetail';
 import WorkerNoteCards from './worker/WorkerNoteCards';
@@ -32,13 +30,6 @@ import {
     MIcon, MEmpty,
 } from '@/components/tabs/mobile/MobileUI';
 
-const REQ_STATUS: Record<string, { tone: 'orange' | 'green' | 'red' | 'gray'; label: string }> = {
-    pending: { tone: 'orange', label: 'čeka' },
-    approved: { tone: 'green', label: 'prihvaćeno' },
-    rejected: { tone: 'red', label: 'odbijeno' },
-    failed: { tone: 'red', label: 'greška' },
-};
-
 const ATTENDANCE_TONE: Record<string, 'green' | 'blue' | 'orange' | 'gray'> = {
     'Prisutan': 'green', 'Teren': 'blue', 'Odmor': 'orange',
     'Bolovanje': 'orange', 'Odsutan': 'gray', 'Vikend': 'gray',
@@ -46,12 +37,18 @@ const ATTENDANCE_TONE: Record<string, 'green' | 'blue' | 'orange' | 'gray'> = {
 
 type JobTone = 'blue' | 'orange' | 'red' | 'green' | 'gray';
 
-/** Boja kartice = status posla. Crveno gori, narandžasto stoji, zeleno gotovo. */
+/**
+ * Boja kartice = STATUS posla (prvo status, tek onda rok):
+ *   gotovo → zeleno · pauzirano → narandžasto · nije pokrenuto → sivo ·
+ *   u toku i kasni → crveno · u toku na vrijeme → plavo.
+ * Status ima prednost nad rokom — inače (kad je puno naloga u kašnjenju) sve
+ * ispadne crveno, pa se pauzirano i nepokrenuto ne razlikuju.
+ */
 function jobTone(a: FieldAssignment): JobTone {
     if (a.progressPct >= 100) return 'green';
     if (a.isPaused) return 'orange';
+    if (a.status === 'Na čekanju') return 'gray';
     if (a.daysUntilDue !== null && a.daysUntilDue <= 0) return 'red';
-    if (a.status === 'Na čekanju' && a.progressPct === 0) return 'gray';
     return 'blue';
 }
 
@@ -116,12 +113,7 @@ export default function WorkerHome({
 }: Props) {
     const { user, assignments, attendance, week } = data;
     const firstName = user.name.split(' ')[0] || user.name;
-    const { requests } = useWorkerRequests(data.preview);
     const [openProductId, setOpenProductId] = useState<string | null>(null);
-
-    // Najnoviji prijedlozi (čeka + skoro riješeni) — da radnik vidi ishod.
-    const recentRequests = requests.slice(0, 5);
-    const pendingCount = requests.filter(r => r.Status === 'pending').length;
 
     const groups = useMemo(() => groupByProject(assignments), [assignments]);
 
@@ -235,36 +227,6 @@ export default function WorkerHome({
                         showToast={showToast}
                         readOnly={!!previewUid}
                     />
-                </>
-            )}
-
-            {/* ── Moji prijedlozi ─────────────────────────────────────── */}
-            {recentRequests.length > 0 && (
-                <>
-                    <MSection
-                        title="Moji prijedlozi"
-                        right={pendingCount > 0 ? <span className="mui-dim">{pendingCount} čeka</span> : undefined}
-                    />
-                    <MList lead>
-                        {recentRequests.map(r => {
-                            const st = REQ_STATUS[r.Status] || REQ_STATUS.pending;
-                            return (
-                                <MItem key={r.Request_ID}>
-                                    <MCell>
-                                        <MIcon tone={st.tone}><Hourglass size={17} /></MIcon>
-                                        <MText
-                                            title={r.Summary || requestKindLabel(r.Kind)}
-                                            sub={<>
-                                                <MPill tone={st.tone}>{st.label}</MPill>
-                                                {r.Status === 'rejected' && r.Reject_Reason && <span>{r.Reject_Reason}</span>}
-                                                {r.Work_Order_Name && <span>{r.Work_Order_Name}</span>}
-                                            </>}
-                                        />
-                                    </MCell>
-                                </MItem>
-                            );
-                        })}
-                    </MList>
                 </>
             )}
 
