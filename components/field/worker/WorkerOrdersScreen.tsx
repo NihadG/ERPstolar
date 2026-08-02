@@ -199,9 +199,6 @@ export default function WorkerOrdersScreen({ orders, loading, error, reload, pro
                                         <ChevronRight size={18} className="fwk-job-chev" />
                                     </div>
 
-                                    <div className="fwk-job-bar">
-                                        <span className="fwk-job-fill" style={{ width: `${Math.min(100, o.progressPct)}%` }} />
-                                    </div>
                                     <div className="fwk-job-foot">
                                         <b>{o.progressPct}%</b>
                                         {due && <span className={`fwk-job-due ${due.cls}`}>{due.text}</span>}

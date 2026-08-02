@@ -242,3 +242,39 @@ export async function deleteTask(orgId: string, taskId: string): Promise<void> {
     if (snap.empty) throw new Error('Zadatak nije pronađen.');
     await snap.docs[0].ref.delete();
 }
+
+// ─── Notifikacija (server-side, Admin SDK) ────────────────────────────
+
+export interface FieldNotificationInput {
+    title: string;
+    message: string;
+    type?: 'info' | 'success' | 'warning' | 'error';
+    relatedId?: string;
+    targetTab?: string;
+    metadata?: Record<string, unknown>;
+}
+
+/**
+ * Upiši notifikaciju za organizaciju (vlasnik je vidi u NotificationCenter).
+ * Ista kolekcija i oblik kao client `createNotification`, ali preko Admin SDK-a
+ * — radnikove rute nemaju pristup client Firestoreu. Tiho ne ruši radnju ako
+ * upis padne: napomena je već kreirana, notifikacija je sekundarna.
+ */
+export async function createFieldNotification(orgId: string, input: FieldNotificationInput): Promise<void> {
+    try {
+        await adminDb().collection('notifications').add({
+            id: uuidv4(),
+            organizationId: orgId,
+            title: input.title,
+            message: input.message,
+            type: input.type || 'info',
+            createdAt: new Date().toISOString(),
+            read: false,
+            ...(input.relatedId ? { relatedId: input.relatedId } : {}),
+            ...(input.targetTab ? { targetTab: input.targetTab } : {}),
+            ...(input.metadata ? { metadata: input.metadata } : {}),
+        });
+    } catch (e) {
+        console.error('createFieldNotification error:', e);
+    }
+}

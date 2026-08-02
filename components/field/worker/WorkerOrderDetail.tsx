@@ -15,7 +15,7 @@ import {
 } from 'lucide-react';
 import type { FieldProductDetail } from '@/lib/field/fieldProjects';
 import type { ProcRow, ProcRowState } from '@/lib/orderProcessRows';
-import { useWorkerOrderDetail } from '@/lib/field/useFieldWorker';
+import { useWorkerNoteActions, useWorkerOrderDetail } from '@/lib/field/useFieldWorker';
 import { useWorkerRequests, type ProposeInput } from '@/lib/field/useWorkerRequests';
 import {
     MPill, MProgress, MEmpty, MSection, MList, MItem, MCell, MText,
@@ -104,6 +104,20 @@ export default function WorkerOrderDetail({ orderId, productById, previewUid, sh
             showToast(e?.message || 'Slanje nije uspjelo.', 'error');
         } finally {
             setBusy(false);
+        }
+    };
+
+    // Napomene su zadaci — kreiraju/mijenjaju se DIREKTNO (bez odobrenja).
+    const { createNote, toggleNote, deleteNote, busy: noteBusy } = useWorkerNoteActions();
+    const noteAction = async (fn: () => Promise<unknown>, okMsg: string) => {
+        if (readOnly || noteBusy) return;
+        try {
+            await fn();
+            showToast(okMsg, 'success');
+            setAddTaskOpen(false); setText('');
+            reload();
+        } catch (e: any) {
+            showToast(e?.message || 'Radnja nije uspjela.', 'error');
         }
     };
 
@@ -301,20 +315,19 @@ export default function WorkerOrderDetail({ orderId, productById, previewUid, sh
                                 </div>
                             )}
                             {detail.tasks.length === 0 ? (
-                                <MEmpty title="Nema napomena" sub="Dodaj napomenu — poslodavac je potvrđuje." />
+                                <MEmpty title="Nema napomena" sub="Dodaj napomenu — odmah se vidi, poslodavac dobije obavijest." />
                             ) : (
                                 <MList lead>
                                     {detail.tasks.map(t => (
                                         <MItem key={t.taskId}>
-                                            <MCell>
+                                            <MCell done={t.status === 'completed'}>
                                                 <MCheck
                                                     on={t.status === 'completed'}
-                                                    disabled={readOnly || busy}
-                                                    onClick={() => submit({
-                                                        kind: 'task_status',
-                                                        payload: { taskId: t.taskId, done: t.status !== 'completed', taskTitle: t.title },
-                                                        workOrderId: orderId,
-                                                    })}
+                                                    disabled={readOnly || noteBusy}
+                                                    onClick={() => noteAction(
+                                                        () => toggleNote(t.taskId, t.status !== 'completed'),
+                                                        t.status !== 'completed' ? 'Označeno gotovim' : 'Vraćeno',
+                                                    )}
                                                 />
                                                 <MText
                                                     title={t.title}
@@ -327,7 +340,7 @@ export default function WorkerOrderDetail({ orderId, productById, previewUid, sh
                                                 {!readOnly && (
                                                     <button
                                                         type="button" className="fwk-iconbtn danger" aria-label="Obriši napomenu"
-                                                        onClick={(e) => { e.stopPropagation(); submit({ kind: 'task_delete', payload: { taskId: t.taskId, taskTitle: t.title }, workOrderId: orderId }); }}
+                                                        onClick={(e) => { e.stopPropagation(); noteAction(() => deleteNote(t.taskId), 'Napomena obrisana'); }}
                                                     >
                                                         <Trash2 size={16} />
                                                     </button>
@@ -393,16 +406,16 @@ export default function WorkerOrderDetail({ orderId, productById, previewUid, sh
                 </div>
             </MSheet>
 
-            {/* ── Sheet: dodaj napomenu ───────────────────────────────── */}
+            {/* ── Sheet: dodaj napomenu (direktno, bez odobrenja) ─────── */}
             <MSheet open={addTaskOpen} title="Nova napomena" onClose={() => setAddTaskOpen(false)}>
                 <input
                     className="fwk-input" placeholder="Upiši napomenu…" value={text}
                     onChange={(e) => setText(e.target.value)} autoFocus
                 />
                 <div className="fld-submit">
-                    <MButton variant="filled" disabled={busy || !text.trim()}
-                        onClick={() => submit({ kind: 'task_create', payload: { title: text.trim() }, workOrderId: orderId })}>
-                        Pošalji prijedlog
+                    <MButton variant="filled" disabled={noteBusy || !text.trim()}
+                        onClick={() => noteAction(() => createNote({ title: text.trim(), workOrderId: orderId }), 'Napomena kreirana')}>
+                        Sačuvaj napomenu
                     </MButton>
                 </div>
             </MSheet>

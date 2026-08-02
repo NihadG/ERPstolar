@@ -14,8 +14,7 @@ import { useMemo, useState } from 'react';
 import { Package, Plus, ClipboardList, Trash2, StickyNote } from 'lucide-react';
 import type { FieldOrderRow } from '@/lib/field/fieldOrders';
 import type { FieldProductDetail } from '@/lib/field/fieldProjects';
-import { useWorkerNotes, useWorkerOrderDetail } from '@/lib/field/useFieldWorker';
-import { useWorkerRequests } from '@/lib/field/useWorkerRequests';
+import { useWorkerNoteActions, useWorkerNotes, useWorkerOrderDetail } from '@/lib/field/useFieldWorker';
 import {
     MLarge, MList, MItem, MCell, MText, MPill, MEmpty, MButton,
     MSheet, MCheck, MOption, MSection,
@@ -36,10 +35,9 @@ interface Props {
 export default function WorkerNotesScreen({ orders, previewUid, showToast }: Props) {
     const readOnly = !!previewUid;
     const { notes, loading, error, reload } = useWorkerNotes(previewUid);
-    const { propose } = useWorkerRequests(readOnly);
+    const { createNote, toggleNote, deleteNote, busy } = useWorkerNoteActions();
 
     const [addOpen, setAddOpen] = useState(false);
-    const [busy, setBusy] = useState(false);
 
     // Nova napomena — tekst + obavezan nalog + opcioni proizvod tog naloga.
     const [text, setText] = useState('');
@@ -55,40 +53,31 @@ export default function WorkerNotesScreen({ orders, previewUid, showToast }: Pro
 
     const resetForm = () => { setText(''); setOrderId(null); setProductId(null); };
 
-    const submit = async (input: Parameters<typeof propose>[0], okMsg: string) => {
+    // Napomena je zadatak — kreira/mijenja se DIREKTNO (bez odobrenja).
+    const runAction = async (fn: () => Promise<unknown>, okMsg: string) => {
         if (readOnly || busy) return;
-        setBusy(true);
         try {
-            await propose(input);
+            await fn();
             showToast(okMsg, 'success');
-            setAddOpen(false); resetForm();
             reload();
         } catch (e: any) {
-            showToast(e?.message || 'Slanje nije uspjelo.', 'error');
-        } finally {
-            setBusy(false);
+            showToast(e?.message || 'Radnja nije uspjela.', 'error');
         }
     };
 
     const create = () => {
         if (!text.trim() || !orderId) return;
-        submit(
-            { kind: 'task_create', payload: { title: text.trim(), ...(productId ? { productId } : {}) }, workOrderId: orderId },
-            'Napomena poslana — čeka potvrdu',
-        );
+        runAction(async () => {
+            await createNote({ title: text.trim(), workOrderId: orderId, ...(productId ? { productId } : {}) });
+            setAddOpen(false); resetForm();
+        }, 'Napomena kreirana');
     };
 
-    const toggle = (taskId: string, done: boolean, title: string, linkedOrderId: string | null) =>
-        submit(
-            { kind: 'task_status', payload: { taskId, done, taskTitle: title }, ...(linkedOrderId ? { workOrderId: linkedOrderId } : {}) },
-            'Prijedlog poslan — čeka potvrdu',
-        );
+    const toggle = (taskId: string, done: boolean) =>
+        runAction(() => toggleNote(taskId, done), done ? 'Označeno gotovim' : 'Vraćeno');
 
-    const remove = (taskId: string, title: string, linkedOrderId: string | null) =>
-        submit(
-            { kind: 'task_delete', payload: { taskId, taskTitle: title }, ...(linkedOrderId ? { workOrderId: linkedOrderId } : {}) },
-            'Prijedlog brisanja poslan — čeka potvrdu',
-        );
+    const remove = (taskId: string) =>
+        runAction(() => deleteNote(taskId), 'Napomena obrisana');
 
     return (
         <>
@@ -130,7 +119,7 @@ export default function WorkerNotesScreen({ orders, previewUid, showToast }: Pro
                                 <MCheck
                                     on={n.status === 'completed'}
                                     disabled={readOnly || busy}
-                                    onClick={() => toggle(n.taskId, n.status !== 'completed', n.title, n.orderId)}
+                                    onClick={() => toggle(n.taskId, n.status !== 'completed')}
                                 />
                                 <MText
                                     title={n.title}
@@ -146,7 +135,7 @@ export default function WorkerNotesScreen({ orders, previewUid, showToast }: Pro
                                 {!readOnly && (
                                     <button
                                         type="button" className="fwk-iconbtn danger" aria-label="Obriši napomenu"
-                                        onClick={(e) => { e.stopPropagation(); remove(n.taskId, n.title, n.orderId); }}
+                                        onClick={(e) => { e.stopPropagation(); remove(n.taskId); }}
                                     >
                                         <Trash2 size={16} />
                                     </button>

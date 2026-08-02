@@ -271,3 +271,12 @@ export async function getTaskById(orgId: string, taskId: string): Promise<Task |
         .get();
     return snap.empty ? null : (snap.docs[0].data() as Task);
 }
+
+export async function getWorkerById(orgId: string, workerId: string): Promise<Worker | null> {
+    const snap = await adminDb().collection('workers')
+        .where('Organization_ID', '==', orgId)
+        .where('Worker_ID', '==', workerId)
+        .limit(1)
+        .get();
+    return snap.empty ? null : (snap.docs[0].data() as Worker);
+}

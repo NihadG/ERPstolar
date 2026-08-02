@@ -207,9 +207,6 @@ export default function WorkerHome({ data, productById, previewUid, showToast }:
                                             {canOpen && <ChevronRight size={18} className="fwk-job-chev" />}
                                         </div>
 
-                                        <div className="fwk-job-bar">
-                                            <span className="fwk-job-fill" style={{ width: `${Math.min(100, a.progressPct)}%` }} />
-                                        </div>
                                         <div className="fwk-job-foot">
                                             <b>{a.progressPct}%</b>
                                             {a.isPaused && <span className="fwk-job-tag">pauzirano</span>}

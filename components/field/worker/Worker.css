@@ -213,15 +213,6 @@
     background: linear-gradient(135deg, var(--j-tintA), var(--j-tintB) 62%), var(--mui-cell);
 }
 
-/* Obojeni rail uz lijevu ivicu — status na prvi pogled. */
-.fwk-job::before {
-    content: '';
-    position: absolute;
-    left: 0; top: 0; bottom: 0;
-    width: 4px;
-    background: var(--j-accent);
-}
-
 .fwk-job:active { transform: scale(0.985); }
 .fwk-job:disabled { cursor: default; }
 
@@ -266,22 +257,9 @@
     background: var(--j-accent); color: #fff;
 }
 
-.fwk-job-bar {
-    position: relative;
-    height: 7px; border-radius: 4px;
-    margin: 12px 0 7px;
-    background: rgba(120, 120, 128, 0.16);
-    overflow: hidden;
-}
-
-.fwk-job-fill {
-    position: absolute; inset: 0 auto 0 0;
-    border-radius: 4px;
-    background: var(--j-accent);
-}
-
 .fwk-job-foot {
     display: flex; align-items: center; gap: 9px; flex-wrap: wrap;
+    margin-top: 11px;
     font-size: 12.5px; color: var(--mui-label2); letter-spacing: -0.01em;
 }
 

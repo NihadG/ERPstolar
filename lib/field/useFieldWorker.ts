@@ -9,7 +9,7 @@
 // ════════════════════════════════════════════════════════════════════
 
 import { useCallback, useEffect, useState } from 'react';
-import { apiGet } from '@/lib/apiClient';
+import { apiDelete, apiGet, apiPatch, apiPost } from '@/lib/apiClient';
 import type { FieldOrderRow, FieldOrderDetail } from './fieldOrders';
 import type { FieldProjectDetail } from './fieldProjects';
 import type { WorkerCalendarMonth } from './fieldCalendar';
@@ -123,6 +123,39 @@ export function useWorkerNotes(previewUid?: string | null) {
     useEffect(() => { load(); }, [load]);
 
     return { notes, loading, error, reload: load };
+}
+
+export interface CreateNoteInput {
+    title: string;
+    workOrderId: string;
+    productId?: string;
+    priority?: string;
+}
+
+/**
+ * Direktne radnje nad napomenama (kreiranje/čekiranje/brisanje) — BEZ odobrenja,
+ * jer napomena je običan zadatak. Server šalje notifikaciju poslodavcu na
+ * kreiranje. Pisanje ne nosi `preview` — u pregledu je sve ionako ugašeno.
+ */
+export function useWorkerNoteActions() {
+    const [busy, setBusy] = useState(false);
+
+    const run = useCallback(async <T>(fn: () => Promise<T>): Promise<T> => {
+        setBusy(true);
+        try { return await fn(); }
+        finally { setBusy(false); }
+    }, []);
+
+    const createNote = useCallback((input: CreateNoteInput) =>
+        run(() => apiPost<{ taskId: string }>('/api/field/worker/notes', input)), [run]);
+
+    const toggleNote = useCallback((taskId: string, done: boolean) =>
+        run(() => apiPatch('/api/field/worker/notes', { taskId, done })), [run]);
+
+    const deleteNote = useCallback((taskId: string) =>
+        run(() => apiDelete(`/api/field/worker/notes?taskId=${encodeURIComponent(taskId)}`)), [run]);
+
+    return { createNote, toggleNote, deleteNote, busy };
 }
 
 export function useWorkerMe(previewUid?: string | null) {

@@ -16,7 +16,7 @@ import type { FieldMaterialRow, FieldProductDetail } from '@/lib/field/fieldProj
 import type { MaterialLine } from '@/lib/changeRequests';
 import { useWorkerRequests, type ProposeInput } from '@/lib/field/useWorkerRequests';
 import {
-    MPill, MEmpty, MSection, MList, MItem, MCell, MText, MDot, MSegmented, MSheet, MButton, MCheck,
+    MPill, MEmpty, MSection, MList, MItem, MCell, MText, MDot, MSheet, MButton, MCheck,
 } from '@/components/tabs/mobile/MobileUI';
 import { useOverlayGuard } from '@/components/tabs/mobile/overlayGuard';
 import { useSwipeBack } from '@/components/tabs/mobile/useSwipe';
@@ -39,7 +39,6 @@ interface Props {
 export default function WorkerProductDetail({ product, backLabel, previewUid, showToast, onClose }: Props) {
     const readOnly = !!previewUid;
     const { propose } = useWorkerRequests(readOnly);
-    const [tab, setTab] = useState<'materijali' | 'procesi'>('materijali');
     const [usageOpen, setUsageOpen] = useState(false);
     const [orderOpen, setOrderOpen] = useState(false);
     const [busy, setBusy] = useState(false);
@@ -116,56 +115,27 @@ export default function WorkerProductDetail({ product, backLabel, previewUid, sh
                 </div>
             )}
 
-            <div className="fld-seg">
-                <MSegmented<'materijali' | 'procesi'>
-                    value={tab}
-                    onChange={setTab}
-                    options={[
-                        { id: 'materijali', label: `Materijali ${product.materialsTotal}` },
-                        { id: 'procesi', label: `Procesi ${product.processes.length}` },
-                    ]}
-                />
-            </div>
-
-            {tab === 'materijali' && (
-                product.materials.length === 0 ? (
-                    <MEmpty title="Nema materijala" sub="Proizvod još nema unesenu sastavnicu." />
-                ) : (
-                    <MList lead>
-                        {product.materials.map(m => (
-                            <MItem key={m.materialId}>
-                                <MCell>
-                                    <MDot kind={matDot(m.status)} />
-                                    <MText
-                                        title={m.name}
-                                        sub={<>
-                                            <MPill tone={matTone(m.status)}>{m.status}</MPill>
-                                            {m.isEssential && <MPill tone="red">ključno</MPill>}
-                                            <span>{m.quantity} {m.unit}{m.supplier ? ` · ${m.supplier}` : ''}</span>
-                                        </>}
-                                    />
-                                </MCell>
-                            </MItem>
-                        ))}
-                    </MList>
-                )
-            )}
-
-            {tab === 'procesi' && (
-                product.processes.length === 0 ? (
-                    <MEmpty title="Nema plana procesa" sub="Proizvod još nema definisan tok." />
-                ) : (
-                    <>
-                        <MList>
-                            {product.processes.map((p, i) => (
-                                <MItem key={`${p}-${i}`}>
-                                    <MCell><MText title={p} sub={`korak ${i + 1}`} /></MCell>
-                                </MItem>
-                            ))}
-                        </MList>
-                        <p className="fwk-hint">Procesi se čekiraju na nalogu, u tabu Tok.</p>
-                    </>
-                )
+            <MSection title="Materijali" right={<span className="mui-dim">{product.materialsTotal}</span>} />
+            {product.materials.length === 0 ? (
+                <MEmpty title="Nema materijala" sub="Proizvod još nema unesenu sastavnicu." />
+            ) : (
+                <MList lead>
+                    {product.materials.map(m => (
+                        <MItem key={m.materialId}>
+                            <MCell>
+                                <MDot kind={matDot(m.status)} />
+                                <MText
+                                    title={m.name}
+                                    sub={<>
+                                        <MPill tone={matTone(m.status)}>{m.status}</MPill>
+                                        {m.isEssential && <MPill tone="red">ključno</MPill>}
+                                        <span>{m.quantity} {m.unit}{m.supplier ? ` · ${m.supplier}` : ''}</span>
+                                    </>}
+                                />
+                            </MCell>
+                        </MItem>
+                    ))}
+                </MList>
             )}
 
             {product.notes && (
