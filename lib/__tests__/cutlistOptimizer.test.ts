@@ -314,6 +314,38 @@ describe('packGroups — više materijala', () => {
     });
 });
 
+describe('regresija: dugačke tanke trake ne izlaze van ploče (iskoristivost ≤ 100%)', () => {
+    // Realan slučaj koji je stari kod rušio: 300× 2560×120 se NE mogu rotirati
+    // (2560 > korisna visina), pa je strip-pakovanje forsiralo portret i slagalo
+    // komade IZVAN ploče → iskoristivost 119% i lažno manji broj ploča.
+    const parts = makeParts([
+        ['A dugačka', 2154, 110, 50],
+        ['B dugačka', 2560, 120, 300],
+        ['C srednja', 1250, 500, 50],
+    ]);
+    const board = { width: 2800, height: 2070 };
+    const localSettings: CutlistSettings = { kerf: 4, trim: 10, allowRotation: true };
+    const usableW = board.width - 2 * localSettings.trim;
+    const usableH = board.height - 2 * localSettings.trim;
+    const result = packGroup(parts, board, localSettings, { timeBudgetMs: 3000, maxRestarts: 150 });
+
+    it('svi komadi unutar granica ploče i bez preklapanja', () => {
+        expect(result.unplaced).toHaveLength(0);
+        validateSheets(result.sheets, usableW, usableH, localSettings.kerf);
+    });
+
+    it('nijedna ploča nema iskoristivost > 100% (nema over-packinga)', () => {
+        for (const sh of result.sheets) {
+            expect(sh.efficiency).toBeLessThanOrEqual(100.01);
+        }
+    });
+
+    it('broj ploča je fizički moguć (≥ ukupna površina / površina ploče)', () => {
+        const minSheets = Math.ceil(result.totalPartsArea / (usableW * usableH));
+        expect(result.sheets.length).toBeGreaterThanOrEqual(minSheets);
+    });
+});
+
 describe('edgeBandingMeters', () => {
     it('računa metre kant trake po ivicama', () => {
         const parts: CutPart[] = [{

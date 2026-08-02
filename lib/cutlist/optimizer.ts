@@ -415,27 +415,40 @@ function packStripsGlobal(
 ): Solution {
     const kerf = settings.kerf;
 
+    // Orijentacije koje FIZIČKI stanu na korisnu površinu. Bez ovog filtera
+    // forsirana orijentacija (npr. 'port' na komadu 2560×120 → 120×2560) pravi
+    // traku VIŠU od ploče, pa se komadi slože izvan granica → iskoristivost
+    // preko 100% i lažno manji broj ploča. (packGroup je već odbacio komade
+    // koji ne stanu ni u jednoj orijentaciji, pa bar jedna uvijek postoji.)
+    const fitsBoard = (w: number, h: number) =>
+        w <= usable.width + 1e-6 && h <= usable.height + 1e-6;
+
     // Primarna orijentacija po komadu (varijanta pretrage). Uz rng, visina
     // za SORTIRANJE dobija džiter (±30mm) — bliske klase visina (553/548/528)
     // se izmiješaju, pa visoka traka može da primi i niže komade s alpha
     // pragom, umjesto da se klase kruto redaju jedna iza druge.
     const oriented = instances.map(inst => {
         const rotatable = settings.allowRotation && inst.ref.canRotate !== false && inst.w !== inst.h;
-        let w = inst.w, h = inst.h, rotated = false;
-        if (rotatable) {
-            if (orient === 'land' && h > w) { w = inst.h; h = inst.w; rotated = true; }
-            if (orient === 'port' && w > h) { w = inst.h; h = inst.w; rotated = true; }
-        }
+        const cand: [number, number, boolean][] = [];
+        if (fitsBoard(inst.w, inst.h)) cand.push([inst.w, inst.h, false]);
+        if (rotatable && fitsBoard(inst.h, inst.w)) cand.push([inst.h, inst.w, true]);
+        if (cand.length === 0) cand.push([inst.w, inst.h, false]);   // guard — ne bi trebalo
+
+        // Primarna prema traženoj orijentaciji, ali SAMO među onima koje stanu.
+        let primary = cand[0];
+        if (orient === 'land') primary = cand.find(c => c[0] >= c[1]) || cand[0];
+        else if (orient === 'port') primary = cand.find(c => c[1] >= c[0]) || cand[0];
+
+        const [w, h, rotated] = primary;
         const sortKey = h + (rng ? (rng() - 0.5) * 60 : 0);
-        return { inst, w, h, rotated, rotatable, sortKey };
+        return { inst, w, h, rotated, rotatable, cand, sortKey };
     }).sort((a, b) => b.sortKey - a.sortKey || b.w - a.w);
 
     const strips: Strip[] = [];
 
     for (const p of oriented) {
-        const orients: [number, number, boolean][] = p.rotatable
-            ? [[p.w, p.h, p.rotated], [p.h, p.w, !p.rotated]]
-            : [[p.w, p.h, p.rotated]];
+        // Samo orijentacije koje stanu na ploču (spriječava trake izvan granica).
+        const orients: [number, number, boolean][] = p.cand;
 
         // 1) Kandidatske trake: dovoljno visoke, ne prerastrošne (alpha
         //    ograničava bacanje visine), imaju širine. Rangira ih gubitak

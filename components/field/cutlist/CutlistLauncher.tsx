@@ -8,6 +8,7 @@
 // ════════════════════════════════════════════════════════════════════
 
 import { useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Scissors, ChevronRight } from 'lucide-react';
 import FieldCutlist from './FieldCutlist';
 import './FieldCutlist.css';
@@ -24,7 +25,12 @@ export default function CutlistLauncher() {
                 </span>
                 <ChevronRight size={20} className="fcl-launch-chev" />
             </button>
-            {open && <FieldCutlist onClose={() => setOpen(false)} />}
+            {/* Portal na <body> — inače overlay ostaje zarobljen u stacking
+                kontekstu tab-trake (.mtb), pa mu traka prekrije donje dugmad. */}
+            {open && typeof document !== 'undefined' && createPortal(
+                <FieldCutlist onClose={() => setOpen(false)} />,
+                document.body,
+            )}
         </>
     );
 }
