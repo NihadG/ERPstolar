@@ -16,14 +16,16 @@
 // NAPREDAK i ROK. Payload (lib/field/fieldHome.ts) iznose ni ne sadrži.
 // ════════════════════════════════════════════════════════════════════
 
-import { useMemo, useState } from 'react';
+import { useMemo, useState, type Dispatch, type SetStateAction } from 'react';
 import { AlertCircle, CalendarCheck, ChevronRight, Package, Wrench, Hourglass } from 'lucide-react';
 import type { FieldHomePayload, FieldAssignment } from '@/lib/field/fieldHome';
 import type { FieldProductDetail } from '@/lib/field/fieldProjects';
+import type { NoteRow } from '@/lib/field/fieldNotes';
 import { useWorkerRequests } from '@/lib/field/useWorkerRequests';
 import { requestKindLabel } from '@/lib/changeRequests';
 import CutlistLauncher from './cutlist/CutlistLauncher';
 import WorkerProductDetail from './worker/WorkerProductDetail';
+import WorkerNoteCards from './worker/WorkerNoteCards';
 import type { ShowToast } from './worker/WorkerApp';
 import {
     MLarge, MSection, MList, MItem, MCell, MText, MValue, MPill,
@@ -100,11 +102,18 @@ function groupByProject(assignments: FieldAssignment[]): ProjectGroup[] {
 interface Props {
     data: FieldHomePayload;
     productById: Map<string, FieldProductDetail>;
+    notes: NoteRow[];
+    setNotes: Dispatch<SetStateAction<NoteRow[]>>;
+    reloadNotes: () => void;
+    /** Nalozi u toku — njihove napomene se ističu na Danas. */
+    activeOrderIds: Set<string>;
     previewUid?: string | null;
     showToast: ShowToast;
 }
 
-export default function WorkerHome({ data, productById, previewUid, showToast }: Props) {
+export default function WorkerHome({
+    data, productById, notes, setNotes, reloadNotes, activeOrderIds, previewUid, showToast,
+}: Props) {
     const { user, assignments, attendance, week } = data;
     const firstName = user.name.split(' ')[0] || user.name;
     const { requests } = useWorkerRequests(data.preview);
@@ -115,6 +124,12 @@ export default function WorkerHome({ data, productById, previewUid, showToast }:
     const pendingCount = requests.filter(r => r.Status === 'pending').length;
 
     const groups = useMemo(() => groupByProject(assignments), [assignments]);
+
+    // Napomene naloga U TOKU — otvorene — istaknute na Danas.
+    const activeNotes = useMemo(
+        () => notes.filter(n => n.status !== 'completed' && n.orderId && activeOrderIds.has(n.orderId)),
+        [notes, activeOrderIds]
+    );
 
     const dateText = new Date(data.today + 'T12:00:00')
         .toLocaleDateString('bs-BA', { weekday: 'long', day: 'numeric', month: 'long' });
@@ -207,6 +222,20 @@ export default function WorkerHome({ data, productById, previewUid, showToast }:
                         </div>
                     </div>
                 ))
+            )}
+
+            {/* ── Napomene naloga u toku (istaknute ovdje) ────────────── */}
+            {activeNotes.length > 0 && (
+                <>
+                    <MSection title="Napomene" right={<span className="mui-dim">{activeNotes.length}</span>} />
+                    <WorkerNoteCards
+                        notes={activeNotes}
+                        setNotes={setNotes}
+                        reload={reloadNotes}
+                        showToast={showToast}
+                        readOnly={!!previewUid}
+                    />
+                </>
             )}
 
             {/* ── Moji prijedlozi ─────────────────────────────────────── */}

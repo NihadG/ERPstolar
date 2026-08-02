@@ -12,7 +12,7 @@
 import { useCallback, useMemo, useState } from 'react';
 import type { FieldHomePayload } from '@/lib/field/fieldHome';
 import type { FieldProductDetail } from '@/lib/field/fieldProjects';
-import { useWorkerWork } from '@/lib/field/useFieldWorker';
+import { useWorkerNotes, useWorkerWork } from '@/lib/field/useFieldWorker';
 import FieldTabBar, { type FieldTabId } from '../FieldTabBar';
 import WorkerHome from '../WorkerHome';
 import WorkerOrdersScreen from './WorkerOrdersScreen';
@@ -32,6 +32,9 @@ export default function WorkerApp({ data, previewUid }: Props) {
     const [tab, setTab] = useState<FieldTabId>('home');
     const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null);
     const { orders, projects, loading, error, reload } = useWorkerWork(previewUid);
+    // Napomene se dohvaćaju JEDNOM ovdje — dijele ih tab Napomene i tab Danas,
+    // pa optimistična izmjena na jednom mjestu odmah važi na oba.
+    const notesState = useWorkerNotes(previewUid);
 
     const showToast = useCallback<ShowToast>((message, type = 'info') => {
         setToast({ message, type });
@@ -45,6 +48,20 @@ export default function WorkerApp({ data, previewUid }: Props) {
         return m;
     }, [projects]);
 
+    // Nalozi/proizvodi „u toku" (aktivna, nepauzirana stavka) — za isticanje
+    // napomena i sortiranje. Ista definicija na Danas i u tabu Napomene.
+    const { activeOrderIds, activeProductIds } = useMemo(() => {
+        const orderIds = new Set<string>();
+        const productIds = new Set<string>();
+        for (const a of data.assignments) {
+            if (a.status === 'U toku' && !a.isPaused) {
+                orderIds.add(a.orderId);
+                if (a.productId) productIds.add(a.productId);
+            }
+        }
+        return { activeOrderIds: orderIds, activeProductIds: productIds };
+    }, [data.assignments]);
+
     return (
         <>
             <div className="fld-body">
@@ -52,6 +69,10 @@ export default function WorkerApp({ data, previewUid }: Props) {
                     <WorkerHome
                         data={data}
                         productById={productById}
+                        notes={notesState.notes}
+                        setNotes={notesState.setNotes}
+                        reloadNotes={notesState.reload}
+                        activeOrderIds={activeOrderIds}
                         previewUid={previewUid}
                         showToast={showToast}
                     />
@@ -72,7 +93,12 @@ export default function WorkerApp({ data, previewUid }: Props) {
                 {tab === 'notes' && (
                     <WorkerNotesScreen
                         orders={orders}
-                        productById={productById}
+                        notes={notesState.notes}
+                        setNotes={notesState.setNotes}
+                        loading={notesState.loading}
+                        error={notesState.error}
+                        reload={notesState.reload}
+                        activeProductIds={activeProductIds}
                         previewUid={previewUid}
                         showToast={showToast}
                     />

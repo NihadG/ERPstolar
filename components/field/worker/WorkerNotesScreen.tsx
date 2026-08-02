@@ -4,44 +4,58 @@
 // RADNIK — NAPOMENE
 //
 // Napomene SU zadaci (isti `tasks`/Task.Links kao desktop tab Zadaci), samo
-// filtrirani i preimenovani za radnika. Kartica se OTVARA (dodir na naslov) da
-// pokaže opis, rok i checklistu. Sve izmjene su DIREKTNE (bez odobrenja) i
-// OPTIMISTIČNE — čekiranje se vidi odmah, bez čekanja mreže; ako upis padne,
-// stanje se vrati. Poslodavac dobije notifikaciju kad radnik doda napomenu.
+// filtrirani i preimenovani za radnika. GRUPISANE PO NALOGU: prvo nalozi u
+// toku, pa pauzirani, pa na čekanju, pa lične (bez naloga). Unutar naloga prve
+// su napomene proizvoda koji je u toku. Kreiranje/čekiranje/brisanje su direktne
+// izmjene (bez odobrenja); poslodavac dobije notifikaciju na kreiranje.
 // ════════════════════════════════════════════════════════════════════
 
-import { useMemo, useState } from 'react';
-import { Check, ChevronDown, ClipboardList, Package, Plus, StickyNote, Trash2 } from 'lucide-react';
+import { useMemo, useState, type Dispatch, type SetStateAction } from 'react';
+import { Plus } from 'lucide-react';
 import type { FieldOrderRow } from '@/lib/field/fieldOrders';
-import type { FieldProductDetail } from '@/lib/field/fieldProjects';
 import type { NoteRow } from '@/lib/field/fieldNotes';
-import { useWorkerNoteActions, useWorkerNotes, useWorkerOrderDetail } from '@/lib/field/useFieldWorker';
-import {
-    MLarge, MList, MPill, MEmpty, MButton, MSheet, MCheck, MOption, MSection,
-} from '@/components/tabs/mobile/MobileUI';
+import { useWorkerNoteActions, useWorkerOrderDetail } from '@/lib/field/useFieldWorker';
+import { MLarge, MList, MPill, MEmpty, MButton, MSheet, MOption, MSection } from '@/components/tabs/mobile/MobileUI';
+import WorkerNoteCards from './WorkerNoteCards';
 import type { ShowToast } from './WorkerApp';
 
-const PRIORITY_TONE: Record<string, 'red' | 'orange' | 'blue' | 'gray'> = {
-    urgent: 'red', high: 'orange', medium: 'blue', low: 'gray',
-};
+const PRIORITY_RANK: Record<string, number> = { urgent: 0, high: 1, medium: 2, low: 3 };
 
-const dueText = (iso: string) =>
-    new Date(iso.split('T')[0] + 'T12:00:00').toLocaleDateString('bs-BA', { day: 'numeric', month: 'long' });
+/** Status naloga za zaglavlje grupe (iz ranga: 0/1 u toku, 2 pauza, 3 čekanje). */
+function orderStatusPill(rank: number): { label: string; tone: 'blue' | 'orange' | 'gray' } | null {
+    if (rank <= 1) return { label: 'U toku', tone: 'blue' };
+    if (rank === 2) return { label: 'Pauziran', tone: 'orange' };
+    if (rank === 3) return { label: 'Na čekanju', tone: 'gray' };
+    return null;
+}
+
+interface NoteGroup {
+    key: string;
+    name: string;
+    rank: number;
+    notes: NoteRow[];
+}
 
 interface Props {
     orders: FieldOrderRow[];
-    productById: Map<string, FieldProductDetail>;
+    notes: NoteRow[];
+    setNotes: Dispatch<SetStateAction<NoteRow[]>>;
+    loading: boolean;
+    error: string | null;
+    reload: () => void;
+    /** Proizvodi u toku — napomene tih proizvoda idu prve unutar naloga. */
+    activeProductIds: Set<string>;
     previewUid?: string | null;
     showToast: ShowToast;
 }
 
-export default function WorkerNotesScreen({ orders, previewUid, showToast }: Props) {
+export default function WorkerNotesScreen({
+    orders, notes, setNotes, loading, error, reload, activeProductIds, previewUid, showToast,
+}: Props) {
     const readOnly = !!previewUid;
-    const { notes, setNotes, loading, error, reload } = useWorkerNotes(previewUid);
-    const { createNote, toggleNote, toggleChecklistItem, deleteNote, busy } = useWorkerNoteActions();
+    const { createNote, busy } = useWorkerNoteActions();
 
     const [addOpen, setAddOpen] = useState(false);
-    const [expandedId, setExpandedId] = useState<string | null>(null);
 
     // Nova napomena — tekst + obavezan nalog + opcioni proizvod tog naloga.
     const [text, setText] = useState('');
@@ -50,41 +64,38 @@ export default function WorkerNotesScreen({ orders, previewUid, showToast }: Pro
     const { detail: orderDetail } = useWorkerOrderDetail(addOpen ? orderId : null, previewUid);
     const orderProducts = orderDetail?.items || [];
 
-    const openCount = useMemo(
-        () => notes.filter(n => n.status !== 'completed').length,
-        [notes]
-    );
+    const openCount = useMemo(() => notes.filter(n => n.status !== 'completed').length, [notes]);
+
+    // ── Grupisanje po nalogu; grupe u toku prve; unutar grupe „u toku" prvi ──
+    const groups = useMemo<NoteGroup[]>(() => {
+        const orderById = new Map(orders.map(o => [o.orderId, o]));
+        const map = new Map<string, NoteGroup>();
+        for (const n of notes) {
+            const key = n.orderId || '__none__';
+            let g = map.get(key);
+            if (!g) {
+                const o = n.orderId ? orderById.get(n.orderId) : undefined;
+                g = {
+                    key,
+                    name: n.orderId ? (o?.name || n.orderName || 'Nalog') : 'Lične napomene',
+                    rank: n.orderId ? (o?.rank ?? 8) : 9,
+                    notes: [],
+                };
+                map.set(key, g);
+            }
+            g.notes.push(n);
+        }
+        for (const g of map.values()) {
+            g.notes.sort((a, b) =>
+                (activeProductIds.has(b.productId || '') ? 1 : 0) - (activeProductIds.has(a.productId || '') ? 1 : 0)
+                || (a.status === 'completed' ? 1 : 0) - (b.status === 'completed' ? 1 : 0)
+                || (PRIORITY_RANK[a.priority] ?? 9) - (PRIORITY_RANK[b.priority] ?? 9)
+                || a.title.localeCompare(b.title, 'bs'));
+        }
+        return [...map.values()].sort((a, b) => a.rank - b.rank || a.name.localeCompare(b.name, 'bs'));
+    }, [notes, orders, activeProductIds]);
 
     const resetForm = () => { setText(''); setOrderId(null); setProductId(null); };
-
-    const patch = (taskId: string, fn: (n: NoteRow) => NoteRow) =>
-        setNotes(prev => prev.map(n => (n.taskId === taskId ? fn(n) : n)));
-
-    // ── Optimistične izmjene (instant, bez reload-a) ─────────────────
-    const toggleDone = (n: NoteRow) => {
-        if (readOnly) return;
-        const done = n.status !== 'completed';
-        patch(n.taskId, x => ({ ...x, status: done ? 'completed' : 'pending' }));
-        toggleNote(n.taskId, done).catch(() => {
-            patch(n.taskId, x => ({ ...x, status: n.status }));
-            showToast('Nije sačuvano.', 'error');
-        });
-    };
-
-    const toggleCheck = (n: NoteRow, itemId: string, completed: boolean) => {
-        if (readOnly) return;
-        patch(n.taskId, x => ({ ...x, checklist: x.checklist.map(c => (c.id === itemId ? { ...c, completed } : c)) }));
-        toggleChecklistItem(n.taskId, itemId, completed).catch(() => {
-            patch(n.taskId, x => ({ ...x, checklist: x.checklist.map(c => (c.id === itemId ? { ...c, completed: !completed } : c)) }));
-            showToast('Nije sačuvano.', 'error');
-        });
-    };
-
-    const remove = (taskId: string) => {
-        if (readOnly) return;
-        setNotes(prev => prev.filter(n => n.taskId !== taskId));
-        deleteNote(taskId).catch(() => { showToast('Brisanje nije uspjelo.', 'error'); reload(); });
-    };
 
     const create = async () => {
         if (readOnly || busy || !text.trim() || !orderId) return;
@@ -130,75 +141,25 @@ export default function WorkerNotesScreen({ orders, previewUid, showToast }: Pro
                 />
             )}
 
-            {notes.length > 0 && (
-                <div className="fwk-notes">
-                    {notes.map(n => {
-                        const done = n.status === 'completed';
-                        const open = expandedId === n.taskId;
-                        const hasDetail = !!(n.description || n.notes || n.dueDate || n.checklist.length);
-                        const checkDone = n.checklist.filter(c => c.completed).length;
-                        return (
-                            <div key={n.taskId} className={`fwk-note${done ? ' done' : ''}`}>
-                                <div className="fwk-note-head">
-                                    <MCheck on={done} disabled={readOnly} onClick={() => toggleDone(n)} />
-                                    <button
-                                        type="button"
-                                        className="fwk-note-open"
-                                        onClick={() => hasDetail && setExpandedId(open ? null : n.taskId)}
-                                    >
-                                        <span className="fwk-note-title">{n.title}</span>
-                                        <span className="fwk-note-tags">
-                                            <MPill tone={PRIORITY_TONE[n.priority] || 'gray'}>{n.priority}</MPill>
-                                            {n.productName
-                                                ? <span className="fwk-note-link"><Package size={12} /> {n.productName}</span>
-                                                : n.orderName
-                                                    ? <span className="fwk-note-link"><ClipboardList size={12} /> {n.orderName}</span>
-                                                    : <span className="fwk-note-link"><StickyNote size={12} /> lična</span>}
-                                            {n.checklist.length > 0 && (
-                                                <span className="fwk-note-cl">{checkDone}/{n.checklist.length}</span>
-                                            )}
-                                        </span>
-                                    </button>
-                                    {hasDetail && <ChevronDown size={18} className={`fwk-note-chev${open ? ' open' : ''}`} />}
-                                    {!readOnly && (
-                                        <button
-                                            type="button" className="fwk-iconbtn danger" aria-label="Obriši napomenu"
-                                            onClick={() => remove(n.taskId)}
-                                        >
-                                            <Trash2 size={16} />
-                                        </button>
-                                    )}
-                                </div>
-
-                                {open && hasDetail && (
-                                    <div className="fwk-note-detail">
-                                        {n.description && <p className="fwk-note-desc">{n.description}</p>}
-                                        {n.notes && <p className="fwk-note-desc">{n.notes}</p>}
-                                        {n.dueDate && <div className="fwk-note-due">Rok: {dueText(n.dueDate)}</div>}
-                                        {n.checklist.length > 0 && (
-                                            <div className="fwk-note-checklist">
-                                                {n.checklist.map(c => (
-                                                    <button
-                                                        key={c.id} type="button"
-                                                        className={`fwk-note-citem${c.completed ? ' on' : ''}`}
-                                                        disabled={readOnly}
-                                                        onClick={() => toggleCheck(n, c.id, !c.completed)}
-                                                    >
-                                                        <span className="fwk-note-cbox">
-                                                            {c.completed && <Check size={12} strokeWidth={3.5} />}
-                                                        </span>
-                                                        <span className="fwk-note-ctext">{c.text}</span>
-                                                    </button>
-                                                ))}
-                                            </div>
-                                        )}
-                                    </div>
-                                )}
-                            </div>
-                        );
-                    })}
-                </div>
-            )}
+            {groups.map(g => {
+                const sp = orderStatusPill(g.rank);
+                return (
+                    <div key={g.key}>
+                        <MSection
+                            title={g.name}
+                            right={sp ? <MPill tone={sp.tone}>{sp.label}</MPill> : <span className="mui-dim">{g.notes.length}</span>}
+                        />
+                        <WorkerNoteCards
+                            notes={g.notes}
+                            setNotes={setNotes}
+                            reload={reload}
+                            showToast={showToast}
+                            readOnly={readOnly}
+                            showLink={false}
+                        />
+                    </div>
+                );
+            })}
 
             {/* ── Nova napomena ───────────────────────────────────────── */}
             <MSheet open={addOpen} title="Nova napomena" onClose={() => setAddOpen(false)}>
