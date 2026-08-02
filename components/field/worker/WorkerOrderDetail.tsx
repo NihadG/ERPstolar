@@ -57,9 +57,11 @@ interface Props {
     previewUid?: string | null;
     showToast: ShowToast;
     onClose: () => void;
+    /** Osvježi dijeljenu listu naloga (Danas/Nalozi) nakon radnje. */
+    onChanged?: () => void;
 }
 
-export default function WorkerOrderDetail({ orderId, productById, previewUid, showToast, onClose }: Props) {
+export default function WorkerOrderDetail({ orderId, productById, previewUid, showToast, onClose, onChanged }: Props) {
     const readOnly = !!previewUid;
     const { detail, loading, error, reload } = useWorkerOrderDetail(orderId, previewUid);
     const { pending, propose } = useWorkerRequests(readOnly);
@@ -93,13 +95,17 @@ export default function WorkerOrderDetail({ orderId, productById, previewUid, sh
         [pending, orderId]
     );
 
-    const submit = async (input: ProposeInput, okMsg = 'Prijedlog poslan — čeka potvrdu') => {
+    // Nenovčane radnje se primijene ODMAH (server); novčane (zatvaranje) ostaju
+    // prijedlog. Podrazumijevana poruka je za direktne; novčane šalju svoju.
+    const submit = async (input: ProposeInput, okMsg = 'Sačuvano') => {
         if (readOnly || busy) return;
         setBusy(true);
         try {
             await propose(input);
             showToast(okMsg, 'success');
             setProcSheet(null); setAddProcOpen(false); setAddTaskOpen(false); setText('');
+            reload();          // osvježi detalj (primijenjena izmjena)
+            onChanged?.();     // osvježi listu naloga u pozadini
         } catch (e: any) {
             showToast(e?.message || 'Slanje nije uspjelo.', 'error');
         } finally {
@@ -193,7 +199,7 @@ export default function WorkerOrderDetail({ orderId, productById, previewUid, sh
                                         <Pause size={17} /> {detail.isPaused ? 'Nastavi' : 'Pauza'}
                                     </MAction>
                                     <MAction tone="tint" disabled={busy}
-                                        onClick={() => submit({ kind: 'order_complete', payload: {}, workOrderId: orderId })}>
+                                        onClick={() => submit({ kind: 'order_complete', payload: {}, workOrderId: orderId }, 'Poslano poslodavcu — čeka potvrdu')}>
                                         <Flag size={17} /> Završi
                                     </MAction>
                                 </>
@@ -292,7 +298,7 @@ export default function WorkerOrderDetail({ orderId, productById, previewUid, sh
                                             {!readOnly && it.canComplete && (
                                                 <MActions>
                                                     <MAction tone="green" disabled={busy}
-                                                        onClick={() => submit({ kind: 'item_complete', payload: { itemId: it.itemId, date: todayISO() }, workOrderId: orderId })}>
+                                                        onClick={() => submit({ kind: 'item_complete', payload: { itemId: it.itemId, date: todayISO() }, workOrderId: orderId }, 'Poslano poslodavcu — čeka potvrdu')}>
                                                         <Flag size={16} /> Predloži zatvaranje
                                                     </MAction>
                                                 </MActions>
@@ -401,7 +407,7 @@ export default function WorkerOrderDetail({ orderId, productById, previewUid, sh
                 <div className="fld-submit">
                     <MButton variant="filled" disabled={busy || !text.trim()}
                         onClick={() => submit({ kind: 'process_add', payload: { itemIds: detail?.items.map(i => i.itemId) || [], procName: text.trim() }, workOrderId: orderId })}>
-                        Pošalji prijedlog
+                        Dodaj proces
                     </MButton>
                 </div>
             </MSheet>

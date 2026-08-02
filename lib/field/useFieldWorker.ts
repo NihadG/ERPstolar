@@ -22,6 +22,27 @@ function withPreview(path: string, previewUid?: string | null): string {
     return `${path}${sep}preview=${encodeURIComponent(previewUid)}`;
 }
 
+/**
+ * Osvježi kad se ekran VRATI U FOKUS (radnik se vrati u app), kad tab postane
+ * vidljiv, i povremeno dok je vidljiv — da izmjene s desktopa (odobrenja/uređivanja)
+ * stignu do radnika brzo, bez ručnog reloada. Radnik nema realtime (nema pristup
+ * Firestoreu), pa je ovo najbliže tome; sve pauzira kad je app u pozadini.
+ */
+function useAutoRefresh(reload: () => void, intervalMs = 30000) {
+    useEffect(() => {
+        const visible = () => typeof document === 'undefined' || document.visibilityState === 'visible';
+        const onWake = () => { if (visible()) reload(); };
+        window.addEventListener('focus', onWake);
+        document.addEventListener('visibilitychange', onWake);
+        const id = window.setInterval(onWake, intervalMs);
+        return () => {
+            window.removeEventListener('focus', onWake);
+            document.removeEventListener('visibilitychange', onWake);
+            window.clearInterval(id);
+        };
+    }, [reload, intervalMs]);
+}
+
 interface WorkPayload {
     today: string;
     orders: FieldOrderRow[];
@@ -46,6 +67,7 @@ export function useWorkerWork(previewUid?: string | null) {
     }, [previewUid]);
 
     useEffect(() => { load(); }, [load]);
+    useAutoRefresh(load);
 
     return {
         orders: data?.orders || [],
@@ -76,6 +98,7 @@ export function useWorkerOrderDetail(orderId: string | null, previewUid?: string
     }, [orderId, previewUid]);
 
     useEffect(() => { load(); }, [load]);
+    useAutoRefresh(load);
 
     return { detail, loading, error, reload: load };
 }
@@ -98,6 +121,7 @@ export function useWorkerCalendar(month: string, previewUid?: string | null) {
     }, [month, previewUid]);
 
     useEffect(() => { load(); }, [load]);
+    useAutoRefresh(load);
 
     return { calendar, loading, error, reload: load };
 }
@@ -121,6 +145,7 @@ export function useWorkerNotes(previewUid?: string | null) {
     }, [previewUid]);
 
     useEffect(() => { load(); }, [load]);
+    useAutoRefresh(load);
 
     return { notes, setNotes, loading, error, reload: load };
 }
@@ -179,6 +204,7 @@ export function useWorkerMe(previewUid?: string | null) {
     }, [previewUid]);
 
     useEffect(() => { load(); }, [load]);
+    useAutoRefresh(load);
 
     return { efficiency, loading, error, reload: load };
 }

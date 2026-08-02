@@ -12,14 +12,15 @@
 import { NextResponse } from 'next/server';
 import { errorResponse, HttpError, requireFieldUser } from '@/lib/server/requireUser';
 import {
-    attachItems, getItemsForWorkOrders, getOpenWorkOrders, getTaskById, getWorkOrderById,
+    attachItems, getItemsForWorkOrders, getOpenWorkOrders, getTaskById, getWorkerById, getWorkOrderById,
 } from '@/lib/server/fieldRepo';
-import { createRequest, listRequestsForWorker } from '@/lib/server/changeRequests';
+import { createRequest, listRequestsForWorker, resolveRequest } from '@/lib/server/changeRequests';
+import { createFieldNotification } from '@/lib/server/fieldWriteExtras';
 import { isWorkerAssignedToAutoItem } from '@/lib/autoBook';
 import { myProductIds } from '@/lib/field/fieldWorker';
 import { canWorkerTouchTask } from '@/lib/field/fieldNotes';
 import { workOrderDisplayName } from '@/lib/utils';
-import type { SummaryContext } from '@/lib/changeRequests';
+import { isMoneyKind, type SummaryContext } from '@/lib/changeRequests';
 import type { ChangeRequestKind, WorkOrder, WorkOrderItem } from '@/lib/types';
 
 export const runtime = 'nodejs';
@@ -135,15 +136,42 @@ export async function POST(req: Request) {
             throw new HttpError(400, 'Nepoznata vrsta prijedloga.');
         }
 
+        const worker = await getWorkerById(caller.orgId, caller.workerId);
+        const workerName = worker?.Name || caller.email || 'Radnik';
+
         const request = await createRequest(caller.orgId, {
             kind,
             rawPayload: payload,
-            actor: { uid: caller.uid, name: caller.email || 'Radnik', workerId: caller.workerId },
+            actor: { uid: caller.uid, name: workerName, workerId: caller.workerId },
             meta,
             summaryCtx,
         });
 
-        return NextResponse.json({ ok: true, request }, { headers: { 'Cache-Control': 'no-store' } });
+        // Radnik NE čeka odobrenje: nenovčane radnje (procesi, start/pauza) server
+        // primijeni ODMAH; novčane (zatvaranje, materijali — mijenjaju kalkulaciju)
+        // ostaju prijedlog i primjenjuje ih vlasnik na desktopu kroz gejt osnovice.
+        // U svakom slučaju vlasnik dobije NOTIFIKACIJU u generalnom pregledu.
+        let applied = false;
+        if (!isMoneyKind(kind)) {
+            await resolveRequest(caller.orgId, request.Request_ID, { action: 'approve' }, {
+                uid: caller.uid, name: workerName, role: 'owner', isSuperAdmin: true,
+            });
+            applied = true;
+        }
+
+        await createFieldNotification(caller.orgId, {
+            title: applied ? 'Radnik izmijenio nalog' : 'Radnik traži potvrdu',
+            message: `${workerName}: ${request.Summary}`,
+            type: applied ? 'info' : 'warning',
+            targetTab: 'orders',
+            relatedId: request.Work_Order_ID || request.Product_ID,
+            metadata: {
+                requestId: request.Request_ID, kind,
+                ...(request.Work_Order_ID ? { workOrderId: request.Work_Order_ID } : {}),
+            },
+        });
+
+        return NextResponse.json({ ok: true, request, applied }, { headers: { 'Cache-Control': 'no-store' } });
     } catch (e) {
         return errorResponse(e);
     }

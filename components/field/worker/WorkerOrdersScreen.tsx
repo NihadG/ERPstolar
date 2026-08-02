@@ -121,6 +121,7 @@ export default function WorkerOrdersScreen({ orders, loading, error, reload, pro
                 previewUid={previewUid}
                 showToast={showToast}
                 onClose={() => setOpenId(null)}
+                onChanged={reload}
             />
         );
     }
