@@ -346,7 +346,9 @@ export function purchaseDataFromGroup(
 ): Partial<PlanBlock> {
     return {
         title: group.supplierName,
-        supplierRef: { id: supplierId, name: group.supplierName },
+        // Bez `id` kad dobavljač nije prepoznat — inače `{ id: undefined }` putuje u
+        // scenarij i ruši upis (Firestore odbija undefined ugniježđen u bloku).
+        supplierRef: supplierId ? { id: supplierId, name: group.supplierName } : { name: group.supplierName },
         materialNames: group.lines.map(l => l.name),
     };
 }

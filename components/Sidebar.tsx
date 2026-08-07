@@ -28,9 +28,17 @@ import {
     CalendarDays,
     Shield,
     Workflow,
+    Scissors,
 } from 'lucide-react';
+import nextDynamic from 'next/dynamic';
+import { createPortal } from 'react-dom';
 import NotificationCenter from './NotificationCenter';
 import './Sidebar.css';
+
+// Krojna lista — brzi standalone kalkulator (unos komada → raspored rezanja →
+// print), nevezan za projekat/proizvod. Lijeno se učitava (povlači optimizator)
+// tek kad korisnik otvori alat, da ne opterećuje glavni bundle sidebara.
+const FieldCutlist = nextDynamic(() => import('./field/cutlist/FieldCutlist'));
 
 interface SidebarProps {
     activeTab: string;
@@ -49,6 +57,9 @@ const Sidebar: React.FC<SidebarProps> = ({ activeTab, onTabChange, isOpen, onClo
 
     // Accordion state: string ID of the open group or null
     const [expandedGroup, setExpandedGroup] = useState<string | null>(null);
+
+    // Krojna lista — overlay pokretača (brzi alat, bez projekta/proizvoda).
+    const [cutlistOpen, setCutlistOpen] = useState(false);
 
     const toggleGroup = (groupId: string) => {
         setExpandedGroup(prev => (prev === groupId ? null : groupId));
@@ -205,6 +216,24 @@ const Sidebar: React.FC<SidebarProps> = ({ activeTab, onTabChange, isOpen, onClo
 
                     <div className="nav-divider"></div>
 
+                    {/* Krojna lista — brzi alat (unos komada → raspored → print),
+                        nevezan za projekat/proizvod. Otvara full-screen overlay. */}
+                    <button
+                        className="nav-item special-action"
+                        onClick={() => {
+                            setCutlistOpen(true);
+                            if (window.innerWidth <= 768) onClose();
+                        }}
+                        title={isCollapsed ? 'Krojna lista' : undefined}
+                    >
+                        <div className="nav-icon-wrapper">
+                            <Scissors size={20} strokeWidth={2} />
+                        </div>
+                        {!isCollapsed && <span className="nav-label">Krojna lista</span>}
+                    </button>
+
+                    <div className="nav-divider"></div>
+
                     {/* Render Groups */}
                     {navGroups.map((group, index) => {
                         const isExpanded = expandedGroup === group.id;
@@ -313,6 +342,13 @@ const Sidebar: React.FC<SidebarProps> = ({ activeTab, onTabChange, isOpen, onClo
                     </div>
                 </div>
             </aside>
+
+            {/* Portal na <body> — overlay krojne liste je position:fixed i mora
+                pokriti cijeli ekran (uklj. sidebar), van njegovog stacking konteksta. */}
+            {cutlistOpen && typeof document !== 'undefined' && createPortal(
+                <FieldCutlist onClose={() => setCutlistOpen(false)} />,
+                document.body,
+            )}
         </>
     );
 };

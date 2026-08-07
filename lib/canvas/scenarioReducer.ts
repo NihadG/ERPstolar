@@ -10,7 +10,7 @@
 // undo koji vraća zum umjesto brisanja je gori od nikakvog undo-a.
 // ════════════════════════════════════════════════════════════════════
 
-import type { PlanScenario, PlanBlock, PlanLink, PlanLinkKind, PlanZoom, PlanGroupBy, PlanRef } from '../types';
+import type { PlanScenario, PlanBlock, PlanLink, PlanLinkKind, PlanZoom, PlanGroupBy, PlanLayout, PlanRef } from '../types';
 import {
     MAX_BLOCKS_PER_SCENARIO, addDays, normalizeBlock, newBlock, newLink,
     wouldCreateCycle, emptyScenario,
@@ -55,7 +55,7 @@ export type ScenarioAction =
     | { type: 'DELETE_LINK'; id: string }
     | { type: 'APPLY_DATE_DIFF'; changes: { id: string; startISO: string; endISO: string }[] }
     | { type: 'RENAME'; name: string }
-    | { type: 'SET_VIEW'; view: Partial<{ zoom: PlanZoom; anchorISO: string; groupBy: PlanGroupBy }> }
+    | { type: 'SET_VIEW'; view: Partial<{ zoom: PlanZoom; anchorISO: string; groupBy: PlanGroupBy; layout: PlanLayout }> }
     | { type: 'SELECT'; ids: string[] }
     | { type: 'UNDO' }
     | { type: 'REDO' }
@@ -292,7 +292,7 @@ export function scenarioReducer(state: ScenarioState, action: ScenarioAction): S
                 scenario: {
                     ...state.scenario,
                     View: {
-                        zoom: 'sedmica', anchorISO: '', groupBy: 'project',
+                        zoom: 'sedmica', anchorISO: '', groupBy: 'project', layout: 'unified-project',
                         ...state.scenario.View,
                         ...action.view,
                     },

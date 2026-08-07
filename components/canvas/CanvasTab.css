@@ -410,6 +410,53 @@
     flex-shrink: 0;
 }
 
+/* ── Klizač vremena ───────────────────────────────────────────────
+   Suptilan: tanka linija koja se pojača na hover/fokus. Široka ručka djeluje
+   kao scrollbar-hvat, pa se cijeli raspon plana pregleda jednim potezom. */
+.cv-timeslider {
+    flex-shrink: 0;
+    padding: 0 12px;
+    margin: -4px 0 -2px;
+}
+.cv-timeslider input[type="range"] {
+    width: 100%;
+    height: 4px;
+    -webkit-appearance: none;
+    appearance: none;
+    background: var(--border-light);
+    border-radius: 3px;
+    cursor: pointer;
+    opacity: .45;
+    transition: opacity var(--transition);
+}
+.cv-timeslider:hover input[type="range"],
+.cv-timeslider input[type="range"]:focus-visible { opacity: 1; outline: none; }
+.cv-timeslider input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 46px;
+    height: 11px;
+    border-radius: 6px;
+    background: var(--accent);
+    border: 2px solid var(--background);
+    cursor: grab;
+    margin-top: -4px;
+}
+.cv-timeslider input[type="range"]::-webkit-slider-thumb:active { cursor: grabbing; }
+.cv-timeslider input[type="range"]::-moz-range-thumb {
+    width: 46px;
+    height: 11px;
+    border-radius: 6px;
+    background: var(--accent);
+    border: 2px solid var(--background);
+    cursor: grab;
+}
+.cv-timeslider input[type="range"]::-moz-range-track {
+    height: 4px;
+    background: var(--border-light);
+    border-radius: 3px;
+}
+
 /* ── Mreža ────────────────────────────────────────────────────── */
 .cv-grid {
     flex: 1 1 auto;
@@ -539,8 +586,10 @@
     position: relative;
     flex: 1 1 auto;
     /* Mreža dana — čisto vizuelna, geometrija je u JS-u */
+    /* Širina dana dolazi iz JS-a (geometry.ts) — ranije je bila zakucana na 22px, pa
+       su na „Dan"/„Mjesec" zumu linije mreže lagale o tome gdje počinje koji dan. */
     background-image: linear-gradient(to right, var(--border-light) 1px, transparent 1px);
-    background-size: 22px 100%;
+    background-size: var(--cv-day-w, 22px) 100%;
     cursor: crosshair;
     touch-action: pan-y;
 }
@@ -582,6 +631,14 @@
     white-space: nowrap;
 }
 
+/* Projekt uz naziv (npr. na narudžbi: „Frischeis · Emir Granov") — prigušen. */
+.cv-block-project {
+    opacity: .75;
+    font-weight: 400;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
 .cv-handle {
     position: absolute;
     top: 0;
@@ -602,6 +659,50 @@
 .cv-block.k-milestone {
     --cv-block-color: var(--error);
     border-radius: 4px;
+}
+
+/* ── Objedinjeni red: sekundarni sloj (narudžba/transport/rok) ──────
+   Nalog je puna traka (okosnica), a logistika ispod je uža i prigušena —
+   da se u JEDNOM redu razazna „ovo je nalog, a unutar intervala stiže narudžba". */
+.cv-block.compact {
+    height: 18px;
+    margin-top: 8px;              /* centrirano u slotu iznad primarne trake */
+    border-radius: 5px;
+    font-size: 11px;
+    box-shadow: none;
+    opacity: .95;
+}
+.cv-block.compact .cv-block-label { padding: 0 6px; gap: 3px; }
+
+/* Narudžba: dijagonalna šrafura preko boje (materijal koji „putuje" do radionice). */
+.cv-block.compact.k-purchase {
+    background-image: repeating-linear-gradient(135deg,
+        rgba(255, 255, 255, .30) 0 5px,
+        transparent 5px 10px);
+}
+.cv-block.compact.k-transport { opacity: .85; }
+.cv-block.compact.k-note { opacity: .8; }
+
+/* Oznaka na nalogu: u njegovom intervalu stiže narudžba materijala. */
+.cv-supply-dot {
+    display: inline-flex;
+    align-items: center;
+    margin-left: 4px;
+    padding: 1px 2px;
+    border-radius: 4px;
+    background: rgba(255, 255, 255, .28);
+    flex-shrink: 0;
+}
+.cv-supply-dot svg { display: block; }
+
+/* Blok koji je već PRETVOREN u stvarni nalog/narudžbu — jasno drugačiji. */
+.cv-block.promoted { box-shadow: 0 0 0 2px var(--success) inset, 0 1px 3px var(--shadow-md); }
+.cv-block-badge {
+    flex-shrink: 0;
+    color: #fff;
+    background: var(--success);
+    border-radius: 50%;
+    padding: 1px;
 }
 
 /* ── Sjene stvarnog posla ─────────────────────────────────────── */
@@ -820,6 +921,69 @@
 }
 .cv-crew-x { cursor: pointer; color: var(--text-tertiary); }
 .cv-crew-x:hover { color: var(--error); }
+
+/* ── Pretvorba plana u stvarnost (PromoteBlockModal) ────────────── */
+.cvp-body { display: grid; gap: 14px; }
+.cvp-summary {
+    display: grid; gap: 6px;
+    padding: 12px;
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius-md);
+    background: var(--surface);
+}
+.cvp-row { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text-secondary); }
+.cvp-row strong { color: var(--text-primary); font-weight: 600; }
+.cvp-lines { list-style: none; margin: 4px 0 0; padding: 0; display: grid; gap: 3px; }
+.cvp-lines li { display: flex; justify-content: space-between; gap: 10px; font-size: 12px; color: var(--text-secondary); }
+.cvp-line-qty { color: var(--text-tertiary); flex-shrink: 0; }
+.cvp-more { font-style: italic; }
+.cvp-state {
+    margin: 4px 0 0;
+    padding: 8px 10px;
+    border-radius: var(--radius-sm);
+    background: var(--accent-light);
+    font-size: 12px; line-height: 1.5;
+    color: var(--text-primary);
+}
+.cvp-choice { display: grid; gap: 8px; }
+.cvp-opt {
+    display: flex; gap: 10px; align-items: flex-start;
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    cursor: pointer;
+    transition: var(--transition);
+}
+.cvp-opt:hover { background: var(--surface-hover); }
+.cvp-opt.on { border-color: var(--accent); background: var(--accent-light); }
+.cvp-opt input { margin-top: 2px; }
+.cvp-opt div { display: grid; gap: 2px; }
+.cvp-opt strong { font-size: 13px; }
+.cvp-opt span { font-size: 12px; color: var(--text-secondary); line-height: 1.45; }
+.cvp-issues { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.cvp-issues li {
+    display: flex; gap: 8px; align-items: flex-start;
+    padding: 8px 10px;
+    border-radius: var(--radius-sm);
+    background: var(--warning-bg);
+    font-size: 12px; line-height: 1.45;
+    color: var(--text-primary);
+}
+.cvp-issues svg { color: var(--warning); flex-shrink: 0; margin-top: 1px; }
+.cvp-foot { display: flex; justify-content: flex-end; gap: 8px; }
+
+/* ── Promocija u draweru ──────────────────────────────────────── */
+.cv-promoted-note {
+    display: flex; align-items: center; gap: 8px;
+    padding: 9px 11px;
+    border-radius: var(--radius-sm);
+    background: var(--success-bg, rgba(52,199,89,.12));
+    color: var(--success);
+    font-size: 12px; font-weight: 500;
+}
+.cv-promoted-note svg { flex-shrink: 0; }
+.cv-btn.promote { border-color: var(--accent); color: var(--accent); font-weight: 600; }
+.cv-btn.promote:hover:not(:disabled) { background: var(--accent-light); }
 
 /* ── Mobilni ──────────────────────────────────────────────────── */
 @media (max-width: 767px) {

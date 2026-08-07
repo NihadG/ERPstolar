@@ -158,6 +158,17 @@
     gap: 3px;
 }
 
+/* Rješenje — istaknuto, jer je to poanta: problem nudi popravku jednim klikom. */
+.cv-link-btn.fix {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    font-weight: 600;
+    color: var(--accent);
+    background: var(--accent-light);
+}
+.cv-link-btn.fix:hover { filter: brightness(.96); }
+
 /* ── Naruči danas ─────────────────────────────────────────────── */
 .cv-due li.late { background: var(--error-bg); }
 
@@ -349,6 +360,18 @@
     color: var(--text-secondary);
     line-height: 1.6;
 }
+
+.cv-chain-intro {
+    margin: 0 0 var(--cm-sp-3);
+    padding: 10px 12px;
+    border-radius: var(--radius-sm);
+    background: var(--surface);
+    border: 1px solid var(--border-light);
+    font-size: var(--cm-fs-xs);
+    line-height: 1.55;
+    color: var(--text-secondary);
+}
+.cv-chain-intro strong { color: var(--text-primary); }
 
 /* ── Veze u bočnoj ploči ──────────────────────────────────────── */
 .cv-links {

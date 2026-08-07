@@ -265,10 +265,21 @@ export function monthBands(vp: Viewport): { label: string; left: number; width: 
     return bands;
 }
 
-/** Anchor koji centrira dati datum u prozoru — za „Danas" i skok na blok. */
+/** Anchor koji centrira dati datum u prozoru — za skok na blok. */
 export function anchorCentering(iso: string, vp: Viewport): string {
     const halfDays = Math.floor(vp.widthPx / dayWidth(vp.zoom) / 2);
     return addDays(iso, -halfDays);
+}
+
+/**
+ * Anchor koji stavlja datum BLIZU lijevog ruba, uz par dana konteksta prije njega —
+ * za „Danas". Bez konteksta bi narudžbe koje hrane skori posao (uvijek malo PRIJE
+ * naloga) ispale van ekrana. Kontekst je ~12% prozora (2–21 dana), da ostane
+ * srazmjeran zumu, a danas i dalje jasno „na početku", ne u sredini.
+ */
+export function anchorLeading(iso: string, vp: Viewport): string {
+    const lead = Math.min(21, Math.max(2, Math.round(visibleDayCount(vp) * 0.12)));
+    return addDays(iso, -lead);
 }
 
 export { toISODate };

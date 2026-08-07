@@ -213,6 +213,14 @@ export {
     duplicateScenario, renameScenario, archiveScenario, deleteScenario,
 } from './planning/scenarioService';
 export type { SaveScenarioResult } from './planning/scenarioService';
+// Platno — pretvorba plan-bloka u stvarni nalog/narudžbu (jedina svjesna akcija van izolacije)
+export {
+    promoteOrderBlock, promotePurchaseBlock,
+    validateOrderBlock, validatePurchaseBlock, resolvePurchaseLines,
+} from './planning/promotionService';
+export type {
+    PromotionContext, PromotionIssue, PromotionResult, PurchaseChoice, ResolvedMaterialLine,
+} from './planning/promotionService';
 
 export { collectUnresolved } from '../insights/unresolved';
 export type { UnresolvedReport, UnresolvedEntry } from '../insights/unresolved';

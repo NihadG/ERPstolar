@@ -25,6 +25,11 @@ export type ConflictKind =
 
 export type ConflictSeverity = 'error' | 'warning';
 
+/** Rješenje jednim klikom koje pozivalac primijeni (dispatch u reducer / otvori modal). */
+export type ConflictFix =
+    | { type: 'shift-block'; blockId: string; days: number }   // pomjeri blok za N dana (± )
+    | { type: 'create-orders'; blockId: string };              // otvori „Napravi narudžbe" za nalog
+
 export interface Conflict {
     id: string;
     kind: ConflictKind;
@@ -33,6 +38,8 @@ export interface Conflict {
     /** Za skok na platno. */
     blockIds: string[];
     dateISO?: string;
+    /** Ponuđeno rješenje jednim klikom (kad postoji smisleno). */
+    fix?: ConflictFix & { label: string };
 }
 
 export interface ConflictContext {
@@ -86,26 +93,17 @@ export function detectConflicts(scenario: PlanScenario, ctx: ConflictContext): C
                 message: `„${purchase.title}" stiže ${late} ${late === 1 ? 'dan' : 'dana'} poslije starta „${work.title}"`,
                 blockIds: [purchase.id, work.id],
                 dateISO: purchase.endISO,
+                // Rješenje: pomjeri narudžbu ranije toliko da dostava padne na start proizvodnje.
+                fix: purchase.locked ? undefined
+                    : { type: 'shift-block', blockId: purchase.id, days: -late, label: 'Pomjeri narudžbu ranije' },
             });
         }
     }
 
-    // ── 2. Rok slanja narudžbe je prošao ─────────────────────────
-    for (const b of blocks) {
-        if (b.kind !== 'purchase' || b.isSent) continue;
-        const orderBy = b.orderByISO || b.startISO;
-        if (orderBy < ctx.todayISO) {
-            const late = diffDays(orderBy, ctx.todayISO);
-            push({
-                id: `order-overdue:${b.id}`,
-                kind: 'order-overdue',
-                severity: 'error',
-                message: `„${b.title}" je trebala otići prije ${late} ${late === 1 ? 'dan' : 'dana'} (${orderBy})`,
-                blockIds: [b.id],
-                dateISO: orderBy,
-            });
-        }
-    }
+    // ── 2. (Uklonjeno iz „Problemi") Rok slanja narudžbe ─────────
+    // „Narudžba je trebala otići prije X dana" je operativni signal spram DANAS, ne
+    // planerski konflikt — pri planiranju budućeg posla samo stvara buku. Živi u tabu
+    // „Naruči danas" (ordersDueSoon), gdje mu je mjesto. Ovdje se namjerno ne prijavljuje.
 
     // ── 3. Prebukiran radnik ─────────────────────────────────────
     // Računa se i STVARNI preuzeti posao — plan koji ga ignoriše je samoobmana.
@@ -207,6 +205,8 @@ export function detectConflicts(scenario: PlanScenario, ctx: ConflictContext): C
         const montaza = byId.get(link.to);
         if (!work || !montaza) continue;
         if (montaza.startISO <= work.endISO) {
+            // Rješenje: pomjeri montažu da počne dan poslije kraja proizvodnje.
+            const shift = diffDays(montaza.startISO, work.endISO) + 1;
             push({
                 id: `montaza-early:${link.id}`,
                 kind: 'montaza-early',
@@ -214,29 +214,17 @@ export function detectConflicts(scenario: PlanScenario, ctx: ConflictContext): C
                 message: `„${montaza.title}" počinje prije nego „${work.title}" završi`,
                 blockIds: [work.id, montaza.id],
                 dateISO: montaza.startISO,
+                fix: montaza.locked ? undefined
+                    : { type: 'shift-block', blockId: montaza.id, days: shift, label: 'Pomjeri montažu poslije proizvodnje' },
             });
         }
     }
 
-    // ── 6. Probijen rok projekta ─────────────────────────────────
-    const deadlineByProject = new Map<string, string>();
-    for (const p of ctx.projects) {
-        if (p.Deadline) deadlineByProject.set(p.Project_ID, p.Deadline.split('T')[0]);
-    }
-    for (const b of blocks) {
-        const pid = b.projectRef?.id;
-        if (!pid) continue;
-        const deadline = deadlineByProject.get(pid);
-        if (!deadline || b.endISO <= deadline) continue;
-        push({
-            id: `deadline:${b.id}`,
-            kind: 'deadline-missed',
-            severity: 'error',
-            message: `„${b.title}" završava ${diffDays(deadline, b.endISO)} dana poslije roka projekta (${deadline})`,
-            blockIds: [b.id],
-            dateISO: deadline,
-        });
-    }
+    // ── 6. (Uklonjeno) Rok projekta ──────────────────────────────
+    // Platno JE mjesto gdje se rokovi definišu — pa plan ne može „kasniti" spram
+    // vanjskog datuma (roka iz projekta/ponude) koji korisnik tek sada raspoređuje.
+    // Ako korisnik želi fiksnu tačku, stavi „Rok" (milestone) na platno i poveže lanac;
+    // tada „Lanac" računa unazad. Poređenje sa `project.Deadline` je uklonjeno namjerno.
 
     // ── 7. Blok počinje neradnim danom ───────────────────────────
     for (const b of blocks) {
@@ -267,6 +255,10 @@ export function detectConflicts(scenario: PlanScenario, ctx: ConflictContext): C
             message: `„${b.title}" nema vezanu narudžbu materijala`,
             blockIds: [b.id],
             dateISO: b.startISO,
+            // Rješenje: otvori „Napravi narudžbe iz sastavnice" za ovaj nalog.
+            fix: (b.productRefs?.length || 0) > 0
+                ? { type: 'create-orders', blockId: b.id, label: 'Napravi narudžbe' }
+                : undefined,
         });
     }
 
@@ -303,7 +295,7 @@ export const CONFLICT_LABEL: Record<ConflictKind, string> = {
     'worker-overbooked': 'Radnik prebukiran',
     'worker-absent': 'Radnik odsutan',
     'montaza-early': 'Montaža prerano',
-    'deadline-missed': 'Rok projekta probijen',
+    'deadline-missed': 'Plan prelazi rok',
     'nonworking-day': 'Neradni dan',
     'orphan-production': 'Bez narudžbe',
 };

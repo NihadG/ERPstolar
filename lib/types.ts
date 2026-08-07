@@ -1600,10 +1600,14 @@ export interface GoogleIntegrationSettings {
 // ============================================
 //
 // IZOLACIJA JE ARHITEKTURNA, NE DOGOVORNA: platno čita stvarnost (nalozi, narudžbe,
-// radnici, šihtarica) ali piše ISKLJUČIVO u kolekciju `planning_scenarios`.
+// radnici, šihtarica) ali AUTOSAVE piše ISKLJUČIVO u kolekciju `planning_scenarios`.
 // Nema promjene statusa, nema scheduleWorkOrder, nema pisanja nazad u referencirane
 // entitete. Stvarni nalozi se na platnu crtaju kao ZAKLJUČANE SJENE — planiranje koje
 // ignoriše već preuzet posao je samoobmana, ali čitanje nije uticaj.
+//
+// JEDINI IZUZETAK je svjesna korisnička pretvorba plan-bloka u stvarni nalog/narudžbu
+// (lib/services/planning/promotionService.ts). Blok tada dobija `linkedWorkOrderId`/
+// `linkedOrderId` (scenario-lokalno, nikad se ne piše nazad u entitet).
 
 /** Vrsta bloka na platnu. Jedan generički blok = jedan motor za povlačenje i jedna geometrija. */
 export type PlanBlockKind =
@@ -1687,6 +1691,16 @@ export interface PlanBlock {
     materialNames?: string[];
     /** Oznaka SAMO unutar scenarija — ne kreira i ne mijenja stvarnu narudžbu. */
     isSent?: boolean;
+
+    // ── Veza na STVARNI entitet (nakon „pretvori u stvarni nalog/narudžbu") ──
+    // Blok ostaje na platnu kao ogledalo, ali sada zna za svoj stvarni parnjak.
+    // Ova polja su scenario-lokalna: NIKAD se ne pišu nazad u nalog/narudžbu.
+    /** Work_Order_ID stvarnog naloga kreiranog iz ovog `order`/`montaza` bloka. */
+    linkedWorkOrderId?: string;
+    /** Order_ID stvarne narudžbe kreirane iz ovog `purchase` bloka. */
+    linkedOrderId?: string;
+    /** ISO trenutak kad je blok pretvoren u stvarni entitet — za oznaku „već kreirano". */
+    promotedAt?: string;
 }
 
 export type PlanLinkKind =
@@ -1751,5 +1765,17 @@ export interface PlanScenario {
         zoom: PlanZoom;
         anchorISO: string;        // lijeva ivica vidljivog raspona
         groupBy: PlanGroupBy;
+        /**
+         * Raspored redova:
+         *  - `unified-project`  → jedan red po projektu; nalog je okosnica, a narudžbe/
+         *                          transport/rokovi se crtaju ugniježđeno u istom redu.
+         *  - `unified-global`   → sve na jednom redu.
+         *  - `detailed`         → klasične sekcije po vrsti (Obaveze/Nalozi/Nabavka).
+         * Radnici su uvijek zasebna sekcija (kapacitet je ortogonalna osa).
+         */
+        layout?: PlanLayout;
     };
 }
+
+/** Kako se slažu redovi platna — objedinjeno ili razdvojeno po vrsti. */
+export type PlanLayout = 'unified-project' | 'unified-global' | 'detailed';

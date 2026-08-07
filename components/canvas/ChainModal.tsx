@@ -114,6 +114,11 @@ export default function ChainModal({
                 </p>
             ) : (
                 <>
+                    <p className="cv-chain-intro">
+                        Zadaješ <strong>fiksan datum</strong> (montaža ili rok klijenta), a platno unazad
+                        predloži kad svaki povezani korak (narudžba → proizvodnja → transport) mora
+                        početi da bi se stiglo. Ništa se ne mijenja dok ne klikneš „Primijeni".
+                    </p>
                     <label className="cv-field">
                         <span>Računaj unazad od</span>
                         <select value={effectiveAnchor} onChange={e => setAnchorId(e.target.value)}>

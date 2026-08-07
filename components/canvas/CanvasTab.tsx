@@ -3,20 +3,24 @@
 // ════════════════════════════════════════════════════════════════════
 // PLATNO — glavni ekran.
 //
-// IZOLACIJA: ova komponenta ČITA projekte, radnike, naloge i šihtaricu, a PIŠE
-// isključivo u `planning_scenarios` kroz useScenario. Nijedan poziv odavde ne
-// mijenja nalog, narudžbu ni status. Stvarni posao se crta kao zaključana sjena.
+// IZOLACIJA: ova komponenta ČITA projekte, radnike, naloge i šihtaricu, a AUTOSAVE
+// piše isključivo u `planning_scenarios` kroz useScenario. Stvarni posao se crta
+// kao zaključana sjena.
+//
+// JEDINI IZUZETAK — svjesna, KORISNIČKA akcija „Kreiraj stvarni nalog / Naruči
+// stvarno" (PromoteBlockModal → promotionService) koja kreira pravi WorkOrder/Order.
+// Autosave scenarija i dalje ne dira ništa van `planning_scenarios`.
 // ════════════════════════════════════════════════════════════════════
 
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import {
     Plus, Copy, Undo2, Redo2, ChevronLeft, ChevronRight, ChevronDown, Loader2,
     Lock, AlertTriangle, Users, Trash2, Save, Link2, Package, Bookmark, Printer,
-    GitCompareArrows, ClipboardList, Sparkles, Rows3, Pencil, MoreHorizontal,
+    GitCompareArrows, ClipboardList, Sparkles, Rows3, Pencil, MoreHorizontal, Check, LayoutGrid,
 } from 'lucide-react';
 import type {
     Project, Worker, WorkOrder, Order, Supplier, WorkerAttendance,
-    PlanBlockKind, PlanGroupBy, PlanZoom, PlanScenario, PlanChainTemplate,
+    PlanBlock, PlanBlockKind, PlanGroupBy, PlanLayout, PlanZoom, PlanScenario, PlanChainTemplate,
 } from '@/lib/types';
 import {
     getScenarios, createScenario, duplicateScenario, getScenario,
@@ -27,9 +31,11 @@ import { useScenario } from './useScenario';
 import { useCanvasDrag } from './useCanvasDrag';
 import CanvasDrawer from './CanvasDrawer';
 import CanvasDock from './CanvasDock';
+import CanvasTimeSlider from './CanvasTimeSlider';
 import ChainModal from './ChainModal';
 import ProductPickerModal from './ProductPickerModal';
 import MaterialOrderModal, { type CreatedPurchase } from './MaterialOrderModal';
+import PromoteBlockModal from './PromoteBlockModal';
 import ChainTemplatesModal from './ChainTemplatesModal';
 import CompareModal from './CompareModal';
 import BatchPlanModal from './BatchPlanModal';
@@ -43,14 +49,15 @@ import { useIsMobile } from '@/hooks/useIsMobile';
 import MobileCanvasView from '@/components/tabs/mobile/MobileCanvasView';
 import { buildSupplierLeadTimes } from '@/lib/canvas/leadTime';
 import { buildSaturdayChecker, type AttendanceLite } from '@/lib/planning';
-import { buildRows, groupRowsBySection, SECTION_LABEL, type CanvasRow } from '@/lib/canvas/rows';
+import { buildRows, groupRowsBySection, SECTION_LABEL, blockLayer, type CanvasRow } from '@/lib/canvas/rows';
 import {
     HEADER_WIDTH, TIMELINE_HEADER_HEIGHT, MIN_LABEL_WIDTH, RESIZE_HANDLE_PX,
     blockRect, packLanes, rowHeight, laneTop, headerTicks, monthBands,
-    dateAtX, xForDate, anchorCentering, dayWidth, type Viewport,
+    dateAtX, xForDate, anchorCentering, anchorLeading, dayWidth, type Viewport, type BlockRect,
 } from '@/lib/canvas/geometry';
 import {
-    newBlock, addDays, BLOCK_LABEL, ZOOM_LABEL, GROUP_BY_LABEL, blockDurationDays,
+    newBlock, addDays, BLOCK_LABEL, ZOOM_LABEL, GROUP_BY_LABEL, blockDurationDays, scenarioBounds,
+    countWorkingDays,
 } from '@/lib/canvas/model';
 import { todayISO } from '@/lib/planning';
 import './CanvasTab.css';
@@ -67,6 +74,18 @@ interface CanvasTabProps {
 
 const ZOOMS: PlanZoom[] = ['dan', 'sedmica', 'mjesec'];
 const GROUPS: PlanGroupBy[] = ['project', 'worker', 'supplier', 'kind'];
+const LAYOUTS: { key: PlanLayout; label: string }[] = [
+    { key: 'unified-project', label: 'Objedinjeno — po projektu' },
+    { key: 'unified-global', label: 'Objedinjeno — jedan red' },
+    { key: 'detailed', label: 'Detaljno — po vrsti' },
+];
+const LAYOUT_SHORT: Record<PlanLayout, string> = {
+    'unified-project': 'Projekt',
+    'unified-global': 'Jedan red',
+    detailed: 'Detaljno',
+};
+/** Ispod ovoliko piksela povlačenje je zapravo klik — klik NE pravi blok (dupli klik pravi). */
+const MIN_DRAW_PX = 6;
 /** Vrste koje se prave brzim tasterom. Nabavka i veze dolaze u Fazi 2. */
 const QUICK_KINDS: { kind: PlanBlockKind; key: string }[] = [
     { kind: 'order', key: 'n' },
@@ -92,6 +111,7 @@ export default function CanvasTab({
     const [chainOpen, setChainOpen] = useState(false);
     const [pickerOpen, setPickerOpen] = useState(false);
     const [orderModalFor, setOrderModalFor] = useState<string | null>(null);
+    const [promoteId, setPromoteId] = useState<string | null>(null);
     const [templatesOpen, setTemplatesOpen] = useState(false);
     const [templates, setTemplates] = useState<PlanChainTemplate[]>([]);
     const [compareOpen, setCompareOpen] = useState(false);
@@ -118,6 +138,7 @@ export default function CanvasTab({
 
     const zoom = scenario.View?.zoom || 'sedmica';
     const groupBy = scenario.View?.groupBy || 'project';
+    const layout = scenario.View?.layout || 'unified-project';
     const anchorISO = scenario.View?.anchorISO || todayISO();
     const vp: Viewport = useMemo(() => ({ anchorISO, zoom, widthPx }), [anchorISO, zoom, widthPx]);
 
@@ -171,8 +192,8 @@ export default function CanvasTab({
 
     // ── Redovi ──────────────────────────────────────────────────
     const rows = useMemo(
-        () => buildRows(scenario, groupBy, { workers, workOrders, attendance, showIdleWorkers: showIdle }),
-        [scenario, groupBy, workers, workOrders, attendance, showIdle]
+        () => buildRows(scenario, groupBy, { workers, workOrders, attendance, showIdleWorkers: showIdle }, layout),
+        [scenario, groupBy, workers, workOrders, attendance, showIdle, layout]
     );
     const sections = useMemo(() => groupRowsBySection(rows), [rows]);
 
@@ -213,12 +234,32 @@ export default function CanvasTab({
             const b = scenario.Blocks.find(x => x.id === blockId);
             if (!b) return;
             if (b.locked) { showToast('Blok je zaključan — otključaj ga u detaljima', 'info'); return; }
+
+            // Ručno razvlačenje naloga/montaže MIJENJA radnik-dane (traka i brojevi u
+            // detaljima moraju se slagati). Dvosmjerno je: upišeš radnik-dane → traka;
+            // razvučeš traku → radnik-dani. Ostale vrste samo mijenjaju datume.
+            // Povlačenje mijenja SAMO vrijeme — nikad projekt/radnika/dobavljača (to se
+            // radi u detaljima, da se blok ne presvrsta greškom kad ga vučeš vodoravno).
+            const isWorkBlock = b.kind === 'order' || b.kind === 'montaza';
+
             if (mode === 'move') {
                 dispatch({ type: 'MOVE_BLOCKS', ids: [blockId], days: deltaDays });
             } else if (mode === 'resize-start') {
-                dispatch({ type: 'SET_DATES', id: blockId, startISO: addDays(b.startISO, deltaDays) });
+                const startISO = addDays(b.startISO, deltaDays);
+                if (isWorkBlock && b.workerDays !== undefined) {
+                    const workerDays = countWorkingDays(startISO, b.endISO, isSaturdayWorking) * (b.crew || 1);
+                    dispatch({ type: 'UPDATE_BLOCK', id: blockId, patch: { startISO, workerDays } });
+                } else {
+                    dispatch({ type: 'SET_DATES', id: blockId, startISO });
+                }
             } else {
-                dispatch({ type: 'SET_DATES', id: blockId, endISO: addDays(b.endISO, deltaDays) });
+                const endISO = addDays(b.endISO, deltaDays);
+                if (isWorkBlock && b.workerDays !== undefined) {
+                    const workerDays = countWorkingDays(b.startISO, endISO, isSaturdayWorking) * (b.crew || 1);
+                    dispatch({ type: 'UPDATE_BLOCK', id: blockId, patch: { endISO, workerDays } });
+                } else {
+                    dispatch({ type: 'SET_DATES', id: blockId, endISO });
+                }
             }
         },
     });
@@ -244,8 +285,12 @@ export default function CanvasTab({
     const commitDraw = useCallback(() => {
         if (!draw) return;
         const row = rows.find(r => r.id === draw.rowId);
+        const dragged = Math.abs(draw.toX - draw.fromX);
         setDraw(null);
         if (!row) return;
+        // Običan KLIK (bez povlačenja) NE pravi blok — samo je poništio izbor. Blok se
+        // pravi povlačenjem raspona ili duplim klikom (namjerna radnja, ne slučajan klik).
+        if (dragged < MIN_DRAW_PX) return;
         const a = dateAtX(Math.min(draw.fromX, draw.toX), vp);
         const b = dateAtX(Math.max(draw.fromX, draw.toX), vp);
         const kind = row.section === 'obaveze' ? 'milestone' : quickKind;
@@ -254,6 +299,16 @@ export default function CanvasTab({
             block: newBlock(kind, a, kind === 'milestone' ? a : b, rowContext(row)),
         });
     }, [draw, rows, vp, quickKind, rowContext, dispatch]);
+
+    /** Dupli klik na prazan dio reda pravi blok podrazumijevanog trajanja na tom danu. */
+    const createOnDoubleClick = useCallback((row: CanvasRow, clientX: number, laneEl: HTMLElement) => {
+        const rect = laneEl.getBoundingClientRect();
+        const start = dateAtX(clientX - rect.left, vp);
+        const kind = row.section === 'obaveze' ? 'milestone' : quickKind;
+        const block = newBlock(kind, start, undefined, rowContext(row));
+        dispatch({ type: 'ADD_BLOCK', block });
+        setDrawerId(block.id);
+    }, [vp, quickKind, rowContext, dispatch]);
 
     // ── Tastatura ───────────────────────────────────────────────
     useEffect(() => {
@@ -303,7 +358,8 @@ export default function CanvasTab({
             if (e.key === '1' || e.key === '2' || e.key === '3') {
                 dispatch({ type: 'SET_VIEW', view: { zoom: ZOOMS[Number(e.key) - 1] } });
             } else if (e.key === 'Home') {
-                dispatch({ type: 'SET_VIEW', view: { anchorISO: anchorCentering(todayISO(), vp) } });
+                // Danas blizu lijevog ruba, uz par dana konteksta (skore narudžbe su prije naloga).
+                dispatch({ type: 'SET_VIEW', view: { anchorISO: anchorLeading(todayISO(), vp) } });
             }
             void zi;
         };
@@ -452,6 +508,15 @@ export default function CanvasTab({
     const ticks = useMemo(() => headerTicks(vp, todayISO()), [vp]);
     const bands = useMemo(() => monthBands(vp), [vp]);
     const todayX = xForDate(todayISO(), vp);
+
+    // Raspon klizača: cijeli plan (+ danas), s malim rubom sa svake strane.
+    const timeRange = useMemo(() => {
+        const b = scenarioBounds(scenario);
+        const today = todayISO();
+        const lo = b ? (b.fromISO < today ? b.fromISO : today) : today;
+        const hi = b ? (b.toISO > today ? b.toISO : today) : today;
+        return { fromISO: addDays(lo, -14), toISO: addDays(hi, 14) };
+    }, [scenario]);
     const selected = new Set(state.selectedIds);
 
     // Umjesto spageta strelica preko cijelog platna: kad je blok izabran, njegovi
@@ -466,6 +531,87 @@ export default function CanvasTab({
         }
         return out;
     }, [state.selectedIds, scenario.Links]);
+
+    /**
+     * Jedan blok — dijeli ga primarni (nalog/montaža) i sekundarni (narudžba/transport)
+     * sloj objedinjenog reda. `compact` daje užu, prigušenu traku; `hasSupply` lijepi
+     * oznaku „u ovom intervalu stiže narudžba" na nalog.
+     */
+    const renderBlock = (
+        item: PlanBlock, lane: number, rect: BlockRect, rowId: string,
+        opts?: { compact?: boolean; hasSupply?: boolean }
+    ) => {
+        const isDragged = drag.preview?.blockId === item.id;
+        const mode = isDragged ? drag.preview!.mode : null;
+        const delta = isDragged ? drag.preview!.deltaDays : 0;
+
+        // KLJUČNO: preview se crta iz POMJERENIH datuma istim `blockRect`-om koji određuje
+        // i konačni položaj nakon puštanja — pa blok padne TAČNO gdje ga pustiš. Ranije se
+        // koristio `rect.left + piksel-pomak`, a `rect.left` je ODSJEČEN na 0 za blokove koji
+        // počinju prije vidljivog ruba (narudžbe uz lijevi rub!), pa bi blok pri puštanju
+        // „skočio" na drugi dan. Za potpuno vidljive blokove ovo daje isti rezultat kao prije.
+        let eff = rect;
+        if (isDragged && delta !== 0) {
+            let s = item.startISO;
+            let e = item.endISO;
+            if (mode === 'move') { s = addDays(s, delta); e = addDays(e, delta); }
+            else if (mode === 'resize-start') { s = addDays(s, delta); if (s > e) s = e; }
+            else if (mode === 'resize-end') { e = addDays(e, delta); if (e < s) e = s; }
+            eff = blockRect(s, e, vp);
+        }
+
+        const promoted = !!(item.linkedWorkOrderId || item.linkedOrderId);
+        // Projekt uz dobavljača — korisno u prikazu po dobavljaču / jednom redu; u prikazu
+        // „po projektu" je red već projekt, pa je suvišno (i znalo bi se ne slagati s
+        // grupisanjem po vezanom nalogu).
+        const projectSuffix = (item.kind === 'purchase' && layout !== 'unified-project')
+            ? (item.projectRef?.name || '') : '';
+
+        return (
+            <div key={item.id}
+                className={`cv-block k-${item.kind}${opts?.compact ? ' compact' : ''}${promoted ? ' promoted' : ''}${selected.has(item.id) ? ' selected' : ''}${linkedToSelection.has(item.id) ? ' linked' : ''}${item.locked ? ' locked' : ''}${item.isSent ? ' sent' : ''}${isDragged ? ' dragging' : ''}${eff.clippedStart ? ' clip-start' : ''}${eff.clippedEnd ? ' clip-end' : ''}`}
+                style={{
+                    left: eff.left,
+                    width: Math.max(6, eff.width),
+                    top: laneTop(lane),
+                    ...(item.color ? { ['--cv-block-color' as string]: item.color } : {}),
+                }}
+                onPointerDown={e => drag.onPointerDown(e, item.id, rowId, 'move')}
+                onPointerMove={drag.onPointerMove}
+                onPointerUp={drag.onPointerUp}
+                onPointerCancel={drag.onPointerCancel}
+                title={`${item.title}${projectSuffix ? ` · ${projectSuffix}` : ''} · ${item.startISO} → ${item.endISO} (${blockDurationDays(item)} d)${promoted ? ' · već kreirano u stvarnim nalozima' : ''}`}
+            >
+                {item.kind !== 'milestone' && !item.locked && (
+                    <span className="cv-handle left"
+                        style={{ width: RESIZE_HANDLE_PX }}
+                        onPointerDown={e => drag.onPointerDown(e, item.id, rowId, 'resize-start')}
+                        onPointerMove={drag.onPointerMove}
+                        onPointerUp={drag.onPointerUp} />
+                )}
+                <span className="cv-block-label">
+                    {item.locked && <Lock size={10} />}
+                    {promoted && <Check size={10} className="cv-block-badge" />}
+                    {eff.width > MIN_LABEL_WIDTH ? item.title : ''}
+                    {projectSuffix && eff.width > MIN_LABEL_WIDTH * 2 && (
+                        <span className="cv-block-project">· {projectSuffix}</span>
+                    )}
+                    {opts?.hasSupply && (
+                        <span className="cv-supply-dot" title="U ovom intervalu stiže narudžba materijala">
+                            <Package size={10} />
+                        </span>
+                    )}
+                </span>
+                {item.kind !== 'milestone' && !item.locked && (
+                    <span className="cv-handle right"
+                        style={{ width: RESIZE_HANDLE_PX }}
+                        onPointerDown={e => drag.onPointerDown(e, item.id, rowId, 'resize-end')}
+                        onPointerMove={drag.onPointerMove}
+                        onPointerUp={drag.onPointerUp} />
+                )}
+            </div>
+        );
+    };
 
     if (loading) {
         return <div className="cv-center"><Loader2 size={20} className="cv-spin" /> Učitavanje platna…</div>;
@@ -534,7 +680,7 @@ export default function CanvasTab({
                         <ChevronLeft size={16} />
                     </button>
                     <button className="cv-nav-today"
-                        onClick={() => dispatch({ type: 'SET_VIEW', view: { anchorISO: anchorCentering(todayISO(), vp) } })}>
+                        onClick={() => dispatch({ type: 'SET_VIEW', view: { anchorISO: anchorLeading(todayISO(), vp) } })}>
                         Danas
                     </button>
                     <button className="cv-nav-arrow" aria-label="Kasnije"
@@ -545,16 +691,33 @@ export default function CanvasTab({
 
                 <CanvasMenu
                     align="left"
+                    title="Raspored redova"
                     trigger={open => (
-                        <button className={`cv-btn ghost${open ? ' on' : ''}`} title="Grupiši redove">
-                            <Rows3 size={14} /> {GROUP_BY_LABEL[groupBy]} <ChevronDown size={13} className="cv-caret" />
+                        <button className={`cv-btn ghost${open ? ' on' : ''}`} title="Objedinjeni ili detaljni prikaz">
+                            <LayoutGrid size={14} /> {LAYOUT_SHORT[layout]} <ChevronDown size={13} className="cv-caret" />
                         </button>
                     )}
-                    items={GROUPS.map(g => ({
-                        key: g, label: GROUP_BY_LABEL[g], active: groupBy === g,
-                        onClick: () => dispatch({ type: 'SET_VIEW', view: { groupBy: g } }),
+                    items={LAYOUTS.map(l => ({
+                        key: l.key, label: l.label, active: layout === l.key,
+                        onClick: () => dispatch({ type: 'SET_VIEW', view: { layout: l.key } }),
                     }))}
                 />
+
+                {/* Grupisanje ima smisla samo u detaljnom prikazu — objedinjeni sam bira osu. */}
+                {layout === 'detailed' && (
+                    <CanvasMenu
+                        align="left"
+                        trigger={open => (
+                            <button className={`cv-btn ghost${open ? ' on' : ''}`} title="Grupiši redove">
+                                <Rows3 size={14} /> {GROUP_BY_LABEL[groupBy]} <ChevronDown size={13} className="cv-caret" />
+                            </button>
+                        )}
+                        items={GROUPS.map(g => ({
+                            key: g, label: GROUP_BY_LABEL[g], active: groupBy === g,
+                            onClick: () => dispatch({ type: 'SET_VIEW', view: { groupBy: g } }),
+                        }))}
+                    />
+                )}
 
                 <CanvasMenu
                     align="left"
@@ -594,7 +757,7 @@ export default function CanvasTab({
                         </button>
                     )}
                     items={[
-                        { key: 'chain', label: 'Lanac — preračun unazad', icon: <Link2 size={14} />, onClick: () => setChainOpen(true) },
+                        { key: 'chain', label: 'Lanac: poredaj od roka unazad', icon: <Link2 size={14} />, onClick: () => setChainOpen(true) },
                         { key: 'compare', label: 'Uporedi planove', icon: <GitCompareArrows size={14} />, onClick: () => setCompareOpen(true) },
                         { key: 'templates', label: 'Šabloni lanaca', icon: <Bookmark size={14} />, badge: templates.length, onClick: () => setTemplatesOpen(true) },
                         { key: 'idle', label: showIdle ? 'Sakrij prazne radnike' : 'Prikaži sve radnike', icon: <Users size={14} />, active: showIdle, divider: true, onClick: () => setShowIdle(v => !v) },
@@ -623,9 +786,19 @@ export default function CanvasTab({
 
             {state.notice && <div className="cv-notice">{state.notice}</div>}
 
+            <CanvasTimeSlider
+                fromISO={timeRange.fromISO}
+                toISO={timeRange.toISO}
+                anchorISO={anchorISO}
+                onScrub={iso => dispatch({ type: 'SET_VIEW', view: { anchorISO: iso } })}
+            />
+
             {/* Platno */}
             <div className="cv-grid" ref={gridRef}
-                style={{ ['--cv-header-w' as string]: `${HEADER_WIDTH}px` }}>
+                style={{
+                    ['--cv-header-w' as string]: `${HEADER_WIDTH}px`,
+                    ['--cv-day-w' as string]: `${dayWidth(zoom)}px`,
+                }}>
                 {/* Zaglavlje s datumima */}
                 <div className="cv-head" style={{ height: TIMELINE_HEADER_HEIGHT }}>
                     <div className="cv-head-corner">{scenario.Blocks.length} blokova</div>
@@ -647,18 +820,39 @@ export default function CanvasTab({
                 <div className="cv-body">
                     {sections.length === 0 && (
                         <div className="cv-empty">
-                            Prazno platno. Povuci mišem po desnoj strani da nacrtaš blok, ili pritisni
-                            <kbd>N</kbd> za nalog, <kbd>V</kbd> za prekretnicu.
+                            Prazno platno. <strong>Dupli klik</strong> pravi blok; povuci mišem da nacrtaš
+                            raspon; ili pritisni <kbd>N</kbd> za nalog, <kbd>V</kbd> za prekretnicu.
                         </div>
                     )}
                     {sections.map(sec => (
                         <div key={sec.section} className="cv-section">
                             <div className="cv-section-head">{SECTION_LABEL[sec.section]}</div>
                             {sec.rows.map(row => {
-                                const packedBlocks = packLanes(row.blocks, b => b, vp);
+                                // Objedinjeni red: nalog (primarni) je okosnica, ostalo (narudžba/
+                                // transport/rok) ide u sekundarni sloj ispod. Detaljni red: sve primarno.
+                                const isUnified = layout !== 'detailed';
+                                const primaryBlocks = isUnified
+                                    ? row.blocks.filter(b => blockLayer(b.kind) === 'primary')
+                                    : row.blocks;
+                                const secondaryBlocks = isUnified
+                                    ? row.blocks.filter(b => blockLayer(b.kind) !== 'primary')
+                                    : [];
+
+                                const packedPrimary = packLanes(primaryBlocks, b => b, vp);
+                                const packedSecondary = packLanes(secondaryBlocks, b => b, vp);
                                 const packedShadows = packLanes(row.shadows, s => s, vp);
-                                const lanes = packedBlocks.laneCount + (row.shadows.length ? packedShadows.laneCount : 0);
-                                const h = rowHeight(lanes);
+
+                                const primaryLanes = primaryBlocks.length ? packedPrimary.laneCount : 0;
+                                const secondaryLanes = secondaryBlocks.length ? packedSecondary.laneCount : 0;
+                                const shadowLanes = row.shadows.length ? packedShadows.laneCount : 0;
+                                const secBase = primaryLanes;
+                                const shadowBase = primaryLanes + secondaryLanes;
+                                const h = rowHeight(Math.max(1, primaryLanes + secondaryLanes + shadowLanes));
+
+                                // Nalog kojem narudžba pada u interval → oznaka „materijal stiže tu".
+                                const supplyPurchases = secondaryBlocks.filter(b => b.kind === 'purchase');
+                                const hasSupply = (b: PlanBlock) =>
+                                    supplyPurchases.some(p => p.startISO <= b.endISO && p.endISO >= b.startISO);
 
                                 return (
                                     <div key={row.id} className={`cv-row${row.synthetic ? ' synthetic' : ''}`}
@@ -683,67 +877,35 @@ export default function CanvasTab({
                                             }}
                                             onPointerUp={commitDraw}
                                             onPointerLeave={() => draw?.rowId === row.id && commitDraw()}
+                                            onDoubleClick={e => {
+                                                if ((e.target as HTMLElement).closest('.cv-block')) return;
+                                                setDraw(null);
+                                                createOnDoubleClick(row, e.clientX, e.currentTarget);
+                                            }}
                                         >
-                                            {/* Sjene stvarnog posla — ispod, bez ručica */}
+                                            {/* Sjene stvarnog posla — ispod svega, bez ručica */}
                                             {packedShadows.placed.map(({ item, lane, rect }) => (
                                                 <div key={item.id}
                                                     className={`cv-shadow ${item.kind}`}
                                                     title={item.hint}
                                                     style={{
                                                         left: rect.left, width: rect.width,
-                                                        top: laneTop(packedBlocks.laneCount + lane),
+                                                        top: laneTop(shadowBase + lane),
                                                     }}>
                                                     <Lock size={10} />
                                                     {rect.width > MIN_LABEL_WIDTH && <span>{item.label}</span>}
                                                 </div>
                                             ))}
 
-                                            {/* Blokovi scenarija */}
-                                            {packedBlocks.placed.map(({ item, lane, rect }) => {
-                                                const isDragged = drag.preview?.blockId === item.id;
-                                                const shift = isDragged && drag.preview?.mode === 'move'
-                                                    ? drag.preview.deltaDays * dayWidth(zoom) : 0;
-                                                const growLeft = isDragged && drag.preview?.mode === 'resize-start'
-                                                    ? drag.preview.deltaDays * dayWidth(zoom) : 0;
-                                                const growRight = isDragged && drag.preview?.mode === 'resize-end'
-                                                    ? drag.preview.deltaDays * dayWidth(zoom) : 0;
+                                            {/* Sekundarni sloj — narudžba/transport/rok, prigušeno ispod naloga */}
+                                            {packedSecondary.placed.map(({ item, lane, rect }) =>
+                                                renderBlock(item, secBase + lane, rect, row.id, { compact: true })
+                                            )}
 
-                                                return (
-                                                    <div key={item.id}
-                                                        className={`cv-block k-${item.kind}${selected.has(item.id) ? ' selected' : ''}${linkedToSelection.has(item.id) ? ' linked' : ''}${item.locked ? ' locked' : ''}${item.isSent ? ' sent' : ''}${isDragged ? ' dragging' : ''}${rect.clippedStart ? ' clip-start' : ''}${rect.clippedEnd ? ' clip-end' : ''}`}
-                                                        style={{
-                                                            left: rect.left + shift + growLeft,
-                                                            width: Math.max(6, rect.width - growLeft + growRight),
-                                                            top: laneTop(lane),
-                                                            ...(item.color ? { ['--cv-block-color' as string]: item.color } : {}),
-                                                        }}
-                                                        onPointerDown={e => drag.onPointerDown(e, item.id, row.id, 'move')}
-                                                        onPointerMove={drag.onPointerMove}
-                                                        onPointerUp={drag.onPointerUp}
-                                                        onPointerCancel={drag.onPointerCancel}
-                                                        title={`${item.title} · ${item.startISO} → ${item.endISO} (${blockDurationDays(item)} d)`}
-                                                    >
-                                                        {item.kind !== 'milestone' && !item.locked && (
-                                                            <span className="cv-handle left"
-                                                                style={{ width: RESIZE_HANDLE_PX }}
-                                                                onPointerDown={e => drag.onPointerDown(e, item.id, row.id, 'resize-start')}
-                                                                onPointerMove={drag.onPointerMove}
-                                                                onPointerUp={drag.onPointerUp} />
-                                                        )}
-                                                        <span className="cv-block-label">
-                                                            {item.locked && <Lock size={10} />}
-                                                            {rect.width > MIN_LABEL_WIDTH ? item.title : ''}
-                                                        </span>
-                                                        {item.kind !== 'milestone' && !item.locked && (
-                                                            <span className="cv-handle right"
-                                                                style={{ width: RESIZE_HANDLE_PX }}
-                                                                onPointerDown={e => drag.onPointerDown(e, item.id, row.id, 'resize-end')}
-                                                                onPointerMove={drag.onPointerMove}
-                                                                onPointerUp={drag.onPointerUp} />
-                                                        )}
-                                                    </div>
-                                                );
-                                            })}
+                                            {/* Primarni sloj — nalog/montaža, okosnica reda */}
+                                            {packedPrimary.placed.map(({ item, lane, rect }) =>
+                                                renderBlock(item, lane, rect, row.id, { hasSupply: isUnified && hasSupply(item) })
+                                            )}
 
                                             {/* Nacrt novog bloka */}
                                             {draw?.rowId === row.id && (
@@ -776,6 +938,14 @@ export default function CanvasTab({
                 days={Math.min(90, Math.max(14, Math.ceil(widthPx / dayWidth(zoom))))}
                 onJumpToBlock={jumpToBlock}
                 onMarkSent={id => dispatch({ type: 'UPDATE_BLOCK', id, patch: { isSent: true } })}
+                onFix={fix => {
+                    if (fix.type === 'shift-block') {
+                        dispatch({ type: 'MOVE_BLOCKS', ids: [fix.blockId], days: fix.days });
+                    } else if (fix.type === 'create-orders') {
+                        setDrawerId(fix.blockId);
+                        setOrderModalFor(fix.blockId);
+                    }
+                }}
             />
 
             <ChainModal
@@ -855,6 +1025,25 @@ export default function CanvasTab({
                 }}
             />
 
+            <PromoteBlockModal
+                block={scenario.Blocks.find(b => b.id === promoteId) || null}
+                projects={projects}
+                workOrders={workOrders}
+                organizationId={orgId}
+                onClose={() => setPromoteId(null)}
+                onPromoted={result => {
+                    if (!promoteId) return;
+                    dispatch({
+                        type: 'UPDATE_BLOCK', id: promoteId, patch: {
+                            ...(result.workOrderId ? { linkedWorkOrderId: result.workOrderId } : {}),
+                            ...(result.orderId ? { linkedOrderId: result.orderId } : {}),
+                            promotedAt: new Date().toISOString(),
+                        },
+                    });
+                }}
+                showToast={showToast}
+            />
+
             {drawerId && (
                 <CanvasDrawer
                     block={scenario.Blocks.find(b => b.id === drawerId) || null}
@@ -871,6 +1060,7 @@ export default function CanvasTab({
                     onDeleteLink={id => dispatch({ type: 'DELETE_LINK', id })}
                     onSelectBlock={jumpToBlock}
                     onCreateOrders={() => setOrderModalFor(drawerId)}
+                    onPromote={() => setPromoteId(drawerId)}
                 />
             )}
         </div>

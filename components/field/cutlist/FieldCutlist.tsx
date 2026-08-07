@@ -12,10 +12,12 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
-    ArrowLeft, Plus, Copy, Trash2, Settings2, Play, ClipboardPaste, Tag, ChevronRight, X, Maximize2, Package,
+    ArrowLeft, Plus, Copy, Trash2, Settings2, Play, ClipboardPaste, Tag, ChevronRight, X, Maximize2, Package, Printer,
 } from 'lucide-react';
 import { packGroup } from '@/lib/cutlist/optimizer';
 import { parseCutlistText } from '@/lib/cutlist/parse';
+import { buildProductCutList } from '@/lib/cutlist/persist';
+import { buildCutlistPrintDocument } from '@/lib/print/cutlistDocument';
 import type { CutPart, GroupPackResult, SheetLayout } from '@/lib/cutlist/types';
 import { useOverlayGuard } from '@/components/tabs/mobile/overlayGuard';
 import { useSwipeBack } from '@/components/tabs/mobile/useSwipe';
@@ -75,6 +77,20 @@ export default function FieldCutlist({ onClose }: Props) {
     const goBack = () => { if (view === 'result') setView('input'); else window.history.back(); };
     useOverlayGuard(true);
     const swipeRef = useSwipeBack(goBack, { enabled: expanded === null && !settingsOpen });
+
+    // Desktop (sidebar launcher): Escape se ponaša kao „Nazad" — rezultat →
+    // unos, unos → zatvori. Na telefonu je Escape irelevantan (nema tipkovnice).
+    useEffect(() => {
+        const onKey = (e: KeyboardEvent) => {
+            if (e.key !== 'Escape') return;
+            if (settingsOpen) { setSettingsOpen(false); return; }
+            if (expanded !== null) { setExpanded(null); return; }
+            e.preventDefault();
+            if (view === 'result') setView('input'); else window.history.back();
+        };
+        window.addEventListener('keydown', onKey);
+        return () => window.removeEventListener('keydown', onKey);
+    }, [view, settingsOpen, expanded]);
 
     const flash = (m: string) => { setToast(m); window.setTimeout(() => setToast(''), 2200); };
 
@@ -165,6 +181,34 @@ export default function FieldCutlist({ onClose }: Props) {
         navigator.clipboard?.writeText(lines.join('\n')).then(() => flash('Plan kopiran.'), () => flash('Kopiranje nije uspjelo.'));
     }
 
+    // Štampa plana rezanja — isti A4 dokument kao krojenje na kartici proizvoda
+    // (lib/print/cutlistDocument), ali bez projekta/materijala: jedna „Ploča" grupa.
+    function handlePrint() {
+        if (!result) return;
+        // Prozor se otvara SINHRONO unutar klika — inače ga pop-up blokator odbije.
+        const printWindow = window.open('', '_blank');
+        if (!printWindow) { flash('Dozvoli pop-up prozore za štampu.'); return; }
+        const cutList = buildProductCutList({
+            name: `Krojna lista ${new Date().toLocaleDateString('hr-HR')}`,
+            parts,
+            settings: { kerf, trim, allowRotation },
+            results: [result],
+            groups: [{ key: result.materialKey || 'ploca', label: 'Ploča' }],
+        });
+        const doc = buildCutlistPrintDocument({ cutList });
+        printWindow.document.open();
+        printWindow.document.write(doc.html);
+        printWindow.document.close();
+        // Sačekaj fontove pa pokreni print (isti obrazac kao ponuda/narudžba).
+        setTimeout(() => {
+            if (printWindow.document.fonts?.ready) {
+                printWindow.document.fonts.ready.then(() => setTimeout(() => printWindow.print(), 100));
+            } else {
+                setTimeout(() => printWindow.print(), 500);
+            }
+        }, 200);
+    }
+
     const avgEff = result && result.sheets.length
         ? Math.round(result.sheets.reduce((s, sh) => s + sh.efficiency, 0) / result.sheets.length) : 0;
     const colors = useMemo(() => result ? buildSizeColors(result) : null, [result]);
@@ -177,12 +221,19 @@ export default function FieldCutlist({ onClose }: Props) {
                     <ArrowLeft size={21} strokeWidth={2.3} /> <span>{view === 'result' ? 'Nazad' : 'Zatvori'}</span>
                 </button>
                 <span className="fcl-nav-title">Krojna lista</span>
-                {showCopy ? (
-                    <button type="button" className="fcl-navbtn" onClick={view === 'result' ? copyResult : copyInput}
-                        aria-label={view === 'result' ? 'Kopiraj plan' : 'Kopiraj listu'}>
-                        <Copy size={18} />
-                    </button>
-                ) : <span className="fcl-navbtn-ghost" />}
+                <div className="fcl-navactions">
+                    {view === 'result' && result && (
+                        <button type="button" className="fcl-navbtn" onClick={handlePrint} aria-label="Štampaj plan">
+                            <Printer size={18} />
+                        </button>
+                    )}
+                    {showCopy ? (
+                        <button type="button" className="fcl-navbtn" onClick={view === 'result' ? copyResult : copyInput}
+                            aria-label={view === 'result' ? 'Kopiraj plan' : 'Kopiraj listu'}>
+                            <Copy size={18} />
+                        </button>
+                    ) : <span className="fcl-navbtn-ghost" />}
+                </div>
             </header>
 
             <div className="fcl-body">

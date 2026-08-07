@@ -11,18 +11,32 @@
 // ════════════════════════════════════════════════════════════════════
 
 import type {
-    PlanScenario, PlanBlock, PlanGroupBy, Worker, WorkOrder, WorkerAttendance,
+    PlanScenario, PlanBlock, PlanBlockKind, PlanGroupBy, PlanLayout, PlanRef, Worker, WorkOrder, WorkerAttendance,
 } from '../types';
 
 /** Sekcije platna, odozgo nadolje. Obaveze su na vrhu jer su fiksne tačke. */
-export type CanvasSection = 'obaveze' | 'nalozi' | 'radnici' | 'nabavka';
+export type CanvasSection = 'obaveze' | 'plan' | 'nalozi' | 'radnici' | 'nabavka';
 
 export const SECTION_LABEL: Record<CanvasSection, string> = {
     obaveze: 'Obaveze',
+    plan: 'Plan',
     nalozi: 'Nalozi',
     radnici: 'Radnici',
     nabavka: 'Nabavka',
 };
+
+/**
+ * Sloj bloka u OBJEDINJENOM redu. Nalog je okosnica (gornji sloj), a logistika
+ * (narudžba/transport) i rokovi se crtaju ispod, uže i prigušeno — da se u istom
+ * redu vidi „ovo je nalog, a unutar njegovog intervala stiže narudžba".
+ */
+export type BlockLayer = 'primary' | 'supply' | 'marker';
+
+export function blockLayer(kind: PlanBlockKind): BlockLayer {
+    if (kind === 'order' || kind === 'montaza') return 'primary';
+    if (kind === 'milestone') return 'marker';
+    return 'supply';   // purchase, transport, note
+}
 
 /**
  * Traka stvarnog, već preuzetog posla. ČITA SE, NIKAD SE NE MIJENJA.
@@ -154,8 +168,24 @@ function absencesByWorker(attendance: WorkerAttendance[]): Map<string, ShadowBar
 /**
  * Redovi platna. Isti blok se NAMJERNO može pojaviti na više redova
  * (nalog s dva radnika je na oba reda) — to je pogled, ne duplikat.
+ *
+ * `layout` bira raspored:
+ *  - `detailed`        → klasične sekcije po vrsti (Obaveze/Nalozi/Nabavka + Radnici).
+ *  - `unified-project` → jedan red po projektu (sve vrste zajedno) + Radnici.
+ *  - `unified-global`  → jedan red sa svim blokovima + Radnici.
  */
 export function buildRows(
+    scenario: PlanScenario,
+    groupBy: PlanGroupBy,
+    ctx: RowContext,
+    layout: PlanLayout = 'detailed'
+): CanvasRow[] {
+    if (layout === 'unified-project') return buildUnifiedRows(scenario, ctx, 'project');
+    if (layout === 'unified-global') return buildUnifiedRows(scenario, ctx, 'global');
+    return buildDetailedRows(scenario, groupBy, ctx);
+}
+
+function buildDetailedRows(
     scenario: PlanScenario,
     groupBy: PlanGroupBy,
     ctx: RowContext
@@ -226,28 +256,7 @@ export function buildRows(
     }
 
     // ── RADNICI: kapacitet i stvarna zauzetost ───────────────────
-    const shadowWO = realWorkOrdersByWorker(ctx.workOrders);
-    const shadowAbs = absencesByWorker(ctx.attendance);
-
-    const referenced = new Set<string>();
-    for (const b of blocks) for (const w of b.workerRefs || []) if (w.id) referenced.add(w.id);
-
-    const workerPool = ctx.showIdleWorkers
-        ? ctx.workers.filter(w => w.Status === 'Aktivan' || w.Status === 'Dostupan')
-        : ctx.workers.filter(w => referenced.has(w.Worker_ID));
-
-    for (const w of [...workerPool].sort((a, b) => (a.Name || '').localeCompare(b.Name || '', 'hr'))) {
-        rows.push({
-            id: `radnik-${w.Worker_ID}`,
-            label: w.Name,
-            sublabel: w.Role,
-            section: 'radnici',
-            blocks: blocks
-                .filter(b => (b.workerRefs || []).some(r => r.id === w.Worker_ID))
-                .sort(byStart),
-            shadows: [...(shadowWO.get(w.Worker_ID) || []), ...(shadowAbs.get(w.Worker_ID) || [])],
-        });
-    }
+    rows.push(...buildWorkerRows(scenario, ctx));
 
     // ── NABAVKA: po dobavljaču ───────────────────────────────────
     const purchases = blocks.filter(b => b.kind === 'purchase');
@@ -274,9 +283,105 @@ export function buildRows(
     return rows;
 }
 
+/** Radnički redovi (kapacitet + sjene stvarnog posla). Isti u svakom rasporedu. */
+function buildWorkerRows(scenario: PlanScenario, ctx: RowContext): CanvasRow[] {
+    const blocks = scenario.Blocks;
+    const shadowWO = realWorkOrdersByWorker(ctx.workOrders);
+    const shadowAbs = absencesByWorker(ctx.attendance);
+
+    const referenced = new Set<string>();
+    for (const b of blocks) for (const w of b.workerRefs || []) if (w.id) referenced.add(w.id);
+
+    const workerPool = ctx.showIdleWorkers
+        ? ctx.workers.filter(w => w.Status === 'Aktivan' || w.Status === 'Dostupan')
+        : ctx.workers.filter(w => referenced.has(w.Worker_ID));
+
+    return [...workerPool]
+        .sort((a, b) => (a.Name || '').localeCompare(b.Name || '', 'hr'))
+        .map(w => ({
+            id: `radnik-${w.Worker_ID}`,
+            label: w.Name,
+            sublabel: w.Role,
+            section: 'radnici' as CanvasSection,
+            blocks: blocks
+                .filter(b => (b.workerRefs || []).some(r => r.id === w.Worker_ID))
+                .sort(byStart),
+            shadows: [...(shadowWO.get(w.Worker_ID) || []), ...(shadowAbs.get(w.Worker_ID) || [])],
+        }));
+}
+
+/**
+ * OBJEDINJENI raspored: nalog, narudžba, transport, rok i montaža istog projekta žive
+ * u JEDNOM redu. Nalog je okosnica; ostalo se crta ispod (vidi `blockLayer`). Radnici
+ * ostaju zasebna sekcija — kapacitet je druga osa i miješanje bi ga zamaglilo.
+ */
+function buildUnifiedRows(
+    scenario: PlanScenario,
+    ctx: RowContext,
+    mode: 'project' | 'global'
+): CanvasRow[] {
+    const rows: CanvasRow[] = [];
+    const blocks = scenario.Blocks;
+
+    if (mode === 'global') {
+        if (blocks.length) {
+            rows.push({
+                id: 'plan-all',
+                label: 'Svi blokovi',
+                sublabel: 'objedinjeno',
+                section: 'plan',
+                blocks: [...blocks].sort(byStart),
+                shadows: [],
+            });
+        }
+    } else {
+        // Narudžba pripada projektu NALOGA koji hrani (veza „stiglo → kreće"), ne svom
+        // (moguće pogrešnom) projectRef-u. Tako narudžba vezana za Emirov nalog stoji pod
+        // Emirom, čak i ako joj je projectRef ostao na drugom projektu.
+        const blockById = new Map(blocks.map(b => [b.id, b]));
+        const linkedProject = new Map<string, PlanRef>();
+        for (const l of scenario.Links) {
+            if (l.kind !== 'delivery-to-start') continue;
+            const nalog = blockById.get(l.to);          // l.from = narudžba, l.to = nalog
+            if (nalog?.projectRef) linkedProject.set(l.from, nalog.projectRef);
+        }
+        const projectOf = (b: PlanBlock): PlanRef | undefined =>
+            (b.kind === 'purchase' ? linkedProject.get(b.id) : undefined) || b.projectRef;
+
+        const UNASSIGNED = '__unassigned__';
+        const grouped = new Map<string, { label: string; blocks: PlanBlock[] }>();
+        for (const b of blocks) {
+            const pr = projectOf(b);
+            const key = pr ? (pr.id || `name:${pr.name}`) : UNASSIGNED;
+            const label = pr ? pr.name : 'Bez projekta';
+            const entry = grouped.get(key) || { label, blocks: [] };
+            entry.blocks.push(b);
+            grouped.set(key, entry);
+        }
+        const entries = Array.from(grouped.entries()).sort(([ka, a], [kb, bb]) => {
+            if (ka === UNASSIGNED) return 1;          // „Bez projekta" na kraj
+            if (kb === UNASSIGNED) return -1;
+            return a.label.localeCompare(bb.label, 'hr');
+        });
+        for (const [key, entry] of entries) {
+            rows.push({
+                id: `plan-${key}`,
+                label: entry.label,
+                section: 'plan',
+                blocks: entry.blocks.sort(byStart),
+                shadows: [],
+                synthetic: key === UNASSIGNED,
+            });
+        }
+    }
+
+    rows.push(...buildWorkerRows(scenario, ctx));
+    return rows;
+}
+
 /** Redovi grupisani po sekcijama, u fiksnom redoslijedu prikaza. */
 export function groupRowsBySection(rows: CanvasRow[]): { section: CanvasSection; rows: CanvasRow[] }[] {
-    const order: CanvasSection[] = ['obaveze', 'nalozi', 'radnici', 'nabavka'];
+    const order: CanvasSection[] = ['obaveze', 'plan', 'nalozi', 'radnici', 'nabavka'];
     return order
         .map(section => ({ section, rows: rows.filter(r => r.section === section) }))
         .filter(g => g.rows.length > 0);

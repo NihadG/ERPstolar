@@ -42,6 +42,8 @@ interface CanvasDrawerProps {
     onSelectBlock: (blockId: string) => void;
     /** Otvara kreiranje narudžbi iz sastavnice proizvoda ovog naloga. */
     onCreateOrders: () => void;
+    /** Pretvori blok u stvarni nalog/narudžbu (otvara PromoteBlockModal). */
+    onPromote: () => void;
 }
 
 const dm = (iso: string) => {
@@ -61,7 +63,7 @@ function inferLinkKind(from: PlanBlock, to: PlanBlock): PlanLinkKind {
 
 export default function CanvasDrawer({
     block, allBlocks, links, projects, workers, suppliers, leadTimes,
-    onClose, onChange, onDelete, onAddLink, onDeleteLink, onSelectBlock, onCreateOrders,
+    onClose, onChange, onDelete, onAddLink, onDeleteLink, onSelectBlock, onCreateOrders, onPromote,
 }: CanvasDrawerProps) {
     const [crewPickerOpen, setCrewPickerOpen] = useState(false);
 
@@ -125,6 +127,7 @@ export default function CanvasDrawer({
 
     const isWork = block.kind === 'order' || block.kind === 'montaza';
     const isPurchase = block.kind === 'purchase';
+    const promoted = !!(block.linkedWorkOrderId || block.linkedOrderId);
     const crew = block.crew || (block.workerRefs?.length || 1);
     const workerIds = new Set((block.workerRefs || []).map(w => w.id).filter(Boolean) as string[]);
 
@@ -169,6 +172,23 @@ export default function CanvasDrawer({
             <div className="cv-drawer-body">
                 {/* Vrsta bloka nije očita iz boje — jedna rečenica uklanja nagađanje */}
                 <p className="cv-kind-help"><Info size={12} /> {BLOCK_HELP[block.kind]}</p>
+
+                {/* ── Pretvori plan u stvarnost ────────────────── */}
+                {(isWork || isPurchase) && (
+                    promoted ? (
+                        <div className="cv-promoted-note">
+                            <Check size={14} />
+                            {block.linkedWorkOrderId
+                                ? 'Iz ovog bloka je kreiran stvarni nalog.'
+                                : 'Iz ovog bloka je kreirana stvarna narudžba.'}
+                        </div>
+                    ) : (
+                        <button className="cv-btn full promote" onClick={onPromote}>
+                            {isPurchase ? <ShoppingCart size={14} /> : <Package size={14} />}
+                            {isPurchase ? 'Naruči stvarno (kreiraj narudžbu)' : 'Kreiraj stvarni nalog'}
+                        </button>
+                    )
+                )}
                 <label className="cv-field">
                     <span>Naziv</span>
                     <input value={block.title} autoFocus
@@ -378,12 +398,12 @@ export default function CanvasDrawer({
 
                 {/* ── Veze ─────────────────────────────────────── */}
                 <div className="cv-field">
-                    <span><Link2 size={12} /> Veze u lancu</span>
+                    <span><Link2 size={12} /> Šta ide prije/poslije (lanac)</span>
 
                     {related.incoming.length === 0 && related.outgoing.length === 0 && (
                         <p className="cv-hint">
-                            Nema veza. Poveži narudžbu → proizvodnju → transport → montažu da
-                            „Lanac" može računati unazad.
+                            Veza kaže šta mora <strong>prije</strong> da bi ovo moglo početi
+                            (npr. narudžba materijala → proizvodnja). „Lanac" ih onda poreda po roku unazad.
                         </p>
                     )}
 
@@ -420,7 +440,7 @@ export default function CanvasDrawer({
                                     ? [target, block] : [block, target];
                                 onAddLink(from.id, to.id, inferLinkKind(from, to));
                             }}>
-                            <option value="">+ Poveži s blokom…</option>
+                            <option value="">+ Dodaj vezu (šta ide prije/poslije)…</option>
                             {linkable.map(b => (
                                 <option key={b.id} value={b.id}>
                                     {BLOCK_LABEL[b.kind]}: {b.title} ({dm(b.startISO)})

@@ -114,6 +114,23 @@ export function endFromWork(
     return workOrderDueDate(startISO, workingDaysNeeded(workerDays, crew), isSaturdayWorking);
 }
 
+/** Broj RADNIH dana u rasponu (uključivo). Obrat `endFromWork` — za kad korisnik
+ *  ručno razvuče traku, pa se iz nje izvedu radnik-dani. */
+export function countWorkingDays(
+    startISO: string,
+    endISO: string,
+    isSaturdayWorking?: (d: Date) => boolean
+): number {
+    if (endISO < startISO) return 1;
+    let count = 0;
+    let cur = startISO;
+    for (let i = 0; i <= 3650 && cur <= endISO; i++) {
+        if (isWorkDay(cur, isSaturdayWorking)) count++;
+        cur = addDays(cur, 1);
+    }
+    return Math.max(1, count);
+}
+
 /** Radni dan po pravilima radionice: nedjelja ne radi, subota po rotaciji. */
 export function isWorkDay(iso: string, isSaturdayWorking?: (d: Date) => boolean): boolean {
     const d = parseDay(iso);

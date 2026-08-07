@@ -62,25 +62,21 @@ describe('materijal kasni', () => {
     });
 });
 
-describe('narudžba probila rok slanja', () => {
-    test('rok u prošlosti je greška', () => {
+describe('rok slanja narudžbe NIJE „Problem" (živi u „Naruči danas")', () => {
+    // Pri planiranju budućeg posla, „narudžba je trebala otići prije X dana" je buka —
+    // operativni signal spram DANAS, ne planerski konflikt. Preseljen u ordersDueSoon.
+    test('narudžba s prošlim rokom slanja se NE prijavljuje kao konflikt', () => {
         const s = scenarioOf([
             newBlock('purchase', '2026-08-10', '2026-08-16', { id: 'n', title: 'Frischeis', orderByISO: '2026-07-30' }),
         ]);
-        const c = detectConflicts(s, ctx()).find(x => x.kind === 'order-overdue')!;
-        expect(c.message).toContain('4 dana');
+        expect(kinds(s)).not.toContain('order-overdue');
     });
 
-    test('narudžba označena kao poslana se ne prijavljuje', () => {
+    test('umjesto toga je vidljiva u ordersDueSoon (Naruči danas)', () => {
         const s = scenarioOf([
-            newBlock('purchase', '2026-08-10', '2026-08-16', { id: 'n', orderByISO: '2026-07-30', isSent: true }),
+            newBlock('purchase', '2026-08-10', '2026-08-16', { id: 'n', title: 'Frischeis', orderByISO: '2026-07-30' }),
         ]);
-        expect(kinds(s)).not.toContain('order-overdue');
-    });
-
-    test('rok danas nije probijen', () => {
-        const s = scenarioOf([newBlock('purchase', '2026-08-10', '2026-08-16', { id: 'n', orderByISO: TODAY })]);
-        expect(kinds(s)).not.toContain('order-overdue');
+        expect(ordersDueSoon(s, TODAY).map(d => d.block.id)).toContain('n');
     });
 });
 
@@ -186,13 +182,16 @@ describe('ostala pravila', () => {
         expect(kinds(s)).toContain('montaza-early');
     });
 
-    test('probijen rok projekta', () => {
-        const projects = [{ Project_ID: 'pr1', Deadline: '2026-08-10' } as Project];
+    test('rok projekta se NE prijavljuje — platno JE mjesto gdje se rokovi definišu', () => {
+        // Ni budući ni prošli rok iz project.Deadline ne pravi konflikt; korisnik
+        // definiše fiksne tačke „Rok" (milestone) blokovima na platnu, ne izvana.
+        const future = [{ Project_ID: 'pr1', Deadline: '2026-08-10' } as Project];
+        const past = [{ Project_ID: 'pr1', Deadline: '2026-05-15' } as Project];
         const s = scenarioOf([
             newBlock('order', '2026-08-03', '2026-08-20', { id: 'p', projectRef: { id: 'pr1', name: 'Novak' } }),
         ]);
-        const c = detectConflicts(s, ctx({ projects })).find(x => x.kind === 'deadline-missed')!;
-        expect(c.message).toContain('10 dana poslije roka');
+        expect(kinds(s, ctx({ projects: future }))).not.toContain('deadline-missed');
+        expect(kinds(s, ctx({ projects: past }))).not.toContain('deadline-missed');
     });
 
     test('blok koji počinje nedjeljom', () => {

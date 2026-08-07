@@ -11,7 +11,7 @@
 import { useState, useMemo } from 'react';
 import { AlertTriangle, AlertCircle, ShoppingCart, BarChart3, ChevronDown, Check } from 'lucide-react';
 import type { PlanScenario, PlanBlock } from '@/lib/types';
-import { detectConflicts, ordersDueSoon, CONFLICT_LABEL, type ConflictContext } from '@/lib/canvas/conflicts';
+import { detectConflicts, ordersDueSoon, CONFLICT_LABEL, type ConflictContext, type ConflictFix } from '@/lib/canvas/conflicts';
 import { dailyCapacity, capacitySummary, type CapacityContext } from '@/lib/canvas/capacity';
 import './CanvasDock.css';
 
@@ -25,6 +25,8 @@ interface CanvasDockProps {
     days: number;
     onJumpToBlock: (blockId: string) => void;
     onMarkSent: (blockId: string) => void;
+    /** Primijeni ponuđeno rješenje konflikta jednim klikom. */
+    onFix: (fix: ConflictFix) => void;
 }
 
 const dm = (iso: string) => {
@@ -33,7 +35,7 @@ const dm = (iso: string) => {
 };
 
 export default function CanvasDock({
-    scenario, conflictCtx, capacityCtx, fromISO, days, onJumpToBlock, onMarkSent,
+    scenario, conflictCtx, capacityCtx, fromISO, days, onJumpToBlock, onMarkSent, onFix,
 }: CanvasDockProps) {
     const [open, setOpen] = useState(true);
     const [tab, setTab] = useState<DockTab>('problemi');
@@ -91,6 +93,13 @@ export default function CanvasDock({
                                                 : <AlertTriangle size={14} />}
                                             <span className="cv-conflict-kind">{CONFLICT_LABEL[c.kind]}</span>
                                             <span className="cv-conflict-msg">{c.message}</span>
+                                            {c.fix && (
+                                                <button className="cv-link-btn fix"
+                                                    onClick={() => onFix(c.fix!)}
+                                                    title="Primijeni rješenje (Ctrl+Z vraća)">
+                                                    <Check size={12} /> {c.fix.label}
+                                                </button>
+                                            )}
                                             <button className="cv-link-btn"
                                                 onClick={() => onJumpToBlock(c.blockIds[0])}>
                                                 pokaži

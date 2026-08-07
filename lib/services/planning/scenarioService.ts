@@ -1,9 +1,9 @@
 /**
  * scenarioService.ts — CRUD za planerske scenarije (Platno).
  *
- * IZOLACIJA: ovo je JEDINI servis koji platno koristi za pisanje, i piše isključivo
- * u `planning_scenarios`. Nijedna funkcija ovdje ne dira naloge, narudžbe, statuse
- * ni bilo šta drugo u aplikaciji.
+ * IZOLACIJA: ovaj servis piše isključivo u `planning_scenarios`. Nijedna funkcija ovdje
+ * ne dira naloge, narudžbe, statuse ni bilo šta drugo. (Svjesnu pretvorbu plana u stvarni
+ * nalog/narudžbu radi zaseban promotionService — nikad autosave.)
  *
  * Obrazac preuzet iz lib/services/resource/supplierService.ts
  * (queryByOrg / findRef / createDoc / updateDocByRef), uz dodatak optimističke
@@ -12,7 +12,7 @@
  */
 
 import { COLLECTIONS } from '../shared/collections';
-import { queryByOrg, findByIdAndOrg, findRef, createDoc, updateDocByRef } from '../shared/firestoreClient';
+import { queryByOrg, findByIdAndOrg, findRef, createDoc, updateDocByRef, deepStripUndefined } from '../shared/firestoreClient';
 import { v4 as uuidv4 } from 'uuid';
 import type { PlanScenario } from '../../types';
 import { MAX_BLOCKS_PER_SCENARIO, emptyScenario } from '../../canvas/model';
@@ -68,7 +68,7 @@ export async function createScenario(
             Modified_Date: new Date().toISOString(),
             Version: 1,
         };
-        await createDoc(COLLECTIONS.PLANNING_SCENARIOS, scenario as unknown as Record<string, unknown>);
+        await createDoc(COLLECTIONS.PLANNING_SCENARIOS, deepStripUndefined(scenario) as unknown as Record<string, unknown>);
         return {
             success: true,
             data: { Scenario_ID: scenario.Scenario_ID, Version: 1 },
@@ -123,11 +123,13 @@ export async function saveScenario(
         const nextVersion = (current.Version || 0) + 1;
         // Organization_ID i Created_Date se NIKAD ne prepisuju iz klijenta.
         const { Organization_ID: _org, Created_Date: _created, ...rest } = scenario;
-        await updateDocByRef(ref, {
+        // Duboko čišćenje: blok može nositi ugniježđeni `undefined` (npr. supplierRef.id
+        // kad dobavljač nije prepoznat) — Firestore to odbija bilo gdje u stablu.
+        await updateDocByRef(ref, deepStripUndefined({
             ...rest,
             Modified_Date: new Date().toISOString(),
             Version: nextVersion,
-        } as Record<string, unknown>);
+        }) as Record<string, unknown>);
 
         return {
             success: true,
