@@ -33,6 +33,21 @@
 .pt-toggle:hover { color: var(--text-primary); }
 .pt-toggle.on { border-color: var(--accent); color: var(--accent); background: var(--accent-light); }
 
+/* ── Prebacivač leća (segmented) — srce redizajna: Po nalogu / Po procesu ── */
+.pt-seg {
+    display: inline-flex; align-items: center; gap: 2px; padding: 3px;
+    border: 1px solid var(--border-light); border-radius: 999px; background: var(--surface); flex-shrink: 0;
+}
+.pt-seg button {
+    display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 14px;
+    border: none; border-radius: 999px; background: transparent;
+    font-size: 12.5px; font-weight: 700; color: var(--text-secondary); cursor: pointer;
+    transition: all 0.15s ease; white-space: nowrap;
+}
+.pt-seg button .material-icons-round { font-size: 16px; }
+.pt-seg button:hover { color: var(--text-primary); }
+.pt-seg button.on { background: var(--background); color: var(--text-primary); box-shadow: 0 1px 2px var(--shadow); }
+
 /* Admin alati su ikone — ne takmiče se s radom */
 .pt-icon {
     display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px;
@@ -77,6 +92,21 @@ button.pt-card-id:not(:disabled):hover .pt-card-title { color: var(--accent); }
 }
 .pt-card-sub { font-size: 11.5px; color: var(--text-secondary); }
 .pt-card-spacer { flex: 1; }
+
+/* ── Kartica STANICE (leća po procesu) ──
+   Identitet nosi NAZIV PROCESA, ne boja naloga — pa je lijeva traka neutralna,
+   a „na redu" u podnaslovu je akcentiran (to je poanta stanice: šta je spremno). */
+.pt-station .pt-card-head { border-left-color: var(--border-light); }
+.pt-station .pt-card-title { font-weight: 800; }
+.pt-sum-now { color: var(--accent); font-weight: 800; }
+
+/* Podnožje: koliko je stanica potpuno završeno (sakriveno iz reda čekanja) */
+.pt-done-stations {
+    display: flex; align-items: center; gap: 7px;
+    padding: 10px 12px; border: 1px dashed var(--border-light); border-radius: 12px;
+    color: var(--text-tertiary); font-size: 12px; font-weight: 600;
+}
+.pt-done-stations .material-icons-round { font-size: 16px; color: var(--success); }
 
 /* Traka napretka — informacija, ne ukras */
 .pt-bar { display: inline-flex; align-items: center; gap: 8px; flex-shrink: 0; }
@@ -262,6 +292,9 @@ button.pt-card-id:not(:disabled):hover .pt-card-title { color: var(--accent); }
 @media (max-width: 860px) {
     .pt-header { gap: 8px; }
     .pt-header-spacer { display: none; }
+    /* Prebacivač leća preko cijele širine — glavni izbor na dohvat palca */
+    .pt-seg { order: -1; flex: 1 1 100%; justify-content: stretch; }
+    .pt-seg button { flex: 1; justify-content: center; }
     .pt-search { flex: 1; }
     .pt-search input { min-width: 0; width: 100%; }
     .pt-card-head { flex-wrap: wrap; row-gap: 8px; }
