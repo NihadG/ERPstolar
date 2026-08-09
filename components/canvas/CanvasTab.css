@@ -695,14 +695,51 @@
 }
 .cv-supply-dot svg { display: block; }
 
-/* Blok koji je već PRETVOREN u stvarni nalog/narudžbu — jasno drugačiji. */
-.cv-block.promoted { box-shadow: 0 0 0 2px var(--success) inset, 0 1px 3px var(--shadow-md); }
-.cv-block-badge {
-    flex-shrink: 0;
-    color: #fff;
-    background: var(--success);
-    border-radius: 50%;
-    padding: 1px;
+/* ── Živi status pretvorenog bloka ──────────────────────────────
+   Boja vrste ostaje ispuna. Status je NOVI, nezavisan kanal: obojena „kapica"
+   uz lijevu ivicu (::before) + mala ikona/tačka u nazivu. Nacrt (nepretvoren
+   blok) nema statusnu klasu → izgleda kao i prije. Bez procenata i bez oznaka
+   kašnjenja — samo u kojem je stanju stvarni nalog/narudžba. */
+.cv-block.s-pending { --cv-status: #0a84ff; }   /* Na čekanju / Nacrt narudžbe */
+.cv-block.s-active  { --cv-status: #12aebc; }   /* U toku / Poslano */
+.cv-block.s-paused  { --cv-status: #ff9f0a; }   /* Pauza */
+.cv-block.s-done    { --cv-status: var(--success); }  /* Završeno / Primljeno */
+.cv-block.s-cancel  { --cv-status: var(--error); }    /* Otkazano */
+
+.cv-block.s-pending::before,
+.cv-block.s-active::before,
+.cv-block.s-paused::before,
+.cv-block.s-done::before,
+.cv-block.s-cancel::before {
+    content: "";
+    position: absolute;
+    left: 0; top: 0; bottom: 0;
+    width: 4px;
+    background: var(--cv-status);
+    border-top-left-radius: inherit;
+    border-bottom-left-radius: inherit;
+    pointer-events: none;   /* nikad ne krade potez ručici / povlačenju bloka */
+    z-index: 2;
+}
+
+/* Ikona statusa u nazivu (Pauza / Završeno / Otkazano). */
+.cv-status-ico { flex-shrink: 0; }
+/* Tačka statusa (Na čekanju / U toku) — bijela za kontrast na boji vrste. */
+.cv-status-dot {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: #fff; flex-shrink: 0;
+    box-shadow: 0 0 0 1.5px rgba(0, 0, 0, .18);
+}
+.cv-status-dot.live { animation: cv-pulse 1.6s ease-in-out infinite; }
+@keyframes cv-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .3; } }
+
+/* Završeno / Otkazano — prigušeno; otkazano i precrtano. */
+.cv-block.s-done { opacity: .62; }
+.cv-block.s-cancel { opacity: .5; }
+.cv-block.s-cancel .cv-block-label { text-decoration: line-through; }
+
+@media (prefers-reduced-motion: reduce) {
+    .cv-status-dot.live { animation: none; }
 }
 
 /* ── Sjene stvarnog posla ─────────────────────────────────────── */
@@ -972,16 +1009,31 @@
 .cvp-issues svg { color: var(--warning); flex-shrink: 0; margin-top: 1px; }
 .cvp-foot { display: flex; justify-content: flex-end; gap: 8px; }
 
-/* ── Promocija u draweru ──────────────────────────────────────── */
-.cv-promoted-note {
-    display: flex; align-items: center; gap: 8px;
-    padding: 9px 11px;
+/* ── Živi status u draweru ────────────────────────────────────── */
+.cv-status-note {
+    display: flex; align-items: center; gap: 9px;
+    padding: 10px 12px;
     border-radius: var(--radius-sm);
-    background: var(--success-bg, rgba(52,199,89,.12));
-    color: var(--success);
-    font-size: 12px; font-weight: 500;
+    background: var(--surface);
+    border-left: 3px solid var(--cv-status, var(--text-tertiary));
+    font-size: 12.5px;
 }
-.cv-promoted-note svg { flex-shrink: 0; }
+.cv-status-note.s-pending { --cv-status: #0a84ff; }
+.cv-status-note.s-active  { --cv-status: #12aebc; }
+.cv-status-note.s-paused  { --cv-status: #ff9f0a; }
+.cv-status-note.s-done    { --cv-status: var(--success); }
+.cv-status-note.s-cancel  { --cv-status: var(--error); }
+.cv-status-note-dot {
+    width: 9px; height: 9px; border-radius: 50%;
+    background: var(--cv-status, var(--text-tertiary)); flex-shrink: 0;
+}
+.cv-status-note.s-active .cv-status-note-dot { animation: cv-pulse 1.6s ease-in-out infinite; }
+.cv-status-note-txt { color: var(--text-secondary); }
+.cv-status-note-txt b { color: var(--text-primary); font-weight: 650; }
+@media (prefers-reduced-motion: reduce) {
+    .cv-status-note.s-active .cv-status-note-dot { animation: none; }
+}
+
 .cv-btn.promote { border-color: var(--accent); color: var(--accent); font-weight: 600; }
 .cv-btn.promote:hover:not(:disabled) { background: var(--accent-light); }
 

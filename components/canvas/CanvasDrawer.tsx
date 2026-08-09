@@ -22,12 +22,15 @@ import {
     addDays, orderByFromDelivery,
 } from '@/lib/canvas/model';
 import { suggestLeadDays, type SupplierLeadTime } from '@/lib/canvas/leadTime';
+import type { BlockStatusInfo } from '@/lib/canvas/status';
 import CrewPicker from './CrewPicker';
 
 const PRIORITIES: TaskPriority[] = ['low', 'medium', 'high', 'urgent'];
 
 interface CanvasDrawerProps {
     block: PlanBlock | null;
+    /** Živi status stvarnog naloga/narudžbe iza bloka; null = nacrt (nije pretvoren). */
+    status: BlockStatusInfo | null;
     allBlocks: PlanBlock[];
     links: PlanLink[];
     projects: Project[];
@@ -62,7 +65,7 @@ function inferLinkKind(from: PlanBlock, to: PlanBlock): PlanLinkKind {
 }
 
 export default function CanvasDrawer({
-    block, allBlocks, links, projects, workers, suppliers, leadTimes,
+    block, status, allBlocks, links, projects, workers, suppliers, leadTimes,
     onClose, onChange, onDelete, onAddLink, onDeleteLink, onSelectBlock, onCreateOrders, onPromote,
 }: CanvasDrawerProps) {
     const [crewPickerOpen, setCrewPickerOpen] = useState(false);
@@ -128,6 +131,7 @@ export default function CanvasDrawer({
     const isWork = block.kind === 'order' || block.kind === 'montaza';
     const isPurchase = block.kind === 'purchase';
     const promoted = !!(block.linkedWorkOrderId || block.linkedOrderId);
+    const liveStatus = status && status.status !== 'draft' ? status : null;
     const crew = block.crew || (block.workerRefs?.length || 1);
     const workerIds = new Set((block.workerRefs || []).map(w => w.id).filter(Boolean) as string[]);
 
@@ -173,14 +177,16 @@ export default function CanvasDrawer({
                 {/* Vrsta bloka nije očita iz boje — jedna rečenica uklanja nagađanje */}
                 <p className="cv-kind-help"><Info size={12} /> {BLOCK_HELP[block.kind]}</p>
 
-                {/* ── Pretvori plan u stvarnost ────────────────── */}
+                {/* ── Pretvori plan u stvarnost / živi status ──── */}
                 {(isWork || isPurchase) && (
                     promoted ? (
-                        <div className="cv-promoted-note">
-                            <Check size={14} />
-                            {block.linkedWorkOrderId
-                                ? 'Iz ovog bloka je kreiran stvarni nalog.'
-                                : 'Iz ovog bloka je kreirana stvarna narudžba.'}
+                        <div className={`cv-status-note s-${liveStatus?.status || 'pending'}`}>
+                            <span className="cv-status-note-dot" />
+                            <span className="cv-status-note-txt">
+                                {block.linkedWorkOrderId ? 'Stvarni nalog' : 'Stvarna narudžba'}
+                                {liveStatus?.ref ? ` ${liveStatus.ref}` : ''}
+                                <b> · {liveStatus?.label || 'kreirano'}</b>
+                            </span>
                         </div>
                     ) : (
                         <button className="cv-btn full promote" onClick={onPromote}>

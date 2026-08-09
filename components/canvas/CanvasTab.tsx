@@ -17,6 +17,7 @@ import {
     Plus, Copy, Undo2, Redo2, ChevronLeft, ChevronRight, ChevronDown, Loader2,
     Lock, AlertTriangle, Users, Trash2, Save, Link2, Package, Bookmark, Printer,
     GitCompareArrows, ClipboardList, Sparkles, Rows3, Pencil, MoreHorizontal, Check, LayoutGrid,
+    Pause, X,
 } from 'lucide-react';
 import type {
     Project, Worker, WorkOrder, Order, Supplier, WorkerAttendance,
@@ -50,6 +51,7 @@ import MobileCanvasView from '@/components/tabs/mobile/MobileCanvasView';
 import { buildSupplierLeadTimes } from '@/lib/canvas/leadTime';
 import { buildSaturdayChecker, type AttendanceLite } from '@/lib/planning';
 import { buildRows, groupRowsBySection, SECTION_LABEL, blockLayer, type CanvasRow } from '@/lib/canvas/rows';
+import { blockStatusMap, type BlockStatus } from '@/lib/canvas/status';
 import {
     HEADER_WIDTH, TIMELINE_HEADER_HEIGHT, MIN_LABEL_WIDTH, RESIZE_HANDLE_PX,
     blockRect, packLanes, rowHeight, laneTop, headerTicks, monthBands,
@@ -196,6 +198,13 @@ export default function CanvasTab({
         [scenario, groupBy, workers, workOrders, attendance, showIdle, layout]
     );
     const sections = useMemo(() => groupRowsBySection(rows), [rows]);
+
+    // Živi status blokova pretvorenih u stvarne naloge/narudžbe — ČITA se iz entiteta,
+    // preslikava na blok (bez pisanja). Nacrti nisu u mapi (podrazumijevani izgled).
+    const statusById = useMemo(
+        () => blockStatusMap(scenario.Blocks, { workOrders, orders }),
+        [scenario.Blocks, workOrders, orders]
+    );
 
     // ── Kontekst za pravila i kapacitet ─────────────────────────
     // Subotnja rotacija po SVIM aktivnim radnicima — ista pravila kao auto-rok naloga.
@@ -560,7 +569,8 @@ export default function CanvasTab({
             eff = blockRect(s, e, vp);
         }
 
-        const promoted = !!(item.linkedWorkOrderId || item.linkedOrderId);
+        // Živi status stvarnog naloga/narudžbe iza bloka (nacrt nije u mapi).
+        const st = statusById.get(item.id);
         // Projekt uz dobavljača — korisno u prikazu po dobavljaču / jednom redu; u prikazu
         // „po projektu" je red već projekt, pa je suvišno (i znalo bi se ne slagati s
         // grupisanjem po vezanom nalogu).
@@ -569,7 +579,7 @@ export default function CanvasTab({
 
         return (
             <div key={item.id}
-                className={`cv-block k-${item.kind}${opts?.compact ? ' compact' : ''}${promoted ? ' promoted' : ''}${selected.has(item.id) ? ' selected' : ''}${linkedToSelection.has(item.id) ? ' linked' : ''}${item.locked ? ' locked' : ''}${item.isSent ? ' sent' : ''}${isDragged ? ' dragging' : ''}${eff.clippedStart ? ' clip-start' : ''}${eff.clippedEnd ? ' clip-end' : ''}`}
+                className={`cv-block k-${item.kind}${opts?.compact ? ' compact' : ''}${st ? ` s-${st.status}` : ''}${selected.has(item.id) ? ' selected' : ''}${linkedToSelection.has(item.id) ? ' linked' : ''}${item.locked ? ' locked' : ''}${item.isSent ? ' sent' : ''}${isDragged ? ' dragging' : ''}${eff.clippedStart ? ' clip-start' : ''}${eff.clippedEnd ? ' clip-end' : ''}`}
                 style={{
                     left: eff.left,
                     width: Math.max(6, eff.width),
@@ -580,7 +590,7 @@ export default function CanvasTab({
                 onPointerMove={drag.onPointerMove}
                 onPointerUp={drag.onPointerUp}
                 onPointerCancel={drag.onPointerCancel}
-                title={`${item.title}${projectSuffix ? ` · ${projectSuffix}` : ''} · ${item.startISO} → ${item.endISO} (${blockDurationDays(item)} d)${promoted ? ' · već kreirano u stvarnim nalozima' : ''}`}
+                title={`${item.title}${projectSuffix ? ` · ${projectSuffix}` : ''} · ${item.startISO} → ${item.endISO} (${blockDurationDays(item)} d)${st ? ` · stvarni: ${st.label}${st.ref ? ` (${st.ref})` : ''}` : ''}`}
             >
                 {item.kind !== 'milestone' && !item.locked && (
                     <span className="cv-handle left"
@@ -591,7 +601,7 @@ export default function CanvasTab({
                 )}
                 <span className="cv-block-label">
                     {item.locked && <Lock size={10} />}
-                    {promoted && <Check size={10} className="cv-block-badge" />}
+                    {st && <StatusMark status={st.status} />}
                     {eff.width > MIN_LABEL_WIDTH ? item.title : ''}
                     {projectSuffix && eff.width > MIN_LABEL_WIDTH * 2 && (
                         <span className="cv-block-project">· {projectSuffix}</span>
@@ -1047,6 +1057,7 @@ export default function CanvasTab({
             {drawerId && (
                 <CanvasDrawer
                     block={scenario.Blocks.find(b => b.id === drawerId) || null}
+                    status={statusById.get(drawerId) || null}
                     allBlocks={scenario.Blocks}
                     links={scenario.Links}
                     projects={projects}
@@ -1065,6 +1076,16 @@ export default function CanvasTab({
             )}
         </div>
     );
+}
+
+// ── Oznaka živog statusa na bloku ───────────────────────────────────
+// Boju nosi lijeva kapica (CSS, po klasi s-*); ovdje je samo mala ikona/tačka:
+// U toku pulsira (živ), Pauza/Završeno/Otkazano imaju jasan glif.
+function StatusMark({ status }: { status: BlockStatus }) {
+    if (status === 'paused') return <Pause size={10} className="cv-status-ico" />;
+    if (status === 'done') return <Check size={10} className="cv-status-ico" />;
+    if (status === 'cancelled') return <X size={10} className="cv-status-ico" />;
+    return <span className={`cv-status-dot${status === 'active' ? ' live' : ''}`} />;
 }
 
 // ── Indikator spremanja ─────────────────────────────────────────────
