@@ -995,8 +995,11 @@
 .cvp-opt.on { border-color: var(--accent); background: var(--accent-light); }
 .cvp-opt input { margin-top: 2px; }
 .cvp-opt div { display: grid; gap: 2px; }
-.cvp-opt strong { font-size: 13px; }
+.cvp-opt strong { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; }
+.cvp-opt strong svg { color: var(--text-secondary); flex-shrink: 0; }
+.cvp-opt.on strong svg { color: var(--accent); }
 .cvp-opt span { font-size: 12px; color: var(--text-secondary); line-height: 1.45; }
+.cvp-choice-lbl { margin: 0 0 2px; font-size: 12px; font-weight: 600; color: var(--text-secondary); }
 .cvp-issues { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
 .cvp-issues li {
     display: flex; gap: 8px; align-items: flex-start;

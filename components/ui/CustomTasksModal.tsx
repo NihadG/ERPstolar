@@ -23,6 +23,8 @@ interface CustomTasksModalProps {
     showToast: (message: string, type: 'success' | 'error' | 'info') => void;
     zIndex?: number;               // for stacking on top of another open modal
     initialWorkerId?: string;      // pre-select a worker on the first task row when opened
+    /** Pred-popuni prvi red iz plan-bloka na Platnu (naziv/radnici/projekt/rok). */
+    initialSeed?: { text?: string; workerIds?: string[]; projectId?: string; dueDate?: string };
     onOrderCreated?: (workOrderId: string, workOrderNumber: string) => void; // fired on success, in addition to onCreated
 }
 
@@ -35,7 +37,7 @@ interface TaskRow {
 
 const uid = () => (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `id-${Date.now()}-${Math.random()}`);
 
-export default function CustomTasksModal({ isOpen, onClose, workOrders, workers, projects = [], tasks = [], organizationId, onCreated, showToast, zIndex, initialWorkerId, onOrderCreated }: CustomTasksModalProps) {
+export default function CustomTasksModal({ isOpen, onClose, workOrders, workers, projects = [], tasks = [], organizationId, onCreated, showToast, zIndex, initialWorkerId, initialSeed, onOrderCreated }: CustomTasksModalProps) {
     const [rows, setRows] = useState<TaskRow[]>([{ id: uid(), text: '', workerIds: initialWorkerId ? [initialWorkerId] : [] }]);
     const [notes, setNotes] = useState('');
     const [dueDate, setDueDate] = useState('');
@@ -53,11 +55,15 @@ export default function CustomTasksModal({ isOpen, onClose, workOrders, workers,
     // re-seed a clean, pre-filled state every time it actually opens.
     useEffect(() => {
         if (isOpen) {
-            setRows([{ id: uid(), text: '', workerIds: initialWorkerId ? [initialWorkerId] : [] }]);
+            // Seed s Platna ima prednost nad initialWorkerId; oba su opciona.
+            const seedWorkers = initialSeed?.workerIds?.length
+                ? initialSeed.workerIds
+                : (initialWorkerId ? [initialWorkerId] : []);
+            setRows([{ id: uid(), text: initialSeed?.text || '', workerIds: seedWorkers }]);
             setNotes('');
-            setDueDate('');
+            setDueDate(initialSeed?.dueDate || '');
             setTaskSelection(emptyTaskSelection());
-            setProjectId(''); setOfferValue(''); setMaterialCost(''); setOtherCosts('');
+            setProjectId(initialSeed?.projectId || ''); setOfferValue(''); setMaterialCost(''); setOtherCosts('');
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [isOpen]);

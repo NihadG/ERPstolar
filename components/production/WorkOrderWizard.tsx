@@ -20,11 +20,16 @@ import MaterialOrderSelectModal from '@/components/ui/MaterialOrderSelectModal';
 
 export type WizardMode = 'production' | 'montaza';
 
-/** Predselekcija proizvoda (dolazi iz ProjectsTab → "Kreiraj nalog"). */
+/** Predselekcija proizvoda (dolazi iz ProjectsTab → "Kreiraj nalog", ili s Platna). */
 export interface WizardInitialProducts {
     projectId: string;
     projectName: string;
     products: { productId: string; productName: string; quantity: number }[];
+    /** Pred-popuni Početak/Rok (iz plan-bloka na Platnu). */
+    startDate?: string;
+    dueDate?: string;
+    /** Ekipa iz plan-bloka: prvi = glavni, ostali = pomoćnici. Vežu se na sve procese. */
+    workerIds?: string[];
 }
 
 interface ProductSelection {
@@ -75,6 +80,8 @@ interface WorkOrderWizardProps {
     initialProducts?: WizardInitialProducts | null;
     onClose: () => void;
     onRefresh: (...collections: string[]) => void;
+    /** Poslije uspješnog kreiranja — pozivalac (npr. Platno) veže blok na stvarni nalog. */
+    onCreated?: (workOrderId: string, workOrderNumber: string) => void;
     showToast: (message: string, type: 'success' | 'error' | 'info') => void;
 }
 
@@ -89,6 +96,7 @@ export default function WorkOrderWizard({
     initialProducts,
     onClose,
     onRefresh,
+    onCreated,
     showToast,
 }: WorkOrderWizardProps) {
     const [activeStep, setActiveStep] = useState(0); // production: 0=Proizvodi, 1=Radnik & rok; montaža: 0=Proizvodi, 1=Procesi, 2=Dodjela
@@ -269,10 +277,14 @@ export default function WorkOrderWizard({
     // proizvoda iz ProjectsTab (tada se preskače korak odabira → pravo na "Radnik & rok").
     useEffect(() => {
         if (!isOpen) return;
+        // Ključevi dodjele: proizvodnja ima jednu ekipu za sve procese (CREW_KEY),
+        // montaža dodjeljuje po koraku (MONTAZA_STEPS).
+        const procs = mode === 'montaza' ? [...MONTAZA_STEPS] : [CREW_KEY];
         setActiveStep(0);
-        setSelectedProcesses(mode === 'montaza' ? [...MONTAZA_STEPS] : [CREW_KEY]);
-        setDueDate('');
-        setStartDate(todayISO());
+        setSelectedProcesses(procs);
+        // Datumi iz seeda (Platno prenosi rokove bloka); inače podrazumijevano.
+        setStartDate(initialProducts?.startDate || todayISO());
+        setDueDate(initialProducts?.dueDate || '');
         setWorkOrderName('');
         setNotes('');
         setProductSearch('');
@@ -281,8 +293,16 @@ export default function WorkOrderWizard({
         setOpenDropdown(null);
         setWorkerSearch('');
         setTaskSelection(emptyTaskSelection());
-        if (mode === 'production' && initialProducts) {
-            const { projectId, projectName, products: pendingProducts } = initialProducts;
+
+        // Seed iz Platna/ProjectsTab: proizvodi + (opciono) ekipa na svaki proces.
+        // Radi za OBA moda — montaža seedane proizvode ubacuje direktno (zaobilazi
+        // listu „Spremno", jer su svjesno izabrani na platnu).
+        if (initialProducts) {
+            const { projectId, projectName, products: pendingProducts, workerIds } = initialProducts;
+            const lead = workerIds?.[0] || '';
+            const helpers = (workerIds || []).slice(1);
+            const seedAssign = () => procs.reduce((a, k) => ({ ...a, [k]: lead }), {} as Record<string, string>);
+            const seedHelpers = () => procs.reduce((a, k) => ({ ...a, [k]: [...helpers] }), {} as Record<string, string[]>);
             setSelectedProducts(pendingProducts.map(p => ({
                 Product_ID: p.productId,
                 Product_Name: p.productName,
@@ -291,10 +311,11 @@ export default function WorkOrderWizard({
                 Quantity: p.quantity,
                 Work_Order_Quantity: p.quantity,
                 Status: '',
-                assignments: { [CREW_KEY]: '' },
-                helperAssignments: { [CREW_KEY]: [] },
+                assignments: seedAssign(),
+                helperAssignments: seedHelpers(),
             })));
-            setActiveStep(1);
+            // Skoči na zadnji korak (dodjela/rok) kad ima proizvoda — inače korak izbora.
+            setActiveStep(pendingProducts.length ? (mode === 'montaza' ? 2 : 1) : 0);
         } else {
             setSelectedProducts([]);
         }
@@ -738,6 +759,9 @@ export default function WorkOrderWizard({
 
         if (result.success) {
             showToast(`Radni nalog ${result.data?.Work_Order_Number} kreiran`, 'success');
+
+            // Pozivalac (Platno) veže plan-blok na ovaj stvarni nalog.
+            if (result.data) onCreated?.(result.data.Work_Order_ID, result.data.Work_Order_Number);
 
             // Zadaci — sada nalog postoji, pa se veza može upisati. Greška ovdje
             // NE ruši nalog (već je kreiran): javi se i nastavi, zadaci se mogu

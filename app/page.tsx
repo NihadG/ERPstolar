@@ -653,8 +653,9 @@ export default function Home() {
                         />
                     )}
 
-                    {/* Platno NE dobija onRefresh — nema šta da osvježava jer ništa
-                        izvan svoje kolekcije ne mijenja. */}
+                    {/* Autosave platna i dalje piše SAMO u planning_scenarios. onRefresh je
+                        za KORISNIČKU pretvorbu bloka u stvarni nalog/narudžbu — tek tada app
+                        mora osvježiti workOrders/orders/projects da se nalog vidi u tabu Nalozi. */}
                     {activeTab === 'platno' && (
                         <CanvasTab
                             projects={appState.projects}
@@ -662,6 +663,8 @@ export default function Home() {
                             workOrders={appState.workOrders}
                             orders={appState.orders}
                             suppliers={appState.suppliers}
+                            tasks={appState.tasks}
+                            onRefresh={refreshCollections}
                             showToast={showToast}
                         />
                     )}

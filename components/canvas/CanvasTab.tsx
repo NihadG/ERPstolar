@@ -20,7 +20,7 @@ import {
     Pause, X,
 } from 'lucide-react';
 import type {
-    Project, Worker, WorkOrder, Order, Supplier, WorkerAttendance,
+    Project, Worker, WorkOrder, Order, Supplier, WorkerAttendance, Task,
     PlanBlock, PlanBlockKind, PlanGroupBy, PlanLayout, PlanZoom, PlanScenario, PlanChainTemplate,
 } from '@/lib/types';
 import {
@@ -36,7 +36,9 @@ import CanvasTimeSlider from './CanvasTimeSlider';
 import ChainModal from './ChainModal';
 import ProductPickerModal from './ProductPickerModal';
 import MaterialOrderModal, { type CreatedPurchase } from './MaterialOrderModal';
-import PromoteBlockModal from './PromoteBlockModal';
+import PromoteBlockModal, { type PromoteOrderType } from './PromoteBlockModal';
+import WorkOrderWizard, { type WizardMode, type WizardInitialProducts } from '@/components/production/WorkOrderWizard';
+import CustomTasksModal from '@/components/ui/CustomTasksModal';
 import ChainTemplatesModal from './ChainTemplatesModal';
 import CompareModal from './CompareModal';
 import BatchPlanModal from './BatchPlanModal';
@@ -71,6 +73,10 @@ interface CanvasTabProps {
     /** Samo za empirijske rokove dobavljača — čita se, ne mijenja. */
     orders: Order[];
     suppliers: Supplier[];
+    /** Svi zadaci org — za wizard „Poveži postojeći" pri kreiranju iz Platna. */
+    tasks?: Task[];
+    /** Osvježi podatke app-a nakon pretvorbe (nalog/narudžba postanu vidljivi u svojim tabovima). */
+    onRefresh?: (...collections: string[]) => void;
     showToast: (message: string, type: 'success' | 'error' | 'info') => void;
 }
 
@@ -98,7 +104,7 @@ const QUICK_KINDS: { kind: PlanBlockKind; key: string }[] = [
 ];
 
 export default function CanvasTab({
-    projects, workers, workOrders, orders, suppliers, showToast,
+    projects, workers, workOrders, orders, suppliers, tasks = [], onRefresh, showToast,
 }: CanvasTabProps) {
     const { organization } = useAuth();
     const orgId = organization?.Organization_ID || '';
@@ -114,6 +120,14 @@ export default function CanvasTab({
     const [pickerOpen, setPickerOpen] = useState(false);
     const [orderModalFor, setOrderModalFor] = useState<string | null>(null);
     const [promoteId, setPromoteId] = useState<string | null>(null);
+    // Pretvorba nalog-bloka u stvarni nalog ide kroz PRAVI flow iz taba Nalozi
+    // (wizard za proizvodni/montažni, CustomTasksModal za razni), hranjen iz bloka.
+    const [promotingId, setPromotingId] = useState<string | null>(null);
+    const [wizardOpen, setWizardOpen] = useState(false);
+    const [wizardMode, setWizardMode] = useState<WizardMode>('production');
+    const [wizardSeed, setWizardSeed] = useState<WizardInitialProducts | undefined>(undefined);
+    const [raniOpen, setRaniOpen] = useState(false);
+    const [raniSeed, setRaniSeed] = useState<{ text?: string; workerIds?: string[]; projectId?: string; dueDate?: string } | undefined>(undefined);
     const [templatesOpen, setTemplatesOpen] = useState(false);
     const [templates, setTemplates] = useState<PlanChainTemplate[]>([]);
     const [compareOpen, setCompareOpen] = useState(false);
@@ -512,6 +526,51 @@ export default function CanvasTab({
         }
         setReviewResult(result);
     }, [scenario, workers, workOrders, attendance, projects, isSaturdayWorking, showToast]);
+
+    // ── Pretvorba nalog-bloka → stvarni nalog (pravi flow iz taba Nalozi) ──
+    /** Seed za wizard iz plan-bloka: projekt, proizvodi, ekipa, rokovi. */
+    const buildOrderSeed = useCallback((block: PlanBlock): WizardInitialProducts => ({
+        projectId: block.projectRef?.id || '',
+        projectName: block.projectRef?.name || '',
+        products: (block.productRefs || []).map(p => ({
+            productId: p.id || '', productName: p.name, quantity: p.qty || 1,
+        })),
+        startDate: block.startISO,
+        dueDate: block.endISO,
+        workerIds: (block.workerRefs || []).map(w => w.id).filter(Boolean) as string[],
+    }), []);
+
+    /** Izabran tip u PromoteBlockModal → otvori odgovarajući pravi flow, hranjen iz bloka. */
+    const onChooseOrderType = useCallback((type: PromoteOrderType) => {
+        const block = scenario.Blocks.find(b => b.id === promoteId);
+        if (!block) return;
+        setPromotingId(block.id);
+        if (type === 'zadaci') {
+            setRaniSeed({
+                text: block.title,
+                workerIds: (block.workerRefs || []).map(w => w.id).filter(Boolean) as string[],
+                projectId: block.projectRef?.id || '',
+                dueDate: block.endISO,
+            });
+            setRaniOpen(true);
+        } else {
+            setWizardMode(type === 'montaza' ? 'montaza' : 'production');
+            setWizardSeed(buildOrderSeed(block));
+            setWizardOpen(true);
+        }
+    }, [scenario.Blocks, promoteId, buildOrderSeed]);
+
+    /** Nalog je stvarno kreiran → veži plan-blok i osvježi app (vidljiv u tabu Nalozi). */
+    const onOrderCreated = useCallback((workOrderId: string) => {
+        if (promotingId) {
+            dispatch({
+                type: 'UPDATE_BLOCK', id: promotingId,
+                patch: { linkedWorkOrderId: workOrderId, promotedAt: new Date().toISOString() },
+            });
+        }
+        setPromotingId(null);
+        onRefresh?.('workOrders', 'projects', 'orders');
+    }, [promotingId, dispatch, onRefresh]);
 
     // ── Render ──────────────────────────────────────────────────
     const ticks = useMemo(() => headerTicks(vp, todayISO()), [vp]);
@@ -1041,16 +1100,48 @@ export default function CanvasTab({
                 workOrders={workOrders}
                 organizationId={orgId}
                 onClose={() => setPromoteId(null)}
+                onChooseType={onChooseOrderType}
                 onPromoted={result => {
                     if (!promoteId) return;
+                    // Samo narudžba stiže ovim putem (nalog ide kroz pravi flow → onOrderCreated).
                     dispatch({
                         type: 'UPDATE_BLOCK', id: promoteId, patch: {
-                            ...(result.workOrderId ? { linkedWorkOrderId: result.workOrderId } : {}),
                             ...(result.orderId ? { linkedOrderId: result.orderId } : {}),
                             promotedAt: new Date().toISOString(),
                         },
                     });
+                    onRefresh?.('orders', 'projects');
                 }}
+                showToast={showToast}
+            />
+
+            {/* Pravi flowovi iz taba Nalozi, hranjeni iz bloka (uvijek montirani, toggle isOpen). */}
+            <WorkOrderWizard
+                isOpen={wizardOpen}
+                mode={wizardMode}
+                workOrders={workOrders}
+                projects={projects}
+                workers={workers}
+                tasks={tasks}
+                organizationId={orgId}
+                initialProducts={wizardSeed}
+                onClose={() => { setWizardOpen(false); setPromotingId(null); }}
+                onRefresh={(...c) => onRefresh?.(...c)}
+                onCreated={id => onOrderCreated(id)}
+                showToast={showToast}
+            />
+
+            <CustomTasksModal
+                isOpen={raniOpen}
+                workOrders={workOrders}
+                workers={workers}
+                projects={projects}
+                tasks={tasks}
+                organizationId={orgId}
+                initialSeed={raniSeed}
+                onClose={() => { setRaniOpen(false); setPromotingId(null); }}
+                onCreated={(...c) => onRefresh?.(...c)}
+                onOrderCreated={id => onOrderCreated(id)}
                 showToast={showToast}
             />
 
