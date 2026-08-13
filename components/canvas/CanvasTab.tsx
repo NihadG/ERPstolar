@@ -41,7 +41,7 @@ import WorkOrderWizard, { type WizardMode, type WizardInitialProducts } from '@/
 import CustomTasksModal from '@/components/ui/CustomTasksModal';
 import ChainTemplatesModal from './ChainTemplatesModal';
 import CompareModal from './CompareModal';
-import BatchPlanModal from './BatchPlanModal';
+import BatchTableModal from './BatchTableModal';
 import ScheduleReviewModal from './ScheduleReviewModal';
 import CanvasMenu from './CanvasMenu';
 import { autoSchedule, type AutoScheduleResult } from '@/lib/canvas/autoSchedule';
@@ -1063,11 +1063,12 @@ export default function CanvasTab({
                 }}
             />
 
-            <BatchPlanModal
+            <BatchTableModal
                 isOpen={batchOpen}
                 projects={projects}
                 workOrders={workOrders}
                 workers={workers}
+                existingBlocks={scenario.Blocks}
                 startISO={todayISO()}
                 isSaturdayWorking={isSaturdayWorking}
                 onClose={() => setBatchOpen(false)}
