@@ -12,7 +12,7 @@ import { useState, useMemo, useEffect } from 'react';
 import { Search, User, UserPlus, X, Check } from 'lucide-react';
 import Modal from '@/components/ui/Modal';
 import type { Worker, PlanCrew, PlanRef } from '@/lib/types';
-import { newCrew } from '@/lib/canvas/batchDraft';
+import { newCrew } from '@/lib/canvas/crew';
 import './CrewPicker.css';
 
 interface CrewPickerProps {
