@@ -41,6 +41,7 @@ import WorkOrderWizard, { type WizardMode, type WizardInitialProducts } from '@/
 import CustomTasksModal from '@/components/ui/CustomTasksModal';
 import ChainTemplatesModal from './ChainTemplatesModal';
 import CompareModal from './CompareModal';
+import WorkerCalendar from './WorkerCalendar';
 import BatchTableModal from './BatchTableModal';
 import ScheduleReviewModal from './ScheduleReviewModal';
 import CanvasMenu from './CanvasMenu';
@@ -133,6 +134,8 @@ export default function CanvasTab({
     const [compareOpen, setCompareOpen] = useState(false);
     const [batchOpen, setBatchOpen] = useState(false);
     const [reviewResult, setReviewResult] = useState<AutoScheduleResult | null>(null);
+    /** Radnik čiji je mjesečni kalendar otvoren (klik na ime u sekciji Radnici). */
+    const [calendarWorkerId, setCalendarWorkerId] = useState<string | null>(null);
 
     const { state, dispatch, saveState, canUndo, canRedo, saveNow, reloadRemote, forceOverwrite } =
         useScenario(orgId, loaded);
@@ -237,6 +240,10 @@ export default function CanvasTab({
     const capacityCtx = useMemo(
         () => ({ workers, workOrders, attendance, isSaturdayWorking }),
         [workers, workOrders, attendance, isSaturdayWorking]
+    );
+    const calendarCtx = useMemo(
+        () => ({ blocks: scenario.Blocks, attendance, workOrders, isSaturdayWorking }),
+        [scenario.Blocks, attendance, workOrders, isSaturdayWorking]
     );
 
     /** Skoči na blok: centriraj prikaz i otvori detalje. */
@@ -926,10 +933,24 @@ export default function CanvasTab({
                                 return (
                                     <div key={row.id} className={`cv-row${row.synthetic ? ' synthetic' : ''}`}
                                         data-row-id={row.id} style={{ height: h }}>
-                                        <div className="cv-row-head">
-                                            <span className="cv-row-label" title={row.label}>{row.label}</span>
-                                            {row.sublabel && <span className="cv-row-sub">{row.sublabel}</span>}
-                                        </div>
+                                        {/* Red radnika je dugme: otvara njegov mjesečni kalendar.
+                                            Ostale sekcije nemaju šta otvoriti, pa ostaju običan div
+                                            (dugme koje ništa ne radi laže tastaturi i čitaču ekrana). */}
+                                        {row.section === 'radnici' ? (
+                                            <button
+                                                className="cv-row-head clickable"
+                                                onClick={() => setCalendarWorkerId(row.id.replace(/^radnik-/, ''))}
+                                                title={`Otvori kalendar — ${row.label}`}
+                                            >
+                                                <span className="cv-row-label">{row.label}</span>
+                                                {row.sublabel && <span className="cv-row-sub">{row.sublabel}</span>}
+                                            </button>
+                                        ) : (
+                                            <div className="cv-row-head">
+                                                <span className="cv-row-label" title={row.label}>{row.label}</span>
+                                                {row.sublabel && <span className="cv-row-sub">{row.sublabel}</span>}
+                                            </div>
+                                        )}
 
                                         <div className="cv-row-lane"
                                             onPointerDown={e => {
@@ -1145,6 +1166,22 @@ export default function CanvasTab({
                 onOrderCreated={id => onOrderCreated(id)}
                 showToast={showToast}
             />
+
+            {/* Kalendar radnika — drugi oblik za pitanje „šta radi ovaj čovjek".
+                Čita isti scenarij, šihtaricu i stvarne naloge koje platno već ima. */}
+            {calendarWorkerId && (() => {
+                const w = workers.find(x => x.Worker_ID === calendarWorkerId);
+                if (!w) return null;
+                return (
+                    <WorkerCalendar
+                        worker={w}
+                        ctx={calendarCtx}
+                        todayISO={todayISO()}
+                        onClose={() => setCalendarWorkerId(null)}
+                        onSelectBlock={id => { setCalendarWorkerId(null); jumpToBlock(id); }}
+                    />
+                );
+            })()}
 
             {drawerId && (
                 <CanvasDrawer

@@ -83,8 +83,12 @@ const byStart = (a: PlanBlock, b: PlanBlock) =>
 
 // ── Sjene ───────────────────────────────────────────────────────────
 
-/** Stvarni zakazani nalozi po radniku — čita `Assigned_Workers` i procese stavki. */
-function realWorkOrdersByWorker(workOrders: WorkOrder[]): Map<string, ShadowBar[]> {
+/**
+ * Stvarni zakazani nalozi po radniku — čita `Assigned_Workers` i procese stavki.
+ * Eksportovano da kalendar radnika čita sjene ISTOM logikom kao osa — dva prikaza
+ * istog čovjeka ne smiju se razilaziti oko toga šta je već preuzeto.
+ */
+export function realWorkOrdersByWorker(workOrders: WorkOrder[]): Map<string, ShadowBar[]> {
     const out = new Map<string, ShadowBar[]>();
     for (const wo of workOrders) {
         if (wo.Status === 'Završeno' || wo.Status === 'Otkazano') continue;

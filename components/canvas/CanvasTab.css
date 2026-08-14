@@ -573,6 +573,26 @@
 }
 .cv-row:hover .cv-row-head { background: #fafafd; }
 
+/* Red radnika je dugme (otvara njegov kalendar) — mora izgledati kao ostala
+   zaglavlja redova, jer to i jeste, a ne kontrola u traci. */
+button.cv-row-head {
+    font-family: inherit;
+    color: inherit;
+    text-align: left;
+    border-top: 0;
+    border-left: 0;
+    border-bottom: 0;
+    cursor: pointer;
+}
+/* PAŽNJA na specifičnost: `.cv-row:hover .cv-row-head` gore je (0,3,0) i tuče
+   goli `button.cv-row-head:hover` (0,2,1). Pošto hover nad dugmetom ujedno znači
+   hover nad redom, bez izjednačene težine bi direktan hover bio nevidljiv i
+   jedina naznaka klika ostao bi kursor. Zato oba pravila idu na (0,3,1), a
+   redoslijed odlučuje — direktan hover je zadnji i pobjeđuje. */
+.cv-row:hover button.cv-row-head { background: #fafafd; }
+.cv-row button.cv-row-head:hover { background: var(--surface-hover); }
+button.cv-row-head:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
 .cv-row-label {
     font-size: 13px;
     font-weight: 500;
