@@ -12,7 +12,7 @@
 
 import { useState, useMemo, useEffect, type KeyboardEvent } from 'react';
 import {
-    ClipboardList, Plus, Copy, Trash2, X, Search, Users, Package, ClipboardPaste, CalendarDays,
+    ClipboardList, Plus, Copy, Trash2, X, Search, Users, Package, ClipboardPaste, CalendarDays, Pin,
 } from 'lucide-react';
 import Modal from '@/components/ui/Modal';
 import type { Project, Worker, WorkOrder, PlanBlock } from '@/lib/types';
@@ -35,6 +35,12 @@ interface Row {
     workerIds: string[];
     durationDays: number;
     startISO: string;
+    /**
+     * Ručno postavljen početak BAŠ ovog naloga. Prazno = pusti raspored da ga složi.
+     * Postoji da se datum jednog reda može pomjeriti bez prebacivanja cijele
+     * tabele u „Ručno" — ostali redovi ostaju automatski.
+     */
+    pinnedISO?: string;
 }
 
 const MODES: { key: BatchScheduleMode; label: string; hint: string }[] = [
@@ -117,7 +123,10 @@ export default function BatchTableModal({
     // Živi raspored (za prikaz Početka i sažetka).
     const placed = useMemo(
         () => new Map(scheduleBatch(
-            rows.map(r => ({ id: r.id, workerIds: r.workerIds, durationDays: r.durationDays, startISO: r.startISO })),
+            rows.map(r => ({
+                id: r.id, workerIds: r.workerIds, durationDays: r.durationDays,
+                startISO: r.startISO, pinnedISO: r.pinnedISO,
+            })),
             mode, { startISO: start, isSaturdayWorking, busyUntilByWorker: busyUntil }
         ).map(p => [p.id, p])),
         [rows, mode, start, isSaturdayWorking, busyUntil]
@@ -176,7 +185,10 @@ export default function BatchTableModal({
         });
     });
 
-    const startToAll = () => setRows(rs => rs.map(r => ({ ...r, startISO: start })));
+    /** Skida sve ručne datume i vraća redove pod automatski raspored od „Kreni od". */
+    const startToAll = () =>
+        setRows(rs => rs.map(r => ({ ...r, startISO: start, pinnedISO: undefined })));
+    const pinnedCount = rows.filter(r => r.pinnedISO).length;
 
     const applyPaste = () => {
         // Svaki red teksta = nalog. Kolone (tab ili ; ili više razmaka):
@@ -283,8 +295,10 @@ export default function BatchTableModal({
                     <button className="btt-tbtn" onClick={() => setPickWorkersFor('ALL')}>
                         <Users size={14} /> Radnici na sve
                     </button>
-                    <button className="btt-tbtn" onClick={startToAll} title={'Postavi „Kreni od" datum na sve redove'}>
-                        <CalendarDays size={14} /> Početak na sve
+                    <button className="btt-tbtn" onClick={startToAll} disabled={pinnedCount === 0}
+                        title={'Skida ručno postavljene datume i vraća redove na automatski raspored'}>
+                        <CalendarDays size={14} /> Vrati na auto
+                        {pinnedCount > 0 && <span className="btt-tbtn-n">{pinnedCount}</span>}
                     </button>
                     <span className="btt-tools-spacer" />
                     <label className="btt-start">Kreni od
@@ -298,9 +312,9 @@ export default function BatchTableModal({
                         <thead>
                             <tr>
                                 <th className="c-idx">#</th>
-                                <th>Naziv naloga</th>
-                                <th>Proizvodi</th>
-                                <th>Radnici</th>
+                                <th className="c-name">Naziv naloga</th>
+                                <th className="c-prod">Proizvodi</th>
+                                <th className="c-wrk">Radnici</th>
                                 <th className="c-dur">Trajanje</th>
                                 <th className="c-start">Početak</th>
                                 <th className="c-rd">rd</th>
@@ -325,11 +339,12 @@ export default function BatchTableModal({
                                                 onChange={e => patch(r.id, { title: e.target.value })}
                                                 onKeyDown={e => onNameKey(e, i === rows.length - 1)} />
                                         </td>
-                                        <td>
+                                        <td className="c-prod">
                                             <div className="btt-chips">
                                                 {r.products.map(pp => (
                                                     <span key={pp.candidate.productId} className="btt-chip prod" title={pp.candidate.productName}>
-                                                        {pp.candidate.productName}<span className="q">×{pp.qty}</span>
+                                                        <span className="btt-chip-t">{pp.candidate.productName}</span>
+                                                        <span className="q">×{pp.qty}</span>
                                                         <X size={11} onClick={() => toggleProduct(r.id, pp.candidate)} />
                                                     </span>
                                                 ))}
@@ -339,11 +354,11 @@ export default function BatchTableModal({
                                                 )}
                                             </div>
                                         </td>
-                                        <td>
+                                        <td className="c-wrk">
                                             <div className="btt-chips">
                                                 {r.workerIds.map(w => (
-                                                    <span key={w} className="btt-chip wrk">
-                                                        {workerName(w)}
+                                                    <span key={w} className="btt-chip wrk" title={workerName(w)}>
+                                                        <span className="btt-chip-t">{workerName(w)}</span>
                                                         <X size={11} onClick={() => toggleWorker(r.id, w)} />
                                                     </span>
                                                 ))}
@@ -352,20 +367,32 @@ export default function BatchTableModal({
                                             </div>
                                         </td>
                                         <td className="c-dur">
-                                            <input className="btt-in num" type="number" min={1} value={r.durationDays}
-                                                onChange={e => patch(r.id, { durationDays: Math.max(1, Number(e.target.value) || 1) })} />
-                                            <span className="btt-unit">d</span>
+                                            <div className="btt-dur-cell">
+                                                <input className="btt-in num" type="number" min={1} value={r.durationDays}
+                                                    onChange={e => patch(r.id, { durationDays: Math.max(1, Number(e.target.value) || 1) })} />
+                                                <span className="btt-unit">dana</span>
+                                            </div>
                                         </td>
+                                        {/* Početak je UVIJEK uređiv. Izmjena prikuje baš ovaj red;
+                                            ostali se i dalje slažu automatski. */}
                                         <td className="c-start">
-                                            {mode === 'manual' ? (
-                                                <input className="btt-in date" type="date" value={r.startISO}
-                                                    onChange={e => e.target.value && patch(r.id, { startISO: e.target.value })} />
-                                            ) : (
-                                                <span className="btt-auto">
-                                                    <span className="lk">{pushed ? 'nadovezano' : 'auto'}</span>
-                                                    {p ? dm(p.startISO) : '—'}
-                                                </span>
-                                            )}
+                                            <div className="btt-start-cell">
+                                                <input
+                                                    className={`btt-in date${r.pinnedISO ? ' pinned' : ''}`}
+                                                    type="date"
+                                                    value={r.pinnedISO || p?.startISO || r.startISO}
+                                                    title={r.pinnedISO ? 'Ručno postavljen datum' : 'Automatski — upiši datum da ga prikuješ'}
+                                                    onChange={e => e.target.value && patch(r.id, { pinnedISO: e.target.value })}
+                                                />
+                                                {r.pinnedISO ? (
+                                                    <button className="btt-pin on" title="Vrati na automatski raspored"
+                                                        onClick={() => patch(r.id, { pinnedISO: undefined })}>
+                                                        <Pin size={11} />
+                                                    </button>
+                                                ) : (
+                                                    <span className="btt-pin-lbl">{pushed ? 'nadovezano' : 'auto'}</span>
+                                                )}
+                                            </div>
                                         </td>
                                         <td className="c-rd"><strong>{rowWorkerDays(r)}</strong></td>
                                         <td className="c-act">

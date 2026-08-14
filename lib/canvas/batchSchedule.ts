@@ -27,6 +27,14 @@ export interface BatchScheduleRow {
     durationDays: number;
     /** Datum početka — koristi se samo u `manual` modu. */
     startISO?: string;
+    /**
+     * Ručno PRIKOVAN početak. Poštuje se u SVAKOM načinu, i nadjačava `startISO`.
+     *
+     * Bez ovoga se datum pojedinog naloga mogao pomjeriti samo prebacivanjem
+     * CIJELE tabele u „Ručno", čime se gubi automatika za sve ostale redove.
+     * Prikivanje je po redu: jedan nalog ide gdje kažeš, ostali se i dalje slažu sami.
+     */
+    pinnedISO?: string;
 }
 
 export interface BatchScheduleCtx {
@@ -66,16 +74,18 @@ export function scheduleBatch(
 ): PlacedRow[] {
     const isSat = ctx.isSaturdayWorking;
 
+    /** Prikovan red ide na svoj datum, bez obzira na način. */
+    const place = (r: BatchScheduleRow, startRaw: string): PlacedRow => {
+        const start = firstWorkingDay(startRaw, isSat);
+        return { id: r.id, startISO: start, endISO: endFor(start, r.durationDays, isSat) };
+    };
+
     if (mode === 'manual') {
-        return rows.map(r => {
-            const start = firstWorkingDay(r.startISO || ctx.startISO, isSat);
-            return { id: r.id, startISO: start, endISO: endFor(start, r.durationDays, isSat) };
-        });
+        return rows.map(r => place(r, r.pinnedISO || r.startISO || ctx.startISO));
     }
 
     if (mode === 'parallel') {
-        const start = firstWorkingDay(ctx.startISO, isSat);
-        return rows.map(r => ({ id: r.id, startISO: start, endISO: endFor(start, r.durationDays, isSat) }));
+        return rows.map(r => place(r, r.pinnedISO || ctx.startISO));
     }
 
     // sequential: kursor po radniku; nova traka kreće nakon već preuzetog posla.
@@ -89,11 +99,15 @@ export function scheduleBatch(
     const out: PlacedRow[] = [];
     for (const r of rows) {
         const worker = r.workerIds[0] || UNASSIGNED;
-        const from = cursor.get(worker) ?? laneStart(worker);
-        const start = firstWorkingDay(from, isSat);
-        const end = endFor(start, r.durationDays, isSat);
-        cursor.set(worker, addDays(end, 1));   // sljedeći nalog istog radnika ide dan poslije
-        out.push({ id: r.id, startISO: start, endISO: end });
+        // Prikovan red ne troši kursor kao „sljedeći slobodan", nego ga POMJERA:
+        // ono što dolazi iza njega mora krenuti poslije njega, inače bi se
+        // nadovezani nalozi tiho preklopili s ručno postavljenim datumom.
+        const from = r.pinnedISO || cursor.get(worker) || laneStart(worker);
+        const placed = place(r, from);
+        const next = addDays(placed.endISO, 1);
+        const cur = cursor.get(worker);
+        cursor.set(worker, !cur || next > cur ? next : cur);
+        out.push(placed);
     }
     return out;
 }

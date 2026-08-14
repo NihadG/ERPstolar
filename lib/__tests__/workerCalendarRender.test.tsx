@@ -6,6 +6,9 @@
  * pravi broj ćelija, da sudar i odsustvo dobiju svoju oznaku, i da kretanje po
  * mjesecima mijenja sadržaj.
  */
+// jest.setup.js ovo učitava u RUNTIME-u, ali je .js pa tsc odatle ne pokupi
+// proširenje tipova — bez ovog importa `toBeInTheDocument` ne postoji za tsc.
+import '@testing-library/jest-dom';
 import { render, screen, fireEvent, within } from '@testing-library/react';
 import WorkerCalendar from '@/components/canvas/WorkerCalendar';
 import { newBlock } from '@/lib/canvas/model';

@@ -24,6 +24,7 @@ import {
 import { suggestLeadDays, type SupplierLeadTime } from '@/lib/canvas/leadTime';
 import type { BlockStatusInfo } from '@/lib/canvas/status';
 import CrewPicker from './CrewPicker';
+import './CanvasDrawer.css';
 
 const PRIORITIES: TaskPriority[] = ['low', 'medium', 'high', 'urgent'];
 
@@ -195,39 +196,42 @@ export default function CanvasDrawer({
                         </button>
                     )
                 )}
-                <label className="cv-field">
-                    <span>Naziv</span>
-                    <input value={block.title} autoFocus
-                        onChange={e => onChange({ title: e.target.value })} />
-                </label>
-
-                <div className="cv-field-row">
+                <section className="dw-sec">
                     <label className="cv-field">
-                        <span>{isPurchase ? 'Naruči' : 'Početak'}</span>
-                        <input type="date" value={block.startISO}
-                            onChange={e => {
-                                if (!e.target.value) return;
-                                onChange(isPurchase
-                                    ? { startISO: e.target.value, orderByISO: e.target.value }
-                                    : { startISO: e.target.value });
-                            }} />
+                        <span>Naziv</span>
+                        <input value={block.title} autoFocus
+                            onChange={e => onChange({ title: e.target.value })} />
                     </label>
-                    {block.kind !== 'milestone' && (
-                        <label className="cv-field">
-                            <span>{isPurchase ? 'Stiže' : 'Kraj'}</span>
-                            <input type="date" value={block.endISO} min={block.startISO}
-                                onChange={e => e.target.value && onChange({ endISO: e.target.value })} />
-                        </label>
-                    )}
-                </div>
 
-                {block.kind !== 'milestone' && !isPurchase && (
-                    <p className="cv-hint">Trajanje: {blockDurationDays(block)} kalendarskih dana</p>
-                )}
+                    <div className="cv-field-row">
+                        <label className="cv-field">
+                            <span>{isPurchase ? 'Naruči' : 'Početak'}</span>
+                            <input type="date" value={block.startISO}
+                                onChange={e => {
+                                    if (!e.target.value) return;
+                                    onChange(isPurchase
+                                        ? { startISO: e.target.value, orderByISO: e.target.value }
+                                        : { startISO: e.target.value });
+                                }} />
+                        </label>
+                        {block.kind !== 'milestone' && (
+                            <label className="cv-field">
+                                <span>{isPurchase ? 'Stiže' : 'Kraj'}</span>
+                                <input type="date" value={block.endISO} min={block.startISO}
+                                    onChange={e => e.target.value && onChange({ endISO: e.target.value })} />
+                            </label>
+                        )}
+                    </div>
+
+                    {block.kind !== 'milestone' && !isPurchase && (
+                        <p className="cv-hint">Trajanje: {blockDurationDays(block)} kalendarskih dana</p>
+                    )}
+                </section>
 
                 {/* ── Narudžba ─────────────────────────────────── */}
                 {isPurchase && (
-                    <>
+                    <section className="dw-sec">
+                        <h4 className="dw-sec-h"><Truck size={12} /> Nabavka</h4>
                         <label className="cv-field">
                             <span><Truck size={12} /> Dobavljač</span>
                             <select
@@ -273,13 +277,13 @@ export default function CanvasDrawer({
                             <Check size={14} />
                             {block.isSent ? 'Označeno kao poslano' : 'Označi kao poslano (samo u planu)'}
                         </button>
-                    </>
+                    </section>
                 )}
 
                 {/* ── Proizvodi naloga ─────────────────────────── */}
                 {isWork && (block.productRefs?.length || 0) > 0 && (
-                    <div className="cv-field">
-                        <span><Package size={12} /> Proizvodi ({block.productRefs!.length})</span>
+                    <section className="dw-sec">
+                        <h4 className="dw-sec-h"><Package size={12} /> Proizvodi ({block.productRefs!.length})</h4>
                         <ul className="cv-products">
                             {block.productRefs!.map((p, i) => (
                                 <li key={p.id || `${p.name}-${i}`}>
@@ -292,12 +296,13 @@ export default function CanvasDrawer({
                         <button className="cv-btn full" onClick={onCreateOrders}>
                             <ShoppingCart size={14} /> Napravi narudžbe iz sastavnice
                         </button>
-                    </div>
+                    </section>
                 )}
 
                 {/* ── Rad ──────────────────────────────────────── */}
                 {isWork && (
-                    <>
+                    <section className="dw-sec">
+                        <h4 className="dw-sec-h"><Users size={12} /> Obim posla</h4>
                         <div className="cv-field-row">
                             <label className="cv-field">
                                 <span>Radnik-dana</span>
@@ -326,9 +331,10 @@ export default function CanvasDrawer({
                                 </strong> (nedjelja se preskače)
                             </p>
                         )}
-                    </>
+                    </section>
                 )}
 
+                <section className="dw-sec">
                 <label className="cv-field">
                     <span><FolderKanban size={12} /> Projekt</span>
                     <select
@@ -362,11 +368,12 @@ export default function CanvasDrawer({
                         </div>
                     </div>
                 )}
+                </section>
 
                 {/* ── Auto-raspored ────────────────────────────── */}
                 {isWork && (
-                    <div className="cv-field cv-auto">
-                        <span><Sparkles size={12} /> Auto-raspored</span>
+                    <section className="dw-sec">
+                        <h4 className="dw-sec-h"><Sparkles size={12} /> Auto-raspored</h4>
                         <label className="cv-field">
                             <span>Prioritet</span>
                             <select value={block.priority || 'medium'}
@@ -399,12 +406,12 @@ export default function CanvasDrawer({
                                 Zadnji raspored dodijelio: <strong>{(block.workerRefs || []).map(w => w.name).join(' + ') || '—'}</strong>
                             </p>
                         ) : null}
-                    </div>
+                    </section>
                 )}
 
                 {/* ── Veze ─────────────────────────────────────── */}
-                <div className="cv-field">
-                    <span><Link2 size={12} /> Šta ide prije/poslije (lanac)</span>
+                <section className="dw-sec">
+                    <h4 className="dw-sec-h"><Link2 size={12} /> Šta ide prije/poslije</h4>
 
                     {related.incoming.length === 0 && related.outgoing.length === 0 && (
                         <p className="cv-hint">
@@ -454,19 +461,21 @@ export default function CanvasDrawer({
                             ))}
                         </select>
                     )}
-                </div>
+                </section>
 
-                <label className="cv-field">
-                    <span>Napomena</span>
-                    <textarea rows={3} value={block.notes || ''}
-                        onChange={e => onChange({ notes: e.target.value })} />
-                </label>
+                <section className="dw-sec">
+                    <label className="cv-field">
+                        <span>Napomena</span>
+                        <textarea rows={3} value={block.notes || ''}
+                            onChange={e => onChange({ notes: e.target.value })} />
+                    </label>
 
-                <button className={`cv-btn full${block.locked ? ' on' : ''}`}
-                    onClick={() => onChange({ locked: !block.locked })}>
-                    {block.locked ? <Lock size={14} /> : <Unlock size={14} />}
-                    {block.locked ? 'Zaključan — lanac ga ne pomjera' : 'Zaključaj (fiksan datum)'}
-                </button>
+                    <button className={`cv-btn full${block.locked ? ' on' : ''}`}
+                        onClick={() => onChange({ locked: !block.locked })}>
+                        {block.locked ? <Lock size={14} /> : <Unlock size={14} />}
+                        {block.locked ? 'Zaključan — lanac ga ne pomjera' : 'Zaključaj (fiksan datum)'}
+                    </button>
+                </section>
             </div>
 
             <footer className="cv-drawer-foot">

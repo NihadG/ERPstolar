@@ -1,0 +1,137 @@
+/* ══════════════════════════════════════════════════════════════════
+   CanvasDrawer — detalji bloka.
+
+   ZAŠTO OVAJ FAJL POSTOJI: stilovi drawera bili su razbacani po TUĐIM
+   fajlovima — `.cv-products` i `.cv-kind-help` u ProductPickerModal.css,
+   `.cv-links` i `.cv-suggest` u CanvasDock.css. Radilo je samo zato što se
+   ti fajlovi slučajno učitaju, a mijenjanje drawera značilo je dirati
+   modal proizvoda. Ovdje je sve što je DRAWEROVO, i sve je scope-ano pod
+   `.cv-drawer` da ne može zagaziti drugim komponentama.
+
+   Zajedničke klase (.cv-field, .cv-btn, .cv-chip) i dalje dolaze iz
+   CanvasTab.css — ovdje se samo poravnavaju unutar ploče.
+   ══════════════════════════════════════════════════════════════════ */
+
+.cv-drawer {
+    /* Jedan razmak za cijelu ploču: zaglavlje, tijelo i podnožje ga dijele,
+       pa se lijeve ivice svega poklapaju po vertikali. */
+    --dw-x: var(--cm-sp-4);
+    --dw-y: var(--cm-sp-3);
+    width: 400px;
+}
+
+/* ── VODORAVNO PRELIJEVANJE ────────────────────────────────────────
+   Tijelo je `display: grid` s implicitnom kolonom `auto`. `auto` traka se
+   širi do MIN-CONTENT najšireg djeteta, a `<select>` ima min-content jednak
+   najdužoj opciji (naziv projekta!), dok `type="date"` ima fiksnu unutrašnju
+   širinu. Zato je `width: 100%` na polju bilo nedovoljno: traka je već bila
+   šira od ploče, pa je `overflow-y: auto` povlačio i vodoravni skrol-bar.
+
+   Rješenje je `minmax(0, 1fr)` — traka smije biti UŽA od svog sadržaja —
+   plus `min-width: 0` na poljima da se stvarno stisnu. */
+.cv-drawer .cv-drawer-body {
+    grid-template-columns: minmax(0, 1fr);
+    overflow-x: hidden;
+    padding: var(--dw-y) var(--dw-x) var(--cm-sp-5);
+    gap: var(--cm-sp-4);
+}
+
+.cv-drawer .cv-field,
+.cv-drawer .cv-field-row { min-width: 0; }
+
+.cv-drawer .cv-field-row { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+
+.cv-drawer .cv-field input,
+.cv-drawer .cv-field select,
+.cv-drawer .cv-field textarea {
+    min-width: 0;
+    max-width: 100%;
+}
+/* Dugačak naziv projekta skraćuje se u polju umjesto da razvlači ploču */
+.cv-drawer .cv-field select { text-overflow: ellipsis; }
+
+.cv-drawer .cv-drawer-head,
+.cv-drawer .cv-drawer-foot { padding: var(--dw-y) var(--dw-x); }
+
+/* ── Sekcije ───────────────────────────────────────────────────────
+   Ranije je ovo bio ravan niz od petnaestak kontrola bez ijedne granice,
+   pa se „termin" nije razlikovao od „auto-rasporeda". Sekcija = tanka
+   linija + natpis; nosi značenje, ne ukras. */
+.cv-drawer .dw-sec {
+    display: grid;
+    gap: var(--cm-sp-3);
+    min-width: 0;
+}
+.cv-drawer .dw-sec + .dw-sec {
+    border-top: 1px solid var(--border-light);
+    padding-top: var(--cm-sp-4);
+}
+.cv-drawer .dw-sec-h {
+    display: flex;
+    align-items: center;
+    gap: var(--cm-sp-2);
+    font-size: var(--cm-fs-micro);
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .05em;
+    color: var(--text-secondary);
+}
+.cv-drawer .dw-sec-h svg { color: var(--text-secondary); flex-shrink: 0; }
+
+/* ── Zaglavlje ─────────────────────────────────────────────────── */
+.cv-drawer .cv-drawer-head { gap: var(--cm-sp-2); }
+
+/* ── Popravke zajedničkih elemenata unutar ploče ───────────────── */
+
+/* Lista proizvoda: dugi nazivi se skraćuju, količina se ne lomi */
+.cv-drawer .cv-products li { min-width: 0; }
+.cv-drawer .cv-prod-name { min-width: 0; }
+
+/* Veze: naziv se skraćuje, dugmad ostaju na svom mjestu */
+.cv-drawer .cv-links li { min-width: 0; }
+
+/* Čipovi radnika ne smiju gurati ploču u širinu */
+.cv-drawer .cv-chips { min-width: 0; }
+.cv-drawer .cv-chip {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    display: inline-block;
+    line-height: calc(var(--cm-h-sm) - 2px);
+}
+
+/* Hint i pomoć: prelamaju se, nikad ne šire ploču */
+.cv-drawer .cv-hint,
+.cv-drawer .cv-kind-help {
+    min-width: 0;
+    overflow-wrap: anywhere;
+    margin: 0;
+}
+
+/* `select` za dodavanje veze je puna širina i skraćuje dugačke opcije */
+.cv-drawer .cv-link-add {
+    min-width: 0;
+    max-width: 100%;
+    text-overflow: ellipsis;
+    margin-top: 0;
+}
+
+/* ── Tipografija na skalu ──────────────────────────────────────────
+   Sve što se vidi u ploči mora doći iz --cm-fs-*. Dvije iznimke su se
+   provlačile: `.cv-link-dir` na 10px (van skale) i ikonična dugmad bez
+   font-size, koja padnu na 13.3333px — Chromeov default za <button>. */
+.cv-drawer .cv-link-dir { font-size: var(--cm-fs-micro); }
+.cv-drawer .cv-icon-btn { font-size: var(--cm-fs-sm); }
+
+/* Polja moraju pobijediti globalno
+   `input[type="date"], select, textarea { font-size: 15px }` (0,1,1).
+   `.cv-field input` je takođe (0,1,1) — vezan rezultat koji rješava redoslijed
+   učitavanja fajlova. Ovdje je (0,2,1), pa ishod više ne ovisi o tome. */
+.cv-drawer .cv-field input,
+.cv-drawer .cv-field select,
+.cv-drawer .cv-field textarea { font-size: var(--cm-fs-sm); }
+
+@media (max-width: 767px) {
+    .cv-drawer { --dw-x: var(--cm-sp-3); width: 100%; }
+}
