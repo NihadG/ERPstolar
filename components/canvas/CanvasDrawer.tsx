@@ -16,7 +16,7 @@ import {
 import type {
     PlanBlock, PlanLink, PlanLinkKind, Project, Worker, Supplier, TaskPriority,
 } from '@/lib/types';
-import { TASK_PRIORITY_LABELS } from '@/lib/types';
+import { TASK_PRIORITY_LABELS, crewLabel, crewWorkerRefs } from '@/lib/types';
 import {
     BLOCK_LABEL, BLOCK_HELP, blockDurationDays, endFromWork, workingDaysNeeded,
     addDays, orderByFromDelivery,
@@ -385,9 +385,9 @@ export default function CanvasDrawer({
                         <span className="cv-sub">Kandidat-ekipe (algoritam bira jednu)</span>
                         <div className="cv-chips">
                             {(block.crewOptions || []).map(c => (
-                                <span key={c.id} className="cv-crew-chip">
+                                <span key={c.id} className="cv-crew-chip" title={crewWorkerRefs(c).map(r => r.name).join(' + ')}>
                                     <Users size={11} />
-                                    {c.lead.name}{c.helper ? ` + ${c.helper.name}` : ''}
+                                    {crewLabel(c)}
                                     <X size={11} className="cv-crew-x"
                                         onClick={() => onChange({ crewOptions: (block.crewOptions || []).filter(x => x.id !== c.id) })} />
                                 </span>
@@ -487,6 +487,7 @@ export default function CanvasDrawer({
             <CrewPicker
                 isOpen={crewPickerOpen}
                 workers={workers}
+                existing={block.crewOptions || []}
                 onClose={() => setCrewPickerOpen(false)}
                 onAdd={crew => onChange({ crewOptions: [...(block.crewOptions || []), crew] })}
                 title="Dodaj kandidat-ekipu"

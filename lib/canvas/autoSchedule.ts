@@ -47,9 +47,14 @@ export interface ScheduleWeights {
     continuityDays: number;
     /** Koliko daleko unaprijed tražimo slobodan termin (kalendarski dani). */
     horizonDays: number;
+    /**
+     * Koliko puta se prolazi kroz sabijanje (popunjavanje rupa). 0 gasi.
+     * Više prolaza jer oslobađanje jednog bloka može otvoriti mjesto drugom.
+     */
+    compactPasses: number;
 }
 
-export const DEFAULT_WEIGHTS: ScheduleWeights = { continuityDays: 3, horizonDays: 180 };
+export const DEFAULT_WEIGHTS: ScheduleWeights = { continuityDays: 3, horizonDays: 180, compactPasses: 2 };
 
 export interface AutoScheduleOptions {
     startISO: string;                    // najraniji dan za raspored
@@ -113,6 +118,13 @@ function markBusy(busy: BusyMap, workerId: string, dates: string[]): void {
     let set = busy.get(workerId);
     if (!set) { set = new Set(); busy.set(workerId, set); }
     for (const d of dates) set.add(d);
+}
+
+/** Oslobodi dane radnika — treba sabijanju da blok ne blokira sam sebe. */
+function unmarkBusy(busy: BusyMap, workerId: string, dates: string[]): void {
+    const set = busy.get(workerId);
+    if (!set) return;
+    for (const d of dates) set.delete(d);
 }
 
 function isFree(busy: BusyMap, workerId: string, dates: string[]): boolean {
@@ -368,32 +380,18 @@ export function autoSchedule(
         const earliest = earliestStartFromPredecessors(block, scenario, scheduledEnd, globalStart);
         const options0 = block.crewOptions || [];
 
-        interface Cand { crew: PlanCrew; slot: Slot; score: number; continuity: boolean; }
-        const cands: Cand[] = [];
-        options0.forEach((crew) => {
-            const needed = workingDaysNeeded(block.workerDays || 0, crewSize(crew));
-            const slot = earliestFeasibleSlot(crew, needed, earliest, busy, isSat, horizonEnd);
-            if (!slot) return;
-            const leadId = crew.lead.id || '';
-            const continuity = !!leadId && (projectLeads.get(pkey)?.has(leadId) || false);
-            const endIndex = diffDays(globalStart, slot.endISO);
-            // Manji skor = bolji: raniji kraj, uz popust za kontinuitet.
-            const score = endIndex - (continuity ? weights.continuityDays : 0);
-            cands.push({ crew, slot, score, continuity });
-        });
+        const best = bestCandidate(
+            block, earliest, busy, isSat, horizonEnd, globalStart,
+            weights.continuityDays, projectLeads.get(pkey)
+        );
 
-        if (!cands.length) {
+        if (!best) {
             unscheduled.push({
                 blockId: block.id,
                 reason: `Nijedna kandidat-ekipa nema ${workingDaysNeeded(block.workerDays || 0, 2)} slobodnih dana do ${horizonEnd}.`,
             });
             continue;
         }
-
-        // Izbor: najmanji skor; tie-break stabilno po redoslijedu opcija.
-        cands.sort((a, b) => a.score - b.score
-            || options0.indexOf(a.crew) - options0.indexOf(b.crew));
-        const best = cands[0];
 
         // Zauzmi radnike i zapiši.
         const refs = crewWorkerRefs(best.crew);
@@ -417,7 +415,131 @@ export function autoSchedule(
         });
     }
 
+    // Pohlepni prolaz ostavlja rupe — sabijanje ih pokušava popuniti, uz garanciju
+    // da se raspored nikad ne pogorša (prihvata se samo strogo bolje).
+    if (weights.compactPasses > 0 && scheduled.length > 1) {
+        const byId = new Map(toSchedule.map(b => [b.id, b]));
+        compactSchedule(
+            scheduled, byId, scenario, busy, isSat, horizonEnd, globalStart, weights, projectLeads
+        );
+    }
+
     return { scheduled, unscheduled };
+}
+
+// ── Sabijanje: popuni rupe koje je pohlepni prolaz ostavio ──────────
+
+interface CandidatePick { crew: PlanCrew; slot: Slot; score: number; continuity: boolean; }
+
+/**
+ * Najbolja ekipa+termin za blok, od `earliest` nadalje. Isti kriterij koji
+ * koristi glavni prolaz, izdvojen da ga sabijanje ne duplira drukčije.
+ */
+function bestCandidate(
+    block: PlanBlock,
+    earliest: string,
+    busy: BusyMap,
+    isSat: ((d: Date) => boolean) | undefined,
+    horizonEnd: string,
+    globalStart: string,
+    continuityDays: number,
+    leadsOnProject: Set<string> | undefined
+): CandidatePick | null {
+    const options = block.crewOptions || [];
+    let best: CandidatePick | null = null;
+    options.forEach((crew, idx) => {
+        const needed = workingDaysNeeded(block.workerDays || 0, crewSize(crew));
+        const slot = earliestFeasibleSlot(crew, needed, earliest, busy, isSat, horizonEnd);
+        if (!slot) return;
+        const leadId = crew.lead.id || '';
+        const continuity = !!leadId && (leadsOnProject?.has(leadId) || false);
+        const score = diffDays(globalStart, slot.endISO) - (continuity ? continuityDays : 0);
+        // Tie-break po redoslijedu opcija → deterministično
+        if (!best || score < best.score
+            || (score === best.score && idx < options.indexOf(best.crew))) {
+            best = { crew, slot, score, continuity };
+        }
+    });
+    return best;
+}
+
+/**
+ * SABIJANJE. Pohlepni prolaz raspoređuje blok po blok i nikad se ne vraća, pa
+ * ostaju rupe: nalog obrađen kasno možda je stao u raniji slobodan termin, ili
+ * bi s DRUGOM kandidat-ekipom završio prije. Ovdje se svaki blok redom pusti
+ * (oslobodi svoje dane), pa se traži najbolji termin iznova preko SVIH ekipa.
+ *
+ * Prihvata se samo STROGO bolje — raniji kraj, ili isti kraj uz raniji početak.
+ * Inače se vraća stara rezervacija. Time je prolaz monoton (nikad ne pogorša)
+ * i deterministički, pa isti ulaz i dalje daje isti izlaz.
+ *
+ * Pomjeranje UNAPRIJED je sigurno i za veze: nasljednik traži samo da prethodnik
+ * završi prije njega, a kraj se ovdje može samo primaknuti.
+ */
+function compactSchedule(
+    scheduled: ScheduledBlock[],
+    byId: Map<string, PlanBlock>,
+    scenario: PlanScenario,
+    busy: BusyMap,
+    isSat: ((d: Date) => boolean) | undefined,
+    horizonEnd: string,
+    globalStart: string,
+    weights: ScheduleWeights,
+    projectLeads: Map<string, Set<string>>
+): number {
+    let moved = 0;
+
+    for (let pass = 0; pass < weights.compactPasses; pass++) {
+        let movedThisPass = 0;
+
+        // Sabijaj slijeva: stabilan redoslijed, i rupe se pune redom kako nastaju.
+        const order = [...scheduled].sort((a, b) =>
+            a.startISO.localeCompare(b.startISO) || a.blockId.localeCompare(b.blockId));
+
+        for (const s of order) {
+            const block = byId.get(s.blockId);
+            if (!block) continue;
+
+            // Trenutni krajevi svih ostalih — za ograničenje prethodnika.
+            const ends = new Map<string, string>();
+            for (const o of scheduled) if (o.blockId !== s.blockId) ends.set(o.blockId, o.endISO);
+            const earliest = earliestStartFromPredecessors(block, scenario, ends, globalStart);
+
+            // Pusti blok: bez ovoga bi sam sebi zauzimao termin koji ispituje.
+            const oldDays = workingDaysInSpan(s.startISO, s.endISO, isSat);
+            for (const r of s.workerRefs) if (r.id) unmarkBusy(busy, r.id, oldDays);
+
+            const pick = bestCandidate(
+                block, earliest, busy, isSat, horizonEnd, globalStart,
+                weights.continuityDays, projectLeads.get(projectKey(block))
+            );
+
+            const better = pick && (
+                pick.slot.endISO < s.endISO
+                || (pick.slot.endISO === s.endISO && pick.slot.startISO < s.startISO)
+            );
+
+            if (pick && better) {
+                const refs = crewWorkerRefs(pick.crew);
+                for (const r of refs) if (r.id) markBusy(busy, r.id, pick.slot.days);
+                s.crewId = pick.crew.id;
+                s.workerRefs = refs;
+                s.crew = crewSize(pick.crew);
+                s.startISO = pick.slot.startISO;
+                s.endISO = pick.slot.endISO;
+                if (!s.reasons.some(r => r.code === 'slot-compacted')) {
+                    s.reasons.push({ code: 'slot-compacted', text: 'Povučeno ranije — popunjena rupa u rasporedu' });
+                }
+                moved++; movedThisPass++;
+            } else {
+                // Ništa bolje — vrati kako je bilo.
+                for (const r of s.workerRefs) if (r.id) markBusy(busy, r.id, oldDays);
+            }
+        }
+
+        if (movedThisPass === 0) break;   // stabilno stanje, dalji prolazi su uzalud
+    }
+    return moved;
 }
 
 function buildReasons(

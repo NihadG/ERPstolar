@@ -1,39 +1,63 @@
-/* CrewPicker — glavni + opcioni pomoćnik. --cm-* skala (globals.css). */
+/* CrewPicker — glavni + proizvoljno mnogo pomoćnika. --cm-* skala (globals.css). */
 
 .crp-shell { display: flex; flex-direction: column; gap: var(--cm-sp-3); min-width: 320px; }
 
-.crp-slots { display: grid; grid-template-columns: 1fr 1fr; gap: var(--cm-sp-2); }
-
-.crp-slot {
+/* Sastav ekipe koja se gradi. Ranije su ovdje bila DVA fiksna slota, pa je
+   ekipa mogla imati najviše dvoje ljudi. Sada je lista tokena bez gornje granice. */
+.crp-draft {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     gap: var(--cm-sp-2);
-    padding: var(--cm-sp-3);
-    border: 1.5px solid var(--border-light);
+    min-height: 46px;
+    padding: var(--cm-sp-2) var(--cm-sp-3);
+    border: 1.5px dashed var(--border);
     border-radius: var(--cm-r-card);
     background: var(--surface);
-    cursor: pointer;
-    text-align: left;
-    font-family: inherit;
-    position: relative;
-    transition: var(--transition);
 }
-.crp-slot.active { border-color: var(--accent); box-shadow: var(--cm-focus-ring); }
-.crp-slot.filled { background: var(--background); }
-.crp-slot:disabled { opacity: .5; cursor: not-allowed; }
-.crp-slot svg { color: var(--text-tertiary); flex-shrink: 0; }
+.crp-draft-empty { font-size: var(--cm-fs-xs); color: var(--text-secondary); }
 
-.crp-slot-role {
-    font-size: var(--cm-fs-micro); text-transform: uppercase; letter-spacing: .03em;
-    color: var(--text-tertiary); position: absolute; top: 7px; left: 36px;
+.crp-tok {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--cm-sp-1);
+    height: var(--cm-h-sm);
+    padding: 0 var(--cm-sp-2) 0 var(--cm-sp-3);
+    border-radius: var(--cm-r-pill);
+    background: var(--surface-active);
+    color: var(--text-primary);
+    font-size: var(--cm-fs-xs);
+    font-weight: 550;
+    max-width: 100%;
 }
-.crp-slot-role em { font-style: normal; text-transform: none; opacity: .7; }
-.crp-slot-name {
-    font-size: var(--cm-fs-sm); font-weight: 600; color: var(--text-primary);
-    margin-top: var(--cm-sp-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+/* Glavni nosi kontinuitet na projektu, pa se vidi da nije samo još jedan član */
+.crp-tok.lead { background: var(--accent); color: #fff; }
+.crp-tok.lead svg { flex-shrink: 0; }
+.crp-tok em {
+    font-style: normal;
+    font-size: var(--cm-fs-micro);
+    opacity: .8;
+    text-transform: uppercase;
+    letter-spacing: .04em;
 }
-.crp-slot-clear { margin-left: auto; color: var(--text-tertiary) !important; cursor: pointer; }
-.crp-slot-clear:hover { color: var(--error) !important; }
+.crp-tok-x { cursor: pointer; opacity: .7; flex-shrink: 0; }
+.crp-tok-x:hover { opacity: 1; }
+
+/* Koliko je radnik već u drugim kandidat-ekipama ovog naloga. Dozvoljeno je i
+   korisno — zato je oznaka neutralna, a ne upozorenje. */
+.crp-ingroups {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    padding: 1px var(--cm-sp-2);
+    border-radius: var(--cm-r-pill);
+    background: var(--surface-active);
+    color: var(--text-secondary);
+    font-size: var(--cm-fs-micro);
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    flex-shrink: 0;
+}
 
 .crp-search {
     display: flex; align-items: center; gap: var(--cm-sp-2);
@@ -72,5 +96,12 @@
 .crp-badge.sec { color: var(--text-secondary); }
 
 .crp-foot { display: flex; align-items: center; justify-content: space-between; gap: var(--cm-sp-3); width: 100%; }
-.crp-foot-hint { font-size: var(--cm-fs-xs); color: var(--text-secondary); }
+.crp-foot-hint {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--cm-sp-1);
+    font-size: var(--cm-fs-xs);
+    color: var(--text-secondary);
+}
+.crp-foot-hint.warn { color: var(--cm-warn-text); font-weight: 600; }
 .crp-foot-actions { display: flex; gap: var(--cm-sp-2); }

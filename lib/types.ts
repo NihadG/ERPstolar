@@ -1640,20 +1640,65 @@ export interface PlanProductRef extends PlanRef {
  *
  * `helper` je opcion: „samo glavni" je legitimna ekipa veličine 1.
  */
+/**
+ * Kandidat-ekipa za auto-raspored: glavni radnik + proizvoljno mnogo pomoćnika.
+ *
+ * ISTI RADNIK SMIJE BITI U VIŠE EKIPA istog naloga — to je namjerno i korisno:
+ * algoritam bira JEDNU ekipu, pa više kombinacija oko istog majstora znači
+ * više načina da se posao uklopi u kalendar.
+ */
 export interface PlanCrew {
     id: string;
+    /** Glavni radnik — nosilac posla i kontinuiteta na projektu. */
     lead: PlanRef;
+    /**
+     * ZASTARJELO: jedan pomoćnik. Ostaje isključivo zbog scenarija spremljenih
+     * prije prelaska na `members` — Firestore je pun takvih. Novi kod PIŠE
+     * `members`, a ČITA se kroz `crewMembers()` koje pokriva oba oblika.
+     */
     helper?: PlanRef;
+    /** Pomoćnici uz glavnog. Ekipa je `lead` + `members`. */
+    members?: PlanRef[];
 }
 
-/** Broj ljudi u ekipi (glavni + pomoćnik ako postoji). */
-export function crewSize(crew: PlanCrew): number {
-    return crew.helper ? 2 : 1;
+/**
+ * Pomoćnici ekipe, bez glavnog. Prihvata i stari (`helper`) i novi (`members`)
+ * oblik — `members` ima prednost kad su oba prisutna.
+ */
+export function crewMembers(crew: PlanCrew): PlanRef[] {
+    if (crew.members && crew.members.length) return crew.members;
+    return crew.helper ? [crew.helper] : [];
 }
 
-/** Radnici ekipe kao PlanRef[] — spremno za `PlanBlock.workerRefs`. */
+/**
+ * Radnici ekipe kao PlanRef[] — spremno za `PlanBlock.workerRefs`.
+ * Duplikati se izbacuju: isti čovjek dva puta u ISTOJ ekipi lažno bi udvostručio
+ * njenu veličinu, pa bi trajanje ispalo upola manje nego što jeste.
+ */
 export function crewWorkerRefs(crew: PlanCrew): PlanRef[] {
-    return crew.helper ? [crew.lead, crew.helper] : [crew.lead];
+    const out: PlanRef[] = [];
+    const seen = new Set<string>();
+    for (const r of [crew.lead, ...crewMembers(crew)]) {
+        if (!r) continue;
+        const key = r.id || `name:${r.name}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push(r);
+    }
+    return out;
+}
+
+/** Broj ljudi u ekipi (glavni + pomoćnici, bez duplikata). */
+export function crewSize(crew: PlanCrew): number {
+    return crewWorkerRefs(crew).length;
+}
+
+/** Čitljiv naziv ekipe: „Emir + Haris + 1". */
+export function crewLabel(crew: PlanCrew): string {
+    const refs = crewWorkerRefs(crew);
+    if (refs.length === 1) return refs[0].name;
+    if (refs.length === 2) return `${refs[0].name} + ${refs[1].name}`;
+    return `${refs[0].name} + ${refs[1].name} + ${refs.length - 2}`;
 }
 
 export interface PlanBlock {

@@ -13,9 +13,12 @@
 import { useState, useMemo, useEffect, type KeyboardEvent } from 'react';
 import {
     ClipboardList, Plus, Copy, Trash2, X, Search, Users, Package, ClipboardPaste, CalendarDays, Pin,
+    UserPlus,
 } from 'lucide-react';
 import Modal from '@/components/ui/Modal';
-import type { Project, Worker, WorkOrder, PlanBlock } from '@/lib/types';
+import type { Project, Worker, WorkOrder, PlanBlock, PlanCrew } from '@/lib/types';
+import { crewLabel, crewWorkerRefs } from '@/lib/types';
+import CrewPicker from './CrewPicker';
 import { collectProductCandidates, groupCandidatesByProject, type ProductCandidate } from '@/lib/canvas/fromProducts';
 import { scheduleBatch, type BatchScheduleMode } from '@/lib/canvas/batchSchedule';
 import { newBlock } from '@/lib/canvas/model';
@@ -41,6 +44,11 @@ interface Row {
      * tabele u „Ručno" — ostali redovi ostaju automatski.
      */
     pinnedISO?: string;
+    /**
+     * Kandidat-ekipe za „Rasporedi". Bez njih `schedulableBlocks()` odbacuje blok,
+     * pa je auto-raspored TIHO preskakao sve što je uneseno kroz batch.
+     */
+    crews: PlanCrew[];
 }
 
 const MODES: { key: BatchScheduleMode; label: string; hint: string }[] = [
@@ -65,7 +73,7 @@ interface BatchTableModalProps {
 }
 
 const emptyRow = (kind: RowKind, startISO: string): Row =>
-    ({ id: uid(), kind, title: '', products: [], workerIds: [], durationDays: kind === 'montaza' ? 2 : 3, startISO });
+    ({ id: uid(), kind, title: '', products: [], workerIds: [], durationDays: kind === 'montaza' ? 2 : 3, startISO, crews: [] });
 
 export default function BatchTableModal({
     isOpen, projects, workOrders, workers, existingBlocks, startISO, isSaturdayWorking, onClose, onCreate,
@@ -75,6 +83,7 @@ export default function BatchTableModal({
     const [start, setStart] = useState(startISO);
     const [pickProductsFor, setPickProductsFor] = useState<string | null>(null);
     const [pickWorkersFor, setPickWorkersFor] = useState<string | null>(null);   // rowId | 'ALL'
+    const [crewFor, setCrewFor] = useState<string | null>(null);                 // rowId za CrewPicker
     const [pasteOpen, setPasteOpen] = useState(false);
     const [pasteText, setPasteText] = useState('');
     const [search, setSearch] = useState('');
@@ -84,6 +93,7 @@ export default function BatchTableModal({
             setRows([emptyRow('proizvodni', startISO)]);
             setMode('sequential'); setStart(startISO); setSearch('');
             setPickProductsFor(null); setPickWorkersFor(null); setPasteOpen(false); setPasteText('');
+            setCrewFor(null);
         }
     }, [isOpen, startISO]);
 
@@ -138,8 +148,13 @@ export default function BatchTableModal({
         const totalWD = valid.reduce((s, r) => s + rowWorkerDays(r), 0);
         let end = '';
         for (const r of valid) { const p = placed.get(r.id); if (p && p.endISO > end) end = p.endISO; }
-        const noWorker = valid.filter(r => r.workerIds.length === 0).length;
-        return { count: valid.length, totalWD: Math.round(totalWD * 100) / 100, end, noWorker };
+        const noWorker = valid.filter(r => r.workerIds.length === 0 && r.crews.length === 0).length;
+        // Bez kandidat-ekipe „Rasporedi" preskače nalog — to mora biti vidljivo OVDJE,
+        // a ne da korisnik poslije gleda prazan rezultat rasporeda.
+        const autoReady = valid.filter(r => r.crews.length > 0).length;
+        return {
+            count: valid.length, totalWD: Math.round(totalWD * 100) / 100, end, noWorker, autoReady,
+        };
     }, [rows, placed]);
 
     // ── Uređivanje redova ────────────────────────────────────────
@@ -148,7 +163,12 @@ export default function BatchTableModal({
     const dupRow = (id: string) => setRows(rs => {
         const i = rs.findIndex(r => r.id === id);
         if (i < 0) return rs;
-        const copy = { ...rs[i], id: uid(), products: rs[i].products.map(p => ({ ...p })), workerIds: [...rs[i].workerIds] };
+        const copy = {
+            ...rs[i], id: uid(),
+            products: rs[i].products.map(p => ({ ...p })),
+            workerIds: [...rs[i].workerIds],
+            crews: rs[i].crews.map(c => ({ ...c, id: uid() })),
+        };
         return [...rs.slice(0, i + 1), copy, ...rs.slice(i + 1)];
     });
     const delRow = (id: string) => setRows(rs => rs.filter(r => r.id !== id));
@@ -203,6 +223,7 @@ export default function BatchTableModal({
                 workerIds: w ? [w.Worker_ID] : [],
                 durationDays: isFinite(dur) && dur > 0 ? dur : 1,
                 startISO: start,
+                crews: [],
             };
         });
         if (parsed.length) setRows(rs => [...rs.filter(r => r.title.trim() || r.products.length), ...parsed]);
@@ -216,8 +237,14 @@ export default function BatchTableModal({
             const p = placed.get(r.id);
             if (!p) continue;
             const kind = r.kind === 'montaza' ? 'montaza' : 'order';
-            const crew = Math.max(1, r.workerIds.length);
-            const workerRefs = r.workerIds.map(id => ({ id, name: workerName(id) }));
+            // Ako radnici nisu ručno dodijeljeni, uzmi sastav PRVE kandidat-ekipe —
+            // blok tako odmah izgleda smisleno na platnu, a „Rasporedi" ga i dalje
+            // smije prebaciti na bilo koju drugu ekipu iz liste.
+            const seedRefs = r.workerIds.length
+                ? r.workerIds.map(id => ({ id, name: workerName(id) }))
+                : (r.crews[0] ? crewWorkerRefs(r.crews[0]) : []);
+            const crew = Math.max(1, seedRefs.length);
+            const workerRefs = seedRefs;
             const productRefs = r.products.map(x => ({ id: x.candidate.productId, name: x.candidate.productName, qty: x.qty }));
             const projIds = new Set(r.products.map(x => x.candidate.projectId));
             const projectRef = projIds.size === 1 && r.products[0]
@@ -231,6 +258,7 @@ export default function BatchTableModal({
                 ...(workerRefs.length ? { workerRefs } : {}),
                 ...(productRefs.length ? { productRefs } : {}),
                 ...(projectRef ? { projectRef } : {}),
+                ...(r.crews.length ? { crewOptions: r.crews } : {}),
             }));
         }
         if (!blocks.length) return;
@@ -272,6 +300,12 @@ export default function BatchTableModal({
                     </span>
                     {summary.noWorker > 0 && (
                         <span className="btt-foot-note">{summary.noWorker} bez radnika</span>
+                    )}
+                    {summary.count > 0 && (
+                        <span className={`btt-foot-note${summary.autoReady === 0 ? '' : ' ok'}`}
+                            title={'Nalog bez kandidat-ekipe „Rasporedi" preskače'}>
+                            <Users size={11} /> {summary.autoReady}/{summary.count} spremno za „Rasporedi"
+                        </span>
                     )}
                     <span className="btt-foot-spacer" />
                     <button className="btn btn-secondary" onClick={onClose}>Odustani</button>
@@ -315,6 +349,7 @@ export default function BatchTableModal({
                                 <th className="c-name">Naziv naloga</th>
                                 <th className="c-prod">Proizvodi</th>
                                 <th className="c-wrk">Radnici</th>
+                                <th className="c-crew" title={'Kandidat-ekipe koje „Rasporedi" smije birati'}>Grupe</th>
                                 <th className="c-dur">Trajanje</th>
                                 <th className="c-start">Početak</th>
                                 <th className="c-rd">rd</th>
@@ -366,6 +401,22 @@ export default function BatchTableModal({
                                                     onClick={() => setPickWorkersFor(r.id)}><Plus size={13} /></button>
                                             </div>
                                         </td>
+                                        {/* Kandidat-ekipe: bez njih „Rasporedi" preskače ovaj nalog */}
+                                        <td className="c-crew">
+                                            <div className="btt-chips">
+                                                {r.crews.map(c => (
+                                                    <span key={c.id} className="btt-chip crew"
+                                                        title={crewWorkerRefs(c).map(x => x.name).join(' + ')}>
+                                                        <Users size={10} />
+                                                        <span className="btt-chip-t">{crewLabel(c)}</span>
+                                                        <X size={11} onClick={() =>
+                                                            patch(r.id, { crews: r.crews.filter(x => x.id !== c.id) })} />
+                                                    </span>
+                                                ))}
+                                                <button className="btt-chip-add" title="Dodaj kandidat-ekipu"
+                                                    onClick={() => setCrewFor(r.id)}><UserPlus size={12} /></button>
+                                            </div>
+                                        </td>
                                         <td className="c-dur">
                                             <div className="btt-dur-cell">
                                                 <input className="btt-in num" type="number" min={1} value={r.durationDays}
@@ -403,7 +454,7 @@ export default function BatchTableModal({
                                 );
                             })}
                             <tr className="btt-addrow-tr">
-                                <td colSpan={8}>
+                                <td colSpan={9}>
                                     <button className="btt-addrow" onClick={() => addRow('proizvodni')}>
                                         <Plus size={14} /> Dodaj red <kbd>Enter</kbd>
                                     </button>
@@ -471,6 +522,17 @@ export default function BatchTableModal({
                     })}
                 </div>
             </Modal>
+
+            {/* Kandidat-ekipa za jedan red */}
+            <CrewPicker
+                isOpen={!!crewFor}
+                workers={workers}
+                existing={crewFor ? (rows.find(r => r.id === crewFor)?.crews || []) : []}
+                onClose={() => setCrewFor(null)}
+                onAdd={c => crewFor && setRows(rs => rs.map(r =>
+                    r.id === crewFor ? { ...r, crews: [...r.crews, c] } : r))}
+                title="Kandidat-ekipa za ovaj nalog"
+            />
 
             {/* Zalijepi iz Excela */}
             <Modal isOpen={pasteOpen} onClose={() => setPasteOpen(false)}

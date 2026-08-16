@@ -112,7 +112,7 @@
     border-collapse: separate;
     border-spacing: 0;
     width: 100%;
-    min-width: 900px;
+    min-width: 1060px;
     font-size: var(--cm-fs-sm);
     table-layout: fixed;
 }
@@ -142,8 +142,9 @@
 /* Fiksne širine: `table-layout: fixed` znači da duga imena proizvoda ne
    razvlače tabelu — čipovi se prelome, kolone ostanu poravnate. */
 .btt-table .c-idx { line-height: var(--btt-ctl); width: 58px; color: var(--text-secondary); font-variant-numeric: tabular-nums; white-space: nowrap; }
-.btt-table .c-prod { width: 26%; }
-.btt-table .c-wrk { width: 22%; }
+.btt-table .c-prod { width: 20%; }
+.btt-table .c-wrk { width: 18%; }
+.btt-table .c-crew { width: 20%; }
 .btt-table .c-dur { width: 104px; }
 .btt-table .c-start { width: 150px; }
 .btt-table .c-rd { line-height: var(--btt-ctl); width: 56px; text-align: right; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
@@ -265,6 +266,9 @@
     min-width: 0;
 }
 .btt-chip.prod { background: var(--accent-light); color: var(--accent); }
+/* Kandidat-ekipa — vizuelno odvojena od ručno dodijeljenih radnika */
+.btt-chip.crew { background: var(--surface); border: 1px solid var(--border); color: var(--text-primary); }
+.btt-chip.crew svg:first-child { opacity: .55; cursor: default; }
 .btt-chip .q { font-variant-numeric: tabular-nums; opacity: .75; flex-shrink: 0; }
 .btt-chip svg { cursor: pointer; opacity: .6; flex-shrink: 0; }
 .btt-chip svg:hover { opacity: 1; }
@@ -357,12 +361,16 @@
 .btt-foot-sum strong { color: var(--text-primary); font-weight: 650; font-variant-numeric: tabular-nums; }
 .btt-sep { margin: 0 var(--cm-sp-2); color: var(--text-secondary); }
 .btt-foot-note {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--cm-sp-1);
     font-size: var(--cm-fs-micro);
     color: var(--cm-warn-text);
     background: var(--warning-bg);
     padding: 3px var(--cm-sp-3);
     border-radius: var(--cm-r-pill);
 }
+.btt-foot-note.ok { color: var(--text-secondary); background: var(--surface); }
 .btt-foot-spacer { flex: 1 1 auto; }
 
 /* ── Popup izbornici (proizvodi / radnici / paste) ───────────── */
@@ -462,6 +470,6 @@
 .btt-paste textarea:focus { outline: none; border-color: var(--accent); box-shadow: var(--cm-focus-ring); }
 
 @media (max-width: 767px) {
-    .btt-table { min-width: 760px; }
+    .btt-table { min-width: 900px; }
     .btt-shell { --btt-cell-x: var(--cm-sp-2); }
 }
