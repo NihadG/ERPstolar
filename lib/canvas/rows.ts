@@ -13,7 +13,7 @@
 import type {
     PlanScenario, PlanBlock, PlanBlockKind, PlanGroupBy, PlanLayout, PlanRef, Worker, WorkOrder, WorkerAttendance,
 } from '../types';
-import { projectHue } from './palette';
+import { projectHue, NO_PROJECT_HUE } from './palette';
 
 /** Sekcije platna, odozgo nadolje. Obaveze su na vrhu jer su fiksne tačke. */
 export type CanvasSection = 'obaveze' | 'plan' | 'nalozi' | 'radnici' | 'nabavka';
@@ -260,8 +260,10 @@ function buildRowsPerOrder(scenario: PlanScenario, ctx: RowContext): CanvasRow[]
         const pr = b.projectRef;
         const key = pr ? (pr.id || `name:${pr.name}`) : UNASSIGNED;
         const label = pr ? pr.name : 'Bez projekta';
+        // Ista neutralna nijansa koju traka dobija kroz projectHue(undefined) —
+        // da se akcent reda i traka ne raziđu u dvije različite sive.
         const entry = grouped.get(key)
-            || { label, hue: pr ? projectHue(pr.id || pr.name) : '#8a94a6', blocks: [], projectId: pr?.id };
+            || { label, hue: pr ? projectHue(pr.id || pr.name) : NO_PROJECT_HUE, blocks: [], projectId: pr?.id };
         entry.blocks.push(b);
         grouped.set(key, entry);
     }

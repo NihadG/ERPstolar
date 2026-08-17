@@ -21,8 +21,11 @@ export const PROJECT_HUES = [
     '#6a4bc4', '#0d6f9e', '#b03652', '#5d6f2c', '#4b5b78',
 ] as const;
 
-/** Nijansa za blok bez projekta — namjerno neutralna, da ne glumi projekt. */
-export const NO_PROJECT_HUE = '#6b7280';
+/**
+ * Nijansa za blok bez projekta — namjerno neutralna, da ne glumi projekt.
+ * Dovoljno tamna da bijeli natpis na traci ostane čitljiv (≥4.5:1).
+ */
+export const NO_PROJECT_HUE = '#5b6573';
 
 /**
  * FNV-1a. Bilo koji stabilan hash bi radio; bitno je da ne ovisi o redoslijedu
