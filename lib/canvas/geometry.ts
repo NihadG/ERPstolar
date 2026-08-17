@@ -12,17 +12,28 @@
 import type { PlanZoom } from '../types';
 import { addDays, diffDays, toISODate } from './model';
 
-/** Širina jednog DANA u pikselima, po nivou zuma. */
+/**
+ * Širina jednog DANA u pikselima, po nivou zuma.
+ *
+ * `mjesec` je bio 7px: traka od pet dana je 35px, a `MIN_LABEL_WIDTH` je 44 —
+ * dakle na mjesečnom zumu se naziv NIKAD nije crtao i platno je bilo niz
+ * plavih mrlja. Na 11px pet dana daje 55px, pa kratak naziv stane, a duži
+ * ispada pored trake (vidi `.cv-spill`).
+ */
 export const DAY_WIDTH: Record<PlanZoom, number> = {
     dan: 56,        // vidi se svaki dan s brojem
-    sedmica: 22,    // ~150px sedmica — radni horizont
-    mjesec: 7,      // ~210px mjesec — kvartalni pregled
+    sedmica: 26,    // ~180px sedmica — radni horizont
+    mjesec: 11,     // ~77px sedmica — kvartalni pregled, ali još čitljiv
 };
 
-/** Visina jednog reda i jedne trake unutar reda (kad se blokovi preklapaju). */
-export const LANE_HEIGHT = 40;
-export const LANE_GAP = 6;
-export const ROW_PADDING = 8;
+/**
+ * Visina jednog reda i jedne trake unutar reda (kad se blokovi preklapaju).
+ * Traka je snižena s 40+6: red s osam preklopljenih blokova bio je 376px, pa
+ * je jedan projekt pojeo cijeli ekran.
+ */
+export const LANE_HEIGHT = 32;
+export const LANE_GAP = 4;
+export const ROW_PADDING = 7;
 /** Minimalna visina reda i kad je prazan. */
 export const MIN_ROW_HEIGHT = LANE_HEIGHT + ROW_PADDING * 2;
 
@@ -239,6 +250,23 @@ export function headerTicks(vp: Viewport, todayISOValue: string): HeaderTick[] {
             });
         }
     }
+    return out;
+}
+
+/**
+ * Nedjelje u vidljivom rasponu — tonirane kolone kroz cijelo platno.
+ *
+ * Ranije je neradni dan blijedio SAMO u zaglavlju, pa se u mreži nije vidjelo
+ * gdje sedmica prestaje. Traka koja „preskače nedjelju" izgledala je kao da
+ * radi kroz vikend.
+ */
+export function nonWorkingBands(vp: Viewport): { iso: string; left: number; width: number }[] {
+    const w = dayWidth(vp.zoom);
+    const out: { iso: string; left: number; width: number }[] = [];
+    visibleDates(vp).forEach((iso, i) => {
+        if (new Date(`${iso}T12:00:00`).getDay() !== 0) return;   // samo nedjelja
+        out.push({ iso, left: i * w, width: w });
+    });
     return out;
 }
 

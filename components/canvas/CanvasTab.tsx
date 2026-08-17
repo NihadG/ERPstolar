@@ -12,7 +12,7 @@
 // Autosave scenarija i dalje ne dira ništa van `planning_scenarios`.
 // ════════════════════════════════════════════════════════════════════
 
-import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import { useState, useEffect, useMemo, useRef, useCallback, Fragment } from 'react';
 import {
     Plus, Copy, Undo2, Redo2, ChevronLeft, ChevronRight, ChevronDown, Loader2,
     Lock, AlertTriangle, Users, Trash2, Save, Link2, Package, Bookmark, Printer,
@@ -55,10 +55,12 @@ import { buildSupplierLeadTimes } from '@/lib/canvas/leadTime';
 import { buildSaturdayChecker, type AttendanceLite } from '@/lib/planning';
 import { buildRows, groupRowsBySection, SECTION_LABEL, blockLayer, type CanvasRow } from '@/lib/canvas/rows';
 import { blockStatusMap, type BlockStatus } from '@/lib/canvas/status';
+import { projectHue } from '@/lib/canvas/palette';
 import {
     HEADER_WIDTH, TIMELINE_HEADER_HEIGHT, MIN_LABEL_WIDTH, RESIZE_HANDLE_PX,
     blockRect, packLanes, rowHeight, laneTop, headerTicks, monthBands,
-    dateAtX, xForDate, anchorCentering, anchorLeading, dayWidth, type Viewport, type BlockRect,
+    dateAtX, xForDate, anchorCentering, anchorLeading, dayWidth, nonWorkingBands, LANE_HEIGHT,
+    type Viewport, type BlockRect,
 } from '@/lib/canvas/geometry';
 import {
     newBlock, addDays, BLOCK_LABEL, ZOOM_LABEL, GROUP_BY_LABEL, blockDurationDays, scenarioBounds,
@@ -582,6 +584,7 @@ export default function CanvasTab({
     // ── Render ──────────────────────────────────────────────────
     const ticks = useMemo(() => headerTicks(vp, todayISO()), [vp]);
     const bands = useMemo(() => monthBands(vp), [vp]);
+    const nonwork = useMemo(() => nonWorkingBands(vp), [vp]);
     const todayX = xForDate(todayISO(), vp);
 
     // Raspon klizača: cijeli plan (+ danas), s malim rubom sa svake strane.
@@ -637,6 +640,17 @@ export default function CanvasTab({
 
         // Živi status stvarnog naloga/narudžbe iza bloka (nacrt nije u mapi).
         const st = statusById.get(item.id);
+        // Boja = PROJEKT. Ranije je boja kodirala vrstu, a skoro sve je vrsta
+        // „nalog", pa je cijelo platno bilo jedna plava masa i projekti se nisu
+        // razlikovali. Ručno postavljena boja bloka i dalje ima prednost.
+        // ...ali SAMO za radne blokove. Rok je crven a materijal narandžast jer je
+        // to značenje vrste, ne identitet projekta — te boje ostaju netaknute.
+        const isWorkKind = item.kind === 'order' || item.kind === 'montaza';
+        const hue = item.color
+            || (isWorkKind ? projectHue(item.projectRef?.id || item.projectRef?.name) : undefined);
+        // Naziv koji ne stane U traku ispisuje se PORED nje. Bez ovoga na
+        // mjesečnom zumu nijedan blok nije imao natpis.
+        const fits = eff.width > MIN_LABEL_WIDTH;
         // Projekt uz dobavljača — korisno u prikazu po dobavljaču / jednom redu; u prikazu
         // „po projektu" je red već projekt, pa je suvišno (i znalo bi se ne slagati s
         // grupisanjem po vezanom nalogu).
@@ -644,13 +658,14 @@ export default function CanvasTab({
             ? (item.projectRef?.name || '') : '';
 
         return (
-            <div key={item.id}
+            <Fragment key={item.id}>
+            <div
                 className={`cv-block k-${item.kind}${opts?.compact ? ' compact' : ''}${st ? ` s-${st.status}` : ''}${selected.has(item.id) ? ' selected' : ''}${linkedToSelection.has(item.id) ? ' linked' : ''}${item.locked ? ' locked' : ''}${item.isSent ? ' sent' : ''}${isDragged ? ' dragging' : ''}${eff.clippedStart ? ' clip-start' : ''}${eff.clippedEnd ? ' clip-end' : ''}`}
                 style={{
                     left: eff.left,
                     width: Math.max(6, eff.width),
                     top: laneTop(lane),
-                    ...(item.color ? { ['--cv-block-color' as string]: item.color } : {}),
+                    ...(hue ? { ['--cv-block-color' as string]: hue } : {}),
                 }}
                 onPointerDown={e => drag.onPointerDown(e, item.id, rowId, 'move')}
                 onPointerMove={drag.onPointerMove}
@@ -668,7 +683,7 @@ export default function CanvasTab({
                 <span className="cv-block-label">
                     {item.locked && <Lock size={10} />}
                     {st && <StatusMark status={st.status} />}
-                    {eff.width > MIN_LABEL_WIDTH ? item.title : ''}
+                    {fits ? item.title : ''}
                     {projectSuffix && eff.width > MIN_LABEL_WIDTH * 2 && (
                         <span className="cv-block-project">· {projectSuffix}</span>
                     )}
@@ -686,6 +701,23 @@ export default function CanvasTab({
                         onPointerUp={drag.onPointerUp} />
                 )}
             </div>
+
+            {/* Naziv izlazi PORED trake kad u nju ne stane — uska traka tako i
+                dalje kaže šta je, umjesto da bude bezimena mrlja. */}
+            {!fits && !eff.clippedEnd && (
+                <div key={`${item.id}-spill`} className="cv-spill"
+                    style={{
+                        left: eff.left + Math.max(6, eff.width) + 5,
+                        top: laneTop(lane),
+                        height: opts?.compact ? 18 : LANE_HEIGHT,
+                        ...(hue ? { ['--cv-block-color' as string]: hue } : {}),
+                    }}
+                    onPointerDown={e => drag.onPointerDown(e, item.id, rowId, 'move')}
+                    title={item.title}>
+                    {item.title}
+                </div>
+            )}
+            </Fragment>
         );
     };
 
@@ -894,6 +926,13 @@ export default function CanvasTab({
 
                 {/* Redovi */}
                 <div className="cv-body">
+                    {/* Nedjelje — tonirane kolone kroz cijelo platno, ispod traka.
+                        Bez ovoga se u mreži nije vidjelo gdje sedmica prestaje. */}
+                    <div className="cv-nonwork-layer" style={{ left: HEADER_WIDTH }}>
+                        {nonwork.map(b => (
+                            <div key={b.iso} className="cv-nonwork" style={{ left: b.left, width: b.width }} />
+                        ))}
+                    </div>
                     {sections.length === 0 && (
                         <div className="cv-empty">
                             Prazno platno. <strong>Dupli klik</strong> pravi blok; povuci mišem da nacrtaš

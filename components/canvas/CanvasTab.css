@@ -614,24 +614,67 @@ button.cv-row-head:focus-visible { outline: 2px solid var(--accent); outline-off
     touch-action: pan-y;
 }
 
+/* ── Neradni dani ─────────────────────────────────────────────── */
+/* Tonirana kolona kroz cijelo platno. Ranije je neradni dan blijedio samo u
+   zaglavlju, pa se u mreži nije vidjelo gdje sedmica prestaje — traka koja
+   „preskače nedjelju" izgledala je kao da radi kroz vikend. */
+.cv-nonwork-layer {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    right: 0;
+    z-index: 0;
+    pointer-events: none;
+}
+.cv-nonwork {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    background: var(--surface);
+    opacity: .55;
+}
+
 /* ── Blokovi ──────────────────────────────────────────────────── */
 .cv-block {
     position: absolute;
-    height: 34px;
+    height: 26px;
     display: flex;
     align-items: center;
-    border-radius: 7px;
+    border-radius: 5px;
+    /* Boja = PROJEKT (lib/canvas/palette.ts). Ravna ispuna, bez sjene: dvadeset
+       traka sa sjenom pravi vizuelni šum u kojem se ništa ne ističe. */
     background: var(--cv-block-color, var(--accent));
     color: #fff;
     font-size: 12px;
+    font-weight: 550;
+    letter-spacing: -.005em;
     cursor: grab;
     user-select: none;
     overflow: hidden;
-    box-shadow: 0 1px 3px var(--shadow-md);
-    transition: box-shadow var(--transition), transform var(--transition);
+    z-index: 2;
+    box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .06);
+    transition: box-shadow var(--transition), filter var(--transition);
+}
+.cv-block:hover { filter: brightness(1.06); }
+
+/* Naziv koji ne stane U traku — ispisuje se pored nje, u boji projekta.
+   Bez ovoga je uska traka (a na mjesečnom zumu SVAKA traka) bezimena mrlja. */
+.cv-spill {
+    position: absolute;
+    display: flex;
+    align-items: center;
+    font-size: 11.5px;
+    font-weight: 550;
+    color: var(--cv-block-color, var(--accent));
+    white-space: nowrap;
+    pointer-events: none;
+    z-index: 3;
+    max-width: 220px;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
-.cv-block:hover { box-shadow: 0 3px 10px var(--shadow-md); z-index: 3; }
+.cv-block:hover { box-shadow: 0 2px 8px var(--shadow-md); z-index: 4; }
 .cv-block.dragging { cursor: grabbing; opacity: .85; z-index: 5; }
 .cv-block.selected { outline: 2px solid var(--text-primary); outline-offset: 1px; z-index: 4; }
 .cv-block.locked { cursor: default; }
