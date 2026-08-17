@@ -1,36 +1,49 @@
 // ════════════════════════════════════════════════════════════════════
 // PLATNO — BOJA PROJEKTA
 //
-// Na platnu boja kodira VRSTU bloka, a skoro sve je vrsta „nalog" — pa osam
-// naloga izgleda kao jedna plava masa i projekti se ne razlikuju.
+// Na platnu boja kodira PROJEKT (ne vrstu bloka) — inače je 20 naloga jedna
+// plava masa i projekti se ne razlikuju.
 //
-// Ovdje je drugi kanal: stabilna nijansa po projektu, izvedena iz njegovog ID-a.
-// Stabilna znači da isti projekt ima istu boju u svakoj sesiji i na svakom
-// ekranu — bez čuvanja ičega u bazi.
+// Svaka nijansa ima TRI vrijednosti, jer traka nije puna zasićena boja nego
+// MEKA TINTA s tamnim tekstom i tankom obojenom kapicom lijevo (smireniji,
+// komercijalniji izgled — kao Motion/Asana/Linear):
+//   • ink — zasićena boja: kapica, tačka grupe, akcent, montaža (puna ispuna)
+//   • bar — vrlo svijetla tinta: ispuna trake naloga
+//   • txt — tamni tekst na toj tinti (kontrast ≥ 7:1)
 //
-// Zasad je koristi kalendar radnika. Trake na osi su namjerno netaknute: to je
-// zaseban zahvat i ne smije se prošvercati kroz ovu promjenu.
+// Boje su MUTED (ne sirovo zasićene) i biraju se deterministički iz ID-a
+// projekta — stabilno kroz sesije, bez ičega u bazi.
 // ════════════════════════════════════════════════════════════════════
 
-/**
- * Deset nijansi biranih da se razlikuju i na svijetloj i na tamnoj podlozi, i
- * da bijeli tekst na njima ostane čitljiv (kontrast ≥ 4.5:1 na svakoj).
- */
-export const PROJECT_HUES = [
-    '#3457d5', '#0c7268', '#9a3d86', '#a5550a', '#2f7d32',
-    '#6a4bc4', '#0d6f9e', '#b03652', '#5d6f2c', '#4b5b78',
-] as const;
+export interface ProjectColors {
+    /** Zasićena boja — kapica, tačka, akcent, puna ispuna montaže. */
+    ink: string;
+    /** Svijetla tinta — ispuna trake naloga. */
+    bar: string;
+    /** Tamni tekst na tinti. */
+    txt: string;
+}
+
+/** Šest usklađenih, prigušenih nijansi. */
+export const PROJECT_COLORS: ProjectColors[] = [
+    { ink: '#4f46e5', bar: '#ebeafc', txt: '#3730a3' },  // indigo
+    { ink: '#0d9488', bar: '#d9f1ec', txt: '#0f5f57' },  // teal
+    { ink: '#be185d', bar: '#fbe3ee', txt: '#8f1247' },  // rose
+    { ink: '#b45309', bar: '#fbecd4', txt: '#83400b' },  // amber
+    { ink: '#4338ca', bar: '#e7e6fb', txt: '#312a97' },  // violet
+    { ink: '#0369a1', bar: '#dcecf8', txt: '#075283' },  // sky
+];
+
+/** Nijansa za blok bez projekta — neutralna, da ne glumi projekt. */
+export const NO_PROJECT_COLORS: ProjectColors = { ink: '#5b6573', bar: '#e9ecf1', txt: '#3f4653' };
+
+/** Zadržano zbog istorijske neutralne boje (kontrast bijelog ≥ 4.5:1). */
+export const NO_PROJECT_HUE = NO_PROJECT_COLORS.ink;
 
 /**
- * Nijansa za blok bez projekta — namjerno neutralna, da ne glumi projekt.
- * Dovoljno tamna da bijeli natpis na traci ostane čitljiv (≥4.5:1).
- */
-export const NO_PROJECT_HUE = '#5b6573';
-
-/**
- * FNV-1a. Bilo koji stabilan hash bi radio; bitno je da ne ovisi o redoslijedu
- * učitavanja projekata (indeks u nizu bi se mijenjao kad se doda novi projekt,
- * pa bi cijela radionica preko noći promijenila boje).
+ * FNV-1a. Bilo koji stabilan hash radi; bitno je da NE ovisi o redoslijedu
+ * učitavanja projekata (indeks u nizu bi se mijenjao kad se doda projekt, pa
+ * bi cijela radionica preko noći promijenila boje).
  */
 function hash(s: string): number {
     let h = 0x811c9dc5;
@@ -41,8 +54,13 @@ function hash(s: string): number {
     return h >>> 0;
 }
 
-/** Boja projekta po njegovom ID-u (ili nazivu kad ID-a nema). */
+/** Sve tri boje projekta po ID-u (ili nazivu). Bez ključa → neutralna. */
+export function projectColors(key: string | undefined | null): ProjectColors {
+    if (!key) return NO_PROJECT_COLORS;
+    return PROJECT_COLORS[hash(key) % PROJECT_COLORS.length];
+}
+
+/** Samo zasićena boja (ink) — za mjesta koja traže jedan hex (npr. kalendar radnika). */
 export function projectHue(key: string | undefined | null): string {
-    if (!key) return NO_PROJECT_HUE;
-    return PROJECT_HUES[hash(key) % PROJECT_HUES.length];
+    return projectColors(key).ink;
 }

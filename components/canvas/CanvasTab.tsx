@@ -55,7 +55,7 @@ import { buildSupplierLeadTimes } from '@/lib/canvas/leadTime';
 import { buildSaturdayChecker, type AttendanceLite } from '@/lib/planning';
 import { buildRows, groupRowsBySection, SECTION_LABEL, blockLayer, type CanvasRow } from '@/lib/canvas/rows';
 import { blockStatusMap, type BlockStatus } from '@/lib/canvas/status';
-import { projectHue } from '@/lib/canvas/palette';
+import { projectColors } from '@/lib/canvas/palette';
 import {
     HEADER_WIDTH, TIMELINE_HEADER_HEIGHT, MIN_LABEL_WIDTH, RESIZE_HANDLE_PX,
     blockRect, packLanes, rowHeight, laneTop, headerTicks, monthBands,
@@ -99,6 +99,8 @@ const LAYOUT_SHORT: Record<PlanLayout, string> = {
 };
 /** Ispod ovoliko piksela povlačenje je zapravo klik — klik NE pravi blok (dupli klik pravi). */
 const MIN_DRAW_PX = 6;
+/** „2026-08-17" → „17.8." */
+const dm = (iso: string) => { const [, m, d] = iso.split('-'); return `${Number(d)}.${Number(m)}.`; };
 /** Vrste koje se prave brzim tasterom. Nabavka i veze dolaze u Fazi 2. */
 const QUICK_KINDS: { kind: PlanBlockKind; key: string }[] = [
     { kind: 'order', key: 'n' },
@@ -651,16 +653,12 @@ export default function CanvasTab({
 
         // Živi status stvarnog naloga/narudžbe iza bloka (nacrt nije u mapi).
         const st = statusById.get(item.id);
-        // Boja = PROJEKT. Ranije je boja kodirala vrstu, a skoro sve je vrsta
-        // „nalog", pa je cijelo platno bilo jedna plava masa i projekti se nisu
-        // razlikovali. Ručno postavljena boja bloka i dalje ima prednost.
-        // ...ali SAMO za radne blokove. Rok je crven a materijal narandžast jer je
-        // to značenje vrste, ne identitet projekta — te boje ostaju netaknute.
+        // Boja = PROJEKT, ali kao MEKA TINTA s tamnim tekstom i tankom kapicom
+        // (ink) lijevo — smireno i čitljivo i kad ih je dvadeset. Vrijedi samo za
+        // radne blokove; rok/narudžba zadržavaju semantičku boju (crveno/žuto).
         const isWorkKind = item.kind === 'order' || item.kind === 'montaza';
-        const hue = item.color
-            || (isWorkKind ? projectHue(item.projectRef?.id || item.projectRef?.name) : undefined);
-        // Naziv koji ne stane U traku ispisuje se PORED nje. Bez ovoga na
-        // mjesečnom zumu nijedan blok nije imao natpis.
+        const colors = isWorkKind ? projectColors(item.projectRef?.id || item.projectRef?.name) : null;
+        // Naziv koji ne stane U traku ostaje prazan — ime je u lijevoj koloni.
         const fits = eff.width > MIN_LABEL_WIDTH;
         // Projekt uz dobavljača — korisno u prikazu po dobavljaču / jednom redu; u prikazu
         // „po projektu" je red već projekt, pa je suvišno (i znalo bi se ne slagati s
@@ -670,12 +668,16 @@ export default function CanvasTab({
 
         return (
             <div key={item.id}
-                className={`cv-block k-${item.kind}${opts?.compact ? ' compact' : ''}${st ? ` s-${st.status}` : ''}${selected.has(item.id) ? ' selected' : ''}${linkedToSelection.has(item.id) ? ' linked' : ''}${item.locked ? ' locked' : ''}${item.isSent ? ' sent' : ''}${isDragged ? ' dragging' : ''}${eff.clippedStart ? ' clip-start' : ''}${eff.clippedEnd ? ' clip-end' : ''}`}
+                className={`cv-block k-${item.kind}${opts?.compact ? ' compact' : ''}${st ? ` s-${st.status}` : ''}${isWorkKind && !st ? ' is-draft' : ''}${selected.has(item.id) ? ' selected' : ''}${linkedToSelection.has(item.id) ? ' linked' : ''}${item.locked ? ' locked' : ''}${item.isSent ? ' sent' : ''}${isDragged ? ' dragging' : ''}${eff.clippedStart ? ' clip-start' : ''}${eff.clippedEnd ? ' clip-end' : ''}`}
                 style={{
                     left: eff.left,
                     width: Math.max(6, eff.width),
                     top: laneTop(lane),
-                    ...(hue ? { ['--cv-block-color' as string]: hue } : {}),
+                    ...(colors ? {
+                        ['--cv-bar' as string]: colors.bar,
+                        ['--cv-ink' as string]: colors.ink,
+                        ['--cv-txt' as string]: colors.txt,
+                    } : {}),
                 }}
                 onPointerDown={e => drag.onPointerDown(e, item.id, rowId, 'move')}
                 onPointerMove={drag.onPointerMove}
@@ -723,24 +725,23 @@ export default function CanvasTab({
         const gh = row.groupHeader!;
         const collapsed = collapsedGroups.has(gh.key);
         const env = gh.fromISO && gh.toISO ? blockRect(gh.fromISO, gh.toISO, vpp) : null;
+        const ink = row.colors?.ink;
+        const rangeTxt = gh.fromISO && gh.toISO ? `${dm(gh.fromISO)} – ${dm(gh.toISO)}` : '';
         return (
-            <div key={row.id} className={`cv-row cv-grouprow${collapsed ? ' collapsed' : ''}`} style={{ height: 40 }}>
-                <button className="cv-row-head cv-group-head" onClick={() => toggleGroup(gh.key)}
-                    title={collapsed ? 'Proširi' : 'Skupi'}>
-                    <ChevronDown size={14} className="cv-group-caret" />
-                    <span className="cv-group-dot" style={{ background: row.hue }} />
-                    <span className="cv-group-meta">
-                        <span className="cv-group-name" title={row.label}>{row.label}</span>
-                        <span className="cv-group-sub">
-                            {gh.count} {gh.count === 1 ? 'nalog' : 'naloga'}
-                            {gh.draftCount > 0 && <> · {gh.draftCount} nacrt</>}
-                        </span>
-                    </span>
+            <div key={row.id} className={`cv-grouprow${collapsed ? ' collapsed' : ''}`}>
+                <button className="cv-group-head" onClick={() => toggleGroup(gh.key)}
+                    title={collapsed ? 'Proširi projekt' : 'Skupi projekt'}>
+                    <ChevronDown size={13} className="cv-group-caret" />
+                    <span className="cv-group-dot" style={{ background: ink }} />
+                    <span className="cv-group-name" title={row.label}>{row.label}</span>
+                    <span className="cv-group-ct">{gh.count}</span>
+                    {gh.draftCount > 0 && <span className="cv-group-draft">{gh.draftCount} nacrt</span>}
+                    {rangeTxt && <span className="cv-group-rng">{rangeTxt}</span>}
                 </button>
-                <div className="cv-row-lane">
-                    {env && env.visible && (
+                <div className="cv-row-lane cv-group-lane">
+                    {collapsed && env && env.visible && (
                         <div className="cv-envelope"
-                            style={{ left: env.left, width: Math.max(6, env.width), background: row.hue }} />
+                            style={{ left: env.left, width: Math.max(6, env.width), background: ink }} />
                     )}
                 </div>
             </div>
@@ -1020,9 +1021,12 @@ export default function CanvasTab({
                                         ) : (
                                             <div className={`cv-row-head${row.groupKey ? ' cv-order-head' : ''}`}
                                                 onClick={row.groupKey ? () => { const b = row.blocks[0]; if (b) { dispatch({ type: 'SELECT', ids: [b.id] }); setDrawerId(b.id); } } : undefined}
-                                                style={row.hue && row.groupKey ? { ['--cv-row-hue' as string]: row.hue } : undefined}>
-                                                <span className="cv-row-label" title={row.label}>{row.label}</span>
-                                                {row.sublabel && <span className="cv-row-sub" title={row.sublabel}>{row.sublabel}</span>}
+                                                style={row.colors && row.groupKey ? { ['--cv-row-hue' as string]: row.colors.ink } : undefined}>
+                                                {row.groupKey && <span className="cv-order-cap" />}
+                                                <span className="cv-order-meta">
+                                                    <span className="cv-row-label" title={row.label}>{row.label}</span>
+                                                    {row.sublabel && <span className="cv-row-sub" title={row.sublabel}>{row.sublabel}</span>}
+                                                </span>
                                             </div>
                                         )}
 

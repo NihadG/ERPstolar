@@ -13,7 +13,7 @@
 import type {
     PlanScenario, PlanBlock, PlanBlockKind, PlanGroupBy, PlanLayout, PlanRef, Worker, WorkOrder, WorkerAttendance,
 } from '../types';
-import { projectHue, NO_PROJECT_HUE } from './palette';
+import { projectColors, NO_PROJECT_COLORS, type ProjectColors } from './palette';
 
 /** Sekcije platna, odozgo nadolje. Obaveze su na vrhu jer su fiksne tačke. */
 export type CanvasSection = 'obaveze' | 'plan' | 'nalozi' | 'radnici' | 'nabavka';
@@ -80,8 +80,8 @@ export interface CanvasRow {
         /** Rok projekta, ako postoji. */
         dueISO?: string;
     };
-    /** Boja projekta ovog reda (za lijevu kolonu i traku). */
-    hue?: string;
+    /** Boje projekta ovog reda (kapica, tinta trake, tekst). */
+    colors?: ProjectColors;
     /** Red pripada grupi s ovim ključem — za skupljanje. */
     groupKey?: string;
 }
@@ -255,15 +255,15 @@ function buildRowsPerOrder(scenario: PlanScenario, ctx: RowContext): CanvasRow[]
     // ── Grupiši naloge po projektu ──────────────────────────────
     const workBlocks = blocks.filter(b => WORK_KINDS.has(b.kind));
     const UNASSIGNED = '__unassigned__';
-    const grouped = new Map<string, { label: string; hue: string; blocks: PlanBlock[]; projectId?: string }>();
+    const grouped = new Map<string, { label: string; colors: ProjectColors; blocks: PlanBlock[]; projectId?: string }>();
     for (const b of workBlocks) {
         const pr = b.projectRef;
         const key = pr ? (pr.id || `name:${pr.name}`) : UNASSIGNED;
         const label = pr ? pr.name : 'Bez projekta';
-        // Ista neutralna nijansa koju traka dobija kroz projectHue(undefined) —
-        // da se akcent reda i traka ne raziđu u dvije različite sive.
+        // Iste boje koje traka dobija kroz projectColors — da se akcent reda i
+        // ispuna trake ne raziđu.
         const entry = grouped.get(key)
-            || { label, hue: pr ? projectHue(pr.id || pr.name) : NO_PROJECT_HUE, blocks: [], projectId: pr?.id };
+            || { label, colors: pr ? projectColors(pr.id || pr.name) : NO_PROJECT_COLORS, blocks: [], projectId: pr?.id };
         entry.blocks.push(b);
         grouped.set(key, entry);
     }
@@ -287,7 +287,7 @@ function buildRowsPerOrder(scenario: PlanScenario, ctx: RowContext): CanvasRow[]
             section: 'plan',
             blocks: [],
             shadows: [],
-            hue: entry.hue,
+            colors: entry.colors,
             synthetic: key === UNASSIGNED,
             groupHeader: { key, count: ordered.length, fromISO, toISO, draftCount },
         });
@@ -303,7 +303,7 @@ function buildRowsPerOrder(scenario: PlanScenario, ctx: RowContext): CanvasRow[]
                 section: 'plan',
                 blocks: [b, ...supplies],
                 shadows: [],
-                hue: entry.hue,
+                colors: entry.colors,
                 groupKey: key,
             });
         }
