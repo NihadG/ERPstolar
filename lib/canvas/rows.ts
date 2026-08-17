@@ -13,6 +13,7 @@
 import type {
     PlanScenario, PlanBlock, PlanBlockKind, PlanGroupBy, PlanLayout, PlanRef, Worker, WorkOrder, WorkerAttendance,
 } from '../types';
+import { projectHue } from './palette';
 
 /** Sekcije platna, odozgo nadolje. Obaveze su na vrhu jer su fiksne tačke. */
 export type CanvasSection = 'obaveze' | 'plan' | 'nalozi' | 'radnici' | 'nabavka';
@@ -62,6 +63,27 @@ export interface CanvasRow {
     shadows: ShadowBar[];
     /** Sintetički red („Nedodijeljeno") — nema stvarnog entiteta iza sebe. */
     synthetic?: boolean;
+    /**
+     * Naslovni red grupe (npr. ime projekta) — nema vlastite trake, samo dijeli
+     * naloge ispod. Klik ga skuplja/širi. Sažetak trake stoji na desnoj strani.
+     */
+    groupHeader?: {
+        /** Ključ grupe — za pamćenje skupljenog stanja. */
+        key: string;
+        /** Broj naloga u grupi. */
+        count: number;
+        /** Raspon grupe (za mini-traku u zaglavlju). */
+        fromISO?: string;
+        toISO?: string;
+        /** Koliko naloga još nije stvarni nalog (nacrt). */
+        draftCount: number;
+        /** Rok projekta, ako postoji. */
+        dueISO?: string;
+    };
+    /** Boja projekta ovog reda (za lijevu kolonu i traku). */
+    hue?: string;
+    /** Red pripada grupi s ovim ključem — za skupljanje. */
+    groupKey?: string;
 }
 
 export interface RowContext {
@@ -184,9 +206,126 @@ export function buildRows(
     ctx: RowContext,
     layout: PlanLayout = 'detailed'
 ): CanvasRow[] {
+    if (layout === 'rows') return buildRowsPerOrder(scenario, ctx);
     if (layout === 'unified-project') return buildUnifiedRows(scenario, ctx, 'project');
     if (layout === 'unified-global') return buildUnifiedRows(scenario, ctx, 'global');
     return buildDetailedRows(scenario, groupBy, ctx);
+}
+
+// ── Jedan nalog = jedan red ─────────────────────────────────────────
+
+const WORK_KINDS = new Set<PlanBlockKind>(['order', 'montaza']);
+
+/**
+ * JEDAN NALOG = JEDAN RED. Naslagati 20 naloga u trake jednog reda je nečitljivo
+ * čim ih je više od par: trake se preklapaju, nazivi ne stanu, i ne vidi se šta
+ * je šta. Ovdje svaki nalog dobija svoj tanak red, a ime stoji u lijevoj FIKSNOJ
+ * koloni — uvijek čitljivo, bez obzira na zum. Traka nosi samo VRIJEME.
+ *
+ * Nalozi su grupisani po projektu (naslovni red se može skupiti). Narudžba koja
+ * hrani nalog crta se kao tanka traka ispod njega u istom redu. Rokovi ostaju u
+ * sekciji Obaveze, radnici u svojoj sekciji.
+ */
+function buildRowsPerOrder(scenario: PlanScenario, ctx: RowContext): CanvasRow[] {
+    const rows: CanvasRow[] = [];
+    const blocks = scenario.Blocks;
+
+    // ── OBAVEZE: rokovi i transport na vrhu, u jednom redu ──────
+    const commitments = blocks.filter(b => b.kind === 'milestone' || b.kind === 'transport').sort(byStart);
+    if (commitments.length) {
+        rows.push({
+            id: 'sec-obaveze', label: 'Rokovi i transport', section: 'obaveze',
+            blocks: commitments, shadows: [],
+        });
+    }
+
+    // ── Narudžba pripada nalogu koji hrani (delivery-to-start veza) ──
+    const suppliesByOrder = new Map<string, PlanBlock[]>();
+    const linkedPurchase = new Set<string>();
+    for (const l of scenario.Links) {
+        if (l.kind !== 'delivery-to-start') continue;
+        const purchase = blocks.find(b => b.id === l.from);
+        if (purchase?.kind !== 'purchase') continue;
+        const arr = suppliesByOrder.get(l.to) || [];
+        arr.push(purchase);
+        suppliesByOrder.set(l.to, arr);
+        linkedPurchase.add(purchase.id);
+    }
+
+    // ── Grupiši naloge po projektu ──────────────────────────────
+    const workBlocks = blocks.filter(b => WORK_KINDS.has(b.kind));
+    const UNASSIGNED = '__unassigned__';
+    const grouped = new Map<string, { label: string; hue: string; blocks: PlanBlock[]; projectId?: string }>();
+    for (const b of workBlocks) {
+        const pr = b.projectRef;
+        const key = pr ? (pr.id || `name:${pr.name}`) : UNASSIGNED;
+        const label = pr ? pr.name : 'Bez projekta';
+        const entry = grouped.get(key)
+            || { label, hue: pr ? projectHue(pr.id || pr.name) : '#8a94a6', blocks: [], projectId: pr?.id };
+        entry.blocks.push(b);
+        grouped.set(key, entry);
+    }
+
+    const groupEntries = Array.from(grouped.entries()).sort(([ka, a], [kb, bb]) => {
+        if (ka === UNASSIGNED) return 1;
+        if (kb === UNASSIGNED) return -1;
+        return a.label.localeCompare(bb.label, 'hr');
+    });
+
+    for (const [key, entry] of groupEntries) {
+        const ordered = entry.blocks.slice().sort(byStart);
+        const fromISO = ordered.reduce((a, b) => (b.startISO < a ? b.startISO : a), ordered[0].startISO);
+        const toISO = ordered.reduce((a, b) => (b.endISO > a ? b.endISO : a), ordered[0].endISO);
+        const draftCount = ordered.filter(b => !b.linkedWorkOrderId && !b.linkedOrderId).length;
+
+        // Naslovni red projekta
+        rows.push({
+            id: `grp-${key}`,
+            label: entry.label,
+            section: 'plan',
+            blocks: [],
+            shadows: [],
+            hue: entry.hue,
+            synthetic: key === UNASSIGNED,
+            groupHeader: { key, count: ordered.length, fromISO, toISO, draftCount },
+        });
+
+        // Jedan red po nalogu
+        for (const b of ordered) {
+            const supplies = suppliesByOrder.get(b.id) || [];
+            const crew = (b.workerRefs || []).map(w => w.name).join(', ');
+            rows.push({
+                id: `ord-${b.id}`,
+                label: b.title,
+                sublabel: crew || undefined,
+                section: 'plan',
+                blocks: [b, ...supplies],
+                shadows: [],
+                hue: entry.hue,
+                groupKey: key,
+            });
+        }
+    }
+
+    // ── RADNICI ─────────────────────────────────────────────────
+    rows.push(...buildWorkerRows(scenario, ctx));
+
+    // ── NABAVKA: narudžbe koje ne hrane nijedan nalog ───────────
+    const looseSupplies = blocks.filter(b => b.kind === 'purchase' && !linkedPurchase.has(b.id));
+    if (looseSupplies.length) {
+        const bySupplier = new Map<string, { label: string; blocks: PlanBlock[] }>();
+        for (const b of looseSupplies) {
+            const k = b.supplierRef?.id || `name:${b.supplierRef?.name || 'Nepoznat'}`;
+            const e = bySupplier.get(k) || { label: b.supplierRef?.name || 'Nepoznat dobavljač', blocks: [] };
+            e.blocks.push(b);
+            bySupplier.set(k, e);
+        }
+        for (const [k, e] of Array.from(bySupplier.entries()).sort(([, a], [, b]) => a.label.localeCompare(b.label, 'hr'))) {
+            rows.push({ id: `nabavka-${k}`, label: e.label, section: 'nabavka', blocks: e.blocks.sort(byStart), shadows: [] });
+        }
+    }
+
+    return rows;
 }
 
 function buildDetailedRows(

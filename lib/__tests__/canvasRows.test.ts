@@ -208,3 +208,71 @@ describe('redovi radnika', () => {
         expect(buildRows(emptyScenario('org'), 'project', ctx())).toEqual([]);
     });
 });
+
+// ── Layout 'rows': jedan nalog = jedan red ──────────────────────────
+describe("layout 'rows' — red po nalogu", () => {
+    const blocks = [
+        newBlock('order', '2026-08-03', '2026-08-07', {
+            id: 'o1', title: 'Kuhinja korpus', projectRef: { id: 'p1', name: 'Villa' },
+            workerRefs: [{ id: 'w1', name: 'Ismet' }],
+        }),
+        newBlock('order', '2026-08-10', '2026-08-14', {
+            id: 'o2', title: 'Kuhinja fronte', projectRef: { id: 'p1', name: 'Villa' },
+        }),
+        newBlock('order', '2026-08-03', '2026-08-06', {
+            id: 'o3', title: 'Ograda', // bez projekta
+        }),
+    ];
+
+    test('svaki nalog dobija svoj red, ime = naslov naloga', () => {
+        const rows = buildRows(scenarioWith(blocks), 'project', ctx(), 'rows');
+        const orderRows = rows.filter(r => r.id.startsWith('ord-'));
+        expect(orderRows.map(r => r.label).sort()).toEqual(['Kuhinja fronte', 'Kuhinja korpus', 'Ograda']);
+        // Svaki red nosi tačno svoj blok
+        expect(orderRows.find(r => r.label === 'Kuhinja korpus')!.blocks.map(b => b.id)).toEqual(['o1']);
+    });
+
+    test('nalozi grupisani po projektu s naslovnim redom', () => {
+        const rows = buildRows(scenarioWith(blocks), 'project', ctx(), 'rows');
+        const headers = rows.filter(r => r.groupHeader);
+        expect(headers.map(h => h.label)).toEqual(['Villa', 'Bez projekta']);
+        expect(headers.find(h => h.label === 'Villa')!.groupHeader!.count).toBe(2);
+    });
+
+    test('„Bez projekta" grupa ide na kraj', () => {
+        const rows = buildRows(scenarioWith(blocks), 'project', ctx(), 'rows');
+        const headers = rows.filter(r => r.groupHeader);
+        expect(headers[headers.length - 1].label).toBe('Bez projekta');
+    });
+
+    test('order redovi nose groupKey grupe kojoj pripadaju', () => {
+        const rows = buildRows(scenarioWith(blocks), 'project', ctx(), 'rows');
+        const villa = rows.filter(r => r.id.startsWith('ord-') && r.label!.startsWith('Kuhinja'));
+        const key = rows.find(r => r.label === 'Villa')!.groupHeader!.key;
+        expect(villa.every(r => r.groupKey === key)).toBe(true);
+    });
+
+    test('narudžba koja hrani nalog crta se u istom redu (sekundarno)', () => {
+        const purchase = newBlock('purchase', '2026-08-01', '2026-08-02', { id: 'm1', title: 'Furnir' });
+        const s: PlanScenario = {
+            ...scenarioWith([blocks[0], purchase]),
+            Links: [{ id: 'l1', from: 'm1', to: 'o1', kind: 'delivery-to-start' }] as PlanScenario['Links'],
+        };
+        const rows = buildRows(s, 'project', ctx(), 'rows');
+        const orderRow = rows.find(r => r.id === 'ord-o1')!;
+        expect(orderRow.blocks.map(b => b.id)).toEqual(['o1', 'm1']);
+    });
+
+    test('rok (milestone) ostaje u sekciji obaveze', () => {
+        const milestone = newBlock('milestone', '2026-08-20', '2026-08-20', { id: 'ms', title: 'Rok' });
+        const rows = buildRows(scenarioWith([blocks[0], milestone]), 'project', ctx(), 'rows');
+        expect(rows.find(r => r.section === 'obaveze')!.blocks.map(b => b.id)).toEqual(['ms']);
+        // Milestone NIJE dobio vlastiti order red
+        expect(rows.some(r => r.id === 'ord-ms')).toBe(false);
+    });
+
+    test('radnici ostaju zasebna sekcija', () => {
+        const rows = buildRows(scenarioWith(blocks), 'project', ctx(), 'rows');
+        expect(rows.filter(r => r.section === 'radnici').map(r => r.label)).toContain('Ismet');
+    });
+});

@@ -1823,4 +1823,4 @@ export interface PlanScenario {
 }
 
 /** Kako se slažu redovi platna — objedinjeno ili razdvojeno po vrsti. */
-export type PlanLayout = 'unified-project' | 'unified-global' | 'detailed';
+export type PlanLayout = 'rows' | 'unified-project' | 'unified-global' | 'detailed';

@@ -12,7 +12,7 @@
 // Autosave scenarija i dalje ne dira ništa van `planning_scenarios`.
 // ════════════════════════════════════════════════════════════════════
 
-import { useState, useEffect, useMemo, useRef, useCallback, Fragment } from 'react';
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import {
     Plus, Copy, Undo2, Redo2, ChevronLeft, ChevronRight, ChevronDown, Loader2,
     Lock, AlertTriangle, Users, Trash2, Save, Link2, Package, Bookmark, Printer,
@@ -59,7 +59,7 @@ import { projectHue } from '@/lib/canvas/palette';
 import {
     HEADER_WIDTH, TIMELINE_HEADER_HEIGHT, MIN_LABEL_WIDTH, RESIZE_HANDLE_PX,
     blockRect, packLanes, rowHeight, laneTop, headerTicks, monthBands,
-    dateAtX, xForDate, anchorCentering, anchorLeading, dayWidth, nonWorkingBands, LANE_HEIGHT,
+    dateAtX, xForDate, anchorCentering, anchorLeading, dayWidth, nonWorkingBands,
     type Viewport, type BlockRect,
 } from '@/lib/canvas/geometry';
 import {
@@ -86,11 +86,13 @@ interface CanvasTabProps {
 const ZOOMS: PlanZoom[] = ['dan', 'sedmica', 'mjesec'];
 const GROUPS: PlanGroupBy[] = ['project', 'worker', 'supplier', 'kind'];
 const LAYOUTS: { key: PlanLayout; label: string }[] = [
+    { key: 'rows', label: 'Nalozi — red po nalogu' },
     { key: 'unified-project', label: 'Objedinjeno — po projektu' },
     { key: 'unified-global', label: 'Objedinjeno — jedan red' },
     { key: 'detailed', label: 'Detaljno — po vrsti' },
 ];
 const LAYOUT_SHORT: Record<PlanLayout, string> = {
+    rows: 'Nalozi',
     'unified-project': 'Projekt',
     'unified-global': 'Jedan red',
     detailed: 'Detaljno',
@@ -138,6 +140,15 @@ export default function CanvasTab({
     const [reviewResult, setReviewResult] = useState<AutoScheduleResult | null>(null);
     /** Radnik čiji je mjesečni kalendar otvoren (klik na ime u sekciji Radnici). */
     const [calendarWorkerId, setCalendarWorkerId] = useState<string | null>(null);
+    /** Skupljeni projekti (grupe naloga) — po ključu grupe. */
+    const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
+    const toggleGroup = useCallback((key: string) => {
+        setCollapsedGroups(prev => {
+            const next = new Set(prev);
+            if (next.has(key)) next.delete(key); else next.add(key);
+            return next;
+        });
+    }, []);
 
     const { state, dispatch, saveState, canUndo, canRedo, saveNow, reloadRemote, forceOverwrite } =
         useScenario(orgId, loaded);
@@ -159,7 +170,7 @@ export default function CanvasTab({
 
     const zoom = scenario.View?.zoom || 'sedmica';
     const groupBy = scenario.View?.groupBy || 'project';
-    const layout = scenario.View?.layout || 'unified-project';
+    const layout = scenario.View?.layout || 'rows';
     const anchorISO = scenario.View?.anchorISO || todayISO();
     const vp: Viewport = useMemo(() => ({ anchorISO, zoom, widthPx }), [anchorISO, zoom, widthPx]);
 
@@ -658,8 +669,7 @@ export default function CanvasTab({
             ? (item.projectRef?.name || '') : '';
 
         return (
-            <Fragment key={item.id}>
-            <div
+            <div key={item.id}
                 className={`cv-block k-${item.kind}${opts?.compact ? ' compact' : ''}${st ? ` s-${st.status}` : ''}${selected.has(item.id) ? ' selected' : ''}${linkedToSelection.has(item.id) ? ' linked' : ''}${item.locked ? ' locked' : ''}${item.isSent ? ' sent' : ''}${isDragged ? ' dragging' : ''}${eff.clippedStart ? ' clip-start' : ''}${eff.clippedEnd ? ' clip-end' : ''}`}
                 style={{
                     left: eff.left,
@@ -701,23 +711,39 @@ export default function CanvasTab({
                         onPointerUp={drag.onPointerUp} />
                 )}
             </div>
+        );
+    };
 
-            {/* Naziv izlazi PORED trake kad u nju ne stane — uska traka tako i
-                dalje kaže šta je, umjesto da bude bezimena mrlja. */}
-            {!fits && !eff.clippedEnd && (
-                <div key={`${item.id}-spill`} className="cv-spill"
-                    style={{
-                        left: eff.left + Math.max(6, eff.width) + 5,
-                        top: laneTop(lane),
-                        height: opts?.compact ? 18 : LANE_HEIGHT,
-                        ...(hue ? { ['--cv-block-color' as string]: hue } : {}),
-                    }}
-                    onPointerDown={e => drag.onPointerDown(e, item.id, rowId, 'move')}
-                    title={item.title}>
-                    {item.title}
+    /**
+     * Naslovni red grupe (projekt). Skuplja/širi naloge, i pokazuje raspon grupe
+     * kao tanku „ovojnicu" u boji projekta — vidi se KADA je projekt aktivan i
+     * kad je skupljen. Sažetak (broj naloga, nacrti, rok) stoji u lijevoj koloni.
+     */
+    const renderGroupHeader = (row: CanvasRow, vpp: Viewport) => {
+        const gh = row.groupHeader!;
+        const collapsed = collapsedGroups.has(gh.key);
+        const env = gh.fromISO && gh.toISO ? blockRect(gh.fromISO, gh.toISO, vpp) : null;
+        return (
+            <div key={row.id} className={`cv-row cv-grouprow${collapsed ? ' collapsed' : ''}`} style={{ height: 40 }}>
+                <button className="cv-row-head cv-group-head" onClick={() => toggleGroup(gh.key)}
+                    title={collapsed ? 'Proširi' : 'Skupi'}>
+                    <ChevronDown size={14} className="cv-group-caret" />
+                    <span className="cv-group-dot" style={{ background: row.hue }} />
+                    <span className="cv-group-meta">
+                        <span className="cv-group-name" title={row.label}>{row.label}</span>
+                        <span className="cv-group-sub">
+                            {gh.count} {gh.count === 1 ? 'nalog' : 'naloga'}
+                            {gh.draftCount > 0 && <> · {gh.draftCount} nacrt</>}
+                        </span>
+                    </span>
+                </button>
+                <div className="cv-row-lane">
+                    {env && env.visible && (
+                        <div className="cv-envelope"
+                            style={{ left: env.left, width: Math.max(6, env.width), background: row.hue }} />
+                    )}
                 </div>
-            )}
-            </Fragment>
+            </div>
         );
     };
 
@@ -942,7 +968,14 @@ export default function CanvasTab({
                     {sections.map(sec => (
                         <div key={sec.section} className="cv-section">
                             <div className="cv-section-head">{SECTION_LABEL[sec.section]}</div>
-                            {sec.rows.map(row => {
+                            {sec.rows
+                                .filter(row => !(row.groupKey && collapsedGroups.has(row.groupKey)))
+                                .map(row => {
+                                // Naslovni red grupe (projekt): skuplja/širi naloge ispod. Nema traka,
+                                // samo sažetak raspona i broja naloga na desnoj strani.
+                                if (row.groupHeader) {
+                                    return renderGroupHeader(row, vp);
+                                }
                                 // Objedinjeni red: nalog (primarni) je okosnica, ostalo (narudžba/
                                 // transport/rok) ide u sekundarni sloj ispod. Detaljni red: sve primarno.
                                 const isUnified = layout !== 'detailed';
@@ -985,9 +1018,11 @@ export default function CanvasTab({
                                                 {row.sublabel && <span className="cv-row-sub">{row.sublabel}</span>}
                                             </button>
                                         ) : (
-                                            <div className="cv-row-head">
+                                            <div className={`cv-row-head${row.groupKey ? ' cv-order-head' : ''}`}
+                                                onClick={row.groupKey ? () => { const b = row.blocks[0]; if (b) { dispatch({ type: 'SELECT', ids: [b.id] }); setDrawerId(b.id); } } : undefined}
+                                                style={row.hue && row.groupKey ? { ['--cv-row-hue' as string]: row.hue } : undefined}>
                                                 <span className="cv-row-label" title={row.label}>{row.label}</span>
-                                                {row.sublabel && <span className="cv-row-sub">{row.sublabel}</span>}
+                                                {row.sublabel && <span className="cv-row-sub" title={row.sublabel}>{row.sublabel}</span>}
                                             </div>
                                         )}
 
