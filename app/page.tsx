@@ -568,8 +568,10 @@ export default function Home() {
             {/* Main Content Area */}
             <div className={`main-content-wrapper ${sidebarCollapsed ? 'sidebar-collapsed' : ''}${isMobile ? ' mobile-nav' : ''}`}>
 
-                {/* Content */}
-                <main className="content-area">
+                {/* Content — Platno je vremenska osa: dobija PUNU širinu (bez 1400px
+                    kape), da graf iskoristi bočni prostor na velikom monitoru.
+                    Ostali tabovi (forme, tabele) ostaju na čitkoj širini. */}
+                <main className={`content-area${activeTab === 'platno' ? ' content-area--wide' : ''}`}>
                     {activeTab === 'projects' && (
                         <ProjectsTab
                             projects={appState.projects}
@@ -781,6 +783,14 @@ export default function Home() {
                     margin: 0 auto;
                     width: 100%;
                     box-sizing: border-box;
+                }
+
+                /* Platno: skini 1400px kapu i suzi bočni padding — graf se prostire
+                   preko cijele raspoložive širine (minus sidebar). */
+                .content-area--wide {
+                    max-width: none;
+                    padding-left: 20px;
+                    padding-right: 20px;
                 }
 
                 @media (max-width: 768px) {

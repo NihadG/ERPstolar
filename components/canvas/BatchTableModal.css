@@ -140,13 +140,19 @@
 .btt-table tbody tr:hover td { background: var(--accent-light); }
 
 /* Fiksne širine: `table-layout: fixed` znači da duga imena proizvoda ne
-   razvlače tabelu — čipovi se prelome, kolone ostanu poravnate. */
+   razvlače tabelu — čipovi se prelome, kolone ostanu poravnate.
+
+   BUDŽET ŠIRINE: naziv naloga NEMA svoju širinu — upija ostatak reda. Zato su
+   čip-kolone (proizvodi/radnici/grupe) namjerno skromne (čipovi se ionako lome
+   u više redova), a „Početak" dovoljno širok da stane CIJEO datum + oznaka
+   (auto / nadovezano / pribadača). Ranije je naziv dobijao mrvicu, a datum se
+   sjekao na „08/18/2…" jer je 150px dijelio s dugom riječi „nadovezano". */
 .btt-table .c-idx { line-height: var(--btt-ctl); width: 58px; color: var(--text-secondary); font-variant-numeric: tabular-nums; white-space: nowrap; }
-.btt-table .c-prod { width: 20%; }
-.btt-table .c-wrk { width: 18%; }
-.btt-table .c-crew { width: 20%; }
+.btt-table .c-prod { width: 18%; }
+.btt-table .c-wrk { width: 14%; }
+.btt-table .c-crew { width: 16%; }
 .btt-table .c-dur { width: 104px; }
-.btt-table .c-start { width: 150px; }
+.btt-table .c-start { width: 200px; }
 .btt-table .c-rd { line-height: var(--btt-ctl); width: 56px; text-align: right; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
 .btt-table .c-rd strong { color: var(--text-primary); font-weight: 650; }
 .btt-table .c-act { line-height: var(--btt-ctl); width: 72px; text-align: right; white-space: nowrap; }
@@ -195,7 +201,9 @@
 
 .btt-shell .c-name .btt-in { font-weight: 600; }
 .btt-shell .btt-in.num { width: 56px; text-align: center; font-variant-numeric: tabular-nums; }
-.btt-shell .btt-in.date { font-variant-numeric: tabular-nums; font-size: var(--cm-fs-xs); }
+/* min-width = pun datum („08/18/2026" + ikonica) NE smije da se skrati; ako je
+   red uzak, popušta oznaka pored (auto/nadovezano), ne sam datum. */
+.btt-shell .btt-in.date { font-variant-numeric: tabular-nums; font-size: var(--cm-fs-xs); min-width: 106px; }
 
 .btt-dur-cell { display: flex; align-items: center; gap: var(--cm-sp-1); }
 .btt-unit { font-size: var(--cm-fs-micro); color: var(--text-secondary); }
@@ -236,7 +244,11 @@
     letter-spacing: .04em;
     color: var(--text-secondary);
     white-space: nowrap;
-    flex-shrink: 0;
+    /* Oznaka popušta prije datuma: ako red ipak zafali, ona se skrati (…), a
+       datum ostane cijeo — obrnuto od ranijeg ponašanja. */
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 /* ── Čipovi (proizvodi / radnici) ────────────────────────────── */

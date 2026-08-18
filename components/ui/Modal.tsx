@@ -12,7 +12,7 @@ interface ModalProps {
     title: ReactNode;
     children: ReactNode;
     footer?: ReactNode;
-    size?: 'default' | 'large' | 'xl' | 'fullscreen';
+    size?: 'default' | 'large' | 'xl' | 'fullscreen' | 'fullscreen-wide';
     zIndex?: number; // For nested modals
 }
 
@@ -69,7 +69,8 @@ export default function Modal({ isOpen, onClose, title, children, footer, size =
 
     const sizeClass = size === 'large' ? 'modal-large' :
         size === 'xl' ? 'modal-xl' :
-            size === 'fullscreen' ? 'modal-fullscreen' : '';
+            size === 'fullscreen' ? 'modal-fullscreen' :
+                size === 'fullscreen-wide' ? 'modal-fullscreen modal-fullscreen-wide' : '';
 
     const overlayStyle = zIndex ? { zIndex: zIndex } : {};
     const modalStyle = zIndex ? { zIndex: zIndex + 1 } : {};

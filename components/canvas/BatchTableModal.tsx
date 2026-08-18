@@ -282,7 +282,7 @@ export default function BatchTableModal({
             isOpen={isOpen}
             onClose={onClose}
             title={<><ClipboardList size={17} /> Brzi unos naloga</>}
-            size="fullscreen"
+            size="fullscreen-wide"
             footer={
                 <div className="btt-foot">
                     <span className="btt-seg-lbl">Rasporedi:</span>

@@ -2267,6 +2267,15 @@ textarea::placeholder {
   overflow-y: auto;
 }
 
+/* Široki fullscreen — za guste tabelarne ekrane (Batch unos naloga), ne za
+   forme. Na velikom monitoru iskoristi bočni prostor umjesto da stoji na 1400. */
+.modal-fullscreen-wide {
+  width: 97%;
+  max-width: 1800px;
+  height: 92vh;
+  max-height: 92vh;
+}
+
 .modal-header {
   display: flex;
   align-items: center;
