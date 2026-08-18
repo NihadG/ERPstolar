@@ -1329,6 +1329,52 @@ export async function getOfferProducts(offerId: string, organizationId: string):
     return products;
 }
 
+/**
+ * PROPAGACIJA CIJENE IZ PONUDE → NALOZI: kad se PRIHVAĆENA ponuda promijeni (izmjena
+ * cijene/usluga/dana ili prihvatanje revizije), preračunaj AKTIVNE naloge projekta.
+ * recalculateWorkOrder live-sinhronizuje prihod/usluge/planirani rad iz prihvaćene ponude,
+ * pa se profit odmah osvježi. Otkazani i završeni nalozi se PRESKAČU (završene stavke su
+ * ionako zamrznute; recalc ne smije oživjeti otkazani nalog jer status računa iz stavki).
+ */
+async function resyncWorkOrdersFromOffer(projectId: string, organizationId: string): Promise<void> {
+    try {
+        if (!projectId || !organizationId) return;
+        const itemsSnap = await getDocs(query(
+            collection(db, COLLECTIONS.WORK_ORDER_ITEMS),
+            where('Project_ID', '==', projectId),
+            where('Organization_ID', '==', organizationId),
+        ));
+        const woIds = Array.from(new Set(
+            itemsSnap.docs.map(d => d.data().Work_Order_ID as string).filter(Boolean)
+        ));
+        if (woIds.length === 0) return;
+
+        // Statusi naloga (chunk 'in', max 30) — recalc samo za aktivne (ne Otkazano/Završeno).
+        const activeWoIds: string[] = [];
+        for (let i = 0; i < woIds.length; i += 30) {
+            const chunk = woIds.slice(i, i + 30);
+            const woSnap = await getDocs(query(
+                collection(db, COLLECTIONS.WORK_ORDERS),
+                where('Work_Order_ID', 'in', chunk),
+                where('Organization_ID', '==', organizationId),
+            ));
+            woSnap.docs.forEach(d => {
+                const s = d.data().Status;
+                if (s !== 'Otkazano' && s !== 'Završeno') activeWoIds.push(d.data().Work_Order_ID);
+            });
+        }
+        if (activeWoIds.length === 0) return;
+
+        const { recalculateWorkOrder } = await import('./attendance');
+        for (const woId of activeWoIds) {
+            try { await recalculateWorkOrder(woId, { skipSnapshot: true }); }
+            catch (e) { console.warn('resyncWorkOrdersFromOffer: recalc failed', woId, e); }
+        }
+    } catch (e) {
+        console.warn('resyncWorkOrdersFromOffer failed (non-critical):', e);
+    }
+}
+
 export async function updateOfferWithProducts(offerData: any, organizationId: string): Promise<{ success: boolean; message: string }> {
     if (!organizationId) {
         return { success: false, message: 'Organization ID is required' };
@@ -1544,6 +1590,13 @@ export async function updateOfferWithProducts(offerData: any, organizationId: st
         // Commit all changes atomically
         await batch.commit();
 
+        // Ako je izmijenjena PRIHVAĆENA ponuda (npr. cijena proizvoda koji je ranije bio
+        // bez cijene, a već je u nalogu), propagiraj u aktivne naloge projekta odmah.
+        if (currentOfferStatus === 'Prihvaćeno') {
+            const projectId = offerSnap.docs[0].data().Project_ID;
+            await resyncWorkOrdersFromOffer(projectId, organizationId);
+        }
+
         return { success: true, message: 'Ponuda ažurirana' };
     } catch (error) {
         console.error('updateOfferWithProducts error:', error);
@@ -1666,6 +1719,13 @@ export async function updateOfferStatus(offerId: string, status: string, organiz
             }
 
             await updateDoc(snapshot.docs[0].ref, updateData);
+
+            // Prihvatanje ponude (uklj. prihvat revizije) mijenja AUTORITATIVNU cijenu
+            // proizvoda projekta → propagiraj u aktivne naloge da profit odmah reflektuje
+            // novu (revidiranu) ponudu, bez čekanja na neki drugi recalc.
+            if (status === 'Prihvaćeno' && offer.Project_ID) {
+                await resyncWorkOrdersFromOffer(offer.Project_ID, organizationId);
+            }
         }
 
         return { success: true, message: 'Status ponude ažuriran' };
@@ -2312,6 +2372,24 @@ export async function updateOfferProduct(data: Partial<OfferProduct>): Promise<{
         merged.Total_Price = merged.Selling_Price * (merged.Quantity || 1);
 
         await updateDoc(snapshot.docs[0].ref, merged as Record<string, unknown>);
+
+        // Ako proizvod pripada PRIHVAĆENOJ ponudi, propagiraj novu cijenu u aktivne naloge projekta.
+        try {
+            const orgId = (snapshot.docs[0].data() as any).Organization_ID;
+            if (merged.Offer_ID && orgId) {
+                const offSnap = await getDocs(query(
+                    collection(db, COLLECTIONS.OFFERS),
+                    where('Offer_ID', '==', merged.Offer_ID),
+                    where('Organization_ID', '==', orgId),
+                ));
+                if (!offSnap.empty) {
+                    const off = offSnap.docs[0].data();
+                    if (off.Status === 'Prihvaćeno' && off.Project_ID) {
+                        await resyncWorkOrdersFromOffer(off.Project_ID, orgId);
+                    }
+                }
+            }
+        } catch (e) { console.warn('updateOfferProduct: resync naloga preskočen:', e); }
 
         return { success: true, message: 'Proizvod ažuriran' };
     } catch (error) {
@@ -3468,31 +3546,39 @@ export async function startWorkOrder(workOrderId: string, organizationId: string
 
         // Update products to production step status (BOTH stores)
         const wo = snapshot.docs[0].data() as WorkOrder;
-        const firstStep = wo.Production_Steps[0];
+        // Proizvodni nalog čiji proizvodi NEMAJU plan procesa nema koraka
+        // (Production_Steps = []), pa je firstStep undefined. Ranije se ovo nikad nije
+        // dostiglo (takav nalog se nije mogao pokrenuti bez radnika); otkad se pokreće
+        // preko Assigned_Workers, guard sprječava updateDoc({ Status: undefined }) koji
+        // je rušio start ("Unsupported field value: undefined ... field Status"). Bez
+        // koraka status proizvoda ostaje nepromijenjen.
+        const firstStep = wo.Production_Steps?.[0];
 
         // Group product updates by project for efficient embedded array updates
         const projectProductUpdates = new Map<string, Map<string, string>>();
 
-        for (const itemDoc of itemsSnap.docs) {
-            const item = itemDoc.data() as WorkOrderItem;
+        if (firstStep) {
+            for (const itemDoc of itemsSnap.docs) {
+                const item = itemDoc.data() as WorkOrderItem;
 
-            // Update standalone PRODUCTS collection
-            const productQ = query(
-                collection(db, COLLECTIONS.PRODUCTS),
-                where('Product_ID', '==', item.Product_ID),
-                where('Organization_ID', '==', organizationId)
-            );
-            const productSnap = await getDocs(productQ);
-            if (!productSnap.empty) {
-                await updateDoc(productSnap.docs[0].ref, { Status: firstStep });
-            }
-
-            // Collect updates for embedded products array
-            if (item.Project_ID) {
-                if (!projectProductUpdates.has(item.Project_ID)) {
-                    projectProductUpdates.set(item.Project_ID, new Map());
+                // Update standalone PRODUCTS collection
+                const productQ = query(
+                    collection(db, COLLECTIONS.PRODUCTS),
+                    where('Product_ID', '==', item.Product_ID),
+                    where('Organization_ID', '==', organizationId)
+                );
+                const productSnap = await getDocs(productQ);
+                if (!productSnap.empty) {
+                    await updateDoc(productSnap.docs[0].ref, { Status: firstStep });
                 }
-                projectProductUpdates.get(item.Project_ID)!.set(item.Product_ID, firstStep);
+
+                // Collect updates for embedded products array
+                if (item.Project_ID) {
+                    if (!projectProductUpdates.has(item.Project_ID)) {
+                        projectProductUpdates.set(item.Project_ID, new Map());
+                    }
+                    projectProductUpdates.get(item.Project_ID)!.set(item.Product_ID, firstStep);
+                }
             }
         }
 

@@ -144,7 +144,7 @@ export {
     recalculateWorkOrder, recalculateAllActiveWorkOrders,
     syncProjectStatus, syncAllProjectData, runStartupSync,
     checkMissingAttendanceForActiveOrders, checkMissingAttendanceHistory,
-    assignWorkersToItem, toggleItemPause,
+    assignWorkersToItem, assignWorkersToOrder, toggleItemPause,
     calculateActualLaborCost, calculateSubTaskLaborCost,
     updateItemProcess, addProcessToOrderItem,
     createSubTasks, updateSubTask, moveSubTask,

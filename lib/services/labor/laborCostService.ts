@@ -310,6 +310,16 @@ export async function assignWorkersToItem(
     return _assign(workOrderId, itemId, workers, organizationId);
 }
 
+// BULK: ista ekipa na sve stavke naloga u jednom prolazu (jedan batch + jedan recalc).
+export async function assignWorkersToOrder(
+    workOrderId: string,
+    workers: any[],
+    organizationId: string
+): Promise<void> {
+    const { assignWorkersToOrder: _assign } = await import('../../attendance');
+    return _assign(workOrderId, workers, organizationId);
+}
+
 export async function toggleItemPause(
     workOrderId: string,
     itemId: string,

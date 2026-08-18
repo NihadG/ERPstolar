@@ -674,6 +674,23 @@ export default function WorkOrderWizard({
                     sum + (m.Unit_Price * m.Quantity), 0);
             }
 
+            // DODIJELJENA EKIPA STAVKE (Assigned_Workers): unija glavnih + pomoćnika iz SVIH
+            // dodjela (proizvodnja: CREW_KEY; montaža: po koraku). Ovo je "zvanična" dodjela
+            // koja PERZISTIRA neovisno o planu procesa — bez nje se radnik izabran u wizardu
+            // gubio kad proizvod nema plan (Processes = []), pa se nalog nije mogao pokrenuti
+            // ("Dodijelite barem jednog radnika"). Assigned_Workers je skup dodjele (članstvo)
+            // koji čitaju kartica naloga, Platno, grupisanje i auto-knjiženje — ne množilac
+            // troška (trošak dolazi iz šihtarice/knjige rada), pa je dodavanje bez finansijskog efekta.
+            const assignedWorkers = (() => {
+                const ids = new Set<string>();
+                Object.values(p.assignments || {}).forEach(id => { if (id) ids.add(id); });
+                Object.values(p.helperAssignments || {}).forEach(arr => (arr || []).forEach(id => { if (id) ids.add(id); }));
+                return Array.from(ids).map(id => {
+                    const w = workers.find(x => x.Worker_ID === id);
+                    return { Worker_ID: id, Worker_Name: w?.Name || 'Nepoznat', Daily_Rate: w?.Daily_Rate || 0 };
+                });
+            })();
+
             return {
                 Product_ID: p.Product_ID,
                 Product_Name: p.Product_Name,
@@ -681,6 +698,8 @@ export default function WorkOrderWizard({
                 Project_Name: p.Project_Name,
                 Quantity: p.Work_Order_Quantity,
                 Total_Product_Quantity: p.Quantity,
+                // Zvanična ekipa stavke — perzistira dodjelu iz wizarda i kad proizvod nema plan procesa.
+                Assigned_Workers: assignedWorkers.length ? assignedWorkers : undefined,
                 // MONTAŽA FIX: Zero out financial fields — revenue/costs already on production WO
                 Product_Value: isMontazaMode ? 0 : (offerProduct?.Selling_Price ? offerProduct.Selling_Price * p.Work_Order_Quantity : undefined),
                 Material_Cost: isMontazaMode ? 0 : (itemMaterialCost > 0 ? itemMaterialCost : undefined),

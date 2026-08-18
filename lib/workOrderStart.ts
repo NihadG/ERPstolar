@@ -27,11 +27,34 @@ export type StartCheckResult = { ok: true } | { ok: false; message: string };
  * Vraća prvu prepreku kao poruku, ili { ok: true }.
  */
 export async function checkWorkOrderStart(wo: WorkOrder, projects: Project[]): Promise<StartCheckResult> {
-    // 1) Bar jedan radnik
-    const hasWorker = (wo.items || []).some(item =>
-        (item.Processes || []).some(p => p.Worker_ID)
-    );
-    if (!hasWorker) {
+    // 1) Bar jedan radnik — dodjela može živjeti u Assigned_Workers (ekipa naloga,
+    //    npr. proizvod BEZ plana procesa → item.Processes je prazan), u Processes
+    //    (glavni + pomoćnici) ili u SubTasks. Ista definicija "dodijeljen" koju
+    //    koriste auto-knjiženje (isWorkerAssignedToAutoItem) i findWorkersToBookToday,
+    //    da se start-gate i knjiženje ne razilaze. Ranije se gledalo SAMO
+    //    Processes[].Worker_ID, pa se nalog s ekipom u Assigned_Workers nije mogao
+    //    pokrenuti ("Dodijelite barem jednog radnika", iako je radnik izabran).
+    const workerChecks: { workerId: string; label: string }[] = [];
+    const checked = new Set<string>();
+    const addWorker = (id?: string, label?: string) => {
+        if (!id || checked.has(id)) return;
+        checked.add(id);
+        workerChecks.push({ workerId: id, label: label || id });
+    };
+    for (const item of wo.items || []) {
+        (item.Assigned_Workers || []).forEach(w => addWorker(w.Worker_ID, w.Worker_Name));
+        for (const process of item.Processes || []) {
+            addWorker(process.Worker_ID, `${process.Worker_Name} (${process.Process_Name})`);
+            for (const helper of process.Helpers || []) {
+                addWorker(helper.Worker_ID, `${helper.Worker_Name} (pomoćnik za ${process.Process_Name})`);
+            }
+        }
+        for (const st of item.SubTasks || []) {
+            addWorker(st.Worker_ID, st.Worker_Name);
+            for (const helper of st.Helpers || []) addWorker(helper.Worker_ID, helper.Worker_Name);
+        }
+    }
+    if (workerChecks.length === 0) {
         return { ok: false, message: 'Dodijelite barem jednog radnika prije pokretanja naloga' };
     }
 
@@ -51,23 +74,7 @@ export async function checkWorkOrderStart(wo: WorkOrder, projects: Project[]): P
         return { ok: false, message: `Esencijalni materijali nisu spremni: ${missingMaterials.join(', ')}` };
     }
 
-    // 3) Prisustvo svih radnika (procesi + pomoćnici), paralelno; bez duplih provjera
-    const workerChecks: { workerId: string; label: string }[] = [];
-    const checked = new Set<string>();
-    for (const item of wo.items || []) {
-        for (const process of item.Processes || []) {
-            if (process.Worker_ID && !checked.has(process.Worker_ID)) {
-                checked.add(process.Worker_ID);
-                workerChecks.push({ workerId: process.Worker_ID, label: `${process.Worker_Name} (${process.Process_Name})` });
-            }
-            for (const helper of process.Helpers || []) {
-                if (helper.Worker_ID && !checked.has(helper.Worker_ID)) {
-                    checked.add(helper.Worker_ID);
-                    workerChecks.push({ workerId: helper.Worker_ID, label: `${helper.Worker_Name} (pomoćnik za ${process.Process_Name})` });
-                }
-            }
-        }
-    }
+    // 3) Prisustvo svih dodijeljenih radnika danas (skup je već sastavljen u koraku 1)
     const availability = await Promise.all(
         workerChecks.map(async ({ workerId, label }) => ({ label, res: await canWorkerStartProcess(workerId) }))
     );

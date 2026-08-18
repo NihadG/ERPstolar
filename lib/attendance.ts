@@ -2491,6 +2491,78 @@ export async function assignWorkersToItem(
 }
 
 /**
+ * BULK dodjela ISTE ekipe na CIJELI nalog — brza zamjena za N× assignWorkersToItem
+ * (koji je radio reconcile + recalculateWorkOrder PO STAVCI, pa je dodavanje jednog
+ * radnika na nalog sa 6 stavki značilo 6 teških prolaza). Ovdje:
+ *   1) Assigned_Workers na SVE stavke u JEDNOM batchu,
+ *   2) reconcile današnjih dnevnica JEDNOM po radniku (ekipa je uniformna → dodano/
+ *      uklonjeno vrijedi za sve stavke; resplit i onako gleda sve stavke radnika),
+ *   3) recalculateWorkOrder JEDNOM.
+ * Neto efekat je isti kao pojedinačni pozivi, bez N×-struke reconcile+recalc.
+ */
+export async function assignWorkersToOrder(
+    workOrderId: string,
+    workers: { Worker_ID: string; Worker_Name: string; Daily_Rate: number }[],
+    organizationId: string
+): Promise<void> {
+    try {
+        const firestore = getDb();
+        const today = formatLocalDateISO();
+        const itemsSnap = await getDocs(query(
+            collection(firestore, COLLECTIONS.WORK_ORDER_ITEMS),
+            where('Work_Order_ID', '==', workOrderId),
+            orgConstraint(organizationId),
+        ));
+        if (itemsSnap.empty) return;
+
+        const oldUnion = new Set<string>();
+        itemsSnap.docs.forEach(d => ((d.data().Assigned_Workers as any[]) || []).forEach(w => w?.Worker_ID && oldUnion.add(w.Worker_ID)));
+        const newIds = new Set(workers.map(w => w.Worker_ID));
+
+        // 1) Batch: ista ekipa na sve stavke (jedan commit)
+        const batch = writeBatch(firestore);
+        itemsSnap.docs.forEach(d => batch.update(d.ref, { Assigned_Workers: workers }));
+        await batch.commit();
+
+        const removed = Array.from(oldUnion).filter(id => !newIds.has(id));
+        const added = Array.from(newIds).filter(id => !oldUnion.has(id));
+
+        // 2a) Ukloni današnje dnevnice uklonjenih radnika na svim stavkama.
+        for (const workerId of removed) {
+            for (const d of itemsSnap.docs) {
+                await deleteWorkLogsForWorkerOnItem(workerId, (d.data() as any).ID, today, organizationId);
+            }
+        }
+        // 2b) Re-split dnevnice svih pogođenih radnika (jednom po radniku).
+        for (const workerId of Array.from(new Set([...removed, ...Array.from(newIds)]))) {
+            await resplitWorkerDailyRate(workerId, today, organizationId);
+        }
+        // 2c) Kreiraj dnevnice za DODANE radnike koji su DANAS prisutni (jednom po radniku).
+        //     Na nezapočet nalog createWorkLogsForAttendance ne knjiži (nalog nije aktivan) — jeftino.
+        for (const workerId of added) {
+            const attSnap = await getDocs(query(
+                collection(firestore, COLLECTIONS.WORKER_ATTENDANCE),
+                where('Worker_ID', '==', workerId),
+                where('Date', '==', today),
+                orgConstraint(organizationId),
+            ));
+            if (attSnap.empty) continue;
+            const att = attSnap.docs[0].data();
+            if (att.Status === 'Prisutan' || att.Status === 'Teren') {
+                const w = workers.find(x => x.Worker_ID === workerId);
+                await createWorkLogsForAttendance(workerId, w?.Worker_Name || att.Worker_Name || 'Unknown', w?.Daily_Rate || 0, today, organizationId, att.Status);
+            }
+        }
+
+        // 3) Preračunaj nalog jednom
+        await recalculateWorkOrder(workOrderId);
+    } catch (error) {
+        console.error('assignWorkersToOrder error:', error);
+        throw error;
+    }
+}
+
+/**
  * REACTIVE RECONCILIATION: Clean up and regenerate work logs when worker assignments change.
  * 
  * This ensures that:
@@ -3209,61 +3281,24 @@ export async function recalculateWorkOrder(
         const isMontaza = workOrder.Work_Order_Type === 'Montaža';
 
         const itemResults = await Promise.all(workOrder.items.map(async (item) => {
-            // BACKFILL: If Product_Value is 0, recover from accepted offer (one-time self-healing)
-            // Montaža stavke NIKAD ne nose prihod — forsiraj 0 (liječi i staru korupciju iz perioda
-            // prije ovog guarda, kad je backfill mogao upisati Product_Value na montaža stavku).
+            // Prihod stavke: default snapshot; live-sync iz PRIHVAĆENE ponude ispod.
+            // Montaža stavke NIKAD ne nose prihod → 0.
             let itemValue = isMontaza ? 0 : (item.Product_Value || 0);
-            if (!isMontaza && itemValue <= 0 && item.Product_ID && item.Project_ID && workOrder.Organization_ID) {
-                try {
-                    // Find accepted offer for this project
-                    const offerQuery = query(
-                        collection(firestore, COLLECTIONS.OFFERS),
-                        where('Project_ID', '==', item.Project_ID),
-                        where('Status', '==', 'Prihvaćeno'),
-                        where('Organization_ID', '==', workOrder.Organization_ID)
-                    );
-                    const offerSnap = await getDocs(offerQuery);
-                    if (!offerSnap.empty) {
-                        const offerId = offerSnap.docs[0].data().Offer_ID;
-                        // Find the offer product matching this item
-                        const opQuery = query(
-                            collection(firestore, COLLECTIONS.OFFER_PRODUCTS),
-                            where('Offer_ID', '==', offerId),
-                            where('Product_ID', '==', item.Product_ID),
-                            where('Organization_ID', '==', workOrder.Organization_ID)
-                        );
-                        const opSnap = await getDocs(opQuery);
-                        if (!opSnap.empty) {
-                            const sellingPrice = opSnap.docs[0].data().Selling_Price || 0;
-                            if (sellingPrice > 0) {
-                                itemValue = sellingPrice * (item.Quantity || 1);
-                                // Write back to WO item so this only runs once
-                                try {
-                                    const itemRef = doc(firestore, COLLECTIONS.WORK_ORDER_ITEMS, item.ID);
-                                    await updateDoc(itemRef, { Product_Value: itemValue });
-                                    console.log(`Backfilled Product_Value=${itemValue} for item ${item.Product_Name} from offer`);
-                                } catch (writeErr) {
-                                    console.warn('Failed to persist backfilled Product_Value:', writeErr);
-                                }
-                            }
-                        }
-                    }
-                } catch (backfillErr) {
-                    console.warn('Product_Value backfill failed (non-critical):', backfillErr);
-                }
-            }
 
-            // SERVICES SYNC: usluge (extras) prihvaćene ponude se osvježavaju na SVAKI recalc za
-            // aktivne, ne-zamrznute, ne-montaža stavke (isto pravilo zamrzavanja kao materijal —
-            // Završeno/Completed_At) — bez ovoga usluge dodane u ponudu NAKON kreiranja naloga
-            // ostaju nevidljive (stari bug, sada popravljen na IZVORU umjesto u svakom potrošaču
-            // posebno — vidi lib/services/profit/analyticsService.ts, koji sada čita SAMO snapshot).
-            // Ručni override (Profit_Overrides.Extras_Total) TRAJNO zamrzava vrijednost — on se
-            // mirroruje direktno u Services_Total pri snimanju (saveProfitOverrides), pa ponovni
-            // fetch ovdje ne smije prepisati korisnikov ručni unos.
-            const itemFrozenForServices = item.Status === 'Završeno' || !!item.Completed_At;
+            // ── LIVE-SYNC IZ PRIHVAĆENE PONUDE (prihod + usluge + planirani rad) ──────────
+            // Prihod (Product_Value = Selling_Price × količina), usluge (Services_Total = Σ extras)
+            // i planirani rad (dani/radnici/dnevnica) povlače se iz PRIHVAĆENE ponude na SVAKI
+            // recalc — da izmjena cijene/usluga/dana u (revidiranoj) ponudi ODMAH uđe u nalog i
+            // profit, i za NOVE i za VEĆ kreirane naloge. Jedno čitanje ponude po stavci (prije su
+            // bila dva: backfill prihoda + sync usluga).
+            // Zamrzavanje (kao materijal): završena/zamrznuta stavka (Status 'Završeno' ili
+            // Completed_At) ostaje na snapshotu — profit se ne mijenja retroaktivno; IZUZETAK:
+            // prihod 0 se ipak self-heal-uje iz ponude (jednokratno). Ručni override
+            // (Profit_Overrides.Selling_Price / .Extras_Total) TRAJNO zamrzava dotičnu vrijednost.
+            const itemFrozen = item.Status === 'Završeno' || !!item.Completed_At;
             const servicesManualOverride = (item as any).Profit_Overrides?.Extras_Total != null;
-            if (!isMontaza && !skipMaterialRefresh && !itemFrozenForServices && !servicesManualOverride && item.Product_ID && item.Project_ID && workOrder.Organization_ID) {
+            const sellingManualOverride = (item as any).Profit_Overrides?.Selling_Price != null && (item as any).Profit_Overrides.Selling_Price > 0;
+            if (!isMontaza && !skipMaterialRefresh && item.Product_ID && item.Project_ID && workOrder.Organization_ID) {
                 try {
                     const offSnap = await getDocs(query(
                         collection(firestore, COLLECTIONS.OFFERS),
@@ -3280,26 +3315,59 @@ export async function recalculateWorkOrder(
                             where('Organization_ID', '==', workOrder.Organization_ID)
                         ));
                         if (!opSnap.empty) {
-                            const opId = opSnap.docs[0].data().ID;
-                            let services = 0;
-                            if (opId) {
-                                const exSnap = await getDocs(query(
-                                    collection(firestore, 'offer_extras'),
-                                    where('Offer_Product_ID', '==', opId),
-                                    orgConstraint(workOrder.Organization_ID)
-                                ));
-                                services = exSnap.docs.reduce((s, d) => s + (d.data().Total || 0), 0);
+                            const op = opSnap.docs[0].data() as any;
+                            const itemRef = doc(firestore, COLLECTIONS.WORK_ORDER_ITEMS, item.ID);
+                            const patch: Record<string, any> = {};
+
+                            // PRIHOD: prodajna cijena × količina. Aktivna stavka prati ponudu;
+                            // zamrznuta se samo self-heal-uje iz 0 (ne dira postojeći snapshot).
+                            if (!sellingManualOverride) {
+                                const offerValue = (op.Selling_Price || 0) * (item.Quantity || 1);
+                                const target = !itemFrozen
+                                    ? offerValue
+                                    : ((item.Product_Value || 0) <= 0 ? offerValue : (item.Product_Value || 0));
+                                if (target > 0) {
+                                    itemValue = target;
+                                    if (target !== (item.Product_Value || 0)) patch.Product_Value = target;
+                                }
                             }
-                            if (services !== ((item as any).Services_Total || 0)) {
-                                const itemRef = doc(firestore, COLLECTIONS.WORK_ORDER_ITEMS, item.ID);
-                                await updateDoc(itemRef, { Services_Total: services });
-                                console.log(`Services_Total sinhronizovan=${services} za stavku ${item.Product_Name}`);
+
+                            // USLUGE (extras) — samo aktivna stavka bez ručnog override-a.
+                            if (!itemFrozen && !servicesManualOverride) {
+                                let services = 0;
+                                if (op.ID) {
+                                    const exSnap = await getDocs(query(
+                                        collection(firestore, 'offer_extras'),
+                                        where('Offer_Product_ID', '==', op.ID),
+                                        orgConstraint(workOrder.Organization_ID)
+                                    ));
+                                    services = exSnap.docs.reduce((s, d) => s + (d.data().Total || 0), 0);
+                                }
+                                if (services !== ((item as any).Services_Total || 0)) patch.Services_Total = services;
+                                (item as any).Services_Total = services;   // za tekuću agregaciju
                             }
-                            (item as any).Services_Total = services;  // za tekuću agregaciju
+
+                            // PLANIRANI RAD (dani/radnici/dnevnica) — za auto-rok i planirani trošak.
+                            if (!itemFrozen) {
+                                const days = op.Labor_Days || 0;
+                                const wk = op.Labor_Workers || 0;
+                                const rate = op.Labor_Daily_Rate || 0;
+                                const plannedCost = wk * days * rate;
+                                if ((item.Planned_Labor_Days || 0) !== days) patch.Planned_Labor_Days = days;
+                                if ((item.Planned_Labor_Workers || 0) !== wk) patch.Planned_Labor_Workers = wk;
+                                if ((item.Planned_Labor_Rate || 0) !== rate) patch.Planned_Labor_Rate = rate;
+                                if ((item.Planned_Labor_Cost || 0) !== plannedCost) patch.Planned_Labor_Cost = plannedCost;
+                                (item as any).Planned_Labor_Cost = plannedCost;   // za tekuću agregaciju
+                            }
+
+                            if (Object.keys(patch).length > 0) {
+                                await updateDoc(itemRef, patch);
+                                console.log(`Nalog live-sync iz ponude za ${item.Product_Name}:`, Object.keys(patch).join(', '));
+                            }
                         }
                     }
-                } catch (svcErr) {
-                    console.warn('Services_Total sync failed (non-critical):', svcErr);
+                } catch (offErr) {
+                    console.warn('Offer live-sync (prihod/usluge/plan rada) failed (non-critical):', offErr);
                 }
             }
 

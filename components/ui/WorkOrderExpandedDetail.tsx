@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, type ReactNode } from 'react';
+import { useState, useEffect, useMemo, useRef, type ReactNode } from 'react';
 import { Play, Pause, CheckCircle, Clock, Edit2, AlertTriangle, NotebookPen, GitBranch, ListTodo, Hammer, CalendarCheck, History, Calendar } from 'lucide-react';
 import { useData } from '@/context/DataContext';
 import {
@@ -73,6 +73,13 @@ export default function WorkOrderExpandedDetail({
     const [productsOpen, setProductsOpen] = useState(true);   // "Proizvodi" — glavni sadržaj, otvoren po defaultu
     const [expandedProducts, setExpandedProducts] = useState<Set<string>>(new Set());   // sklopivi proizvodi (collapsed po defaultu)
     const [graphVersion, setGraphVersion] = useState(0);   // bump nakon zatvaranja grafa → OrderProcessBoard ponovo učita gating
+    // Ekipa naloga (Assigned_Workers) — dodjela/izmjena radnika na nivou naloga.
+    const [crewSaving, setCrewSaving] = useState(false);   // suptilni indikator upisa
+    const [crewAddOpen, setCrewAddOpen] = useState(false);
+    const [crewSearch, setCrewSearch] = useState('');
+    const crewIdsRef = useRef<string[]>([]);               // uvijek najnovija ekipa (za brze uzastopne klikove)
+    const crewChain = useRef<Promise<unknown>>(Promise.resolve());  // serijalizuj upise (bez trke na recalc)
+    const crewPending = useRef(0);
     // Potvrda "opasnih" akcija kroz stilizovan Modal umjesto sirovog window.confirm
     // (konzistentno s ostalim dijalozima; pregled ŠTA će se desiti prije klika).
     const [confirmState, setConfirmState] = useState<{
@@ -413,6 +420,55 @@ export default function WorkOrderExpandedDetail({
     const procProgress = useMemo(() => orderProcessProgress(localItems), [localItems]);
     const bookedDays = useMemo(() => new Set(workLogs.map(l => l.Date)).size, [workLogs]);
 
+    // ── EKIPA NALOGA (Assigned_Workers) ────────────────────────────────
+    // Prikaz = unija dodijeljenih radnika preko stavki. Dodavanje/uklanjanje piše
+    // ISTU ekipu na SVE stavke kroz assignWorkersToItem (koji uskladi današnje
+    // dnevnice; istorija je netaknuta). Ovo je „zvanično" mjesto za dodjelu radnika
+    // na već kreiranom nalogu — i za popravku naloga zaglavljenih bez ekipe.
+    const crew = useMemo(() => {
+        const m = new Map<string, string>();
+        for (const it of localItems) {
+            (it.Assigned_Workers || []).forEach(w => {
+                if (w.Worker_ID) m.set(w.Worker_ID, w.Worker_Name || workers.find(x => x.Worker_ID === w.Worker_ID)?.Name || 'Radnik');
+            });
+        }
+        return Array.from(m.entries()).map(([id, name]) => ({ id, name }));
+    }, [localItems, workers]);
+
+    // Drži crewIdsRef sinhron s prikazanom ekipom (izvor za brze uzastopne izmjene).
+    useEffect(() => { crewIdsRef.current = crew.map(c => c.id); }, [crew]);
+
+    // Primijeni novu ekipu: ODMAH optimistički (chip se pojavi/nestane bez čekanja mreže),
+    // a upis ide kroz JEDAN bulk poziv (assignWorkersToOrder) serijalizovan lančano da se
+    // uzastopni klikovi ne trkaju na recalc. Osvježi tek kad se svi upisi slegnu.
+    const commitCrew = (nextIds: string[]) => {
+        const payload = nextIds.map(id => {
+            const w = workers.find(x => x.Worker_ID === id);
+            return { Worker_ID: id, Worker_Name: w?.Name || 'Radnik', Daily_Rate: w?.Daily_Rate || 0 };
+        });
+        crewIdsRef.current = nextIds;
+        setLocalItems(prev => prev.map(it => ({ ...it, Assigned_Workers: payload })));
+        crewPending.current += 1;
+        setCrewSaving(true);
+        crewChain.current = crewChain.current.then(async () => {
+            try {
+                const { assignWorkersToOrder } = await import('@/lib/services');
+                await assignWorkersToOrder(workOrder.Work_Order_ID, payload, organizationId || '');
+            } catch (e) {
+                console.error('assign crew', e);
+                showToast?.('Greška pri ažuriranju ekipe', 'error');
+            } finally {
+                crewPending.current -= 1;
+                if (crewPending.current === 0) {
+                    setCrewSaving(false);
+                    onRefresh?.('workOrders', 'projects', 'workLogs');
+                }
+            }
+        });
+    };
+    const addToCrew = (id: string) => { setCrewAddOpen(false); setCrewSearch(''); commitCrew(Array.from(new Set([...crewIdsRef.current, id]))); };
+    const removeFromCrew = (id: string) => commitCrew(crewIdsRef.current.filter(x => x !== id));
+
     // Zadaci ovog naloga (žive iz Task.Links — isti dokument koji vidi tab Zadaci)
     const orderTasks = useMemo(() => tasksForWorkOrder(tasks, workOrder.Work_Order_ID), [tasks, workOrder.Work_Order_ID]);
     const taskStats = useMemo(() => taskProgress(orderTasks, todayISO()), [orderTasks]);
@@ -598,6 +654,91 @@ export default function WorkOrderExpandedDetail({
                 stvari istog ranga izgledale su kao dvije različite vrste stvari. */}
             {tab === 'tok' && (
                 <div className="wo-flow">
+                    {/* ═══ EKIPA: dodjela/izmjena radnika na nivou naloga ═══ */}
+                    {woActive && (
+                        <section className="wo-sec">
+                            <div className="wo-sec-head">
+                                <div className="wo-sec-toggle" style={{ cursor: 'default' }}>
+                                    <span className="material-icons-round wo-sec-chevron" style={{ opacity: 0 }}>chevron_right</span>
+                                    <span className="wo-sec-title">Ekipa</span>
+                                    {crew.length > 0 && <span className="wo-sec-count">{crew.length}</span>}
+                                    {crewSaving && <span style={{ fontSize: 12, color: 'var(--text-secondary)', marginLeft: 8 }}>spremam…</span>}
+                                </div>
+                            </div>
+                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', padding: '2px 2px 10px 30px' }}>
+                                {crew.map(c => (
+                                    <span key={c.id} style={{
+                                        display: 'inline-flex', alignItems: 'center', gap: 6,
+                                        background: 'var(--bg-tertiary, #f1f5f9)', border: '1px solid var(--border-color, #e2e8f0)',
+                                        borderRadius: 999, padding: '4px 6px 4px 12px', fontSize: 13, color: 'var(--text-primary)',
+                                    }}>
+                                        {c.name}
+                                        <button type="button" onClick={() => removeFromCrew(c.id)}
+                                            title="Ukloni iz ekipe"
+                                            style={{
+                                                display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                                                width: 18, height: 18, borderRadius: 999, border: 'none', cursor: 'pointer',
+                                                background: 'rgba(148,163,184,0.25)', color: 'var(--text-secondary)', lineHeight: 1,
+                                            }}>×</button>
+                                    </span>
+                                ))}
+                                {crew.length === 0 && (
+                                    <span style={{ color: 'var(--text-secondary)', fontSize: 13 }}>Nema dodijeljene ekipe</span>
+                                )}
+
+                                {/* Dodaj radnika */}
+                                <div style={{ position: 'relative' }}>
+                                    <button type="button"
+                                        onClick={() => { setCrewAddOpen(o => !o); setCrewSearch(''); }}
+                                        style={{
+                                            display: 'inline-flex', alignItems: 'center', gap: 4,
+                                            background: 'transparent', border: '1px dashed var(--accent, #0071e3)',
+                                            color: 'var(--accent, #0071e3)', borderRadius: 999, padding: '4px 12px',
+                                            fontSize: 13, fontWeight: 600, cursor: 'pointer',
+                                        }}>
+                                        <span className="material-icons-round" style={{ fontSize: 15 }}>person_add</span>
+                                        {crew.length === 0 ? 'Dodijeli radnika' : 'Dodaj'}
+                                    </button>
+                                    {crewAddOpen && (
+                                        <div style={{
+                                            position: 'absolute', top: 'calc(100% + 4px)', left: 0, zIndex: 30,
+                                            width: 240, background: 'var(--bg-primary, #fff)', border: '1px solid var(--border-color, #e2e8f0)',
+                                            borderRadius: 10, boxShadow: '0 8px 24px rgba(0,0,0,0.14)', overflow: 'hidden',
+                                        }}>
+                                            <div style={{ padding: 8, borderBottom: '1px solid var(--border-color, #eef2f6)' }}>
+                                                <input autoFocus placeholder="Traži radnika…" value={crewSearch}
+                                                    onChange={e => setCrewSearch(e.target.value)}
+                                                    style={{
+                                                        width: '100%', border: '1px solid var(--border-color, #e2e8f0)', borderRadius: 6,
+                                                        padding: '6px 8px', fontSize: 13, background: 'var(--bg-secondary, #fff)', color: 'var(--text-primary)',
+                                                    }} />
+                                            </div>
+                                            <div style={{ maxHeight: 220, overflowY: 'auto' }}>
+                                                {(() => {
+                                                    const inCrew = new Set(crew.map(c => c.id));
+                                                    const list = workers.filter(w => !inCrew.has(w.Worker_ID) && w.Name.toLowerCase().includes(crewSearch.toLowerCase()));
+                                                    if (list.length === 0) return <div style={{ padding: 12, fontSize: 13, color: 'var(--text-secondary)' }}>Nema radnika</div>;
+                                                    return list.map(w => (
+                                                        <button key={w.Worker_ID} type="button" onClick={() => addToCrew(w.Worker_ID)}
+                                                            style={{
+                                                                display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left',
+                                                                padding: '8px 12px', border: 'none', background: 'transparent', cursor: 'pointer', fontSize: 13, color: 'var(--text-primary)',
+                                                            }}
+                                                            onMouseEnter={e => (e.currentTarget.style.background = 'var(--bg-tertiary, #f1f5f9)')}
+                                                            onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}>
+                                                            <span style={{ fontWeight: 600 }}>{w.Name}</span>
+                                                            {w.Role && <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--text-secondary)' }}>{w.Role}</span>}
+                                                        </button>
+                                                    ));
+                                                })()}
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        </section>
+                    )}
+
                     <section className="wo-sec">
                         <div className="wo-sec-head">
                             <button className="wo-sec-toggle" onClick={() => setFlowOpen(o => !o)} aria-expanded={flowOpen}>
