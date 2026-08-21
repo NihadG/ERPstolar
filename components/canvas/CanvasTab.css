@@ -830,9 +830,9 @@ button.cv-row-head:focus-visible { outline: 2px solid var(--accent); outline-off
 
 /* ── Vikend na traci naloga ────────────────────────────────────────
    Subota zelena kad dodijeljena ekipa radi, crvena kad ne; nedjelja uvijek
-   crvena. Meka tinta odozdo + zasićena crtica na dnu = „zastavica" statusa
-   koja se čita i preko projektne boje i preko punog inka montaže, a ne guši
-   naziv (ispod je, z-index). Boja prati per-nalog subotnju rotaciju. */
+   crvena. Suptilna tinta + tanka crtica na dnu = tiha „zastavica" statusa koja
+   se nazire i preko projektne boje i preko punog inka montaže, a ne guši naziv
+   (ispod je, z-index). Boja prati per-nalog subotnju rotaciju. */
 .cv-wk {
     position: absolute;
     top: 0;
@@ -841,12 +841,12 @@ button.cv-row-head:focus-visible { outline: 2px solid var(--accent); outline-off
     pointer-events: none;
 }
 .cv-wk.on {          /* subota — ekipa radi */
-    background: linear-gradient(to bottom, transparent 55%, color-mix(in srgb, #16a34a 26%, transparent));
-    box-shadow: inset 0 -3px 0 color-mix(in srgb, #16a34a 88%, transparent);
+    background: color-mix(in srgb, #16a34a 9%, transparent);
+    box-shadow: inset 0 -2px 0 color-mix(in srgb, #16a34a 42%, transparent);
 }
 .cv-wk.off {         /* subota bez rada + nedjelja */
-    background: linear-gradient(to bottom, transparent 55%, color-mix(in srgb, #dc2626 26%, transparent));
-    box-shadow: inset 0 -3px 0 color-mix(in srgb, #dc2626 88%, transparent);
+    background: color-mix(in srgb, #dc2626 9%, transparent);
+    box-shadow: inset 0 -2px 0 color-mix(in srgb, #dc2626 42%, transparent);
 }
 /* Montaža ima bijeli tekst na punom inku — tu suptilna sjena pomaže čitljivosti. */
 .cv-block.k-montaza:not(.is-draft) .cv-block-label { text-shadow: 0 1px 1px rgba(0, 0, 0, .22); }

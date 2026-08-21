@@ -95,6 +95,36 @@ describe('workerWorksSaturday — režim iz zadnje 3 subote (stalan vs alternaci
         expect(workerWorksSaturday('W1', '2026-07-11', att)).toBe(false); // +1 od zadnje (04.) → ne
         expect(workerWorksSaturday('W1', '2026-07-18', att)).toBe(true);  // +2 → da
     });
+
+    test('odmor u zadnjoj suboti se PRESKAČE — radnik koji radi svaku i dalje radi', () => {
+        // Radi svaku subotu, ali zadnju (04.) bio na odmoru. Bez preskakanja bi odmor
+        // izgledao kao „ne radi" i lažno ga proglasio alternirajućim.
+        const att = [
+            { Worker_ID: 'W1', Date: '2026-06-20', Status: 'Prisutan' },
+            { Worker_ID: 'W1', Date: '2026-06-27', Status: 'Prisutan' },
+            { Worker_ID: 'W1', Date: '2026-07-04', Status: 'Odmor' },   // preskače se
+        ];
+        // Relevantne (20., 27.) su uzastopne i iste → stalan režim → 11. RADI.
+        expect(workerWorksSaturday('W1', '2026-07-11', att)).toBe(true);
+    });
+
+    test('bolovanje ne prekida alternaciju — procjena po relevantnim subotama', () => {
+        const att = [
+            { Worker_ID: 'W1', Date: '2026-06-20', Status: 'Prisutan' },  // radi
+            { Worker_ID: 'W1', Date: '2026-06-27', Status: 'Vikend' },    // slobodan po rotaciji
+            { Worker_ID: 'W1', Date: '2026-07-04', Status: 'Bolovanje' }, // preskače se
+        ];
+        // Relevantne (27. false, 20. true) → alternacija; 11. je +2 od 27. (parno) → NE radi.
+        expect(workerWorksSaturday('W1', '2026-07-11', att)).toBe(false);
+    });
+
+    test('sva odsustva u istoriji → nema signala → radi (rok se ne produžava)', () => {
+        const att = [
+            { Worker_ID: 'W1', Date: '2026-06-20', Status: 'Odmor' },
+            { Worker_ID: 'W1', Date: '2026-06-27', Status: 'Odmor' },
+        ];
+        expect(workerWorksSaturday('W1', '2026-07-11', att)).toBe(true);
+    });
 });
 
 describe('buildSaturdayChecker + rok (multi-worker: subota radna ako bar jedan radi)', () => {

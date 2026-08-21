@@ -74,20 +74,27 @@ export function daysUntil(iso?: string | null, fromISO?: string): number | null 
 //   • isti ishod u paru  → stalan režim → ponovi zadnju subotu (radi/ne kao zadnju),
 //   • različit ishod      → alternacija → projekcija parnošću sedmica od zadnje.
 // Kad nema uzastopnog para (jedan zapis ili rupe u šihtarici) → alternacija od
-// zadnjeg zapisa (isto ponašanje kao ranije). Bez ijednog zapisa → radi (da rok
-// ne bude predug).
+// zadnjeg zapisa. Bez ijednog zapisa → radi (da rok ne bude predug).
+//
+// VAŽNO: gledaju se SAMO subote koje govore o rotaciji — radio (Prisutan/Teren)
+// ili slobodan po rotaciji (Vikend). Odsustva iz drugih razloga (Odmor, Bolovanje,
+// Odsutan, Praznik) se PRESKAČU: da se ne preskaču, odmor bi lažno izgledao kao
+// „ne radi tu subotu" i pokvario procjenu — radnik koji inače radi svaku subotu
+// ispao bi kao da alternira. Procjena „gleda kroz" odsustvo na stvarni obrazac.
 // ════════════════════════════════════════════════════════════════════
 
 export interface AttendanceLite { Worker_ID: string; Date: string; Status: string }
 
 const SATURDAY = 6;
 const WORKED_STATUSES = new Set(['Prisutan', 'Teren']);
-/** Koliko zadnjih subotnjih zapisa ulazi u procjenu rotacije. */
+/** Subota koja NE nosi signal rotacije — odsustvo iz drugih razloga; preskače se. */
+const NON_ROTATION_STATUSES = new Set(['Odmor', 'Bolovanje', 'Odsutan', 'Praznik']);
+/** Koliko zadnjih (relevantnih) subotnjih zapisa ulazi u procjenu rotacije. */
 const SATURDAY_LOOKBACK = 3;
 
 /**
  * Da li `workerId` radi subotu `saturdayISO`, procijenjeno iz zadnjih do tri
- * subotnja zapisa u šihtarici (vidi objašnjenje režima iznad).
+ * RELEVANTNE subotnja zapisa u šihtarici (vidi objašnjenje režima iznad).
  *
  * Primjer korisnika: radio zadnju, nije pretprošlu, radio treću pozadi (W, ne, W)
  * → zadnji par (W, ne) je RAZLIČIT → alternacija → sljedeću subotu NE radi.
@@ -97,17 +104,19 @@ export function workerWorksSaturday(workerId: string, saturdayISO: string, atten
     if (isNaN(target.getTime()) || target.getDay() !== SATURDAY) return true;
 
     // Subotnji zapisi radnika PRIJE ciljane subote (razmak u sedmicama + ishod).
+    // Odsustva (odmor/bolovanje/izostanak/praznik) se ne broje — nisu signal rotacije.
     const recs: { weeksBefore: number; worked: boolean }[] = [];
     for (const a of attendance) {
         if (a.Worker_ID !== workerId) continue;
         const d = new Date(a.Date + 'T00:00:00');
         if (isNaN(d.getTime()) || d.getDay() !== SATURDAY || d >= target) continue;
+        if (NON_ROTATION_STATUSES.has(a.Status)) continue;   // odmor/bolovanje/… → preskoči
         recs.push({
             weeksBefore: Math.round((target.getTime() - d.getTime()) / (7 * 86400000)),
             worked: WORKED_STATUSES.has(a.Status),
         });
     }
-    if (!recs.length) return true;                        // nema istorije → radi
+    if (!recs.length) return true;                        // nema relevantne istorije → radi
 
     recs.sort((x, y) => x.weeksBefore - y.weeksBefore);   // najskoriji prvi
     const recent = recs.slice(0, SATURDAY_LOOKBACK);
