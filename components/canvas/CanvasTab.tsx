@@ -714,15 +714,17 @@ export default function CanvasTab({
                 onPointerCancel={drag.onPointerCancel}
                 title={`${item.title}${projectSuffix ? ` · ${projectSuffix}` : ''} · ${item.startISO} → ${item.endISO} (${blockDurationDays(item)} d)${st ? ` · stvarni: ${st.label}${st.ref ? ` (${st.ref})` : ''}` : ''}`}
             >
-                {/* Vikend na traci — ispod naziva (z-index), prati ivice bloka. */}
+                {/* Vikend na traci — SAMO crveno kad se NE radi; radna subota se
+                    podrazumijeva pa nema oznake. Ispod naziva (z-index), prati ivice. */}
                 {weekend.map(m => {
+                    if (m.working) return null;               // radi se → bez oznake
                     const segL = xForDate(m.iso, vp);
                     const l = Math.max(segL, eff.left);
                     const r = Math.min(segL + dayWidth(zoom), eff.left + eff.width);
                     if (r <= l) return null;
                     return (
                         <span key={m.iso}
-                            className={`cv-wk ${m.kind} ${m.working ? 'on' : 'off'}`}
+                            className={`cv-wk ${m.kind} off`}
                             style={{ left: l - eff.left, width: r - l }} />
                     );
                 })}
