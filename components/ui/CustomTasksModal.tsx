@@ -39,6 +39,9 @@ const uid = () => (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.r
 
 export default function CustomTasksModal({ isOpen, onClose, workOrders, workers, projects = [], tasks = [], organizationId, onCreated, showToast, zIndex, initialWorkerId, initialSeed, onOrderCreated }: CustomTasksModalProps) {
     const [rows, setRows] = useState<TaskRow[]>([{ id: uid(), text: '', workerIds: initialWorkerId ? [initialWorkerId] : [] }]);
+    // Opisni naziv naloga (naslov na kartici/listi). Prazno → naslijedi naziv prvog
+    // posla, da nalog nikad ne ostane bezimeni „Razni poslovi".
+    const [orderName, setOrderName] = useState('');
     const [notes, setNotes] = useState('');
     const [dueDate, setDueDate] = useState('');
     const [saving, setSaving] = useState(false);
@@ -60,6 +63,7 @@ export default function CustomTasksModal({ isOpen, onClose, workOrders, workers,
                 ? initialSeed.workerIds
                 : (initialWorkerId ? [initialWorkerId] : []);
             setRows([{ id: uid(), text: initialSeed?.text || '', workerIds: seedWorkers }]);
+            setOrderName('');
             setNotes('');
             setDueDate(initialSeed?.dueDate || '');
             setTaskSelection(emptyTaskSelection());
@@ -122,7 +126,7 @@ export default function CustomTasksModal({ isOpen, onClose, workOrders, workers,
 
     const validRows = rows.filter(r => r.text.trim().length > 0);
     const hasAnyWorker = validRows.some(r => r.workerIds.length > 0);
-    const reset = () => { setRows([{ id: uid(), text: '', workerIds: [] }]); setNotes(''); setDueDate(''); setTaskSelection(emptyTaskSelection()); setProjectId(''); setOfferValue(''); setMaterialCost(''); setOtherCosts(''); };
+    const reset = () => { setRows([{ id: uid(), text: '', workerIds: [] }]); setOrderName(''); setNotes(''); setDueDate(''); setTaskSelection(emptyTaskSelection()); setProjectId(''); setOfferValue(''); setMaterialCost(''); setOtherCosts(''); };
 
     const handleCreate = async () => {
         if (!organizationId || saving) return;
@@ -135,6 +139,9 @@ export default function CustomTasksModal({ isOpen, onClose, workOrders, workers,
             const num = (s: string) => { const n = parseFloat(s.replace(',', '.')); return isFinite(n) && n > 0 ? n : 0; };
             const fin = { value: num(offerValue), material: num(materialCost), other: num(otherCosts) };
             const projName = selectedProject ? (selectedProject.Name?.trim() || selectedProject.Client_Name) : 'Razni poslovi';
+            // Naslov naloga: eksplicitni „Naziv naloga", inače naziv prvog posla.
+            // Nikad ne pada na goli „Razni poslovi" (to je fallback iz Project_Name-a).
+            const orderTitle = orderName.trim() || validRows[0].text.trim();
 
             const items = validRows.map((r, idx) => {
                 const link = r.linkedItemId ? linkLookup.get(r.linkedItemId) : undefined;
@@ -176,13 +183,14 @@ export default function CustomTasksModal({ isOpen, onClose, workOrders, workers,
             const res = await createWorkOrder({
                 Work_Order_Type: 'Zadaci',
                 Production_Steps: [],
+                Name: orderTitle,
                 Due_Date: dueDate || undefined,
                 Notes: notes || undefined,
                 items,
             }, organizationId);
 
             if (res.success) {
-                showToast(`Nalog "Razni poslovi" kreiran (${items.length} ${items.length === 1 ? 'posao' : 'poslova'})`, 'success');
+                showToast(`Nalog "${orderTitle}" kreiran (${items.length} ${items.length === 1 ? 'posao' : 'poslova'})`, 'success');
 
                 // Zadaci iz taba Zadaci — vežu se tek sada (nalog postoji). Greška
                 // ne ruši nalog: mogu se dodati i kasnije na kartici.
@@ -351,6 +359,11 @@ export default function CustomTasksModal({ isOpen, onClose, workOrders, workers,
                         <Calendar size={15} className="ctm-section-ico" />
                         <span className="ctm-section-title">Detalji naloga</span>
                     </div>
+                    <label className="ctm-field">
+                        <span>Naziv naloga <em>naslov na listi — prazno = naziv prvog posla</em></span>
+                        <input type="text" value={orderName} onChange={e => setOrderName(e.target.value)}
+                            placeholder={validRows[0]?.text.trim() || 'npr. Izrada paleta za skladište'} />
+                    </label>
                     <div className="ctm-grid2">
                         <label className="ctm-field">
                             <span>Rok <em>opciono</em></span>
