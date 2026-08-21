@@ -21,7 +21,7 @@ import {
 } from 'lucide-react';
 import type {
     Project, Worker, WorkOrder, Order, Supplier, WorkerAttendance, Task,
-    PlanBlock, PlanBlockKind, PlanGroupBy, PlanLayout, PlanZoom, PlanScenario, PlanChainTemplate,
+    PlanBlock, PlanBlockKind, PlanGroupBy, PlanLayout, PlanZoom, PlanScenario, PlanChainTemplate, PlanRef,
 } from '@/lib/types';
 import {
     getScenarios, createScenario, duplicateScenario, getScenario,
@@ -66,6 +66,7 @@ import {
     newBlock, addDays, BLOCK_LABEL, ZOOM_LABEL, GROUP_BY_LABEL, blockDurationDays, scenarioBounds,
     countWorkingDays,
 } from '@/lib/canvas/model';
+import { weekendMarksInSpan } from '@/lib/canvas/weekend';
 import { todayISO } from '@/lib/planning';
 import './CanvasTab.css';
 
@@ -246,6 +247,27 @@ export default function CanvasTab({
         return buildSaturdayChecker(ids, attendance as unknown as AttendanceLite[]);
     }, [workers, attendance]);
 
+    // Per-NALOG subotnja rotacija: boja subote na traci (i njena dužina pri
+    // razvlačenju) prati DODIJELJENU ekipu naloga, ne cijeli pogon — inače radnik
+    // koji ne radi subotu nikad ne bi bio crven, jer neki drugi aktivan radnik tu
+    // subotu radi. Nalog bez radnika pada na shop-level checker. Keširano po sastavu
+    // ekipe; šihtarica se prethodno suzi na subote (skenira se po svakoj suboti).
+    const satCheckerFor = useMemo(() => {
+        const satAtt = (attendance as unknown as AttendanceLite[]).filter(a => {
+            const d = new Date(`${(a.Date || '').split('T')[0]}T12:00:00`);
+            return !isNaN(d.getTime()) && d.getDay() === 6;
+        });
+        const cache = new Map<string, (d: Date) => boolean>();
+        return (refs: PlanRef[] | undefined): ((d: Date) => boolean) => {
+            const ids = (refs || []).map(r => r.id).filter((x): x is string => !!x);
+            if (!ids.length) return isSaturdayWorking;
+            const key = ids.slice().sort().join('|');
+            let checker = cache.get(key);
+            if (!checker) { checker = buildSaturdayChecker(ids, satAtt); cache.set(key, checker); }
+            return checker;
+        };
+    }, [attendance, isSaturdayWorking]);
+
     const leadTimes = useMemo(() => buildSupplierLeadTimes(orders), [orders]);
 
     const conflictCtx = useMemo(
@@ -292,7 +314,7 @@ export default function CanvasTab({
             } else if (mode === 'resize-start') {
                 const startISO = addDays(b.startISO, deltaDays);
                 if (isWorkBlock && b.workerDays !== undefined) {
-                    const workerDays = countWorkingDays(startISO, b.endISO, isSaturdayWorking) * (b.crew || 1);
+                    const workerDays = countWorkingDays(startISO, b.endISO, satCheckerFor(b.workerRefs)) * (b.crew || 1);
                     dispatch({ type: 'UPDATE_BLOCK', id: blockId, patch: { startISO, workerDays } });
                 } else {
                     dispatch({ type: 'SET_DATES', id: blockId, startISO });
@@ -300,7 +322,7 @@ export default function CanvasTab({
             } else {
                 const endISO = addDays(b.endISO, deltaDays);
                 if (isWorkBlock && b.workerDays !== undefined) {
-                    const workerDays = countWorkingDays(b.startISO, endISO, isSaturdayWorking) * (b.crew || 1);
+                    const workerDays = countWorkingDays(b.startISO, endISO, satCheckerFor(b.workerRefs)) * (b.crew || 1);
                     dispatch({ type: 'UPDATE_BLOCK', id: blockId, patch: { endISO, workerDays } });
                 } else {
                     dispatch({ type: 'SET_DATES', id: blockId, endISO });
@@ -642,13 +664,13 @@ export default function CanvasTab({
         // počinju prije vidljivog ruba (narudžbe uz lijevi rub!), pa bi blok pri puštanju
         // „skočio" na drugi dan. Za potpuno vidljive blokove ovo daje isti rezultat kao prije.
         let eff = rect;
+        let effStart = item.startISO;
+        let effEnd = item.endISO;
         if (isDragged && delta !== 0) {
-            let s = item.startISO;
-            let e = item.endISO;
-            if (mode === 'move') { s = addDays(s, delta); e = addDays(e, delta); }
-            else if (mode === 'resize-start') { s = addDays(s, delta); if (s > e) s = e; }
-            else if (mode === 'resize-end') { e = addDays(e, delta); if (e < s) e = s; }
-            eff = blockRect(s, e, vp);
+            if (mode === 'move') { effStart = addDays(effStart, delta); effEnd = addDays(effEnd, delta); }
+            else if (mode === 'resize-start') { effStart = addDays(effStart, delta); if (effStart > effEnd) effStart = effEnd; }
+            else if (mode === 'resize-end') { effEnd = addDays(effEnd, delta); if (effEnd < effStart) effEnd = effStart; }
+            eff = blockRect(effStart, effEnd, vp);
         }
 
         // Živi status stvarnog naloga/narudžbe iza bloka (nacrt nije u mapi).
@@ -658,6 +680,13 @@ export default function CanvasTab({
         // radne blokove; rok/narudžba zadržavaju semantičku boju (crveno/žuto).
         const isWorkKind = item.kind === 'order' || item.kind === 'montaza';
         const colors = isWorkKind ? projectColors(item.projectRef?.id || item.projectRef?.name) : null;
+        // Vikend NA traci naloga: subota zelena kad dodijeljena ekipa radi, crvena
+        // kad ne; nedjelja uvijek crvena. Skriveno na mjesečnom zumu (dan je 11px,
+        // oznaka bi bila šum) i na kompaktnim/logističkim trakama. Isti per-nalog
+        // checker koji nosi i dužinu trake, pa se boja i dužina slažu.
+        const weekend = (isWorkKind && !opts?.compact && zoom !== 'mjesec')
+            ? weekendMarksInSpan(effStart, effEnd, satCheckerFor(item.workerRefs))
+            : [];
         // Naziv koji ne stane U traku ostaje prazan — ime je u lijevoj koloni.
         const fits = eff.width > MIN_LABEL_WIDTH;
         // Projekt uz dobavljača — korisno u prikazu po dobavljaču / jednom redu; u prikazu
@@ -685,6 +714,18 @@ export default function CanvasTab({
                 onPointerCancel={drag.onPointerCancel}
                 title={`${item.title}${projectSuffix ? ` · ${projectSuffix}` : ''} · ${item.startISO} → ${item.endISO} (${blockDurationDays(item)} d)${st ? ` · stvarni: ${st.label}${st.ref ? ` (${st.ref})` : ''}` : ''}`}
             >
+                {/* Vikend na traci — ispod naziva (z-index), prati ivice bloka. */}
+                {weekend.map(m => {
+                    const segL = xForDate(m.iso, vp);
+                    const l = Math.max(segL, eff.left);
+                    const r = Math.min(segL + dayWidth(zoom), eff.left + eff.width);
+                    if (r <= l) return null;
+                    return (
+                        <span key={m.iso}
+                            className={`cv-wk ${m.kind} ${m.working ? 'on' : 'off'}`}
+                            style={{ left: l - eff.left, width: r - l }} />
+                    );
+                })}
                 {item.kind !== 'milestone' && !item.locked && (
                     <span className="cv-handle left"
                         style={{ width: RESIZE_HANDLE_PX }}

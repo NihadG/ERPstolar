@@ -67,31 +67,64 @@ export function daysUntil(iso?: string | null, fromISO?: string): number | null 
 
 // ════════════════════════════════════════════════════════════════════
 // SUBOTNJA ROTACIJA PO RADNIKU (auto iz šihtarice)
-// Pravilo: nađi zadnju PROŠLU subotu radnika u šihtarici; ako je tada RADIO
-// (Prisutan/Teren) → narednu subotu NE radi, pa alternira (svaku drugu subotu).
-// Bez istorije → pretpostavi da radi (da rok ne bude predug).
+//
+// Dva obrasca postoje u pogonu i NE smiju se pobrkati: radnik koji radi SVAKU
+// subotu (stalan) i radnik koji ih ALTERNIRA (svaku drugu). Zato se gleda zadnji
+// PAR uzastopnih subota (razmak tačno 7 dana):
+//   • isti ishod u paru  → stalan režim → ponovi zadnju subotu (radi/ne kao zadnju),
+//   • različit ishod      → alternacija → projekcija parnošću sedmica od zadnje.
+// Kad nema uzastopnog para (jedan zapis ili rupe u šihtarici) → alternacija od
+// zadnjeg zapisa (isto ponašanje kao ranije). Bez ijednog zapisa → radi (da rok
+// ne bude predug).
 // ════════════════════════════════════════════════════════════════════
 
 export interface AttendanceLite { Worker_ID: string; Date: string; Status: string }
 
 const SATURDAY = 6;
 const WORKED_STATUSES = new Set(['Prisutan', 'Teren']);
+/** Koliko zadnjih subotnjih zapisa ulazi u procjenu rotacije. */
+const SATURDAY_LOOKBACK = 3;
 
-/** Da li `workerId` radi subotu `saturdayISO`, prema alternaciji iz šihtarice. */
+/**
+ * Da li `workerId` radi subotu `saturdayISO`, procijenjeno iz zadnjih do tri
+ * subotnja zapisa u šihtarici (vidi objašnjenje režima iznad).
+ *
+ * Primjer korisnika: radio zadnju, nije pretprošlu, radio treću pozadi (W, ne, W)
+ * → zadnji par (W, ne) je RAZLIČIT → alternacija → sljedeću subotu NE radi.
+ */
 export function workerWorksSaturday(workerId: string, saturdayISO: string, attendance: AttendanceLite[]): boolean {
     const target = new Date(saturdayISO + 'T00:00:00');
     if (isNaN(target.getTime()) || target.getDay() !== SATURDAY) return true;
-    // zadnji subotnji zapis radnika PRIJE ciljane subote
-    let ref: { time: number; worked: boolean } | null = null;
+
+    // Subotnji zapisi radnika PRIJE ciljane subote (razmak u sedmicama + ishod).
+    const recs: { weeksBefore: number; worked: boolean }[] = [];
     for (const a of attendance) {
         if (a.Worker_ID !== workerId) continue;
         const d = new Date(a.Date + 'T00:00:00');
         if (isNaN(d.getTime()) || d.getDay() !== SATURDAY || d >= target) continue;
-        if (!ref || d.getTime() > ref.time) ref = { time: d.getTime(), worked: WORKED_STATUSES.has(a.Status) };
+        recs.push({
+            weeksBefore: Math.round((target.getTime() - d.getTime()) / (7 * 86400000)),
+            worked: WORKED_STATUSES.has(a.Status),
+        });
     }
-    if (!ref) return true; // nema istorije → radi
-    const weeks = Math.round((target.getTime() - ref.time) / (7 * 86400000));
-    return weeks % 2 === 0 ? ref.worked : !ref.worked;  // alternacija po parnosti sedmica
+    if (!recs.length) return true;                        // nema istorije → radi
+
+    recs.sort((x, y) => x.weeksBefore - y.weeksBefore);   // najskoriji prvi
+    const recent = recs.slice(0, SATURDAY_LOOKBACK);
+    const r0 = recent[0];
+
+    // Alternacija: ishod se mijenja svake sedmice → parnost razmaka do r0.
+    const alternate = r0.weeksBefore % 2 === 0 ? r0.worked : !r0.worked;
+
+    // Zadnji par UZASTOPNIH subota (razmak 1 sedmica) određuje režim.
+    for (let i = 0; i < recent.length - 1; i++) {
+        if (recent[i + 1].weeksBefore - recent[i].weeksBefore === 1) {
+            return recent[i].worked === recent[i + 1].worked
+                ? r0.worked      // stalan režim → ponovi zadnju subotu
+                : alternate;     // alternacija → projekcija parnošću
+        }
+    }
+    return alternate;            // nema uzastopnog para → alternacija od zadnje
 }
 
 /**

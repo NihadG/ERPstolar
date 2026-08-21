@@ -53,6 +53,50 @@ describe('workerWorksSaturday — alternacija iz šihtarice', () => {
     });
 });
 
+// Subote 2026: 06-20, 06-27, 07-04, 07-11, 07-18. Precizniji režim gleda zadnje
+// do 3 subote i razlikuje STALNOG (radi svaku) od onog koji ALTERNIRA.
+describe('workerWorksSaturday — režim iz zadnje 3 subote (stalan vs alternacija)', () => {
+    test('radi SVAKU subotu (3 uzastopne prisutne) → i narednu radi', () => {
+        const att = [
+            { Worker_ID: 'W1', Date: '2026-06-20', Status: 'Prisutan' },
+            { Worker_ID: 'W1', Date: '2026-06-27', Status: 'Prisutan' },
+            { Worker_ID: 'W1', Date: '2026-07-04', Status: 'Prisutan' },
+        ];
+        // Zadnji par (04.,27.) je isti ishod → stalan režim → 11. RADI.
+        // (Prosta parnost od zadnje subote bi ovdje pogrešno rekla „ne radi".)
+        expect(workerWorksSaturday('W1', '2026-07-11', att)).toBe(true);
+        expect(workerWorksSaturday('W1', '2026-07-18', att)).toBe(true);
+    });
+
+    test('primjer korisnika: radio zadnju, ne pretprošlu, radio treću (W,ne,W) → narednu NE radi', () => {
+        const att = [
+            { Worker_ID: 'W1', Date: '2026-06-20', Status: 'Prisutan' }, // treća pozadi — radio
+            { Worker_ID: 'W1', Date: '2026-06-27', Status: 'Vikend' },   // pretprošla — nije
+            { Worker_ID: 'W1', Date: '2026-07-04', Status: 'Prisutan' }, // zadnja — radio
+        ];
+        expect(workerWorksSaturday('W1', '2026-07-11', att)).toBe(false); // alternacija
+        expect(workerWorksSaturday('W1', '2026-07-18', att)).toBe(true);
+    });
+
+    test('zadnji par odlučuje: dvije skorije uzastopne prisutne → radi, iako je treća pozadi bila slobodna', () => {
+        const att = [
+            { Worker_ID: 'W1', Date: '2026-06-20', Status: 'Vikend' },   // treća pozadi — slobodan
+            { Worker_ID: 'W1', Date: '2026-06-27', Status: 'Prisutan' }, // pretprošla — radio
+            { Worker_ID: 'W1', Date: '2026-07-04', Status: 'Prisutan' }, // zadnja — radio
+        ];
+        expect(workerWorksSaturday('W1', '2026-07-11', att)).toBe(true); // stalan režim (zadnji par isti)
+    });
+
+    test('rupa u šihtarici (nema uzastopnog para) → alternacija od zadnje subote', () => {
+        const att = [
+            { Worker_ID: 'W1', Date: '2026-06-20', Status: 'Prisutan' }, // 07-04 je 2 sedmice iza — nema para
+            { Worker_ID: 'W1', Date: '2026-07-04', Status: 'Prisutan' },
+        ];
+        expect(workerWorksSaturday('W1', '2026-07-11', att)).toBe(false); // +1 od zadnje (04.) → ne
+        expect(workerWorksSaturday('W1', '2026-07-18', att)).toBe(true);  // +2 → da
+    });
+});
+
 describe('buildSaturdayChecker + rok (multi-worker: subota radna ako bar jedan radi)', () => {
     test('jedan radnik koji je radio 20. → subota 27. nije radna za njega', () => {
         const att = [{ Worker_ID: 'W1', Date: '2026-06-20', Status: 'Prisutan' }];
