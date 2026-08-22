@@ -349,7 +349,7 @@ export default function OrderDetail({ orderId, onClose, showToast, readOnly }: P
 
             {/* ── KNJIGA RADA ─────────────────────────────────────────── */}
             {tab === 'knjiga' && (
-                <WorkLogPanel orderId={orderId} readOnly={readOnly} showToast={showToast} />
+                <WorkLogPanel orderId={orderId} readOnly={readOnly} showToast={showToast} onChanged={reload} />
             )}
 
             {/* ── ZADACI ──────────────────────────────────────────────── */}

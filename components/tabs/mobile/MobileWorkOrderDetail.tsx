@@ -286,7 +286,11 @@ export default function MobileWorkOrderDetail({
                 {/* ── RAD: knjiga rada (isti panel kao desktop) ── */}
                 {tab === 'rad' && (
                     <div className="mwd-panel mui">
-                        <WorkLogPanel orderId={workOrder.Work_Order_ID} showToast={showToast} />
+                        <WorkLogPanel
+                            orderId={workOrder.Work_Order_ID}
+                            showToast={showToast}
+                            onChanged={() => { reloadLogs(); onRefresh('workOrders', 'projects', 'workLogs'); }}
+                        />
                     </div>
                 )}
 

@@ -41,9 +41,15 @@ interface Props {
     orderId: string;
     readOnly?: boolean;
     showToast: (message: string, type: 'success' | 'error' | 'info') => void;
+    /**
+     * Upis je prošao. Panel se osvježava sam, ali kad je ugniježđen u glavnu
+     * aplikaciju (vlasnikov detalj naloga) njeno stanje se puni klijentskim
+     * SDK-om i o ovom upisu ne zna ništa — trošak rada na kartici bi ostao star.
+     */
+    onChanged?: () => void;
 }
 
-export default function WorkLogPanel({ orderId, readOnly, showToast }: Props) {
+export default function WorkLogPanel({ orderId, readOnly, showToast, onChanged }: Props) {
     const [data, setData] = useState<FieldWorkLogPayload | null>(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
@@ -111,6 +117,7 @@ export default function WorkLogPanel({ orderId, readOnly, showToast }: Props) {
             );
             showToast(res.message, res.created > 0 ? 'success' : 'info');
             await load();
+            if (res.created > 0) onChanged?.();
             closeDay();
         } catch (e: any) {
             showToast(e?.message || 'Upis nije uspio', 'error');
@@ -129,6 +136,7 @@ export default function WorkLogPanel({ orderId, readOnly, showToast }: Props) {
             );
             showToast(res.message, res.removed > 0 ? 'success' : 'info');
             await load();
+            if (res.removed > 0) onChanged?.();
         } catch (e: any) {
             showToast(e?.message || 'Brisanje nije uspjelo', 'error');
         } finally {
