@@ -21,6 +21,7 @@ import CutlistLauncher from './cutlist/CutlistLauncher';
 import FieldTabBar, { type FieldTabId } from './FieldTabBar';
 import AttendanceScreen from './attendance/AttendanceScreen';
 import OrdersScreen from './orders/OrdersScreen';
+import TasksScreen from './tasks/TasksScreen';
 import PurchasesScreen from './purchases/PurchasesScreen';
 import ProjectsScreen from './projects/ProjectsScreen';
 import './Controller.css';
@@ -84,6 +85,10 @@ export default function ControllerApp({ data, readOnly }: Props) {
 
                 {tab === 'orders' && (
                     <OrdersScreen showToast={showToast} readOnly={readOnly} />
+                )}
+
+                {tab === 'tasks' && (
+                    <TasksScreen showToast={showToast} readOnly={readOnly} />
                 )}
 
                 {tab === 'purchases' && (

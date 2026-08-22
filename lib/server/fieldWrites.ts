@@ -210,17 +210,46 @@ export async function createTask(orgId: string, input: CreateTaskInput): Promise
     return taskId;
 }
 
-/** Čekiranje zadatka — isti dokument koji vlasnik vidi u Zadacima. */
-export async function setTaskStatus(orgId: string, taskId: string, done: boolean): Promise<void> {
+async function taskRef(orgId: string, taskId: string) {
     const snap = await adminDb().collection('tasks')
         .where('Organization_ID', '==', orgId)
         .where('Task_ID', '==', taskId)
         .limit(1)
         .get();
     if (snap.empty) throw new Error('Zadatak nije pronađen.');
+    return snap.docs[0].ref;
+}
 
-    await snap.docs[0].ref.update({
+/** Čekiranje zadatka — isti dokument koji vlasnik vidi u Zadacima. */
+export async function setTaskStatus(orgId: string, taskId: string, done: boolean): Promise<void> {
+    await (await taskRef(orgId, taskId)).update({
         Status: done ? 'completed' : 'pending',
         Completed_Date: done ? new Date().toISOString() : '',
     });
+}
+
+/**
+ * Postavi tačan status zadatka (uključujući „u toku"). Kontrolorov Zadaci tab
+ * vodi zadatak kroz cijeli tok, ne samo završeno/nezavršeno. `Completed_Date`
+ * se drži u skladu sa statusom da izvještaji ostanu tačni.
+ */
+export async function setTaskState(orgId: string, taskId: string, status: Task['Status']): Promise<void> {
+    await (await taskRef(orgId, taskId)).update({
+        Status: status,
+        Completed_Date: status === 'completed' ? new Date().toISOString() : '',
+    });
+}
+
+/** Prebaci jednu stavku checkliste — isti dokument koji vlasnik vidi u Zadacima. */
+export async function toggleTaskChecklistItem(orgId: string, taskId: string, itemId: string): Promise<void> {
+    const ref = await taskRef(orgId, taskId);
+    const snap = await ref.get();
+    const checklist: { id: string; text: string; completed: boolean }[] =
+        Array.isArray(snap.data()?.Checklist) ? [...snap.data()!.Checklist] : [];
+
+    const idx = checklist.findIndex(c => c.id === itemId);
+    if (idx < 0) throw new Error('Stavka nije pronađena.');
+
+    checklist[idx] = { ...checklist[idx], completed: !checklist[idx].completed };
+    await ref.update({ Checklist: checklist });
 }

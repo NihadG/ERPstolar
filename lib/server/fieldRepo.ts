@@ -255,6 +255,14 @@ export async function getWorkLogsForWorkOrder(orgId: string, workOrderId: string
 
 // ─── Zadaci ───────────────────────────────────────────────────────────
 
+/** Svi zadaci organizacije — kontrolorov „Zadaci" tab vidi cijelu listu. */
+export async function getAllTasks(orgId: string): Promise<Task[]> {
+    const snap = await adminDb().collection('tasks')
+        .where('Organization_ID', '==', orgId)
+        .get();
+    return snap.docs.map(d => d.data() as Task);
+}
+
 export async function getTasksForWorker(orgId: string, workerId: string): Promise<Task[]> {
     const snap = await adminDb().collection('tasks')
         .where('Organization_ID', '==', orgId)

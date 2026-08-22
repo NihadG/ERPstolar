@@ -13,7 +13,7 @@
 // ════════════════════════════════════════════════════════════════════
 
 import { useCallback, useMemo, useState } from 'react';
-import { CalendarDays, ChevronLeft, ChevronRight, ReceiptText, Users } from 'lucide-react';
+import { CalendarDays, ChevronLeft, ChevronRight, ListChecks, ReceiptText, Users } from 'lucide-react';
 import type { ProposalRow } from '@/lib/attendanceBooking';
 import { bookedKey, unbookedPresentWorkers } from '@/lib/field/fieldAttendance';
 import { isoOf, mondayOf, useFieldAttendance } from '@/lib/field/useFieldAttendance';
@@ -21,6 +21,7 @@ import { MLarge, MSearch, MEmpty, MButton, MAvatar } from '@/components/tabs/mob
 import { haptic } from '@/components/tabs/mobile/useSwipe';
 import StatusSheet from './StatusSheet';
 import BookingScreen from './BookingScreen';
+import BulkAttendanceScreen from './BulkAttendanceScreen';
 
 const DOW = ['Pon', 'Uto', 'Sri', 'Čet', 'Pet', 'Sub', 'Ned'];
 
@@ -28,6 +29,16 @@ const TONE: Record<string, string> = {
     'Prisutan': 'green', 'Teren': 'blue', 'Odsutan': 'gray',
     'Bolovanje': 'orange', 'Odmor': 'orange', 'Vikend': 'gray', 'Praznik': 'purple',
 };
+
+// Poredak liste za izabrani dan prati kontrolorovu pažnju: prvo ko je tu, pa
+// teren, pa odsustva po težini, a ostala i neoznačeni na dnu. Neoznačeni idu
+// najniže (rang 5) — na početku dana su svi tu, pa kako se označavaju, prisutni
+// se dižu na vrh, a „još za uraditi" ostaje skupljeno pri dnu.
+const STATUS_RANK: Record<string, number> = {
+    'Prisutan': 0, 'Teren': 1, 'Bolovanje': 2, 'Odmor': 3,
+    'Odsutan': 4, 'Vikend': 4, 'Praznik': 4,
+};
+const rankOf = (status?: string): number => (status == null ? 5 : STATUS_RANK[status] ?? 4);
 
 const initials = (name: string) =>
     name.split(' ').filter(Boolean).map(p => p[0]).join('').toUpperCase().slice(0, 2) || '?';
@@ -47,8 +58,9 @@ export default function AttendanceScreen({ showToast, readOnly }: Props) {
     const [sheetWorker, setSheetWorker] = useState<{ id: string; name: string } | null>(null);
     const [busy, setBusy] = useState(false);
     const [booking, setBooking] = useState<{ rows: ProposalRow[]; date: string } | null>(null);
+    const [bulkOpen, setBulkOpen] = useState(false);
 
-    const { data, loading, error, reload, setStatus, proposalFor, book } = useFieldAttendance(anchor);
+    const { data, loading, error, reload, setStatus, setManyStatuses, proposalFor, book } = useFieldAttendance(anchor);
 
     const today = isoOf(new Date());
 
@@ -101,8 +113,15 @@ export default function AttendanceScreen({ showToast, readOnly }: Props) {
 
     const workers = useMemo(() => {
         const q = search.trim().toLowerCase();
-        return (data?.workers || []).filter(w => !q || w.name.toLowerCase().includes(q));
-    }, [data, search]);
+        const list = (data?.workers || []).filter(w => !q || w.name.toLowerCase().includes(q));
+        // Sortiraj po statusu IZABRANOG dana; unutar iste grupe ostaje abecedno
+        // (projekcija radnike već slaže po imenu).
+        return list.slice().sort((a, b) => {
+            const ra = rankOf(statusByWorker.get(a.workerId)?.status);
+            const rb = rankOf(statusByWorker.get(b.workerId)?.status);
+            return ra - rb || a.name.localeCompare(b.name, 'bs');
+        });
+    }, [data, search, statusByWorker]);
 
     const markedCount = useMemo(
         () => (data?.workers || []).filter(w => statusByWorker.has(w.workerId)).length,
@@ -177,6 +196,23 @@ export default function AttendanceScreen({ showToast, readOnly }: Props) {
         }
     }, [data, statusByWorker, selected, setStatus, showToast, openBookingFor]);
 
+    // Zatečeni status po radniku (bez napomene) — polazna tačka grupnog nacrta.
+    const currentStatusMap = useMemo(() => {
+        const map = new Map<string, string>();
+        for (const [id, v] of statusByWorker) map.set(id, v.status);
+        return map;
+    }, [statusByWorker]);
+
+    const saveBulk = useCallback(async (entries: { workerId: string; status: string }[]) => {
+        try {
+            await setManyStatuses(selected, entries);
+            showToast(`Sačuvano za ${entries.length} radnika`, 'success');
+        } catch (e: any) {
+            showToast(e?.message || 'Snimanje nije uspjelo', 'error');
+            throw e;   // ekran ostaje otvoren za ponovni pokušaj
+        }
+    }, [selected, setManyStatuses, showToast]);
+
     // ── Prikaz ───────────────────────────────────────────────────────
     if (booking) {
         return (
@@ -190,6 +226,19 @@ export default function AttendanceScreen({ showToast, readOnly }: Props) {
                     showToast(res.message, res.failedWorkers.length > 0 ? 'error' : 'success');
                     res.startWarnings.forEach(w => showToast(w, 'error'));
                 }}
+            />
+        );
+    }
+
+    if (bulkOpen && data) {
+        return (
+            <BulkAttendanceScreen
+                date={selected}
+                workers={data.workers}
+                current={currentStatusMap}
+                yesterday={yesterdayByWorker}
+                onClose={() => setBulkOpen(false)}
+                onSave={saveBulk}
             />
         );
     }
@@ -252,9 +301,14 @@ export default function AttendanceScreen({ showToast, readOnly }: Props) {
             )}
 
             {!readOnly && (
-                <button type="button" className="fat-bulk" disabled={busy} onClick={markAllPresent}>
-                    <Users size={18} /> Svi prisutni
-                </button>
+                <div className="fat-bulkrow">
+                    <button type="button" className="fat-bulk" disabled={busy} onClick={markAllPresent}>
+                        <Users size={18} /> Svi prisutni
+                    </button>
+                    <button type="button" className="fat-bulk" disabled={busy || !data} onClick={() => setBulkOpen(true)}>
+                        <ListChecks size={18} /> Grupno
+                    </button>
+                </div>
             )}
 
             <div className="fat-search">

@@ -222,6 +222,10 @@
 .fat-bulk:active { opacity: 0.75; }
 .fat-bulk:disabled { opacity: 0.5; }
 
+/* „Svi prisutni" + „Grupno" dijele jedan red. */
+.fat-bulkrow { display: flex; gap: 8px; margin-bottom: 12px; }
+.fat-bulkrow .fat-bulk { flex: 1; margin-bottom: 0; }
+
 .fat-search { padding-bottom: 12px; }
 
 .fat-loading {
@@ -429,6 +433,77 @@
     font-family: inherit;
     font-size: 15px;
     cursor: pointer;
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   GRUPNO OZNAČAVANJE (puni ekran, koristi .fbk okvir i .fat-card kartice)
+   ═══════════════════════════════════════════════════════════════════ */
+
+.fgr-quick { padding: 2px 0 12px; }
+
+.fgr-quick-l {
+    display: block;
+    padding: 0 2px 8px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--mui-label2);
+    letter-spacing: -0.01em;
+}
+
+/* „Postavi sve na …" — vodoravna traka koja se skroluje, bez scrollbara. */
+.fgr-quick-rail {
+    display: flex;
+    gap: 8px;
+    overflow-x: auto;
+    padding: 2px;
+    scrollbar-width: none;
+}
+.fgr-quick-rail::-webkit-scrollbar { display: none; }
+
+.fgr-qchip {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 42px;
+    padding: 0 15px;
+    border: none;
+    border-radius: 999px;
+    background: rgba(60, 60, 67, 0.07);
+    color: var(--mui-label);
+    font-family: inherit;
+    font-size: 14.5px;
+    font-weight: 500;
+    letter-spacing: -0.01em;
+    white-space: nowrap;
+    cursor: pointer;
+}
+
+.fgr-qchip:active { transform: scale(0.96); }
+.fgr-qchip svg { color: var(--mui-label2); }
+
+/* Tint po statusu — ista logika „boja govori status" kao na karticama. */
+.fgr-qchip.green { background: rgba(52, 199, 89, 0.15); color: var(--mui-green-t); }
+.fgr-qchip.green svg { color: var(--mui-green-t); }
+.fgr-qchip.blue { background: rgba(0, 122, 255, 0.13); color: var(--mui-blue-t); }
+.fgr-qchip.orange { background: rgba(255, 149, 0, 0.15); color: var(--mui-orange-t); }
+.fgr-qchip.purple { background: rgba(175, 82, 222, 0.14); color: var(--mui-purple-t); }
+.fgr-qchip.gray { background: rgba(60, 60, 67, 0.09); color: var(--mui-label2); }
+
+.fgr-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    /* Prostor za fiksiranu potvrdu na dnu. */
+    padding-bottom: calc(150px + env(safe-area-inset-bottom, 0px));
+}
+
+/* Tačka „promijenjeno u nacrtu" — desno na kartici radnika. */
+.fgr-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--mui-blue);
 }
 
 /* ═══════════════════════════════════════════════════════════════════

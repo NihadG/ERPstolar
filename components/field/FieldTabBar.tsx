@@ -11,14 +11,14 @@
 // gore desno (vidi ControllerApp).
 // ════════════════════════════════════════════════════════════════════
 
-import { ClipboardList, FolderOpen, Home, CalendarCheck, CalendarDays, ShoppingCart, StickyNote, User } from 'lucide-react';
+import { ClipboardList, FolderOpen, Home, CalendarCheck, CalendarDays, ListChecks, ShoppingCart, StickyNote, User } from 'lucide-react';
 import { haptic } from '@/components/tabs/mobile/useSwipe';
 import type { UserRole } from '@/lib/types';
 import '@/components/tabs/mobile/MobileTabBar.css';
 
 export type FieldTabId =
-    | 'orders' | 'attendance' | 'purchases' | 'projects'   // kontrolor
-    | 'home' | 'notes' | 'calendar' | 'me';                // radnik
+    | 'orders' | 'tasks' | 'attendance' | 'purchases' | 'projects'   // kontrolor
+    | 'home' | 'notes' | 'calendar' | 'me';                          // radnik
 
 export interface FieldTab {
     id: FieldTabId;
@@ -26,9 +26,11 @@ export interface FieldTab {
     Icon: typeof Home;
 }
 
-/** Redoslijed prati kontrolorov dan: šta se radi → ko radi → šta je stiglo → za koga. */
+/** Redoslijed prati kontrolorov dan: šta se radi → šta zapinje → ko radi →
+ *  šta je stiglo → za koga. */
 const CONTROLLER_TABS: FieldTab[] = [
     { id: 'orders', label: 'Nalozi', Icon: ClipboardList },
+    { id: 'tasks', label: 'Zadaci', Icon: ListChecks },
     { id: 'attendance', label: 'Šihtarica', Icon: CalendarCheck },
     { id: 'purchases', label: 'Narudžbe', Icon: ShoppingCart },
     { id: 'projects', label: 'Projekti', Icon: FolderOpen },

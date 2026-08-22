@@ -75,12 +75,17 @@
 .fld-preview .fat-card,
 .fld-preview .fat-unbooked,
 .fld-preview .fat-bulk,
+.fld-preview .fgr-qchip,
 .fld-preview .fbk-order,
 .fld-preview .fbk-confirm,
 .fld-preview .fbk-presence,
 .fld-preview .fod-item,
 .fld-preview .fod-act,
-.fld-preview .fod-chip button {
+.fld-preview .fod-chip button,
+.fld-preview .ftk-alert,
+.fld-preview .ftk-card-main,
+.fld-preview .ftk-groupbtn,
+.fld-preview .ftk-fab {
     pointer-events: none;
 }
 

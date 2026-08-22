@@ -29,9 +29,14 @@ export function mondayOf(d: Date): Date {
 }
 
 export function weekRange(anchor: Date): { from: string; to: string } {
-    const from = mondayOf(anchor);
-    const to = new Date(from);
-    to.setDate(from.getDate() + 6);
+    const monday = mondayOf(anchor);
+    // Dohvati i prethodnu nedjelju. „Kao jučer" treba jučerašnji status, a
+    // ponedjeljkom jučer (nedjelja) padne izvan sedmice — bez ovog dugme nestane
+    // baš na dan kad je najkorisnije. Jedan dan više je zanemariv na mreži.
+    const from = new Date(monday);
+    from.setDate(monday.getDate() - 1);
+    const to = new Date(monday);
+    to.setDate(monday.getDate() + 6);
     return { from: isoOf(from), to: isoOf(to) };
 }
 
@@ -102,6 +107,23 @@ export function useFieldAttendance(anchorDate: Date) {
         return res.proposal || [];
     }, [invalidate, load]);
 
+    /**
+     * Grupni upis statusa za više radnika istog dana. POST-ovi idu paralelno
+     * (radnici su nezavisni), pa se keš odbaci i sedmica dohvati JEDNOM — za
+     * razliku od petlje `setStatus`, koja bi reloadala mrežu za svakog radnika.
+     * Dnevnice se ne knjiže ovdje; to ostaje na traci „bez dnevnice → Proknjiži".
+     */
+    const setManyStatuses = useCallback(async (
+        date: string, entries: { workerId: string; status: string; notes?: string }[]
+    ): Promise<void> => {
+        if (entries.length === 0) return;
+        await Promise.all(entries.map(e =>
+            apiPost('/api/field/attendance', { workerId: e.workerId, date, status: e.status, notes: e.notes })
+        ));
+        invalidate(date);
+        await load(true);
+    }, [invalidate, load]);
+
     /** Prijedlog za više radnika — „Svi prisutni" i traka „bez dnevnice". */
     const proposalFor = useCallback(async (date: string, workerIds?: string[]): Promise<ProposalRow[]> => {
         const res = await apiPost<{ proposal: ProposalRow[] }>(
@@ -117,5 +139,5 @@ export function useFieldAttendance(anchorDate: Date) {
         return res;
     }, [invalidate, load]);
 
-    return { data, loading, error, reload: () => load(true), setStatus, proposalFor, book };
+    return { data, loading, error, reload: () => load(true), setStatus, setManyStatuses, proposalFor, book };
 }

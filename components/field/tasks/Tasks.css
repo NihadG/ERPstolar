@@ -1,0 +1,334 @@
+/* ═══════════════════════════════════════════════════════════════════
+   ZADACI — kontrolorov ekran
+   Nadogradnja nad MobileUI.css (sve boje/tipografija odatle). Iste navike
+   kao .fat/.fod: kartice s bojom lijeve ivice = hitnost, velike mete, meko
+   sjenčenje. Prefiks `.ftk-`.
+   ═══════════════════════════════════════════════════════════════════ */
+
+.ftk-sub-over { color: var(--mui-orange-t); }
+
+/* ── Traka prekoračenih (jedino upozorenje na vrhu) ────────────────── */
+
+.ftk-alert {
+    display: flex;
+    align-items: center;
+    gap: 11px;
+    width: 100%;
+    min-height: 54px;
+    margin: 2px 0 12px;
+    padding: 12px 14px;
+    border: none;
+    border-radius: 15px;
+    background: linear-gradient(135deg, #ff3b30, #ff6a5e);
+    color: #fff;
+    font-family: inherit;
+    font-size: 15px;
+    letter-spacing: -0.015em;
+    text-align: left;
+    cursor: pointer;
+    box-shadow: 0 6px 18px -8px rgba(255, 59, 48, 0.85);
+}
+
+.ftk-alert > span:nth-of-type(1) { flex: 1; }
+.ftk-alert b { font-weight: 700; }
+.ftk-alert:active { transform: scale(0.99); }
+
+.ftk-alert-cta {
+    flex: none;
+    padding: 6px 12px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.25);
+    font-size: 14px;
+    font-weight: 600;
+}
+
+/* ── Traka alata: brojač + grupisanje ──────────────────────────────── */
+
+.ftk-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 2px 2px 10px;
+}
+
+.ftk-toolbar-n {
+    font-size: 13px;
+    color: var(--mui-label2);
+    letter-spacing: -0.01em;
+}
+
+.ftk-groupbtn {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 7px 12px;
+    border: none;
+    border-radius: 999px;
+    background: rgba(60, 60, 67, 0.07);
+    color: var(--mui-label);
+    font-family: inherit;
+    font-size: 13.5px;
+    font-weight: 500;
+    letter-spacing: -0.01em;
+    cursor: pointer;
+}
+
+.ftk-groupbtn:active { opacity: 0.7; }
+.ftk-groupbtn svg { color: var(--mui-label2); }
+
+/* ── Sekcije i lista ───────────────────────────────────────────────── */
+
+.ftk-sections { display: flex; flex-direction: column; gap: 4px; }
+.ftk-sec { display: flex; flex-direction: column; }
+
+.ftk-shd {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 16px 4px 8px;
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    color: var(--mui-label);
+}
+
+.ftk-sec:first-child .ftk-shd { padding-top: 4px; }
+
+.ftk-shd-n {
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--mui-label2);
+    background: rgba(60, 60, 67, 0.08);
+    padding: 1px 8px;
+    border-radius: 999px;
+}
+
+.ftk-list { display: flex; flex-direction: column; gap: 8px; }
+
+/* Kartica zadatka — meta ≥64px, boja lijeve ivice = hitnost. */
+.ftk-card {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    width: 100%;
+    padding: 12px 14px;
+    border: none;
+    border-left: 4px solid transparent;
+    border-radius: 14px;
+    background: var(--mui-cell);
+    box-shadow: 0 1px 2px rgba(20, 30, 60, 0.05), 0 12px 28px -20px rgba(20, 30, 60, 0.25);
+}
+
+.ftk-card.red { border-left-color: var(--mui-red); }
+.ftk-card.orange { border-left-color: var(--mui-orange); }
+.ftk-card.blue { border-left-color: var(--mui-blue); }
+.ftk-card.gray { border-left-color: rgba(60, 60, 67, 0.3); }
+
+.ftk-card .mui-cbx { margin-top: 1px; }
+
+.ftk-card-main {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+    border: none;
+    background: none;
+    padding: 0;
+    font-family: inherit;
+    text-align: left;
+    cursor: pointer;
+}
+
+.ftk-card-title {
+    font-size: 15.5px;
+    font-weight: 500;
+    letter-spacing: -0.02em;
+    line-height: 1.3;
+    color: var(--mui-label);
+}
+
+/* Završen — prigušen naslov s precrtom, ostalo blijedi. */
+.ftk-card.done .ftk-card-title {
+    color: var(--mui-label2);
+    text-decoration: line-through;
+    text-decoration-color: var(--mui-label3);
+}
+.ftk-card.done { opacity: 0.72; }
+
+.ftk-card-meta {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px 9px;
+    font-size: 12.5px;
+    color: var(--mui-label2);
+}
+
+.ftk-meta-i {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    letter-spacing: -0.01em;
+}
+
+.ftk-meta-i svg { color: var(--mui-label3); }
+
+.ftk-due {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-weight: 500;
+    letter-spacing: -0.01em;
+    color: var(--mui-label2);
+}
+
+.ftk-due svg { color: currentColor; opacity: 0.7; }
+.ftk-due.soon { color: var(--mui-orange-t); }
+.ftk-due.over { color: var(--mui-red-t); font-weight: 600; }
+
+/* Chip naloga/projekta na koji zadatak upućuje. */
+.ftk-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    max-width: 100%;
+    padding: 4px 9px;
+    border-radius: 8px;
+    background: rgba(60, 60, 67, 0.06);
+    font-size: 12px;
+    letter-spacing: -0.01em;
+    color: var(--mui-label2);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.ftk-link svg { flex: none; color: var(--mui-label3); }
+.ftk-link.work_order { background: rgba(0, 122, 255, 0.09); color: var(--mui-blue-t); }
+.ftk-link.work_order svg { color: var(--mui-blue-t); }
+.ftk-link.project { background: rgba(175, 82, 222, 0.1); color: var(--mui-purple-t); }
+.ftk-link.project svg { color: var(--mui-purple-t); }
+
+/* ── Plutajuće dugme (+) ───────────────────────────────────────────── */
+
+.ftk-fab {
+    position: fixed;
+    right: 18px;
+    bottom: calc(88px + env(safe-area-inset-bottom, 0px));
+    z-index: 60;
+    width: 56px;
+    height: 56px;
+    border: none;
+    border-radius: 50%;
+    background: linear-gradient(135deg, #0a84ff, #5e5ce6);
+    color: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    box-shadow: 0 10px 24px -6px rgba(10, 132, 255, 0.7);
+}
+
+.ftk-fab:active { transform: scale(0.93); }
+
+/* ── Detalj (sheet) ────────────────────────────────────────────────── */
+
+.ftk-d-chips {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 7px;
+    margin: -2px 0 6px;
+}
+
+.ftk-d-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 5px 11px;
+    border-radius: 999px;
+    background: rgba(60, 60, 67, 0.08);
+    font-size: 13px;
+    letter-spacing: -0.01em;
+    color: var(--mui-label2);
+}
+
+.ftk-d-chip svg { color: var(--mui-label3); }
+
+.ftk-d-text {
+    margin: 4px 2px 0;
+    font-size: 15px;
+    line-height: 1.5;
+    letter-spacing: -0.01em;
+    color: var(--mui-label);
+    white-space: pre-wrap;
+}
+
+.ftk-d-links { display: flex; flex-wrap: wrap; gap: 7px; padding: 2px 0; }
+
+.ftk-linkchip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 12px;
+    border-radius: 10px;
+    background: rgba(60, 60, 67, 0.06);
+    font-size: 13.5px;
+    letter-spacing: -0.01em;
+    color: var(--mui-label);
+}
+
+.ftk-linkchip svg { flex: none; color: var(--mui-label2); }
+.ftk-linkchip.work_order { background: rgba(0, 122, 255, 0.09); color: var(--mui-blue-t); }
+.ftk-linkchip.work_order svg { color: var(--mui-blue-t); }
+.ftk-linkchip.project { background: rgba(175, 82, 222, 0.1); color: var(--mui-purple-t); }
+.ftk-linkchip.project svg { color: var(--mui-purple-t); }
+
+/* ── Novi zadatak (sheet) ──────────────────────────────────────────── */
+
+.ftk-field {
+    padding: 13px 16px;
+    margin-top: 2px;
+    border-radius: 12px;
+    background: var(--mui-cell);
+}
+
+.ftk-input {
+    width: 100%;
+    border: none;
+    outline: none;
+    background: transparent;
+    font-family: inherit;
+    font-size: 16px;   /* ispod 16px iOS zumira ekran */
+    letter-spacing: -0.01em;
+    color: var(--mui-label);
+}
+
+.ftk-pick { display: flex; flex-wrap: wrap; gap: 8px; padding-bottom: 2px; }
+.ftk-pick .mui-chip { min-height: 42px; padding: 0 16px; }
+
+.ftk-row2 { display: flex; gap: 8px; }
+.ftk-row2 .ftk-select { flex: 1; min-width: 0; }
+
+.ftk-select,
+.ftk-textarea {
+    width: 100%;
+    padding: 12px 14px;
+    border: none;
+    border-radius: 12px;
+    background: var(--mui-cell);
+    font-family: inherit;
+    font-size: 16px;   /* ispod 16px iOS zumira ekran */
+    letter-spacing: -0.01em;
+    color: var(--mui-label);
+    -webkit-appearance: none;
+    appearance: none;
+}
+
+.ftk-select-full { margin-top: 0; }
+
+.ftk-textarea { resize: none; line-height: 1.45; }
+.ftk-textarea::placeholder { color: var(--mui-label3); }
