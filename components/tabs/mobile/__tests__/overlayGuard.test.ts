@@ -39,4 +39,17 @@ describe('overlayGuard', () => {
         pushOverlay();
         expect(isOverlayOpen()).toBe(true);
     });
+
+    // Traka se sklanja dok je overlay otvoren; bez ovoga se provlači preko
+    // dugmeta na dnu cjeloekranskog sloja i sječe ga.
+    it('označava <body> dok je overlay otvoren', () => {
+        expect(document.body.classList.contains('m-overlay')).toBe(false);
+        pushOverlay();
+        expect(document.body.classList.contains('m-overlay')).toBe(true);
+        pushOverlay();
+        popOverlay();
+        expect(document.body.classList.contains('m-overlay')).toBe(true);
+        popOverlay();
+        expect(document.body.classList.contains('m-overlay')).toBe(false);
+    });
 });

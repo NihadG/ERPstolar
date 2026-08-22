@@ -159,7 +159,16 @@ export async function bookWorkerDayItems(
     workerName: string,
     date: string,
     targets: BookTarget[],
-    presence: number = 1
+    presence: number = 1,
+    /**
+     * 'attendance' = nastalo iz šihtarice (odsustvo ga smije počistiti).
+     * 'manual'     = izričit unos u Knjigu rada; `clearAutoLogsForAbsence` ga
+     *                NE dira, isto pravilo kao na desktopu.
+     *
+     * Ime NIJE `source` — tako se u petlji ispod već zove stavka s koje je
+     * trošak preusmjeren (`resolveLaborCostTarget`), pa bi je parametar zasjenio.
+     */
+    bookingSource: 'attendance' | 'manual' = 'attendance'
 ): Promise<{ created: number; affectedWorkOrderIds: string[] }> {
     if (!workerId || !date || !orgId || targets.length === 0) {
         return { created: 0, affectedWorkOrderIds: [] };
@@ -227,7 +236,7 @@ export async function bookWorkerDayItems(
             Worker_ID: workerId, Worker_Name: workerName,
             Daily_Rate: dailyRate, Original_Daily_Rate: dailyRate,
             Day_Fraction: norm, Presence: norm, Split_Factor: 1, Hours_Worked: 8 * norm,
-            Booking_Source: 'attendance', Is_From_Attendance: true,
+            Booking_Source: bookingSource, Is_From_Attendance: bookingSource === 'attendance',
             Work_Order_ID: targetWoId, Work_Order_Item_ID: targetItemId, Product_ID: productId,
             ...(redirected && source ? {
                 Source_Work_Order_ID: source.Work_Order_ID,
@@ -355,6 +364,38 @@ export async function renormalizeWorkerDay(
 }
 
 /**
+ * Skini radnika s jednog dana JEDNOG naloga (Knjiga rada na telefonu).
+ *
+ * Namjerno usko: briše samo zapise koji direktno pripadaju tom nalogu — tačno
+ * ono što je ekran i pokazao. Preusmjereni trošak „raznih poslova" (zapis živi
+ * na tuđem nalogu, a nosi `Source_Work_Order_ID`) se NE dira: on se ne vidi u
+ * ovoj knjizi, pa se odavde ne smije ni brisati. Za takve slučajeve ostaje
+ * desktop, gdje se vidi cijela slika.
+ *
+ * Poslije brisanja radnikov dan se renormalizuje — ako mu je ostao rad na
+ * drugim nalozima, dnevnica se preraspodijeli na njih (invarijanta
+ * Σ Daily_Rate = Original_Daily_Rate × Presence ostaje).
+ */
+export async function removeWorkerDayFromOrder(
+    orgId: string,
+    workOrderId: string,
+    workerId: string,
+    date: string
+): Promise<{ removed: number; affectedWorkOrderIds: string[] }> {
+    const logs = await getWorkLogRefsForWorkerDate(orgId, workerId, date);
+    const mine = logs.filter(l => l.data.Work_Order_ID === workOrderId && !l.data.Source_Work_Order_ID);
+    if (mine.length === 0) return { removed: 0, affectedWorkOrderIds: [] };
+
+    const batch = adminDb().batch();
+    mine.forEach(l => batch.delete(l.ref));
+    await batch.commit();
+
+    const affected = new Set<string>([workOrderId]);
+    (await renormalizeWorkerDay(orgId, workerId, date)).forEach(id => affected.add(id));
+    return { removed: mine.length, affectedWorkOrderIds: Array.from(affected) };
+}
+
+/**
  * Osvježi trošak rada na nalogu i njegovim stavkama.
  *
  * NAMJERNO UŽE od desktop `recalculateWorkOrder`: dira samo rad. Prihod,
@@ -412,6 +453,13 @@ export interface CommitResult {
     failedWorkers: string[];
     startWarnings: string[];
     affectedOrders: string[];
+    /**
+     * Koliko je (radnik, stavka) ciljeva uopšte pripremljeno. Razlikuje dva
+     * tiha ishoda koja korisniku izgledaju isto („nula dnevnica"): nalog nema
+     * nijednu stavku za knjižiti (prepared = 0) naspram toga da je dan već
+     * proknjižen pa je idempotentnost sve preskočila (prepared > 0, booked = 0).
+     */
+    prepared: number;
 }
 
 /**
@@ -519,13 +567,14 @@ export async function commitBooking(
         }
     }));
     const booked = results.reduce((s, n) => s + n, 0);
+    const prepared = Array.from(perWorker.values()).reduce((s, w) => s + w.targets.length, 0);
 
     // 3) Preračunaj pogođene naloge — nezavisni dokumenti, pa paralelno.
     await Promise.all(Array.from(affectedOrders).map(id =>
         recalcOrderLabor(orgId, id).catch(e => console.warn('[fieldAttendance] recalc failed', id, e))
     ));
 
-    return { booked, failedWorkers, startWarnings, affectedOrders: Array.from(affectedOrders) };
+    return { booked, prepared, failedWorkers, startWarnings, affectedOrders: Array.from(affectedOrders) };
 }
 
 export { ABSENT_STATUSES, PRESENT_STATUSES };

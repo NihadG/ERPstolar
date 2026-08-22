@@ -13,7 +13,7 @@
 // ════════════════════════════════════════════════════════════════════
 
 import { useCallback, useMemo, useState } from 'react';
-import { CalendarDays, ChevronLeft, ChevronRight, ListChecks, ReceiptText, Users } from 'lucide-react';
+import { CalendarDays, ChevronLeft, ChevronRight, ListChecks, ReceiptText, Users, Wallet } from 'lucide-react';
 import type { ProposalRow } from '@/lib/attendanceBooking';
 import { bookedKey, unbookedPresentWorkers } from '@/lib/field/fieldAttendance';
 import { isoOf, mondayOf, useFieldAttendance } from '@/lib/field/useFieldAttendance';
@@ -49,9 +49,15 @@ const longDate = (iso: string) =>
 interface Props {
     showToast: (message: string, type: 'success' | 'error' | 'info') => void;
     readOnly?: boolean;
+    /**
+     * Obračun dnevnica. Postoji samo za vlasnika (isti ekran na telefonu):
+     * kontrolor raspoređuje ljude i ne vidi iznose, pa kod njega ovo izostaje
+     * i dugme se ne crta.
+     */
+    onOpenPayroll?: () => void;
 }
 
-export default function AttendanceScreen({ showToast, readOnly }: Props) {
+export default function AttendanceScreen({ showToast, readOnly, onOpenPayroll }: Props) {
     const [anchor, setAnchor] = useState(() => new Date());
     const [selected, setSelected] = useState(() => isoOf(new Date()));
     const [search, setSearch] = useState('');
@@ -184,9 +190,12 @@ export default function AttendanceScreen({ showToast, readOnly }: Props) {
         }
         setBusy(true);
         try {
-            // Serijski: svaki upis vraća svjež presjek, a redoslijed drži
-            // renormalizaciju dnevnica predvidivom.
-            for (const w of missing) await setStatus(w.workerId, selected, 'Prisutan');
+            // Grupni upis, ne petlja `setStatus`. Petlja je za svakog radnika
+            // radila POST + puni dohvat sedmice (17 radnika = 34 kruga na
+            // pogonskoj mreži), a prvi pad bi je prekinuo na pola — ostatak
+            // ekipe ostane neoznačen, a poruka kaže samo „snimanje nije uspjelo".
+            // Dnevnice se ne knjiže ovdje; to radi korak ispod.
+            await setManyStatuses(selected, missing.map(w => ({ workerId: w.workerId, status: 'Prisutan' })));
             showToast(`Označeno ${missing.length} radnika`, 'success');
             await openBookingFor(missing.map(w => w.workerId));
         } catch (e: any) {
@@ -194,7 +203,7 @@ export default function AttendanceScreen({ showToast, readOnly }: Props) {
         } finally {
             setBusy(false);
         }
-    }, [data, statusByWorker, selected, setStatus, showToast, openBookingFor]);
+    }, [data, statusByWorker, selected, setManyStatuses, showToast, openBookingFor]);
 
     // Zatečeni status po radniku (bez napomene) — polazna tačka grupnog nacrta.
     const currentStatusMap = useMemo(() => {
@@ -219,6 +228,7 @@ export default function AttendanceScreen({ showToast, readOnly }: Props) {
             <BookingScreen
                 rows={booking.rows}
                 date={booking.date}
+                showToast={showToast}
                 onClose={() => setBooking(null)}
                 onConfirm={async decisions => {
                     const res = await book(booking.date, decisions);
@@ -308,6 +318,11 @@ export default function AttendanceScreen({ showToast, readOnly }: Props) {
                     <button type="button" className="fat-bulk" disabled={busy || !data} onClick={() => setBulkOpen(true)}>
                         <ListChecks size={18} /> Grupno
                     </button>
+                    {onOpenPayroll && (
+                        <button type="button" className="fat-bulk" onClick={onOpenPayroll}>
+                            <Wallet size={18} /> Obračun
+                        </button>
+                    )}
                 </div>
             )}
 

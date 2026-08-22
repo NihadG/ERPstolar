@@ -7,7 +7,8 @@
 // rokom, pa segmentna kontrola. Hero nosi NAPREDAK, ne novac — a ovdje ni
 // ne može, jer projekcija iznose ni ne sadrži.
 //
-// Tabovi: Tok (čekiranje procesa) · Proizvodi (zatvaranje) · Zadaci (problemi).
+// Tabovi: Tok (čekiranje procesa) · Proizvodi (zatvaranje) · Knjiga (ko je radio
+// kojeg dana) · Zadaci (problemi).
 //
 // „Dodaj proces" NAMJERNO nije ovdje — ono mijenja graf naloga, što je
 // vlasnikova odluka, ne kontrolorova.
@@ -25,8 +26,9 @@ import {
 import { useOverlayGuard } from '@/components/tabs/mobile/overlayGuard';
 import { useSwipeBack } from '@/components/tabs/mobile/useSwipe';
 import CompleteSheet from './CompleteSheet';
+import WorkLogPanel from './WorkLogPanel';
 
-type Tab = 'tok' | 'proizvodi' | 'zadaci';
+type Tab = 'tok' | 'proizvodi' | 'knjiga' | 'zadaci';
 
 const todayISO = () => {
     const d = new Date();
@@ -188,6 +190,7 @@ export default function OrderDetail({ orderId, onClose, showToast, readOnly }: P
                     options={[
                         { id: 'tok', label: 'Tok' },
                         { id: 'proizvodi', label: `Proizvodi ${detail.items.length}` },
+                        { id: 'knjiga', label: 'Knjiga' },
                         { id: 'zadaci', label: `Zadaci ${openTasks.length}` },
                     ]}
                 />
@@ -342,6 +345,11 @@ export default function OrderDetail({ orderId, onClose, showToast, readOnly }: P
                         ))}
                     </div>
                 </>
+            )}
+
+            {/* ── KNJIGA RADA ─────────────────────────────────────────── */}
+            {tab === 'knjiga' && (
+                <WorkLogPanel orderId={orderId} readOnly={readOnly} showToast={showToast} />
             )}
 
             {/* ── ZADACI ──────────────────────────────────────────────── */}

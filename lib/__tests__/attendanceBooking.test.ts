@@ -142,6 +142,42 @@ describe('buildBookingProposal — Teren', () => {
         if (rows[0].kind === 'teren') expect(rows[0].suggestedWorkOrderId).toBeUndefined();
     });
 
+    // ── REGRESIJA (telefon): teren mora dobiti listu naloga, ne samo predabir ──
+    // Bez `orders` je pogonski ekran terenskom radniku pokazivao nula opcija, pa
+    // je „Potvrdi i proknjiži" ostajalo trajno onemogućeno — dan se nije mogao
+    // proknjižiti s telefona.
+    test('teren nosi PONUDU naloga — uključujući „Razne poslove" i završene', () => {
+        const rows = buildBookingProposal(
+            [{ workerId: W, workerName: 'Radnik', status: 'Teren' }],
+            [
+                order('PROD', [item('p1')]),
+                order('RP', [item('r1')], { Name: 'Razni poslovi', Work_Order_Type: 'Zadaci' }),
+                order('DONE', [item('d1', { Status: 'Završeno' })], { Status: 'Završeno' }),
+                order('CANC', [item('c1')], { Status: 'Otkazano' }),
+            ],
+            DAY
+        );
+        expect(rows).toHaveLength(1);
+        if (rows[0].kind !== 'teren') throw new Error('očekivan teren red');
+        const ids = rows[0].orders.map(o => o.workOrderId);
+        expect(ids).toEqual(expect.arrayContaining(['PROD', 'RP', 'DONE']));
+        expect(ids).not.toContain('CANC');   // otkazan nalog ne prima rad
+        expect(rows[0].orders.find(o => o.workOrderId === 'RP')?.type).toBe('Zadaci');
+    });
+
+    test('teren: montažni nalog je prvi u ponudi (najčešći slučaj)', () => {
+        const rows = buildBookingProposal(
+            [{ workerId: W, workerName: 'Radnik', status: 'Teren' }],
+            [
+                order('RP', [item('r1', { Assigned_Workers: [] })], { Name: 'Razni poslovi', Work_Order_Type: 'Zadaci' }),
+                order('MON', [item('m1', { Assigned_Workers: [] })], { Name: 'Montaža Dino', Work_Order_Type: 'Montaža' }),
+            ],
+            DAY
+        );
+        if (rows[0].kind !== 'teren') throw new Error('očekivan teren red');
+        expect(rows[0].orders[0].workOrderId).toBe('MON');
+    });
+
     // ── "KAO JUČER" fallback (P7 iz PDF-a): teren bez auto-Montaže dobije jučerašnji nalog ──
     test('teren bez auto-Montaže → predabir = nalog na koji je radnik JUČER knjižen', () => {
         const yMap = new Map<string, string[]>([[W, ['PROD']]]);

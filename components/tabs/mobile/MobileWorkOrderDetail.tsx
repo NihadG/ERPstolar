@@ -9,9 +9,15 @@
 // Zaglavlje NE prikazuje novac (profit/marža) — na terenu trebaju napredak,
 // rok i radnje; finansije žive u pregledu projekta.
 //
-// Tabovi „Zadaci" i „Rad" NAMJERNO renderuju iste panele kao desktop
-// (WorkOrderTasksPanel, WorkOrderWorkLog) — logika knjiženja i zadataka
-// postoji na jednom mjestu i ne smije se duplirati.
+// Tab „Zadaci" NAMJERNO renderuje isti panel kao desktop (WorkOrderTasksPanel) —
+// logika zadataka postoji na jednom mjestu i ne smije se duplirati.
+//
+// „Knjiga rada" je izuzetak i to je promišljeno: desktop `WorkOrderWorkLog` je
+// mreža radnik × proizvod s pretraživim izbornicima i iznosom po komadu — na
+// 375px se ne može koristiti. Zato ovdje ide `WorkLogPanel`, isti onaj koji
+// kontrolor ima u pogonu. Logika se opet NE duplira: panel ne računa ništa sam,
+// nego čita i piše kroz /api/field/…/worklog, gdje knjiženje radi isti
+// `bookWorkerDayItems` kao i svugdje drugdje.
 // ════════════════════════════════════════════════════════════════════
 
 import { useEffect, useMemo, useState } from 'react';
@@ -26,8 +32,9 @@ import { tasksForWorkOrder, taskProgress, lastBookingDate } from '@/lib/workOrde
 import { toggleItemPause, completeWorkOrderItem, getWorkLogsForWorkOrder } from '@/lib/services';
 import { useData } from '@/context/DataContext';
 import WorkOrderTasksPanel from '@/components/ui/WorkOrderTasksPanel';
-import WorkOrderWorkLog from '@/components/ui/WorkOrderWorkLog';
+import WorkLogPanel from '@/components/field/orders/WorkLogPanel';
 import OrderProcessBoard from '@/components/ui/OrderProcessBoard';
+import '@/components/field/Controller.css';
 import { useSwipeBack } from './useSwipe';
 import { useOverlayGuard } from './overlayGuard';
 import {
@@ -232,7 +239,7 @@ export default function MobileWorkOrderDetail({
                     options={[
                         { id: 'tok', label: 'Tok' },
                         { id: 'zadaci', label: tProg.total > 0 ? `Zadaci ${tProg.done}/${tProg.total}` : 'Zadaci' },
-                        { id: 'rad', label: 'Rad' },
+                        { id: 'rad', label: 'Knjiga' },
                         { id: 'stavke', label: `Stavke ${items.length}` },
                     ]}
                 />
@@ -278,16 +285,8 @@ export default function MobileWorkOrderDetail({
 
                 {/* ── RAD: knjiga rada (isti panel kao desktop) ── */}
                 {tab === 'rad' && (
-                    <div className="mwd-panel">
-                        <WorkOrderWorkLog
-                            workOrder={workOrder}
-                            items={items}
-                            workLogs={workLogs}
-                            workers={workers}
-                            organizationId={organizationId || ''}
-                            onReload={() => { reloadLogs(); onRefresh('workOrders', 'projects', 'workLogs'); }}
-                            showToast={showToast}
-                        />
+                    <div className="mwd-panel mui">
+                        <WorkLogPanel orderId={workOrder.Work_Order_ID} showToast={showToast} />
                     </div>
                 )}
 

@@ -614,6 +614,56 @@
     line-height: 1.45;
 }
 
+/* Pretraga unutar kartice — pojavi se tek kad ponuda naloga preraste ekran.
+   Teren vidi SVE naloge firme, pa bez ovoga postane beskrajna lista. */
+.fbk-find {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    margin-top: 12px;
+    padding: 0 12px;
+    height: 44px;
+    border-radius: 11px;
+    background: rgba(60, 60, 67, 0.07);
+    color: var(--mui-label2);
+}
+
+.fbk-find input {
+    flex: 1;
+    min-width: 0;
+    border: none;
+    background: none;
+    outline: none;
+    font-family: inherit;
+    /* ≥16px, inače iOS zumira ekran pri fokusu. */
+    font-size: 16px;
+    letter-spacing: -0.02em;
+    color: var(--mui-label);
+}
+
+/* Tekstualna radnja pod listom („Prikaži još", „Dodaj posao", „Novi nalog"). */
+.fbk-more {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    width: 100%;
+    min-height: 48px;
+    margin-top: 8px;
+    border: none;
+    border-radius: 13px;
+    background: transparent;
+    font-family: inherit;
+    font-size: 15px;
+    font-weight: 500;
+    letter-spacing: -0.02em;
+    color: var(--mui-blue);
+    cursor: pointer;
+}
+
+.fbk-more:active { opacity: 0.55; }
+.fbk-more--new { border: 1.5px dashed rgba(0, 122, 255, 0.35); }
+
 /* Red naloga — meta 56px */
 .fbk-order {
     display: flex;
@@ -995,6 +1045,273 @@
     color: var(--mui-label);
     text-align: right;
 }
+
+/* ═══════════════════════════════════════════════════════════════════
+   KNJIGA RADA
+   ═══════════════════════════════════════════════════════════════════ */
+
+.fwl-head {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 10px 2px 12px;
+    font-size: 13.5px;
+    color: var(--mui-label2);
+    letter-spacing: -0.01em;
+}
+
+.fwl-head b { color: var(--mui-label); font-weight: 640; }
+
+.fwl-addday {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding-bottom: 12px;
+}
+
+.fwl-addday input {
+    flex: 1;
+    min-width: 0;
+    height: 46px;
+    padding: 0 12px;
+    border: none;
+    border-radius: 12px;
+    background: var(--mui-cell);
+    font-family: inherit;
+    /* ≥16px, inače iOS zumira ekran pri fokusu. */
+    font-size: 16px;
+    color: var(--mui-label);
+}
+
+.fwl-addbtn {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 46px;
+    padding: 0 14px;
+    border: none;
+    border-radius: 12px;
+    background: rgba(0, 122, 255, 0.12);
+    font-family: inherit;
+    font-size: 15px;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    color: var(--mui-blue);
+    cursor: pointer;
+}
+
+.fwl-addbtn:disabled { opacity: 0.45; cursor: default; }
+
+.fwl-days { display: flex; flex-direction: column; gap: 8px; }
+
+.fwl-day {
+    display: flex;
+    flex-direction: column;
+    gap: 9px;
+    width: 100%;
+    padding: 13px 14px;
+    border: none;
+    border-left: 4px solid transparent;
+    border-radius: 14px;
+    background: var(--mui-cell);
+    font-family: inherit;
+    text-align: left;
+    cursor: pointer;
+}
+
+/* Boja lijeve ivice = tip dana; ista pogodba kao redovi procesa (.fod-row). */
+.fwl-day.working { border-left-color: var(--mui-green); }
+.fwl-day.paused { border-left-color: var(--mui-orange); }
+.fwl-day.no_work { border-left-color: rgba(60, 60, 67, 0.18); }
+.fwl-day:disabled { cursor: default; }
+
+.fwl-day-top { display: flex; align-items: center; gap: 9px; }
+
+.fwl-date {
+    font-size: 15.5px;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    color: var(--mui-label);
+}
+
+.fwl-badge {
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: rgba(60, 60, 67, 0.09);
+    font-size: 11.5px;
+    font-weight: 600;
+    color: var(--mui-label2);
+}
+
+.fwl-badge.working { background: rgba(52, 199, 89, 0.16); color: var(--mui-green-t); }
+.fwl-badge.paused { background: rgba(255, 149, 0, 0.16); color: var(--mui-orange-t); }
+
+.fwl-cost {
+    margin-left: auto;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--mui-label2);
+    font-variant-numeric: tabular-nums;
+}
+
+.fwl-crew { display: flex; flex-wrap: wrap; gap: 6px; }
+
+.fwl-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 10px 3px 3px;
+    border-radius: 999px;
+    background: rgba(60, 60, 67, 0.07);
+    font-size: 13.5px;
+    letter-spacing: -0.01em;
+    color: var(--mui-label);
+}
+
+.fwl-chip em { font-style: normal; color: var(--mui-label2); }
+
+.fwl-ava {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    background: var(--mui-grp);
+    font-size: 10px;
+    font-weight: 700;
+    color: var(--mui-label2);
+}
+
+.fwl-empty {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 13.5px;
+    color: var(--mui-blue);
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   NOVI NALOG — „Razni poslovi" (sheet)
+   ═══════════════════════════════════════════════════════════════════ */
+
+.fno-field {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 12px 2px 4px;
+}
+
+.fno-field label {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--mui-label2);
+    letter-spacing: -0.01em;
+}
+
+.fno-field label em { font-style: normal; font-weight: 400; color: var(--mui-label3); }
+
+.fno-field input {
+    height: 48px;
+    padding: 0 13px;
+    border: none;
+    border-radius: 12px;
+    background: var(--mui-cell);
+    font-family: inherit;
+    /* ≥16px, inače iOS zumira ekran pri fokusu. */
+    font-size: 16px;
+    letter-spacing: -0.02em;
+    color: var(--mui-label);
+}
+
+.fno-rows { display: flex; flex-direction: column; gap: 8px; }
+
+.fno-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 0 10px 0 12px;
+    border-radius: 12px;
+    background: var(--mui-cell);
+}
+
+.fno-num {
+    flex: none;
+    width: 22px;
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--mui-label3);
+    font-variant-numeric: tabular-nums;
+}
+
+.fno-row input {
+    flex: 1;
+    min-width: 0;
+    height: 48px;
+    border: none;
+    background: none;
+    outline: none;
+    font-family: inherit;
+    font-size: 16px;
+    letter-spacing: -0.02em;
+    color: var(--mui-label);
+}
+
+.fno-x {
+    flex: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 34px;
+    height: 34px;
+    border: none;
+    border-radius: 50%;
+    background: transparent;
+    color: var(--mui-label3);
+    cursor: pointer;
+}
+
+/* Ekipa — čipovi, jer je izbor višestruk i imena su kratka. */
+.fno-crew { display: flex; flex-wrap: wrap; gap: 8px; }
+
+.fno-worker {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    min-height: 44px;
+    padding: 0 13px 0 6px;
+    border: 1.5px solid transparent;
+    border-radius: 999px;
+    background: rgba(60, 60, 67, 0.07);
+    font-family: inherit;
+    font-size: 15px;
+    letter-spacing: -0.02em;
+    color: var(--mui-label);
+    cursor: pointer;
+}
+
+.fno-worker.on {
+    border-color: var(--mui-blue);
+    background: rgba(0, 122, 255, 0.12);
+    color: var(--mui-blue-t);
+    font-weight: 600;
+}
+
+.fno-ava {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    background: var(--mui-cell);
+    font-size: 11.5px;
+    font-weight: 700;
+    color: var(--mui-label2);
+}
+
+.fno-worker.on .fno-ava { background: var(--mui-blue); color: #fff; }
 
 .fod-confirm-wrap { padding: 18px 0 4px; }
 

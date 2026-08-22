@@ -99,12 +99,19 @@ export function useFieldAttendance(anchorDate: Date) {
     const setStatus = useCallback(async (
         workerId: string, date: string, status: string, notes?: string
     ): Promise<ProposalRow[]> => {
-        const res = await apiPost<{ ok: boolean; proposal: ProposalRow[] | null }>(
-            '/api/field/attendance', { workerId, date, status, notes }
-        );
-        invalidate(date);
-        await load(true);
-        return res.proposal || [];
+        try {
+            const res = await apiPost<{ ok: boolean; proposal: ProposalRow[] | null }>(
+                '/api/field/attendance', { workerId, date, status, notes }
+            );
+            return res.proposal || [];
+        } finally {
+            // Osvježavanje ide i kad upis padne. Zahtjev može pasti POSLIJE upisa
+            // prisustva (npr. brisanje auto-dnevnica kod odsustva), pa bi zadržan
+            // keš pokazivao stari status — ekran tvrdi da ništa nije snimljeno,
+            // a u bazi jeste. Bolje jedan dohvat viška nego lažan presjek.
+            invalidate(date);
+            await load(true);
+        }
     }, [invalidate, load]);
 
     /**
@@ -117,11 +124,23 @@ export function useFieldAttendance(anchorDate: Date) {
         date: string, entries: { workerId: string; status: string; notes?: string }[]
     ): Promise<void> => {
         if (entries.length === 0) return;
-        await Promise.all(entries.map(e =>
-            apiPost('/api/field/attendance', { workerId: e.workerId, date, status: e.status, notes: e.notes })
-        ));
-        invalidate(date);
-        await load(true);
+        try {
+            // `allSettled`, ne `all`: pad jednog radnika ne smije sakriti ostale
+            // koji JESU snimljeni. Prijavi se koliko ih je palo, a ekran pokaže
+            // stvarno stanje iz svježeg dohvata ispod.
+            const results = await Promise.allSettled(entries.map(e =>
+                apiPost('/api/field/attendance', { workerId: e.workerId, date, status: e.status, notes: e.notes })
+            ));
+            const failed = results.filter(r => r.status === 'rejected').length;
+            if (failed > 0) {
+                throw new Error(failed === entries.length
+                    ? 'Snimanje nije uspjelo.'
+                    : `Snimljeno ${entries.length - failed} od ${entries.length} — ostalo pokušaj ponovo.`);
+            }
+        } finally {
+            invalidate(date);
+            await load(true);
+        }
     }, [invalidate, load]);
 
     /** Prijedlog za više radnika — „Svi prisutni" i traka „bez dnevnice". */

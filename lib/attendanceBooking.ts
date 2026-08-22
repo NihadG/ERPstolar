@@ -9,6 +9,9 @@
 //     novi nalog + šihtarica idu u JEDNOM prolazu, bez ponovnog snimanja prisustva.
 //   • Teren    → UVIJEK red u upitu (teren je dvosmislen). Predabir = dodijeljeni aktivni Montaža
 //     nalog; korisnik može izabrati BILO koji nalog (aktivan ili neaktivan), novi nalog ili ništa.
+//     Uz predabir red nosi i `orders` — punu ponudu naloga (montaža prva, ali i „Razni poslovi",
+//     i završeni). Desktop je ne koristi (ima pretraživu listu svih naloga), telefon bez nje nema
+//     šta ponuditi.
 // Knjiženje na potvrdu radi lib/attendance.ts → bookWorkerDayItems (aditivno, idempotentno).
 // ════════════════════════════════════════════════════════════════════
 
@@ -31,6 +34,7 @@ export interface PresentOrderOption {
     paused: boolean;                     // sav preostali posao je pauziran → „pokreni ponovo"
     assigned: boolean;                   // radnik je dodijeljen nekoj stavci
     notStarted: boolean;                 // 'Na čekanju' → potvrda knjiženja ga auto-starta
+    type?: string;                       // Work_Order_Type — telefon po njemu grupiše ponudu
 }
 
 /** Prisutan radnik: ponuda naloga (predčekirani = dodijeljeni aktivni). */
@@ -48,6 +52,16 @@ export interface TerenProposalRow {
     workerId: string;
     workerName: string;
     suggestedWorkOrderId?: string;       // dodijeljeni aktivni Montaža nalog (predabir), ako postoji
+    /**
+     * Nalozi koje teren radnik može izabrati — montažni prvi, ali NE samo oni:
+     * teren se u praksi knjiži i na „Razne poslove" (isporuka, popravka kod kupca).
+     *
+     * Desktop ovo polje ne koristi (ima vlastitu pretraživu listu svih naloga),
+     * ali telefon bez njega nema ŠTA da ponudi — a bez izbora se dnevnica ne
+     * može proknjižiti i ekran ostaje slijepa ulica („Odaberi bar jedan nalog"
+     * nad listom bez ijedne opcije).
+     */
+    orders: PresentOrderOption[];
 }
 
 export type ProposalRow = PresentProposalRow | TerenProposalRow;
@@ -141,7 +155,13 @@ export function buildBookingProposal(
                 const yList = yesterdayByWorker?.get(w.workerId);
                 if (yList && yList.length) suggestedWorkOrderId = yList[0];
             }
-            rows.push({ kind: 'teren', workerId: w.workerId, workerName: w.workerName, suggestedWorkOrderId });
+            rows.push({
+                kind: 'teren',
+                workerId: w.workerId,
+                workerName: w.workerName,
+                suggestedWorkOrderId,
+                orders: buildTerenOrderOptions(workOrders, w.workerId),
+            });
         }
         // ostali statusi (Odsutan/Bolovanje/Odmor/Vikend/Praznik) → ne ulaze u upit
     }
@@ -163,14 +183,7 @@ function buildPresentOrderOptions(workOrders: WorkOrder[], workerId: string): Pr
         const live = (wo.items || []).filter(it => it.Status !== 'Završeno');
         const fullyPaused = live.length > 0 && live.every(it => it.Is_Paused);
         const assigned = live.some(it => isWorkerAssignedToAutoItem(toAutoBookItem(it), workerId));
-        out.push({
-            workOrderId: wo.Work_Order_ID,
-            name: workOrderDisplayName(wo),
-            status: wo.Status,
-            paused: fullyPaused,
-            assigned,
-            notStarted: wo.Status === 'Na čekanju',
-        });
+        out.push(toOption(wo, fullyPaused, assigned));
     }
     // dodijeljeni prvi, pa aktivni (nepokrenuti iza njih), pa po nazivu
     out.sort((a, b) => {
@@ -180,6 +193,44 @@ function buildPresentOrderOptions(workOrders: WorkOrder[], workerId: string): Pr
         return a.name.localeCompare(b.name);
     });
     return out;
+}
+
+/**
+ * Nalozi koje TEREN radnik može izabrati.
+ *
+ * Šire od prisutnog radnika u dvije stvari, i obje su namjerne:
+ *  • uzima i ZAVRŠENE naloge — montaža se često knjiži na dan kad je nalog
+ *    zatvoren (isto pravilo koje `getBookableWorkOrders` primjenjuje na servu);
+ *  • ne filtrira po tipu — teren nije samo montaža. Isporuka, popravka kod
+ *    kupca i slično žive kao „Razni poslovi" (tip 'Zadaci').
+ *
+ * Poredak stavlja montažu na vrh jer je to i dalje najčešći slučaj.
+ */
+function buildTerenOrderOptions(workOrders: WorkOrder[], workerId: string): PresentOrderOption[] {
+    const out: PresentOrderOption[] = [];
+    for (const wo of workOrders) {
+        if (wo.Status === 'Otkazano') continue;
+        const live = (wo.items || []).filter(it => it.Status !== 'Završeno');
+        const fullyPaused = live.length > 0 && live.every(it => it.Is_Paused);
+        const assigned = (wo.items || []).some(it => isWorkerAssignedToAutoItem(toAutoBookItem(it), workerId));
+        out.push(toOption(wo, fullyPaused, assigned));
+    }
+    const rank = (o: PresentOrderOption) =>
+        (o.assigned ? 0 : 4) + (o.type === 'Montaža' ? 0 : 2) + (o.status === 'U toku' ? 0 : 1);
+    out.sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name));
+    return out;
+}
+
+function toOption(wo: WorkOrder, paused: boolean, assigned: boolean): PresentOrderOption {
+    return {
+        workOrderId: wo.Work_Order_ID,
+        name: workOrderDisplayName(wo),
+        status: wo.Status,
+        paused,
+        assigned,
+        notStarted: wo.Status === 'Na čekanju',
+        type: wo.Work_Order_Type,
+    };
 }
 
 /** Da li uneseni statusi uopšte zahtijevaju upit. */

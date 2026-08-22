@@ -23,12 +23,33 @@ import { useEffect } from 'react';
 
 let depth = 0;
 
+/**
+ * Klasa na <body> dok je bilo koji overlay otvoren.
+ *
+ * Postoji zbog DONJE TAB-TRAKE. Cjeloekranski slojevi (`.fbk` dodjela naloga,
+ * `.fod` detalj naloga, sheetovi) crtaju vlastito dugme na dnu, fiksirano na
+ * `bottom: 0` — tačno tamo gdje stoji i `.mtb`. Papirnato to rješava z-index
+ * (900/1200 iznad 800), ali u praksi se na telefonu traka provlačila preko
+ * dugmeta i sjekla ga po pola — dovoljno da se „Potvrdi i proknjiži" ne može
+ * pouzdano pogoditi. Umjesto natezanja slojeva, traka se za to vrijeme skloni:
+ * ispod cjeloekranskog sloja je ionako niko ne vidi, a iOS je i sam sakriva
+ * kad se gurne novi ekran.
+ */
+const BODY_CLASS = 'm-overlay';
+
+function syncBody(): void {
+    if (typeof document === 'undefined') return;
+    document.body.classList.toggle(BODY_CLASS, depth > 0);
+}
+
 export function pushOverlay(): void {
     depth++;
+    syncBody();
 }
 
 export function popOverlay(): void {
     depth = Math.max(0, depth - 1);
+    syncBody();
 }
 
 export function isOverlayOpen(): boolean {

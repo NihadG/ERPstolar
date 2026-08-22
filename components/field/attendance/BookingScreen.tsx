@@ -10,15 +10,23 @@
 //
 // Podaci su `ProposalRow[]` sa servera — taj oblik NE SADRŽI nijedan iznos.
 // Kontrolor bira NA ŠTA se knjiži, ne koliko to košta.
+//
+// TEREN nije poseban slučaj s posebnim pravilima. Ranije je ovaj ekran terenskom
+// radniku pokazivao samo rečenicu „odaberi ga na desktopu" i nijednu opciju — pa
+// je dugme na dnu ostajalo zauvijek na „Odaberi bar jedan nalog" i dan se nije
+// mogao proknjižiti s telefona. Sada teren dobija istu listu naloga kao prisutan
+// radnik (montaža prva, ali i „Razni poslovi"), plus dugme koje tu i tamo otvori
+// novi nalog za razne poslove.
 // ════════════════════════════════════════════════════════════════════
 
 import { useEffect, useMemo, useState } from 'react';
-import { ArrowLeft, Check } from 'lucide-react';
+import { ArrowLeft, Check, Plus, Search } from 'lucide-react';
 import type { ProposalRow } from '@/lib/attendanceBooking';
 import type { BookingDecision } from '@/lib/field/useFieldAttendance';
 import { MAvatar, MEmpty, MPill } from '@/components/tabs/mobile/MobileUI';
 import { useOverlayGuard } from '@/components/tabs/mobile/overlayGuard';
 import { useSwipeBack } from '@/components/tabs/mobile/useSwipe';
+import NewOrderSheet from '../orders/NewOrderSheet';
 
 const initials = (name: string) =>
     name.split(' ').filter(Boolean).map(p => p[0]).join('').toUpperCase().slice(0, 2) || '?';
@@ -26,11 +34,15 @@ const initials = (name: string) =>
 const longDate = (iso: string) =>
     new Date(iso + 'T12:00:00').toLocaleDateString('bs-BA', { weekday: 'long', day: 'numeric', month: 'long' });
 
+/** Koliko naloga se pokaže prije nego lista traži pretragu. */
+const VISIBLE_LIMIT = 7;
+
 interface Props {
     rows: ProposalRow[];
     date: string;
     onClose: () => void;
     onConfirm: (decisions: BookingDecision[]) => Promise<void>;
+    showToast?: (message: string, type: 'success' | 'error' | 'info') => void;
 }
 
 interface WorkerState {
@@ -38,7 +50,18 @@ interface WorkerState {
     presence: 0.5 | 1;
 }
 
-export default function BookingScreen({ rows, date, onClose, onConfirm }: Props) {
+/** Nalog napravljen ovdje i odmah ponuđen svima na ekranu. */
+interface FreshOrder {
+    workOrderId: string;
+    name: string;
+    status: string;
+    paused: boolean;
+    assigned: boolean;
+    notStarted: boolean;
+    type?: string;
+}
+
+export default function BookingScreen({ rows, date, onClose, onConfirm, showToast }: Props) {
     const [state, setState] = useState<Map<string, WorkerState>>(() => {
         const init = new Map<string, WorkerState>();
         for (const r of rows) {
@@ -50,6 +73,10 @@ export default function BookingScreen({ rows, date, onClose, onConfirm }: Props)
         return init;
     });
     const [saving, setSaving] = useState(false);
+    const [queries, setQueries] = useState<Record<string, string>>({});
+    const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+    const [fresh, setFresh] = useState<FreshOrder[]>([]);
+    const [newOrderFor, setNewOrderFor] = useState<{ workerId: string; workerName: string } | null>(null);
 
     // Hardverska nazad-tipka i swipe zatvaraju ekran — ista pogodba kao
     // ostali puni ekrani (MobileOrderDetail).
@@ -68,7 +95,7 @@ export default function BookingScreen({ rows, date, onClose, onConfirm }: Props)
 
     const goBack = () => window.history.back();
     useOverlayGuard(true);
-    const swipeRef = useSwipeBack(goBack, { enabled: !saving });
+    const swipeRef = useSwipeBack(goBack, { enabled: !saving && !newOrderFor });
 
     const toggleOrder = (workerId: string, orderId: string) => {
         setState(prev => {
@@ -88,6 +115,18 @@ export default function BookingScreen({ rows, date, onClose, onConfirm }: Props)
             next.set(workerId, { ...cur, presence });
             return next;
         });
+    };
+
+    /**
+     * Ponuda naloga za jedan red. Nalozi napravljeni na ovom ekranu idu na vrh
+     * svima — kad se otvori „Razni poslovi" za jednog radnika, isti posao je po
+     * pravilu radila cijela ekipa, pa ga ne treba tražiti ponovo.
+     */
+    const optionsFor = (row: ProposalRow) => {
+        const base = row.orders;
+        if (fresh.length === 0) return base;
+        const known = new Set(base.map(o => o.workOrderId));
+        return [...fresh.filter(f => !known.has(f.workOrderId)), ...base];
     };
 
     const willBook = useMemo(
@@ -138,7 +177,16 @@ export default function BookingScreen({ rows, date, onClose, onConfirm }: Props)
                 {rows.map(row => {
                     const s = state.get(row.workerId);
                     const chosen = s?.orderIds || new Set<string>();
-                    const options = row.kind === 'present' ? row.orders : [];
+                    const all = optionsFor(row);
+                    const q = (queries[row.workerId] || '').trim().toLowerCase();
+                    const matching = q ? all.filter(o => o.name.toLowerCase().includes(q)) : all;
+                    // Odabrani nalozi ostaju vidljivi i kad ih skraćivanje liste izbaci —
+                    // inače se čekirano „izgubi" čim lista pređe granicu.
+                    const showAll = expanded[row.workerId] || !!q;
+                    const visible = showAll
+                        ? matching
+                        : matching.filter((o, i) => i < VISIBLE_LIMIT || chosen.has(o.workOrderId));
+                    const hidden = matching.length - visible.length;
 
                     return (
                         <div key={row.workerId} className="fbk-card">
@@ -147,7 +195,10 @@ export default function BookingScreen({ rows, date, onClose, onConfirm }: Props)
                                 <div className="fbk-card-name">
                                     <strong>{row.workerName}</strong>
                                     <span>
-                                        {row.kind === 'teren' ? 'teren' : `${chosen.size} od ${options.length} naloga`}
+                                        {row.kind === 'teren' && 'teren · '}
+                                        {chosen.size > 0
+                                            ? `${chosen.size} ${chosen.size === 1 ? 'nalog' : 'naloga'} izabrano`
+                                            : 'nijedan nalog'}
                                     </span>
                                 </div>
                                 <div className="fbk-presence" role="group" aria-label="Koliko je radio">
@@ -164,17 +215,36 @@ export default function BookingScreen({ rows, date, onClose, onConfirm }: Props)
                                 </div>
                             </div>
 
-                            {row.kind === 'present' && options.length === 0 && (
-                                <p className="fbk-none">Nema aktivnih naloga — dnevnica se neće knjižiti.</p>
-                            )}
-
                             {row.kind === 'teren' && (
                                 <p className="fbk-none">
-                                    Teren se knjiži na montažni nalog. Ako ga nema, odaberi ga na desktopu.
+                                    Na šta se odnosi teren? Montaža je najčešća, ali može i „Razni poslovi"
+                                    (isporuka, popravka kod kupca).
                                 </p>
                             )}
 
-                            {options.map(o => {
+                            {all.length === 0 && (
+                                <p className="fbk-none">
+                                    Nema naloga na koje bi se dan mogao knjižiti — otvori novi ispod.
+                                </p>
+                            )}
+
+                            {all.length > VISIBLE_LIMIT && (
+                                <label className="fbk-find">
+                                    <Search size={16} />
+                                    <input
+                                        type="text"
+                                        value={queries[row.workerId] || ''}
+                                        onChange={e => setQueries(p => ({ ...p, [row.workerId]: e.target.value }))}
+                                        placeholder={`Traži među ${all.length} naloga…`}
+                                    />
+                                </label>
+                            )}
+
+                            {q && matching.length === 0 && (
+                                <p className="fbk-none">Nijedan nalog ne odgovara pretrazi.</p>
+                            )}
+
+                            {visible.map(o => {
                                 const on = chosen.has(o.workOrderId);
                                 return (
                                     <button
@@ -190,14 +260,34 @@ export default function BookingScreen({ rows, date, onClose, onConfirm }: Props)
                                             <span className="fbk-order-name">{o.name}</span>
                                             <span className="fbk-order-meta">
                                                 {o.assigned && <MPill tone="blue">dodijeljen</MPill>}
+                                                {o.type === 'Montaža' && <MPill tone="purple">montaža</MPill>}
+                                                {o.type === 'Zadaci' && <MPill tone="gray">razni poslovi</MPill>}
                                                 {o.paused && <MPill tone="orange">pauziran</MPill>}
                                                 {o.notStarted && on && <MPill tone="green">pokrenuće se</MPill>}
-                                                {!o.assigned && !o.paused && !o.notStarted && <span>{o.status}</span>}
+                                                {!o.paused && !o.notStarted && <span>{o.status}</span>}
                                             </span>
                                         </span>
                                     </button>
                                 );
                             })}
+
+                            {hidden > 0 && (
+                                <button
+                                    type="button"
+                                    className="fbk-more"
+                                    onClick={() => setExpanded(p => ({ ...p, [row.workerId]: true }))}
+                                >
+                                    Prikaži još {hidden}
+                                </button>
+                            )}
+
+                            <button
+                                type="button"
+                                className="fbk-more fbk-more--new"
+                                onClick={() => setNewOrderFor({ workerId: row.workerId, workerName: row.workerName })}
+                            >
+                                <Plus size={16} /> Novi nalog — razni poslovi
+                            </button>
                         </div>
                     );
                 })}
@@ -215,6 +305,24 @@ export default function BookingScreen({ rows, date, onClose, onConfirm }: Props)
                     Ako otkažeš, prisustvo ostaje zabilježeno — samo dnevnica neće biti knjižena.
                 </p>
             </div>
+
+            <NewOrderSheet
+                open={!!newOrderFor}
+                seedWorker={newOrderFor || undefined}
+                onClose={() => setNewOrderFor(null)}
+                showToast={showToast}
+                onCreated={(order) => {
+                    const workerId = newOrderFor?.workerId;
+                    setFresh(prev => [
+                        { ...order, status: 'Na čekanju', paused: false, assigned: true, notStarted: true, type: 'Zadaci' },
+                        ...prev,
+                    ]);
+                    // Nalog je otvoren zbog ovog radnika — odmah ga i čekiraj,
+                    // inače bi se odmah nakon kreiranja morao tražiti i dodirnuti.
+                    if (workerId) toggleOrder(workerId, order.workOrderId);
+                    setNewOrderFor(null);
+                }}
+            />
         </div>
     );
 }

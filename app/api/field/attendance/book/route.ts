@@ -57,16 +57,26 @@ export async function POST(req: Request) {
         }
 
         if (decisions.length === 0) {
-            return NextResponse.json({ booked: 0, failedWorkers: [], startWarnings: [], message: 'Dnevnice nisu knjižene.' });
+            return NextResponse.json({
+                booked: 0, failedWorkers: [], startWarnings: [],
+                message: 'Nijedan nalog nije izabran — dnevnice nisu knjižene.',
+            });
         }
 
         const result = await commitBooking(caller.orgId, date, decisions);
+
+        // „Nula dnevnica" ima dva sasvim različita uzroka i korisnik mora znati
+        // koji je njegov: dan je već proknjižen (ništa ne treba raditi) naspram
+        // izabranog naloga koji nema nijednu stavku (treba mu se dodati posao).
+        const nothingBooked = result.prepared > 0
+            ? 'Taj dan je već proknjižen — nema novih dnevnica.'
+            : 'Izabrani nalozi nemaju nijednu stavku na koju bi se dan knjižio.';
 
         const message = result.failedWorkers.length > 0
             ? `Greška pri knjiženju za: ${result.failedWorkers.join(', ')}${result.booked > 0 ? ` — ostalo (${result.booked}) proknjiženo` : ''}`
             : result.booked > 0
                 ? `Proknjiženo ${result.booked} ${result.booked === 1 ? 'dnevnica' : 'dnevnica'}`
-                : 'Dnevnice nisu knjižene.';
+                : nothingBooked;
 
         return NextResponse.json({
             booked: result.booked,

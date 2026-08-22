@@ -10,13 +10,14 @@
 // ════════════════════════════════════════════════════════════════════
 
 import { useMemo, useState } from 'react';
-import { ClipboardList, ListChecks, Pause, Wrench } from 'lucide-react';
+import { ClipboardList, ListChecks, Pause, Plus, Wrench } from 'lucide-react';
 import type { FieldOrderRow } from '@/lib/field/fieldOrders';
 import { useFieldOrders } from '@/lib/field/useFieldOrders';
 import {
     MLarge, MSearch, MChips, MCard, MCardHead, MCardBody, MIcon,
     MPill, MProgress, MEmpty, MButton,
 } from '@/components/tabs/mobile/MobileUI';
+import NewOrderSheet from './NewOrderSheet';
 import OrderDetail from './OrderDetail';
 
 type Filter = '' | 'today' | 'late' | 'paused';
@@ -39,6 +40,7 @@ export default function OrdersScreen({ showToast, readOnly }: Props) {
     const [search, setSearch] = useState('');
     const [filter, setFilter] = useState<Filter>('');
     const [openId, setOpenId] = useState<string | null>(null);
+    const [newOpen, setNewOpen] = useState(false);
 
     const counts = useMemo(() => ({
         today: orders.filter(o => o.rank === 0).length,
@@ -79,6 +81,16 @@ export default function OrdersScreen({ showToast, readOnly }: Props) {
             <div className="fld-search">
                 <MSearch value={search} onChange={setSearch} placeholder="Traži nalog ili projekat…" />
             </div>
+
+            {/* Nalog se otvara tamo gdje posao nastane — proizvodni i montažni i
+                dalje dolaze iz projekta, pa ovo otvara „Razne poslove". */}
+            {!readOnly && (
+                <div className="fat-bulkrow">
+                    <button type="button" className="fat-bulk" onClick={() => setNewOpen(true)}>
+                        <Plus size={18} /> Novi nalog — razni poslovi
+                    </button>
+                </div>
+            )}
 
             <MChips<Filter>
                 value={filter}
@@ -150,6 +162,17 @@ export default function OrdersScreen({ showToast, readOnly }: Props) {
                     );
                 })}
             </div>
+
+            <NewOrderSheet
+                open={newOpen}
+                onClose={() => setNewOpen(false)}
+                showToast={showToast}
+                onCreated={(order) => {
+                    setNewOpen(false);
+                    reload();
+                    setOpenId(order.workOrderId);
+                }}
+            />
         </>
     );
 }

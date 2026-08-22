@@ -39,7 +39,10 @@ import {
 import Modal from '@/components/ui/Modal';
 import { useData } from '@/context/DataContext';
 import { useIsMobile } from '@/hooks/useIsMobile';
-import MobileAttendanceView from '@/components/tabs/mobile/MobileAttendanceView';
+import AttendanceScreen from '@/components/field/attendance/AttendanceScreen';
+import '@/components/tabs/mobile/MobileUI.css';
+import '@/components/field/Field.css';
+import '@/components/field/Controller.css';
 
 interface AttendanceTabProps {
     workers: Worker[];
@@ -1085,26 +1088,22 @@ export default function AttendanceTab({ workers, workOrders, onRefresh, showToas
 
     const isMobile = useIsMobile();
     if (isMobile) {
+        // NA TELEFONU VLASNIK DOBIJA ISTU ŠIHTARICU KAO KONTROLOR.
+        //
+        // Ranije je ovdje živio zaseban mobilni prikaz nad desktop stanjem
+        // (`MobileAttendanceView`). Dvije mobilne šihtarice znače da svaka
+        // popravka mora dva puta — a razlike su se već bile nakupile: grupno
+        // označavanje, otpornost na pad pojedinačnog upisa i izbor naloga za
+        // teren postojali su samo u pogonskoj verziji.
+        //
+        // Pogonski ekran piše kroz /api/field/* (serverski blizanac istih
+        // funkcija), pa je ishod identičan onome što desktop upiše klijentskim
+        // SDK-om. Obračun ostaje vlasnikov — kontrolor to dugme ne dobija.
         return (
-            <>
-                <MobileAttendanceView
-                    workers={activeWorkers}
-                    getAttendance={getAttendance}
-                    isBookedInfo={isBookedInfo}
-                    isPresentUnbooked={isPresentUnbooked}
-                    getStatusDisplay={getStatusDisplay}
-                    yesterdayStatusOf={yesterdayStatusOf}
-                    onCellTap={handleCellClickByDate}
-                    onRepeatYesterday={(worker, dateStr) =>
-                        handleRepeatYesterday({ workerId: worker.Worker_ID, workerName: worker.Name, date: dateStr })}
-                    onOpenBulkEdit={openBulkEditModalByDate}
-                    onOpenBookingConfirm={openBookingConfirm}
-                    onLoadMonth={loadMonth}
-                    onOpenPayroll={() => setPayrollOpen(true)}
-                    showToast={showToast}
-                />
+            <div className="mui fld-embed">
+                <AttendanceScreen showToast={showToast} onOpenPayroll={() => setPayrollOpen(true)} />
                 {renderModals()}
-            </>
+            </div>
         );
     }
 

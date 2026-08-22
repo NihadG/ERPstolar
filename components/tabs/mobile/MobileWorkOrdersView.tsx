@@ -17,6 +17,8 @@ import { WORK_ORDER_STATUSES } from '@/lib/types';
 import { daysUntil } from '@/lib/planning';
 import { workOrderDisplayName, orderProcessProgress, compareWorkOrdersDefault } from '@/lib/utils';
 import MobileWorkOrderDetail from './MobileWorkOrderDetail';
+import NewOrderSheet from '@/components/field/orders/NewOrderSheet';
+import '@/components/field/Controller.css';
 import {
     MLarge, MSearch, MChips, MSection, MCard, MCardHead, MCardBody, MIcon,
     MPill, MProgress, MEmpty, MButton, MSheet, MList, MOption,
@@ -64,6 +66,7 @@ export default function MobileWorkOrdersView({
     // Isti izbor kao desktop: samo grupisanje (poredak naloga je fiksan).
     const [groupBy, setGroupBy] = useMobileGrouping<WorkOrderGroupBy>('nalozi', 'project');
     const [groupSheet, setGroupSheet] = useState(false);
+    const [customOpen, setCustomOpen] = useState(false);
 
     const counts = useMemo(() => {
         const c: Record<string, number> = {};
@@ -169,6 +172,12 @@ export default function MobileWorkOrdersView({
                         <Layers size={13} style={{ verticalAlign: -2, marginRight: 5 }} />
                         {WORK_ORDER_GROUPING_OPTIONS.find(o => o.value === groupBy)?.label || 'Grupiši'}
                     </button>
+                    {/* Dva puta do naloga, jer nisu ista stvar: „Razni poslovi"
+                        se otvore u par dodira na licu mjesta, dok „Novi" vodi u
+                        puni čarobnjak (proizvodi iz projekta, vrijednosti). */}
+                    <button type="button" className="mui-chip" onClick={() => setCustomOpen(true)}>
+                        <Plus size={14} style={{ verticalAlign: -2, marginRight: 4 }} />Razni poslovi
+                    </button>
                     <div className="mui-spacer" />
                     <button type="button" className="mui-chip on" onClick={onCreate}>
                         <Plus size={14} style={{ verticalAlign: -2, marginRight: 4 }} />Novi
@@ -220,6 +229,14 @@ export default function MobileWorkOrdersView({
                     ))}
                 </MList>
             </MSheet>
+
+            {/* Nalog „Razni poslovi" — isti sheet i isti API kao u pogonu. */}
+            <NewOrderSheet
+                open={customOpen}
+                onClose={() => setCustomOpen(false)}
+                showToast={showToast}
+                onCreated={() => { setCustomOpen(false); onRefresh('workOrders'); }}
+            />
 
             {/* Detalj naloga — vlastiti ekran */}
             {openWo && (

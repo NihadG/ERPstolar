@@ -28,6 +28,11 @@
 /* Ekrani bez tab-trake (lozinka, greška, učitavanje). */
 .fld-solo .fld-body { padding-bottom: calc(32px + env(safe-area-inset-bottom, 0px)); }
 
+/* Pogonski ekran ugniježđen u GLAVNU aplikaciju (vlasnikova šihtarica na
+   telefonu). Okvir i skrolovanje već daje `.content-area`, pa ovdje treba
+   samo prostor ispod da traka ne pojede zadnji red. */
+.fld-embed { padding-bottom: calc(24px + env(safe-area-inset-bottom, 0px)); }
+
 .fld-center {
     flex: 1;
     display: flex;

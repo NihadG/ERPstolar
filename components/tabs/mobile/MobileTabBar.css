@@ -39,6 +39,24 @@
 .mtb-item.on { color: #007aff; }
 .mtb-item:active { opacity: 0.6; }
 
+/* Traka nosi šest tabova — natpis se skraćuje umjesto da se prelomi u dva reda
+   i gurne ikone gore. Na najužim telefonima ide korak manje. */
+.mtb-item span {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+@media (max-width: 360px) {
+    .mtb-item { font-size: 9.5px; letter-spacing: -0.02em; }
+}
+
+/* Cjeloekranski sloj (detalj naloga, dodjela naloga, sheet) prekriva traku i
+   nosi vlastito dugme na dnu. Traka se za to vrijeme sklanja — inače se
+   provlači preko tog dugmeta i sječe ga (klasu postavlja overlayGuard). */
+body.m-overlay .mtb { display: none; }
+
 /* Sadržaj ne smije završiti ispod trake. */
 @media (max-width: 768px) {
     .content-area { padding-bottom: calc(76px + env(safe-area-inset-bottom, 0px)) !important; }
