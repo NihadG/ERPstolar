@@ -40,6 +40,14 @@ export function weekRange(anchor: Date): { from: string; to: string } {
     return { from: isoOf(from), to: isoOf(to) };
 }
 
+/** Payload sa upisanim/izmijenjenim statusom za (radnik, dan) — ostalo netaknuto. */
+function withEntry(
+    p: FieldAttendancePayload, workerId: string, date: string, status: string, notes = ''
+): FieldAttendancePayload {
+    const rest = p.entries.filter(e => !(e.workerId === workerId && e.date === date));
+    return { ...p, entries: [...rest, { workerId, date, status, notes }] };
+}
+
 export interface BookingDecision {
     workerId: string;
     workerName: string;
@@ -62,15 +70,16 @@ export function useFieldAttendance(anchorDate: Date) {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
 
-    const load = useCallback(async (force = false) => {
+    // `silent` = tihi reconcile poslije optimističnog upisa: osvježi podatke u
+    // pozadini bez spinnera i bez brisanja greške, da ekran ne treperi.
+    const load = useCallback(async (force = false, silent = false) => {
         const key = `${from}_${to}`;
         if (!force && cache.current.has(key)) {
             setData(cache.current.get(key)!);
             setLoading(false);
             return;
         }
-        setLoading(true);
-        setError(null);
+        if (!silent) { setLoading(true); setError(null); }
         try {
             const payload = await apiGet<FieldAttendancePayload>(
                 `/api/field/attendance?from=${from}&to=${to}`
@@ -78,10 +87,20 @@ export function useFieldAttendance(anchorDate: Date) {
             cache.current.set(key, payload);
             setData(payload);
         } catch (e: any) {
-            setError(e?.message || 'Učitavanje nije uspjelo.');
+            if (!silent) setError(e?.message || 'Učitavanje nije uspjelo.');
         } finally {
-            setLoading(false);
+            if (!silent) setLoading(false);
         }
+    }, [from, to]);
+
+    /** Odmah primijeni izmjenu na tekuću sedmicu (i u keš) — ćelija reaguje na dodir. */
+    const applyOptimistic = useCallback((update: (p: FieldAttendancePayload) => FieldAttendancePayload) => {
+        setData(prev => {
+            if (!prev) return prev;
+            const next = update(prev);
+            cache.current.set(`${from}_${to}`, next);
+            return next;
+        });
     }, [from, to]);
 
     useEffect(() => { load(); }, [load]);
@@ -99,20 +118,21 @@ export function useFieldAttendance(anchorDate: Date) {
     const setStatus = useCallback(async (
         workerId: string, date: string, status: string, notes?: string
     ): Promise<ProposalRow[]> => {
+        applyOptimistic(p => withEntry(p, workerId, date, status, notes));
         try {
             const res = await apiPost<{ ok: boolean; proposal: ProposalRow[] | null }>(
                 '/api/field/attendance', { workerId, date, status, notes }
             );
             return res.proposal || [];
         } finally {
-            // Osvježavanje ide i kad upis padne. Zahtjev može pasti POSLIJE upisa
-            // prisustva (npr. brisanje auto-dnevnica kod odsustva), pa bi zadržan
-            // keš pokazivao stari status — ekran tvrdi da ništa nije snimljeno,
-            // a u bazi jeste. Bolje jedan dohvat viška nego lažan presjek.
+            // Reconcile ide i kad upis padne. Zahtjev može pasti POSLIJE upisa
+            // prisustva (npr. brisanje auto-dnevnica kod odsustva), pa optimistični
+            // presjek treba potvrditi svježim. Ide u POZADINI (silent) — ne blokira
+            // dodir i ne vraća spinner; ćelija je već prebačena.
             invalidate(date);
-            await load(true);
+            void load(true, true);
         }
-    }, [invalidate, load]);
+    }, [applyOptimistic, invalidate, load]);
 
     /**
      * Grupni upis statusa za više radnika istog dana. POST-ovi idu paralelno
@@ -124,6 +144,8 @@ export function useFieldAttendance(anchorDate: Date) {
         date: string, entries: { workerId: string; status: string; notes?: string }[]
     ): Promise<void> => {
         if (entries.length === 0) return;
+        applyOptimistic(p => entries.reduce(
+            (acc, e) => withEntry(acc, e.workerId, date, e.status, e.notes), p));
         try {
             // `allSettled`, ne `all`: pad jednog radnika ne smije sakriti ostale
             // koji JESU snimljeni. Prijavi se koliko ih je palo, a ekran pokaže
@@ -139,9 +161,9 @@ export function useFieldAttendance(anchorDate: Date) {
             }
         } finally {
             invalidate(date);
-            await load(true);
+            void load(true, true);
         }
-    }, [invalidate, load]);
+    }, [applyOptimistic, invalidate, load]);
 
     /** Prijedlog za više radnika — „Svi prisutni" i traka „bez dnevnice". */
     const proposalFor = useCallback(async (date: string, workerIds?: string[]): Promise<ProposalRow[]> => {

@@ -12,10 +12,11 @@
 // vidi, kontrolor ne. Ekran ne odlučuje o tome — samo poštuje šta je dobio.
 // ════════════════════════════════════════════════════════════════════
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { CalendarPlus, Plus, X } from 'lucide-react';
 import { apiGet, apiPost } from '@/lib/apiClient';
-import type { FieldWorkLogDay, FieldWorkLogPayload } from '@/lib/field/fieldWorkLog';
+import { useFieldResource } from '@/lib/field/useFieldResource';
+import type { FieldWorkLogDay, FieldWorkLogPayload, FieldWorkLogWorker } from '@/lib/field/fieldWorkLog';
 import type { FieldWorkerRow } from '@/lib/field/fieldAttendance';
 import { MEmpty, MButton, MSheet } from '@/components/tabs/mobile/MobileUI';
 
@@ -37,6 +38,25 @@ const DAY_LABEL: Record<string, string> = {
     holiday: 'Praznik', no_work: 'Bez rada', future: 'Budući',
 };
 
+/**
+ * Optimistična izmjena jednog dana: nađi ga (ili ubaci prazan ako ga još nema),
+ * primijeni `fn`, presloži dane najnoviji-prvi i osvježi brojač radnih dana.
+ */
+function upsertDay(
+    p: FieldWorkLogPayload,
+    date: string,
+    fn: (day: FieldWorkLogDay) => FieldWorkLogDay
+): FieldWorkLogPayload {
+    const exists = p.days.some(d => d.date === date);
+    const base: FieldWorkLogDay[] = exists
+        ? p.days
+        : [{ date, dayType: 'no_work', workers: [] }, ...p.days];
+    const days = base
+        .map(d => (d.date === date ? fn(d) : d))
+        .sort((a, b) => b.date.localeCompare(a.date));
+    return { ...p, days, workingDays: days.filter(d => d.dayType === 'working').length };
+}
+
 interface Props {
     orderId: string;
     readOnly?: boolean;
@@ -50,9 +70,13 @@ interface Props {
 }
 
 export default function WorkLogPanel({ orderId, readOnly, showToast, onChanged }: Props) {
-    const [data, setData] = useState<FieldWorkLogPayload | null>(null);
-    const [loading, setLoading] = useState(true);
-    const [error, setError] = useState<string | null>(null);
+    // Upisi u knjigu su optimistični: čip radnika se pojavi/nestane odmah, a
+    // trošak (koji se računa na serveru) sjedne tihim reloadom sekundu kasnije.
+    const { data, loading, error, reload, mutate } = useFieldResource<FieldWorkLogPayload>(
+        () => apiGet<FieldWorkLogPayload>(`/api/field/work-orders/${orderId}/worklog`),
+        [orderId],
+        { errorMessage: 'Knjiga rada nije učitana.' },
+    );
     const [workers, setWorkers] = useState<FieldWorkerRow[]>([]);
 
     const [editDate, setEditDate] = useState<string | null>(null);
@@ -62,20 +86,6 @@ export default function WorkLogPanel({ orderId, readOnly, showToast, onChanged }
     const [busy, setBusy] = useState(false);
     const [newDay, setNewDay] = useState('');
     const [extraDays, setExtraDays] = useState<string[]>([]);
-
-    const load = useCallback(async () => {
-        setLoading(true);
-        setError(null);
-        try {
-            setData(await apiGet<FieldWorkLogPayload>(`/api/field/work-orders/${orderId}/worklog`));
-        } catch (e: any) {
-            setError(e?.message || 'Knjiga rada nije učitana.');
-        } finally {
-            setLoading(false);
-        }
-    }, [orderId]);
-
-    useEffect(() => { void load(); }, [load]);
 
     useEffect(() => {
         if (readOnly) return;
@@ -109,14 +119,27 @@ export default function WorkLogPanel({ orderId, readOnly, showToast, onChanged }
 
     const addCrew = async () => {
         if (!editDate || busy || pick.size === 0) return;
+        const date = editDate;
+        const itemIds = Array.from(pickItems);
+        const added: FieldWorkLogWorker[] = Array.from(pick).map(id => ({
+            workerId: id,
+            name: workers.find(w => w.workerId === id)?.name || '',
+            presence,
+            itemIds,
+        }));
         setBusy(true);
         try {
-            const res = await apiPost<{ created: number; message: string }>(
-                `/api/field/work-orders/${orderId}/worklog`,
-                { action: 'add', date: editDate, workerIds: Array.from(pick), itemIds: Array.from(pickItems), presence }
+            const res = await mutate<{ created: number; message: string }>(
+                d => upsertDay(d, date, day => {
+                    const have = new Set(day.workers.map(w => w.workerId));
+                    const merged = [...day.workers, ...added.filter(w => !have.has(w.workerId))]
+                        .sort((a, b) => a.name.localeCompare(b.name, 'bs'));
+                    return { ...day, dayType: 'working', workers: merged };
+                }),
+                () => apiPost(`/api/field/work-orders/${orderId}/worklog`,
+                    { action: 'add', date, workerIds: Array.from(pick), itemIds, presence }),
             );
             showToast(res.message, res.created > 0 ? 'success' : 'info');
-            await load();
             if (res.created > 0) onChanged?.();
             closeDay();
         } catch (e: any) {
@@ -128,14 +151,20 @@ export default function WorkLogPanel({ orderId, readOnly, showToast, onChanged }
 
     const removeWorker = async (workerId: string) => {
         if (!editDate || busy) return;
+        const date = editDate;
         setBusy(true);
         try {
-            const res = await apiPost<{ removed: number; message: string }>(
-                `/api/field/work-orders/${orderId}/worklog`,
-                { action: 'remove', date: editDate, workerId }
+            const res = await mutate<{ removed: number; message: string }>(
+                d => ({
+                    ...d,
+                    days: d.days.map(day => day.date === date
+                        ? { ...day, workers: day.workers.filter(w => w.workerId !== workerId) }
+                        : day),
+                }),
+                () => apiPost(`/api/field/work-orders/${orderId}/worklog`,
+                    { action: 'remove', date, workerId }),
             );
             showToast(res.message, res.removed > 0 ? 'success' : 'info');
-            await load();
             if (res.removed > 0) onChanged?.();
         } catch (e: any) {
             showToast(e?.message || 'Brisanje nije uspjelo', 'error');
@@ -153,7 +182,7 @@ export default function WorkLogPanel({ orderId, readOnly, showToast, onChanged }
         return (
             <MEmpty title="Knjiga rada nije učitana" sub={error}>
                 <div style={{ width: '100%', paddingTop: 14 }}>
-                    <MButton variant="filled" onClick={() => void load()}>Pokušaj ponovo</MButton>
+                    <MButton variant="filled" onClick={() => void reload()}>Pokušaj ponovo</MButton>
                 </div>
             </MEmpty>
         );
