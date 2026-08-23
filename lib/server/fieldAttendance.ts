@@ -62,31 +62,56 @@ export interface SetAttendanceInput {
  */
 export async function setAttendance(orgId: string, input: SetAttendanceInput): Promise<void> {
     const db = adminDb();
-    const existing = await db.collection('worker_attendance')
-        .where('Organization_ID', '==', orgId)
+
+    // Uhvati SVE zapise ovog radnika za ovaj dan, u BILO KOJEM formatu datuma.
+    // U bazi zna postojati zaostali blizanac sa punim ISO vremenom
+    // ("YYYY-MM-DDT00:00:00Z") pored čistog "YYYY-MM-DD". Tačna jednakost po
+    // "YYYY-MM-DD" nikad ne pogodi taj blizanac, pa bi upis pravio DRUGI zapis,
+    // a projekcija bi znala vratiti stari status — otud „status se ne sačuva"
+    // baš kod nekih radnika. Raspon [dan, sljedeći dan) hvata oba oblika i
+    // postojeći indeks (Worker_ID, Organization_ID, Date).
+    const snap = await db.collection('worker_attendance')
         .where('Worker_ID', '==', input.workerId)
-        .where('Date', '==', input.date)
-        .limit(1)
+        .where('Organization_ID', '==', orgId)
+        .where('Date', '>=', input.date)
+        .where('Date', '<', input.date + 'T99')
         .get();
 
-    const attendanceId = existing.empty
-        ? uuidv4()
-        : (existing.docs[0].data().Attendance_ID as string) || existing.docs[0].id;
-    const createdDate = existing.empty
-        ? new Date().toISOString()
-        : (existing.docs[0].data().Created_Date as string) || new Date().toISOString();
+    // Sigurnosni filter: tačno ovaj radnik i tačno ovaj dan (i puni ISO → dan).
+    const mine = snap.docs.filter(d => {
+        const data = d.data();
+        return data.Worker_ID === input.workerId
+            && String(data.Date || '').split('T')[0] === input.date;
+    });
 
-    await db.collection('worker_attendance').doc(attendanceId).set({
+    // Kanonski dokument: putanja == Attendance_ID (čist upsert-cilj); inače prvi
+    // zatečeni; inače nov. Ostali su duplikati koje šihtarica ne smije imati
+    // (jedan status po radnik-danu) — brišu se u istoj batch operaciji.
+    const canonical = mine.find(d => (d.data().Attendance_ID as string) === d.id) || mine[0];
+    const attendanceId = canonical
+        ? ((canonical.data().Attendance_ID as string) || canonical.id)
+        : uuidv4();
+    const createdDate = canonical
+        ? ((canonical.data().Created_Date as string) || new Date().toISOString())
+        : new Date().toISOString();
+
+    const batch = db.batch();
+    for (const d of mine) {
+        if (d.id !== attendanceId) batch.delete(d.ref);
+    }
+    batch.set(db.collection('worker_attendance').doc(attendanceId), {
         Attendance_ID: attendanceId,
         Organization_ID: orgId,
         Worker_ID: input.workerId,
         Worker_Name: input.workerName,
-        Date: input.date,
+        Date: input.date,                 // uvijek čist "YYYY-MM-DD"
         Status: input.status,
         Notes: input.notes || '',
         Created_Date: createdDate,
         Modified_Date: new Date().toISOString(),
     }, { merge: true });
+
+    await batch.commit();
 }
 
 /**

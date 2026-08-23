@@ -54,6 +54,10 @@ export const bookedKey = (workerId: string, date: string) => `${workerId}|${date
 
 const dOnly = (iso?: string | null): string => (iso ? iso.split('T')[0] : '');
 
+/** Vrijeme zapisa za odabir najsvježijeg duplikata (Modified pa Created). */
+const attTime = (a: WorkerAttendance): number =>
+    Date.parse(a.Modified_Date || a.Created_Date || '') || 0;
+
 export function buildFieldAttendance(input: FieldAttendanceInput): FieldAttendancePayload {
     const workers: FieldWorkerRow[] = input.workers
         .filter(w => w.Status !== 'Obrisan')
@@ -67,14 +71,26 @@ export function buildFieldAttendance(input: FieldAttendanceInput): FieldAttendan
 
     const known = new Set(workers.map(w => w.workerId));
 
-    const entries: FieldAttendanceEntry[] = input.attendance
-        .filter(a => known.has(a.Worker_ID))
-        .map(a => ({
-            workerId: a.Worker_ID,
-            date: dOnly(a.Date),
-            status: a.Status,
-            notes: a.Notes || '',
-        }));
+    // DEDUP (radnik, dan) → JEDAN status. U bazi znaju živjeti dva zapisa za
+    // isti dan: jedan sa `Date` = "YYYY-MM-DD", drugi zaostali sa punim ISO
+    // vremenom ("…T00:00:00Z"). `setAttendance` upsertuje po tačnom "YYYY-MM-DD",
+    // pa nikad ne pogodi zaostali blizanac — a bez dedupa ovdje projekcija zna
+    // vratiti baš njega (stari status), i ekran tvrdi da se „status ne sačuva".
+    // Rješenje bez migracije: za svaki (radnik, dan) zadrži NAJSVJEŽIJI zapis.
+    const latestByKey = new Map<string, WorkerAttendance>();
+    for (const a of input.attendance) {
+        if (!known.has(a.Worker_ID)) continue;
+        const key = `${a.Worker_ID}|${dOnly(a.Date)}`;
+        const prev = latestByKey.get(key);
+        if (!prev || attTime(a) >= attTime(prev)) latestByKey.set(key, a);
+    }
+
+    const entries: FieldAttendanceEntry[] = Array.from(latestByKey.values()).map(a => ({
+        workerId: a.Worker_ID,
+        date: dOnly(a.Date),
+        status: a.Status,
+        notes: a.Notes || '',
+    }));
 
     // Cijeli mjesec dnevnica svede se na skup ključeva — nijedan iznos ne izlazi.
     const bookedKeys = Array.from(new Set(

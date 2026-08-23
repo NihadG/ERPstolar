@@ -176,3 +176,43 @@ describe('bookedKey', () => {
         expect(bookedKey('w-1', '2026-07-15')).toBe('w-1|2026-07-15');
     });
 });
+
+describe('buildFieldAttendance — dedup zaostalih duplikata', () => {
+    // U bazi zna biti dva zapisa za isti (radnik, dan): stari s punim ISO
+    // datumom i novi „YYYY-MM-DD". Bez dedupa projekcija zna vratiti stari
+    // status — ekran onda tvrdi da se „status ne sačuva".
+    it('za isti dan zadrži NAJSVJEŽIJI status (po Modified_Date)', () => {
+        const out = buildFieldAttendance(makeInput({
+            workLogs: [],
+            attendance: [
+                // Zaostali blizanac: puni ISO datum, star status, staro vrijeme.
+                attendance({
+                    Attendance_ID: 'stari', Date: '2026-07-15T00:00:00.000Z',
+                    Status: 'Odsutan', Modified_Date: '2026-07-15T06:00:00.000Z',
+                }),
+                // Svjež upis: čist datum, novi status, novije vrijeme.
+                attendance({
+                    Attendance_ID: 'novi', Date: '2026-07-15',
+                    Status: 'Prisutan', Modified_Date: '2026-07-15T09:30:00.000Z',
+                }),
+            ],
+        }));
+
+        const forDay = out.entries.filter(e => e.workerId === 'w-1' && e.date === '2026-07-15');
+        expect(forDay).toHaveLength(1);
+        expect(forDay[0].status).toBe('Prisutan');
+    });
+
+    it('redoslijed ulaza ne mijenja ishod (svjež pobjeđuje i kad je prvi)', () => {
+        const out = buildFieldAttendance(makeInput({
+            workLogs: [],
+            attendance: [
+                attendance({ Date: '2026-07-15', Status: 'Prisutan', Modified_Date: '2026-07-15T09:30:00.000Z' }),
+                attendance({ Date: '2026-07-15T00:00:00.000Z', Status: 'Odsutan', Modified_Date: '2026-07-15T06:00:00.000Z' }),
+            ],
+        }));
+        const forDay = out.entries.filter(e => e.date === '2026-07-15');
+        expect(forDay).toHaveLength(1);
+        expect(forDay[0].status).toBe('Prisutan');
+    });
+});
