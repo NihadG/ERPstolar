@@ -326,6 +326,7 @@ export async function buildOfferPrintDocument({ offer, dimensions, company }: Of
         rabat: isEN ? 'Disc.' : 'Rabat',
         newPrice: isEN ? 'Net Price' : 'Nova cijena',
         itemDiscount: isEN ? 'Item discount' : 'Rabat na stavke',
+        afterDiscount: isEN ? 'Subtotal after discount' : 'Suma nakon rabata',
         total: isEN ? 'Total' : 'Ukupno',
         subtotal: isEN ? 'Subtotal' : 'Suma',
         transport: isEN ? 'Transport' : 'Transport',
@@ -456,6 +457,10 @@ export async function buildOfferPrintDocument({ offer, dimensions, company }: Of
                     <div class="totals-line discount">
                         <span class="t-label">${t.itemDiscount}</span>
                         <span class="t-value">${itemDiscount >= 0 ? '-' : '+'}${fmtCurr(Math.abs(itemDiscount))}</span>
+                    </div>
+                    <div class="totals-line">
+                        <span class="t-label">${t.afterDiscount}</span>
+                        <span class="t-value">${fmtCurr(subtotal)}</span>
                     </div>
                 ` : `
                     <div class="totals-line">
