@@ -292,8 +292,10 @@
     .fcl-hd h1 { font-size: 27px; }
     .fcl-cta { display: flex; justify-content: center; }
     .fcl-cta > .fcl-go { max-width: 720px; }
-    /* Postavke: bottom-sheet postaje centrirani panel (nema „dna" za povlačenje). */
-    .fcl-sheetm { left: 50%; right: auto; transform: translate(-50%, 100%); width: 460px; max-width: calc(100vw - 32px); border-radius: 22px; bottom: 24px; }
+    /* Postavke: bottom-sheet postaje centrirani panel (nema „dna" za povlačenje).
+       Zatvoreno stanje mora očistiti i `bottom: 24px` odmak i sjenu — inače
+       vrh panela (naslov „Postavke ploče") viri iznad ruba ekrana. */
+    .fcl-sheetm { left: 50%; right: auto; transform: translate(-50%, calc(100% + 48px)); width: 460px; max-width: calc(100vw - 32px); border-radius: 22px; bottom: 24px; }
     .fcl-sheetm.on { transform: translate(-50%, 0); }
     .fcl-grab { display: none; }
     .fcl-zoom-inner { max-width: 900px; }
