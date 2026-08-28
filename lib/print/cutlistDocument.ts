@@ -181,7 +181,6 @@ export function renderSheetSvg(sheet: CutlistSheetRecord, boardW: number, boardH
         // lijevi rub (okrenuto 90°). Font je ~20% veći od ranijeg centralnog
         // „Š×V" prikaza, ali ograničen da broj stane duž ruba koji označava.
         const edgeSize = Math.min(fontBase * 1.15, minDim / 3.4, p.W / 3.4, p.H / 3.4);
-        const nameSize = Math.min(fontBase * 0.85, minDim / 5.5, p.W / Math.max(5, p.Name.length * 0.62));
         const idxSize = Math.min(fontBase, minDim / 2.2, p.W / 3);
 
         if (edgeSize >= fontBase * 0.36) {
@@ -190,11 +189,22 @@ export function renderSheetSvg(sheet: CutlistSheetRecord, boardW: number, boardH
             parts.push(`<text x="${cx}" y="${y + edgeInset}" text-anchor="middle" dominant-baseline="central" font-size="${edgeSize}" font-weight="700" font-family="monospace" fill="#78350f">${Math.round(p.W)}</text>`);
             // Visina — uz lijevi rub, okrenuto.
             parts.push(`<text x="${x + edgeInset}" y="${cy}" text-anchor="middle" dominant-baseline="central" font-size="${edgeSize}" font-weight="700" font-family="monospace" fill="#78350f" transform="rotate(-90 ${x + edgeInset} ${cy})">${Math.round(p.H)}</text>`);
-            // Redni broj + naziv — centriran u OSTATKU komada (desno od lijeve i
-            // ispod gornje oznake), da ne naliježe na dimenzije kod uskih komada.
+
+            // Redni broj + naziv — PRATI DUŽU STRANU komada: uspravno (okrenuto
+            // -90°) na portretnim, vodoravno na pejzažnim komadima. Font se mjeri
+            // po dužoj/kraćoj strani površine iza rubnih oznaka, pa uski uspravni
+            // komadi (npr. 250×1250) dobiju veći, čitljiv naziv duž dužine.
             const band = edgeInset * 1.7;
-            if (nameSize >= fontBase * 0.3 && p.W - band > nameSize * 2 && p.H - band > nameSize * 1.4) {
-                parts.push(`<text x="${(x + band + x + p.W) / 2}" y="${(y + band + y + p.H) / 2}" text-anchor="middle" dominant-baseline="central" font-size="${nameSize}" font-weight="600" fill="#b45309">${i + 1}. ${esc(p.Name)}${p.Rotated ? ' ⟳' : ''}</text>`);
+            const portrait = p.H > p.W;
+            const availShort = (portrait ? p.W : p.H) - band;
+            const availLong = (portrait ? p.H : p.W) - band;
+            const label = `${i + 1}. ${p.Name}${p.Rotated ? ' ⟳' : ''}`;
+            const nameSize = Math.min(fontBase * 1.02, availShort / 1.6, availLong / Math.max(4, label.length * 0.6));
+            if (nameSize >= fontBase * 0.32 && availShort > 0) {
+                const ncx = x + (p.W + band) / 2;
+                const ncy = y + (p.H + band) / 2;
+                const rot = portrait ? ` transform="rotate(-90 ${ncx} ${ncy})"` : '';
+                parts.push(`<text x="${ncx}" y="${ncy}" text-anchor="middle" dominant-baseline="central" font-size="${nameSize}" font-weight="600" fill="#b45309"${rot}>${i + 1}. ${esc(p.Name)}${p.Rotated ? ' ⟳' : ''}</text>`);
             }
         } else if (idxSize >= fontBase * 0.3) {
             parts.push(`<text x="${cx}" y="${cy + idxSize * 0.35}" text-anchor="middle" font-size="${idxSize}" font-weight="600" fill="#78350f">${i + 1}</text>`);

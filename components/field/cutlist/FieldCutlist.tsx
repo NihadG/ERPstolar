@@ -530,14 +530,35 @@ function SheetSVG({ sheet, usable, colorByKey, big }: {
             {sheet.placements.map((p, i) => {
                 const c = colorByKey.get(sizeKey(p.w, p.h)) || '#3B82F6';
                 const short = Math.min(p.w, p.h);
+                // Isti raspored kao u printu: širina uz gornji rub, visina uz
+                // lijevi rub (okrenuto), a naziv u sredini prati DUŽU stranu
+                // komada (uspravno na portretnim, vodoravno na pejzažnim).
+                const edgeSize = Math.min(fs * 1.05, short / 3.2, p.w / 3.2, p.h / 3.2);
+                const inset = edgeSize * 0.82;
+                const band = inset * 1.8;
+                const portrait = p.h > p.w;
+                const availShort = (portrait ? p.w : p.h) - band;
+                const availLong = (portrait ? p.h : p.w) - band;
+                const label = `${i + 1}. ${p.name}${p.rotated ? ' ⟳' : ''}`;
+                const nameSize = Math.min(fs * 0.92, availShort / 1.6, availLong / Math.max(4, label.length * 0.6));
+                const ncx = p.x + (p.w + band) / 2;
+                const ncy = p.y + (p.h + band) / 2;
                 return (
                     <g key={i}>
                         <rect x={p.x} y={p.y} width={p.w} height={p.h} fill={c} fillOpacity={0.9} stroke="#fff" strokeWidth={stroke} rx={Math.min(7, short * 0.05)} />
-                        {short > fs * 2.4 && (
-                            <text x={p.x + p.w / 2} y={p.y + p.h / 2} fontSize={fs} fill="#fff" fontWeight={600}
-                                textAnchor="middle" dominantBaseline="central">
-                                {Math.round(p.rotated ? p.h : p.w)}×{Math.round(p.rotated ? p.w : p.h)}
-                            </text>
+                        {edgeSize >= fs * 0.5 && (
+                            <>
+                                <text x={p.x + p.w / 2} y={p.y + inset} fontSize={edgeSize} fill="#fff" fontWeight={700}
+                                    textAnchor="middle" dominantBaseline="central" opacity={0.92}>{Math.round(p.w)}</text>
+                                <text x={p.x + inset} y={p.y + p.h / 2} fontSize={edgeSize} fill="#fff" fontWeight={700}
+                                    textAnchor="middle" dominantBaseline="central" opacity={0.92}
+                                    transform={`rotate(-90 ${p.x + inset} ${p.y + p.h / 2})`}>{Math.round(p.h)}</text>
+                                {nameSize >= fs * 0.42 && availShort > 0 && (
+                                    <text x={ncx} y={ncy} fontSize={nameSize} fill="#fff" fontWeight={600}
+                                        textAnchor="middle" dominantBaseline="central"
+                                        transform={portrait ? `rotate(-90 ${ncx} ${ncy})` : undefined}>{label}</text>
+                                )}
+                            </>
                         )}
                     </g>
                 );
