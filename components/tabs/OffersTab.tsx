@@ -498,6 +498,19 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
         return baseUnitPrice(product) * (1 - (product.discountPercent || 0) / 100);
     }
 
+    /** Iznos rabata po komadu (računat na cijelu cijenu — materijal+rad+usluge+marža). */
+    function rabatAmountPerUnit(product: OfferProductState): number {
+        return baseUnitPrice(product) * (product.discountPercent || 0) / 100;
+    }
+
+    /**
+     * Marža/kom NAKON rabata. Rabat se računa na cijelu cijenu, a odbija se od marže:
+     * proizvod 1000 (marža 200) + 10% rabat → rabat 100 → marža 100, cijena 900.
+     */
+    function effectiveMarginPerUnit(product: OfferProductState): number {
+        return (product.margin || 0) - rabatAmountPerUnit(product);
+    }
+
     // Refresh material cost from latest project product data (jedan proizvod)
     function refreshMaterialCost(index: number) {
         const product = offerProducts[index];
@@ -1489,7 +1502,8 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
                         {offerProducts.length > 0 && (() => {
                             const totals = calculateOfferTotals();
                             const inc = offerProducts.filter(p => p.included);
-                            const profit = inc.reduce((sum, p) => sum + (p.margin || 0) * (p.Quantity || 1), 0);
+                            // Marža nakon rabata (rabat se odbija od marže) — pa profit chip prati rabat.
+                            const profit = inc.reduce((sum, p) => sum + effectiveMarginPerUnit(p) * (p.Quantity || 1), 0);
                             // Planirani TROŠKOVI iz ponude (svaki × količina) + broj radnih dana.
                             const materialTotal = inc.reduce((s, p) => s + (p.Material_Cost || 0) * (p.Quantity || 1), 0);
                             const uslugeTotal = inc.reduce((s, p) => s + (p.extras || []).reduce((a, e) => a + (e.total || 0), 0) * (p.Quantity || 1), 0);
@@ -1997,6 +2011,15 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
                                                                     />
                                                                     <span className="suffix">KM</span>
                                                                 </div>
+                                                                {rabatEnabled && (product.discountPercent || 0) !== 0 && (
+                                                                    <div
+                                                                        className="margin-after-rabat"
+                                                                        style={{ color: effectiveMarginPerUnit(product) < 0 ? '#dc2626' : '#16a34a' }}
+                                                                        title="Marža/kom nakon rabata (rabat se odbija od marže)"
+                                                                    >
+                                                                        ↓ {formatPrice(effectiveMarginPerUnit(product), offerCurrency)}
+                                                                    </div>
+                                                                )}
                                                             </td>
                                                             <td className="readonly-cell unit-price">
                                                                 {formatPrice(unitPrice, offerCurrency)}
@@ -2522,7 +2545,7 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
                                                     Mat: {formatPrice(product.Material_Cost, viewCurrency)}
                                                 </div>
                                                 <div style={{ fontSize: '12px', background: 'rgba(34,197,94,0.1)', color: '#16a34a', padding: '4px 8px', borderRadius: '6px', fontWeight: 600 }}>
-                                                    Marža: {formatPrice(product.Margin, viewCurrency)}
+                                                    Marža: {formatPrice(discountPct !== 0 ? (product.Margin || 0) - baseUnit * discountPct / 100 : product.Margin, viewCurrency)}
                                                 </div>
                                                 {laborTotal > 0 && (
                                                     <div style={{ fontSize: '12px', background: 'rgba(168,85,247,0.1)', color: '#9333ea', padding: '4px 8px', borderRadius: '6px', fontWeight: 600 }}>

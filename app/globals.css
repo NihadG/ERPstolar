@@ -1885,14 +1885,26 @@ textarea::placeholder {
 .rabat-bar-left .material-icons-round { font-size: 16px; color: #16a34a; }
 .rabat-bar-title { font-size: 12px; font-weight: 600; color: var(--text-primary); }
 .rabat-bulk-input {
-  display: inline-flex; align-items: center; gap: 2px;
-  background: var(--surface); border: 1px solid var(--border); border-radius: 7px; padding: 2px 8px;
+  display: inline-flex; align-items: center; gap: 4px;
+  background: #fff; border: 1.5px solid var(--border); border-radius: 8px;
+  padding: 5px 10px; min-height: 34px;
 }
+.rabat-bulk-input:focus-within { border-color: #16a34a; box-shadow: 0 0 0 3px rgba(22,163,74,0.12); }
 .rabat-bulk-input input {
-  width: 46px; border: none; background: transparent; outline: none;
-  font-size: 13px; font-weight: 600; text-align: right; color: var(--text-primary);
+  width: 58px; border: none; background: transparent; outline: none;
+  font-size: 15px; font-weight: 700; text-align: right; color: #111;
+  -moz-appearance: textfield;
 }
-.rabat-bulk-input span { font-size: 12px; color: var(--text-secondary); }
+/* Bez spinnera — bili su široki i gutali prostor pa se broj nije vidio */
+.rabat-bulk-input input::-webkit-outer-spin-button,
+.rabat-bulk-input input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.rabat-bulk-input input::placeholder { color: #9ca3af; font-weight: 600; }
+.rabat-bulk-input span { font-size: 14px; font-weight: 700; color: var(--text-secondary); }
+
+.margin-after-rabat {
+  margin-top: 3px; font-size: 10px; font-weight: 600; text-align: right;
+  white-space: nowrap; line-height: 1.2;
+}
 .rabat-apply-btn {
   font-size: 12px; font-weight: 600; color: #fff; background: #16a34a;
   border: none; border-radius: 7px; padding: 6px 12px; cursor: pointer;
