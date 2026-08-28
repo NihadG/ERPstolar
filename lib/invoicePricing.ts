@@ -43,8 +43,12 @@ export function buildInvoiceLines(offerProducts: OfferProduct[], projectProducts
                 : (op.Material_Cost || 0); // proizvod obrisan iz projekta — fallback na snapshot
             const extrasTotal = (op.extras || []).reduce((s, e) => s + (e.Total || 0), 0);
             const laborTotal = (op.Labor_Workers || 0) * (op.Labor_Days || 0) * (op.Labor_Daily_Rate || 0);
+            // Rabat iz ponude (signed: + popust / − doplata) se zadržava i u rekalkulaciji —
+            // inače bi izbor „svježe preračunato" tiho poništio dogovoreni popust.
+            const discountPercent = op.Discount_Percent || 0;
             const offerUnitPrice = round2(op.Selling_Price || 0);
-            const recalculatedUnitPrice = round2(currentMaterialCost + (op.Margin || 0) + extrasTotal + laborTotal);
+            const recalculatedBase = currentMaterialCost + (op.Margin || 0) + extrasTotal + laborTotal;
+            const recalculatedUnitPrice = round2(recalculatedBase * (1 - discountPercent / 100));
             const quantity = op.Quantity || 1;
             return {
                 productId: op.Product_ID,

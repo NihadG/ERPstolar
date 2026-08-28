@@ -1401,14 +1401,18 @@ export async function updateOfferWithProducts(offerData: any, organizationId: st
 
         // Izračunaj cijenu/ukupno reda iz sirovih editor polja (ista formula kao OffersTab
         // calculateProductTotal — jedini izvor za Selling_Price/Total_Price pri snimanju).
+        const round2 = (n: number) => Math.round(n * 100) / 100;
         const computeOfferProductFields = (p: any) => {
             const materialCost = parseFloat(p.Material_Cost) || 0;
             const margin = parseFloat(p.Margin) || 0;
             const extrasTotal = (p.Extras || []).reduce((sum: number, e: any) => sum + (parseFloat(e.total) || 0), 0);
             const laborTotal = (parseFloat(p.Labor_Workers) || 0) * (parseFloat(p.Labor_Days) || 0) * (parseFloat(p.Labor_Daily_Rate) || 0);
             const quantity = parseFloat(p.Quantity) || 1;
-            const sellingPrice = materialCost + margin + extrasTotal + laborTotal;
-            return { materialCost, margin, extrasTotal, laborTotal, quantity, sellingPrice, totalPrice: sellingPrice * quantity };
+            // Rabat po stavci (signed: + popust / − doplata) ide u neto cijenu.
+            const discountPercent = parseFloat(p.Discount_Percent) || 0;
+            const baseSellingPrice = round2(materialCost + margin + extrasTotal + laborTotal);
+            const sellingPrice = round2(baseSellingPrice * (1 - discountPercent / 100));
+            return { materialCost, margin, extrasTotal, laborTotal, quantity, discountPercent, baseSellingPrice, sellingPrice, totalPrice: round2(sellingPrice * quantity) };
         };
 
         const transportCost = parseFloat(offerData.Transport_Cost) || 0;
@@ -1470,6 +1474,7 @@ export async function updateOfferWithProducts(offerData: any, organizationId: st
             PDV_Rate: offerData.PDV_Rate ?? 17,
             Currency: offerData.Currency || 'KM',
             Language: offerData.Language || 'bs',
+            Show_Item_Discounts: offerData.Show_Item_Discounts ?? false,
             // Client override fields
             Client_Name: offerData.Client_Name || '',
             Client_Phone: offerData.Client_Phone || '',
@@ -1495,6 +1500,8 @@ export async function updateOfferWithProducts(offerData: any, organizationId: st
                 Material_Cost: fields.materialCost,
                 Margin: fields.margin,
                 Margin_Type: 'Fixed',
+                Discount_Percent: fields.discountPercent,
+                Base_Selling_Price: fields.baseSellingPrice,
                 Selling_Price: fields.sellingPrice,
                 Total_Price: fields.totalPrice,
                 Labor_Workers: parseFloat(p.Labor_Workers) || 0,
@@ -1549,6 +1556,8 @@ export async function updateOfferWithProducts(offerData: any, organizationId: st
                 Sink_Faucet_Price: 0,
                 Transport_Share: 0,
                 Discount_Share: 0,
+                Discount_Percent: fields.discountPercent,
+                Base_Selling_Price: fields.baseSellingPrice,
                 Selling_Price: fields.sellingPrice,
                 Total_Price: fields.totalPrice,
                 Labor_Workers: parseFloat((product as any).Labor_Workers) || 0,

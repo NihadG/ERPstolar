@@ -296,6 +296,11 @@ export interface Offer {
     Client_ID_Number?: string;
     Client_PDV_Number?: string;
 
+    // RABAT PO STAVCI — prikaži na štampi razradu (Cijena → Rabat → Nova cijena).
+    // Sam rabat je uvijek ubačen u Selling_Price/Total_Price stavke; ovaj flag
+    // odlučuje SAMO da li kupac vidi razradu ili samo konačnu cijenu.
+    Show_Item_Discounts?: boolean;
+
     // GOOGLE DRIVE — arhivirani PDF ponude u podfolderu „Ponude" projekta.
     Drive_File_ID?: string;
     Drive_File_URL?: string;
@@ -322,6 +327,10 @@ export interface OfferProduct {
     Sink_Faucet_Price: number;
     Transport_Share: number;
     Discount_Share: number;
+    /** Rabat na stavku u % (pozitivno = popust, negativno = doplata). Default 0. */
+    Discount_Percent?: number;
+    /** Cijena/kom PRIJE rabata (materijal + marža + usluge + rad). Selling_Price je poslije rabata. */
+    Base_Selling_Price?: number;
     Selling_Price: number;
     Total_Price: number;
     Labor_Workers: number;

@@ -25,8 +25,13 @@ const PX_PER_MM = 96 / 25.4;
 /** Iste margine kao `@page` u CSS-u za štampu ponude — PDF i papir se poklapaju. */
 export const PRINT_MARGIN_MM = { top: 10, right: 12, bottom: 14, left: 12 };
 
-/** 300 DPI = štamparski standard; tekst je oštar i pri zumu. */
-const DEFAULT_DPI = 300;
+/**
+ * 400 DPI baseline — iznad štamparskog standarda (300), pa tekst ostaje
+ * oštar i kad se PDF gleda na ekranu i zumira (ranije se na 300 vidjela
+ * rasterizacija). Ponuda traži još više (vidi poziv u OffersTab) jer je
+ * kratka pa veći raster ne opterećuje ni memoriju ni Drive upload.
+ */
+const DEFAULT_DPI = 400;
 
 // Zaštita od pucanja canvasa: Chrome odbija stranicu preko ~16k px i
 // canvas preko ~256MB. Držimo se dobro ispod — dugačka narudžba inače

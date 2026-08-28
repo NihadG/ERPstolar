@@ -211,12 +211,16 @@ const STYLE_CSS = `
 
     .col-num { width: 40px; text-align: center; color: #aaa; }
     .col-name { }
-    .col-qty { width: 70px; text-align: center; }
-    .col-price { width: 110px; text-align: right; }
-    .col-total { width: 120px; text-align: right; font-weight: 500; }
+    .col-qty { width: 64px; text-align: center; }
+    .col-price { width: 98px; text-align: right; }
+    .col-rabat { width: 60px; text-align: right; color: #16a34a; font-weight: 600; }
+    .col-rabat.rabat-up { color: #c0392b; }
+    .col-total { width: 108px; text-align: right; font-weight: 500; }
 
     thead th.col-price,
+    thead th.col-rabat,
     thead th.col-total { text-align: right; }
+    thead th.col-rabat { color: #888; font-weight: 600; }
     thead th.col-qty { text-align: center; }
 
     .product-name { font-weight: 500; color: #333; }
@@ -319,6 +323,9 @@ export async function buildOfferPrintDocument({ offer, dimensions, company }: Of
         dims: isEN ? '(HxWxD)' : '(VxŠxD)',
         qty: isEN ? 'Qty' : 'Količina',
         price: isEN ? 'Unit Price' : 'Cijena',
+        rabat: isEN ? 'Disc.' : 'Rabat',
+        newPrice: isEN ? 'Net Price' : 'Nova cijena',
+        itemDiscount: isEN ? 'Item discount' : 'Rabat na stavke',
         total: isEN ? 'Total' : 'Ukupno',
         subtotal: isEN ? 'Subtotal' : 'Suma',
         transport: isEN ? 'Transport' : 'Transport',
@@ -339,15 +346,29 @@ export async function buildOfferPrintDocument({ offer, dimensions, company }: Of
         : val.toLocaleString('bs-BA', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' KM';
 
     const products = sortProductsByName(
-        (offer.products || []).filter(p => p.Included !== false).map(p => ({
-            ...p,
-            Selling_Price: p.Selling_Price || 0,
-            Total_Price: p.Total_Price || 0,
-        })),
+        (offer.products || []).filter(p => p.Included !== false).map(p => {
+            const net = p.Selling_Price || 0;
+            const dp = (p as any).Discount_Percent || 0;
+            // Base_Selling_Price je cijena prije rabata; fallback za stare ponude bez tog polja.
+            const base = (p as any).Base_Selling_Price || (dp ? net / (1 - dp / 100) : net);
+            return {
+                ...p,
+                Selling_Price: net,
+                Total_Price: p.Total_Price || 0,
+                _discountPercent: dp,
+                _basePrice: base,
+            };
+        }),
         p => p.Product_Name
     );
 
+    // Rabat po stavci se prikazuje na štampi samo ako je flag uključen I ima stvarnog rabata.
+    const showItemDiscounts = !!(offer as any).Show_Item_Discounts
+        && products.some(p => Math.abs(p._discountPercent) >= 0.01);
+
     const subtotal = offer.Subtotal || products.reduce((sum, p) => sum + p.Total_Price, 0);
+    const grossSubtotal = products.reduce((sum, p) => sum + p._basePrice * (p.Quantity || 1), 0);
+    const itemDiscount = grossSubtotal - subtotal;   // ukupan rabat na stavke (za razradu suma)
     const transport = offer.Transport_Cost || 0;
     const discount = offer.Onsite_Assembly ? (offer.Onsite_Discount || 0) : 0;
     const total = subtotal + transport - discount;
@@ -393,6 +414,9 @@ export async function buildOfferPrintDocument({ offer, dimensions, company }: Of
         </div>
     `;
 
+    // Rabat u koloni: pozitivan % = popust (−X%), negativan = doplata (+X%).
+    const fmtRabat = (dp: number) => dp === 0 ? '—' : (dp > 0 ? `−${dp}%` : `+${Math.abs(dp)}%`);
+
     const productRowHTML = (p: typeof products[0], globalIndex: number) => `
         <tr>
             <td class="col-num">${globalIndex + 1}</td>
@@ -405,7 +429,13 @@ export async function buildOfferPrintDocument({ offer, dimensions, company }: Of
                 })()}</div>
             </td>
             <td class="col-qty">${p.Quantity}</td>
-            <td class="col-price">${fmtCurr(p.Selling_Price)}</td>
+            ${showItemDiscounts ? `
+                <td class="col-price">${fmtCurr(p._basePrice)}</td>
+                <td class="col-rabat${p._discountPercent < 0 ? ' rabat-up' : ''}">${fmtRabat(p._discountPercent)}</td>
+                <td class="col-price">${fmtCurr(p.Selling_Price)}</td>
+            ` : `
+                <td class="col-price">${fmtCurr(p.Selling_Price)}</td>
+            `}
             <td class="col-total">${fmtCurr(p.Total_Price)}</td>
         </tr>
     `;
@@ -418,10 +448,21 @@ export async function buildOfferPrintDocument({ offer, dimensions, company }: Of
                 ${offer.Notes ? offer.Notes.split('\n').map((line: string) => `<p>${line}</p>`).join('') : ''}
             </div>
             <div class="totals-box">
-                <div class="totals-line">
-                    <span class="t-label">${t.subtotal}</span>
-                    <span class="t-value">${fmtCurr(subtotal)}</span>
-                </div>
+                ${showItemDiscounts && Math.abs(itemDiscount) >= 0.01 ? `
+                    <div class="totals-line">
+                        <span class="t-label">${t.subtotal}</span>
+                        <span class="t-value">${fmtCurr(grossSubtotal)}</span>
+                    </div>
+                    <div class="totals-line discount">
+                        <span class="t-label">${t.itemDiscount}</span>
+                        <span class="t-value">${itemDiscount >= 0 ? '-' : '+'}${fmtCurr(Math.abs(itemDiscount))}</span>
+                    </div>
+                ` : `
+                    <div class="totals-line">
+                        <span class="t-label">${t.subtotal}</span>
+                        <span class="t-value">${fmtCurr(subtotal)}</span>
+                    </div>
+                `}
                 ${transport > 0 ? `
                     <div class="totals-line">
                         <span class="t-label">${t.transport}</span>
@@ -464,7 +505,13 @@ export async function buildOfferPrintDocument({ offer, dimensions, company }: Of
             <th class="col-num">#</th>
             <th class="col-name">${t.name} <span style="font-weight:400;color:#bbb;font-size:9px;">${t.dims}</span></th>
             <th class="col-qty">${t.qty}</th>
-            <th class="col-price">${t.price}</th>
+            ${showItemDiscounts ? `
+                <th class="col-price">${t.price}</th>
+                <th class="col-rabat">${t.rabat}</th>
+                <th class="col-price">${t.newPrice}</th>
+            ` : `
+                <th class="col-price">${t.price}</th>
+            `}
             <th class="col-total">${t.total}</th>
         </tr>
     `;

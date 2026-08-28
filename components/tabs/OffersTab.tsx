@@ -37,6 +37,8 @@ interface OfferProductState {
     Material_Cost: number;
     included: boolean;
     margin: number;
+    /** Rabat na stavku u % (pozitivno = popust, negativno = doplata). */
+    discountPercent: number;
     extras: Extra[];
     // Labor cost fields
     laborWorkers: number;
@@ -120,6 +122,14 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
     // PDV State
     const [includePDV, setIncludePDV] = useState(true);
     const [pdvRate, setPdvRate] = useState(17);
+    // RABAT — dva odvojena prekidača:
+    //  • rabatEnabled: kolone rabata su aktivne u editoru (funkcija uključena).
+    //  • showItemDiscounts: razrada (Cijena → Rabat → Nova cijena) se PRINTA na ponudi.
+    // Sam rabat po stavci živi u OfferProductState.discountPercent i uvijek ulazi u cijenu.
+    const [rabatEnabled, setRabatEnabled] = useState(false);
+    const [showItemDiscounts, setShowItemDiscounts] = useState(false);
+    // „Rabat za sve" — vrijednost koja se jednim klikom upiše u sve uključene, otključane redove.
+    const [bulkDiscount, setBulkDiscount] = useState<number>(0);
 
     // Client Override State (for swapping client on an offer)
     const [clientOverride, setClientOverride] = useState(false);
@@ -355,6 +365,9 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
         setNotes('Plaćanje: Avansno ili po dogovoru\nRok isporuke: Po dogovoru nakon potvrde');
         setOfferCurrency('KM');
         setOfferLanguage('bs');
+        setRabatEnabled(false);
+        setShowItemDiscounts(false);
+        setBulkDiscount(0);
         // Reset client override
         setClientOverride(false);
         setOverrideClientName('');
@@ -414,6 +427,7 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
             Material_Cost: p.Material_Cost || 0,
             included: true,
             margin: 0,
+            discountPercent: 0,
             extras: [],
             laborWorkers: 0,
             laborDays: 0,
@@ -434,6 +448,54 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
         const updated = [...offerProducts];
         updated[index].margin = margin;
         setOfferProducts(updated);
+    }
+
+    function updateProductDiscount(index: number, discountPercent: number) {
+        const updated = [...offerProducts];
+        updated[index].discountPercent = discountPercent;
+        setOfferProducts(updated);
+    }
+
+    /** „Rabat za sve": upiši bulkDiscount u sve UKLJUČENE, OTKLJUČANE redove. */
+    function applyBulkDiscount() {
+        let changed = 0;
+        const updated = offerProducts.map(p => {
+            if (!p.included || p.locked) return p;
+            changed++;
+            return { ...p, discountPercent: bulkDiscount };
+        });
+        setOfferProducts(updated);
+        if (changed > 0 && !rabatEnabled) setRabatEnabled(true);
+        showToast(
+            changed > 0
+                ? `Rabat ${bulkDiscount}% postavljen na ${changed} ${changed === 1 ? 'stavku' : 'stavki'}`
+                : 'Nema uključenih otključanih stavki za rabat',
+            changed > 0 ? 'success' : 'info',
+        );
+    }
+
+    /** Uklj/isklj rabat u editoru. Gašenje čisti sve rabate (da cijena ne ostane tiho snižena) i print-flag. */
+    function toggleRabat(enabled: boolean) {
+        setRabatEnabled(enabled);
+        if (!enabled) {
+            setShowItemDiscounts(false);
+            setBulkDiscount(0);
+            setOfferProducts(prev => prev.some(p => (p.discountPercent || 0) !== 0)
+                ? prev.map(p => (p.locked ? p : { ...p, discountPercent: 0 }))
+                : prev);
+        }
+    }
+
+    /** Cijena/kom prije rabata (materijal + marža + usluge + rad). */
+    function baseUnitPrice(product: OfferProductState): number {
+        const extrasTotal = (product.extras || []).reduce((sum, e) => sum + (e.total || 0), 0);
+        const laborTotal = (product.laborWorkers || 0) * (product.laborDays || 0) * (product.laborDailyRate || 0);
+        return (product.Material_Cost || 0) + (product.margin || 0) + extrasTotal + laborTotal;
+    }
+
+    /** Cijena/kom poslije rabata (signed: + popust / − doplata). */
+    function netUnitPrice(product: OfferProductState): number {
+        return baseUnitPrice(product) * (1 - (product.discountPercent || 0) / 100);
     }
 
     // Refresh material cost from latest project product data (jedan proizvod)
@@ -478,21 +540,20 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
     }
 
     function calculateProductTotal(product: OfferProductState): number {
-        const materialCost = product.Material_Cost || 0;
-        const margin = product.margin || 0;
-        const extrasTotal = (product.extras || []).reduce((sum, e) => sum + (e.total || 0), 0);
-        const laborTotal = (product.laborWorkers || 0) * (product.laborDays || 0) * (product.laborDailyRate || 0);
         const quantity = product.Quantity || 1;
-        return (materialCost + margin + extrasTotal + laborTotal) * quantity;
+        return netUnitPrice(product) * quantity;
     }
 
     function calculateOfferTotals() {
-        let subtotal = 0;
+        let subtotal = 0;        // neto (poslije rabata po stavci)
+        let grossSubtotal = 0;   // bruto (prije rabata po stavci)
         offerProducts.forEach(p => {
             if (p.included) {
                 subtotal += calculateProductTotal(p);
+                grossSubtotal += baseUnitPrice(p) * (p.Quantity || 1);
             }
         });
+        const itemDiscount = grossSubtotal - subtotal; // ukupan rabat na stavke (može biti < 0 kod doplate)
 
         const transport = transportCost || 0;
         const discount = onsiteAssembly ? (onsiteDiscount || 0) : 0;
@@ -500,7 +561,7 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
         const pdvAmount = includePDV ? (baseTotal * pdvRate / 100) : 0;
         const total = baseTotal + pdvAmount;
 
-        return { subtotal, transport, discount, pdvAmount, total };
+        return { subtotal, grossSubtotal, itemDiscount, transport, discount, pdvAmount, total };
     }
 
     // ============================================
@@ -649,6 +710,7 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
             PDV_Rate: pdvRate,
             Currency: offerCurrency,
             Language: offerLanguage,
+            Show_Item_Discounts: showItemDiscounts,
             // Eksplicitni izuzetak od zaključavanja po redu (rješavanje konflikta) — server ga
             // koristi u mergeOfferProducts da tretira ove Product_ID-eve kao otključane.
             unlockProductIds: Array.from(forceUnlockedIds),
@@ -661,6 +723,7 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
                     Included: p.included,
                     Material_Cost: p.Material_Cost,
                     Margin: p.margin,
+                    Discount_Percent: p.discountPercent || 0,
                     Extras: p.extras.map(e => ({
                         ...e,
                         price: e.price,
@@ -785,6 +848,9 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
                     setPdvRate((fullOffer as any).PDV_Rate ?? 17);
                     setOfferCurrency((fullOffer as any).Currency || 'KM');
                     setOfferLanguage((fullOffer as any).Language || 'bs');
+                    setShowItemDiscounts((fullOffer as any).Show_Item_Discounts ?? false);
+                    setRabatEnabled(((fullOffer as any).Show_Item_Discounts ?? false) || (fullOffer.products || []).some((p: OfferProduct) => ((p as any).Discount_Percent || 0) !== 0));
+                    setBulkDiscount(0);
 
                     // Isti "smeće red" filter kao u openEditModal: obrisan iz projekta + nikad
                     // nije bio uključen → tiho izbaci. Uključeni redovi se ne diraju.
@@ -802,6 +868,7 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
                             // De-select conflicting products
                             included: p.Included !== false && !conflictIds.has(p.Product_ID),
                             margin: p.Margin || 0,
+                            discountPercent: (p as any).Discount_Percent || 0,
                             extras: ((p as any).Extras || (p as any).extras || []).map((e: any) => {
                                 const price = e.price || e.Price || e.Unit_Price || 0;
                                 const qty = e.qty || e.Qty || e.Quantity || 1;
@@ -918,6 +985,7 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
                 Material_Cost: materialCost,
                 included: p.Included !== false,
                 margin: margin,
+                discountPercent: (p as any).Discount_Percent || 0,
                 extras: ((p as any).Extras || (p as any).extras || []).map((e: any) => {
                     const price = e.price || e.Price || e.Unit_Price || 0;
                     const qty = e.qty || e.Qty || e.Quantity || 1;
@@ -970,6 +1038,7 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
                 Material_Cost: pp.Material_Cost || 0,
                 included: false,
                 margin: 0,
+                discountPercent: 0,
                 extras: [],
                 laborWorkers: 0,
                 laborDays: 0,
@@ -990,6 +1059,9 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
         setPdvRate((fullOffer as any).PDV_Rate ?? 17);
         setOfferCurrency((fullOffer as any).Currency || 'KM');
         setOfferLanguage((fullOffer as any).Language || 'bs');
+        setShowItemDiscounts((fullOffer as any).Show_Item_Discounts ?? false);
+        setRabatEnabled(((fullOffer as any).Show_Item_Discounts ?? false) || (fullOffer.products || []).some((p: OfferProduct) => ((p as any).Discount_Percent || 0) !== 0));
+        setBulkDiscount(0);
 
         // Load client override — check if offer has its own client data different from project
         const proj = projects.find(pr => pr.Project_ID === fullOffer.Project_ID);
@@ -1070,6 +1142,7 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
             await exportHTMLToPDFFile(doc.body, `Ponuda_${offer.Offer_Number}`, {
                 css: doc.css,
                 printOverrides: doc.printOverrides,
+                dpi: 500, // ponuda je kratka → visok raster za oštar tekst i u PDF pregledaču
             });
             showToast('PDF ponude preuzet', 'success');
         } catch (error) {
@@ -1093,6 +1166,7 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
             const blob = await exportHTMLToPDFBlob(doc.body, {
                 css: doc.css,
                 printOverrides: doc.printOverrides,
+                dpi: 500, // isti oštri raster kao „Preuzmi PDF"
             });
             const filed = await fileToSubfolder(subId, blob, `Ponuda_${offer.Offer_Number}.pdf`);
             await saveOffer({ Offer_ID: offer.Offer_ID, Drive_File_ID: filed.id, Drive_File_URL: filed.webViewLink }, organizationId);
@@ -1712,8 +1786,48 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
                                 <div className="offer-products-list">
                                     <div className="offer-products-header">
                                         <h3>Proizvodi</h3>
-                                        <span className="count">{offerProducts.filter(p => p.included).length} od {offerProducts.length}</span>
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                                            <label className="rabat-toggle" title="Uključi/isključi kolonu rabata (popust ili doplata po stavci)">
+                                                <input
+                                                    type="checkbox"
+                                                    checked={rabatEnabled}
+                                                    onChange={(e) => toggleRabat(e.target.checked)}
+                                                />
+                                                <span>Rabat po stavci</span>
+                                            </label>
+                                            <span className="count">{offerProducts.filter(p => p.included).length} od {offerProducts.length}</span>
+                                        </div>
                                     </div>
+
+                                    {rabatEnabled && (
+                                        <div className="rabat-bar">
+                                            <div className="rabat-bar-left">
+                                                <span className="material-icons-round">sell</span>
+                                                <span className="rabat-bar-title">Rabat za sve stavke</span>
+                                                <div className="rabat-bulk-input">
+                                                    <input
+                                                        type="number"
+                                                        value={bulkDiscount === 0 ? '' : bulkDiscount}
+                                                        onChange={(e) => setBulkDiscount(parseFloat(e.target.value) || 0)}
+                                                        placeholder="0"
+                                                        step="1"
+                                                    />
+                                                    <span>%</span>
+                                                </div>
+                                                <button type="button" className="rabat-apply-btn" onClick={applyBulkDiscount}>
+                                                    Primijeni na sve
+                                                </button>
+                                            </div>
+                                            <label className="rabat-print-toggle" title="Prikaži razradu rabata (Cijena → Rabat → Nova cijena) na štampanoj/PDF ponudi">
+                                                <input
+                                                    type="checkbox"
+                                                    checked={showItemDiscounts}
+                                                    onChange={(e) => setShowItemDiscounts(e.target.checked)}
+                                                />
+                                                <span>Prikaži na ponudi (štampa)</span>
+                                            </label>
+                                        </div>
+                                    )}
 
                                     <div className="table-responsive" style={{ overflowX: 'auto', border: '1px solid var(--border-light)', borderRadius: '8px' }}>
                                         <table className="offer-spreadsheet">
@@ -1743,6 +1857,8 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
                                                     <th style={{ width: '120px', textAlign: 'right' }}>Usluge</th>
                                                     <th style={{ width: '130px', textAlign: 'right' }}>Marža</th>
                                                     <th style={{ width: '130px', textAlign: 'right' }}>Cijena/kom</th>
+                                                    {rabatEnabled && <th style={{ width: '90px', textAlign: 'right' }} title="Popust (+) ili doplata (−) u %">Rabat %</th>}
+                                                    {rabatEnabled && <th style={{ width: '120px', textAlign: 'right' }}>Nova cijena</th>}
                                                     <th style={{ width: '140px', textAlign: 'right' }}>Ukupno</th>
                                                 </tr>
                                             </thead>
@@ -1752,7 +1868,8 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
                                                     const laborTotal = (product.laborWorkers || 0) * (product.laborDays || 0) * (product.laborDailyRate || 0);
                                                     const extrasTotal = (product.extras || []).reduce((sum, e) => sum + (e.total || 0), 0);
                                                     const unitPrice = materialCost + (product.margin || 0) + extrasTotal + laborTotal;
-                                                    
+                                                    const netUnit = unitPrice * (1 - (product.discountPercent || 0) / 100);
+
                                                     return (
                                                         <tr key={product.Product_ID} className={`${product.included ? 'included' : 'excluded'}${product.locked ? ' offer-row-locked' : ''}`}>
                                                             <td className="text-center" style={{ textAlign: 'center' }}>
@@ -1884,6 +2001,29 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
                                                             <td className="readonly-cell unit-price">
                                                                 {formatPrice(unitPrice, offerCurrency)}
                                                             </td>
+                                                            {rabatEnabled && (
+                                                                <td className="input-cell with-suffix" style={{ background: 'rgba(52, 199, 89, 0.05)' }}>
+                                                                    <div className="input-wrapper">
+                                                                        <input
+                                                                            type="number"
+                                                                            className="sheet-input text-right"
+                                                                            style={{ fontWeight: 600, fontSize: '13px', color: (product.discountPercent || 0) < 0 ? '#dc2626' : 'var(--text-primary)' }}
+                                                                            value={product.discountPercent === 0 ? '' : (product.discountPercent || '')}
+                                                                            onChange={(e) => updateProductDiscount(index, parseFloat(e.target.value) || 0)}
+                                                                            step="1"
+                                                                            disabled={!product.included || product.locked}
+                                                                            placeholder="0"
+                                                                            title="Popust (+) ili doplata (−) u %"
+                                                                        />
+                                                                        <span className="suffix">%</span>
+                                                                    </div>
+                                                                </td>
+                                                            )}
+                                                            {rabatEnabled && (
+                                                                <td className="readonly-cell unit-price" style={{ color: (product.discountPercent || 0) !== 0 ? '#16a34a' : undefined }}>
+                                                                    {formatPrice(netUnit, offerCurrency)}
+                                                                </td>
+                                                            )}
                                                             <td className="readonly-cell unit-price">
                                                                 {formatPrice(calculateProductTotal(product), offerCurrency)}
                                                             </td>
@@ -1986,10 +2126,23 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
                                 {/* Summary */}
                                 <div className="offer-summary" style={{ width: '280px', flexShrink: 0 }}>
                                     <div className="offer-summary-rows">
-                                        <div className="offer-summary-row">
-                                            <span className="label">Proizvodi</span>
-                                            <span className="value">{formatPrice(totals.subtotal, offerCurrency)}</span>
-                                        </div>
+                                        {rabatEnabled && Math.abs(totals.itemDiscount) >= 0.01 ? (
+                                            <>
+                                                <div className="offer-summary-row">
+                                                    <span className="label">Proizvodi (bruto)</span>
+                                                    <span className="value">{formatPrice(totals.grossSubtotal, offerCurrency)}</span>
+                                                </div>
+                                                <div className="offer-summary-row discount">
+                                                    <span className="label">{totals.itemDiscount >= 0 ? 'Rabat (stavke)' : 'Doplata (stavke)'}</span>
+                                                    <span className="value">{totals.itemDiscount >= 0 ? '-' : '+'}{formatPrice(Math.abs(totals.itemDiscount), offerCurrency)}</span>
+                                                </div>
+                                            </>
+                                        ) : (
+                                            <div className="offer-summary-row">
+                                                <span className="label">Proizvodi</span>
+                                                <span className="value">{formatPrice(totals.subtotal, offerCurrency)}</span>
+                                            </div>
+                                        )}
                                         {totals.transport > 0 && (
                                             <div className="offer-summary-row">
                                                 <span className="label">Transport</span>
@@ -2348,8 +2501,10 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
                                         ? `${pp.Width} × ${pp.Height} × ${pp.Depth} mm` : null;
                                     const laborTotal = ((product as any).Labor_Workers || 0) * ((product as any).Labor_Days || 0) * ((product as any).Labor_Daily_Rate || 0);
                                     const extrasTotal = ((product as any).Extras || (product as any).extras || []).reduce((sum: number, e: any) => sum + (e.total || e.Total || 0), 0);
-                                    const unitPrice = (product.Material_Cost || 0) + (product.Margin || 0) + laborTotal + extrasTotal;
-                                    
+                                    const discountPct = (product as any).Discount_Percent || 0;
+                                    const baseUnit = (product as any).Base_Selling_Price || ((product.Material_Cost || 0) + (product.Margin || 0) + laborTotal + extrasTotal);
+                                    const unitPrice = discountPct !== 0 ? (product.Selling_Price || baseUnit) : baseUnit;
+
                                     return (
                                         <div key={product.ID} style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border-light)', borderRadius: '12px', padding: '16px', display: 'flex', flexDirection: 'column', gap: '12px', boxShadow: '0 2px 8px rgba(0,0,0,0.02)' }}>
                                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
@@ -2379,10 +2534,19 @@ export default function OffersTab({ offers, projects, onRefresh, showToast, onNa
                                                         Usluge: {formatPrice(extrasTotal, viewCurrency)}
                                                     </div>
                                                 )}
+                                                {discountPct !== 0 && (
+                                                    <div style={{ fontSize: '12px', background: discountPct > 0 ? 'rgba(52,199,89,0.12)' : 'rgba(220,38,38,0.1)', color: discountPct > 0 ? '#16a34a' : '#dc2626', padding: '4px 8px', borderRadius: '6px', fontWeight: 700 }}>
+                                                        {discountPct > 0 ? `Rabat ${discountPct}%` : `Doplata ${Math.abs(discountPct)}%`}
+                                                    </div>
+                                                )}
                                             </div>
 
                                             <div style={{ borderTop: '1px dashed var(--border)', paddingTop: '12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 'auto' }}>
-                                                <div style={{ fontSize: '12px', color: 'var(--text-secondary)', fontWeight: 500 }}>1 kom: {formatPrice(unitPrice, viewCurrency)}</div>
+                                                <div style={{ fontSize: '12px', color: 'var(--text-secondary)', fontWeight: 500 }}>
+                                                    1 kom: {discountPct !== 0 && (
+                                                        <span style={{ textDecoration: 'line-through', opacity: 0.55, marginRight: '4px' }}>{formatPrice(baseUnit, viewCurrency)}</span>
+                                                    )}{formatPrice(unitPrice, viewCurrency)}
+                                                </div>
                                                 <div style={{ fontSize: '16px', fontWeight: 800, color: 'var(--text-primary)' }}>{formatPrice(product.Total_Price, viewCurrency)}</div>
                                             </div>
                                         </div>

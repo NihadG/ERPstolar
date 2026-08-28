@@ -27,6 +27,34 @@ import { v4 as uuidv4 } from 'uuid';
 import { generateOfferNumber as _generateOfferNumber } from '../shared/idGenerator';
 import type { Offer, OfferProduct, OfferExtra } from '../../types';
 
+const round2 = (n: number): number => Math.round(n * 100) / 100;
+
+/**
+ * Cijena stavke ponude iz sirovih editor polja — JEDINI izvor istine za
+ * Base/Selling/Total_Price pri snimanju. Rabat (Discount_Percent, signed:
+ * + popust / − doplata) se OBRAČUNA u neto cijenu, pa svi nizvodni prikazi
+ * (profit, računi, nalozi) vide već sniženu cijenu; Base_Selling_Price čuva
+ * cijenu prije rabata za razradu na štampi.
+ */
+export function offerProductPricing(p: any): {
+    materialCost: number; margin: number; extrasTotal: number; laborTotal: number;
+    quantity: number; discountPercent: number; baseSellingPrice: number;
+    sellingPrice: number; totalPrice: number;
+} {
+    const materialCost = parseFloat(p.Material_Cost) || 0;
+    const margin = parseFloat(p.Margin) || 0;
+    const extrasTotal = (p.Extras || []).reduce((sum: number, e: any) => sum + (parseFloat(e.total) || 0), 0);
+    const laborTotal = (parseFloat(p.Labor_Workers) || 0) * (parseFloat(p.Labor_Days) || 0) * (parseFloat(p.Labor_Daily_Rate) || 0);
+    const quantity = parseFloat(p.Quantity) || 1;
+    const discountPercent = parseFloat(p.Discount_Percent) || 0;
+    const baseSellingPrice = round2(materialCost + margin + extrasTotal + laborTotal);
+    const sellingPrice = round2(baseSellingPrice * (1 - discountPercent / 100));
+    return {
+        materialCost, margin, extrasTotal, laborTotal, quantity, discountPercent,
+        baseSellingPrice, sellingPrice, totalPrice: round2(sellingPrice * quantity),
+    };
+}
+
 // ============================================
 // READ
 // ============================================
@@ -145,15 +173,10 @@ export async function createOfferWithProducts(
             return { success: false, message: 'Označite barem jedan proizvod' };
         }
 
-        // Calculate subtotal
+        // Calculate subtotal (rabat po stavci ubačen u neto cijenu)
         let subtotal = 0;
         includedProducts.forEach((p: any) => {
-            const materialCost = parseFloat(p.Material_Cost) || 0;
-            const margin = parseFloat(p.Margin) || 0;
-            const extrasTotal = (p.Extras || []).reduce((sum: number, e: any) => sum + (parseFloat(e.total) || 0), 0);
-            const laborTotal = (parseFloat(p.Labor_Workers) || 0) * (parseFloat(p.Labor_Days) || 0) * (parseFloat(p.Labor_Daily_Rate) || 0);
-            const quantity = parseFloat(p.Quantity) || 1;
-            subtotal += (materialCost + margin + extrasTotal + laborTotal) * quantity;
+            subtotal += offerProductPricing(p).totalPrice;
         });
 
         const transportCost = parseFloat(offerData.Transport_Cost) || 0;
@@ -185,6 +208,7 @@ export async function createOfferWithProducts(
             PDV_Rate: offerData.PDV_Rate ?? 17,
             Currency: offerData.Currency || 'KM',
             Language: offerData.Language || 'bs',
+            Show_Item_Discounts: offerData.Show_Item_Discounts ?? false,
         };
 
         const batch = writeBatch(db);
@@ -194,13 +218,7 @@ export async function createOfferWithProducts(
 
         for (const product of products) {
             const productId = uuidv4();
-            const materialCost = parseFloat(product.Material_Cost) || 0;
-            const margin = parseFloat(product.Margin) || 0;
-            const extrasTotal = (product.Extras || []).reduce((sum: number, e: any) => sum + (parseFloat(e.total) || 0), 0);
-            const laborTotal = (parseFloat(product.Labor_Workers) || 0) * (parseFloat(product.Labor_Days) || 0) * (parseFloat(product.Labor_Daily_Rate) || 0);
-            const quantity = parseFloat(product.Quantity) || 1;
-            const sellingPrice = materialCost + margin + extrasTotal + laborTotal;
-            const totalPrice = sellingPrice * quantity;
+            const pricing = offerProductPricing(product);
 
             const offerProduct: OfferProduct & { Organization_ID: string } = {
                 ID: productId,
@@ -208,10 +226,10 @@ export async function createOfferWithProducts(
                 Offer_ID: offerId,
                 Product_ID: product.Product_ID,
                 Product_Name: product.Product_Name,
-                Quantity: quantity,
+                Quantity: pricing.quantity,
                 Included: product.Included === true,
-                Material_Cost: materialCost,
-                Margin: margin,
+                Material_Cost: pricing.materialCost,
+                Margin: pricing.margin,
                 Margin_Type: 'Fixed',
                 LED_Meters: 0,
                 LED_Price: 0,
@@ -222,8 +240,10 @@ export async function createOfferWithProducts(
                 Sink_Faucet_Price: 0,
                 Transport_Share: 0,
                 Discount_Share: 0,
-                Selling_Price: sellingPrice,
-                Total_Price: totalPrice,
+                Discount_Percent: pricing.discountPercent,
+                Base_Selling_Price: pricing.baseSellingPrice,
+                Selling_Price: pricing.sellingPrice,
+                Total_Price: pricing.totalPrice,
                 Labor_Workers: parseFloat(product.Labor_Workers) || 0,
                 Labor_Days: parseFloat(product.Labor_Days) || 0,
                 Labor_Daily_Rate: parseFloat(product.Labor_Daily_Rate) || 0,

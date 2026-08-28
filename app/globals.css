@@ -1866,6 +1866,45 @@ textarea::placeholder {
   border: 1px solid var(--border-light);
 }
 
+/* Rabat po stavci — prekidač u zaglavlju + traka za grupni rabat */
+.rabat-toggle {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 11px; font-weight: 600; color: var(--text-secondary);
+  cursor: pointer; user-select: none;
+}
+.rabat-toggle input { width: 15px; height: 15px; cursor: pointer; accent-color: var(--accent); }
+
+.rabat-bar {
+  display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px;
+  margin-bottom: 8px; padding: 8px 12px;
+  background: rgba(52, 199, 89, 0.06);
+  border: 1px solid rgba(52, 199, 89, 0.22);
+  border-radius: 8px;
+}
+.rabat-bar-left { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.rabat-bar-left .material-icons-round { font-size: 16px; color: #16a34a; }
+.rabat-bar-title { font-size: 12px; font-weight: 600; color: var(--text-primary); }
+.rabat-bulk-input {
+  display: inline-flex; align-items: center; gap: 2px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 7px; padding: 2px 8px;
+}
+.rabat-bulk-input input {
+  width: 46px; border: none; background: transparent; outline: none;
+  font-size: 13px; font-weight: 600; text-align: right; color: var(--text-primary);
+}
+.rabat-bulk-input span { font-size: 12px; color: var(--text-secondary); }
+.rabat-apply-btn {
+  font-size: 12px; font-weight: 600; color: #fff; background: #16a34a;
+  border: none; border-radius: 7px; padding: 6px 12px; cursor: pointer;
+}
+.rabat-apply-btn:hover { background: #15803d; }
+.rabat-print-toggle {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 11px; font-weight: 600; color: var(--text-secondary);
+  cursor: pointer; user-select: none;
+}
+.rabat-print-toggle input { width: 15px; height: 15px; cursor: pointer; accent-color: #16a34a; }
+
 /* Spreadsheet Layout */
 .offer-spreadsheet {
   width: 100%;
