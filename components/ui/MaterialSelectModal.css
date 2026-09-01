@@ -473,6 +473,19 @@
     box-shadow: 0 0 0 3px rgba(0, 113, 227, 0.08);
 }
 
+/* Dobavljač dropdown (SearchableSelect) — uskladi izgled sa kompaktnim poljima create forme.
+   Viša specifičnost (0,3,0) pobjeđuje styled-jsx pravila komponente bez !important. */
+.msm-create-form .msm-form-group .searchable-select-trigger {
+    padding: 7px 10px;
+    border-radius: 8px;
+    box-shadow: none;
+}
+
+.msm-create-form .msm-form-group .trigger-text {
+    font-size: 13px;
+    font-weight: 400;
+}
+
 .msm-create-actions {
     display: flex;
     gap: 6px;

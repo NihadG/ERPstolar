@@ -3,8 +3,10 @@
 import { useState, useMemo, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import type { Material, MaterialTemplate } from '@/lib/types';
-import { MATERIAL_CATEGORIES } from '@/lib/types';
+import { MATERIAL_CATEGORIES, MATERIAL_UNITS } from '@/lib/types';
 import { saveMaterial, getMaterialTemplates, saveMaterialTemplate, deleteMaterialTemplate } from '@/lib/services';
+import { useData } from '@/context/DataContext';
+import { SearchableSelect } from '@/components/ui/SearchableSelect';
 import './MaterialSelectModal.css';
 
 // ============================================
@@ -49,6 +51,9 @@ export default function MaterialSelectModal({
     onRefresh,
     showToast,
 }: MaterialSelectModalProps) {
+    // Suppliers iz zajedničke baze (isti izvor kao Resursi tab)
+    const { appState, isTabLoaded, loadTabData } = useData();
+
     // ---- State ----
     const [searchQuery, setSearchQuery] = useState('');
     const [categoryFilter, setCategoryFilter] = useState('');
@@ -81,6 +86,19 @@ export default function MaterialSelectModal({
             console.error('getMaterialTemplates error:', err);
         }
     };
+
+    // Dobavljači iz baze — učitaj tab ako već nije (isto kao Resursi tab)
+    useEffect(() => {
+        if (isOpen && !isTabLoaded('suppliers')) {
+            loadTabData('suppliers');
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [isOpen]);
+
+    const supplierOptions = useMemo(
+        () => (appState.suppliers || []).map(s => ({ value: s.Name, label: s.Name })),
+        [appState.suppliers]
+    );
 
     // Reset on open
     useEffect(() => {
@@ -609,11 +627,9 @@ export default function MaterialSelectModal({
                                     <div className="msm-form-group">
                                         <label>Jedinica</label>
                                         <select value={newUnit} onChange={e => setNewUnit(e.target.value)}>
-                                            <option value="kom">kom</option>
-                                            <option value="m">m</option>
-                                            <option value="m²">m²</option>
-                                            <option value="set">set</option>
-                                            <option value="kg">kg</option>
+                                            {MATERIAL_UNITS.map(u => (
+                                                <option key={u} value={u}>{u}</option>
+                                            ))}
                                         </select>
                                     </div>
                                 </div>
@@ -631,11 +647,11 @@ export default function MaterialSelectModal({
                                     </div>
                                     <div className="msm-form-group">
                                         <label>Dobavljač</label>
-                                        <input
-                                            type="text"
+                                        <SearchableSelect
+                                            options={supplierOptions}
                                             value={newSupplier}
-                                            onChange={e => setNewSupplier(e.target.value)}
-                                            placeholder="Opciono"
+                                            onChange={setNewSupplier}
+                                            placeholder="Odaberi dobavljača..."
                                         />
                                     </div>
                                 </div>

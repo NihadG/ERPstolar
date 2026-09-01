@@ -9,7 +9,7 @@ import Modal from '@/components/ui/Modal';
 import ProfitBasisReviewModal from '@/components/ui/ProfitBasisReviewModal';
 import MaterialTemplatesModal from '@/components/ui/MaterialTemplatesModal';
 import { SearchableSelect } from '@/components/ui/SearchableSelect';
-import { MATERIAL_CATEGORIES } from '@/lib/types';
+import { MATERIAL_CATEGORIES, MATERIAL_UNITS } from '@/lib/types';
 import { formatCurrency } from '@/lib/utils';
 
 interface MaterialsTabProps {
@@ -311,11 +311,9 @@ export default function MaterialsTab({ materials, onRefresh, showToast }: Materi
                             value={editingMaterial?.Unit || 'kom'}
                             onChange={(e) => setEditingMaterial({ ...editingMaterial, Unit: e.target.value })}
                         >
-                            <option value="kom">kom</option>
-                            <option value="m">m</option>
-                            <option value="m²">m²</option>
-                            <option value="set">set</option>
-                            <option value="kg">kg</option>
+                            {MATERIAL_UNITS.map(u => (
+                                <option key={u} value={u}>{u}</option>
+                            ))}
                         </select>
                     </div>
                 </div>

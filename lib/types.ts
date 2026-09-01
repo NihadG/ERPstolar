@@ -975,6 +975,8 @@ export const MATERIAL_STATUSES = ['Nije naručeno', 'Na stanju', 'Naručeno', 'P
 export const OFFER_STATUSES = ['Nacrt', 'Poslano', 'Prihvaćeno', 'Odbijeno', 'Isteklo', 'Revidirano'];
 export const ORDER_STATUSES = ['Nacrt', 'Poslano', 'Primljeno'];
 export const MATERIAL_CATEGORIES = ['Ploče i trake', 'Okovi', 'Staklo', 'Alu vrata', 'Ostalo'];
+// Jedinice mjere za materijale — jedan izvor istine za Resursi tab i modal za dodavanje u proizvod.
+export const MATERIAL_UNITS = ['kom', 'm', 'm²', 'set', 'kg'];
 export const WORKER_ROLES = ['Rezač', 'Kantiranje', 'Bušenje', 'Montaža', 'Instalacija', 'Opći'];
 export const WORKER_TYPES = ['Glavni', 'Pomoćnik'] as const;
 export const WORK_ORDER_STATUSES = ['Na čekanju', 'U toku', 'Završeno', 'Otkazano'];
