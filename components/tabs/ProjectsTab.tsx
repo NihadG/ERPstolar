@@ -1919,7 +1919,10 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
 
                                                             {/* Product Materials — shown when expanded */}
                                                             {expandedProducts.has(product.Product_ID) && (() => {
-                                                                const productMats = product.materials || [];
+                                                                // Abecedni redoslijed (bs) — predvidiv pregled umjesto redoslijeda unosa
+                                                                const productMats = [...(product.materials || [])].sort(
+                                                                    (a, b) => (a.Material_Name || '').localeCompare(b.Material_Name || '', 'bs')
+                                                                );
 
                                                                 return (
                                                                     <div className="product-materials">

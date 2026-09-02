@@ -62,7 +62,13 @@ export default function MobileProductDetail({
     const [tab, setTab] = useState<Tab>('materijali');
     const [confirmDel, setConfirmDel] = useState<ProductMaterial | null>(null);
 
-    const materials = useMemo(() => product.materials || [], [product.materials]);
+    // Abecedni redoslijed (bs) — isti pregled kao na desktopu
+    const materials = useMemo(
+        () => [...(product.materials || [])].sort(
+            (a, b) => (a.Material_Name || '').localeCompare(b.Material_Name || '', 'bs')
+        ),
+        [product.materials]
+    );
     const matTotal = useMemo(
         () => materials.reduce((s, m) => s + (m.Total_Price || 0), 0),
         [materials]
