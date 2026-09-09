@@ -16,13 +16,45 @@
 }
 
 /* Jedini skroler ekrana — donja tab-traka (.mtb, z-index 800) stoji iznad,
-   pa sadržaj mora imati prostora ispod sebe. */
+   pa sadržaj mora imati prostora ispod sebe.
+   touch-action: pan-y — okomiti skrol je preglednikov, vodoravni pokret
+   ostaje nama (svajp-nazad), pa preventDefault radi i gest ne stutera. */
 .fld-body {
     flex: 1;
     overflow-y: auto;
     overscroll-behavior: contain;
     -webkit-overflow-scrolling: touch;
+    touch-action: pan-y;
     padding: calc(14px + env(safe-area-inset-top, 0px)) 16px calc(92px + env(safe-area-inset-bottom, 0px));
+}
+
+/* ── Pager tabova (radnik) — vodoravno prelistavanje ────────────────────
+   Prozor je fiksne visine (flex:1), a svaki tab je zaseban skroler koji
+   klizi vodoravno. Vidi FieldPager.tsx. */
+.fld-pager {
+    flex: 1;
+    position: relative;
+    overflow: hidden;
+}
+
+.fld-pane {
+    position: absolute;
+    inset: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+    touch-action: pan-y;
+    padding: calc(14px + env(safe-area-inset-top, 0px)) 16px calc(92px + env(safe-area-inset-bottom, 0px));
+    /* Vlastita pozadina — dok pane klizi preko drugog, ne prosijava praznina. */
+    background: linear-gradient(178deg, #eef1f6, #e7eaf1);
+    /* Neaktivni su parkirani van ekrana; JS (FieldPager) upravlja transformom. */
+    transform: translate3d(100%, 0, 0);
+    visibility: hidden;
+}
+
+.fld-pane.is-active {
+    transform: none;
+    visibility: visible;
 }
 
 /* Ekrani bez tab-trake (lozinka, greška, učitavanje). */

@@ -14,9 +14,26 @@
     z-index: 900;
     overflow-y: auto;
     overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+    /* Okomiti skrol preglednika, vodoravni pokret nama (svajp-nazad). */
+    touch-action: pan-y;
     background: linear-gradient(178deg, #eef1f6, #e7eaf1);
     padding: calc(14px + env(safe-area-inset-top, 0px)) 16px
              calc(92px + env(safe-area-inset-bottom, 0px));
+    /* Stranica uđe zdesna (poniranje) — svajp-nazad je onda samo nastavak
+       istog pokreta, ne skok. Traje jednako kao gest (0.34s). */
+    animation: fwk-page-in 0.34s cubic-bezier(0.32, 0.72, 0, 1);
+    will-change: transform;
+}
+
+@keyframes fwk-page-in {
+    from { transform: translate3d(100%, 0, 0); }
+    to { transform: translate3d(0, 0, 0); }
+}
+
+/* Poštuj korisnike koji su isključili animacije. */
+@media (prefers-reduced-motion: reduce) {
+    .fwk-fod { animation: none; }
 }
 
 .fwk-hint {

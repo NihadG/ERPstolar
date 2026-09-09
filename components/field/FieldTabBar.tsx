@@ -60,7 +60,9 @@ export default function FieldTabBar({ role, activeTab, onTabChange }: Props) {
     const handle = (id: FieldTabId) => {
         if (id === activeTab) {
             // Dodir aktivnog taba vraća na vrh — iOS navika kod dugih lista.
-            document.querySelector('.fld-body')?.scrollTo({ top: 0, behavior: 'smooth' });
+            // Radnik skroluje aktivni pane pagera; kontrolor jedini `.fld-body`.
+            (document.querySelector('.fld-pane.is-active') || document.querySelector('.fld-body'))
+                ?.scrollTo({ top: 0, behavior: 'smooth' });
             haptic(5);
             return;
         }

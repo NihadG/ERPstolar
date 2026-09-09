@@ -13,7 +13,8 @@ import { useCallback, useMemo, useState } from 'react';
 import type { FieldHomePayload } from '@/lib/field/fieldHome';
 import type { FieldProductDetail } from '@/lib/field/fieldProjects';
 import { useWorkerNotes, useWorkerWork } from '@/lib/field/useFieldWorker';
-import FieldTabBar, { type FieldTabId } from '../FieldTabBar';
+import FieldTabBar, { tabsForRole, type FieldTabId } from '../FieldTabBar';
+import FieldPager from '../FieldPager';
 import WorkerHome from '../WorkerHome';
 import WorkerOrdersScreen from './WorkerOrdersScreen';
 import WorkerNotesScreen from './WorkerNotesScreen';
@@ -62,10 +63,16 @@ export default function WorkerApp({ data, previewUid }: Props) {
         return { activeOrderIds: orderIds, activeProductIds: productIds };
     }, [data.assignments]);
 
-    return (
-        <>
-            <div className="fld-body">
-                {tab === 'home' && (
+    // Tabovi u trakoj poredak → indeks, da prelistavanje i tab-traka gledaju
+    // istu listu. Pager drži tabove živim (keep-alive), pa se skrol i otvoreni
+    // detalj čuvaju kad se korisnik vrati na tab.
+    const tabs = useMemo(() => tabsForRole('worker'), []);
+    const activeIndex = Math.max(0, tabs.findIndex(t => t.id === tab));
+
+    const renderPane = useCallback((i: number) => {
+        switch (tabs[i]?.id) {
+            case 'home':
+                return (
                     <WorkerHome
                         data={data}
                         productById={productById}
@@ -76,9 +83,9 @@ export default function WorkerApp({ data, previewUid }: Props) {
                         previewUid={previewUid}
                         showToast={showToast}
                     />
-                )}
-
-                {tab === 'orders' && (
+                );
+            case 'orders':
+                return (
                     <WorkerOrdersScreen
                         orders={orders}
                         loading={loading}
@@ -88,9 +95,9 @@ export default function WorkerApp({ data, previewUid }: Props) {
                         previewUid={previewUid}
                         showToast={showToast}
                     />
-                )}
-
-                {tab === 'notes' && (
+                );
+            case 'notes':
+                return (
                     <WorkerNotesScreen
                         orders={orders}
                         notes={notesState.notes}
@@ -102,12 +109,24 @@ export default function WorkerApp({ data, previewUid }: Props) {
                         previewUid={previewUid}
                         showToast={showToast}
                     />
-                )}
+                );
+            case 'calendar':
+                return <WorkerCalendarScreen previewUid={previewUid} />;
+            case 'me':
+                return <WorkerMe data={data} previewUid={previewUid} readOnly={data.preview} />;
+            default:
+                return null;
+        }
+    }, [tabs, data, productById, notesState, activeOrderIds, orders, loading, error, reload, activeProductIds, previewUid, showToast]);
 
-                {tab === 'calendar' && <WorkerCalendarScreen previewUid={previewUid} />}
-
-                {tab === 'me' && <WorkerMe data={data} previewUid={previewUid} readOnly={data.preview} />}
-            </div>
+    return (
+        <>
+            <FieldPager
+                index={activeIndex}
+                count={tabs.length}
+                onIndexChange={(i) => setTab(tabs[i].id)}
+                renderPane={renderPane}
+            />
 
             <FieldTabBar role={data.user.role} activeTab={tab} onTabChange={setTab} />
 
