@@ -228,43 +228,62 @@ export default function CustomTasksModal({ isOpen, onClose, workOrders, workers,
     };
 
     return (
-        <Modal isOpen={isOpen} onClose={onClose} title="Razni poslovi — nalog bez proizvoda" size="large" footer={null} zIndex={zIndex}>
+        <Modal
+            isOpen={isOpen}
+            onClose={onClose}
+            title="Razni poslovi"
+            size="large"
+            zIndex={zIndex}
+            footer={
+                <div className="ctm-foot">
+                    {validRows.length > 0 && !hasAnyWorker ? (
+                        <span className="ctm-foot-warn"><AlertTriangle size={15} /> Bez radnika nalog se neće moći pokrenuti</span>
+                    ) : <span className="ctm-foot-spacer" />}
+                    <div className="ctm-foot-btns">
+                        <button className="ctm-btn" onClick={onClose} disabled={saving}>Odustani</button>
+                        <button className="ctm-btn ctm-btn-primary" onClick={handleCreate} disabled={saving || validRows.length === 0}>
+                            {saving ? <Loader2 size={15} className="ctm-spin" /> : <ClipboardList size={15} />}
+                            Kreiraj nalog
+                        </button>
+                    </div>
+                </div>
+            }
+        >
             <div className="ctm">
-                <div className="ctm-intro">
+                <div className="ctm-note">
                     <Info size={16} />
                     <span>
-                        Poslovi koji nisu proizvodi iz baze (izrada paleta, čišćenje pogona…). Dodijeli jednog ili
-                        više radnika da nalog možeš pokrenuti, a posao možeš povezati s bilo kojim proizvodom (i
-                        završenim) — tada se sav rad na tom poslu uračuna u trošak tog proizvoda.
+                        Poslovi koji nisu proizvodi iz baze (izrada paleta, čišćenje pogona…). Dodijeli radnika da nalog
+                        možeš pokrenuti; posao možeš povezati s bilo kojim proizvodom — tada se rad uračuna u trošak tog proizvoda.
                     </span>
                 </div>
 
-                <section className="ctm-section">
-                    <div className="ctm-section-head">
-                        <Wrench size={15} className="ctm-section-ico" />
-                        <span className="ctm-section-title">Poslovi</span>
+                <section className="ctm-primary">
+                    <div className="ctm-sec-head">
+                        <Wrench size={16} className="ctm-sec-ico" />
+                        <h3>Poslovi</h3>
                         <span className="ctm-count">{validRows.length}</span>
-                        <em className="ctm-section-note">stavke naloga — nose trošak rada</em>
+                        <span className="ctm-sec-hint">stavke naloga — nose trošak rada</span>
                     </div>
 
-                    <div className="ctm-tasks">
+                    <div className="ctm-jobs">
                         {rows.map((row, idx) => (
-                            <div className="ctm-task" key={row.id}>
-                                <div className="ctm-task-top">
-                                    <span className="ctm-num">{idx + 1}</span>
+                            <div className="ctm-job" key={row.id}>
+                                <div className="ctm-job-top">
+                                    <span className="ctm-job-num">{idx + 1}</span>
                                     <input
-                                        className="ctm-input"
-                                        placeholder="Naziv zadatka (npr. Izrada paleta)"
+                                        className="ctm-job-name"
+                                        placeholder="Naziv posla (npr. Izrada paleta)"
                                         value={row.text}
                                         onChange={e => updateRow(row.id, { text: e.target.value })}
                                     />
                                     {rows.length > 1 && (
-                                        <button className="ctm-remove" onClick={() => removeRow(row.id)} aria-label="Ukloni zadatak"><X size={16} /></button>
+                                        <button className="ctm-job-del" onClick={() => removeRow(row.id)} aria-label="Ukloni posao"><X size={16} /></button>
                                     )}
                                 </div>
-                                <div className="ctm-task-fields">
-                                    <div className="ctm-field">
-                                        <span>Radnici <em>prvi = glavni</em></span>
+                                <div className="ctm-job-body">
+                                    <div className="ctm-job-field">
+                                        <span className="ctm-mini-lab">Radnici <em>· prvi = glavni</em></span>
                                         <SearchableSelect
                                             options={workerOptions.filter(o => !row.workerIds.includes(o.value))}
                                             value=""
@@ -286,8 +305,8 @@ export default function CustomTasksModal({ isOpen, onClose, workOrders, workers,
                                             </div>
                                         )}
                                     </div>
-                                    <label className="ctm-field">
-                                        <span>Poveži s proizvodom <em>opciono</em></span>
+                                    <label className="ctm-job-field">
+                                        <span className="ctm-mini-lab">Poveži s proizvodom <em>· opciono</em></span>
                                         <SearchableSelect
                                             options={linkOptions}
                                             value={row.linkedItemId || ''}
@@ -303,181 +322,140 @@ export default function CustomTasksModal({ isOpen, onClose, workOrders, workers,
                     <button className="ctm-add" onClick={addRow}><Plus size={16} /> Dodaj posao</button>
                 </section>
 
-                {/* Zadaci iz taba Zadaci — evidencija/podsjetnici, NE stavke naloga:
-                    ne nose trošak rada i ne utiču na profit. */}
-                <section className="ctm-section">
-                    <TaskAttachEditor
-                        value={taskSelection}
-                        onChange={setTaskSelection}
-                        tasks={tasks}
-                        workers={workers}
-                        products={[]}
-                        pickerZIndex={(zIndex || 1000) + 100}
-                    />
-                </section>
-
-                <section className="ctm-section">
-                    <div className="ctm-section-head">
-                        <Coins size={15} className="ctm-section-ico" />
-                        <span className="ctm-section-title">Vrijednost i troškovi</span>
-                        <em className="ctm-section-note">za profit — opciono</em>
+                <section className="ctm-opts">
+                    <div className="ctm-opts-title">
+                        <span className="ctm-eyebrow">Opcije naloga</span>
+                        <span className="ctm-opts-muted">— sve nije obavezno</span>
                     </div>
-                    <label className="ctm-field">
-                        <span>Projekat <em>profit ide u „Razni nalozi" tog projekta</em></span>
-                        <SearchableSelect
-                            options={projectOptions}
-                            value={projectId}
-                            onChange={v => setProjectId(v || '')}
-                            placeholder="Bez projekta — globalni razni nalozi"
+
+                    <div className="ctm-opt-grid">
+                        <div className="ctm-opt-block">
+                            <span className="ctm-blab"><Coins size={13} /> Vrijednost i troškovi <em>· za profit</em></span>
+                            <label className="ctm-field">
+                                <span>Projekat <em>· profit ide u „Razni nalozi" tog projekta</em></span>
+                                <SearchableSelect
+                                    options={projectOptions}
+                                    value={projectId}
+                                    onChange={v => setProjectId(v || '')}
+                                    placeholder="Bez projekta — globalni razni nalozi"
+                                />
+                            </label>
+                            <div className="ctm-grid3">
+                                <label className="ctm-field">
+                                    <span>Vrijednost <em>iz ponude</em></span>
+                                    <input type="number" min={0} step="0.01" inputMode="decimal"
+                                        value={offerValue} onChange={e => setOfferValue(e.target.value)} placeholder="KM" />
+                                </label>
+                                <label className="ctm-field">
+                                    <span>Materijal</span>
+                                    <input type="number" min={0} step="0.01" inputMode="decimal"
+                                        value={materialCost} onChange={e => setMaterialCost(e.target.value)} placeholder="KM" />
+                                </label>
+                                <label className="ctm-field">
+                                    <span>Ostalo</span>
+                                    <input type="number" min={0} step="0.01" inputMode="decimal"
+                                        value={otherCosts} onChange={e => setOtherCosts(e.target.value)} placeholder="KM" />
+                                </label>
+                            </div>
+                            <p className="ctm-fin-note">
+                                Profit = vrijednost − materijal − ostalo − <strong>rad</strong> (dnevnice iz šihtarice).
+                                Ostavi prazno ako je čisto radni posao.
+                            </p>
+                        </div>
+
+                        <div className="ctm-opt-block">
+                            <span className="ctm-blab"><Calendar size={13} /> Detalji naloga</span>
+                            <label className="ctm-field">
+                                <span>Naziv naloga <em>· prazno = naziv prvog posla</em></span>
+                                <input type="text" value={orderName} onChange={e => setOrderName(e.target.value)}
+                                    placeholder={validRows[0]?.text.trim() || 'npr. Izrada paleta za skladište'} />
+                            </label>
+                            <div className="ctm-grid2">
+                                <label className="ctm-field">
+                                    <span>Rok <em>· opciono</em></span>
+                                    <input type="date" value={dueDate} onChange={e => setDueDate(e.target.value)} />
+                                </label>
+                                <label className="ctm-field">
+                                    <span>Napomena <em>· opciono</em></span>
+                                    <input type="text" value={notes} onChange={e => setNotes(e.target.value)} placeholder="npr. interni poslovi" />
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Zadaci iz taba Zadaci — evidencija/podsjetnici, NE stavke naloga:
+                        ne nose trošak rada i ne utiču na profit. */}
+                    <div className="ctm-tasks">
+                        <TaskAttachEditor
+                            value={taskSelection}
+                            onChange={setTaskSelection}
+                            tasks={tasks}
+                            workers={workers}
+                            products={[]}
+                            pickerZIndex={(zIndex || 1000) + 100}
                         />
-                    </label>
-                    <div className="ctm-grid3">
-                        <label className="ctm-field">
-                            <span>Vrijednost <em>iz ponude</em></span>
-                            <input type="number" min={0} step="0.01" inputMode="decimal"
-                                value={offerValue} onChange={e => setOfferValue(e.target.value)} placeholder="KM" />
-                        </label>
-                        <label className="ctm-field">
-                            <span>Materijal</span>
-                            <input type="number" min={0} step="0.01" inputMode="decimal"
-                                value={materialCost} onChange={e => setMaterialCost(e.target.value)} placeholder="KM" />
-                        </label>
-                        <label className="ctm-field">
-                            <span>Ostali troškovi</span>
-                            <input type="number" min={0} step="0.01" inputMode="decimal"
-                                value={otherCosts} onChange={e => setOtherCosts(e.target.value)} placeholder="KM" />
-                        </label>
-                    </div>
-                    <p className="ctm-fin-note">
-                        Profit = vrijednost − materijal − ostalo − <strong>rad</strong> (dnevnice iz šihtarice).
-                        Ostavi prazno ako je ovo čisto radni posao bez vlastite vrijednosti.
-                    </p>
-                </section>
-
-                <section className="ctm-section">
-                    <div className="ctm-section-head">
-                        <Calendar size={15} className="ctm-section-ico" />
-                        <span className="ctm-section-title">Detalji naloga</span>
-                    </div>
-                    <label className="ctm-field">
-                        <span>Naziv naloga <em>naslov na listi — prazno = naziv prvog posla</em></span>
-                        <input type="text" value={orderName} onChange={e => setOrderName(e.target.value)}
-                            placeholder={validRows[0]?.text.trim() || 'npr. Izrada paleta za skladište'} />
-                    </label>
-                    <div className="ctm-grid2">
-                        <label className="ctm-field">
-                            <span>Rok <em>opciono</em></span>
-                            <input type="date" value={dueDate} onChange={e => setDueDate(e.target.value)} />
-                        </label>
-                        <label className="ctm-field">
-                            <span>Napomena <em>opciono</em></span>
-                            <input type="text" value={notes} onChange={e => setNotes(e.target.value)} placeholder="npr. interni poslovi za juni" />
-                        </label>
                     </div>
                 </section>
-
-                <div className="ctm-footer">
-                    {validRows.length > 0 && !hasAnyWorker && (
-                        <span className="ctm-warn"><AlertTriangle size={14} /> Bez radnika nalog se neće moći pokrenuti</span>
-                    )}
-                    <div className="ctm-footer-btns">
-                        <button className="ctm-btn" onClick={onClose} disabled={saving}>Odustani</button>
-                        <button className="ctm-btn ctm-btn-primary" onClick={handleCreate} disabled={saving || validRows.length === 0}>
-                            {saving ? <Loader2 size={15} className="ctm-spin" /> : <ClipboardList size={15} />}
-                            Kreiraj nalog
-                        </button>
-                    </div>
-                </div>
             </div>
 
             <style jsx>{`
-                /* Sve kontrole (input, date, SearchableSelect trigger) dijele JEDNU
-                   visinu/radius/font preko --ctm-* varijabli, a tipografija i razmaci
-                   idu iz zajedničke --cm-* skale (globals.css) — isto kao modali platna. */
+                /* Sve kontrole dijele jednu visinu/radius preko --ctm-*; tipografija i
+                   razmaci idu iz zajedničke --cm-* skale (globals.css). */
                 .ctm {
-                    --ctm-control-h: 40px;
-                    --ctm-radius: var(--cm-r-control);
-                    --ctm-font: var(--cm-fs-sm);
+                    --ctm-h: 40px;
+                    --ctm-r: var(--cm-r-control);
                     display: flex; flex-direction: column; gap: var(--cm-sp-5); padding: 2px 2px 0;
                 }
 
-                /* Uvod kao info-callout */
-                .ctm-intro {
+                /* Tanka napomena umjesto velikog sivog bloka */
+                .ctm-note {
                     display: flex; align-items: flex-start; gap: var(--cm-sp-2);
-                    margin: 0; padding: var(--cm-sp-3); border-radius: var(--cm-r-card);
-                    background: var(--surface);
-                    font-size: var(--cm-fs-sm); color: var(--text-secondary); line-height: 1.55;
+                    padding: 10px 12px; border-radius: var(--cm-r-control);
+                    background: var(--accent-light); color: var(--text-secondary);
+                    font-size: var(--cm-fs-sm); line-height: 1.5;
                 }
-                .ctm-intro :global(svg) { color: var(--accent); flex-shrink: 0; margin-top: 1px; }
+                .ctm-note :global(svg) { color: var(--accent); flex-shrink: 0; margin-top: 2px; }
 
-                /* Sekcije */
-                .ctm-section { display: flex; flex-direction: column; gap: var(--cm-sp-3); }
-                .ctm-section-head { display: flex; align-items: center; gap: var(--cm-sp-2); min-height: 22px; }
-                .ctm-section-head :global(.ctm-section-ico) { color: var(--text-tertiary); flex-shrink: 0; }
-                .ctm-section-title { font-size: var(--cm-fs-lg); font-weight: 700; color: var(--text-primary); }
+                /* Zaglavlje sekcije */
+                .ctm-sec-head { display: flex; align-items: center; gap: var(--cm-sp-2); margin-bottom: var(--cm-sp-3); }
+                .ctm-sec-head :global(.ctm-sec-ico) { color: var(--text-secondary); flex-shrink: 0; }
+                .ctm-sec-head h3 { margin: 0; font-size: var(--cm-fs-lg); font-weight: 700; letter-spacing: -0.01em; color: var(--text-primary); }
                 .ctm-count {
-                    display: inline-flex; align-items: center; justify-content: center; min-width: 20px; height: 20px; padding: 0 6px;
+                    min-width: 20px; height: 20px; padding: 0 6px; display: inline-grid; place-items: center;
                     font-size: var(--cm-fs-micro); font-weight: 700; color: var(--accent); background: var(--accent-light);
                     border-radius: var(--cm-r-pill); font-variant-numeric: tabular-nums;
                 }
-                /* Razlika između „Poslovi" (stavke naloga, nose trošak) i „Zadaci"
-                   (podsjetnici iz taba Zadaci) — bez ovoga se dvije liste čitaju kao ista stvar. */
-                .ctm-section-note { font-style: normal; font-size: var(--cm-fs-xs); font-weight: 400; color: var(--text-tertiary); }
+                .ctm-sec-hint { font-size: var(--cm-fs-xs); color: var(--text-tertiary); margin-left: auto; }
 
-                /* Kartice poslova */
-                .ctm-tasks { display: flex; flex-direction: column; gap: var(--cm-sp-2); }
-                .ctm-task {
-                    display: flex; flex-direction: column; gap: var(--cm-sp-3);
-                    padding: var(--cm-sp-3); border: 1px solid var(--border-light);
-                    border-radius: var(--cm-r-card); background: var(--background);
+                /* PRIMARNO: kartice poslova */
+                .ctm-jobs { display: flex; flex-direction: column; gap: var(--cm-sp-2); }
+                .ctm-job {
+                    border: 1px solid var(--border); border-radius: var(--cm-r-card); background: var(--background);
+                    box-shadow: var(--cm-shadow-card); overflow: hidden;
                 }
-                .ctm-task-top { display: flex; align-items: center; gap: var(--cm-sp-3); }
-                .ctm-num {
-                    width: 26px; height: 26px; border-radius: var(--cm-r-pill); flex-shrink: 0;
-                    display: flex; align-items: center; justify-content: center;
-                    font-size: var(--cm-fs-xs); font-weight: 700; color: var(--text-secondary); background: var(--surface);
+                .ctm-job-top { display: flex; align-items: center; gap: var(--cm-sp-3); padding: 10px 12px; }
+                .ctm-job-num {
+                    width: 26px; height: 26px; flex-shrink: 0; border-radius: var(--cm-r-pill); background: var(--surface);
+                    display: grid; place-items: center; font-size: var(--cm-fs-xs); font-weight: 700; color: var(--text-secondary);
                     font-variant-numeric: tabular-nums;
                 }
-                .ctm-input {
-                    flex: 1; min-width: 0; height: var(--ctm-control-h); box-sizing: border-box;
-                    border: 1px solid var(--border); border-radius: var(--ctm-radius);
-                    padding: 0 var(--cm-sp-3); font-size: var(--ctm-font); font-weight: 600; color: var(--text-primary); background: var(--background);
-                    transition: var(--transition);
+                .ctm-job-name {
+                    flex: 1; min-width: 0; height: 38px; border: none; background: transparent;
+                    font-size: var(--cm-fs-md); font-weight: 600; color: var(--text-primary); outline: none;
                 }
-                .ctm-input::placeholder { font-weight: 400; color: var(--text-tertiary); }
-                .ctm-input:focus { outline: none; border-color: var(--accent); box-shadow: var(--cm-focus-ring); }
-                .ctm-remove {
-                    display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0;
-                    width: var(--ctm-control-h); height: var(--ctm-control-h); border: none; background: transparent;
-                    color: var(--text-tertiary); border-radius: var(--cm-r-control); cursor: pointer;
+                .ctm-job-name::placeholder { font-weight: 400; color: var(--text-tertiary); }
+                .ctm-job-del {
+                    width: 32px; height: 32px; flex-shrink: 0; border: none; background: transparent;
+                    color: var(--text-tertiary); border-radius: var(--cm-r-control); cursor: pointer; display: grid; place-items: center;
                 }
-                .ctm-remove:hover { color: var(--error); background: var(--error-bg); }
-
-                /* Polja poslova su poravnata pod naslov (26px broj + 12px razmak),
-                   a align-items:start + jednorede labele drže oba selecta u istom nivou. */
-                .ctm-task-fields { display: grid; grid-template-columns: 1fr 1fr; gap: var(--cm-sp-3); padding-left: 38px; align-items: start; }
-                .ctm-grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: var(--cm-sp-3); }
-                .ctm-grid3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: var(--cm-sp-3); }
-                .ctm-fin-note { margin: 0; font-size: var(--cm-fs-xs); color: var(--text-tertiary); line-height: 1.55; }
-                .ctm-fin-note strong { color: var(--text-secondary); }
-
-                /* Zajednička labela + kontrola. .ctm-field je sam <label>, pa reset
-                   text-transform-a ovdje gasi i globalno .modal label:uppercase koje
-                   se inače provuklo sve do teksta u SearchableSelect trigeru. */
-                .ctm-field { display: flex; flex-direction: column; gap: var(--cm-sp-2); min-width: 0; text-transform: none; }
-                .ctm-field > span {
-                    font-size: var(--cm-fs-sm); color: var(--text-secondary); font-weight: 600;
-                    text-transform: none; letter-spacing: normal; line-height: 1.3;
+                .ctm-job-del:hover { background: var(--error-bg); color: var(--error); }
+                .ctm-job-body {
+                    display: grid; grid-template-columns: 1fr 1fr; gap: var(--cm-sp-3);
+                    padding: 12px 12px 12px 50px; border-top: 1px dashed var(--border-light); align-items: start;
                 }
-                .ctm-field > span em { font-style: normal; color: var(--text-tertiary); font-weight: 400; }
-                .ctm-field > input {
-                    height: var(--ctm-control-h); box-sizing: border-box;
-                    border: 1px solid var(--border); border-radius: var(--ctm-radius);
-                    padding: 0 var(--cm-sp-3); font-size: var(--ctm-font); color: var(--text-primary); background: var(--background);
-                    transition: var(--transition);
-                }
-                .ctm-field > input::placeholder { color: var(--text-tertiary); }
-                .ctm-field > input:focus { outline: none; border-color: var(--accent); box-shadow: var(--cm-focus-ring); }
+                .ctm-job-field { display: flex; flex-direction: column; gap: 6px; min-width: 0; text-transform: none; }
+                .ctm-mini-lab { font-size: var(--cm-fs-xs); font-weight: 600; color: var(--text-secondary); }
+                .ctm-mini-lab em { font-style: normal; font-weight: 400; color: var(--text-tertiary); }
 
                 /* Radnici — čipovi ISPOD selecta, da rast lijeve kolone ne pomjera desni select. */
                 .ctm-chips { display: flex; flex-wrap: wrap; gap: var(--cm-sp-1); margin-top: 2px; }
@@ -489,8 +467,8 @@ export default function CustomTasksModal({ isOpen, onClose, workOrders, workers,
                 }
                 .ctm-chip-main { border-color: var(--accent); background: var(--accent-light); }
                 .ctm-chip-tag {
-                    font-size: var(--cm-fs-micro); font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em;
-                    color: var(--accent); background: var(--background); padding: 1px 6px; border-radius: var(--cm-r-pill);
+                    font-size: 9px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.04em;
+                    color: #fff; background: var(--accent); padding: 2px 6px; border-radius: var(--cm-r-pill);
                 }
                 .ctm-chip-x {
                     display: inline-flex; align-items: center; justify-content: center;
@@ -499,55 +477,73 @@ export default function CustomTasksModal({ isOpen, onClose, workOrders, workers,
                 }
                 .ctm-chip-x:hover { color: var(--error); background: var(--error-bg); }
 
-                /* SearchableSelect trigger — zakovan na istu visinu/radius/border/font kao inputi. */
-                .ctm-field :global(.searchable-select-trigger) {
-                    height: var(--ctm-control-h) !important;
-                    box-sizing: border-box !important;
-                    padding: 0 var(--cm-sp-3) !important;
-                    border: 1px solid var(--border) !important;
-                    border-radius: var(--ctm-radius) !important;
-                    background: var(--background) !important;
-                    box-shadow: none !important;
-                }
-                .ctm-field :global(.searchable-select-trigger.active) {
-                    border-color: var(--accent) !important;
-                    box-shadow: var(--cm-focus-ring) !important;
-                }
-                .ctm-field :global(.trigger-text) {
-                    font-size: var(--ctm-font) !important;
-                    font-weight: 500 !important;
-                    color: var(--text-primary) !important;
-                }
-                .ctm-field :global(.trigger-text.placeholder) {
-                    color: var(--text-tertiary) !important;
-                    font-weight: 400 !important;
-                }
-                .ctm-field :global(.trigger-icon) {
-                    color: var(--text-tertiary) !important;
-                    font-size: 18px !important;
-                }
-
                 /* Dodaj posao */
                 .ctm-add {
                     align-self: flex-start; display: inline-flex; align-items: center; gap: var(--cm-sp-1);
-                    height: 38px; border: 1px dashed var(--border); background: transparent; color: var(--accent);
-                    font-size: var(--cm-fs-sm); font-weight: 600; padding: 0 var(--cm-sp-4);
+                    height: 36px; margin-top: var(--cm-sp-2); border: 1px dashed var(--border); background: transparent;
+                    color: var(--accent); font-size: var(--cm-fs-sm); font-weight: 600; padding: 0 var(--cm-sp-4);
                     border-radius: var(--cm-r-control); cursor: pointer; transition: var(--transition);
                 }
                 .ctm-add:hover { background: var(--accent-light); border-color: var(--accent); }
 
-                /* Podnožje */
-                .ctm-footer {
-                    display: flex; align-items: center; justify-content: space-between; gap: var(--cm-sp-3); flex-wrap: wrap;
-                    padding-top: var(--cm-sp-4); border-top: 1px solid var(--border-light);
+                /* SEKUNDARNO: opcije naloga (demotovano na tintani panel) */
+                .ctm-opts {
+                    background: var(--surface); border: 1px solid var(--border-light); border-radius: var(--cm-r-card);
+                    padding: var(--cm-sp-4); display: flex; flex-direction: column; gap: var(--cm-sp-5);
                 }
-                .ctm-warn { display: inline-flex; align-items: center; gap: var(--cm-sp-1); font-size: var(--cm-fs-xs); color: var(--cm-warn-text); }
-                .ctm-warn :global(svg) { color: var(--warning); flex-shrink: 0; }
-                .ctm-footer-btns { display: flex; gap: var(--cm-sp-2); margin-left: auto; }
+                .ctm-opts-title { display: flex; align-items: baseline; gap: var(--cm-sp-2); }
+                .ctm-eyebrow { font-size: var(--cm-fs-micro); font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; color: var(--text-tertiary); }
+                .ctm-opts-muted { font-size: var(--cm-fs-xs); color: var(--text-tertiary); }
+                .ctm-opt-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+                .ctm-opt-block { display: flex; flex-direction: column; gap: var(--cm-sp-3); }
+                .ctm-blab {
+                    display: flex; align-items: center; gap: 6px; font-size: var(--cm-fs-xs); font-weight: 700;
+                    text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-secondary);
+                }
+                .ctm-blab :global(svg) { color: var(--text-tertiary); flex-shrink: 0; }
+                .ctm-blab em { font-style: normal; text-transform: none; letter-spacing: normal; font-weight: 400; color: var(--text-tertiary); }
+                .ctm-grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: var(--cm-sp-3); }
+                .ctm-grid3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: var(--cm-sp-2); }
+                .ctm-fin-note { margin: 2px 0 0; font-size: var(--cm-fs-xs); color: var(--text-tertiary); line-height: 1.5; }
+                .ctm-fin-note strong { color: var(--text-secondary); }
+
+                /* Zajednička labela + kontrola. .ctm-field je <label>, pa reset text-transform-a
+                   ovdje gasi i globalno .modal label:uppercase. */
+                .ctm-field { display: flex; flex-direction: column; gap: var(--cm-sp-2); min-width: 0; text-transform: none; }
+                .ctm-field > span {
+                    font-size: var(--cm-fs-xs); color: var(--text-secondary); font-weight: 600;
+                    text-transform: none; letter-spacing: normal; line-height: 1.3;
+                }
+                .ctm-field > span em { font-style: normal; color: var(--text-tertiary); font-weight: 400; }
+                .ctm-field > input {
+                    height: var(--ctm-h); box-sizing: border-box; border: 1px solid var(--border); border-radius: var(--ctm-r);
+                    padding: 0 var(--cm-sp-3); font-size: var(--cm-fs-md); color: var(--text-primary); background: var(--background);
+                    transition: var(--transition);
+                }
+                .ctm-field > input::placeholder { color: var(--text-tertiary); }
+                .ctm-field > input:focus { outline: none; border-color: var(--accent); box-shadow: var(--cm-focus-ring); }
+
+                /* SearchableSelect trigger — ista visina/radius/font kao inputi. */
+                .ctm :global(.searchable-select-trigger) {
+                    height: var(--ctm-h) !important; box-sizing: border-box !important;
+                    padding: 0 var(--cm-sp-3) !important; border: 1px solid var(--border) !important;
+                    border-radius: var(--ctm-r) !important; background: var(--background) !important; box-shadow: none !important;
+                }
+                .ctm :global(.searchable-select-trigger.active) { border-color: var(--accent) !important; box-shadow: var(--cm-focus-ring) !important; }
+                .ctm :global(.trigger-text) { font-size: var(--cm-fs-md) !important; font-weight: 500 !important; color: var(--text-primary) !important; }
+                .ctm :global(.trigger-text.placeholder) { color: var(--text-tertiary) !important; font-weight: 400 !important; }
+                .ctm :global(.trigger-icon) { color: var(--text-tertiary) !important; font-size: 18px !important; }
+
+                /* Podnožje (ide u Modal footer prop → pinovano ispod tijela) */
+                .ctm-foot { flex: 1; display: flex; align-items: center; gap: var(--cm-sp-3); }
+                .ctm-foot-spacer { flex: 1; }
+                .ctm-foot-warn { display: inline-flex; align-items: center; gap: 6px; font-size: var(--cm-fs-xs); font-weight: 600; color: var(--cm-warn-text); }
+                .ctm-foot-warn :global(svg) { color: var(--warning); flex-shrink: 0; }
+                .ctm-foot-btns { margin-left: auto; display: flex; gap: var(--cm-sp-2); }
                 .ctm-btn {
                     display: inline-flex; align-items: center; justify-content: center; gap: var(--cm-sp-1);
-                    height: var(--ctm-control-h); border: 1px solid var(--border); background: var(--background); color: var(--text-primary);
-                    font-size: var(--cm-fs-sm); font-weight: 600; padding: 0 var(--cm-sp-4); border-radius: var(--cm-r-control);
+                    height: 40px; border: 1px solid var(--border); background: var(--background); color: var(--text-primary);
+                    font-size: var(--cm-fs-sm); font-weight: 600; padding: 0 18px; border-radius: var(--cm-r-control);
                     cursor: pointer; transition: var(--transition);
                 }
                 .ctm-btn:hover:not(:disabled) { background: var(--surface-hover); }
@@ -558,9 +554,9 @@ export default function CustomTasksModal({ isOpen, onClose, workOrders, workers,
                 @keyframes ctm-spin { to { transform: rotate(360deg); } }
 
                 @media (max-width: 640px) {
-                    .ctm-task-fields { grid-template-columns: 1fr; padding-left: 0; }
-                    .ctm-grid2, .ctm-grid3 { grid-template-columns: 1fr; }
-                    .ctm-footer-btns { width: 100%; }
+                    .ctm-job-body { grid-template-columns: 1fr; padding-left: 12px; }
+                    .ctm-opt-grid, .ctm-grid2, .ctm-grid3 { grid-template-columns: 1fr; }
+                    .ctm-foot-btns { width: 100%; }
                     .ctm-btn { flex: 1 1 auto; }
                 }
             `}</style>
