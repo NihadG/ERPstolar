@@ -12,10 +12,9 @@
 // ════════════════════════════════════════════════════════════════════
 
 import type { Offer, Order, Project, WorkOrder, Worker } from './types';
-import { WORK_ORDER_STATUSES } from './types';
 import {
     workOrderSortRank, compareWorkOrdersDefault, projectStatusRank,
-    compareProjectsByActivity, formatDate,
+    compareProjectsByActivity, formatDate, isOrderPaused,
 } from './utils';
 
 export interface Group<T> {
@@ -32,12 +31,19 @@ export interface Group<T> {
 export type WorkOrderGroupBy = 'none' | 'status' | 'project' | 'date' | 'worker';
 
 export const WORK_ORDER_GROUPING_OPTIONS: { value: WorkOrderGroupBy; label: string }[] = [
-    { value: 'project', label: 'Po projektu' },
     { value: 'status', label: 'Po statusu' },
+    { value: 'project', label: 'Po projektu' },
     { value: 'date', label: 'Po datumu' },
     { value: 'worker', label: 'Po radniku' },
     { value: 'none', label: 'Bez grupisanja' },
 ];
+
+/**
+ * Redoslijed GRUPA kod grupisanja po statusu: na čekanju → u toku → pauzirani →
+ * završeni → otkazani. „Pauzirano" nije zaseban Status (nalog i dalje piše 'U toku'),
+ * nego izvedeno stanje (isOrderPaused) — pa dobija vlastitu grupu odmah iza „U toku".
+ */
+const WORK_ORDER_STATUS_GROUP_ORDER = ['Na čekanju', 'U toku', 'Pauzirano', 'Završeno', 'Otkazano'];
 
 /**
  * Grupisanje naloga — replika ProductionTab.
@@ -76,7 +82,8 @@ export function groupWorkOrders(
         }
 
         if (groupBy === 'status') {
-            const key = wo.Status || 'Ostalo';
+            // Pauzirani nalozi imaju Status 'U toku', ali se izdvajaju u vlastitu grupu.
+            const key = isOrderPaused(wo) ? 'Pauzirano' : (wo.Status || 'Ostalo');
             push(key, key, wo);
         } else if (groupBy === 'project') {
             push(wo.items?.[0]?.Project_ID || 'unknown', wo.items?.[0]?.Project_Name || 'Nepoznat projekat', wo);
@@ -89,7 +96,11 @@ export function groupWorkOrders(
     // Redoslijed GRUPA — svaka vrsta ima svoje pravilo (kao desktop).
     const ordered = Object.values(groups).sort((a, b) => {
         if (groupBy === 'date') return b.key.localeCompare(a.key);                 // najnovije prvo
-        if (groupBy === 'status') return WORK_ORDER_STATUSES.indexOf(a.key as any) - WORK_ORDER_STATUSES.indexOf(b.key as any);
+        if (groupBy === 'status') {
+            const ia = WORK_ORDER_STATUS_GROUP_ORDER.indexOf(a.key);
+            const ib = WORK_ORDER_STATUS_GROUP_ORDER.indexOf(b.key);
+            return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
+        }
         if (groupBy === 'worker') return b.totalValue - a.totalValue;              // najproduktivniji prvo
         if (groupBy === 'project') {
             // Projekat s bar jednim aktivnim nalogom ide ispred onog s pauziranim/montažnim.

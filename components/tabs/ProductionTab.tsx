@@ -12,7 +12,8 @@ import { checkMissingAttendanceForActiveOrders } from '@/lib/services';
 import { repairAllProductStatuses } from '@/lib/services';
 import { checkWorkOrderStart, findWorkersToBookToday, bookWorkersToday } from '@/lib/workOrderStart';
 import { todayISO } from '@/lib/planning';
-import { workOrderDisplayName, isOrderPaused, workOrderSortRank, compareWorkOrdersDefault } from '@/lib/utils';
+import { workOrderDisplayName, compareWorkOrdersDefault } from '@/lib/utils';
+import { groupWorkOrders, WORK_ORDER_GROUPING_OPTIONS, type WorkOrderGroupBy } from '@/lib/grouping';
 import { useData } from '@/context/DataContext';
 import Modal from '@/components/ui/Modal';
 import WorkOrderPrintTemplate from '@/components/ui/WorkOrderPrintTemplate';
@@ -93,18 +94,12 @@ export default function ProductionTab({ workOrders, projects, workers, tasks, wo
             .catch(err => console.error('Attendance check failed:', err));
     }, [organizationId, workOrders]);
 
-    // Grouping State
-    type GroupBy = 'none' | 'status' | 'project' | 'date' | 'worker';
-    const [groupBy, setGroupBy] = useState<GroupBy>('project');
+    // Grouping State — grupisanje/poredak dijeli s mobilnim prikazom (lib/grouping).
+    // Default = po statusu: grupe idu na čekanju → u toku → pauzirani → završeni → otkazani.
+    const [groupBy, setGroupBy] = useState<WorkOrderGroupBy>('status');
     const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
 
-    const groupingOptions = [
-        { value: 'none', label: 'Bez grupisanja' },
-        { value: 'status', label: 'Po statusu' },
-        { value: 'project', label: 'Po projektu' },
-        { value: 'date', label: 'Po datumu' },
-        { value: 'worker', label: 'Po radniku' }
-    ];
+    const groupingOptions = WORK_ORDER_GROUPING_OPTIONS;
 
     const filteredWorkOrders = useMemo(() => {
         const filtered = workOrders.filter(wo => {
@@ -119,104 +114,12 @@ export default function ProductionTab({ workOrders, projects, workers, tasks, wo
         return filtered.sort(compareWorkOrdersDefault);
     }, [workOrders, searchTerm, statusFilter]);
 
-    // Grouping Logic
-    const groupedWorkOrders = useMemo(() => {
-        if (groupBy === 'none') return [];
-
-        const groups: Record<string, { key: string; label: string; count: number; totalValue: number; items: WorkOrder[] }> = {};
-
-        filteredWorkOrders.forEach(wo => {
-            // For worker grouping, one order can appear in multiple groups
-            if (groupBy === 'worker') {
-                // Jedan model: dodjela radnika = Assigned_Workers + Processes[] (bez legacy Process_Assignments)
-                const workerIds = new Set<string>();
-                wo.items?.forEach(item => {
-                    (item.Assigned_Workers || []).forEach(w => { if (w.Worker_ID) workerIds.add(w.Worker_ID); });
-                    item.Processes?.forEach(p => {
-                        if (p.Worker_ID) workerIds.add(p.Worker_ID);
-                        p.Helpers?.forEach(h => { if (h.Worker_ID) workerIds.add(h.Worker_ID); });
-                    });
-                });
-
-                if (workerIds.size === 0) {
-                    // No workers assigned
-                    const key = 'unassigned';
-                    if (!groups[key]) {
-                        groups[key] = { key, label: 'Nedodijeljeno', count: 0, totalValue: 0, items: [] };
-                    }
-                    groups[key].items.push(wo);
-                    groups[key].count++;
-                    groups[key].totalValue += wo.Total_Value || 0;
-                } else {
-                    workerIds.forEach(workerId => {
-                        const worker = workers.find(w => w.Worker_ID === workerId);
-                        const key = workerId;
-                        const label = worker?.Name || 'Nepoznat';
-                        if (!groups[key]) {
-                            groups[key] = { key, label, count: 0, totalValue: 0, items: [] };
-                        }
-                        if (!groups[key].items.some(i => i.Work_Order_ID === wo.Work_Order_ID)) {
-                            groups[key].items.push(wo);
-                            groups[key].count++;
-                            groups[key].totalValue += wo.Total_Value || 0;
-                        }
-                    });
-                }
-                return;
-            }
-
-            let key = '';
-            let label = '';
-
-            switch (groupBy) {
-                case 'status':
-                    key = wo.Status || 'Ostalo';
-                    label = key;
-                    break;
-                case 'project':
-                    key = wo.items?.[0]?.Project_ID || 'unknown';
-                    label = wo.items?.[0]?.Project_Name || 'Nepoznat projekat';
-                    break;
-                case 'date':
-                    key = wo.Created_Date ? wo.Created_Date.split('T')[0] : 'unknown';
-                    label = wo.Created_Date ? formatDate(wo.Created_Date) : 'Nepoznat datum';
-                    break;
-            }
-
-            if (!groups[key]) {
-                groups[key] = { key, label, count: 0, totalValue: 0, items: [] };
-            }
-            groups[key].items.push(wo);
-            groups[key].count++;
-            groups[key].totalValue += wo.Total_Value || 0;
-        });
-
-        // Sort groups
-        return Object.values(groups).sort((a, b) => {
-            if (groupBy === 'date') return b.key.localeCompare(a.key);
-            if (groupBy === 'status') {
-                return WORK_ORDER_STATUSES.indexOf(a.key) - WORK_ORDER_STATUSES.indexOf(b.key);
-            }
-            if (groupBy === 'worker') {
-                // Sort by total value descending (most productive first)
-                return b.totalValue - a.totalValue;
-            }
-            if (groupBy === 'project') {
-                // Projekat s najboljim (najmanjim) rangom naloga ide prvi — npr. projekat
-                // koji ima BAR JEDAN aktivan proizvodni nalog uvijek ispred projekta čiji
-                // su svi nalozi pauzirani/montažni/razni poslovi. Vidi workOrderSortRank.
-                const bestRank = (items: WorkOrder[]) => Math.min(...items.map(workOrderSortRank));
-                const rankDiff = bestRank(a.items) - bestRank(b.items);
-                if (rankDiff !== 0) return rankDiff;
-                // Izjednačen rang: projekti poredani prema datumu prvog (najstarijeg)
-                // naloga u projektu — najmlađi prvo (nepromijenjeno, postojeće ponašanje)
-                const firstOrderDate = (items: WorkOrder[]) =>
-                    Math.min(...items.map(i => new Date(i.Created_Date).getTime()));
-                return firstOrderDate(b.items) - firstOrderDate(a.items);
-            }
-            return a.label.localeCompare(b.label);
-        });
-    }, [filteredWorkOrders, groupBy, workers]);
+    // Grupisanje i poredak grupa = ISTA logika kao mobilni prikaz (lib/grouping),
+    // da se isti podatak ne bi drugačije poredao na laptopu i telefonu.
+    const groupedWorkOrders = useMemo(
+        () => groupWorkOrders(filteredWorkOrders, groupBy, workers),
+        [filteredWorkOrders, groupBy, workers]
+    );
 
     function toggleGroup(groupKey: string) {
         const newCollapsed = new Set(collapsedGroups);
@@ -305,10 +208,6 @@ export default function ProductionTab({ workOrders, projects, workers, tasks, wo
         workers: { workerId: string; workerName: string }[];
     }>({ isOpen: false, workOrderId: null, workers: [] });
     const [bookTodaySaving, setBookTodaySaving] = useState(false);
-    function formatDate(dateString: string): string {
-        if (!dateString) return '-';
-        return new Date(dateString).toLocaleDateString('hr-HR');
-    }
 
     // View/Edit/Delete/Print logic
     async function handleUpdateWorkOrder(workOrderId: string, updates: any) {
@@ -687,7 +586,7 @@ export default function ProductionTab({ workOrders, projects, workers, tasks, wo
                         <span className="control-label">Grupiši:</span>
                         <select
                             value={groupBy}
-                            onChange={(e) => setGroupBy(e.target.value as GroupBy)}
+                            onChange={(e) => setGroupBy(e.target.value as WorkOrderGroupBy)}
                         >
                             {groupingOptions.map(opt => (
                                 <option key={opt.value} value={opt.value}>{opt.label}</option>

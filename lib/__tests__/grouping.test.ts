@@ -68,6 +68,27 @@ describe('groupWorkOrders — replika ProductionTab', () => {
     it('„none" ne pravi grupe', () => {
         expect(groupWorkOrders([wo({ Work_Order_ID: 'A' })], 'none')).toEqual([]);
     });
+
+    it('grupe po statusu idu na čekanju → u toku → pauzirani → završeni → otkazani', () => {
+        const groups = groupWorkOrders([
+            wo({ Work_Order_ID: 'zav', Status: 'Završeno' }),
+            wo({ Work_Order_ID: 'otk', Status: 'Otkazano' }),
+            wo({ Work_Order_ID: 'tok', Status: 'U toku' }),
+            wo({ Work_Order_ID: 'cek', Status: 'Na čekanju' }),
+            // Pauzirano = Status 'U toku' + sve otvorene stavke pauzirane (isOrderPaused).
+            wo({ Work_Order_ID: 'pau', Status: 'U toku', items: [{ Status: 'U toku', Is_Paused: true }] as any }),
+        ], 'status');
+        expect(groups.map(g => g.key)).toEqual(['Na čekanju', 'U toku', 'Pauzirano', 'Završeno', 'Otkazano']);
+    });
+
+    it('pauzirani nalog se izdvaja iz grupe „U toku"', () => {
+        const groups = groupWorkOrders([
+            wo({ Work_Order_ID: 'aktivan', Status: 'U toku', items: [{ Status: 'U toku', Is_Paused: false }] as any }),
+            wo({ Work_Order_ID: 'pauziran', Status: 'U toku', items: [{ Status: 'U toku', Is_Paused: true }] as any }),
+        ], 'status');
+        expect(groups.find(g => g.key === 'U toku')!.items.map(i => i.Work_Order_ID)).toEqual(['aktivan']);
+        expect(groups.find(g => g.key === 'Pauzirano')!.items.map(i => i.Work_Order_ID)).toEqual(['pauziran']);
+    });
 });
 
 describe('groupOrders / sortOrders — replika OrdersTab', () => {

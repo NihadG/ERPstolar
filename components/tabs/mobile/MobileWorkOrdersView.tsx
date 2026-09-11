@@ -64,7 +64,7 @@ export default function MobileWorkOrdersView({
     const [status, setStatus] = useState<string>('');
     const [openId, setOpenId] = useState<string | null>(null);
     // Isti izbor kao desktop: samo grupisanje (poredak naloga je fiksan).
-    const [groupBy, setGroupBy] = useMobileGrouping<WorkOrderGroupBy>('nalozi', 'project');
+    const [groupBy, setGroupBy] = useMobileGrouping<WorkOrderGroupBy>('nalozi', 'status');
     const [groupSheet, setGroupSheet] = useState(false);
     const [customOpen, setCustomOpen] = useState(false);
 
