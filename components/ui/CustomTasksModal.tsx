@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useMemo, useEffect } from 'react';
-import { Plus, X, Loader2, ClipboardList, AlertTriangle, Info, Wrench, Coins, Calendar } from 'lucide-react';
+import { Plus, X, Loader2, ClipboardList, AlertTriangle, Info, Wrench } from 'lucide-react';
 import Modal from './Modal';
 import { SearchableSelect } from './SearchableSelect';
 import TaskAttachEditor from './TaskAttachEditor';
@@ -329,58 +329,46 @@ export default function CustomTasksModal({ isOpen, onClose, workOrders, workers,
                     </div>
 
                     <div className="ctm-opt-grid">
-                        <div className="ctm-opt-block">
-                            <span className="ctm-blab"><Coins size={13} /> Vrijednost i troškovi <em>· za profit</em></span>
-                            <label className="ctm-field">
-                                <span>Projekat <em>· profit ide u „Razni nalozi" tog projekta</em></span>
-                                <SearchableSelect
-                                    options={projectOptions}
-                                    value={projectId}
-                                    onChange={v => setProjectId(v || '')}
-                                    placeholder="Bez projekta — globalni razni nalozi"
-                                />
-                            </label>
-                            <div className="ctm-grid3">
-                                <label className="ctm-field">
-                                    <span>Vrijednost <em>iz ponude</em></span>
-                                    <input type="number" min={0} step="0.01" inputMode="decimal"
-                                        value={offerValue} onChange={e => setOfferValue(e.target.value)} placeholder="KM" />
-                                </label>
-                                <label className="ctm-field">
-                                    <span>Materijal</span>
-                                    <input type="number" min={0} step="0.01" inputMode="decimal"
-                                        value={materialCost} onChange={e => setMaterialCost(e.target.value)} placeholder="KM" />
-                                </label>
-                                <label className="ctm-field">
-                                    <span>Ostalo</span>
-                                    <input type="number" min={0} step="0.01" inputMode="decimal"
-                                        value={otherCosts} onChange={e => setOtherCosts(e.target.value)} placeholder="KM" />
-                                </label>
-                            </div>
-                            <p className="ctm-fin-note">
-                                Profit = vrijednost − materijal − ostalo − <strong>rad</strong> (dnevnice iz šihtarice).
-                                Ostavi prazno ako je čisto radni posao.
-                            </p>
-                        </div>
-
-                        <div className="ctm-opt-block">
-                            <span className="ctm-blab"><Calendar size={13} /> Detalji naloga</span>
-                            <label className="ctm-field">
-                                <span>Naziv naloga <em>· prazno = naziv prvog posla</em></span>
-                                <input type="text" value={orderName} onChange={e => setOrderName(e.target.value)}
-                                    placeholder={validRows[0]?.text.trim() || 'npr. Izrada paleta za skladište'} />
-                            </label>
-                            <div className="ctm-grid2">
-                                <label className="ctm-field">
-                                    <span>Rok <em>· opciono</em></span>
-                                    <input type="date" value={dueDate} onChange={e => setDueDate(e.target.value)} />
-                                </label>
-                                <label className="ctm-field">
-                                    <span>Napomena <em>· opciono</em></span>
-                                    <input type="text" value={notes} onChange={e => setNotes(e.target.value)} placeholder="npr. interni poslovi" />
-                                </label>
-                            </div>
-                        </div>
+                        <label className="ctm-field ctm-c2">
+                            <span>Projekat <em>· za profit</em></span>
+                            <SearchableSelect
+                                options={projectOptions}
+                                value={projectId}
+                                onChange={v => setProjectId(v || '')}
+                                placeholder="Bez projekta"
+                            />
+                        </label>
+                        <label className="ctm-field ctm-c2">
+                            <span>Naziv naloga <em>· prazno = 1. posao</em></span>
+                            <input type="text" value={orderName} onChange={e => setOrderName(e.target.value)}
+                                placeholder={validRows[0]?.text.trim() || 'Izrada paleta za skladište'} />
+                        </label>
+                        <label className="ctm-field">
+                            <span>Vrijednost</span>
+                            <input type="number" min={0} step="0.01" inputMode="decimal"
+                                value={offerValue} onChange={e => setOfferValue(e.target.value)} placeholder="KM" />
+                        </label>
+                        <label className="ctm-field">
+                            <span>Materijal</span>
+                            <input type="number" min={0} step="0.01" inputMode="decimal"
+                                value={materialCost} onChange={e => setMaterialCost(e.target.value)} placeholder="KM" />
+                        </label>
+                        <label className="ctm-field">
+                            <span>Ostalo</span>
+                            <input type="number" min={0} step="0.01" inputMode="decimal"
+                                value={otherCosts} onChange={e => setOtherCosts(e.target.value)} placeholder="KM" />
+                        </label>
+                        <label className="ctm-field">
+                            <span>Rok <em>· opciono</em></span>
+                            <input type="date" value={dueDate} onChange={e => setDueDate(e.target.value)} />
+                        </label>
+                        <label className="ctm-field ctm-c4">
+                            <span>Napomena <em>· opciono</em></span>
+                            <input type="text" value={notes} onChange={e => setNotes(e.target.value)} placeholder="npr. interni poslovi za juni" />
+                        </label>
+                        <p className="ctm-fin-note ctm-c4">
+                            Profit = vrijednost − materijal − ostalo − <strong>rad</strong> (dnevnice iz šihtarice). Ostavi prazno ako je čisto radni posao.
+                        </p>
                     </div>
 
                     {/* Zadaci iz taba Zadaci — evidencija/podsjetnici, NE stavke naloga:
@@ -454,7 +442,7 @@ export default function CustomTasksModal({ isOpen, onClose, workOrders, workers,
                     padding: 12px 12px 12px 50px; border-top: 1px dashed var(--border-light); align-items: start;
                 }
                 .ctm-job-field { display: flex; flex-direction: column; gap: 6px; min-width: 0; text-transform: none; }
-                .ctm-mini-lab { font-size: var(--cm-fs-xs); font-weight: 600; color: var(--text-secondary); }
+                .ctm-mini-lab { display: block; height: 16px; line-height: 16px; font-size: var(--cm-fs-xs); font-weight: 600; color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
                 .ctm-mini-lab em { font-style: normal; font-weight: 400; color: var(--text-tertiary); }
 
                 /* Radnici — čipovi ISPOD selecta, da rast lijeve kolone ne pomjera desni select. */
@@ -494,16 +482,10 @@ export default function CustomTasksModal({ isOpen, onClose, workOrders, workers,
                 .ctm-opts-title { display: flex; align-items: baseline; gap: var(--cm-sp-2); }
                 .ctm-eyebrow { font-size: var(--cm-fs-micro); font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; color: var(--text-tertiary); }
                 .ctm-opts-muted { font-size: var(--cm-fs-xs); color: var(--text-tertiary); }
-                .ctm-opt-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
-                .ctm-opt-block { display: flex; flex-direction: column; gap: var(--cm-sp-3); }
-                .ctm-blab {
-                    display: flex; align-items: center; gap: 6px; font-size: var(--cm-fs-xs); font-weight: 700;
-                    text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-secondary);
-                }
-                .ctm-blab :global(svg) { color: var(--text-tertiary); flex-shrink: 0; }
-                .ctm-blab em { font-style: normal; text-transform: none; letter-spacing: normal; font-weight: 400; color: var(--text-tertiary); }
-                .ctm-grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: var(--cm-sp-3); }
-                .ctm-grid3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: var(--cm-sp-2); }
+                /* Jedna 4-kolonska mreža — svi boxovi/tekstovi u liniji (bez para blokova koji se razilaze) */
+                .ctm-opt-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; align-items: start; }
+                .ctm-c2 { grid-column: span 2; }
+                .ctm-c4 { grid-column: span 4; }
                 .ctm-fin-note { margin: 2px 0 0; font-size: var(--cm-fs-xs); color: var(--text-tertiary); line-height: 1.5; }
                 .ctm-fin-note strong { color: var(--text-secondary); }
 
@@ -511,8 +493,10 @@ export default function CustomTasksModal({ isOpen, onClose, workOrders, workers,
                    ovdje gasi i globalno .modal label:uppercase. */
                 .ctm-field { display: flex; flex-direction: column; gap: var(--cm-sp-2); min-width: 0; text-transform: none; }
                 .ctm-field > span {
+                    height: 16px; line-height: 16px;
                     font-size: var(--cm-fs-xs); color: var(--text-secondary); font-weight: 600;
-                    text-transform: none; letter-spacing: normal; line-height: 1.3;
+                    text-transform: none; letter-spacing: normal;
+                    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
                 }
                 .ctm-field > span em { font-style: normal; color: var(--text-tertiary); font-weight: 400; }
                 .ctm-field > input {
@@ -555,7 +539,8 @@ export default function CustomTasksModal({ isOpen, onClose, workOrders, workers,
 
                 @media (max-width: 640px) {
                     .ctm-job-body { grid-template-columns: 1fr; padding-left: 12px; }
-                    .ctm-opt-grid, .ctm-grid2, .ctm-grid3 { grid-template-columns: 1fr; }
+                    .ctm-opt-grid { grid-template-columns: 1fr 1fr; }
+                    .ctm-c2, .ctm-c4 { grid-column: span 2; }
                     .ctm-foot-btns { width: 100%; }
                     .ctm-btn { flex: 1 1 auto; }
                 }

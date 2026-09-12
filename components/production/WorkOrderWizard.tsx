@@ -1166,19 +1166,14 @@ export default function WorkOrderWizard({
                                 // Close dropdowns when clicking outside
                                 if (!(e.target as HTMLElement).closest('.wdd')) { setOpenDropdown(null); setWorkerSearch(''); }
                             }}>
-                                <div className="wz-two">
-                                    <aside className="wz-rail">
-                                        <div className="wz-rail-title">
-                                            <h3>Postavke naloga</h3>
-                                            <span>Rok, vrijednost i upozorenja</span>
-                                        </div>
-
-                                        <div className="wz-field">
-                                            <label>Naziv naloga <em>· opciono</em></label>
-                                            <input type="text" placeholder="npr. Kuhinja — Dino" value={workOrderName} onChange={e => setWorkOrderName(e.target.value)} />
-                                        </div>
-
-                                        <div className="wz-rail-2">
+                                <div className="wz-col">
+                                    {/* Postavke naloga — jedan poravnat red (naziv / početak / rok) */}
+                                    <div className="wz-panel wz-panel-pad">
+                                        <div className="wz-band">
+                                            <div className="wz-field wz-c2">
+                                                <label>Naziv naloga <em>· opciono</em></label>
+                                                <input type="text" placeholder="npr. Kuhinja — Dino" value={workOrderName} onChange={e => setWorkOrderName(e.target.value)} />
+                                            </div>
                                             <div className="wz-field">
                                                 <label>Početak</label>
                                                 <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} />
@@ -1193,73 +1188,61 @@ export default function WorkOrderWizard({
                                                 ⤵ Predloženo iz {totalPlannedDays} planirana radna dana: {suggestedDueDate}
                                             </button>
                                         )}
-
-                                        <div className="wz-field">
+                                        <div className="wz-field" style={{ marginTop: 14 }}>
                                             <label>Napomena <em>· opciono</em></label>
                                             <input type="text" placeholder="Dodatne upute za radnike…" value={notes} onChange={e => setNotes(e.target.value)} />
                                         </div>
+                                    </div>
 
-                                        {/* Finansijski sažetak — šta ovaj nalog nosi PRIJE kreiranja */}
-                                        {wizardFin && (
-                                            <div className="wz-fin2">
-                                                <span className="wz-eyebrow">Šta nalog nosi</span>
-                                                <div className="wz-fin-list">
-                                                    <div className="wz-fin-row"><span className="k">Vrijednost</span><span className="v">{fmtKM(wizardFin.value)}</span></div>
-                                                    <div className="wz-fin-row"><span className="k">Materijal</span><span className="v">{fmtKM(wizardFin.material)}</span></div>
-                                                    <div className="wz-fin-row"><span className="k">Planirani rad{totalPlannedDays > 0 ? ` · ${totalPlannedDays} d` : ''}</span><span className="v">{fmtKM(wizardFin.plannedLabor)}</span></div>
-                                                    {(wizardFin.transport > 0 || wizardFin.services > 0) && (
-                                                        <div className="wz-fin-row"><span className="k">Transport + usluge</span><span className="v">{fmtKM(wizardFin.transport + wizardFin.services)}</span></div>
-                                                    )}
-                                                    <div className={`wz-fin-row total ${wizardFin.profit >= 0 ? 'pos' : 'neg'}`}><span className="k">Procijenjeno ostaje</span><span className="v">{fmtKM(wizardFin.profit)}</span></div>
-                                                </div>
-                                            </div>
-                                        )}
-
-                                        {/* Odmah naruči nedostajuće materijale (samo proizvodnja) */}
-                                        {mode === 'production' && (
-                                            <label className="wz-toggle">
-                                                <input type="checkbox" checked={createMaterialOrders} onChange={e => setCreateMaterialOrders(e.target.checked)} />
-                                                <span className="wz-toggle-txt">
-                                                    <b>Predloži narudžbe materijala</b>
-                                                    <span>Poslije kreiranja biraš dobavljače i materijale prije nego što se narudžba stvarno kreira.</span>
-                                                </span>
-                                            </label>
-                                        )}
-
-                                        {/* Objedinjeno upozorenje: bez radnika (guard na startu) + nedefinisani proizvodi */}
-                                        {(() => {
-                                            const noWorker = selectedProducts.length > 0 && selectedProducts.every(p => Object.values(p.assignments || {}).every(v => !v));
-                                            if (!noWorker && undefinedProducts.length === 0) return null;
-                                            return (
-                                                <div className="wz-advisory">
-                                                    <div className="wz-adv-head"><span className="material-icons-round">warning_amber</span>Prije pokretanja</div>
-                                                    <ul>
-                                                        {noWorker && (
-                                                            <li><span className="b" /><span><b>Nijedan radnik nije dodijeljen.</b> Nalog se neće moći pokrenuti dok ne dodijeliš radnika — možeš i kasnije.</span></li>
-                                                        )}
-                                                        {undefinedProducts.length > 0 && (
-                                                            <li><span className="b" /><span><b>Nedefinisani proizvodi</b> (cijena/rok): {undefinedProducts.join(', ')} — rok i profit su potcijenjeni dok se ponuda ne dopuni.</span></li>
-                                                        )}
-                                                    </ul>
-                                                </div>
-                                            );
-                                        })()}
-
-                                        {/* Zadaci uz nalog — vežu se čim nalog nastane */}
-                                        <div className="wz-tasks">
-                                            <TaskAttachEditor
-                                                value={taskSelection}
-                                                onChange={setTaskSelection}
-                                                tasks={tasks}
-                                                workers={workers}
-                                                products={selectedProducts.map(p => ({ Product_ID: p.Product_ID, Product_Name: p.Product_Name }))}
-                                                suggestedIds={suggestedTaskIds}
-                                                pickerZIndex={2000}
-                                            />
+                                    {/* Finansije — horizontalni strip (šta nalog nosi) */}
+                                    {wizardFin && (
+                                        <div className="wz-fin">
+                                            <div className="wz-fin-cell"><span className="k">Vrijednost</span><span className="v">{fmtKM(wizardFin.value)}</span></div>
+                                            <div className="wz-fin-cell"><span className="k">Materijal</span><span className="v">{fmtKM(wizardFin.material)}</span></div>
+                                            <div className="wz-fin-cell"><span className="k">Planirani rad{totalPlannedDays > 0 ? ` · ${totalPlannedDays} d` : ''}</span><span className="v">{fmtKM(wizardFin.plannedLabor)}</span></div>
+                                            {(wizardFin.transport > 0 || wizardFin.services > 0) && (
+                                                <div className="wz-fin-cell"><span className="k">Transport + usluge</span><span className="v">{fmtKM(wizardFin.transport + wizardFin.services)}</span></div>
+                                            )}
+                                            <div className={`wz-fin-cell total ${wizardFin.profit >= 0 ? 'pos' : 'neg'}`}><span className="k">Procijenjeno ostaje</span><span className="v">{fmtKM(wizardFin.profit)}</span></div>
                                         </div>
-                                    </aside>
+                                    )}
 
-                                    <div className="wz-assign">
+                                    {/* Toggle narudžbi + objedinjeno upozorenje */}
+                                    {(() => {
+                                        const noWorker = selectedProducts.length > 0 && selectedProducts.every(p => Object.values(p.assignments || {}).every(v => !v));
+                                        const showAdvisory = noWorker || undefinedProducts.length > 0;
+                                        const showToggle = mode === 'production';
+                                        if (!showAdvisory && !showToggle) return null;
+                                        return (
+                                            <div className={`wz-subrow${showToggle && showAdvisory ? '' : ' one'}`}>
+                                                {showToggle && (
+                                                    <label className="wz-toggle wz-panel">
+                                                        <input type="checkbox" checked={createMaterialOrders} onChange={e => setCreateMaterialOrders(e.target.checked)} />
+                                                        <span className="wz-toggle-txt">
+                                                            <b>Predloži narudžbe materijala</b>
+                                                            <span>Poslije kreiranja biraš dobavljače i materijale prije nego što se narudžba stvarno kreira.</span>
+                                                        </span>
+                                                    </label>
+                                                )}
+                                                {showAdvisory && (
+                                                    <div className="wz-advisory wz-panel">
+                                                        <div className="wz-adv-head"><span className="material-icons-round">warning_amber</span>Prije pokretanja</div>
+                                                        <ul>
+                                                            {noWorker && (
+                                                                <li><span className="b" /><span><b>Nijedan radnik nije dodijeljen.</b> Nalog se neće moći pokrenuti dok ne dodijeliš radnika — možeš i kasnije.</span></li>
+                                                            )}
+                                                            {undefinedProducts.length > 0 && (
+                                                                <li><span className="b" /><span><b>Nedefinisani proizvodi</b> (cijena/rok): {undefinedProducts.join(', ')} — rok i profit su potcijenjeni dok se ponuda ne dopuni.</span></li>
+                                                            )}
+                                                        </ul>
+                                                    </div>
+                                                )}
+                                            </div>
+                                        );
+                                    })()}
+
+                                    {/* Dodjela radnika */}
+                                    <div className="wz-assign wz-panel">
                                         <div className="wz-assign-head">
                                             <b>Dodjela radnika</b>
                                             <span>{selectedProducts.length} {selectedProducts.length === 1 ? 'proizvod' : 'proizvoda'}{mode === 'production' ? ' · jedna ekipa radi sve procese' : ''}</span>
@@ -1467,7 +1450,19 @@ export default function WorkOrderWizard({
                                         ))}
                                     </div>
                                 </div>
-                                    {/* /matrix-wrapper */}
+                                    </div>
+
+                                    {/* Zadaci uz nalog — dno kolone (vežu se čim nalog nastane) */}
+                                    <div className="wz-panel wz-tasks-panel">
+                                        <TaskAttachEditor
+                                            value={taskSelection}
+                                            onChange={setTaskSelection}
+                                            tasks={tasks}
+                                            workers={workers}
+                                            products={selectedProducts.map(p => ({ Product_ID: p.Product_ID, Product_Name: p.Product_Name }))}
+                                            suggestedIds={suggestedTaskIds}
+                                            pickerZIndex={2000}
+                                        />
                                     </div>
                                 </div>
                             </div>
@@ -1762,22 +1757,16 @@ export default function WorkOrderWizard({
                 }
                 .add-process-row button:hover { background: #0056b3; transform: scale(1.02); }
 
-                /* Step "Radnik & rok" — dvije kolone: postavke (rail) | dodjela (matrica) */
-                .step-details { height: 100%; overflow: hidden; }
-                .wz-two {
-                    display: grid; grid-template-columns: 360px 1fr; height: 100%; min-height: 0;
-                    background: var(--background); border: 1px solid var(--border-light);
-                    border-radius: 14px; overflow: hidden; box-shadow: var(--cm-shadow-card);
-                }
+                /* Step "Radnik & rok" — centrirana kolona poravnatih traka */
+                .step-details { height: 100%; overflow-y: auto; overflow-x: hidden; }
+                .wz-col { max-width: 1040px; margin: 0 auto; display: flex; flex-direction: column; gap: 16px; }
 
-                /* Lijevi rail — postavke naloga */
-                .wz-rail { border-right: 1px solid var(--border-light); padding: 18px; overflow: auto; display: flex; flex-direction: column; gap: 18px; }
-                .wz-rail-title { display: flex; flex-direction: column; gap: 2px; }
-                .wz-rail-title h3 { margin: 0; font-size: var(--cm-fs-lg); font-weight: 700; color: var(--text-primary); }
-                .wz-rail-title span { font-size: var(--cm-fs-xs); color: var(--text-secondary); }
-                .wz-rail-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+                .wz-panel { background: var(--background); border: 1px solid var(--border-light); border-radius: var(--cm-r-card); box-shadow: var(--cm-shadow-card); }
+                .wz-panel-pad { padding: 16px; }
+
+                /* Polje: FIKSNA visina labele → svi inputi ostaju u istoj liniji (labela se ne lomi) */
                 .wz-field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
-                .wz-field label { font-size: var(--cm-fs-xs); font-weight: 600; color: var(--text-secondary); text-transform: none; letter-spacing: normal; }
+                .wz-field label { height: 16px; line-height: 16px; font-size: var(--cm-fs-xs); font-weight: 600; color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-transform: none; letter-spacing: normal; }
                 .wz-field label em { font-style: normal; font-weight: 400; color: var(--text-tertiary); }
                 .wz-field input {
                     width: 100%; height: 40px; box-sizing: border-box; padding: 0 12px;
@@ -1786,88 +1775,72 @@ export default function WorkOrderWizard({
                     outline: none; transition: var(--transition);
                 }
                 .wz-field input:focus { border-color: var(--accent); box-shadow: var(--cm-focus-ring); }
-                .wz-suggest { align-self: flex-start; margin-top: -8px; display: inline-flex; align-items: center; gap: 5px; font-size: var(--cm-fs-xs); font-weight: 600; color: var(--accent); background: none; border: none; padding: 0; cursor: pointer; text-align: left; }
+                .wz-band { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
+                .wz-c2 { grid-column: span 2; }
+                .wz-suggest { align-self: flex-start; margin-top: 10px; display: inline-flex; align-items: center; gap: 5px; font-size: var(--cm-fs-xs); font-weight: 600; color: var(--accent); background: none; border: none; padding: 0; cursor: pointer; }
                 .wz-suggest:hover { text-decoration: underline; }
 
-                .wz-eyebrow { font-size: var(--cm-fs-micro); font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; color: var(--text-tertiary); }
+                /* Finansije — horizontalni strip, poravnate ćelije */
+                .wz-fin { display: grid; grid-template-columns: repeat(4, 1fr); border: 1px solid var(--border-light); border-radius: var(--cm-r-card); overflow: hidden; box-shadow: var(--cm-shadow-card); }
+                .wz-fin-cell { padding: 11px 14px; border-right: 1px solid var(--border-light); display: flex; flex-direction: column; gap: 3px; background: var(--background); }
+                .wz-fin-cell:last-child { border-right: none; }
+                .wz-fin-cell .k { font-size: var(--cm-fs-xs); color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+                .wz-fin-cell .v { font-size: var(--cm-fs-lg); font-weight: 700; color: var(--text-primary); font-variant-numeric: tabular-nums; }
+                .wz-fin-cell.total { background: var(--success-bg); }
+                .wz-fin-cell.total .k { color: #1a7f37; font-weight: 600; }
+                .wz-fin-cell.total .v { color: #1a7f37; font-weight: 800; }
+                .wz-fin-cell.total.neg { background: var(--error-bg); }
+                .wz-fin-cell.total.neg .k, .wz-fin-cell.total.neg .v { color: #b3261e; }
 
-                /* Finansijski sažetak — vertikalni strip */
-                .wz-fin2 { display: flex; flex-direction: column; gap: 8px; }
-                .wz-fin-list { border: 1px solid var(--border-light); border-radius: var(--cm-r-card); overflow: hidden; }
-                .wz-fin-row { display: flex; align-items: center; justify-content: space-between; padding: 9px 12px; font-size: var(--cm-fs-sm); border-bottom: 1px solid var(--border-light); }
-                .wz-fin-row:last-child { border-bottom: none; }
-                .wz-fin-row .k { color: var(--text-secondary); }
-                .wz-fin-row .v { font-weight: 600; color: var(--text-primary); font-variant-numeric: tabular-nums; }
-                .wz-fin-row.total { background: var(--success-bg); }
-                .wz-fin-row.total .k { font-weight: 600; }
-                .wz-fin-row.total .v { font-weight: 800; font-size: var(--cm-fs-md); }
-                .wz-fin-row.total.pos .v, .wz-fin-row.total.pos .k { color: #1a7f37; }
-                .wz-fin-row.total.neg { background: var(--error-bg); }
-                .wz-fin-row.total.neg .v, .wz-fin-row.total.neg .k { color: #b3261e; }
-
-                /* Toggle narudžbi */
-                .wz-toggle { display: flex; align-items: flex-start; gap: 10px; padding: 11px 12px; border: 1px solid var(--border-light); border-radius: var(--cm-r-control); background: var(--surface); cursor: pointer; }
+                /* Toggle + upozorenje u jednom redu */
+                .wz-subrow { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; align-items: stretch; }
+                .wz-subrow.one { grid-template-columns: 1fr; }
+                .wz-toggle { display: flex; align-items: flex-start; gap: 10px; padding: 12px 14px; cursor: pointer; }
                 .wz-toggle input { width: 18px; height: 18px; margin: 1px 0 0; accent-color: var(--accent); flex-shrink: 0; }
                 .wz-toggle-txt { display: flex; flex-direction: column; gap: 2px; }
                 .wz-toggle-txt b { font-size: var(--cm-fs-sm); font-weight: 600; color: var(--text-primary); }
-                .wz-toggle-txt span { font-size: var(--cm-fs-xs); color: var(--text-secondary); line-height: 1.45; }
+                .wz-toggle-txt span { font-size: var(--cm-fs-xs); color: var(--text-secondary); line-height: 1.4; }
 
-                /* Objedinjeno upozorenje (umjesto dva naslagana banera) */
-                .wz-advisory { border: 1px solid #f0d090; background: var(--warning-bg); border-radius: var(--cm-r-card); padding: 12px; }
+                .wz-advisory { padding: 12px 14px; background: var(--warning-bg); border-color: #f0d79a; }
                 .wz-adv-head { display: flex; align-items: center; gap: 7px; font-size: var(--cm-fs-sm); font-weight: 700; color: var(--cm-warn-text); margin-bottom: 8px; }
                 .wz-adv-head .material-icons-round { font-size: 17px; color: var(--warning); }
-                .wz-advisory ul { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 7px; }
+                .wz-advisory ul { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 6px; }
                 .wz-advisory li { display: flex; gap: 8px; font-size: var(--cm-fs-xs); color: var(--cm-warn-text); line-height: 1.45; }
                 .wz-advisory li .b { width: 5px; height: 5px; border-radius: 50%; background: var(--warning); flex-shrink: 0; margin-top: 6px; }
 
-                .wz-tasks { margin-top: 2px; }
-
-                /* Desni panel — dodjela radnika */
-                .wz-assign { display: flex; flex-direction: column; min-height: 0; background: var(--surface); }
-                .wz-assign-head { flex-shrink: 0; display: flex; flex-direction: column; gap: 1px; padding: 14px 18px 10px; }
-                .wz-assign-head b { font-size: var(--cm-fs-md); font-weight: 700; color: var(--text-primary); }
+                /* Dodjela radnika — panel s horizontalnim trakama (bez okvira-u-okviru) */
+                .wz-assign { display: flex; flex-direction: column; overflow: hidden; }
+                .wz-assign-head { padding: 14px 18px; border-bottom: 1px solid var(--border-light); }
+                .wz-assign-head b { display: block; font-size: var(--cm-fs-md); font-weight: 700; color: var(--text-primary); }
                 .wz-assign-head span { font-size: var(--cm-fs-xs); color: var(--text-secondary); }
+                .wz-tasks-panel { padding: 12px 16px; }
 
-                /* Bulk Assignment Bar — mirna alatna traka (bez ljubičastog gradijenta) */
+                /* Bulk Assignment Bar — mirna alatna traka, puna širina panela */
                 .bulk-assign-bar {
-                    flex-shrink: 0;
-                    display: flex;
-                    align-items: center;
-                    gap: 12px;
-                    margin: 0 18px 12px;
-                    padding: 10px 12px;
-                    background: var(--background);
-                    border: 1px solid var(--border-light);
-                    border-radius: var(--cm-r-control);
+                    display: flex; align-items: center; gap: 12px;
+                    margin: 0; padding: 10px 18px;
+                    background: var(--surface); border: none;
+                    border-bottom: 1px solid var(--border-light); border-radius: 0;
                 }
-                .bulk-label {
-                    display: flex;
-                    align-items: center;
-                    gap: 6px;
-                    font-size: var(--cm-fs-xs);
-                    font-weight: 700;
-                    color: var(--text-secondary);
-                    white-space: nowrap;
-                }
+                .bulk-label { display: flex; align-items: center; gap: 6px; font-size: var(--cm-fs-xs); font-weight: 700; color: var(--text-secondary); white-space: nowrap; }
                 .bulk-label .material-icons-round { color: var(--accent); }
                 .bulk-controls { display: flex; gap: 10px; flex: 1; }
 
                 /* Matrix Container */
                 .matrix-wrapper.full-height {
-                    flex: 1;
                     display: flex;
                     flex-direction: column;
-                    margin: 0 18px 18px;
-                    background: var(--background);
-                    border-radius: var(--cm-r-card);
-                    border: 1px solid var(--border-light);
-                    overflow: hidden;
-                    box-shadow: var(--cm-shadow-card);
+                    margin: 0;
+                    background: transparent;
+                    border: none;
+                    border-radius: 0;
+                    overflow: visible;
+                    box-shadow: none;
                 }
-                .mw-header { 
-                    display: flex; 
-                    background: #fafbfc;
-                    border-bottom: 1px solid rgba(0,0,0,0.06); 
+                .mw-header {
+                    display: flex;
+                    background: var(--background);
+                    border-bottom: 1px solid var(--border-light);
                     position: sticky;
                     top: 0;
                     z-index: 5;
@@ -1883,14 +1856,14 @@ export default function WorkOrderWizard({
                     align-items: center; 
                 }
                 .m-col:last-child { border-right: none; }
-                .m-col.product { 
-                    width: 280px; 
-                    flex-shrink: 0; 
-                    flex-direction: column; 
-                    align-items: flex-start; 
-                    justify-content: center; 
-                    gap: 3px; 
-                    background: #fafbfc;
+                .m-col.product {
+                    width: 280px;
+                    flex-shrink: 0;
+                    flex-direction: column;
+                    align-items: flex-start;
+                    justify-content: center;
+                    gap: 3px;
+                    background: transparent;
                 }
                 .m-col.product strong { font-size: 13px; font-weight: 600; color: var(--text-primary); letter-spacing: -0.1px; }
                 .m-col.product small { font-size: 11px; color: var(--text-secondary); font-weight: 400; }
@@ -2114,10 +2087,11 @@ export default function WorkOrderWizard({
                 }
 
 
-                /* Dvije kolone → jedna kad nema širine (rail iznad matrice) */
-                @media (max-width: 900px) {
-                    .wz-two { grid-template-columns: 1fr; grid-template-rows: auto 1fr; }
-                    .wz-rail { border-right: none; border-bottom: 1px solid var(--border-light); max-height: 45%; }
+                /* Uske širine: trake se lome na manje kolona */
+                @media (max-width: 820px) {
+                    .wz-band { grid-template-columns: 1fr 1fr; }
+                    .wz-fin { grid-template-columns: 1fr 1fr; }
+                    .wz-subrow { grid-template-columns: 1fr; }
                 }
 
                 /* TABLET RESPONSIVE (768px - 1024px) */
