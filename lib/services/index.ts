@@ -102,7 +102,7 @@ export { getInvoicesForProject, saveInvoiceDraft, deleteInvoice, issueInvoice, c
 export type { InvoiceDraftInput } from './invoice/invoiceService';
 
 // Order
-export { getOrders, getOrder, getOrderItems, createOrder, saveOrder, deleteOrder, updateOrderStatus, markOrderSent, markMaterialsReceived, markMaterialsUnreceived, deleteOrderItemsByIds, updateOrderItem, recalculateOrderTotal, batchUpdateMaterialStatuses } from './order/orderService';
+export { getOrders, getOrder, getOrderItems, createOrder, saveOrder, deleteOrder, updateOrderStatus, markOrderSent, markMaterialsReceived, markMaterialsUnreceived, deleteOrderItemsByIds, updateOrderItem, recalculateOrderTotal, batchUpdateMaterialStatuses, createOrdersFromMaterialSelection } from './order/orderService';
 
 // Work Order
 export {

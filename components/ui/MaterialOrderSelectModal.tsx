@@ -22,16 +22,24 @@ import './MaterialOrderSelectModal.css';
 interface MaterialOrderSelectModalProps {
     isOpen: boolean;
     onClose: () => void;
-    workOrderId: string;
+    /** Put kroz nalog — plan se vuče iz baze. Izostavlja se kad se šalje gotov `plan`. */
+    workOrderId?: string;
     workOrderLabel: string;
     plannedStartDate: string;
     organizationId: string;
     onRefresh: (...collections: string[]) => void;
     showToast: (message: string, type: 'success' | 'error' | 'info') => void;
+    /**
+     * Gotov plan (Komandni centar: materijali odabrani direktno s proizvoda,
+     * bez naloga). Kad je zadan, modal ne čita ništa iz baze.
+     */
+    plan?: MaterialOrderPlanGroup[];
+    /** Upis za gotov plan — obavezan uz `plan`. */
+    onCreate?: (selectedMaterialIds: string[]) => Promise<{ ordersCreated: number; orderNumbers: string[] }>;
 }
 
 export default function MaterialOrderSelectModal({
-    isOpen, onClose, workOrderId, workOrderLabel, plannedStartDate, organizationId, onRefresh, showToast,
+    isOpen, onClose, workOrderId, workOrderLabel, plannedStartDate, organizationId, onRefresh, showToast, plan, onCreate,
 }: MaterialOrderSelectModalProps) {
     const [loading, setLoading] = useState(true);
     const [groups, setGroups] = useState<MaterialOrderPlanGroup[]>([]);
@@ -43,6 +51,16 @@ export default function MaterialOrderSelectModal({
     useEffect(() => {
         if (!isOpen) return;
         let cancelled = false;
+        // Gotov plan (Komandni centar) se ne ponavlja iz baze — pozivalac ga je već izgradio.
+        if (plan) {
+            setGroups(plan);
+            const all = new Set<string>();
+            plan.forEach(g => g.materials.forEach(m => all.add(m.productMaterialId)));
+            setSelected(all);
+            setLoading(false);
+            return;
+        }
+        if (!workOrderId) { setGroups([]); setLoading(false); return; }
         setLoading(true);
         import('@/lib/services').then(({ buildMaterialOrderPlan }) => buildMaterialOrderPlan(workOrderId, organizationId))
             .then(plan => {
@@ -56,7 +74,7 @@ export default function MaterialOrderSelectModal({
             .finally(() => { if (!cancelled) setLoading(false); });
         return () => { cancelled = true; };
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [isOpen, workOrderId, organizationId]);
+    }, [isOpen, workOrderId, organizationId, plan]);
 
     const groupState = (g: MaterialOrderPlanGroup): 'all' | 'some' | 'none' => {
         const ids = g.materials.map(m => m.productMaterialId);
@@ -100,8 +118,11 @@ export default function MaterialOrderSelectModal({
         if (selected.size === 0 || creating) return;
         setCreating(true);
         try {
-            const { createSelectedMaterialOrders } = await import('@/lib/services');
-            const res = await createSelectedMaterialOrders(workOrderId, plannedStartDate, Array.from(selected), organizationId);
+            const ids = Array.from(selected);
+            const res = onCreate
+                ? await onCreate(ids)
+                : await import('@/lib/services').then(({ createSelectedMaterialOrders }) =>
+                    createSelectedMaterialOrders(workOrderId || '', plannedStartDate, ids, organizationId));
             if (res.ordersCreated > 0) {
                 showToast(`Kreirano ${res.ordersCreated} ${res.ordersCreated === 1 ? 'narudžba' : 'narudžbi'} (${res.orderNumbers.join(', ')})`, 'success');
                 onRefresh('orders');

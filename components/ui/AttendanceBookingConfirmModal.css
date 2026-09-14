@@ -3,28 +3,144 @@
    Apple-style, usklađeno s design tokenima iz globals.css
    ============================================ */
 
-.abcm { display: flex; flex-direction: column; gap: 14px; }
+.abcm { display: flex; flex-direction: column; }
 
-.abcm-intro {
-    margin: 0;
-    font-size: 13px;
-    line-height: 1.5;
+/* ── Naslov ────────────────────────────────────────────────── */
+.abcm-title { display: inline-flex; align-items: center; gap: 9px; }
+.abcm-title-icon { color: var(--success); }
+.abcm-title-date { color: var(--text-tertiary); font-weight: 400; }
+
+/* ── Alatna traka (lijepi se uz vrh tijela modala) ──────────── */
+/* Negativne margine ponište padding .modal-body, a vlastiti padding ga vrati —
+   tako traka ide od ivice do ivice i ništa ne proviruje iznad nje pri skrolu. */
+.abcm-bar {
+    position: sticky;
+    top: -24px;
+    z-index: 5;
+    margin: -24px -24px 14px;
+    padding: 24px 24px 12px;
+    background: var(--background);
+    border-bottom: 1px solid var(--border-light);
+}
+
+.abcm-bar-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+
+.abcm-hint {
+    margin: 9px 0 0;
+    font-size: 12.5px;
+    line-height: 1.45;
     color: var(--text-secondary);
 }
 
-/* ── Kartica radnika ───────────────────────────────────────── */
+/* Prekidač prikaza */
+.abcm-seg {
+    display: inline-flex;
+    background: var(--surface);
+    border-radius: var(--radius-sm);
+    padding: 2px;
+    flex-shrink: 0;
+}
+.abcm-seg button {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    border: none;
+    background: none;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: var(--transition);
+    white-space: nowrap;
+}
+.abcm-seg button:hover { color: var(--text-primary); }
+.abcm-seg button.is-on {
+    background: var(--background);
+    color: var(--text-primary);
+    font-weight: 600;
+    box-shadow: 0 1px 2px var(--shadow-md);
+}
+
+/* Pretraga */
+.abcm-search {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    flex: 1 1 180px;
+    min-width: 150px;
+    padding: 0 10px;
+    height: 34px;
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius-sm);
+    background: var(--surface);
+    color: var(--text-tertiary);
+    transition: var(--transition);
+}
+.abcm-search:focus-within {
+    background: var(--background);
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-light);
+}
+.abcm-search input {
+    flex: 1;
+    min-width: 0;
+    border: none;
+    background: none;
+    outline: none;
+    font-size: 13px;
+    color: var(--text-primary);
+}
+.abcm-search-clear {
+    display: inline-flex;
+    border: none;
+    background: none;
+    color: var(--text-tertiary);
+    cursor: pointer;
+    padding: 2px;
+    border-radius: 5px;
+}
+.abcm-search-clear:hover { color: var(--text-primary); background: var(--surface-hover); }
+
+/* „Prepiši jučer" */
+.abcm-ghost {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 34px;
+    padding: 0 12px;
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius-sm);
+    background: var(--background);
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-primary);
+    cursor: pointer;
+    transition: var(--transition);
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+.abcm-ghost:hover:not(:disabled) { background: var(--accent-light); border-color: var(--accent); color: var(--accent); }
+.abcm-ghost:disabled { opacity: 0.45; cursor: default; }
+
+/* ── Kartice ───────────────────────────────────────────────── */
+.abcm-list { display: flex; flex-direction: column; gap: 12px; }
+
 .abcm-card {
     border: 1px solid var(--border-light);
     border-radius: var(--radius-lg);
     overflow: hidden;
     background: var(--background);
+    transition: border-color var(--transition);
 }
+.abcm-card.is-empty { border-style: dashed; }
 
 .abcm-head {
     display: flex;
     align-items: center;
     gap: 12px;
-    padding: 12px 14px;
+    padding: 11px 14px;
     background: var(--surface);
     border-bottom: 1px solid var(--border-light);
 }
@@ -45,8 +161,22 @@
 .abcm-avatar--teren { background: var(--accent); }
 
 .abcm-who { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
-.abcm-name { font-size: 14px; font-weight: 600; color: var(--text-primary); }
-.abcm-sub { font-size: 12px; color: var(--text-secondary); }
+.abcm-name {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-primary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.abcm-sub {
+    font-size: 12px;
+    color: var(--text-secondary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.abcm-sub--warn { color: var(--warning); font-weight: 500; }
 
 .abcm-head-right { margin-left: auto; display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
 
@@ -64,20 +194,55 @@
 .abcm-badge--present { background: var(--success-bg); color: #1b7a3a; }
 .abcm-badge--teren { background: var(--accent-light); color: var(--accent); }
 
-.abcm-link {
+/* Broj radnika na nalogu (prikaz po nalozima) */
+.abcm-count {
     font-size: 12px;
-    color: var(--accent);
-    background: none;
+    font-weight: 600;
+    color: var(--text-tertiary);
+    white-space: nowrap;
+}
+.abcm-count.is-on { color: var(--accent); }
+
+/* ½ / 1 dan */
+.abcm-presence {
+    display: inline-flex;
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+}
+.abcm-presence button {
+    padding: 3px 10px;
+    font-size: 11px;
+    font-weight: 700;
     border: none;
     cursor: pointer;
-    padding: 4px 8px;
-    border-radius: 7px;
-    font-weight: 500;
-    transition: background var(--transition);
+    background: var(--background);
+    color: var(--text-secondary);
+    transition: var(--transition);
 }
-.abcm-link:hover { background: var(--accent-light); }
+.abcm-presence button:hover { background: var(--surface-hover); }
+.abcm-presence button.is-on { background: var(--accent); color: #fff; }
 
-/* ── Prisutan: lista proizvoda ─────────────────────────────── */
+/* Malo dugme u zaglavlju kartice („Jučer", ili datum kad izvor nije jučer) */
+.abcm-icon-btn {
+    text-transform: capitalize;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 9px;
+    font-size: 11.5px;
+    font-weight: 600;
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius-sm);
+    background: var(--background);
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: var(--transition);
+    white-space: nowrap;
+}
+.abcm-icon-btn:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-light); }
+
+/* ── Redovi naloga u kartici radnika ───────────────────────── */
 .abcm-items { display: flex; flex-direction: column; padding: 6px; }
 
 /* viša specifičnost (.abcm .abcm-item) da pobijedi globalni `.modal label` */
@@ -140,100 +305,137 @@
     align-items: center;
     gap: 4px;
 }
-.abcm-chip--paused {
-    background: var(--warning-bg);
-    color: #8a5a00;
-    border-color: #f3e1c0;
+.abcm-head .abcm-chip { margin-left: 0; background: var(--background); }
+.abcm-chip--paused { background: var(--warning-bg); color: #8a5a00; border-color: #f3e1c0; }
+.abcm-chip--resume { background: var(--accent-light); color: var(--accent); border-color: #cfe6ff; }
+.abcm-chip--new { background: var(--success-bg); color: #1b7a3a; border-color: #cdeeda; }
+.abcm-head .abcm-chip--paused { background: var(--warning-bg); }
+.abcm-head .abcm-chip--resume { background: var(--accent-light); }
+.abcm-head .abcm-chip--new { background: var(--success-bg); }
+
+/* ── Podnožje kartice: dodaj nalog / označi sve / novi nalog ── */
+.abcm-card-foot {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 9px 12px;
+    border-top: 1px dashed var(--border-light);
+    background: var(--background);
 }
-.abcm-chip--resume {
-    background: var(--accent-light);
+/* Uska kontrola, ne polje forme preko cijele širine — podnožje ostaje mirno. */
+.abcm-add { flex: 0 1 250px; min-width: 0; }
+.abcm-card-foot > .abcm-link:first-of-type { margin-left: auto; }
+
+.abcm-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 12.5px;
     color: var(--accent);
-    border-color: #cfe6ff;
-}
-.abcm-chip--new {
-    background: var(--success-bg, #eafaf0);
-    color: var(--success, #1e7e44);
-    border-color: #cdeeda;
-}
-
-/* ── Teren: opcije ─────────────────────────────────────────── */
-.abcm-options { display: flex; flex-direction: column; gap: 8px; padding: 10px; }
-
-.abcm .abcm-opt {
-    display: block;
-    border: 1px solid var(--border-light);
-    border-radius: var(--radius-md);
-    padding: 11px 12px;
+    background: none;
+    border: none;
     cursor: pointer;
-    transition: var(--transition);
-    text-transform: none;
-    letter-spacing: normal;
-}
-.abcm .abcm-opt:hover { border-color: var(--border); background: var(--surface); }
-.abcm .abcm-opt.is-on { border-color: var(--accent); background: var(--accent-light); }
-
-.abcm-opt-row { display: flex; align-items: center; gap: 11px; }
-.abcm-opt input[type="radio"] {
-    width: 16px;
-    height: 16px;
-    accent-color: var(--accent);
-    cursor: pointer;
-    flex-shrink: 0;
-    margin: 0;
-}
-.abcm-opt-label {
-    font-size: 14px;
+    padding: 5px 8px;
+    border-radius: 7px;
     font-weight: 500;
-    color: var(--text-primary);
+    white-space: nowrap;
+    transition: background var(--transition);
+}
+.abcm-link:hover { background: var(--accent-light); }
+
+/* „Svi / Niko" na kraju reda radnika — visina reda ista kao kod dugmadi radnika */
+.abcm-link--chip { align-self: center; padding: 5px 10px; }
+
+/* SearchableSelect crta vlastiti okvir — stisni ga u tihu „dodaj" kontrolu,
+   da podnožje kartice ne izgleda kao još jedno polje forme. */
+.abcm-add .searchable-select-trigger {
+    padding: 6px 11px !important;
+    border: 1px solid var(--border-light) !important;
+    border-radius: var(--radius-sm) !important;
+    background: var(--surface) !important;
+    box-shadow: none !important;
+}
+.abcm-add .searchable-select-trigger:hover { border-color: var(--accent) !important; background: var(--accent-light) !important; }
+.abcm-add .searchable-select-trigger.active {
+    border-color: var(--accent) !important;
+    background: var(--background) !important;
+    box-shadow: 0 0 0 3px var(--accent-light) !important;
+}
+.abcm-add .trigger-text { font-size: 13px !important; font-weight: 500 !important; color: var(--accent) !important; }
+.abcm-add .trigger-text.placeholder { color: var(--accent) !important; font-weight: 500 !important; }
+
+/* ── Prikaz po nalozima: radnici kao dugmad ────────────────── */
+.abcm-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 7px;
+    padding: 11px 12px;
+}
+
+.abcm-wchip {
     display: inline-flex;
     align-items: center;
     gap: 7px;
-}
-.abcm-opt-hint { margin-left: auto; font-size: 12px; color: var(--text-tertiary); }
-
-.abcm-opt-control { margin: 10px 0 2px; padding-left: 27px; }
-.abcm-opt-control select,
-.abcm-opt-control input {
-    width: 100%;
-    padding: 9px 11px;
-    border: 1px solid var(--border);
-    border-radius: var(--radius-md);
-    font-size: 14px;
+    padding: 5px 12px 5px 5px;
+    border: 1px solid var(--border-light);
+    border-radius: 999px;
     background: var(--background);
-    color: var(--text-primary);
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-secondary);
+    cursor: pointer;
     transition: var(--transition);
 }
-.abcm-opt-control select:focus,
-.abcm-opt-control input:focus {
-    outline: none;
+.abcm-wchip:hover { border-color: var(--border); background: var(--surface); color: var(--text-primary); }
+.abcm-wchip.is-assigned { border-color: #cfe6ff; }
+.abcm-wchip.is-on {
+    background: var(--accent);
     border-color: var(--accent);
-    box-shadow: 0 0 0 3px var(--accent-light);
+    color: #fff;
+    font-weight: 600;
 }
 
-/* SearchableSelect ("Postojeći nalog") renders its own trigger box — match it
-   to the select/input style above so it isn't a visibly different size/shape. */
-.abcm-opt-control .searchable-select-trigger {
-    padding: 9px 12px !important;
-    border: 1px solid var(--border) !important;
-    border-radius: var(--radius-md) !important;
-    background: var(--background) !important;
-    box-shadow: none !important;
+.abcm-wchip-dot {
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    display: grid;
+    place-items: center;
+    font-size: 10px;
+    font-weight: 700;
+    color: #fff;
+    flex-shrink: 0;
+    letter-spacing: 0.02em;
 }
-.abcm-opt-control .searchable-select-trigger.active {
-    border-color: var(--accent) !important;
-    box-shadow: 0 0 0 3px var(--accent-light) !important;
+.abcm-wchip-dot.is-present { background: var(--success); }
+.abcm-wchip-dot.is-teren { background: var(--accent); }
+.abcm-wchip.is-on .abcm-wchip-dot { background: rgba(255, 255, 255, 0.25); }
+
+.abcm-wchip-half { font-size: 11px; font-weight: 700; opacity: 0.75; }
+
+/* „Prikaži još N naloga" */
+.abcm-more {
+    align-self: center;
+    padding: 9px 16px;
+    border: 1px dashed var(--border);
+    border-radius: var(--radius-md);
+    background: none;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: var(--transition);
 }
-.abcm-opt-control .trigger-text {
-    font-size: 14px !important;
-    font-weight: 500 !important;
-    color: var(--text-primary) !important;
-}
-.abcm-opt-control .trigger-text.placeholder {
-    color: var(--text-tertiary) !important;
-    font-weight: 400 !important;
+.abcm-more:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-light); }
+
+.abcm-empty {
+    padding: 34px 16px;
+    text-align: center;
+    font-size: 13.5px;
+    color: var(--text-secondary);
 }
 
-/* ── Footer ────────────────────────────────────────────────── */
+/* ── Podnožje modala ───────────────────────────────────────── */
 .abcm-foot {
     display: flex;
     align-items: center;
@@ -243,12 +445,30 @@
 }
 .abcm-foot-count { font-size: 13px; color: var(--text-secondary); }
 .abcm-foot-count strong { color: var(--text-primary); font-weight: 600; }
+.abcm-foot-warn { color: var(--warning); }
 .abcm-foot-btns { display: flex; gap: 10px; }
 
+/* ── Mobilno ───────────────────────────────────────────────── */
 @media (max-width: 768px) {
+    .abcm-bar {
+        top: -20px;
+        margin: -20px -20px 12px;
+        padding: 20px 20px 10px;
+    }
+    .abcm-seg { flex: 1 1 100%; }
+    .abcm-seg button { flex: 1; justify-content: center; }
+    .abcm-search { flex: 1 1 auto; height: 38px; }
+    .abcm-ghost { height: 38px; }
+
+    .abcm-head { flex-wrap: wrap; row-gap: 8px; }
+    .abcm-head-right { margin-left: 0; width: 100%; justify-content: flex-start; }
+
     .abcm-foot { flex-direction: column; align-items: stretch; grid-column: 1 / -1; }
     .abcm-foot-btns { display: grid; grid-template-columns: 1fr 1fr; }
     .abcm-chip { max-width: 38%; }
     .abcm .abcm-item { padding: 12px 10px; }
-    .abcm .abcm-opt { padding: 13px 12px; }
+
+    .abcm-card-foot { flex-wrap: wrap; }
+    .abcm-add { flex: 1 1 100%; }
+    .abcm-wchip { padding: 7px 14px 7px 7px; font-size: 14px; }
 }

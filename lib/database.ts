@@ -4091,6 +4091,36 @@ async function createOrdersFromGroups(
     // dalje razdvaja u listi) — bez toga su u Narudžbama samo brojevi.
     const orderName = groups.length > 0 ? await workOrderNameForOrders(workOrderId, organizationId) : undefined;
 
+    return writeOrdersForGroups(groups, organizationId, {
+        orderName,
+        expectedDelivery,
+        notes: `${notePrefix} Planirani početak: ${plannedStartDate}`,
+        notifyTitle,
+        notifySubject: 'radni nalog',
+        relatedId: workOrderId,
+    });
+}
+
+/**
+ * Stvarni upis narudžbi po dobavljaču. Izdvojeno iz createOrdersFromGroups da
+ * isti put mogu koristiti i materijali koji NISU vezani za nalog (Komandni
+ * centar bira ih direktno s proizvoda) — numeracija, Expected_Price i
+ * obavještenja moraju ostati jedno te isto, inače se narudžbe iz dva puta
+ * počnu razlikovati.
+ */
+async function writeOrdersForGroups(
+    groups: MaterialOrderPlanGroup[],
+    organizationId: string,
+    opts: {
+        orderName?: string;
+        expectedDelivery: string;
+        notes: string;
+        notifyTitle: string;
+        notifySubject: string;
+        relatedId?: string;
+    }
+): Promise<{ ordersCreated: number; orderNumbers: string[] }> {
+    const { orderName, expectedDelivery } = opts;
     const orderNumbers: string[] = [];
     for (const group of groups) {
         if (group.materials.length === 0) continue;
@@ -4116,7 +4146,7 @@ async function createOrdersFromGroups(
             Supplier_Name: group.supplierName,
             Expected_Delivery: expectedDelivery,
             Total_Amount: totalAmount,
-            Notes: `${notePrefix} Planirani početak: ${plannedStartDate}`,
+            Notes: opts.notes,
             items: orderItems as any
         }, organizationId);
 
@@ -4128,15 +4158,46 @@ async function createOrdersFromGroups(
     if (orderNumbers.length > 0) {
         await createNotification({
             organizationId,
-            title: notifyTitle,
-            message: `Kreirano ${orderNumbers.length} narudžbi za radni nalog. Brojevi: ${orderNumbers.join(', ')}`,
+            title: opts.notifyTitle,
+            message: `Kreirano ${orderNumbers.length} narudžbi za ${opts.notifySubject}. Brojevi: ${orderNumbers.join(', ')}`,
             type: 'info',
-            relatedId: workOrderId,
+            relatedId: opts.relatedId,
             link: '/orders'
         }, organizationId);
     }
 
     return { ordersCreated: orderNumbers.length, orderNumbers };
+}
+
+/**
+ * Narudžbe iz SLOBODNOG izbora materijala (Komandni centar): materijali su
+ * odabrani direktno s proizvoda, kroz više proizvoda i projekata, bez naloga.
+ *
+ * Plan gradi pozivalac (lib/command/materialOrder.planFromSelection) jer su
+ * projekti već u memoriji — ponovno čitanje iz baze bi bilo skuplje i ne bi
+ * ništa dokazalo. Narudžba nastaje kao „Nacrt"; materijali prelaze u
+ * „Naručeno" tek kad se narudžba pošalje (updateOrderStatus → 'Poslano'),
+ * isti put kao i sve druge narudžbe.
+ */
+export async function createOrdersFromMaterialSelection(
+    groups: MaterialOrderPlanGroup[],
+    expectedDelivery: string,
+    organizationId: string,
+    orderName?: string
+): Promise<{ ordersCreated: number; orderNumbers: string[] }> {
+    if (!organizationId || groups.length === 0) return { ordersCreated: 0, orderNumbers: [] };
+    try {
+        return await writeOrdersForGroups(groups, organizationId, {
+            orderName,
+            expectedDelivery,
+            notes: 'Kreirano iz Komandnog centra.',
+            notifyTitle: 'Narudžbe materijala kreirane',
+            notifySubject: 'odabrane materijale',
+        });
+    } catch (error) {
+        console.error('createOrdersFromMaterialSelection error:', error);
+        return { ordersCreated: 0, orderNumbers: [] };
+    }
 }
 
 /**

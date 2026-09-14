@@ -202,3 +202,17 @@ export async function batchUpdateMaterialStatuses(
     const { batchUpdateMaterialStatuses: _update } = await import('../../database');
     return _update(updates, organizationId);
 }
+
+/**
+ * Narudžbe iz slobodnog izbora materijala (Komandni centar) — materijali nisu
+ * vezani za radni nalog. Plan gradi pozivalac (lib/command/materialOrder).
+ */
+export async function createOrdersFromMaterialSelection(
+    groups: import('../../database').MaterialOrderPlanGroup[],
+    expectedDelivery: string,
+    organizationId: string,
+    orderName?: string
+): Promise<{ ordersCreated: number; orderNumbers: string[] }> {
+    const { createOrdersFromMaterialSelection: _create } = await import('../../database');
+    return _create(groups, expectedDelivery, organizationId, orderName);
+}

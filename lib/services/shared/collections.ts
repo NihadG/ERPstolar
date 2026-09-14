@@ -38,6 +38,8 @@ export const COLLECTIONS = {
     INVOICE_ITEMS: 'invoice_items',
     // Prijedlozi izmjena radnika — čekaju odobrenje vlasnika/kontrolora.
     CHANGE_REQUESTS: 'change_requests',
+    /** Lična tabla Komandnog centra — jedan dokument po korisniku (ID = auth uid). */
+    USER_BOARDS: 'user_boards',
 } as const;
 
 export type CollectionKey = keyof typeof COLLECTIONS;

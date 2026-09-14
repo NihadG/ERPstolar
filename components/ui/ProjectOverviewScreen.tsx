@@ -3,9 +3,8 @@
 // ════════════════════════════════════════════════════════════════════
 // PREGLED PROJEKTA — full-screen overlay (portal)
 //
-// Kompletna, radna slika projekta na jednom mjestu: šta klijent plaća, na šta ide
-// svaka marka, SVI proizvodi (i oni koji još nisu u nalogu), materijali (s
-// kreiranjem narudžbi), nalozi (otvaranje prave kartice) i radnici (dnevni rad).
+// Operativna komanda: napredak, nalozi, materijali po proizvodu, zadaci i plan.
+// Finansijski podaci ostaju u odvojenim detaljnim tabovima.
 // Sve se računa iz podataka u memoriji (buildProjectOverview) — otvaranje trenutno.
 //
 // Finansije = isti izvor kao kartica/nalog/analitika (lib/projectOverview → lib/profit).
@@ -13,16 +12,15 @@
 
 import { Fragment, useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { v4 as uuidv4 } from 'uuid';
 import {
     ArrowLeft, Printer, LayoutDashboard, Package, Boxes, ClipboardList, Users,
     TrendingUp, TrendingDown, Wallet, Coins, AlertTriangle, ChevronRight,
     ShoppingCart, CheckSquare, Square, Hammer, CalendarDays,
     Plus, ListChecks, Trash2, Pencil, PlayCircle, CheckCircle2, Circle, PieChart, X,
 } from 'lucide-react';
-import type { Project, WorkOrder, WorkLog, Offer, Worker, Material, Order, Task, TaskLink, ChecklistItem, TaskPriority } from '@/lib/types';
+import type { Project, WorkOrder, WorkLog, Offer, Worker, Material, Order, Task, TaskLink, TaskPriority } from '@/lib/types';
 import { TASK_PRIORITY_LABELS } from '@/lib/types';
-import { buildProjectOverview, type ProjectOverview, type WorkOrderOverviewRow } from '@/lib/projectOverview';
+import { buildProjectOverview, type ProjectOverview } from '@/lib/projectOverview';
 import { formatDate } from '@/lib/utils';
 import { orderItemPricing } from '@/lib/orderPricing';
 import { useIsCompact } from '@/hooks/useIsCompact';
@@ -36,6 +34,10 @@ import Modal from './Modal';
 import WorkOrderExpandedDetail from './WorkOrderExpandedDetail';
 import WorkOrderPrintTemplate from './WorkOrderPrintTemplate';
 import WorkOrderWizard, { type WizardInitialProducts } from '@/components/production/WorkOrderWizard';
+import ProjectCommand from './ProjectCommand';
+import ProjectMaterialGroups from './ProjectMaterialGroups';
+import TaskEditorModal from './TaskEditorModal';
+import { groupProjectMaterials, projectMaterialRows } from '@/lib/projectCommand';
 import './ProjectOverviewScreen.css';
 
 // ── Paleta troškovnih segmenata (fiksne, kontrastne) ────────────────
@@ -170,8 +172,6 @@ export default function ProjectOverviewScreen({
     );
     const openTaskCount = useMemo(() => projectTasks.filter(t => t.Status !== 'completed' && t.Status !== 'cancelled').length, [projectTasks]);
 
-    // Vrijednost materijala koji čekaju narudžbu (za „Naruči" prečicu na Komandi).
-    const orderableValue = useMemo(() => orderableMaterials.reduce((s, m) => s + m.lineTotal, 0), [orderableMaterials]);
 
     // ── Kreiranje naloga: ugrađeni wizard (ostaje se na projektu) ─────────
     const openWizard = (products?: WizardInitialProducts) => {
@@ -229,12 +229,6 @@ export default function ProjectOverviewScreen({
         showToast?.(res.message, res.success ? 'success' : 'error');
         if (res.success) onRefresh?.('tasks');
         return res.success;
-    };
-
-    const handleQuickAddTask = async (title: string, priority: TaskPriority) => {
-        const t = title.trim();
-        if (!t) return;
-        await handleSaveTask({ Title: t, Priority: priority, Category: 'general', Status: 'pending', Description: '' });
     };
 
     const handleToggleTaskDone = async (task: Task) => {
@@ -377,7 +371,7 @@ export default function ProjectOverviewScreen({
     const TABS: { id: Tab; label: string; Icon: typeof Package; count?: number }[] = [
         { id: 'komanda', label: 'Komanda', Icon: LayoutDashboard },
         { id: 'proizvodi', label: 'Proizvodi', Icon: Package, count: ov.products.length },
-        { id: 'materijali', label: 'Materijali', Icon: Boxes, count: ov.materials.length },
+        { id: 'materijali', label: 'Materijali', Icon: Boxes, count: (project.products || []).reduce((sum, product) => sum + (product.materials || []).length, 0) },
         { id: 'nalozi', label: 'Nalozi', Icon: ClipboardList, count: ov.workOrders.length },
         { id: 'zadaci', label: 'Zadaci', Icon: ListChecks, count: openTaskCount },
         { id: 'finansije', label: 'Finansije', Icon: PieChart },
@@ -442,23 +436,21 @@ export default function ProjectOverviewScreen({
             </header>
 
             <main className="pov-body">
-                {tab === 'komanda' && (
-                    <KomandaTab
-                        ov={ov} project={project} fmt={fmt} fmt0={fmt0} marginClass={marginClass}
-                        rawWorkOrders={workOrders} workLogs={workLogs} projectTasks={projectTasks}
-                        orderableCount={orderableMaterials.length} orderableValue={orderableValue}
+                <div hidden={tab !== 'komanda'}>
+                    <ProjectCommand
+                        ov={ov} project={project} organizationId={organizationId}
+                        rawWorkOrders={workOrders} projectTasks={projectTasks}
+                        orderableCount={orderableMaterials.length}
                         canCreate={canCreate}
-                        onOpenWorkOrder={(id) => { setExpandedWoId(id); setTab('nalozi'); }}
+                        onOpenWorkOrder={(id) => { setExpandedWoId(id); setTab('nalozi'); swipeRef.current?.scrollTo({ top: 0 }); }}
                         onNewWorkOrder={() => openWizard()}
-                        onStartWorkOrder={handleWoStart}
                         onNaruci={() => orderableMaterials.length ? setOrderDialogOpen(true) : showToast?.('Nema materijala spremnih za narudžbu', 'info')}
                         onAddTask={() => setTaskModal({ mode: 'create' })}
-                        onQuickAddTask={handleQuickAddTask}
                         onToggleTask={handleToggleTaskDone}
                         onOpenTask={(t) => setTaskModal({ mode: 'edit', task: t })}
-                        onGoTab={(t) => setTab(t)}
+                        onGoTab={(t) => { setTab(t); swipeRef.current?.scrollTo({ top: 0 }); }}
                     />
-                )}
+                </div>
                 {tab === 'proizvodi' && <ProizvodiTab ov={ov} fmt={fmt} onCreateWorkOrder={canCreate ? createWorkOrderFromProducts : undefined} />}
                 {tab === 'materijali' && (
                     <MaterijaliTab
@@ -504,11 +496,11 @@ export default function ProjectOverviewScreen({
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
                     <button className="pov-choice" onClick={() => confirmWoDelete('completed')}>
                         <span style={{ fontSize: 22 }}>✅</span>
-                        <span><b>Završi proizvode</b><small>Postavi status na „Spremno" (bez kalkulacije profita)</small></span>
+                        <span><b>Završi proizvode</b><small>Postavi status na „Spremno” (bez kalkulacije profita)</small></span>
                     </button>
                     <button className="pov-choice" onClick={() => confirmWoDelete('waiting')}>
                         <span style={{ fontSize: 22 }}>↩️</span>
-                        <span><b>Vrati na čekanje</b><small>Proizvodi se vraćaju u „Na čekanju"</small></span>
+                        <span><b>Vrati na čekanje</b><small>Proizvodi se vraćaju u „Na čekanju”</small></span>
                     </button>
                 </div>
             </Modal>
@@ -917,19 +909,16 @@ function MaterijaliTab({ ov, project, fmt, orders, orderable, canOrder, onCreate
     orderable: OrderableMaterial[]; canOrder: boolean;
     onCreateOrders: (ids: Set<string>, mode: 'single' | 'supplier' | 'category') => Promise<void>;
 }) {
-    const compact = useIsCompact();
-    const [filter, setFilter] = useState<string>('');
+    const [filter, setFilter] = useState('');
     const [orderModal, setOrderModal] = useState(false);
     const [openOrders, setOpenOrders] = useState<Set<string>>(new Set());
-    const [openMat, setOpenMat] = useState<Set<string>>(new Set());
-    const counts = useMemo(() => ({
-        total: ov.materials.length,
-        notOrdered: ov.materials.filter(m => m.status === 'Nije naručeno').length,
-        ordered: ov.materials.filter(m => m.status === 'Naručeno').length,
-        ready: ov.materials.filter(m => m.status === 'Primljeno' || m.status === 'Na stanju').length,
-    }), [ov.materials]);
-    const rows = filter ? ov.materials.filter(m => m.status === filter) : ov.materials;
-    const fmtQty = (v: number, u: string) => `${v % 1 === 0 ? v : v.toFixed(2)} ${u}`;
+    const materialRows = useMemo(() => projectMaterialRows(project), [project]);
+    const counts = {
+        total: materialRows.length,
+        notOrdered: materialRows.filter(m => m.Status === 'Nije naručeno').length,
+        ordered: materialRows.filter(m => m.Status === 'Naručeno').length,
+        ready: materialRows.filter(m => m.Status === 'Primljeno' || m.Status === 'Na stanju').length,
+    };
 
     if (ov.materials.length === 0 && orders.length === 0) return <EmptyState icon="inventory_2" text="Nijedan proizvod ovog projekta nema unesene materijale." />;
 
@@ -941,10 +930,9 @@ function MaterijaliTab({ ov, project, fmt, orders, orderable, canOrder, onCreate
                         <button className={`pov-fchip ${filter === '' ? 'on' : ''}`} onClick={() => setFilter('')}>Svi ({counts.total})</button>
                         {counts.notOrdered > 0 && <button className={`pov-fchip danger ${filter === 'Nije naručeno' ? 'on' : ''}`} onClick={() => setFilter('Nije naručeno')}>Čeka ({counts.notOrdered})</button>}
                         {counts.ordered > 0 && <button className={`pov-fchip warning ${filter === 'Naručeno' ? 'on' : ''}`} onClick={() => setFilter('Naručeno')}>Naručeno ({counts.ordered})</button>}
-                        {counts.ready > 0 && <button className={`pov-fchip success ${filter === 'Primljeno' ? 'on' : ''}`} onClick={() => setFilter('Primljeno')}>Spremno ({counts.ready})</button>}
+                        {counts.ready > 0 && <button className={`pov-fchip success ${filter === 'ready' ? 'on' : ''}`} onClick={() => setFilter('ready')}>Spremno ({counts.ready})</button>}
                     </div>
                     <div className="pov-mat-toolbar-right">
-                        <span className="pov-mat-total">Vrijednost: <b>{fmt(ov.materialCatalogCost)}</b></span>
                         {canOrder && (
                             <button className="pov-btn-primary sm" onClick={() => setOrderModal(true)}>
                                 <ShoppingCart size={15} /> Naruči materijale ({orderable.length})
@@ -952,74 +940,7 @@ function MaterijaliTab({ ov, project, fmt, orders, orderable, canOrder, onCreate
                         )}
                     </div>
                 </div>
-                {rows.length === 0 ? (
-                    <div className="pov-empty"><span className="material-icons-round">filter_alt_off</span><p>Nema materijala u ovom filteru.</p></div>
-                ) : compact ? (
-                    <div className="pov-mlist pov-mlist-inset">
-                        {rows.map((m, i) => {
-                            const isOpen = openMat.has(m.materialId || String(i));
-                            const key = m.materialId || String(i);
-                            return (
-                                <div key={key} className="pov-mcard">
-                                    <div className="pov-mcard-head" onClick={() => setOpenMat(prev => { const n = new Set(prev); n.has(key) ? n.delete(key) : n.add(key); return n; })}>
-                                        <div className="pov-mcard-title">
-                                            <div className="pov-mcard-name">{m.name}</div>
-                                            {m.products.length > 0 && <div className="pov-mcard-sub">{m.products.length === 1 ? m.products[0] : `${m.products.length} proizvoda`}</div>}
-                                        </div>
-                                        <span className={`pov-chip ${matStatusClass(m.status)}`}>{m.status}</span>
-                                        <ChevronRight size={18} className={`pov-chev ${isOpen ? 'open' : ''}`} />
-                                    </div>
-                                    <div className="pov-mcard-figs">
-                                        <div className="pov-fig"><span>Potrebno</span><b>{fmtQty(m.needed, m.unit)}</b></div>
-                                        <div className="pov-fig"><span>Preostalo</span><b style={{ color: m.remaining > 0 ? 'var(--error)' : 'var(--success)' }}>{fmtQty(m.remaining, m.unit)}</b></div>
-                                        <div className="pov-fig"><span>Vrijednost</span><b>{fmt(m.lineCost)}</b></div>
-                                    </div>
-                                    {isOpen && (
-                                        <div className="pov-mcard-detail">
-                                            <Detail label="Na stanju" value={fmtQty(m.onStock, m.unit)} />
-                                            <Detail label="Naručeno" value={fmtQty(m.ordered, m.unit)} />
-                                            <Detail label="Primljeno" value={fmtQty(m.received, m.unit)} />
-                                        </div>
-                                    )}
-                                </div>
-                            );
-                        })}
-                    </div>
-                ) : (
-                    <div className="pov-table-wrap">
-                        <table className="pov-table">
-                            <thead>
-                                <tr>
-                                    <th>Materijal</th>
-                                    <th className="r hide-sm">Potrebno</th>
-                                    <th className="r hide-md">Na stanju</th>
-                                    <th className="r hide-md">Naručeno</th>
-                                    <th className="r hide-md">Primljeno</th>
-                                    <th className="r hl">Preostalo</th>
-                                    <th className="r hide-sm">Vrijednost</th>
-                                    <th className="c">Status</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {rows.map((m, i) => (
-                                    <tr key={m.materialId || i}>
-                                        <td>
-                                            <div className="pov-mat-name">{m.name}</div>
-                                            {m.products.length > 0 && <div className="pov-mat-sub" title={m.products.join(', ')}>{m.products.length === 1 ? m.products[0] : `${m.products.length} proizvoda`}</div>}
-                                        </td>
-                                        <td className="r fw hide-sm">{fmtQty(m.needed, m.unit)}</td>
-                                        <td className="r dim hide-md">{fmtQty(m.onStock, m.unit)}</td>
-                                        <td className="r dim hide-md">{fmtQty(m.ordered, m.unit)}</td>
-                                        <td className="r dim hide-md">{fmtQty(m.received, m.unit)}</td>
-                                        <td className="r hl"><span style={{ color: m.remaining > 0 ? 'var(--error)' : 'var(--success)', fontWeight: 700 }}>{fmtQty(m.remaining, m.unit)}</span></td>
-                                        <td className="r dim hide-sm">{fmt(m.lineCost)}</td>
-                                        <td className="c"><span className={`pov-chip ${matStatusClass(m.status)}`}>{m.status}</span></td>
-                                    </tr>
-                                ))}
-                            </tbody>
-                        </table>
-                    </div>
-                )}
+                <ProjectMaterialGroups project={project} filter={filter} />
             </div>
 
             {/* Narudžbe projekta */}
@@ -1033,7 +954,7 @@ function MaterijaliTab({ ov, project, fmt, orders, orderable, canOrder, onCreate
                 ) : (
                     <div className="pov-order-list">
                         {orders.map(o => {
-                            const items = o.items || [];
+                            const items = (o.items || []).filter(it => it.Project_ID === project.Project_ID);
                             const isOpen = openOrders.has(o.Order_ID);
                             return (
                                 <div key={o.Order_ID} className={`pov-order-wrap ${isOpen ? 'open' : ''}`}>
@@ -1049,7 +970,7 @@ function MaterijaliTab({ ov, project, fmt, orders, orderable, canOrder, onCreate
                                         <div className="pov-order-meta">
                                             <span>{items.length} {items.length === 1 ? 'stavka' : 'stavki'}</span>
                                             {o.Expected_Delivery && <><span className="pov-dot">•</span><span>Isporuka: {formatDate(o.Expected_Delivery)}</span></>}
-                                            <span className="pov-dot">•</span><b>{fmt(o.Total_Amount || 0)}</b>
+
                                         </div>
                                     </div>
                                     {isOpen && (
@@ -1060,7 +981,7 @@ function MaterijaliTab({ ov, project, fmt, orders, orderable, canOrder, onCreate
                                                 // Legacy auto-narudžbe su Expected_Price spremile kao JEDINIČNU
                                                 // cijenu — bez ovoga red pokazuje 3.000 KM za 0.08 m³.
                                                 const pricing = orderItemPricing(o);
-                                                return items.map(it => (
+                                                return groupProjectMaterials(items, it => ({ productId: it.Product_ID || '', productName: it.Product_Name || '', name: it.Material_Name })).map(group => <div key={group.id}><div className="pov-material-group-heading">{group.name}<span>{group.rows.length} stavki</span></div>{group.rows.map(it => (
                                                     <div key={it.ID} className="pov-order-item">
                                                         <div className="pov-order-item-main">
                                                             <span className="pov-order-item-name">{it.Material_Name}</span>
@@ -1072,7 +993,7 @@ function MaterijaliTab({ ov, project, fmt, orders, orderable, canOrder, onCreate
                                                         <span className={`pov-chip ${matStatusClass(it.Status)}`}>{it.Status}</span>
                                                         <b className="pov-order-item-price">{fmt(pricing.lineTotal(it))}</b>
                                                     </div>
-                                                ));
+                                                ))}</div>);
                                             })()}
                                         </div>
                                     )}
@@ -1097,6 +1018,7 @@ function OrderCreateDialog({ orderable, fmt, onClose, onConfirm }: {
     const [mode, setMode] = useState<'single' | 'supplier' | 'category'>('supplier');
     const [saving, setSaving] = useState(false);
 
+    const productGroups = useMemo(() => groupProjectMaterials(orderable, m => m), [orderable]);
     const chosen = orderable.filter(m => selected.has(m.id));
     const orderCount = useMemo(() => {
         if (chosen.length === 0) return 0;
@@ -1111,7 +1033,7 @@ function OrderCreateDialog({ orderable, fmt, onClose, onConfirm }: {
         <Modal isOpen onClose={onClose} title="Naruči materijale" size="large"
             footer={<>
                 <button className="btn btn-secondary" onClick={onClose} disabled={saving}>Odustani</button>
-                <button className="btn btn-primary" disabled={saving || chosen.length === 0} onClick={() => { setSaving(true); onConfirm(selected, mode); }}>
+                <button className="btn btn-primary" disabled={saving || chosen.length === 0} onClick={async () => { setSaving(true); try { await onConfirm(selected, mode); } finally { setSaving(false); } }}>
                     {saving ? 'Kreiram…' : `Kreiraj ${orderCount} ${orderCount === 1 ? 'narudžbu' : 'narudžbi'}`}
                 </button>
             </>}>
@@ -1125,10 +1047,12 @@ function OrderCreateDialog({ orderable, fmt, onClose, onConfirm }: {
                     </div>
                 </div>
                 <div className="pov-ocd-list">
-                    {orderable.map(m => {
+                    {productGroups.map(group => <div key={group.id}>
+                        <div className="pov-material-group-heading"><label><input type="checkbox" checked={group.rows.every(m => selected.has(m.id))} onChange={e => { const checked = e.target.checked; setSelected(prev => { const next = new Set(prev); group.rows.forEach(m => checked ? next.add(m.id) : next.delete(m.id)); return next; }); }} />{group.name}</label><span>{group.rows.filter(m => selected.has(m.id)).length}/{group.rows.length}</span></div>
+                        {group.rows.map(m => {
                         const on = selected.has(m.id);
                         return (
-                            <div key={m.id} className={`pov-ocd-item ${on ? 'on' : ''}`} onClick={() => toggle(m.id)}>
+                            <div key={m.id} role="checkbox" aria-checked={on} tabIndex={0} className={`pov-ocd-item ${on ? 'on' : ''}`} onClick={() => toggle(m.id)} onKeyDown={e => { if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); toggle(m.id); } }}>
                                 {on ? <CheckSquare size={18} className="pov-check on" /> : <Square size={18} className="pov-check" />}
                                 <div className="pov-ocd-item-main">
                                     <span className="pov-ocd-item-name">{m.name}</span>
@@ -1140,7 +1064,7 @@ function OrderCreateDialog({ orderable, fmt, onClose, onConfirm }: {
                                 </div>
                             </div>
                         );
-                    })}
+                    })}</div>)}
                 </div>
                 <div className="pov-ocd-summary">
                     <span>{chosen.length} materijal(a) → <b>{orderCount}</b> {orderCount === 1 ? 'narudžba' : 'narudžbi'}</span>
@@ -1369,17 +1293,6 @@ function humanDay(iso: string): string {
 // ── Zadaci / crew — zajednički helperi ───────────────────────────────
 const PRIO_RANK: Record<TaskPriority, number> = { urgent: 0, high: 1, medium: 2, low: 3 };
 const AVATAR_COLORS = ['#5b8def', '#f5a524', '#a855f7', '#2fb457', '#17c0b8', '#ff6b6b', '#0071e3'];
-function avatarColor(name: string): string {
-    let h = 0;
-    for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0;
-    return AVATAR_COLORS[h % AVATAR_COLORS.length];
-}
-function initials(name: string): string {
-    const parts = name.trim().split(/\s+/).filter(Boolean);
-    if (parts.length === 0) return '?';
-    if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
-    return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
-}
 function dateOnly(iso?: string): string { return (iso || '').slice(0, 10); }
 function isOverdue(due?: string): boolean { return !!due && dateOnly(due) < todayISO(); }
 function checklistProgress(t: Task): { done: number; total: number } {
@@ -1387,322 +1300,6 @@ function checklistProgress(t: Task): { done: number; total: number } {
     return { done: c.filter(i => i.completed).length, total: c.length };
 }
 const TASK_STATUS_OPEN = (t: Task) => t.Status !== 'completed' && t.Status !== 'cancelled';
-
-// ════════════════════════════════════════════════════════════════════
-// TAB: KOMANDA — operativni landing (nalozi + materijali + zadaci)
-//
-// „Pametno adaptivan": redoslijed po hitnosti, prazne sekcije prelaze u CTA,
-// a materijali koji čekaju narudžbu se ističu. Sve iz podataka u memoriji.
-// ════════════════════════════════════════════════════════════════════
-function KomandaTab({
-    ov, project, fmt, fmt0, marginClass, rawWorkOrders, workLogs, projectTasks,
-    orderableCount, orderableValue, canCreate,
-    onOpenWorkOrder, onNewWorkOrder, onStartWorkOrder, onNaruci,
-    onAddTask, onQuickAddTask, onToggleTask, onOpenTask, onGoTab,
-}: {
-    ov: ProjectOverview; project: Project; fmt: (n: number) => string; fmt0: (n: number) => string; marginClass: string;
-    rawWorkOrders: WorkOrder[]; workLogs: WorkLog[]; projectTasks: Task[];
-    orderableCount: number; orderableValue: number; canCreate: boolean;
-    onOpenWorkOrder: (id: string) => void; onNewWorkOrder: () => void; onStartWorkOrder: (id: string) => Promise<void>;
-    onNaruci: () => void; onAddTask: () => void; onQuickAddTask: (title: string, priority: TaskPriority) => Promise<void>;
-    onToggleTask: (t: Task) => void; onOpenTask: (t: Task) => void; onGoTab: (t: Tab) => void;
-}) {
-    const fin = ov.financial;
-    const cost = fin.material + fin.labor + fin.services + fin.transport + fin.other;
-    const [quickTitle, setQuickTitle] = useState('');
-    const [quickBusy, setQuickBusy] = useState(false);
-
-    // Stavke naloga (po projektu) + ekipa iz dnevnika rada.
-    const woItemIds = useMemo(() => {
-        const m = new Map<string, Set<string>>();
-        for (const w of rawWorkOrders) {
-            const ids = new Set<string>();
-            for (const it of w.items || []) if (it.Project_ID === project.Project_ID) ids.add(it.ID);
-            if (ids.size) m.set(w.Work_Order_ID, ids);
-        }
-        return m;
-    }, [rawWorkOrders, project.Project_ID]);
-
-    const woDone = useMemo(() => {
-        const m = new Map<string, number>();
-        for (const w of rawWorkOrders) {
-            let done = 0;
-            for (const it of w.items || []) if (it.Project_ID === project.Project_ID && it.Status === 'Završeno') done++;
-            m.set(w.Work_Order_ID, done);
-        }
-        return m;
-    }, [rawWorkOrders, project.Project_ID]);
-
-    const crewByWo = useMemo(() => {
-        const m = new Map<string, string[]>();
-        const seen = new Map<string, Set<string>>();
-        for (const wl of workLogs) {
-            const itemId = wl.Work_Order_Item_ID;
-            if (!itemId) continue;
-            for (const [woId, ids] of Array.from(woItemIds.entries())) {
-                if (!ids.has(itemId)) continue;
-                const name = wl.Worker_Name || '';
-                if (!name) continue;
-                let s = seen.get(woId); if (!s) { s = new Set(); seen.set(woId, s); }
-                if (!s.has(name)) { s.add(name); const arr = m.get(woId) || []; arr.push(name); m.set(woId, arr); }
-            }
-        }
-        return m;
-    }, [workLogs, woItemIds]);
-
-    // Aktivni nalozi (sve osim Završeno) — sortirani po hitnosti.
-    const active = useMemo(() => {
-        const rows = ov.workOrders.filter(w => w.status !== 'Završeno');
-        const rank = (s: string) => (s === 'U toku' ? 0 : s === 'Pauza' ? 1 : 2);
-        return rows.sort((a, b) => {
-            const ao = isOverdue(a.dueDate) ? 0 : 1, bo = isOverdue(b.dueDate) ? 0 : 1;
-            if (ao !== bo) return ao - bo;
-            const r = rank(a.status) - rank(b.status);
-            if (r !== 0) return r;
-            return dateOnly(a.dueDate).localeCompare(dateOnly(b.dueDate));
-        });
-    }, [ov.workOrders]);
-    const completed = useMemo(() => ov.workOrders.filter(w => w.status === 'Završeno'), [ov.workOrders]);
-    const completedProfit = completed.reduce((s, w) => s + w.profit, 0);
-
-    // Proizvodnja — statusi (bez „raznih").
-    const prod = useMemo(() => {
-        const real = ov.products.filter(p => !p.isCustom);
-        const done = real.filter(p => p.status === 'Završeno').length;
-        const run = real.filter(p => p.status === 'U toku').length;
-        const wait = real.length - done - run;
-        return { total: real.length, done, run, wait };
-    }, [ov.products]);
-
-    // Materijali — statusi.
-    const mat = useMemo(() => {
-        const ready = ov.materials.filter(m => m.status === 'Primljeno' || m.status === 'Na stanju').length;
-        const ordered = ov.materials.filter(m => m.status === 'Naručeno').length;
-        const waiting = ov.materials.filter(m => m.status === 'Nije naručeno').length;
-        return { ready, ordered, waiting, total: ov.materials.length };
-    }, [ov.materials]);
-
-    // Zadaci — otvoreni, sortirani po hitnosti/roku (top 5 na landing).
-    const openTasks = useMemo(() => {
-        return projectTasks.filter(TASK_STATUS_OPEN).sort((a, b) => {
-            const ao = isOverdue(a.Due_Date) ? 0 : 1, bo = isOverdue(b.Due_Date) ? 0 : 1;
-            if (ao !== bo) return ao - bo;
-            const p = PRIO_RANK[a.Priority] - PRIO_RANK[b.Priority];
-            if (p !== 0) return p;
-            return dateOnly(a.Due_Date || '9999').localeCompare(dateOnly(b.Due_Date || '9999'));
-        });
-    }, [projectTasks]);
-
-    const submitQuick = async () => {
-        if (!quickTitle.trim() || quickBusy) return;
-        setQuickBusy(true);
-        try { await onQuickAddTask(quickTitle, 'medium'); setQuickTitle(''); }
-        finally { setQuickBusy(false); }
-    };
-
-    const woPct = (r: WorkOrderOverviewRow) => {
-        const total = r.itemCount || 0;
-        const done = woDone.get(r.workOrderId) || 0;
-        return { done, total, pct: total > 0 ? Math.round((done / total) * 100) : 0 };
-    };
-
-    return (
-        <div className="cc">
-            {/* KPI strip */}
-            <div className="cc-kpis">
-                <div className="cc-kpi">
-                    <div className="cc-kpi-ic pay"><Wallet size={18} /></div>
-                    <div className="cc-kpi-body"><span className="cc-kpi-lab">Klijent plaća</span><span className="cc-kpi-val">{fmt(fin.revenue)}</span>
-                        <span className="cc-kpi-meta">{ov.acceptedOffer?.offerNumber ? `Ponuda #${ov.acceptedOffer.offerNumber}` : 'prihod projekta'}</span></div>
-                </div>
-                <div className="cc-kpi">
-                    <div className="cc-kpi-ic cost"><Coins size={18} /></div>
-                    <div className="cc-kpi-body"><span className="cc-kpi-lab">Ukupni trošak</span><span className="cc-kpi-val">{fmt(cost)}</span>
-                        <span className="cc-kpi-meta">Mat {fmt0(fin.material)} · Rad {fmt0(fin.labor)}</span></div>
-                </div>
-                <div className={`cc-kpi ${marginClass}`}>
-                    <div className="cc-kpi-ic profit">{fin.profit < 0 ? <TrendingDown size={18} /> : <TrendingUp size={18} />}</div>
-                    <div className="cc-kpi-body"><span className="cc-kpi-lab">{fin.profit < 0 ? 'Gubitak' : 'Profit'}</span>
-                        <span className={`cc-kpi-val ${fin.profit < 0 ? 'bad' : 'good'}`}>{fmt(fin.profit)}</span>
-                        <span className="cc-kpi-meta">{ov.hasPlan ? `plan ${fmt0(ov.plannedProfit)} KM` : 'nakon svih troškova'}</span></div>
-                </div>
-                <button className={`cc-kpi as-btn ${marginClass}`} onClick={() => onGoTab('finansije')} title="Otvori Finansije">
-                    <Ring pct={fin.margin} label={`${Math.round(fin.margin)}%`} colorClass={marginClass} />
-                    <div className="cc-kpi-body"><span className="cc-kpi-lab">Marža</span>
-                        <span className="cc-kpi-meta">{ov.counts.productsInProduction}/{ov.counts.products} proizv. · {ov.counts.workOrders} nal.</span>
-                        <span className="cc-kpi-meta">{ov.counts.workers} radnika · {fmt0(ov.counts.totalWorkerDays)} dana</span></div>
-                </button>
-            </div>
-
-            <div className="cc-grid">
-                {/* LIJEVO */}
-                <div className="cc-main">
-                    <section className="pov-card cc-sec">
-                        <div className="cc-sec-head">
-                            <h3>Aktivni nalozi</h3>
-                            {active.length > 0 && <span className="cc-cnt">{active.length}</span>}
-                            <span className="cc-spacer" />
-                            {canCreate && <button className="cc-link" onClick={onNewWorkOrder}><Plus size={15} /> Novi nalog</button>}
-                        </div>
-                        {active.length === 0 ? (
-                            <div className="cc-cta">
-                                <p>Nema aktivnih naloga. {completed.length > 0 ? `${completed.length} završenih.` : ''}</p>
-                                {canCreate && <button className="pov-btn-primary sm" onClick={onNewWorkOrder}><Hammer size={15} /> Kreiraj nalog</button>}
-                            </div>
-                        ) : (
-                            <div className="cc-wolist">
-                                {active.map(w => {
-                                    const p = woPct(w);
-                                    const crew = crewByWo.get(w.workOrderId) || [];
-                                    const over = isOverdue(w.dueDate);
-                                    const sClass = w.status === 'U toku' ? 'run' : w.status === 'Pauza' ? 'pause' : 'wait';
-                                    return (
-                                        <div key={w.workOrderId} className={`cc-wo s-${sClass}`} onClick={() => onOpenWorkOrder(w.workOrderId)}>
-                                            <span className="cc-wo-stripe" />
-                                            <div className="cc-wo-body">
-                                                <div className="cc-wo-top">
-                                                    <span className="cc-wo-name">{w.name || `Nalog ${w.number}`}</span>
-                                                    {w.number && <span className="cc-wo-num">#{w.number}</span>}
-                                                    {w.type === 'Montaža' && <span className="pov-tag montaza">Montaža</span>}
-                                                    <span className={`pov-chip s-${statusSlug(w.status)}`}>{w.status}</span>
-                                                </div>
-                                                <div className="cc-wo-mid">
-                                                    <div className="cc-prog">
-                                                        <div className="cc-prog-top"><span>Stavke</span><span><b>{p.done}</b> / {p.total}</span></div>
-                                                        <div className="cc-bar"><i style={{ width: `${Math.max(p.pct, 3)}%` }} /></div>
-                                                    </div>
-                                                    {crew.length > 0 && (
-                                                        <div className="cc-crew">
-                                                            {crew.slice(0, 3).map((n, i) => (
-                                                                <span key={i} className="cc-av" style={{ background: avatarColor(n) }} title={n}>{initials(n)}</span>
-                                                            ))}
-                                                            {crew.length > 3 && <span className="cc-av more">+{crew.length - 3}</span>}
-                                                        </div>
-                                                    )}
-                                                </div>
-                                            </div>
-                                            <div className="cc-wo-right">
-                                                {w.dueDate && <span className={`cc-wo-due ${over ? 'over' : ''}`}>{over ? <AlertTriangle size={13} /> : <CalendarDays size={13} />}{formatDate(w.dueDate)}</span>}
-                                                {w.status === 'Na čekanju' && canCreate ? (
-                                                    <button className="pov-btn-primary xs" onClick={(e) => { e.stopPropagation(); onStartWorkOrder(w.workOrderId); }}><PlayCircle size={14} /> Pokreni</button>
-                                                ) : (
-                                                    <span className={`cc-wo-profit ${w.profit < 0 ? 'bad' : 'good'}`}>{w.profit >= 0 ? '+' : ''}{fmt0(w.profit)} <span className="k">KM</span></span>
-                                                )}
-                                            </div>
-                                        </div>
-                                    );
-                                })}
-                                {completed.length > 0 && (
-                                    <button className="cc-collapsed" onClick={() => onGoTab('nalozi')}>
-                                        <CheckCircle2 size={16} /> {completed.length} završenih naloga · {completedProfit >= 0 ? '+' : ''}{fmt0(completedProfit)} KM profit
-                                        <span className="cc-spacer" /><ChevronRight size={16} />
-                                    </button>
-                                )}
-                            </div>
-                        )}
-                    </section>
-
-                    <section className="pov-card cc-sec">
-                        <div className="cc-sec-head">
-                            <h3>Proizvodnja</h3><span className="cc-spacer" />
-                            <button className="cc-link" onClick={() => onGoTab('proizvodi')}>Svi proizvodi <ChevronRight size={14} /></button>
-                        </div>
-                        <div className="cc-prodbar">
-                            <div className="cc-prodbar-head"><span>{prod.total} proizvoda</span><span><b>{prod.run + prod.done}</b> u proizvodnji</span></div>
-                            <div className="cc-seg-track">
-                                {prod.run > 0 && <span style={{ width: `${(prod.run / prod.total) * 100}%`, background: COLORS.material }} />}
-                                {prod.done > 0 && <span style={{ width: `${(prod.done / prod.total) * 100}%`, background: COLORS.profit }} />}
-                                {prod.wait > 0 && <span style={{ width: `${(prod.wait / prod.total) * 100}%`, background: COLORS.labor }} />}
-                            </div>
-                            <div className="cc-seg-legend">
-                                <span><i style={{ background: COLORS.material }} />U toku · {prod.run}</span>
-                                <span><i style={{ background: COLORS.profit }} />Završeno · {prod.done}</span>
-                                <span><i style={{ background: COLORS.labor }} />Na čekanju · {prod.wait}</span>
-                            </div>
-                        </div>
-                    </section>
-                </div>
-
-                {/* DESNO */}
-                <div className="cc-rail">
-                    <section className="pov-card cc-sec">
-                        <div className="cc-sec-head"><h3>Materijali</h3><span className="cc-spacer" /><span className="cc-mat-val">Vrijednost <b>{fmt(ov.materialCatalogCost)}</b></span></div>
-                        <div className="cc-mat-body">
-                            {mat.total === 0 ? (
-                                <div className="pov-empty-inline">Nema unesenih materijala.</div>
-                            ) : (<>
-                                <div className="cc-seg-track tall">
-                                    {mat.ready > 0 && <span style={{ width: `${(mat.ready / mat.total) * 100}%`, background: COLORS.profit }} />}
-                                    {mat.ordered > 0 && <span style={{ width: `${(mat.ordered / mat.total) * 100}%`, background: COLORS.material }} />}
-                                    {mat.waiting > 0 && <span style={{ width: `${(mat.waiting / mat.total) * 100}%`, background: COLORS.loss }} />}
-                                </div>
-                                <div className="cc-seg-legend wrap">
-                                    <span><i style={{ background: COLORS.profit }} />Spremno <b>{mat.ready}</b></span>
-                                    <span><i style={{ background: COLORS.material }} />Naručeno <b>{mat.ordered}</b></span>
-                                    <span><i style={{ background: COLORS.loss }} />Čeka <b>{mat.waiting}</b></span>
-                                </div>
-                                {orderableCount > 0 ? (
-                                    <div className="cc-alert">
-                                        <div className="cc-alert-ic"><ShoppingCart size={17} /></div>
-                                        <div className="cc-alert-t"><div className="t">{orderableCount} {orderableCount === 1 ? 'stavka čeka' : 'stavki čeka'} narudžbu</div><div className="s">Procijenjeno {fmt(orderableValue)}</div></div>
-                                        {canCreate && <button className="pov-btn-primary sm" onClick={onNaruci}>Naruči</button>}
-                                    </div>
-                                ) : (
-                                    <div className="cc-ok"><CheckCircle2 size={15} /> Svi materijali su naručeni ili spremni</div>
-                                )}
-                            </>)}
-                        </div>
-                    </section>
-
-                    <section className="pov-card cc-sec">
-                        <div className="cc-sec-head">
-                            <h3>Zadaci</h3>{openTasks.length > 0 && <span className="cc-cnt">{openTasks.length}</span>}<span className="cc-spacer" />
-                            {canCreate && <button className="cc-link" onClick={onAddTask}>Detaljno <ChevronRight size={14} /></button>}
-                        </div>
-                        <div className="cc-tasks-body">
-                            {canCreate && (
-                                <div className="cc-quickadd">
-                                    <input value={quickTitle} onChange={e => setQuickTitle(e.target.value)}
-                                        onKeyDown={e => { if (e.key === 'Enter') submitQuick(); }}
-                                        placeholder="Novi zadatak za ovaj projekat…" />
-                                    <button className="pov-btn-primary xs" disabled={!quickTitle.trim() || quickBusy} onClick={submitQuick}>{quickBusy ? '…' : 'Dodaj'}</button>
-                                </div>
-                            )}
-                            {openTasks.length === 0 ? (
-                                <div className="pov-empty-inline">Nema otvorenih zadataka.</div>
-                            ) : (
-                                <div className="cc-tasklist">
-                                    {openTasks.slice(0, 5).map(t => {
-                                        const cp = checklistProgress(t);
-                                        const over = isOverdue(t.Due_Date);
-                                        return (
-                                            <div key={t.Task_ID} className="cc-task" onClick={() => onOpenTask(t)}>
-                                                <button className="cc-task-check" onClick={e => { e.stopPropagation(); onToggleTask(t); }} aria-label="Završi zadatak"><Circle size={17} /></button>
-                                                <span className={`cc-pri p-${t.Priority}`} title={TASK_PRIORITY_LABELS[t.Priority]} />
-                                                <div className="cc-task-tt">
-                                                    <div className="cc-task-n">{t.Title}</div>
-                                                    {(t.Due_Date || cp.total > 0) && (
-                                                        <div className="cc-task-m">
-                                                            {t.Due_Date && <span className={over ? 'over' : ''}>{over ? 'dospjelo ' : ''}{formatDate(t.Due_Date)}</span>}
-                                                            {t.Due_Date && cp.total > 0 && <span className="pov-dot">·</span>}
-                                                            {cp.total > 0 && <span>{cp.done}/{cp.total}</span>}
-                                                        </div>
-                                                    )}
-                                                </div>
-                                                {cp.total > 0 && <span className="cc-clbar"><i style={{ width: `${Math.round((cp.done / cp.total) * 100)}%` }} /></span>}
-                                            </div>
-                                        );
-                                    })}
-                                    {openTasks.length > 5 && <button className="cc-collapsed sm" onClick={onAddTask}>+ još {openTasks.length - 5} — otvori sve <ChevronRight size={15} /></button>}
-                                </div>
-                            )}
-                        </div>
-                    </section>
-                </div>
-            </div>
-        </div>
-    );
-}
 
 // ════════════════════════════════════════════════════════════════════
 // TAB: ZADACI — svi zadaci projekta (isti model kao tab Zadaci)
@@ -1799,127 +1396,3 @@ function ZadaciTab({ tasks, canCreate, onAdd, onOpen, onToggle, onDelete, onTogg
     );
 }
 
-// ════════════════════════════════════════════════════════════════════
-// MODAL: uređivač zadatka (kreiraj / uredi) — projekt se veže automatski
-// ════════════════════════════════════════════════════════════════════
-const TASK_CATEGORY_LABELS: Record<string, string> = {
-    general: 'Općenito', manufacturing: 'Proizvodnja', ordering: 'Narudžba',
-    installation: 'Montaža', design: 'Dizajn', meeting: 'Sastanak', reminder: 'Podsjetnik',
-};
-const PRIO_OPTIONS: TaskPriority[] = ['urgent', 'high', 'medium', 'low'];
-
-function TaskEditorModal({ mode, task, projectName, workers, onClose, onSave, onDelete }: {
-    mode: 'create' | 'edit'; task?: Task; projectName: string; workers: Worker[];
-    onClose: () => void; onSave: (data: Partial<Task>) => Promise<void>; onDelete?: () => Promise<void>;
-}) {
-    const [title, setTitle] = useState(task?.Title || '');
-    const [description, setDescription] = useState(task?.Description || '');
-    const [priority, setPriority] = useState<TaskPriority>(task?.Priority || 'medium');
-    const [category, setCategory] = useState<string>(task?.Category || 'general');
-    const [dueDate, setDueDate] = useState<string>(dateOnly(task?.Due_Date));
-    const [workerId, setWorkerId] = useState<string>(task?.Assigned_Worker_ID || '');
-    const [checklist, setChecklist] = useState<ChecklistItem[]>(task?.Checklist ? task.Checklist.map(c => ({ ...c })) : []);
-    const [newItem, setNewItem] = useState('');
-    const [saving, setSaving] = useState(false);
-
-    const addItem = () => {
-        const t = newItem.trim(); if (!t) return;
-        setChecklist(prev => [...prev, { id: uuidv4(), text: t, completed: false }]);
-        setNewItem('');
-    };
-    const removeItem = (id: string) => setChecklist(prev => prev.filter(i => i.id !== id));
-    const toggleItem = (id: string) => setChecklist(prev => prev.map(i => i.id === id ? { ...i, completed: !i.completed } : i));
-
-    const submit = async () => {
-        if (!title.trim() || saving) return;
-        setSaving(true);
-        const worker = workers.find(w => w.Worker_ID === workerId);
-        const data: Partial<Task> = {
-            ...(task?.Task_ID ? { Task_ID: task.Task_ID } : {}),
-            Title: title.trim(),
-            Description: description.trim(),
-            Priority: priority,
-            Category: category as Task['Category'],
-            Due_Date: dueDate || undefined,
-            Assigned_Worker_ID: workerId || undefined,
-            Assigned_Worker_Name: worker?.Name || undefined,
-            Checklist: checklist,
-            Links: task?.Links || [],
-            ...(task?.Status ? { Status: task.Status } : { Status: 'pending' }),
-        };
-        try { await onSave(data); } finally { setSaving(false); }
-    };
-
-    const clDone = checklist.filter(c => c.completed).length;
-
-    return (
-        <Modal isOpen onClose={onClose} title={mode === 'create' ? 'Novi zadatak' : 'Uredi zadatak'} size="large"
-            footer={<>
-                {onDelete && <button className="btn btn-danger" onClick={onDelete} disabled={saving} style={{ marginRight: 'auto' }}><Trash2 size={15} /> Obriši</button>}
-                <button className="btn btn-secondary" onClick={onClose} disabled={saving}>Odustani</button>
-                <button className="btn btn-primary" onClick={submit} disabled={saving || !title.trim()}>{saving ? 'Spremam…' : mode === 'create' ? 'Kreiraj zadatak' : 'Spremi'}</button>
-            </>}>
-            <div className="te">
-                <div className="te-linkchip"><span className="te-link-ic"><LayoutDashboard size={13} /></span>Povezano s projektom <b>{projectName}</b></div>
-
-                <label className="te-field">
-                    <span className="te-label">Naslov</span>
-                    <input className="te-input" autoFocus value={title} onChange={e => setTitle(e.target.value)} placeholder="Šta treba uraditi?" />
-                </label>
-
-                <div className="te-row">
-                    <div className="te-field">
-                        <span className="te-label">Prioritet</span>
-                        <div className="te-seg">
-                            {PRIO_OPTIONS.map(p => (
-                                <button key={p} className={`${priority === p ? 'on' : ''} p-${p}`} onClick={() => setPriority(p)}>{TASK_PRIORITY_LABELS[p]}</button>
-                            ))}
-                        </div>
-                    </div>
-                    <label className="te-field te-narrow">
-                        <span className="te-label">Rok</span>
-                        <input className="te-input" type="date" value={dueDate} onChange={e => setDueDate(e.target.value)} />
-                    </label>
-                </div>
-
-                <div className="te-row">
-                    <label className="te-field">
-                        <span className="te-label">Kategorija</span>
-                        <select className="te-input" value={category} onChange={e => setCategory(e.target.value)}>
-                            {Object.entries(TASK_CATEGORY_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-                        </select>
-                    </label>
-                    <label className="te-field">
-                        <span className="te-label">Zaduženi radnik</span>
-                        <select className="te-input" value={workerId} onChange={e => setWorkerId(e.target.value)}>
-                            <option value="">— nitko —</option>
-                            {workers.map(w => <option key={w.Worker_ID} value={w.Worker_ID}>{w.Name}</option>)}
-                        </select>
-                    </label>
-                </div>
-
-                <label className="te-field">
-                    <span className="te-label">Opis</span>
-                    <textarea className="te-input" rows={2} value={description} onChange={e => setDescription(e.target.value)} placeholder="Detalji (opcionalno)…" />
-                </label>
-
-                <div className="te-field">
-                    <span className="te-label">Checklist {checklist.length > 0 && <span className="te-cl-cnt">{clDone}/{checklist.length}</span>}</span>
-                    <div className="te-checklist">
-                        {checklist.map(it => (
-                            <div key={it.id} className="te-cli">
-                                <button className={`te-cli-check ${it.completed ? 'on' : ''}`} onClick={() => toggleItem(it.id)}>{it.completed ? <CheckSquare size={16} /> : <Square size={16} />}</button>
-                                <span className={it.completed ? 'done' : ''}>{it.text}</span>
-                                <button className="te-cli-x" onClick={() => removeItem(it.id)} aria-label="Ukloni"><X size={14} /></button>
-                            </div>
-                        ))}
-                        <div className="te-cli-add">
-                            <input value={newItem} onChange={e => setNewItem(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addItem(); } }} placeholder="Dodaj stavku…" />
-                            <button className="te-cli-addbtn" onClick={addItem} disabled={!newItem.trim()}><Plus size={16} /></button>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </Modal>
-    );
-}

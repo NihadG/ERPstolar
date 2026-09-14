@@ -36,10 +36,13 @@ import { projectProfitBreakdown } from '@/lib/projectProfit';
 
 import ProjectMaterialsModal from '@/components/ui/ProjectMaterialsModal';
 import ProjectOverviewScreen from '@/components/ui/ProjectOverviewScreen';
+import CommandCenterScreen from '@/components/ui/command/CommandCenterScreen';
+import { useCommandBoard } from '@/components/ui/command/useCommandBoard';
 import InvoiceModal from '@/components/ui/InvoiceModal';
 import ProjectNotesModal from '@/components/ui/ProjectNotesModal';
 import { summarizeNotes, summarizeProjectNotes } from '@/lib/productNotes';
 import { useData } from '@/context/DataContext';
+import { useAuth } from '@/context/AuthContext';
 import { syncAllProjectData, overrideWorkLogs } from '@/lib/services';
 import { PROJECT_STATUSES, PRODUCTION_STEPS, MATERIAL_CATEGORIES } from '@/lib/types';
 import { useIsMobile } from '@/hooks/useIsMobile';
@@ -53,7 +56,7 @@ import CutlistModal from '@/components/ui/CutlistModal';
 import { useGoogleIntegration } from '@/lib/google/useGoogleIntegration';
 import { ensureProjectFolderTree, shouldAutoCreateFolder } from '@/lib/google/projectDrive';
 import { folderLink } from '@/lib/google/driveClient';
-import { Search, ListFilter, Archive, ArchiveRestore, RefreshCw, Plus } from 'lucide-react';
+import { Search, ListFilter, Archive, ArchiveRestore, RefreshCw, Plus, LayoutDashboard } from 'lucide-react';
 import './ProjectsTab.css';
 
 interface ProjectsTabProps {
@@ -79,6 +82,7 @@ interface ProjectsTabProps {
 
 export default function ProjectsTab({ projects, materials, workOrders = [], offers = [], workLogs = [], orders = [], tasks = [], onRefresh, onEnsureWorkOrderLogs, showToast, onNavigateToTasks, onCreateWorkOrder, autoExpandProjectId, autoExpandProductId, returnToOfferId, onReturnToOffer, onClearAutoExpand }: ProjectsTabProps) {
     const { organizationId, appState } = useData();
+    const { firebaseUser } = useAuth();
     const gi = useGoogleIntegration();
     const allWorkers = appState.workers || [];
     const [searchTerm, setSearchTerm] = useState('');
@@ -90,6 +94,9 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
     const [materialsOverviewProject, setMaterialsOverviewProject] = useState<Project | null>(null);
     // Puni pregled projekta (full-screen overlay) — sav novac/proizvodi/materijali/nalozi/radnici.
     const [overviewProject, setOverviewProject] = useState<Project | null>(null);
+    // Komandni centar — lična tabla više projekata (components/ui/command).
+    const [commandOpen, setCommandOpen] = useState(false);
+    const { board: commandBoard, setBoard: setCommandBoard } = useCommandBoard(firebaseUser?.uid, organizationId, commandOpen, message => showToast(message, 'error'));
     // Pitanja i napomene — jedan modal, ulaz s kartice projekta (sva) ili proizvoda (skrol na njega).
     const [notesModal, setNotesModal] = useState<{ project: Project; productId?: string } | null>(null);
     // Završni račun — otvara se za projekat koji ima prihvaćenu ponudu (vidi InvoiceModal).
@@ -1524,6 +1531,21 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
 
                 <div className="app-toolbar-spacer" />
 
+                {/* Komandni centar — više projekata na jednoj strani (lična tabla). */}
+                <button
+                    className="app-toolbar-btn"
+                    title="Komandni centar — proizvodi, nalozi, zadaci i napomene više projekata na jednoj strani"
+                    onClick={() => setCommandOpen(true)}
+                >
+                    <LayoutDashboard size={16} />
+                    Komanda
+                    {commandBoard.Project_IDs.length > 0 && (
+                        <span className="app-toolbar-badge">{commandBoard.Project_IDs.length}</span>
+                    )}
+                </button>
+
+                <div className="app-toolbar-divider" />
+
                 <button
                     className={`app-toolbar-btn ${showHidden ? 'on' : ''}`}
                     onClick={() => setShowHidden(!showHidden)}
@@ -2357,6 +2379,26 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                         tasks={tasks}
                         onClose={() => setOverviewProject(null)}
                         onCreateWorkOrder={onCreateWorkOrder}
+                        onRefresh={onRefresh}
+                        showToast={showToast}
+                    />
+                )
+            }
+
+            {/* Komandni centar — lična tabla više projekata na jednoj strani. */}
+            {
+                commandOpen && (
+                    <CommandCenterScreen
+                        projects={projects}
+                        workOrders={workOrders}
+                        orders={orders}
+                        tasks={tasks}
+                        workers={allWorkers}
+                        organizationId={organizationId}
+                        board={commandBoard}
+                        onBoardChange={setCommandBoard}
+                        canCreate={!!organizationId}
+                        onClose={() => setCommandOpen(false)}
                         onRefresh={onRefresh}
                         showToast={showToast}
                     />

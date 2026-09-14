@@ -493,5 +493,20 @@ service cloud.firestore {
       allow create: if hasValidOrgId();
       allow update, delete: if isOrgMember();
     }
+
+    // ============================================
+    // LIČNA TABLA KOMANDNOG CENTRA
+    //
+    // Jedan dokument po korisniku, ID = auth uid. Tabla je PRIVATNA: ne čita
+    // je ni kolega iz iste firme, jer je to samo lični izbor šta ko prati.
+    // Sadržaj su ID-evi projekata — ništa osjetljivo, ali ni ništa zajedničko.
+    // ============================================
+
+    match /user_boards/{userId} {
+      allow read: if isOwner(userId);
+      allow create, update: if isOwner(userId)
+                            && request.resource.data.User_ID == userId;
+      allow delete: if isOwner(userId);
+    }
   }
 }

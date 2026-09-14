@@ -81,6 +81,10 @@ export default function AttendanceTab({ workers, workOrders, onRefresh, showToas
     const [confirmOpen, setConfirmOpen] = useState(false);
     const [confirmRows, setConfirmRows] = useState<ProposalRow[]>([]);
     const [confirmDate, setConfirmDate] = useState('');
+    // workerId → Work_Order_ID[] s posljednjeg dana koji je imao knjiženja + koji je to dan
+    // bio (modal iz toga nudi „Prepiši jučer").
+    const [confirmYesterday, setConfirmYesterday] = useState<Map<string, string[]>>(new Map());
+    const [confirmYesterdayDate, setConfirmYesterdayDate] = useState('');
 
     // Mjesečni obračun plata
     const [payrollOpen, setPayrollOpen] = useState(false);
@@ -351,13 +355,12 @@ export default function AttendanceTab({ workers, workOrders, onRefresh, showToas
         return getAttendance(workerId, shiftISO(dateStr, -1))?.Status;
     }
 
-    // "Kao jučer" izvor za prijedlog u modalu: workerId → Work_Order_ID[] knjiženi JUČER.
-    async function buildYesterdayOrderMap(dateStr: string): Promise<Map<string, string[]>> {
+    // Knjiženja jednog dana → workerId → Work_Order_ID[].
+    async function orderMapForDay(day: string): Promise<Map<string, string[]>> {
         const map = new Map<string, string[]>();
-        if (!organizationId) return map;
         try {
-            const yEntries = await getDailyWorkBooking(shiftISO(dateStr, -1), organizationId);
-            yEntries.forEach(e => {
+            const entries = await getDailyWorkBooking(day, organizationId!);
+            entries.forEach(e => {
                 const orderIds: string[] = [];
                 (e.items || []).forEach(bi => { if (bi.workOrderId && !orderIds.includes(bi.workOrderId)) orderIds.push(bi.workOrderId); });
                 if (orderIds.length) map.set(e.workerId, orderIds);
@@ -366,17 +369,37 @@ export default function AttendanceTab({ workers, workOrders, onRefresh, showToas
         return map;
     }
 
+    // "Kao jučer" izvor za prijedlog i za dugme „Prepiši jučer" u modalu.
+    // Doslovno jučer je prazno ponedjeljkom i poslije praznika, pa se traži POSLJEDNJI
+    // dan koji je imao knjiženja (do 4 dana unazad). Redoslijed upita čuva brzinu:
+    // običnim danom JEDAN upit; tek ako je jučer prazno, ostala tri idu paralelno.
+    async function buildYesterdayOrderMap(dateStr: string): Promise<{ map: Map<string, string[]>; sourceDate: string }> {
+        if (!organizationId) return { map: new Map(), sourceDate: '' };
+        const yesterday = shiftISO(dateStr, -1);
+        const first = await orderMapForDay(yesterday);
+        if (first.size > 0) return { map: first, sourceDate: yesterday };
+
+        const older = [2, 3, 4].map(n => shiftISO(dateStr, -n));
+        const maps = await Promise.all(older.map(orderMapForDay));
+        for (let i = 0; i < maps.length; i++) {
+            if (maps[i].size > 0) return { map: maps[i], sourceDate: older[i] };
+        }
+        return { map: new Map(), sourceDate: '' };
+    }
+
     // Izgradi prijedlog knjiženja s "kao jučer" fallback-om (Teren/Prisutan bez auto-prijedloga) i
     // otvori upit ako ima redova. Vrati true ako je upit otvoren.
     async function openBookingConfirm(
         savedWorkers: { workerId: string; workerName: string; status: string }[],
         dateStr: string,
     ): Promise<boolean> {
-        const yMap = await buildYesterdayOrderMap(dateStr);
+        const { map: yMap, sourceDate: ySource } = await buildYesterdayOrderMap(dateStr);
         const rows = buildBookingProposal(savedWorkers, workOrders, dateStr, undefined, yMap);
         if (rows.length > 0) {
             setConfirmRows(rows);
             setConfirmDate(dateStr);
+            setConfirmYesterday(yMap);
+            setConfirmYesterdayDate(ySource);
             setConfirmOpen(true);
             return true;
         }
@@ -457,6 +480,8 @@ export default function AttendanceTab({ workers, workOrders, onRefresh, showToas
                     if (rows.length > 0) {
                         setConfirmRows(rows);
                         setConfirmDate(date);
+                        setConfirmYesterday(new Map());
+                        setConfirmYesterdayDate('');
                         setConfirmOpen(true);
                     } else {
                         showToast(`Kao jučer: ${yStatus}`, 'success');
@@ -608,15 +633,16 @@ export default function AttendanceTab({ workers, workOrders, onRefresh, showToas
                 )
             );
 
-            // 3. Single batch recalculation — only if any work logs were created/deleted
+            // 3. Single batch recalculation — only if any work logs were created/deleted.
+            //    Ide u POZADINU: preračunava SVAKI aktivni nalog (+ završene iz zadnjih 30 dana),
+            //    što traje sekundama, a ni upit knjiženja ni šihtarica ne ovise ni o jednoj od tih
+            //    cifara. Dok se čekalo, unos je izgledao zamrznuto i modal se otvarao sa zakašnjenjem.
             const totalChanges = results.reduce((sum, r) => sum + r.workLogsCreated + r.workLogsDeleted, 0);
             if (totalChanges > 0 && organizationId) {
-                try {
-                    const { recalculateAllActiveWorkOrders } = await import('@/lib/services');
-                    await recalculateAllActiveWorkOrders(organizationId, { includeCompleted: true });
-                } catch (recalcError) {
-                    console.error('Batch recalculation failed:', recalcError);
-                }
+                void import('@/lib/services')
+                    .then(({ recalculateAllActiveWorkOrders }) => recalculateAllActiveWorkOrders(organizationId, { includeCompleted: true }))
+                    .then(() => onRefresh('workOrders'))
+                    .catch(recalcError => console.error('Batch recalculation failed:', recalcError));
             }
 
             // Odsutni dani uklanjaju auto-dnevnice; ručne se zadržavaju (rizik #5).
@@ -651,14 +677,12 @@ export default function AttendanceTab({ workers, workOrders, onRefresh, showToas
     // KNJIŽENJE NA POTVRDU (iz upita)
     // ============================================
 
-    // Prikupi CILJNE stavke za radnika na nalogu: bira dodijeljene (ili sve) nezavršene stavke,
-    // POKRENE PONOVO pauzirane stavke i starta nalog ako je još „Na čekanju".
+    // CILJNE stavke radnika na nalogu: dodijeljene (ili sve) nezavršene stavke.
+    // ČISTO računanje iz već učitanih naloga — bez ijednog upita, pa se cijeli izbor iz
+    // upita razriješi odjednom umjesto redom, par po par radnik-nalog.
     // NE knjiži — cijeli dan radnika se knjiži JEDNIM bookWorkerDayItems (jedna renormalizacija),
     // pa radnik na više naloga ne pokreće renormalizeWorkerDay/getWorkers po svakom nalogu.
-    // startWarnings: startWorkOrder vraća {success,message} (ne baca) — neuspjeh starta se
-    // prikuplja i prijavljuje korisniku; dnevnica se IPAK knjiži (trošak nezavisan od statusa),
-    // ali nepokrenut nalog ne bi primao auto-dnevnice narednih dana, pa korisnik mora znati.
-    async function prepareWorkerOrderTargets(workerId: string, orgId: string, workOrderId: string, startWarnings?: string[]): Promise<{ workOrderId: string; itemId: string; productId?: string }[]> {
+    function workerOrderTargets(workerId: string, workOrderId: string): { workOrderId: string; itemId: string; productId?: string }[] {
         const wo = workOrders.find(w => w.Work_Order_ID === workOrderId);
         if (!wo) return [];
         const all = wo.items || [];
@@ -668,26 +692,34 @@ export default function AttendanceTab({ workers, workOrders, onRefresh, showToas
             isWorkerAssignedToAutoItem({ ID: it.ID, Assigned_Workers: it.Assigned_Workers, Processes: it.Processes, SubTasks: it.SubTasks }, workerId)
         );
         const chosen = assigned.length > 0 ? assigned : base;
-        if (chosen.length === 0) return [];
+        return chosen.map(it => ({ workOrderId, itemId: it.ID, productId: it.Product_ID }));
+    }
 
-        // Pokreni ponovo pauzirane stavke koje knjižimo.
-        for (const it of chosen) {
-            if (it.Is_Paused) {
-                try { await toggleItemPause(workOrderId, it.ID, false); } catch (e) { console.warn('resume failed', it.ID, e); }
-            }
-        }
-        // Startaj nalog ako još nije pokrenut.
+    // Dovedi NALOG u stanje u kojem dnevnica ima smisla: odmrzni pauzirane stavke koje
+    // knjižimo i startaj nalog ako je još „Na čekanju". Radi se JEDNOM PO NALOGU, nad
+    // unijom stavki svih radnika — prije se ista pauzirana stavka odmrzavala onoliko puta
+    // koliko radnika ide na nju, i to jedno po jedno, što je i bilo sporo potvrđivanje.
+    // startWarnings: startWorkOrder vraća {success,message} (ne baca) — neuspjeh starta se
+    // prikuplja i prijavljuje korisniku; dnevnica se IPAK knjiži (trošak nezavisan od statusa),
+    // ali nepokrenut nalog ne bi primao auto-dnevnice narednih dana, pa korisnik mora znati.
+    async function ensureOrderBookable(workOrderId: string, orgId: string, itemIds: Set<string>, startWarnings: string[]): Promise<void> {
+        const wo = workOrders.find(w => w.Work_Order_ID === workOrderId);
+        if (!wo) return;
+
+        const paused = (wo.items || []).filter(it => itemIds.has(it.ID) && it.Is_Paused);
+        await Promise.all(paused.map(it =>
+            toggleItemPause(workOrderId, it.ID, false).catch(e => console.warn('resume failed', it.ID, e))
+        ));
+
         if (wo.Status === 'Na čekanju') {
             try {
                 const res = await startWorkOrder(workOrderId, orgId);
-                if (!res.success) startWarnings?.push(`„${workOrderDisplayName(wo)}" nije pokrenut: ${res.message}`);
+                if (!res.success) startWarnings.push(`„${workOrderDisplayName(wo)}" nije pokrenut: ${res.message}`);
             } catch (e) {
                 console.warn('start failed', workOrderId, e);
-                startWarnings?.push(`„${workOrderDisplayName(wo)}" nije pokrenut (greška pri startu)`);
+                startWarnings.push(`„${workOrderDisplayName(wo)}" nije pokrenut (greška pri startu)`);
             }
         }
-
-        return chosen.map(it => ({ workOrderId, itemId: it.ID, productId: it.Product_ID }));
     }
 
     async function commitDecisions(decisions: BookingDecision[]) {
@@ -707,29 +739,33 @@ export default function AttendanceTab({ workers, workOrders, onRefresh, showToas
             if (workOrders.find(w => w.Work_Order_ID === orderId)?.Status === 'Završeno') touchedCompleted.add(orderId);
         };
 
-        // 1) Prikupi ciljeve PO RADNIKU (radnik na više naloga = SVI ciljevi u jednom knjiženju).
+        // 1) Prikupi ciljeve PO RADNIKU (radnik na više naloga = SVI ciljevi u jednom
+        //    knjiženju) — čisto računanje, bez ijednog upita.
         const perWorker = new Map<string, { workerName: string; presence: 0.5 | 1; targets: { workOrderId: string; itemId: string; productId?: string }[] }>();
+        const itemsByOrder = new Map<string, Set<string>>();   // nalog → stavke koje ćemo knjižiti
         for (const d of decisions) {
             const presence: 0.5 | 1 = d.presence === 0.5 ? 0.5 : 1;
-            const orderIds: string[] = d.kind === 'present'
-                ? d.orderIds
-                : (d.choice.mode === 'order' ? [d.choice.workOrderId] : []);
-            if (orderIds.length === 0) continue;
+            if (d.orderIds.length === 0) continue;
             const entry = perWorker.get(d.workerId) || { workerName: d.workerName, presence, targets: [] };
-            for (const orderId of orderIds) {
-                try {
-                    const t = await prepareWorkerOrderTargets(d.workerId, orgId, orderId, startWarnings);
-                    entry.targets.push(...t);
-                    noteAffected(orderId);
-                } catch (e) {
-                    console.error(`commitDecisions: priprema za ${d.workerName} (${orderId}) nije uspjela`, e);
-                    if (!failedWorkers.includes(d.workerName)) failedWorkers.push(d.workerName);
-                }
+            for (const orderId of d.orderIds) {
+                const t = workerOrderTargets(d.workerId, orderId);
+                if (t.length === 0) continue;
+                entry.targets.push(...t);
+                noteAffected(orderId);
+                const set = itemsByOrder.get(orderId) || new Set<string>();
+                t.forEach(x => set.add(x.itemId));
+                itemsByOrder.set(orderId, set);
             }
             if (entry.targets.length > 0) perWorker.set(d.workerId, entry);
         }
 
-        // 2) Knjiži PO RADNIKU, PARALELNO — svaki: JEDAN bookWorkerDayItems (→ jedna renormalizacija dana).
+        // 2) Pripremi NALOGE — jednom po nalogu, svi paralelno (odmrzavanje + start).
+        await Promise.all(Array.from(itemsByOrder.entries()).map(([orderId, itemIds]) =>
+            ensureOrderBookable(orderId, orgId, itemIds, startWarnings)
+                .catch(e => console.error(`commitDecisions: priprema naloga ${orderId} nije uspjela`, e))
+        ));
+
+        // 3) Knjiži PO RADNIKU, PARALELNO — svaki: JEDAN bookWorkerDayItems (→ jedna renormalizacija dana).
         const results = await Promise.all(Array.from(perWorker.entries()).map(async ([workerId, w]) => {
             try {
                 const res = await bookWorkerDayItems(workerId, w.workerName, date, orgId, w.targets, w.presence);
@@ -744,22 +780,6 @@ export default function AttendanceTab({ workers, workOrders, onRefresh, showToas
         booked = results.reduce((s, n) => s + n, 0);
 
         try {
-            // Preračunaj pogođene naloge: osvježi Actual_Labor_Cost/Profit na dokumentu naloga;
-            // završeni nalozi pritom dobiju NOVI production snapshot (rizik #4) + dosljedan prikaz.
-            // Nalozi su nezavisni dokumenti → paralelno (bio je glavni uzrok sporog knjiženja kad
-            // je radnik dodijeljen na više naloga odjednom).
-            // skipMaterialRefresh/skipStatusSync: knjiženje dnevnice ne mijenja materijal ni status
-            // proizvoda/projekta (isti obrazac kao saveDailyWorkBooking) — bez ovoga se ovdje ponovo
-            // dohvatao materijal po stavci I skenirali SVI aktivni nalozi organizacije (syncProjectStatus),
-            // što je bio glavni uzrok sporog potvrđivanja knjiženja. skipSnapshot NIJE postavljen —
-            // završeni nalozi i dalje dobiju svjež production snapshot (namjerno, vidi komentar iznad).
-            await Promise.all(Array.from(affectedOrders).map(orderId =>
-                recalculateWorkOrder(orderId, { skipMaterialRefresh: true, skipStatusSync: true }).catch(e => console.warn('recalc failed', orderId, e))
-            ));
-            if (touchedCompleted.size > 0) {
-                showToast(`Ažurirano ${touchedCompleted.size} završen${touchedCompleted.size > 1 ? 'a naloga' : ' nalog'} — profit preračunat`, 'info');
-            }
-
             // Neuspjeli auto-start naloga: dnevnice su knjižene, ali nalog je ostao 'Na čekanju'
             // → neće primati auto-dnevnice narednih dana dok se uzrok ne otkloni.
             for (const w of Array.from(new Set(startWarnings))) {
@@ -773,10 +793,28 @@ export default function AttendanceTab({ workers, workOrders, onRefresh, showToas
             } else {
                 showToast('Dnevnice nisu knjižene', 'info');
             }
-            onRefresh('workers', 'workOrders');
+
+            // Šihtarica odmah pokazuje tačno stanje — dnevnice su već upisane.
             const dt = new Date(date);
             loadMonth(dt.getFullYear(), dt.getMonth() + 1);
             refreshBookedMonth(dt.getFullYear(), dt.getMonth() + 1);
+
+            // Preračun naloga (Actual_Labor_Cost/Profit, snapshot završenih) je POSLJEDICA
+            // knjiženja, a ne uslov za njega → ide u POZADINU da potvrda bude trenutna.
+            // Nalozi su nezavisni dokumenti → paralelno. skipMaterialRefresh/skipStatusSync:
+            // knjiženje dnevnice ne mijenja materijal ni status proizvoda/projekta (isti obrazac
+            // kao saveDailyWorkBooking) — bez toga bi se ovdje ponovo dohvatao materijal po stavci
+            // I skenirali SVI aktivni nalozi organizacije (syncProjectStatus). skipSnapshot NIJE
+            // postavljen — završeni nalozi i dalje dobiju svjež production snapshot (rizik #4).
+            void Promise.all(Array.from(affectedOrders).map(orderId =>
+                recalculateWorkOrder(orderId, { skipMaterialRefresh: true, skipStatusSync: true })
+                    .catch(e => console.warn('recalc failed', orderId, e))
+            )).then(() => {
+                onRefresh('workers', 'workOrders');
+                if (touchedCompleted.size > 0) {
+                    showToast(`Ažurirano ${touchedCompleted.size} završen${touchedCompleted.size > 1 ? 'a naloga' : ' nalog'} — profit preračunat`, 'info');
+                }
+            });
         } catch (e) {
             console.error('commitDecisions error', e);
             showToast('Greška pri knjiženju dnevnica', 'error');
@@ -1063,6 +1101,8 @@ export default function AttendanceTab({ workers, workOrders, onRefresh, showToas
                         onClose={() => setConfirmOpen(false)}
                         date={confirmDate}
                         rows={confirmRows}
+                        yesterdayByWorker={confirmYesterday}
+                        yesterdaySourceDate={confirmYesterdayDate}
                         workOrders={workOrders}
                         workers={workers}
                         organizationId={organizationId || ''}
