@@ -39,13 +39,15 @@ import PulseStrip from './PulseStrip';
 import CommandTimeline from './CommandTimeline';
 import ProductsPanel from './ProductsPanel';
 import WorkOrdersPanel from './WorkOrdersPanel';
+import PurchaseOrdersPanel from './PurchaseOrdersPanel';
 import TaskWall from './TaskWall';
 import NotesPanel from './NotesPanel';
-import { KcPanel } from './parts';
+import { KcPanel, plural } from './parts';
 import './CommandCenter.css';
 
 const SOLO_LABELS: Record<string, string> = {
-    calendar: 'Kalendar', products: 'Proizvodi', workorders: 'Radni nalozi', tasks: 'Zadaci', notes: 'Napomene',
+    calendar: 'Kalendar', products: 'Proizvodi', workorders: 'Radni nalozi',
+    purchases: 'Narudžbe', tasks: 'Zadaci', notes: 'Napomene',
 };
 
 export interface CommandCenterScreenProps {
@@ -477,6 +479,16 @@ export default function CommandCenterScreen(props: CommandCenterScreenProps) {
                             </div>
 
                             <aside className="kc-col kc-col-rail">
+                                {soloVisible('purchases') && (
+                                    <PurchaseOrdersPanel
+                                        scope={scope}
+                                        today={today}
+                                        lens={lensSelection}
+                                        showDone={board.Show_Done}
+                                        solo={solo}
+                                        onSolo={setSolo}
+                                    />
+                                )}
                                 {soloVisible('tasks') && (
                                     <TaskWall
                                         scope={scope}
@@ -634,13 +646,6 @@ function enrichForPrint(wo: WorkOrder, projects: Project[]): WorkOrder {
     };
 }
 
-function plural(n: number, one: string, few: string, many: string): string {
-    const mod10 = n % 10;
-    const mod100 = n % 100;
-    if (mod10 === 1 && mod100 !== 11) return one;
-    if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return few;
-    return many;
-}
 
 
 /**

@@ -62,6 +62,30 @@ test('među nezavršenima pozicija s materijalom ima prednost', () => {
     expect(compareProducts(withCount('A', 'Na čekanju', 0), withCount('B', 'Rezanje', 2))).toBeGreaterThan(0);
 });
 
+test('pozicije iz naloga „U toku" idu na vrh, i one same po abecedi', () => {
+    const inProgress = (Name: string, Status: string, materialCount: number) =>
+        ({ product: product(Name, Status), materialCount, inProgress: true });
+    // U toku tuče i „ima materijal" i abecedu.
+    expect(compareProducts(inProgress('Z', 'Rezanje', 0), withCount('A', 'Rezanje', 9))).toBeLessThan(0);
+    // Dvije aktivne pozicije se međusobno porede abecedno.
+    expect(compareProducts(inProgress('A', 'Rezanje', 0), inProgress('B', 'Rezanje', 0))).toBeLessThan(0);
+});
+
+test('poredak liste: u toku → s materijalom → bez materijala → završeno', () => {
+    const materials = new Map([
+        ['ST19.B', [{} as CommandMaterialRow]], ['ST19.A', []],
+        ['ST6.A', [{} as CommandMaterialRow]], ['ST9', []], ['Gotov', [{} as CommandMaterialRow]],
+    ]);
+    const sorted = sortProductsForBoard([
+        product('ST9', 'Rezanje'),
+        product('Gotov', 'Spremno'),
+        product('ST19.B', 'Sklapanje'),
+        product('ST6.A', 'Rezanje'),
+        product('ST19.A', 'Sklapanje'),
+    ], materials, new Set(['ST19.A', 'ST19.B']));
+    expect(sorted.map(p => p.Name)).toEqual(['ST19.A', 'ST19.B', 'ST6.A', 'ST9', 'Gotov']);
+});
+
 test('sve ostalo je abeceda, prirodno (T2 prije T10)', () => {
     const materials = new Map([
         ['T10', [{} as CommandMaterialRow]], ['T2', [{} as CommandMaterialRow]], ['T1', [{} as CommandMaterialRow]],

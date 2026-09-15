@@ -19,6 +19,7 @@ import Modal from '@/components/ui/Modal';
 import type { Project, Worker, WorkOrder, PlanBlock, PlanCrew } from '@/lib/types';
 import { crewLabel, crewWorkerRefs } from '@/lib/types';
 import CrewPicker from './CrewPicker';
+import WorkerPicker from './WorkerPicker';
 import { collectProductCandidates, groupCandidatesByProject, type ProductCandidate } from '@/lib/canvas/fromProducts';
 import { scheduleBatch, type BatchScheduleMode } from '@/lib/canvas/batchSchedule';
 import { newBlock } from '@/lib/canvas/model';
@@ -499,29 +500,17 @@ export default function BatchTableModal({
                 </div>
             </Modal>
 
-            {/* Izbor radnika */}
-            <Modal isOpen={!!pickWorkersFor} onClose={() => setPickWorkersFor(null)}
+            {/* Izbor radnika — pretraga s tastature (vidi WorkerPicker) */}
+            <WorkerPicker
+                isOpen={!!pickWorkersFor}
+                workers={activeWorkers}
+                isSelected={wid => pickWorkersFor === 'ALL'
+                    ? rows.length > 0 && rows.every(r => r.workerIds.includes(wid))
+                    : !!rows.find(r => r.id === pickWorkersFor)?.workerIds.includes(wid)}
+                onToggle={wid => pickWorkersFor && toggleWorker(pickWorkersFor, wid)}
+                onClose={() => setPickWorkersFor(null)}
                 title={<><Users size={16} /> {pickWorkersFor === 'ALL' ? 'Radnici na sve naloge' : 'Dodijeli radnike'}</>}
-                size="default" zIndex={1200}
-                footer={<div className="btt-pick-foot">
-                    <button className="btn btn-primary" onClick={() => setPickWorkersFor(null)}>Gotovo</button>
-                </div>}>
-                <div className="btt-pick-list">
-                    {activeWorkers.map(w => {
-                        const on = pickWorkersFor === 'ALL'
-                            ? rows.length > 0 && rows.every(r => r.workerIds.includes(w.Worker_ID))
-                            : !!rows.find(r => r.id === pickWorkersFor)?.workerIds.includes(w.Worker_ID);
-                        return (
-                            <button key={w.Worker_ID} className={`btt-pick-item${on ? ' on' : ''}`}
-                                onClick={() => pickWorkersFor && toggleWorker(pickWorkersFor, w.Worker_ID)}>
-                                <span className={`btt-box${on ? ' on' : ''}`} />
-                                <span className="btt-pick-name">{w.Name}</span>
-                                <span className="btt-pick-meta">{w.Role || ''}</span>
-                            </button>
-                        );
-                    })}
-                </div>
-            </Modal>
+            />
 
             {/* Kandidat-ekipa za jedan red */}
             <CrewPicker

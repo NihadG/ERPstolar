@@ -18,7 +18,7 @@ import type { CommandMaterialRow } from '@/lib/command/materialOrder';
 import { essentialState, lensAllowsMaterial, lensAllowsProduct, type LensSelection } from '@/lib/command/signals';
 import { matches, queryTokens } from '@/lib/command/search';
 import { productSearchText, sortProductsForBoard } from '@/lib/command/products';
-import { hue, KcPanel, qty } from './parts';
+import { hue, KcPanel, plural, qty } from './parts';
 
 const READY = new Set(['Primljeno', 'Na stanju']);
 
@@ -94,6 +94,17 @@ export default function ProductsPanel(props: ProductsPanelProps) {
         return ids;
     }, [scope.workOrders]);
 
+    // Pozicije iz naloga koji se UPRAVO rade — one idu na vrh liste.
+    // Uže od `activeOrderProducts`: nalog „Na čekanju" je planiran, ne aktivan.
+    const inProgressProducts = useMemo(() => {
+        const ids = new Set<string>();
+        for (const wo of scope.workOrders) {
+            if (wo.Status !== 'U toku') continue;
+            for (const item of wo.items || []) if (item.Product_ID) ids.add(item.Product_ID);
+        }
+        return ids;
+    }, [scope.workOrders]);
+
     // Pretraga je tolerantna (dijakritika, redoslijed, razmaci, tipfeleri) i
     // gleda i materijale — „gdje mi je iveral" je stvarno pitanje nad ovom listom.
     const tokens = useMemo(() => queryTokens(query), [query]);
@@ -105,9 +116,10 @@ export default function ProductsPanel(props: ProductsPanelProps) {
                     lensAllowsProduct(lens, product.Product_ID)
                     && matches(productSearchText(product, byProduct.get(product.Product_ID) || [], project.Name || project.Client_Name || ''), tokens)),
                 byProduct,
+                inProgressProducts,
             ),
         }))
-        .filter(g => g.products.length > 0), [scope.projects, lens, tokens, byProduct]);
+        .filter(g => g.products.length > 0), [scope.projects, lens, tokens, byProduct, inProgressProducts]);
 
     const total = groups.reduce((sum, g) => sum + g.products.length, 0);
     const selectedMaterialRows = materials.filter(m => selectedMaterials.has(m.ID));
@@ -389,12 +401,5 @@ function statusClass(status: string): string {
     return 's-late';
 }
 
-function plural(n: number, one: string, few: string, many: string): string {
-    const mod10 = n % 10;
-    const mod100 = n % 100;
-    if (mod10 === 1 && mod100 !== 11) return one;
-    if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return few;
-    return many;
-}
 
 

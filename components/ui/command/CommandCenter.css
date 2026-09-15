@@ -666,7 +666,10 @@
 .kc-table tr:last-child td { border-bottom: none; }
 .kc-table .r { text-align: right; font-variant-numeric: tabular-nums; }
 .kc-table .fw { font-weight: 650; }
-.kc-table tr.blocked td:nth-child(2) { box-shadow: inset 2px 0 0 var(--kc-late); }
+/* Crvena ivica ide uz ime materijala, a NE uz drugu kolonu po redu: tabela
+   narudžbi nema kolonu s kvačicom, pa bi `nth-child(2)` u njoj obojila
+   količinu. Veže se na sadržaj ćelije, pa vrijedi za obje tabele. */
+.kc-table tr.blocked td:has(.kc-mat-name) { box-shadow: inset 2px 0 0 var(--kc-late); }
 .kc-mat-name { font-weight: 600; }
 
 /* Pomocne kolone (na stanju / naruceno / primljeno) padaju prve kad je usko:

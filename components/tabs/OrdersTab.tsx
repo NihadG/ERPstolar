@@ -1341,8 +1341,10 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
         return sum + (mat?.Total_Price || 0);
     }, 0);
 
-    // Projects with unordered materials
+    // Projekti sa nenaručenim materijalima. Arhivirani (Hidden) ispadaju —
+    // završeni poslovi bi inače zatrpali prvi korak wizarda.
     const projectsWithMaterials = projects.filter(p =>
+        !p.Hidden &&
         unorderedMaterials.some(m => {
             const product = p.products?.find(prod => prod.Product_ID === m.Product_ID);
             return !!product;

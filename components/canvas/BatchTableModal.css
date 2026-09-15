@@ -485,3 +485,55 @@
     .btt-table { min-width: 900px; }
     .btt-shell { --btt-cell-x: var(--cm-sp-2); }
 }
+
+/* ── Pretraga radnika (WorkerPicker) ─────────────────────────── */
+.wp .btt-pick-list { max-height: 46vh; }
+
+.wp-clear {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    padding: 0;
+    border: none;
+    border-radius: 50%;
+    background: var(--surface);
+    color: var(--text-secondary);
+    cursor: pointer;
+    flex-shrink: 0;
+}
+.wp-clear:hover { background: var(--surface-hover); color: var(--text-primary); }
+
+.wp-status {
+    display: flex;
+    justify-content: space-between;
+    gap: var(--cm-sp-2);
+    font-size: var(--cm-fs-micro);
+    color: var(--text-secondary);
+    font-variant-numeric: tabular-nums;
+}
+
+/* Označen red (strelice / hover) — jasno odvojen od „čekiran" stanja,
+   jer se ta dva stanja često poklapaju na istom redu. */
+.btt-pick-item.active {
+    background: var(--surface-hover);
+    box-shadow: inset 2px 0 0 var(--accent);
+}
+.btt-pick-item.on.active { background: var(--accent-light); }
+
+.wp-hl {
+    background: transparent;
+    color: var(--accent);
+    font-weight: 700;
+    padding: 0;
+}
+
+.wp-foot-hint {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    margin-right: auto;
+    font-size: var(--cm-fs-micro);
+    color: var(--text-secondary);
+}

@@ -2,10 +2,12 @@
 // KOMANDNI CENTAR — REDOSLIJED I PRETRAŽIVI TEKST POZICIJA
 //
 // Poredak liste je operativni, ne abecedni:
-//   1. ZAVRŠENO NA DNO — gotova pozicija ne traži više nijednu odluku
-//   2. IMA LI MATERIJAL — pozicija bez ijednog materijala je nedovršena
+//   1. U TOKU NA VRH — pozicija u nalogu koji se upravo radi je ono o čemu
+//      se danas odlučuje; ranije je bila zakopana pri dnu liste
+//   2. IMA MATERIJAL — pozicija bez ijednog materijala je nedovršena
 //      priprema; ne može se ni naručiti ni raditi, pa ide iza
-//   3. NAZIV — prirodno (T2 prije T10)
+//   3. ZAVRŠENO NA DNO — gotova pozicija ne traži više nijednu odluku
+//   4. NAZIV — prirodno (T2 prije T10), unutar svake od grupa
 //
 // Pretraživi tekst namjerno uključuje i materijale i dobavljače: „gdje mi je
 // iveral" je stvarno pitanje koje se postavlja nad ovom listom.
@@ -38,25 +40,51 @@ export function isProductDone(status?: string): boolean {
 export interface ProductOrderInput {
     product: Product;
     materialCount: number;
+    /** Pozicija je u radnom nalogu sa statusom „U toku". */
+    inProgress?: boolean;
+}
+
+/**
+ * Grupa kojoj pozicija pripada. Poredak je grupa-pa-abeceda, a NE lanac
+ * uslova — unutar jedne grupe ništa osim naziva ne smije mijenjati mjesta.
+ * Da se materijal poredio i unutar „u toku" grupe, dvije aktivne pozicije
+ * istog naloga bi se razdvojile samo zato što jednoj materijal nije unesen.
+ */
+function productTier(entry: ProductOrderInput): number {
+    if (entry.inProgress) return 0;                        // radi se upravo sad
+    if (isProductDone(entry.product.Status)) return 3;     // gotovo — ne traži odluku
+    return entry.materialCount > 0 ? 1 : 2;                // ima li šta za naručiti
 }
 
 /**
  * Poredak liste je operativni:
- *   1. ZAVRŠENE pozicije na dno — one više ne traže odluku
- *   2. POZICIJA S MATERIJALOM ima prednost — bez materijala je nedovršena
- *      priprema i ne može se ni naručiti ni raditi
- *   3. ABECEDA (prirodna: T2 prije T10) — sve ostalo je jednako važno
+ *   1. U TOKU na vrh — to je posao koji se upravo radi
+ *   2. S MATERIJALOM (bar 1) — ima se šta naručiti i raditi
+ *   3. BEZ MATERIJALA — nedovršena priprema
+ *   4. ZAVRŠENO na dno — više ne traži odluku
+ * Unutar svake grupe: abeceda, prirodna (T2 prije T10).
  */
 export function compareProducts(a: ProductOrderInput, b: ProductOrderInput): number {
-    return Number(isProductDone(a.product.Status)) - Number(isProductDone(b.product.Status))
-        || Number(b.materialCount > 0) - Number(a.materialCount > 0)
+    return productTier(a) - productTier(b)
         || naturalCompare(a.product.Name || '', b.product.Name || '');
 }
 
-/** Poredaj pozicije jednog projekta, uz broj materijala po poziciji. */
-export function sortProductsForBoard(products: Product[], materialsByProduct: Map<string, CommandMaterialRow[]>): Product[] {
+/**
+ * Poredaj pozicije jednog projekta, uz broj materijala po poziciji.
+ * `inProgressProducts` su ID-evi pozicija iz naloga koji su „U toku" — bez tog
+ * skupa poredak ne zna šta je aktivno, jer status naloga ne stoji na poziciji.
+ */
+export function sortProductsForBoard(
+    products: Product[],
+    materialsByProduct: Map<string, CommandMaterialRow[]>,
+    inProgressProducts?: Set<string>,
+): Product[] {
     return [...products]
-        .map(product => ({ product, materialCount: (materialsByProduct.get(product.Product_ID) || []).length }))
+        .map(product => ({
+            product,
+            materialCount: (materialsByProduct.get(product.Product_ID) || []).length,
+            inProgress: !!inProgressProducts?.has(product.Product_ID),
+        }))
         .sort(compareProducts)
         .map(entry => entry.product);
 }

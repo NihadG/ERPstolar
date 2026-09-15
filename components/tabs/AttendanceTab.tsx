@@ -3,6 +3,7 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import type { Worker, WorkerAttendance, WorkOrder } from '@/lib/types';
 import { ATTENDANCE_STATUSES } from '@/lib/types';
+import type { DailyBookingEntryView } from '@/lib/services';
 import {
     markAttendanceAndRecalculate,
     getAllAttendanceByMonth,
@@ -34,12 +35,15 @@ import {
     ChevronRight,
     Calendar,
     Users,
-    History
+    History,
+    ClipboardList,
+    Loader2
 } from 'lucide-react';
 import Modal from '@/components/ui/Modal';
 import { useData } from '@/context/DataContext';
 import { useIsMobile } from '@/hooks/useIsMobile';
 import AttendanceScreen from '@/components/field/attendance/AttendanceScreen';
+import '@/components/tabs/AttendanceTab.css';
 import '@/components/tabs/mobile/MobileUI.css';
 import '@/components/field/Field.css';
 import '@/components/field/Controller.css';
@@ -85,6 +89,13 @@ export default function AttendanceTab({ workers, workOrders, onRefresh, showToas
     // bio (modal iz toga nudi „Prepiši jučer").
     const [confirmYesterday, setConfirmYesterday] = useState<Map<string, string[]>>(new Map());
     const [confirmYesterdayDate, setConfirmYesterdayDate] = useState('');
+
+    // Nalozi na kojima je radnik TAJ dan radio — čita se tek kad se ćelija otvori.
+    // Šihtarica je mreža od par stotina ćelija; učitavati knjiženja za sve unaprijed
+    // znači stotine upita za podatak koji se gleda jednom.
+    const [dayWork, setDayWork] = useState<{ loading: boolean; entry: DailyBookingEntryView | null }>(
+        { loading: false, entry: null }
+    );
 
     // Mjesečni obračun plata
     const [payrollOpen, setPayrollOpen] = useState(false);
@@ -342,6 +353,39 @@ export default function AttendanceTab({ workers, workOrders, onRefresh, showToas
             loadMonth(date.getFullYear(), date.getMonth() + 1);
         }
     }
+
+    // Dohvat knjiženja za otvorenu ćeliju. Brzo klikanje kroz ćelije zna pokrenuti
+    // više upita, pa se rezultat zastarjelog odbacuje (`stale`) — bez toga bi sporiji
+    // raniji odgovor pregazio prikaz za ćeliju koja je trenutno otvorena.
+    useEffect(() => {
+        if (!editModalOpen || !selectedCell || !organizationId) {
+            setDayWork({ loading: false, entry: null });
+            return;
+        }
+        let stale = false;
+        const { workerId, date } = selectedCell;
+        setDayWork({ loading: true, entry: null });
+        getDailyWorkBooking(date, organizationId)
+            .then(entries => {
+                if (stale) return;
+                setDayWork({ loading: false, entry: entries.find(e => e.workerId === workerId) || null });
+            })
+            .catch(() => { if (!stale) setDayWork({ loading: false, entry: null }); });
+        return () => { stale = true; };
+    }, [editModalOpen, selectedCell, organizationId]);
+
+    // Knjižene stavke grupisane po nalogu — jedan red po nalogu, proizvodi ispod njega.
+    const dayWorkOrders = useMemo(() => {
+        const items = dayWork.entry?.items || [];
+        const groups = new Map<string, { workOrderId: string; products: DailyBookingEntryView['items'] }>();
+        for (const item of items) {
+            const key = item.workOrderId || 'bez-naloga';
+            const group = groups.get(key) || { workOrderId: item.workOrderId, products: [] };
+            group.products.push(item);
+            groups.set(key, group);
+        }
+        return Array.from(groups.values());
+    }, [dayWork.entry]);
 
     // Pomjeri ISO datum za N dana (lokalno, bez UTC pomaka)
     function shiftISO(iso: string, days: number): string {
@@ -938,6 +982,60 @@ export default function AttendanceTab({ workers, workOrders, onRefresh, showToas
                                             </button>
                                         );
                                     })}
+                                </div>
+                            </div>
+
+                            {/* Šta je taj dan knjiženo — nalozi i proizvodi na kojima je
+                                radnik radio. Status se često ispravlja naknadno, a bez ovog
+                                pregleda se ne vidi na šta je dnevnica već pala. */}
+                            <div className="form-group" style={{ marginTop: '20px' }}>
+                                <label style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                    <ClipboardList size={15} />
+                                    Radio na nalozima
+                                    {dayWorkOrders.length > 0 && (
+                                        <span className="att-work-count">{dayWorkOrders.length}</span>
+                                    )}
+                                </label>
+                                <div className="att-work-box">
+                                    {dayWork.loading ? (
+                                        <div className="att-work-empty">
+                                            <Loader2 size={15} className="att-work-spin" />
+                                            Učitavanje knjiženja...
+                                        </div>
+                                    ) : dayWorkOrders.length === 0 ? (
+                                        <div className="att-work-empty">
+                                            Tog dana nema knjiženih naloga za ovog radnika.
+                                        </div>
+                                    ) : (
+                                        dayWorkOrders.map(group => {
+                                            const wo = workOrders.find(w => w.Work_Order_ID === group.workOrderId);
+                                            const named = group.products.filter(p => p.productName);
+                                            return (
+                                                <div key={group.workOrderId || 'bez-naloga'} className="att-work-order">
+                                                    <div className="att-work-head">
+                                                        <strong>{wo ? workOrderDisplayName(wo) : 'Nalog'}</strong>
+                                                        {wo?.Work_Order_Number && <span className="att-work-num">#{wo.Work_Order_Number}</span>}
+                                                        {wo?.Status && <span className="att-work-status">{wo.Status}</span>}
+                                                    </div>
+                                                    {named.length > 0 ? (
+                                                        <ul className="att-work-products">
+                                                            {named.map(product => (
+                                                                <li key={product.workOrderItemId}>
+                                                                    <span className="att-work-prod">{product.productName}</span>
+                                                                    {product.projectName && <span className="att-work-proj">{product.projectName}</span>}
+                                                                    {(product.processes?.length ?? 0) > 0 && (
+                                                                        <span className="att-work-proc">{product.processes!.join(', ')}</span>
+                                                                    )}
+                                                                </li>
+                                                            ))}
+                                                        </ul>
+                                                    ) : (
+                                                        <div className="att-work-noprod">Proizvodi nisu definisani na ovom nalogu.</div>
+                                                    )}
+                                                </div>
+                                            );
+                                        })
+                                    )}
                                 </div>
                             </div>
 

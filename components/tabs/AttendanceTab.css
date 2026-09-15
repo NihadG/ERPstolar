@@ -1,0 +1,134 @@
+/* ══════════════════════════════════════════════════════════════════
+   Šihtarica — pregled knjiženih naloga u modalu „Označi Prisustvo".
+
+   Blok je namjerno vizuelno tiši od dugmadi za status: to je PODSJETNIK
+   na šta je dnevnica pala, a ne polje koje se mijenja. Zato okvir bez
+   ispune, tanja tipografija i lista bez ikonica.
+   ══════════════════════════════════════════════════════════════════ */
+
+.att-work-box {
+    margin-top: 8px;
+    max-height: 208px;
+    overflow-y: auto;
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius-md);
+    background: var(--background);
+}
+
+.att-work-count {
+    min-width: 18px;
+    padding: 0 6px;
+    border-radius: 999px;
+    background: var(--surface);
+    color: var(--text-secondary);
+    font-size: 11px;
+    font-weight: 700;
+    line-height: 18px;
+    text-align: center;
+}
+
+.att-work-empty {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 16px;
+    color: var(--text-secondary);
+    font-size: 13px;
+}
+
+.att-work-spin {
+    animation: att-work-rotate 1s linear infinite;
+}
+
+@keyframes att-work-rotate {
+    to { transform: rotate(360deg); }
+}
+
+.att-work-order {
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--border-light);
+}
+
+.att-work-order:last-child {
+    border-bottom: none;
+}
+
+.att-work-head {
+    display: flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.att-work-head strong {
+    font-size: 13.5px;
+    font-weight: 650;
+    color: var(--text-primary);
+}
+
+.att-work-num {
+    font-size: 12px;
+    color: var(--text-secondary);
+    font-variant-numeric: tabular-nums;
+}
+
+.att-work-status {
+    margin-left: auto;
+    padding: 1px 8px;
+    border-radius: 999px;
+    background: var(--surface);
+    color: var(--text-secondary);
+    font-size: 11px;
+    font-weight: 600;
+}
+
+.att-work-products {
+    margin: 6px 0 0;
+    padding: 0;
+    list-style: none;
+    display: grid;
+    gap: 3px;
+}
+
+.att-work-products li {
+    display: flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 8px;
+    font-size: 12.5px;
+    line-height: 1.5;
+}
+
+/* Tačka ispred proizvoda — lista ostaje lista i kad se prelomi u dva reda. */
+.att-work-products li::before {
+    content: "";
+    width: 4px;
+    height: 4px;
+    border-radius: 50%;
+    background: var(--text-tertiary);
+    flex: none;
+    transform: translateY(-2px);
+}
+
+.att-work-prod {
+    color: var(--text-primary);
+}
+
+.att-work-proj {
+    color: var(--text-secondary);
+}
+
+.att-work-proc {
+    padding: 0 6px;
+    border-radius: 4px;
+    background: var(--accent-light);
+    color: #0a5fb4;
+    font-size: 11px;
+    font-weight: 600;
+}
+
+.att-work-noprod {
+    margin-top: 4px;
+    font-size: 12.5px;
+    color: var(--text-tertiary);
+}

@@ -1,7 +1,8 @@
 'use client';
 
-import { useMemo } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import Modal from '../ui/Modal';
+import { matchesSearch, searchScore, searchTokens } from '../../lib/searchMatch';
 
 interface Project {
     Project_ID: string;
@@ -418,6 +419,30 @@ export function OrderWizardModal({
     orderName,
     setOrderName,
 }: OrderWizardModalProps) {
+    // Korak 1: pretraga projekata. Lista zna narasti na stotine kartica pa je
+    // skrolanje do traženog klijenta sporije od kucanja dva slova.
+    const [projectQuery, setProjectQuery] = useState('');
+    const projectSearchRef = useRef<HTMLInputElement>(null);
+
+    // Novo otvaranje wizarda (ili povratak na korak 1) kreće od čiste liste —
+    // zaostali upit bi sakrio projekte koje korisnik očekuje da vidi.
+    useEffect(() => {
+        if (!isOpen || wizardStep !== 1) setProjectQuery('');
+    }, [isOpen, wizardStep]);
+
+    const visibleProjects = useMemo(() => {
+        const tokens = searchTokens(projectQuery);
+        if (tokens.length === 0) return projectsWithMaterials;
+        return projectsWithMaterials
+            .map(project => ({
+                project,
+                score: searchScore(tokens, project.Name, project.Client_Name),
+            }))
+            .filter(entry => entry.score > 0)
+            .sort((a, b) => b.score - a.score)
+            .map(entry => entry.project);
+    }, [projectsWithMaterials, projectQuery]);
+
     const canGoNext =
         (wizardStep === 1 && selectedProjectIds.size > 0) ||
         (wizardStep === 2 && selectedProductIds.size > 0) ||
@@ -499,12 +524,57 @@ export function OrderWizardModal({
                     {/* STEP 1: PROJECTS */}
                     {wizardStep === 1 && (
                         <div className="wizard-step-container">
-                            <div className="step-header">
-                                <h3>Odaberite projekte</h3>
-                                <p>Za koje projekte kreirate narudžbu materijala?</p>
+                            <div className="step-header step-header-with-search">
+                                <div>
+                                    <h3>Odaberite projekte</h3>
+                                    <p>Za koje projekte kreirate narudžbu materijala?</p>
+                                </div>
+                                <div className="wizard-search">
+                                    <span className="material-icons-round wizard-search-icon">search</span>
+                                    <input
+                                        ref={projectSearchRef}
+                                        type="text"
+                                        value={projectQuery}
+                                        onChange={e => setProjectQuery(e.target.value)}
+                                        onKeyDown={e => {
+                                            if (e.key === 'Escape' && projectQuery) {
+                                                e.stopPropagation();  // Esc prvo čisti upit, tek prazan zatvara modal
+                                                setProjectQuery('');
+                                            }
+                                            // Enter na jedinom rezultatu = odabir bez podizanja ruke s tastature
+                                            if (e.key === 'Enter' && visibleProjects.length === 1) {
+                                                e.preventDefault();
+                                                toggleProject(visibleProjects[0].Project_ID);
+                                                setProjectQuery('');
+                                            }
+                                        }}
+                                        placeholder="Pretraži projekte ili klijente..."
+                                        className="wizard-search-input"
+                                        autoComplete="off"
+                                    />
+                                    {projectQuery && (
+                                        <button
+                                            type="button"
+                                            className="wizard-search-clear"
+                                            onClick={() => {
+                                                setProjectQuery('');
+                                                projectSearchRef.current?.focus();
+                                            }}
+                                            title="Očisti pretragu"
+                                        >
+                                            <span className="material-icons-round">close</span>
+                                        </button>
+                                    )}
+                                </div>
                             </div>
+                            {projectQuery && projectsWithMaterials.length > 0 && (
+                                <div className="wizard-search-summary">
+                                    {visibleProjects.length} od {projectsWithMaterials.length} projekata
+                                    {selectedProjectIds.size > 0 && ` · ${selectedProjectIds.size} odabrano`}
+                                </div>
+                            )}
                             <div className="wizard-grid projects-grid">
-                                {projectsWithMaterials.map(project => (
+                                {visibleProjects.map(project => (
                                     <div
                                         key={project.Project_ID}
                                         onClick={() => toggleProject(project.Project_ID)}
@@ -526,6 +596,15 @@ export function OrderWizardModal({
                                 <div style={{ textAlign: 'center', padding: '60px 20px', color: 'var(--text-secondary)' }}>
                                     <span className="material-icons-round" style={{ fontSize: '64px', color: 'var(--text-tertiary)', marginBottom: '16px', display: 'block' }}>folder_off</span>
                                     <p style={{ fontSize: '16px' }}>Nema projekata sa nenaručenim materijalima</p>
+                                </div>
+                            )}
+                            {projectsWithMaterials.length > 0 && visibleProjects.length === 0 && (
+                                <div style={{ textAlign: 'center', padding: '48px 20px', color: 'var(--text-secondary)' }}>
+                                    <span className="material-icons-round" style={{ fontSize: '48px', color: 'var(--text-tertiary)', marginBottom: '12px', display: 'block' }}>search_off</span>
+                                    <p style={{ fontSize: '15px' }}>Nema projekta za „{projectQuery}"</p>
+                                    <button className="btn btn-secondary" style={{ marginTop: '12px' }} onClick={() => setProjectQuery('')}>
+                                        Očisti pretragu
+                                    </button>
                                 </div>
                             )}
                         </div>
