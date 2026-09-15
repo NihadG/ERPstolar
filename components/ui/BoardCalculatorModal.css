@@ -1,0 +1,597 @@
+/* ============================================
+   BoardCalculatorModal — "koliko mi ploča treba"
+   Otvara se iznad izbora materijala (z-index > .msm-*)
+   ============================================ */
+
+.bcm-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.4);
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+    z-index: 1200;
+    animation: bcmFade 0.18s ease-out;
+}
+
+.bcm-modal {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: min(1080px, 96vw);
+    max-height: 90vh;
+    background: #fff;
+    border-radius: 20px;
+    box-shadow: 0 24px 80px rgba(0, 0, 0, 0.22), 0 4px 16px rgba(0, 0, 0, 0.08);
+    z-index: 1201;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    animation: bcmSlide 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes bcmFade {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+@keyframes bcmSlide {
+    from { opacity: 0; transform: translate(-50%, -48%) scale(0.98); }
+    to { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+}
+
+/* ---- Header ---- */
+.bcm-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px 22px;
+    border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+    flex-shrink: 0;
+}
+
+.bcm-header-left {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.bcm-header-icon {
+    width: 36px;
+    height: 36px;
+    border-radius: 10px;
+    background: linear-gradient(135deg, #b45309, #f59e0b);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #fff;
+}
+
+.bcm-title {
+    font-size: 17px;
+    font-weight: 650;
+    color: #1d1d1f;
+    letter-spacing: -0.02em;
+}
+
+.bcm-subtitle {
+    font-size: 12px;
+    color: #86868b;
+    margin-top: 1px;
+}
+
+.bcm-close {
+    background: rgba(0, 0, 0, 0.04);
+    border: none;
+    border-radius: 50%;
+    width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    color: #86868b;
+}
+
+.bcm-close:hover {
+    background: rgba(0, 0, 0, 0.08);
+    color: #1d1d1f;
+}
+
+/* ---- Body ---- */
+.bcm-body {
+    display: grid;
+    grid-template-columns: 1.15fr 1fr;
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+}
+
+.bcm-input-pane {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 18px 20px;
+    gap: 18px;
+    background: #fafafa;
+    border-right: 1px solid rgba(0, 0, 0, 0.06);
+}
+
+.bcm-section {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.bcm-parts-section {
+    flex: 1;
+    min-height: 0;
+}
+
+.bcm-section-title {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: #86868b;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.bcm-link {
+    background: none;
+    border: none;
+    color: #0071e3;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: none;
+    letter-spacing: 0;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 0;
+}
+
+.bcm-link .material-icons-round {
+    font-size: 14px;
+}
+
+/* ---- Ploča ---- */
+.bcm-board-row {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+.bcm-select {
+    flex: 1;
+    min-width: 180px;
+    padding: 8px 10px;
+    border: 1px solid #e5e7eb;
+    border-radius: 9px;
+    font-size: 13px;
+    background: #fff;
+    color: #1d1d1f;
+}
+
+.bcm-dims {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.bcm-dims input {
+    width: 76px;
+    padding: 8px 8px;
+    border: 1px solid #e5e7eb;
+    border-radius: 9px;
+    font-size: 13px;
+    text-align: right;
+    background: #fff;
+}
+
+.bcm-dims span {
+    color: #86868b;
+    font-size: 13px;
+}
+
+.bcm-unit {
+    font-size: 11px !important;
+}
+
+.bcm-settings-row {
+    display: flex;
+    gap: 12px;
+    align-items: flex-end;
+    flex-wrap: wrap;
+}
+
+.bcm-settings-row label {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    font-size: 11px;
+    color: #6b7280;
+    font-weight: 600;
+}
+
+.bcm-settings-row input[type='number'] {
+    width: 86px;
+    padding: 7px 9px;
+    border: 1px solid #e5e7eb;
+    border-radius: 9px;
+    font-size: 13px;
+    background: #fff;
+}
+
+.bcm-check {
+    flex-direction: row !important;
+    align-items: center;
+    gap: 7px !important;
+    padding-bottom: 8px;
+    cursor: pointer;
+}
+
+.bcm-check input {
+    width: 15px;
+    height: 15px;
+    accent-color: #b45309;
+}
+
+/* ---- Paste ---- */
+.bcm-paste {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 10px;
+    background: #fff;
+    border: 1px dashed #d1d5db;
+    border-radius: 10px;
+}
+
+.bcm-paste textarea {
+    width: 100%;
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    padding: 8px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 12px;
+    resize: vertical;
+}
+
+/* ---- Tabela komada ---- */
+.bcm-table-head,
+.bcm-table-row {
+    display: grid;
+    /* Frakcije, ne fiksni px — na užem ekranu se kolone skupe umjesto da
+       tabela izbaci vodoravni skrol. */
+    grid-template-columns: minmax(64px, 1.5fr) minmax(52px, 1fr) minmax(52px, 1fr) minmax(42px, 0.7fr) 26px;
+    gap: 6px;
+    align-items: center;
+}
+
+.bcm-table-head {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: #9ca3af;
+    padding: 0 2px;
+}
+
+.bcm-table {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    max-height: 320px;
+    overflow-y: auto;
+    padding-right: 2px;
+}
+
+.bcm-table-row input {
+    padding: 7px 9px;
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    font-size: 13px;
+    background: #fff;
+    width: 100%;
+    min-width: 0;
+}
+
+.bcm-table-row input:focus {
+    outline: none;
+    border-color: #b45309;
+    box-shadow: 0 0 0 3px rgba(180, 83, 9, 0.12);
+}
+
+.bcm-row-remove {
+    background: none;
+    border: none;
+    color: #d1d5db;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 2px;
+    border-radius: 50%;
+}
+
+.bcm-row-remove:hover {
+    color: #ef4444;
+    background: rgba(239, 68, 68, 0.08);
+}
+
+.bcm-row-remove .material-icons-round {
+    font-size: 16px;
+}
+
+.bcm-add-row {
+    align-self: flex-start;
+    background: none;
+    border: none;
+    color: #0071e3;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 0;
+}
+
+.bcm-add-row .material-icons-round {
+    font-size: 16px;
+}
+
+/* ---- Rezultat ---- */
+.bcm-result-pane {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 18px 20px;
+    gap: 14px;
+}
+
+.bcm-empty {
+    margin: auto;
+    text-align: center;
+    color: #9ca3af;
+}
+
+.bcm-empty .material-icons-round {
+    font-size: 40px;
+    opacity: 0.35;
+}
+
+.bcm-empty p {
+    margin: 6px 0 0;
+    font-size: 13px;
+}
+
+.bcm-empty .hint {
+    font-size: 11px;
+    color: #b0b0b5;
+}
+
+.spin {
+    animation: bcmSpin 1s linear infinite;
+}
+
+@keyframes bcmSpin {
+    to { transform: rotate(360deg); }
+}
+
+.bcm-headline {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    padding: 14px 16px;
+    background: linear-gradient(135deg, rgba(180, 83, 9, 0.08), rgba(245, 158, 11, 0.06));
+    border: 1px solid rgba(180, 83, 9, 0.18);
+    border-radius: 14px;
+}
+
+.bcm-big {
+    font-size: 40px;
+    font-weight: 700;
+    line-height: 1;
+    color: #b45309;
+    font-variant-numeric: tabular-nums;
+}
+
+.bcm-big-label {
+    font-size: 13px;
+    color: #78350f;
+    font-weight: 600;
+}
+
+.bcm-stats {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.bcm-stats div {
+    display: flex;
+    justify-content: space-between;
+    font-size: 12px;
+    padding: 6px 10px;
+    background: #f7f7f8;
+    border-radius: 8px;
+}
+
+.bcm-stats span {
+    color: #6b7280;
+}
+
+.bcm-stats strong {
+    color: #1d1d1f;
+}
+
+.bcm-warn {
+    padding: 9px 12px;
+    background: rgba(239, 68, 68, 0.08);
+    border: 1px solid rgba(239, 68, 68, 0.2);
+    border-radius: 10px;
+    font-size: 12px;
+    color: #b91c1c;
+}
+
+.bcm-error {
+    padding: 9px 12px;
+    background: rgba(239, 68, 68, 0.08);
+    border-radius: 10px;
+    font-size: 12px;
+    color: #b91c1c;
+}
+
+.bcm-sheets {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.bcm-sheet {
+    border: 1px solid #e5e7eb;
+    border-radius: 12px;
+    overflow: hidden;
+    background: #fff;
+}
+
+.bcm-sheet-head {
+    display: flex;
+    justify-content: space-between;
+    padding: 7px 10px;
+    font-size: 11px;
+    font-weight: 600;
+    color: #6b7280;
+    background: #f7f7f8;
+    border-bottom: 1px solid #eee;
+}
+
+.bcm-sheet-svg svg {
+    display: block;
+    width: 100%;
+    height: auto;
+}
+
+/* ---- Footer ---- */
+.bcm-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 14px 20px;
+    border-top: 1px solid rgba(0, 0, 0, 0.06);
+    background: #fafafa;
+    flex-shrink: 0;
+    flex-wrap: wrap;
+}
+
+.bcm-footer-info {
+    font-size: 12px;
+    color: #6b7280;
+}
+
+.bcm-footer-info strong {
+    color: #1d1d1f;
+}
+
+.bcm-footer-actions {
+    display: flex;
+    gap: 8px;
+}
+
+.bcm-btn {
+    padding: 9px 16px;
+    border-radius: 10px;
+    border: 1px solid #e5e7eb;
+    background: #fff;
+    color: #1d1d1f;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.15s;
+}
+
+.bcm-btn:hover:not(:disabled) {
+    background: #f3f4f6;
+}
+
+.bcm-btn.primary {
+    background: #b45309;
+    border-color: #b45309;
+    color: #fff;
+}
+
+.bcm-btn.primary:hover:not(:disabled) {
+    background: #92400e;
+}
+
+.bcm-btn.secondary {
+    background: transparent;
+    border-color: transparent;
+    color: #86868b;
+}
+
+.bcm-btn.small {
+    padding: 6px 12px;
+    font-size: 12px;
+    align-self: flex-start;
+}
+
+.bcm-btn:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+
+@media (max-width: 860px) {
+    /* Jedna kolona: grid s definisanom visinom bi stisnuo redove ispod
+       visine sadržaja (panoi se preklapaju), pa se prelazi na flex kolonu
+       koja pušta sadržaj u svoju punu visinu, a skrola cijelo tijelo. */
+    .bcm-body {
+        display: flex;
+        flex-direction: column;
+        overflow-y: auto;
+    }
+
+    .bcm-input-pane,
+    .bcm-result-pane {
+        overflow: visible;
+        flex: none;
+        min-height: 0;
+    }
+
+    .bcm-input-pane {
+        border-right: none;
+        border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+    }
+
+    .bcm-table {
+        max-height: none;
+    }
+}
+
+/* Tabela komada ne smije da se skupi u ništa kad je modal nizak —
+   flex dijete bez min-visine pada na 0 i redovi ispadnu van okvira. */
+.bcm-table {
+    min-height: 110px;
+}
+
+@media (max-width: 420px) {
+    /* Vrlo uski ekran: kolone tabele na minimum da nema vodoravnog skrola. */
+    .bcm-table-head,
+    .bcm-table-row {
+        grid-template-columns: minmax(46px, 1.3fr) minmax(42px, 1fr) minmax(42px, 1fr) minmax(34px, 0.6fr) 22px;
+        gap: 4px;
+    }
+
+    .bcm-table-row input {
+        padding: 7px 6px;
+    }
+}

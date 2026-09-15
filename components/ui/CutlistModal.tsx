@@ -19,6 +19,7 @@ import { createPortal } from 'react-dom';
 import type { Material, Product, ProductCutList } from '@/lib/types';
 import type { CutPart, CutlistSettings } from '@/lib/cutlist/types';
 import { parseCutlistText, normalizeMaterialKey, groupKeysInOrder } from '@/lib/cutlist/parse';
+import { BOARD_PRESETS, loadSavedBoardDims, saveBoardDims } from '@/lib/cutlist/boardPrefs';
 import { suggestMaterials, materialSimilarity } from '@/lib/cutlist/match';
 import { packGroup, packGroups } from '@/lib/cutlist/optimizer';
 import { buildProductCutList, type CutlistGroupMeta } from '@/lib/cutlist/persist';
@@ -81,35 +82,6 @@ interface GroupConfig {
     allowRotation: boolean;
     partCount: number;
     areaM2: number;
-}
-
-const BOARD_PRESETS: { label: string; w: number; h: number }[] = [
-    { label: '2800 × 2070 (iverica standard)', w: 2800, h: 2070 },
-    { label: '2790 × 2060 (obrezana)', w: 2790, h: 2060 },
-    { label: '2750 × 1830 (MDF)', w: 2750, h: 1830 },
-    { label: '2440 × 1220', w: 2440, h: 1220 },
-    { label: '2500 × 1250', w: 2500, h: 1250 },
-    { label: '3050 × 1220', w: 3050, h: 1220 },
-];
-
-const BOARD_DIMS_STORAGE = 'cutlist-board-dims';
-
-/** Zapamćene dimenzije ploče po materijalu (localStorage). */
-function loadSavedBoardDims(): Record<string, { w: number; h: number }> {
-    try {
-        return JSON.parse(localStorage.getItem(BOARD_DIMS_STORAGE) || '{}');
-    } catch {
-        return {};
-    }
-}
-
-function saveBoardDims(materialId: string, w: number, h: number): void {
-    if (!materialId) return;
-    try {
-        const all = loadSavedBoardDims();
-        all[materialId] = { w, h };
-        localStorage.setItem(BOARD_DIMS_STORAGE, JSON.stringify(all));
-    } catch { /* localStorage nedostupan — nije kritično */ }
 }
 
 interface CutlistModalProps {
@@ -1023,6 +995,11 @@ export default function CutlistModal({
                                         <span className="clm-result-group-meta">
                                             {g.Sheets.length} ploča {g.Board_Width}×{g.Board_Height}
                                             {g.Edge_Banding_M ? ` • kant ${g.Edge_Banding_M.toFixed(1)} m` : ''}
+                                            {(() => {
+                                                const reuse = g.Sheets.reduce(
+                                                    (s, sh) => s + (sh.Offcuts || []).reduce((a, o) => a + o.W * o.H, 0), 0) / 1e6;
+                                                return reuse > 0.01 ? ` • za dalje ${reuse.toFixed(2)} m²` : '';
+                                            })()}
                                         </span>
                                     </div>
                                     {g.Sheets.map((sheet, si) => (
@@ -1030,7 +1007,9 @@ export default function CutlistModal({
                                             <div className="clm-sheet-head">
                                                 <span>Ploča {si + 1}/{g.Sheets.length}</span>
                                                 <span className="clm-sheet-meta">
-                                                    {sheet.Offcuts?.[0] ? `najveći ostatak ${sheet.Offcuts[0].W}×${sheet.Offcuts[0].H} mm` : ''}
+                                                    {(sheet.Offcuts || []).length
+                                                        ? `za dalje: ${sheet.Offcuts!.map(o => `${o.W}×${o.H}`).join(', ')} mm`
+                                                        : ''}
                                                 </span>
                                                 <span className={`clm-eff ${sheet.Efficiency > 88 ? 'good' : sheet.Efficiency > 75 ? 'ok' : 'low'}`}>
                                                     {sheet.Efficiency.toFixed(1)}%

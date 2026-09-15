@@ -1045,3 +1045,37 @@
         grid-template-columns: 1fr;
     }
 }
+
+/* ---- Akcije na odabranoj kartici (kalkulator ploča + ukloni) ---- */
+.msm-selected-actions {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin-left: 12px;
+    flex-shrink: 0;
+}
+
+.msm-selected-actions .msm-remove-btn {
+    margin-left: 0;
+}
+
+.msm-calc-btn {
+    background: rgba(180, 83, 9, 0.1);
+    border: none;
+    color: #b45309;
+    cursor: pointer;
+    padding: 6px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.15s;
+}
+
+.msm-calc-btn:hover {
+    background: rgba(180, 83, 9, 0.18);
+}
+
+.msm-calc-btn .material-icons-round {
+    font-size: 18px;
+}

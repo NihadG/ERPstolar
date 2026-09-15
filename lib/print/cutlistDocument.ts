@@ -152,12 +152,35 @@ const STYLE_CSS = `
     .totals-line strong { font-size: 14px; }
 `;
 
+/** Procijenjena širina teksta u mm (SVG jedinicama) za dati font. */
+function textWidth(text: string, size: number, mono: boolean): number {
+    return text.length * size * (mono ? 0.62 : 0.55);
+}
+
+/** Skrati tekst da stane u `avail`; '' ako ni skraćeno nema smisla. */
+function fitText(text: string, avail: number, size: number, mono = false): string {
+    if (textWidth(text, size, mono) <= avail) return text;
+    const per = size * (mono ? 0.62 : 0.55);
+    const max = Math.floor(avail / per);
+    if (max < 3) return '';
+    return `${text.slice(0, max - 1)}…`;
+}
+
 /**
  * SVG crtež jedne ploče. Koordinate = mm (viewBox u dimenzijama ploče).
  * Izvezeno da i CutlistModal (pregled na ekranu) crta ISTIM kodom.
+ *
+ * OZNAKE SU FIKSNE VELIČINE za cijelu ploču — mali komad dobija jednako
+ * krupan broj kao i veliki. (Ranije se font skalirao po komadu, pa je
+ * ista lista imala i nečitljivo sitne i nepotrebno krupne natpise.) Kad
+ * natpis ne stane, SKRAĆUJE SE ili se izostavlja — nikad ne smanjuje.
  */
 export function renderSheetSvg(sheet: CutlistSheetRecord, boardW: number, boardH: number, trim: number): string {
     const fontBase = Math.max(boardW, boardH) / 80;
+    /** Dimenzije uz rubove komada. */
+    const DIM_SIZE = fontBase * 1.1;
+    /** Redni broj + naziv. */
+    const NAME_SIZE = fontBase * 0.98;
     const parts: string[] = [];
 
     parts.push(`<svg class="board-svg" viewBox="-1 -1 ${boardW + 2} ${boardH + 2}" xmlns="http://www.w3.org/2000/svg">`);
@@ -165,6 +188,23 @@ export function renderSheetSvg(sheet: CutlistSheetRecord, boardW: number, boardH
     parts.push(`<rect x="0" y="0" width="${boardW}" height="${boardH}" fill="#f8fafc" stroke="#64748b" stroke-width="${fontBase / 8}"/>`);
     if (trim > 0) {
         parts.push(`<rect x="${trim}" y="${trim}" width="${boardW - 2 * trim}" height="${boardH - 2 * trim}" fill="white" stroke="#e2e8f0" stroke-width="${fontBase / 14}" stroke-dasharray="${fontBase} ${fontBase}"/>`);
+    }
+
+    // Iskoristivi ostaci — ispod komada, zeleno: ono što se vraća na policu.
+    // (Starije snimljene liste nemaju X/Y, pa se te zone ne crtaju.)
+    for (const o of sheet.Offcuts || []) {
+        if (o.X === undefined || o.Y === undefined) continue;
+        const ox = o.X + trim;
+        const oy = o.Y + trim;
+        parts.push(`<rect x="${ox}" y="${oy}" width="${o.W}" height="${o.H}" fill="#ecfdf5" stroke="#10b981" stroke-width="${fontBase / 12}" stroke-dasharray="${fontBase * 0.6} ${fontBase * 0.4}"/>`);
+        const portrait = o.H > o.W;
+        const label = fitText(`ostatak ${o.W}×${o.H}`, (portrait ? o.H : o.W) * 0.9, NAME_SIZE);
+        if (label && Math.min(o.W, o.H) >= NAME_SIZE * 1.25) {
+            const ocx = ox + o.W / 2;
+            const ocy = oy + o.H / 2;
+            const rot = portrait ? ` transform="rotate(-90 ${ocx} ${ocy})"` : '';
+            parts.push(`<text x="${ocx}" y="${ocy}" text-anchor="middle" dominant-baseline="central" font-size="${NAME_SIZE}" font-weight="600" fill="#047857"${rot}>${label}</text>`);
+        }
     }
 
     // Komadi — koordinate rasporeda su u KORISNOJ površini → pomak za trim.
@@ -175,39 +215,47 @@ export function renderSheetSvg(sheet: CutlistSheetRecord, boardW: number, boardH
 
         const cx = x + p.W / 2;
         const cy = y + p.H / 2;
-        const minDim = Math.min(p.W, p.H);
+        const portrait = p.H > p.W;
+        const longSide = portrait ? p.H : p.W;
+        const shortSide = portrait ? p.W : p.H;
+        const suffix = p.Rotated ? ' ⟳' : '';
 
-        // Dimenzije se pišu DUŽ RUBOVA komada: širina uz gornji rub, visina uz
-        // lijevi rub (okrenuto 90°). Font je ~20% veći od ranijeg centralnog
-        // „Š×V" prikaza, ali ograničen da broj stane duž ruba koji označava.
-        const edgeSize = Math.min(fontBase * 1.15, minDim / 3.4, p.W / 3.4, p.H / 3.4);
-        const idxSize = Math.min(fontBase, minDim / 2.2, p.W / 3);
+        const wTxt = String(Math.round(p.W));
+        const hTxt = String(Math.round(p.H));
+        const inset = DIM_SIZE * 0.78;
+        // Rubne dimenzije traže pojas visine ~1.6×font po obje ose (broj +
+        // zrak), a natpis mora stati duž ruba koji označava.
+        const edgeFits =
+            p.H >= DIM_SIZE * 2.9 && p.W >= DIM_SIZE * 2.9
+            && textWidth(wTxt, DIM_SIZE, true) <= p.W - inset
+            && textWidth(hTxt, DIM_SIZE, true) <= p.H - inset;
 
-        if (edgeSize >= fontBase * 0.36) {
-            const edgeInset = edgeSize * 0.78;
-            // Širina — uz gornji rub.
-            parts.push(`<text x="${cx}" y="${y + edgeInset}" text-anchor="middle" dominant-baseline="central" font-size="${edgeSize}" font-weight="700" font-family="monospace" fill="#78350f">${Math.round(p.W)}</text>`);
-            // Visina — uz lijevi rub, okrenuto.
-            parts.push(`<text x="${x + edgeInset}" y="${cy}" text-anchor="middle" dominant-baseline="central" font-size="${edgeSize}" font-weight="700" font-family="monospace" fill="#78350f" transform="rotate(-90 ${x + edgeInset} ${cy})">${Math.round(p.H)}</text>`);
+        if (edgeFits) {
+            // Širina uz gornji rub, visina uz lijevi rub (okrenuta 90°).
+            parts.push(`<text x="${cx}" y="${y + inset}" text-anchor="middle" dominant-baseline="central" font-size="${DIM_SIZE}" font-weight="700" font-family="monospace" fill="#78350f">${wTxt}</text>`);
+            parts.push(`<text x="${x + inset}" y="${cy}" text-anchor="middle" dominant-baseline="central" font-size="${DIM_SIZE}" font-weight="700" font-family="monospace" fill="#78350f" transform="rotate(-90 ${x + inset} ${cy})">${hTxt}</text>`);
 
-            // Redni broj + naziv — PRATI DUŽU STRANU komada: uspravno (okrenuto
-            // -90°) na portretnim, vodoravno na pejzažnim komadima. Font se mjeri
-            // po dužoj/kraćoj strani površine iza rubnih oznaka, pa uski uspravni
-            // komadi (npr. 250×1250) dobiju veći, čitljiv naziv duž dužine.
-            const band = edgeInset * 1.7;
-            const portrait = p.H > p.W;
-            const availShort = (portrait ? p.W : p.H) - band;
-            const availLong = (portrait ? p.H : p.W) - band;
-            const label = `${i + 1}. ${p.Name}${p.Rotated ? ' ⟳' : ''}`;
-            const nameSize = Math.min(fontBase * 1.02, availShort / 1.6, availLong / Math.max(4, label.length * 0.6));
-            if (nameSize >= fontBase * 0.32 && availShort > 0) {
+            // Redni broj + naziv — duž DUŽE strane (uspravno na portretnim),
+            // u površini iza rubnih oznaka; predug naziv se skraćuje.
+            const band = inset * 1.7;
+            const label = fitText(`${i + 1}. ${p.Name}${suffix}`, longSide - band, NAME_SIZE);
+            if (label && shortSide - band >= NAME_SIZE * 1.15) {
                 const ncx = x + (p.W + band) / 2;
                 const ncy = y + (p.H + band) / 2;
                 const rot = portrait ? ` transform="rotate(-90 ${ncx} ${ncy})"` : '';
-                parts.push(`<text x="${ncx}" y="${ncy}" text-anchor="middle" dominant-baseline="central" font-size="${nameSize}" font-weight="600" fill="#b45309"${rot}>${i + 1}. ${esc(p.Name)}${p.Rotated ? ' ⟳' : ''}</text>`);
+                parts.push(`<text x="${ncx}" y="${ncy}" text-anchor="middle" dominant-baseline="central" font-size="${NAME_SIZE}" font-weight="600" fill="#b45309"${rot}>${esc(label)}</text>`);
             }
-        } else if (idxSize >= fontBase * 0.3) {
-            parts.push(`<text x="${cx}" y="${cy + idxSize * 0.35}" text-anchor="middle" font-size="${idxSize}" font-weight="600" fill="#78350f">${i + 1}</text>`);
+        } else if (shortSide >= NAME_SIZE * 1.25) {
+            // Uski komad (traka, letvica): JEDAN red duž duže strane —
+            // "3. Polica 1488×80" → skraćuje se dok stane, font ostaje isti.
+            const rot = portrait ? ` transform="rotate(-90 ${cx} ${cy})"` : '';
+            const full = `${i + 1}. ${p.Name}${suffix}  ${wTxt}×${hTxt}`;
+            const label = fitText(full, longSide * 0.92, NAME_SIZE)
+                || fitText(`${i + 1}. ${wTxt}×${hTxt}`, longSide * 0.92, NAME_SIZE)
+                || fitText(`${i + 1}`, longSide * 0.92, NAME_SIZE);
+            if (label) {
+                parts.push(`<text x="${cx}" y="${cy}" text-anchor="middle" dominant-baseline="central" font-size="${NAME_SIZE}" font-weight="600" fill="#78350f"${rot}>${esc(label)}</text>`);
+            }
         }
     });
 
@@ -232,11 +280,14 @@ export function buildCutlistPrintDocument({ cutList, productName, projectName }:
         const avgEff = g.Sheets.length
             ? g.Sheets.reduce((s, sh) => s + sh.Efficiency, 0) / g.Sheets.length
             : 0;
+        const reuse = g.Sheets.reduce(
+            (s, sh) => s + (sh.Offcuts || []).reduce((a, o) => a + o.W * o.H, 0), 0) / 1e6;
         return `<tr>
             <td>${esc(g.Material_Label)}</td>
             <td class="num">${g.Board_Width} × ${g.Board_Height}</td>
             <td class="num"><strong>${g.Sheets.length}</strong></td>
             <td class="num">${avgEff.toFixed(1)}%</td>
+            <td class="num">${reuse > 0.01 ? reuse.toFixed(2) + ' m²' : '—'}</td>
             <td class="num">${g.Edge_Banding_M ? g.Edge_Banding_M.toFixed(1) + ' m' : '—'}</td>
         </tr>`;
     }).join('');
@@ -264,6 +315,7 @@ export function buildCutlistPrintDocument({ cutList, productName, projectName }:
             <thead><tr>
                 <th>Materijal</th><th class="num" style="width:110px">Ploča (mm)</th>
                 <th class="num" style="width:60px">Ploča kom</th><th class="num" style="width:90px">Iskorišteno</th>
+                <th class="num" style="width:90px">Ostatak za dalje</th>
                 <th class="num" style="width:80px">Kant traka</th>
             </tr></thead>
             <tbody>${summaryRows}</tbody>
@@ -304,7 +356,9 @@ export function buildCutlistPrintDocument({ cutList, productName, projectName }:
                         ${group.Board_Width} × ${group.Board_Height} mm •
                         iskorišteno <strong>${sheet.Efficiency.toFixed(1)}%</strong> •
                         otpad ${(waste / 1e6).toFixed(2)} m² •
-                        rez ${(sheet.Cut_Length / 1000).toFixed(1)} m${noRotation ? ' • bez rotacije' : ''}${sheet.Offcuts?.[0] ? ` • najveći ostatak ${sheet.Offcuts[0].W}×${sheet.Offcuts[0].H}` : ''}
+                        rez ${(sheet.Cut_Length / 1000).toFixed(1)} m${noRotation ? ' • bez rotacije' : ''}${(sheet.Offcuts || []).length
+                            ? ` • za dalje: ${sheet.Offcuts!.map(o => `${o.W}×${o.H}`).join(', ')}`
+                            : ''}
                     </div>
                 </div>
                 ${renderSheetSvg(sheet, group.Board_Width, group.Board_Height, cutList.Settings.Trim)}

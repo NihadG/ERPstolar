@@ -295,6 +295,51 @@ describe('Nalog "Ormar na ulazu" (PDF 23.07.2026) — 4 grupe materijala', () =>
     });
 });
 
+describe('grupisanje otpada — ostatak mora biti u KRUPNIM komadima', () => {
+    // Drugi prioritet iza broja ploča: ono što ostane treba biti jedan
+    // upotrebljiv komad za policu, a ne pet traka od kojih se ništa ne reže.
+    const parts = makeParts(BENCHMARK_PARTS);
+    const board = { width: 2790, height: 2060 };
+    const result = packGroup(parts, board, { kerf: 4, trim: 10, allowRotation: true },
+        { timeBudgetMs: 6000, maxRestarts: 400 });
+
+    const usableArea = result.usable.width * result.usable.height;
+    const offcuts = result.sheets.flatMap(s => s.offcuts);
+    const biggest = offcuts.reduce((m, o) => Math.max(m, o.w * o.h), 0);
+
+    it('najveći ostatak je bar 70% slobodne površine najslabije ploče', () => {
+        const last = result.sheets[result.sheets.length - 1];
+        const freeOnLast = usableArea - last.usedArea;
+        // eslint-disable-next-line no-console
+        console.log(`[otpad] najveći ostatak: ${(biggest / 1e6).toFixed(2)} m², ` +
+            `slobodno na zadnjoj ploči: ${(freeOnLast / 1e6).toFixed(2)} m², ` +
+            `iskoristivih ostataka: ${offcuts.length}`);
+        expect(biggest).toBeGreaterThan(freeOnLast * 0.7);
+    });
+
+    it('otpad je koncentrisan na zadnjoj ploči (ostale su iznad 80%)', () => {
+        for (let i = 0; i < result.sheets.length - 1; i++) {
+            expect(result.sheets[i].efficiency).toBeGreaterThan(80);
+        }
+    });
+
+    it('ostaci ne izlaze iz ploče i ne preklapaju komade', () => {
+        for (const sheet of result.sheets) {
+            for (const o of sheet.offcuts) {
+                expect(o.x).toBeGreaterThanOrEqual(-0.01);
+                expect(o.y).toBeGreaterThanOrEqual(-0.01);
+                expect(o.x + o.w).toBeLessThanOrEqual(result.usable.width + 0.01);
+                expect(o.y + o.h).toBeLessThanOrEqual(result.usable.height + 0.01);
+                for (const p of sheet.placements) {
+                    const apart = o.x + o.w <= p.x + 0.01 || p.x + p.w <= o.x + 0.01
+                        || o.y + o.h <= p.y + 0.01 || p.y + p.h <= o.y + 0.01;
+                    expect(apart).toBe(true);
+                }
+            }
+        }
+    });
+});
+
 describe('packGroups — više materijala', () => {
     it('pakuje grupe odvojeno i čuva redoslijed', async () => {
         const iveral = makeParts([['A', 600, 400, 6]], 'iveral');

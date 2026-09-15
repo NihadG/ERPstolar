@@ -239,8 +239,12 @@ export interface CutlistSheetRecord {
     Efficiency: number;
     Used_Area: number;
     Cut_Length: number;
-    /** Najveći iskoristivi ostaci (mm) — objašnjava zašto još komada ne staje. */
-    Offcuts?: { W: number; H: number }[];
+    /**
+     * Najveći ISKORISTIVI ostaci (mm) — ono što ide na policu za sljedeći
+     * nalog. X/Y su položaj u korisnoj površini (crtaju se na skici);
+     * starije snimljene liste ih nemaju, pa su opcioni.
+     */
+    Offcuts?: { W: number; H: number; X?: number; Y?: number }[];
 }
 
 export interface CutlistGroupRecord {

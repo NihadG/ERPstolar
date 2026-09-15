@@ -66,6 +66,27 @@ const OFFCUT_MIN_SIDE = 100;
 /** Zone uže/niže od ovoga se odbacuju odmah (ni najmanji komad ne stane). */
 const RECT_DROP_EPS = 0.5;
 
+/**
+ * Vrijednost jedne slobodne zone kao ISKORISTIVOG ostatka (za policu).
+ * Kvadratna po površini: ostatak od 2 m² vrijedi 4, dva od po 1 m² samo 2.
+ * Zato raspored koji otpad GRUPIŠE pobjeđuje onaj koji ga razbije na
+ * sitne trake, a ostatak uži od OFFCUT_MIN_SIDE ne vrijedi ništa.
+ */
+function rectValue(r: FreeRect): number {
+    if (Math.min(r.w, r.h) < OFFCUT_MIN_SIDE) return 0;
+    const m2 = (r.w * r.h) / 1e6;
+    return m2 * m2;
+}
+
+/** Kvalitet ostatka cijelog rješenja — veće je bolje. */
+function leftoverScore(sheets: SheetState[]): number {
+    let v = 0;
+    for (const s of sheets) {
+        for (const r of s.rects) v += rectValue(r);
+    }
+    return v;
+}
+
 /** Prag "savršenog fita" u score prostoru. */
 const PERFECT_THRESHOLD = -1e8;
 
@@ -625,13 +646,19 @@ function randomPolicy(rng: () => number, parts: PartInst[]): PackPolicy {
     return { mode: rng() < 0.5 ? 'order' : 'global', orient: map };
 }
 
-/** Leksikografsko poređenje: broj ploča → popunjenost zadnje → dužina reza. */
+/**
+ * Leksikografsko poređenje rješenja:
+ *  1. BROJ PLOČA (apsolutni prioritet — maksimalno iskorištenje materijala);
+ *  2. KVALITET OSTATKA: pri istom broju ploča pobjeđuje raspored koji
+ *     ostavlja krupne, iskoristive ostatke umjesto sitnih traka;
+ *  3. dužina reza.
+ */
 function betterSolution(a: Solution, b: Solution | null): boolean {
     if (!b) return true;
     if (a.sheets.length !== b.sheets.length) return a.sheets.length < b.sheets.length;
-    const lastA = a.sheets.length ? a.sheets[a.sheets.length - 1].usedArea : 0;
-    const lastB = b.sheets.length ? b.sheets[b.sheets.length - 1].usedArea : 0;
-    if (lastA !== lastB) return lastA < lastB;
+    const leftA = leftoverScore(a.sheets);
+    const leftB = leftoverScore(b.sheets);
+    if (Math.abs(leftA - leftB) > 1e-9) return leftA > leftB;
     const cutA = a.sheets.reduce((s, x) => s + x.cutLength, 0);
     const cutB = b.sheets.reduce((s, x) => s + x.cutLength, 0);
     return cutA < cutB;
@@ -647,6 +674,212 @@ const SORT_STRATEGIES: SortFn[] = [
     (a, b) => Math.max(b.w, b.h) - Math.max(a.w, a.h) || b.area - a.area,
     (a, b) => (b.w + b.h) - (a.w + a.h) || b.h - a.h,
 ];
+
+/** Postavljen komad → instanca s ORIGINALNIM dimenzijama (zbog canRotate). */
+function placementInst(pl: PlacedPart, refById: Map<string, CutPart>): PartInst {
+    const ow = pl.rotated ? pl.h : pl.w;
+    const oh = pl.rotated ? pl.w : pl.h;
+    const ref = refById.get(pl.partId) || ({ id: pl.partId, name: pl.name } as CutPart);
+    return { ref, w: ow, h: oh, area: ow * oh };
+}
+
+function cloneSheet(s: SheetState): SheetState {
+    return {
+        placements: s.placements.map(p => ({ ...p })),
+        cuts: s.cuts.map(c => ({ ...c })),
+        rects: s.rects.map(r => ({ ...r })),
+        usedArea: s.usedArea,
+        cutLength: s.cutLength,
+        cutOrder: s.cutOrder,
+    };
+}
+
+// ════════════════════════════════════════════════════════════════════
+// GRUPISANJE OTPADA — isti broj ploča, ali ostatak koji nešto vrijedi
+//
+// Kad je broj ploča utvrđen, isti komadi se mogu složiti tako da ostatak
+// bude deset sitnih traka razasutih po svim pločama (bezvrijedno) ili
+// jedan veliki komad na zadnjoj ploči (ide na policu i troši se u
+// sljedećem nalogu). Ovdje se, BEZ povećanja broja ploča, radi dvoje:
+//   1) svaka ploča se prepakuje varijantom koja ostavlja krupniji ostatak;
+//   2) NAJSLABIJA ploča se prazni — komadi se sele u slobodne zone punijih
+//      ploča dok god staju, pa se otpad skuplja na jednom mjestu (a kad
+//      se isprazni do kraja, otpadne i cijela ploča).
+// ════════════════════════════════════════════════════════════════════
+
+/**
+ * Najbolji raspored poola na JEDNU ploču po kvalitetu ostatka.
+ * `wide` = široka pretraga (za ploču čiji ostatak nas najviše zanima).
+ * null ako pool ne stane na jednu ploču.
+ */
+function bestSingleSheet(
+    pool: PartInst[],
+    usable: BoardDims,
+    settings: CutlistSettings,
+    deadline: number,
+    wide: boolean,
+): SheetState | null {
+    let best: SheetState | null = null;
+    let bestVal = -Infinity;
+
+    const consider = (solution: Solution) => {
+        if (solution.sheets.length !== 1) return;
+        const sheet = solution.sheets[0];
+        const val = leftoverScore([sheet]);
+        if (val > bestVal) { bestVal = val; best = sheet; }
+    };
+
+    for (const orient of ['asis', 'land', 'port'] as const) {
+        for (const alpha of (wide ? [1.0, 0.9, 0.8, 0.65] : [1.0, 0.8])) {
+            if (Date.now() > deadline) return best;
+            consider(packStripsGlobal(pool, usable, settings, orient, alpha));
+        }
+    }
+    const sorts = wide ? SORT_STRATEGIES : SORT_STRATEGIES.slice(0, 2);
+    const policies = wide ? BASE_POLICIES : BASE_POLICIES.slice(0, 3);
+    for (const sortFn of sorts) {
+        const sorted = [...pool].sort(sortFn);
+        for (const policy of policies) {
+            if (Date.now() > deadline) return best;
+            consider(packAll(sorted, usable, settings, policy));
+        }
+    }
+    return best;
+}
+
+interface RefillResult {
+    sheet: SheetState;
+    /** Ponuđeni komadi koji NISU stali. */
+    leftover: PartInst[];
+    /** Površina progutanih komada — po njoj se biraju varijante. */
+    absorbedArea: number;
+}
+
+/**
+ * Prepakuj ploču ZAJEDNO s ponuđenim komadima s druge ploče: vraća novu
+ * ploču koja je progutala što više njih i one koji nisu stali. Vlastiti
+ * komadi ploče moraju ostati SVI — varijanta koja bilo koji izbaci se
+ * odbacuje (komad ne smije nestati iz naloga).
+ */
+function refillSheet(
+    own: PartInst[],
+    extras: PartInst[],
+    usable: BoardDims,
+    settings: CutlistSettings,
+    deadline: number,
+): RefillResult | null {
+    const ownSet = new Set(own);
+    let best: RefillResult | null = null;
+
+    for (const sortFn of SORT_STRATEGIES.slice(0, 3)) {
+        const sorted = [...own, ...extras].sort(sortFn);
+        for (const policy of BASE_POLICIES.slice(0, 3)) {
+            if (Date.now() > deadline) return best;
+            const remaining = [...sorted];
+            const sheet = packSheet(remaining, usable, settings, policy);
+            if (remaining.some(p => ownSet.has(p))) continue;      // ispao vlastiti komad
+            const absorbedArea = extras.reduce((s, e) => s + (remaining.includes(e) ? 0 : e.area), 0);
+            if (absorbedArea <= 0) continue;
+            if (!best || absorbedArea > best.absorbedArea) best = { sheet, leftover: remaining, absorbedArea };
+        }
+    }
+    return best;
+}
+
+function consolidateWaste(
+    solution: Solution,
+    usable: BoardDims,
+    settings: CutlistSettings,
+    refById: Map<string, CutPart>,
+    budgetMs = 1500,
+): Solution {
+    const deadline = Date.now() + budgetMs;
+    let current = solution;
+
+    // 1) Po ploči: prepakuj ako neka varijanta ostavlja krupniji ostatak.
+    //    Široka pretraga na pločama koje imaju šta izgubiti (ispod 95%) —
+    //    kod pune ploče se ionako nema gdje mrdnuti.
+    const boardArea = usable.width * usable.height;
+    current = {
+        sheets: current.sheets.map(sheet => {
+            if (Date.now() > deadline) return sheet;
+            const pool = sheet.placements.map(pl => placementInst(pl, refById));
+            const alt = bestSingleSheet(pool, usable, settings, deadline, sheet.usedArea < boardArea * 0.95);
+            return alt && leftoverScore([alt]) > leftoverScore([sheet]) ? alt : sheet;
+        }),
+    };
+
+    // 2) Pražnjenje najslabije ploče u slobodne zone punijih.
+    for (let pass = 0; pass < 3; pass++) {
+        if (Date.now() > deadline || current.sheets.length < 2) break;
+
+        const byFill = current.sheets
+            .map((s, i) => ({ i, used: s.usedArea }))
+            .sort((a, b) => a.used - b.used);
+        const donorIdx = byFill[0].i;
+        // Primaoci: od NAJPUNIJE prema praznijim — otpad se gura ka jednoj ploči.
+        const receivers = byFill.slice(1).map(x => x.i).reverse();
+
+        const donorParts = current.sheets[donorIdx].placements
+            .map(pl => placementInst(pl, refById))
+            .sort((a, b) => b.area - a.area);
+
+        const touched = new Map<number, SheetState>();
+
+        // 2a) Jeftino: komad po komad u POSTOJEĆE slobodne zone primalaca.
+        let pending: PartInst[] = [];
+        for (const part of donorParts) {
+            if (Date.now() > deadline) { pending.push(part); continue; }
+            let placed = false;
+            for (const ri of receivers) {
+                let sheet = touched.get(ri);
+                if (!sheet) { sheet = cloneSheet(current.sheets[ri]); touched.set(ri, sheet); }
+                const choice = findPlacement([part], sheet.rects, settings.kerf, settings.allowRotation,
+                    { mode: 'order', orient: 'none' });
+                if (!choice) continue;
+                placeAndSplit(sheet, choice.rectIdx, part, choice.w, choice.h, choice.rotated,
+                    settings.kerf, [], settings.allowRotation);
+                placed = true;
+                break;
+            }
+            if (!placed) pending.push(part);
+        }
+
+        // 2b) Skuplje: primalac se PREPAKUJE zajedno s preostalim komadima —
+        //     hvata ono što ne stane u zatečene rupe, ali stane kad se ploča
+        //     presloži (upravo to prazni zadnju ploču).
+        for (const ri of receivers) {
+            if (pending.length === 0 || Date.now() > deadline) break;
+            const sheet = touched.get(ri) || current.sheets[ri];
+            const own = sheet.placements.map(pl => placementInst(pl, refById));
+            const res = refillSheet(own, pending, usable, settings, deadline);
+            if (!res) continue;
+            touched.set(ri, res.sheet);
+            pending = res.leftover;
+        }
+
+        if (pending.length === donorParts.length) break;      // ništa se nije pomjerilo
+
+        const rest = pending.length > 0
+            ? bestSingleSheet(pending, usable, settings, deadline, true)
+            : null;
+        if (pending.length > 0 && !rest) break;               // ostatak ne stane nazad — odustani
+
+        const candidate: Solution = {
+            sheets: current.sheets
+                .map((s, i) => {
+                    if (i === donorIdx) return rest;           // null ⇒ ploča otpada
+                    return touched.get(i) || s;
+                })
+                .filter((s): s is SheetState => s !== null),
+        };
+
+        if (!betterSolution(candidate, current)) break;
+        current = candidate;
+    }
+
+    return current;
+}
 
 /**
  * Eliminacija ploča — tri strategije, dok god ima poboljšanja:
@@ -670,13 +903,7 @@ function tryEliminateSheets(
     // Vlastiti tok za strip pokušaje u repacku (vidi rngStrips u packGroup).
     const rngS = mulberry32(0xABCD1234);
 
-    // Placement → originalne dimenzije i referenca komada (zbog canRotate).
-    const instOf = (pl: PlacedPart): PartInst => {
-        const ow = pl.rotated ? pl.h : pl.w;
-        const oh = pl.rotated ? pl.w : pl.h;
-        const ref = refById.get(pl.partId) || ({ id: pl.partId, name: pl.name } as CutPart);
-        return { ref, w: ow, h: oh, area: ow * oh };
-    };
+    const instOf = (pl: PlacedPart): PartInst => placementInst(pl, refById);
 
     /** Pokušaj spakovati pool u ≤ maxSheets ploča (trake + multi-start). */
     const repackAttempts = (pool: PartInst[], maxSheets: number, randomTries: number): Solution | null => {
@@ -718,15 +945,6 @@ function tryEliminateSheets(
         }
         return null;
     };
-
-    const cloneSheet = (s: SheetState): SheetState => ({
-        placements: s.placements.map(p => ({ ...p })),
-        cuts: s.cuts.map(c => ({ ...c })),
-        rects: s.rects.map(r => ({ ...r })),
-        usedArea: s.usedArea,
-        cutLength: s.cutLength,
-        cutOrder: s.cutOrder,
-    });
 
     /** Ubaci SVE komade ploče fromIdx u slobodne zone ostalih; null ako ne mogu svi. */
     const tryInsertInto = (fromIdx: number): Solution | null => {
@@ -832,6 +1050,8 @@ export interface PackGroupOptions {
     maxRestarts?: number;
     /** Seed za deterministički RNG. Default 1337. */
     seed?: number;
+    /** Budžet faze grupisanja otpada (ms). Default 1200. */
+    wasteBudgetMs?: number;
 }
 
 /**
@@ -942,11 +1162,12 @@ export function packGroup(
         if (betterSolution(solution, best)) best = solution;
     }
 
+    const refById = new Map<string, CutPart>(parts.map(p => [p.id, p]));
+
     // 3) Eliminacija najslabijih ploča — od SVAKOG kandidata (ukupno
     //    najbolji, najbolji pohlepni, najbolji trakasti), jer polazna
     //    kompozicija određuje uspjeh preraspodjele.
     if (best && best.sheets.length > lowerBound) {
-        const refById = new Map<string, CutPart>(parts.map(p => [p.id, p]));
         const seeds: Solution[] = [];
         for (const cand of [best, bestGreedy, bestStrip]) {
             if (cand && !seeds.includes(cand)) seeds.push(cand);
@@ -956,6 +1177,12 @@ export function packGroup(
             if (betterSolution(improved, best)) best = improved;
             if (best.sheets.length <= lowerBound) break;
         }
+    }
+
+    // 4) Grupisanje otpada — broj ploča se više ne dira, ali se ostatak
+    //    skuplja u velike komade umjesto u sitne trake.
+    if (best && best.sheets.length > 0) {
+        best = consolidateWaste(best, usable, settings, refById, options.wasteBudgetMs ?? 1200);
     }
 
     const sheets = (best?.sheets || [])

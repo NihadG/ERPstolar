@@ -7,6 +7,7 @@ import { MATERIAL_CATEGORIES, MATERIAL_UNITS } from '@/lib/types';
 import { saveMaterial, getMaterialTemplates, saveMaterialTemplate, deleteMaterialTemplate } from '@/lib/services';
 import { useData } from '@/context/DataContext';
 import { SearchableSelect } from '@/components/ui/SearchableSelect';
+import BoardCalculatorModal from '@/components/ui/BoardCalculatorModal';
 import './MaterialSelectModal.css';
 
 // ============================================
@@ -69,6 +70,9 @@ export default function MaterialSelectModal({
     const [newSupplier, setNewSupplier] = useState('');
     const [creatingMaterial, setCreatingMaterial] = useState(false);
 
+    // Kalkulator ploča (otvoren za jedan odabrani materijal — kategorija ploča)
+    const [calcFor, setCalcFor] = useState<string | null>(null);
+
     // Templates state
     const [templates, setTemplates] = useState<MaterialTemplate[]>([]);
     const [loadTemplateId, setLoadTemplateId] = useState('');
@@ -111,6 +115,7 @@ export default function MaterialSelectModal({
             setLoadTemplateId('');
             setShowSaveTemplate(false);
             setTemplateName('');
+            setCalcFor(null);
             refreshTemplates();
             // Focus search on open
             setTimeout(() => searchInputRef.current?.focus(), 100);
@@ -122,7 +127,8 @@ export default function MaterialSelectModal({
     useEffect(() => {
         if (!isOpen) return;
         const handleEsc = (e: KeyboardEvent) => {
-            if (e.key === 'Escape') onClose();
+            // Dok je kalkulator ploča otvoren, Escape zatvara SAMO njega.
+            if (e.key === 'Escape' && !calcFor) onClose();
         };
         document.addEventListener('keydown', handleEsc);
         document.body.style.overflow = 'hidden';
@@ -130,7 +136,7 @@ export default function MaterialSelectModal({
             document.removeEventListener('keydown', handleEsc);
             document.body.style.overflow = '';
         };
-    }, [isOpen, onClose]);
+    }, [isOpen, onClose, calcFor]);
 
     // ---- Filtering ----
     const filteredMaterials = useMemo(() => {
@@ -178,6 +184,12 @@ export default function MaterialSelectModal({
 
     function isAluDoor(mat: Material): boolean {
         return mat.Is_Alu_Door === true || mat.Category === 'Alu vrata';
+    }
+
+    /** Ploča (kategorija "Ploče i trake") — za nju ima smisla kalkulator ploča. */
+    function isBoard(materialId: string): boolean {
+        const mat = materials.find(m => m.Material_ID === materialId);
+        return mat?.Category === 'Ploče i trake';
     }
 
     async function toggleMaterial(mat: Material) {
@@ -743,13 +755,24 @@ export default function MaterialSelectModal({
                                                 <div className="msm-selected-name">{item.materialName}</div>
                                                 <div className="msm-selected-unit-label">{item.unit}{item.supplier ? ` • ${item.supplier}` : ''}</div>
                                             </div>
-                                            <button
-                                                className="msm-remove-btn"
-                                                onClick={() => removeSelected(item.materialId)}
-                                                title="Ukloni"
-                                            >
-                                                <span className="material-icons-round">close</span>
-                                            </button>
+                                            <div className="msm-selected-actions">
+                                                {isBoard(item.materialId) && (
+                                                    <button
+                                                        className="msm-calc-btn"
+                                                        onClick={() => setCalcFor(item.materialId)}
+                                                        title="Kalkulator ploča — izračunaj koliko ploča treba"
+                                                    >
+                                                        <span className="material-icons-round">grid_on</span>
+                                                    </button>
+                                                )}
+                                                <button
+                                                    className="msm-remove-btn"
+                                                    onClick={() => removeSelected(item.materialId)}
+                                                    title="Ukloni"
+                                                >
+                                                    <span className="material-icons-round">close</span>
+                                                </button>
+                                            </div>
                                         </div>
 
                                         <div className="msm-selected-math-row">
@@ -814,6 +837,27 @@ export default function MaterialSelectModal({
                     </div>
                 </div>
             </div>
+
+            {/* Kalkulator ploča — broj ploča se vraća kao količina materijala */}
+            {calcFor && (() => {
+                const item = selected.get(calcFor);
+                if (!item) return null;
+                return (
+                    <BoardCalculatorModal
+                        isOpen
+                        onClose={() => setCalcFor(null)}
+                        materialId={item.materialId}
+                        materialName={item.materialName}
+                        unit={item.unit}
+                        currentQuantity={item.quantity}
+                        onApply={(quantity, sheets) => {
+                            updateSelectedField(item.materialId, 'quantity', quantity);
+                            setCalcFor(null);
+                            showToast(`Potrebno ${sheets} ploča — količina postavljena na ${quantity} ${item.unit}`, 'success');
+                        }}
+                    />
+                );
+            })()}
         </>,
         document.body
     );

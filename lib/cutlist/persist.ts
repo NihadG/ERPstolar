@@ -34,7 +34,10 @@ function roundMm(v: number): number {
 }
 
 function toSheetRecord(sheet: GroupPackResult['sheets'][number]): CutlistSheetRecord {
-    const offcuts = sheet.offcuts.slice(0, 2).map(o => ({ W: Math.round(o.w), H: Math.round(o.h) }));
+    // Iskoristivi ostaci (najveći prvi) — s položajem, da se vide na skici.
+    const offcuts = sheet.offcuts.slice(0, 4).map(o => ({
+        W: Math.round(o.w), H: Math.round(o.h), X: roundMm(o.x), Y: roundMm(o.y),
+    }));
     const rec: CutlistSheetRecord = {
         Placements: sheet.placements.map(p => ({
             Name: p.name,
