@@ -11,6 +11,27 @@
 
 .mos-hint { margin: 0; font-size: 12.5px; color: var(--text-tertiary); line-height: 1.6; }
 
+/* Naziv narudžbe — prvo polje u modalu: bez njega su sve narudžbe iz
+   Komandnog centra nosile isti generički naziv. */
+.mos-name { display: flex; flex-direction: column; gap: 6px; }
+.mos-name .mos-name-label {
+    font-size: 11.5px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase;
+    color: var(--text-secondary);
+}
+.mos-name input {
+    height: 42px; padding: 0 13px;
+    border: 1px solid var(--border); border-radius: 10px;
+    background: var(--surface); color: var(--text-primary);
+    font: inherit; font-size: 14.5px; font-weight: 600;
+    transition: border-color var(--transition), box-shadow var(--transition), background var(--transition);
+}
+.mos-name input::placeholder { font-weight: 500; color: var(--text-tertiary); }
+.mos-name input:focus {
+    outline: none; background: var(--background); border-color: var(--accent);
+    box-shadow: var(--cm-focus-ring, 0 0 0 3px var(--accent-light));
+}
+.mos-name-hint { font-size: 11.5px; color: var(--text-tertiary); line-height: 1.5; }
+
 .mos-loading, .mos-empty {
     display: flex; flex-direction: column; align-items: center; justify-content: center;
     gap: 10px; padding: 48px 20px; text-align: center;

@@ -32,14 +32,14 @@ import {
     type CommandNote, type NoteGroupBy, type NoteSort,
 } from '@/lib/command/notes';
 import { matches, queryTokens } from '@/lib/command/search';
-import { hue, KcPanel } from './parts';
+import { hue, KcPanel, SummaryBits } from './parts';
 
 const AUDIENCE_ICON: Record<ProductNoteAudience, typeof User> = {
     client: User, supplier: Truck, colleague: Users, other: MessageSquare,
 };
 
 export default function NotesPanel({
-    scope, lens, showDone, canCreate, today, onSave, onOpenModal, solo, onSolo, wide,
+    scope, lens, showDone, canCreate, today, onSave, onOpenModal, collapsed, onCollapse, pinned, onPin,
 }: {
     scope: BoardScope;
     lens: LensSelection | null;
@@ -48,9 +48,10 @@ export default function NotesPanel({
     today: string;
     onSave: (productId: string, notes: ProductNote[]) => void;
     onOpenModal: (project: Project, productId?: string) => void;
-    solo?: string | null;
-    onSolo?: (id: string | null) => void;
-    wide: boolean;
+    collapsed?: boolean;
+    onCollapse?: () => void;
+    pinned?: boolean;
+    onPin?: () => void;
 }) {
     const [by, setBy] = useState<NoteGroupBy>('audience');
     const [sort, setSort] = useState<NoteSort>('oldest');
@@ -74,6 +75,8 @@ export default function NotesPanel({
         [visible, by, scope.order, sort],
     );
     const openCount = visible.filter(n => n.status === 'open').length;
+    const staleCount = visible.filter(n => n.stale).length;
+    const colleagueCount = visible.filter(n => n.status !== 'resolved' && n.note.Audience === 'colleague').length;
     const now = () => new Date().toISOString();
     const productNotes = (productId: string) => scope.products.get(productId)?.Questions;
 
@@ -100,16 +103,28 @@ export default function NotesPanel({
             title="Napomene"
             count={openCount}
             countTone={openCount > 0 ? 'alert' : undefined}
-            wide={wide}
-            solo={solo}
-            onSolo={onSolo}
-            actions={canCreate && scope.products.size > 0 && (
+            collapsed={collapsed}
+            onCollapse={onCollapse}
+            pinned={pinned}
+            onPin={onPin}
+            summary={(
+                <SummaryBits bits={[
+                    { label: staleCount > 0 ? `${staleCount} zapelo` : '', tone: 'alert' },
+                    { label: colleagueCount > 0 ? `${colleagueCount} za kolegu` : '' },
+                    { label: openCount > 0 ? `${openCount} čeka odgovor` : 'sve odgovoreno' },
+                ]} />
+            )}
+            create={canCreate && scope.products.size > 0 && (
                 <button
                     type="button"
-                    className="kc-btn sm primary"
-                    onClick={() => setAdding(adding ? null : { productId: Array.from(scope.products.keys())[0] })}
+                    className="kc-create"
+                    onClick={() => {
+                        // Sklopljena ploča se otvara — obrazac za novu napomenu je u njoj.
+                        if (collapsed) onCollapse?.();
+                        setAdding(adding && !collapsed ? null : { productId: Array.from(scope.products.keys())[0] });
+                    }}
                 >
-                    <Plus size={14} /> Nova
+                    <Plus size={14} /> <span>Nova</span>
                 </button>
             )}
         >

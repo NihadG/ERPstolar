@@ -1,4 +1,4 @@
-import { commandMaterialRows, planFromSelection, planTotal } from '../command/materialOrder';
+import { commandMaterialRows, orderableIds, planFromSelection, planTotal, suggestOrderName } from '../command/materialOrder';
 import type { Project } from '../types';
 
 const projectWith = (materials: Record<string, unknown>[], productQty = 2): Project => ({
@@ -61,4 +61,45 @@ test('materijal bez dobavljača dobije svoju grupu umjesto da nestane', () => {
 test('ukupna vrijednost plana je zbir količina × jedinična cijena', () => {
     const rows = commandMaterialRows([projectWith([material({ Unit_Price: 12.5 })])]);
     expect(planTotal(planFromSelection(rows, ['m1']))).toBe(75);   // 6 kom × 12.5
+});
+
+// ── Izbor za narudžbu i naziv ───────────────────────────────────────
+
+const twoProjects = (): Project[] => [
+    {
+        Project_ID: 'p1', Name: 'Aamanns', Client_Name: 'Igor',
+        products: [
+            { Product_ID: 'klupa', Name: 'Klupa', Quantity: 1, materials: [material({ ID: 'a' }), material({ ID: 'b', Status: 'Primljeno' })] },
+            { Product_ID: 'sto', Name: 'Sto', Quantity: 1, materials: [material({ ID: 'c' })] },
+        ],
+    },
+    {
+        Project_ID: 'p2', Name: 'Melihin stan', Client_Name: 'Meliha',
+        products: [{ Product_ID: 'vrata', Name: 'Vrata', Quantity: 1, materials: [material({ ID: 'd' })] }],
+    },
+] as unknown as Project[];
+
+test('„naruči što fali" bira samo ono što se još može naručiti — po projektu, poziciji ili cijeloj tabli', () => {
+    const rows = commandMaterialRows(twoProjects());
+    expect(orderableIds(rows)).toEqual(['a', 'c', 'd']);
+    expect(orderableIds(rows, { projectId: 'p1' })).toEqual(['a', 'c']);
+    expect(orderableIds(rows, { productIds: ['klupa'] })).toEqual(['a']);   // 'b' je već primljen
+});
+
+test('naziv narudžbe se predlaže iz projekta i pozicije, nikad generičan', () => {
+    const rows = commandMaterialRows(twoProjects());
+    const order = new Map([['p1', 0], ['p2', 1]]);
+    expect(suggestOrderName(rows, ['a'], order)).toBe('Aamanns — Klupa');
+    expect(suggestOrderName(rows, ['a', 'c'], order)).toBe('Aamanns');
+    // Redoslijed table, ne redoslijed izbora.
+    expect(suggestOrderName(rows, ['d', 'a'], order)).toBe('Aamanns + Melihin stan');
+    expect(suggestOrderName(rows, [], order)).toBe('');
+});
+
+test('više od dva projekta se skraćuje da naziv ostane čitljiv', () => {
+    const projects = [...twoProjects(), {
+        Project_ID: 'p3', Name: 'Kuća Čorluka', products: [{ Product_ID: 'orman', Name: 'Orman', Quantity: 1, materials: [material({ ID: 'e' })] }],
+    } as unknown as Project];
+    const rows = commandMaterialRows(projects);
+    expect(suggestOrderName(rows, ['a', 'd', 'e'], new Map([['p1', 0], ['p2', 1], ['p3', 2]]))).toBe('Aamanns + još 2');
 });

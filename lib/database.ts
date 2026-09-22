@@ -4081,15 +4081,18 @@ async function createOrdersFromGroups(
     groups: MaterialOrderPlanGroup[],
     organizationId: string,
     notePrefix: string,
-    notifyTitle: string
+    notifyTitle: string,
+    customName?: string
 ): Promise<{ ordersCreated: number; orderNumbers: string[] }> {
     const startDate = new Date(plannedStartDate);
     startDate.setDate(startDate.getDate() - 1);
     const expectedDelivery = startDate.toISOString().split('T')[0];
 
-    // Sve narudžbe iz jednog naloga nose naziv tog naloga (dobavljač ih i
-    // dalje razdvaja u listi) — bez toga su u Narudžbama samo brojevi.
-    const orderName = groups.length > 0 ? await workOrderNameForOrders(workOrderId, organizationId) : undefined;
+    // Naziv koji je korisnik upisao ima prednost. Bez njega sve narudžbe iz
+    // jednog naloga nose naziv tog naloga (dobavljač ih i dalje razdvaja u
+    // listi) — inače su u Narudžbama samo brojevi.
+    const orderName = customName?.trim()
+        || (groups.length > 0 ? await workOrderNameForOrders(workOrderId, organizationId) : undefined);
 
     return writeOrdersForGroups(groups, organizationId, {
         orderName,
@@ -4232,12 +4235,16 @@ export async function autoCreateOrdersForWorkOrder(
  * ovdje (ne vjeruje se klijentskoj kopiji), pa selekcija filtrira svjež plan —
  * materijal koji je u međuvremenu pokriven (npr. neko drugi ga naruči) se tiho
  * preskoči umjesto da izazove grešku.
+ *
+ * `orderName` je naziv koji je korisnik upisao u modalu; bez njega narudžbe
+ * nasljeđuju naziv naloga.
  */
 export async function createSelectedMaterialOrders(
     workOrderId: string,
     plannedStartDate: string,
     selectedMaterialIds: string[],
-    organizationId: string
+    organizationId: string,
+    orderName?: string
 ): Promise<{ ordersCreated: number; orderNumbers: string[] }> {
     if (!organizationId || selectedMaterialIds.length === 0) return { ordersCreated: 0, orderNumbers: [] };
     try {
@@ -4249,7 +4256,7 @@ export async function createSelectedMaterialOrders(
 
         return await createOrdersFromGroups(
             workOrderId, plannedStartDate, filtered, organizationId,
-            'Kreirano iz radnog naloga.', 'Narudžbe materijala kreirane'
+            'Kreirano iz radnog naloga.', 'Narudžbe materijala kreirane', orderName
         );
     } catch (error) {
         console.error('createSelectedMaterialOrders error:', error);

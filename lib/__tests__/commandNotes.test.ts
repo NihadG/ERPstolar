@@ -56,12 +56,33 @@ test('grupisanje po primaocu skuplja sve što jedan čovjek duguje', () => {
 });
 
 test('grupa bez otvorenih pitanja pada ispod onih koje nešto čekaju', () => {
-    const onlyResolved: CommandNote[] = [
-        { ...find('done'), note: { ...find('done').note, Audience: 'colleague' } },
-        find('fresh'),
-    ];
-    const groups = groupNotes(onlyResolved, 'audience', PRODUCT_NOTE_AUDIENCE_LABELS, order);
-    expect(groups.map(g => g.label)).toEqual(['Dobavljač', 'Kolega']);
+    // Klijent je po zadanom ispred dobavljača, ali kod njega je sve riješeno.
+    const groups = groupNotes([find('done'), find('fresh')], 'audience', PRODUCT_NOTE_AUDIENCE_LABELS, order);
+    expect(groups.map(g => g.label)).toEqual(['Dobavljač', 'Klijent']);
+});
+
+const asColleague = (entry: CommandNote, id: string): CommandNote =>
+    ({ ...entry, note: { ...entry.note, id, Audience: 'colleague' } });
+
+test('kolega je uvijek prva grupa — i kad je kod njega sve riješeno', () => {
+    const groups = groupNotes(
+        [find('old'), find('fresh'), asColleague(find('done'), 'kol-done')],
+        'audience', PRODUCT_NOTE_AUDIENCE_LABELS, order,
+    );
+    expect(groups.map(g => g.label)).toEqual(['Kolega', 'Klijent', 'Dobavljač']);
+});
+
+test('unutar projekta napomena za kolegu ide prva, a riješeno ostaje na dnu', () => {
+    const colleagueAnswered = asColleague(find('ans'), 'kol-ans');
+    const colleagueResolved = asColleague(find('done'), 'kol-done');
+    const sorted = [find('old'), colleagueResolved, find('fresh'), colleagueAnswered]
+        .sort((a, b) => compareNotes(a, b)).map(n => n.note.id);
+    expect(sorted).toEqual(['kol-ans', 'old', 'fresh', 'kol-done']);
+
+    const sameProject = { ...colleagueAnswered, projectId: 'p1', projectName: 'Aamanns' };
+    const groups = groupNotes([find('old'), sameProject], 'project', PRODUCT_NOTE_AUDIENCE_LABELS, order);
+    expect(groups).toHaveLength(1);
+    expect(groups[0].notes.map(n => n.note.id)).toEqual(['kol-ans', 'old']);
 });
 
 test('grupisanje po projektu poštuje redoslijed table', () => {

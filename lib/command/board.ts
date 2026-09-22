@@ -11,12 +11,19 @@
 // ════════════════════════════════════════════════════════════════════
 
 import type { Project } from '../types';
+import { isPanelId, type PanelId } from './layout';
 
 export interface CommandBoardState {
     /** Redoslijed je značajan — to je redoslijed grupa u svim kontejnerima. */
     Project_IDs: string[];
     /** Prikaži i završeno (nalozi, primljeni materijali, riješene napomene). */
     Show_Done: boolean;
+    /**
+     * Ploče koje je korisnik sklopio. Pamti se s tablom, jer je to odluka o
+     * tome šta ga zanima (npr. „napomene ne pratim"), a ne trenutni klik.
+     * Izostavlja se kad je prazno — Firestore ne prima `undefined`.
+     */
+    Collapsed_Panels?: PanelId[];
 }
 
 export interface UserBoardsDoc {
@@ -38,7 +45,12 @@ export function normalizeBoard(raw: unknown): CommandBoardState {
     const ids = Array.isArray(value.Project_IDs)
         ? value.Project_IDs.filter((id): id is string => typeof id === 'string' && id.length > 0)
         : [];
-    return { Project_IDs: dedupe(ids), Show_Done: value.Show_Done === true };
+    const collapsed = Array.isArray(value.Collapsed_Panels) ? dedupe(value.Collapsed_Panels.filter(isPanelId)) : [];
+    return {
+        Project_IDs: dedupe(ids),
+        Show_Done: value.Show_Done === true,
+        ...(collapsed.length > 0 ? { Collapsed_Panels: collapsed } : {}),
+    };
 }
 
 /** Tabla za jednu organizaciju iz dokumenta korisnika. */
@@ -61,6 +73,13 @@ export function docWithBoard(
         Updated_At: new Date().toISOString(),
         Boards: { ...(previous?.Boards || {}), [organizationId]: normalizeBoard(board) },
     };
+}
+
+/** Nova lista sklopljenih ploča; prazna lista briše ključ (ne upisuje `[]` ni `undefined`). */
+export function withCollapsedPanels(board: CommandBoardState, panels: PanelId[]): CommandBoardState {
+    const { Collapsed_Panels: _previous, ...rest } = board;
+    const clean = dedupe(panels.filter(isPanelId));
+    return clean.length > 0 ? { ...rest, Collapsed_Panels: clean } : rest;
 }
 
 /** Dodaje na KRAJ (novi projekat ne preskače one koje već pratiš) i nikad dvaput. */
@@ -103,6 +122,6 @@ export function staleBoardIds(board: CommandBoardState, projects: Project[]): st
     return board.Project_IDs.filter(id => !live.has(id));
 }
 
-function dedupe(ids: string[]): string[] {
+function dedupe<T extends string>(ids: T[]): T[] {
     return Array.from(new Set(ids));
 }

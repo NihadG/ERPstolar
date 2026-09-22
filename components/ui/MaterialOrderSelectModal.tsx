@@ -35,17 +35,27 @@ interface MaterialOrderSelectModalProps {
      * bez naloga). Kad je zadan, modal ne čita ništa iz baze.
      */
     plan?: MaterialOrderPlanGroup[];
-    /** Upis za gotov plan — obavezan uz `plan`. */
-    onCreate?: (selectedMaterialIds: string[]) => Promise<{ ordersCreated: number; orderNumbers: string[] }>;
+    /** Upis za gotov plan — obavezan uz `plan`. `name` je naziv koji je korisnik potvrdio. */
+    onCreate?: (selectedMaterialIds: string[], name?: string) => Promise<{ ordersCreated: number; orderNumbers: string[] }>;
+    /**
+     * Prijedlog naziva iz trenutnog izbora (npr. „Aamanns 1921 — Klupe"). Dok
+     * korisnik ne kuca svoj naziv, polje prati izbor; čim ga promijeni, ostaje
+     * njegov. Bez ovoga polje je prazno i narudžba nosi naziv naloga.
+     */
+    suggestName?: (selectedMaterialIds: string[]) => string;
 }
 
 export default function MaterialOrderSelectModal({
-    isOpen, onClose, workOrderId, workOrderLabel, plannedStartDate, organizationId, onRefresh, showToast, plan, onCreate,
+    isOpen, onClose, workOrderId, workOrderLabel, plannedStartDate, organizationId, onRefresh, showToast, plan, onCreate, suggestName,
 }: MaterialOrderSelectModalProps) {
     const [loading, setLoading] = useState(true);
     const [groups, setGroups] = useState<MaterialOrderPlanGroup[]>([]);
     const [selected, setSelected] = useState<Set<string>>(new Set());
     const [creating, setCreating] = useState(false);
+    // Naziv: `null` = korisnik ga nije dirao, pa vrijedi prijedlog iz izbora.
+    const [typedName, setTypedName] = useState<string | null>(null);
+
+    useEffect(() => { if (isOpen) setTypedName(null); }, [isOpen, plan]);
 
     // Učitaj plan pri otvaranju — SVI materijali su čekirani na startu (isto
     // pokriće kao stari "auto" tok), korisnik onda SVJESNO isključi šta ne želi.
@@ -125,15 +135,19 @@ export default function MaterialOrderSelectModal({
     const groupSubtotal = (g: MaterialOrderPlanGroup) =>
         g.materials.filter(m => selected.has(m.productMaterialId)).reduce((s, m) => s + m.quantity * m.unitPrice, 0);
 
+    const suggested = useMemo(() => (suggestName ? suggestName(Array.from(selected)) : ''), [suggestName, selected]);
+    const orderName = typedName ?? suggested;
+
     const handleConfirm = async () => {
         if (selected.size === 0 || creating) return;
         setCreating(true);
         try {
             const ids = Array.from(selected);
+            const name = orderName.trim() || undefined;
             const res = onCreate
-                ? await onCreate(ids)
+                ? await onCreate(ids, name)
                 : await import('@/lib/services').then(({ createSelectedMaterialOrders }) =>
-                    createSelectedMaterialOrders(workOrderId || '', plannedStartDate, ids, organizationId));
+                    createSelectedMaterialOrders(workOrderId || '', plannedStartDate, ids, organizationId, name));
             if (res.ordersCreated > 0) {
                 showToast(`Kreirano ${res.ordersCreated} ${res.ordersCreated === 1 ? 'narudžba' : 'narudžbi'} (${res.orderNumbers.join(', ')})`, 'success');
                 onRefresh('orders');
@@ -192,6 +206,26 @@ export default function MaterialOrderSelectModal({
                     </div>
                 ) : (
                     <>
+                        <div className="mos-name">
+                            <label className="mos-name-label" htmlFor="mos-order-name">Naziv narudžbe</label>
+                            <input
+                                id="mos-order-name"
+                                type="text"
+                                value={orderName}
+                                // Prijedlog je označen da se preko njega odmah kuca vlastiti naziv.
+                                autoFocus={!!suggestName}
+                                onFocus={e => { if (typedName === null) e.currentTarget.select(); }}
+                                onChange={e => setTypedName(e.target.value)}
+                                onKeyDown={e => { if (e.key === 'Enter') handleConfirm(); }}
+                                placeholder={suggestName ? 'npr. Okovi za kuhinju — Hodžić' : 'Prazno = naziv naloga'}
+                            />
+                            {totals.supplierCount > 1 && (
+                                <span className="mos-name-hint">
+                                    Nastaće {totals.supplierCount} {plural(totals.supplierCount, 'narudžba', 'narudžbe', 'narudžbi')} — po jedna za
+                                    svakog dobavljača, sve s ovim nazivom.
+                                </span>
+                            )}
+                        </div>
                         <p className="mos-hint">
                             Materijali koji nedostaju, grupisani po dobavljaču. Sve je unaprijed izabrano —
                             isključi šta ne želiš naručiti sada.

@@ -13,36 +13,43 @@
 //   • PROJEKAT — „šta sve visi na ovom poslu"
 //
 // Klik ne otvara modal: ceduljica se širi NA MJESTU, da se ne izgubi kontekst
-// ostalih ceduljica oko nje.
+// ostalih ceduljica oko nje. Otvorena ceduljica zauzme cijeli red zida.
+//
+// Zid NEMA fiksan broj kolona: ceduljice se slažu koliko ih stane u širinu
+// ploče (jedna u uskoj koloni, tri-četiri kad se kolona raširi). Ranije se
+// više kolona dobijalo samo „solo" prikazom, koji je sakrivao sve ostalo.
 // ════════════════════════════════════════════════════════════════════
 
-import { useMemo, useState } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import { Check, ExternalLink, Pencil, Plus, Square, SquareCheckBig } from 'lucide-react';
 import type { Task } from '@/lib/types';
 import { TASK_PRIORITY_LABELS } from '@/lib/types';
 import type { BoardScope } from '@/lib/command/scope';
 import { isTaskOpen, taskProduct, taskProject } from '@/lib/command/scope';
 import { isTaskLate, lensAllowsTask, type LensSelection } from '@/lib/command/signals';
-import { hue, KcPanel, shortDate } from './parts';
+import { hue, KcPanel, shortDate, SummaryBits } from './parts';
 
 const PRIORITY_RANK: Record<Task['Priority'], number> = { urgent: 0, high: 1, medium: 2, low: 3 };
 
 export default function TaskWall({
-    scope, lens, showDone, today, canCreate, wide, onToggleDone, onEdit, onToggleChecklist, onNew, onOpenWorkOrder, solo, onSolo,
+    scope, lens, showDone, today, canCreate, onToggleDone, onEdit, onToggleChecklist, onNew, onOpenWorkOrder,
+    create, collapsed, onCollapse, pinned, onPin,
 }: {
     scope: BoardScope;
     lens: LensSelection | null;
     showDone: boolean;
     today: string;
     canCreate: boolean;
-    wide: boolean;
     onToggleDone: (task: Task) => void;
     onEdit: (task: Task) => void;
     onToggleChecklist: (task: Task, itemId: string) => void;
     onNew: (projectId: string) => void;
     onOpenWorkOrder: (id: string) => void;
-    solo?: string | null;
-    onSolo?: (id: string | null) => void;
+    create?: ReactNode;
+    collapsed?: boolean;
+    onCollapse?: () => void;
+    pinned?: boolean;
+    onPin?: () => void;
 }) {
     const [openId, setOpenId] = useState<string | null>(null);
     const [groupBy, setGroupBy] = useState<'priority' | 'project'>('priority');
@@ -73,6 +80,8 @@ export default function TaskWall({
     }, [groupBy, tasks, scope]);
 
     const openCount = tasks.filter(isTaskOpen).length;
+    const lateCount = tasks.filter(t => isTaskOpen(t) && isTaskLate(t, today)).length;
+    const urgentCount = tasks.filter(t => isTaskOpen(t) && t.Priority === 'urgent').length;
     const renderNote = (task: Task) => (
         <StickyNote
             key={task.Task_ID}
@@ -94,9 +103,18 @@ export default function TaskWall({
             eyebrow="ŠTA TREBA URADITI"
             title="Zadaci"
             count={openCount}
-            wide={wide}
-            solo={solo}
-            onSolo={onSolo}
+            collapsed={collapsed}
+            onCollapse={onCollapse}
+            pinned={pinned}
+            onPin={onPin}
+            create={create}
+            summary={(
+                <SummaryBits bits={[
+                    { label: lateCount > 0 ? `${lateCount} kasni` : '', tone: 'alert' },
+                    { label: urgentCount > 0 ? `${urgentCount} hitno` : '', tone: 'warn' },
+                    { label: openCount > 0 ? `${openCount} otvoreno` : 'sve urađeno' },
+                ]} />
+            )}
             actions={
                 <div className="kc-seg" role="group" aria-label="Poredak zadataka">
                     <button type="button" aria-pressed={groupBy === 'priority'} onClick={() => setGroupBy('priority')}>Hitnost</button>

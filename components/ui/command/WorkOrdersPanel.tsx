@@ -13,14 +13,14 @@
 // nigdje ne razlikuje.
 // ════════════════════════════════════════════════════════════════════
 
-import { useMemo, useState } from 'react';
+import { useMemo, type ReactNode } from 'react';
 import { ChevronRight, ClipboardList } from 'lucide-react';
 import type { Task, WorkOrder, Worker } from '@/lib/types';
 import { compareWorkOrdersDefault, isOrderPaused, workOrderDisplayName } from '@/lib/utils';
 import type { BoardScope } from '@/lib/command/scope';
 import { isWorkOrderLate, lensAllowsWorkOrder, type LensSelection } from '@/lib/command/signals';
 import WorkOrderExpandedDetail from '../WorkOrderExpandedDetail';
-import { hue, KcPanel, shortDate } from './parts';
+import { hue, KcPanel, shortDate, SummaryBits } from './parts';
 
 type Bucket = 'late' | 'running' | 'paused' | 'waiting' | 'done' | 'cancelled';
 
@@ -51,7 +51,8 @@ export interface WorkOrderActions {
 }
 
 export default function WorkOrdersPanel({
-    scope, workers, tasks, today, lens, showDone, actions, openId, onOpenChange, onNew, canCreate, solo, onSolo,
+    scope, workers, tasks, today, lens, showDone, actions, openId, onOpenChange, create,
+    collapsed, onCollapse, pinned, onPin,
 }: {
     scope: BoardScope;
     workers: Worker[];
@@ -62,10 +63,12 @@ export default function WorkOrdersPanel({
     actions: WorkOrderActions;
     openId: string | null;
     onOpenChange: (id: string | null) => void;
-    onNew: () => void;
-    canCreate: boolean;
-    solo?: string | null;
-    onSolo?: (id: string | null) => void;
+    /** „+ Nalog" — meni projekata, dolazi iz ekrana (isti kao u zaglavlju). */
+    create?: ReactNode;
+    collapsed?: boolean;
+    onCollapse?: () => void;
+    pinned?: boolean;
+    onPin?: () => void;
 }) {
     const grouped = useMemo(() => {
         const buckets = new Map<Bucket, WorkOrder[]>();
@@ -83,6 +86,7 @@ export default function WorkOrdersPanel({
 
     const total = Array.from(grouped.values()).reduce((sum, list) => sum + list.length, 0);
     const lateCount = grouped.get('late')?.length || 0;
+    const count = (bucket: Bucket) => grouped.get(bucket)?.length || 0;
 
     return (
         <KcPanel
@@ -91,16 +95,26 @@ export default function WorkOrdersPanel({
             title="Radni nalozi"
             count={total}
             countTone={lateCount > 0 ? 'alert' : undefined}
-            solo={solo}
-            onSolo={onSolo}
-            actions={canCreate ? <button type="button" className="kc-btn sm primary" onClick={onNew}>Novi nalog</button> : undefined}
+            collapsed={collapsed}
+            onCollapse={onCollapse}
+            pinned={pinned}
+            onPin={onPin}
+            create={create}
+            summary={(
+                <SummaryBits bits={[
+                    { label: lateCount > 0 ? `${lateCount} kasni` : '', tone: 'alert' },
+                    { label: count('running') > 0 ? `${count('running')} u toku` : '' },
+                    { label: count('paused') > 0 ? `${count('paused')} pauza` : '' },
+                    { label: count('waiting') > 0 ? `${count('waiting')} čeka` : '' },
+                ]} />
+            )}
         >
             <div className="kc-panel-body">
                 {total === 0 && (
                     <div className="kc-empty">
                         <ClipboardList size={22} style={{ opacity: 0.45 }} />
                         <p>Nema naloga u ovom prikazu.</p>
-                        <span>Označi proizvode u kontejneru iznad pa napravi nalog.</span>
+                        <span>Nalog praviš dugmetom „Nalog" gore, s pozicije bez naloga ili iz odabira proizvoda.</span>
                     </div>
                 )}
                 {BUCKETS.map(bucket => {

@@ -5,12 +5,13 @@
 //
 // Tri prikaza istog modela (lib/command/timeline), jer se o vremenu
 // postavljaju tri različita pitanja:
+//   • TRAKA   — „koliko traje i šta se preklapa". Gantt: red po projektu,
+//     dani kao kolone. ZADANI prikaz — korisnik tako otvara kalendar, a
+//     traka je i znatno niža od agende, pa tabla ispod ostaje na ekranu.
 //   • AGENDA  — „šta me čeka, šta kasni". Hronološki spisak događaja:
 //     kasni → danas → sutra → ova sedmica → … Traka koja traje dvije
 //     sedmice se ovdje razlaže na događaje (kreće / u toku / rok), jer
 //     jedna stavka nije jedan dan.
-//   • TRAKA   — „koliko traje i šta se preklapa". Gantt: red po projektu,
-//     dani kao kolone.
 //   • MJESEC  — „kako izgleda ovaj mjesec".
 //
 // Sva tri crtaju po istom pravilu: boja = projekat, oblik i ikona = vrsta,
@@ -33,7 +34,7 @@ import {
 } from '@/lib/command/timeline';
 import { buildAgenda, withoutProductDuplicates, type AgendaBucket, type AgendaEntry, type AgendaMarker } from '@/lib/command/agenda';
 import { shiftDate, weekStart } from '@/lib/projectCommand';
-import { hue, KcPanel, shortDate } from './parts';
+import { hue, KcPanel, shortDate, SummaryBits } from './parts';
 
 const DOW = ['Pon', 'Uto', 'Sri', 'Čet', 'Pet', 'Sub', 'Ned'];
 const MONTHS = ['januar', 'februar', 'mart', 'april', 'maj', 'juni', 'juli', 'august', 'septembar', 'oktobar', 'novembar', 'decembar'];
@@ -75,7 +76,7 @@ export interface TimelineActions {
 }
 
 export default function CommandTimeline({
-    data, scope, today, actions, plans, solo, onSolo,
+    data, scope, today, actions, plans, collapsed, onCollapse,
 }: {
     data: TimelineData;
     scope: BoardScope;
@@ -83,17 +84,16 @@ export default function CommandTimeline({
     actions: TimelineActions;
     /** Scenariji s Platna koji dodiruju tablu — crta se jedan, biraš koji. */
     plans?: { list: { id: string; name: string }[]; selectedId: string; onSelect: (id: string) => void };
-    solo?: string | null;
-    onSolo?: (id: string | null) => void;
+    collapsed?: boolean;
+    onCollapse?: () => void;
 }) {
-    const [mode, setMode] = useState<'agenda' | 'timeline' | 'month'>('agenda');
+    const [mode, setMode] = useState<'agenda' | 'timeline' | 'month'>('timeline');
     const [weeks, setWeeks] = useState(8);
     const [grouping, setGrouping] = useState<RowGrouping>('compact');
     const [anchor, setAnchor] = useState(() => weekStart(today));
     const [expanded, setExpanded] = useState<Set<string>>(new Set());
     const [legendOpen, setLegendOpen] = useState(false);
     const [detailId, setDetailId] = useState<string | null>(null);
-    const [collapsed, setCollapsed] = useState(false);
 
     const days = useMemo(
         () => (mode === 'month' ? monthDays(anchor) : timelineDays(anchor, weeks)),
@@ -132,112 +132,112 @@ export default function CommandTimeline({
         ? `${MONTHS[Number(anchor.slice(5, 7)) - 1]} ${anchor.slice(0, 4)}.`
         : `${shortDate(days[0], today)} – ${shortDate(days[days.length - 1], today)}`;
     const lateCount = agenda.find(b => b.id === 'late')?.count ?? 0;
+    const todayCount = agenda.find(b => b.id === 'today')?.count ?? 0;
 
     return (
         <KcPanel
             id="calendar"
             eyebrow="VRIJEME"
             title="Kalendar projekata"
-            solo={solo}
-            onSolo={onSolo}
+            collapsed={collapsed}
+            onCollapse={onCollapse}
+            summary={(
+                <SummaryBits bits={[
+                    { label: lateCount > 0 ? `${lateCount} kasni` : '', tone: 'alert' },
+                    { label: todayCount > 0 ? `${todayCount} danas` : '' },
+                ]} />
+            )}
             actions={
-                <>
-                    <button type="button" className="kc-icon-btn" aria-label="Legenda" title="Kako se čitaju trake" aria-pressed={legendOpen} onClick={() => setLegendOpen(v => !v)}>
-                        <Info size={15} />
-                    </button>
-                    <button type="button" className="kc-icon-btn" aria-label={collapsed ? 'Otvori kalendar' : 'Sklopi kalendar'} onClick={() => setCollapsed(v => !v)}>
-                        <ChevronDown size={16} style={{ transform: collapsed ? 'rotate(-90deg)' : 'none', transition: 'transform .15s ease' }} />
-                    </button>
-                </>
+                <button type="button" className="kc-icon-btn" aria-label="Legenda" title="Kako se čitaju trake" aria-pressed={legendOpen} onClick={() => setLegendOpen(v => !v)}>
+                    <Info size={15} />
+                </button>
             }
         >
-            {!collapsed && (
-                <>
-                    <div className="kc-cal-tools">
-                        <div className="kc-seg" role="group" aria-label="Prikaz kalendara">
-                            <button type="button" aria-pressed={mode === 'agenda'} onClick={() => setMode('agenda')}>
-                                Agenda
-                                {lateCount > 0 && <i className="kc-seg-dot" aria-label={`${lateCount} kasni`} />}
-                            </button>
-                            <button type="button" aria-pressed={mode === 'timeline'} onClick={() => setMode('timeline')}>Traka</button>
-                            <button type="button" aria-pressed={mode === 'month'} onClick={() => setMode('month')}>Mjesec</button>
-                        </div>
-
-                        {mode !== 'agenda' && (
-                            <>
-                                <div className="kc-range">
-                                    <button type="button" className="kc-icon-btn" aria-label="Nazad" onClick={() => step(-1)}><ChevronLeft size={16} /></button>
-                                    <span>{title}</span>
-                                    <button type="button" className="kc-icon-btn" aria-label="Naprijed" onClick={() => step(1)}><ChevronRight size={16} /></button>
-                                </div>
-                                <button type="button" className="kc-btn sm" onClick={() => setAnchor(weekStart(today))}>Danas</button>
-                            </>
-                        )}
-
-                        {mode === 'timeline' && (
-                            <>
-                                <div className="kc-seg" role="group" aria-label="Raspon">
-                                    {[4, 8, 12].map(n => (
-                                        <button type="button" key={n} aria-pressed={weeks === n} onClick={() => setWeeks(n)}>{n} sedm.</button>
-                                    ))}
-                                </div>
-                                <select
-                                    className="kc-select sm"
-                                    aria-label="Razlaganje redova"
-                                    value={grouping}
-                                    onChange={e => { setGrouping(e.target.value as RowGrouping); setExpanded(new Set()); }}
-                                >
-                                    {(Object.keys(GROUPING_LABEL) as RowGrouping[]).map(g => (
-                                        <option key={g} value={g}>{GROUPING_LABEL[g]}</option>
-                                    ))}
-                                </select>
-                            </>
-                        )}
-
-                        {plans && plans.list.length > 1 && (
-                            <select
-                                className="kc-select"
-                                aria-label="Plan s Platna"
-                                title="Koji plan s Platna se crta kao planirano"
-                                style={{ marginLeft: 'auto' }}
-                                value={plans.selectedId}
-                                onChange={e => plans.onSelect(e.target.value)}
-                            >
-                                {plans.list.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-                            </select>
-                        )}
+            <>
+                <div className="kc-cal-tools">
+                    <div className="kc-seg" role="group" aria-label="Prikaz kalendara">
+                        <button type="button" aria-pressed={mode === 'timeline'} onClick={() => setMode('timeline')}>Traka</button>
+                        <button type="button" aria-pressed={mode === 'agenda'} onClick={() => setMode('agenda')}>
+                            Agenda
+                            {lateCount > 0 && <i className="kc-seg-dot" aria-label={`${lateCount} kasni`} />}
+                        </button>
+                        <button type="button" aria-pressed={mode === 'month'} onClick={() => setMode('month')}>Mjesec</button>
                     </div>
 
-                    {legendOpen && <Legend />}
-
-                    {mode === 'agenda' ? (
-                        <AgendaView buckets={agenda} scope={scope} today={today} onPick={setDetailId} />
-                    ) : rows.every(r => r.placed.length === 0) ? (
-                        <div className="kc-cal-empty">
-                            <CalendarDays size={22} style={{ opacity: 0.5 }} />
-                            <p style={{ margin: '6px 0 0' }}>Nema aktivnosti u ovom rasponu.</p>
-                        </div>
-                    ) : mode === 'timeline' ? (
-                        <TimelineGrid rows={rows} days={days} today={today} onPick={setDetailId} onToggleProject={toggleProject} expanded={expanded} projects={scope.projects} />
-                    ) : (
-                        <MonthGrid days={days} items={data.items.filter(i => !i.productId)} anchor={anchor} today={today} onPick={setDetailId} />
+                    {mode !== 'agenda' && (
+                        <>
+                            <div className="kc-range">
+                                <button type="button" className="kc-icon-btn" aria-label="Nazad" onClick={() => step(-1)}><ChevronLeft size={16} /></button>
+                                <span>{title}</span>
+                                <button type="button" className="kc-icon-btn" aria-label="Naprijed" onClick={() => step(1)}><ChevronRight size={16} /></button>
+                            </div>
+                            <button type="button" className="kc-btn sm" onClick={() => setAnchor(weekStart(today))}>Danas</button>
+                        </>
                     )}
 
-                    {mode !== 'agenda' && undated.length > 0 && (
-                        <div className="kc-undated">
-                            <strong>Bez roka</strong>
-                            {undated.slice(0, 12).map(item => (
-                                <button type="button" key={item.id} className="kc-point" style={hue(item.projectId)} onClick={() => setDetailId(item.id)}>
-                                    {item.title}
-                                </button>
-                            ))}
-                            {undated.length > 12 && <span style={{ fontSize: 11 }}>+{undated.length - 12}</span>}
-                        </div>
+                    {mode === 'timeline' && (
+                        <>
+                            <div className="kc-seg" role="group" aria-label="Raspon">
+                                {[4, 8, 12].map(n => (
+                                    <button type="button" key={n} aria-pressed={weeks === n} onClick={() => setWeeks(n)}>{n} sedm.</button>
+                                ))}
+                            </div>
+                            <select
+                                className="kc-select sm"
+                                aria-label="Razlaganje redova"
+                                value={grouping}
+                                onChange={e => { setGrouping(e.target.value as RowGrouping); setExpanded(new Set()); }}
+                            >
+                                {(Object.keys(GROUPING_LABEL) as RowGrouping[]).map(g => (
+                                    <option key={g} value={g}>{GROUPING_LABEL[g]}</option>
+                                ))}
+                            </select>
+                        </>
                     )}
 
-                    {detail && <Detail item={detail} scope={scope} today={today} actions={actions} onClose={() => setDetailId(null)} />}
-                </>
-            )}
+                    {plans && plans.list.length > 1 && (
+                        <select
+                            className="kc-select"
+                            aria-label="Plan s Platna"
+                            title="Koji plan s Platna se crta kao planirano"
+                            style={{ marginLeft: 'auto' }}
+                            value={plans.selectedId}
+                            onChange={e => plans.onSelect(e.target.value)}
+                        >
+                            {plans.list.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                        </select>
+                    )}
+                </div>
+
+                {legendOpen && <Legend />}
+
+                {mode === 'agenda' ? (
+                    <AgendaView buckets={agenda} scope={scope} today={today} onPick={setDetailId} />
+                ) : rows.every(r => r.placed.length === 0) ? (
+                    <div className="kc-cal-empty">
+                        <CalendarDays size={22} style={{ opacity: 0.5 }} />
+                        <p style={{ margin: '6px 0 0' }}>Nema aktivnosti u ovom rasponu.</p>
+                    </div>
+                ) : mode === 'timeline' ? (
+                    <TimelineGrid rows={rows} days={days} today={today} onPick={setDetailId} onToggleProject={toggleProject} expanded={expanded} projects={scope.projects} />
+                ) : (
+                    <MonthGrid days={days} items={data.items.filter(i => !i.productId)} anchor={anchor} today={today} onPick={setDetailId} />
+                )}
+
+                {mode !== 'agenda' && undated.length > 0 && (
+                    <div className="kc-undated">
+                        <strong>Bez roka</strong>
+                        {undated.slice(0, 12).map(item => (
+                            <button type="button" key={item.id} className="kc-point" style={hue(item.projectId)} onClick={() => setDetailId(item.id)}>
+                                {item.title}
+                            </button>
+                        ))}
+                        {undated.length > 12 && <span style={{ fontSize: 11 }}>+{undated.length - 12}</span>}
+                    </div>
+                )}
+
+                {detail && <Detail item={detail} scope={scope} today={today} actions={actions} onClose={() => setDetailId(null)} />}
+            </>
         </KcPanel>
     );
 }

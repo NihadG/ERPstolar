@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import CommandCenterScreen from '../command/CommandCenterScreen';
 import type { Order, Project, Task, WorkOrder } from '@/lib/types';
 
@@ -14,6 +14,7 @@ jest.mock('@/lib/services', () => ({
     updateProductNotes: jest.fn().mockResolvedValue({ success: true, message: 'ok' }),
     saveTask: jest.fn().mockResolvedValue({ success: true, message: 'ok' }),
     deleteTask: jest.fn().mockResolvedValue({ success: true, message: 'ok' }),
+    createOrdersFromMaterialSelection: jest.fn().mockResolvedValue({ ordersCreated: 1, orderNumbers: ['2026-050'] }),
 }));
 
 const projects = [
@@ -96,13 +97,22 @@ test('leća iz pulsa sužava SVE kontejnere na isto pitanje', () => {
     expect(within(screen.getByRole('region', { name: 'Napomene' })).queryByText('Koja boja?')).not.toBeInTheDocument();
 });
 
-test('odabir proizvoda nudi nalog i narudžbu, po projektu odabira', () => {
+// Traka odabira lebdi na dnu EKRANA, ne na dnu ploče Proizvodi — do stare
+// se moralo skrolati kroz cijelu listu.
+const dock = () => screen.getByRole('region', { name: 'Označeno' });
+
+test('odabir proizvoda otvara plutajuću traku s nalogom i narudžbom', () => {
     renderScreen();
+    expect(screen.queryByRole('region', { name: 'Označeno' })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('checkbox', { name: 'Označi proizvod Klupa' }));
-    expect(screen.getByText(/Označeno:/)).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Napravi nalog/ })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Očisti' }));
-    expect(screen.queryByText(/Označeno:/)).not.toBeInTheDocument();
+    expect(within(dock()).getByText(/Označeno:/)).toBeInTheDocument();
+    expect(within(dock()).getByRole('button', { name: /Napravi nalog/ })).toBeInTheDocument();
+    // Samo proizvod označen → nudi se sve što na njemu fali.
+    expect(within(dock()).getByRole('button', { name: /Naruči što fali \(1\)/ })).toBeEnabled();
+    // Traka nije dio ploče Proizvodi.
+    expect(within(screen.getByRole('region', { name: 'Proizvodi' })).queryByText(/Označeno:/)).not.toBeInTheDocument();
+    fireEvent.click(within(dock()).getByRole('button', { name: 'Očisti' }));
+    expect(screen.queryByRole('region', { name: 'Označeno' })).not.toBeInTheDocument();
 });
 
 test('materijal se bira tek kad se proizvod proširi, i samo ako ima šta naručiti', () => {
@@ -111,7 +121,95 @@ test('materijal se bira tek kad se proizvod proširi, i samo ako ima šta naruč
     const check = screen.getByRole('checkbox', { name: 'Naruči Iveral' });
     expect(check).toBeEnabled();
     fireEvent.click(check);
-    expect(screen.getByRole('button', { name: /Naruči materijale \(1\)/ })).toBeInTheDocument();
+    expect(within(dock()).getByRole('button', { name: /Naruči označene \(1\)/ })).toBeInTheDocument();
+});
+
+test('narudžba dobija naziv iz projekta i pozicije — nikad „Komandni centar"', async () => {
+    const { createOrdersFromMaterialSelection } = jest.requireMock('@/lib/services');
+    renderScreen();
+    fireEvent.click(screen.getAllByRole('button', { name: 'Prikaži materijale' })[0]);
+    // „Naruči što fali" stoji uz tabelu materijala, ne na dnu ploče.
+    fireEvent.click(within(screen.getByRole('region', { name: 'Proizvodi' })).getByRole('button', { name: /Naruči što fali \(1\)/ }));
+
+    const name = await screen.findByLabelText('Naziv narudžbe');
+    expect(name).toHaveValue('Aamanns — Klupa');
+    fireEvent.change(name, { target: { value: 'Iveral za klupe' } });
+    fireEvent.click(screen.getByRole('button', { name: /Kreiraj narudžbe/ }));
+
+    await waitFor(() => expect(createOrdersFromMaterialSelection).toHaveBeenCalled());
+    const [, , , orderName] = createOrdersFromMaterialSelection.mock.calls[0];
+    expect(orderName).toBe('Iveral za klupe');
+});
+
+test('pozicija bez naloga ima dugme koje pravi nalog samo za nju', () => {
+    renderScreen({ workOrders: [] });
+    expect(screen.queryByTestId('wizard')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Napravi nalog: Klupa' }));
+    expect(screen.getByTestId('wizard')).toBeInTheDocument();
+});
+
+test('nalog, narudžba i zadatak se prave iz zaglavlja, uz izbor projekta', () => {
+    renderScreen();
+    const create = screen.getByRole('group', { name: 'Novo' });
+    fireEvent.click(within(create).getByRole('button', { name: 'Nova narudžba materijala' }));
+    const menu = screen.getByRole('menu');
+    // Projekat bez ičega za naručiti se ne nudi kao da ima.
+    expect(within(menu).getByRole('menuitem', { name: /Melihin stan/ })).toBeDisabled();
+    expect(within(menu).getByRole('menuitem', { name: /Aamanns/ })).toBeEnabled();
+    fireEvent.click(within(menu).getByRole('menuitem', { name: /Aamanns/ }));
+    expect(screen.getByLabelText('Naziv narudžbe')).toHaveValue('Aamanns — Klupa');
+});
+
+// ── Raspored ────────────────────────────────────────────────────────
+
+test('sklopljena ploča ostaje zaglavlje sa sažetkom i pamti se na tabli', () => {
+    const { onBoardChange } = renderScreen();
+    const tasksPanel = screen.getByRole('region', { name: 'Zadaci' });
+    fireEvent.click(within(tasksPanel).getByRole('button', { name: 'Zadaci' }));
+    expect(onBoardChange).toHaveBeenCalledWith({ Project_IDs: ['p1', 'p2'], Show_Done: false, Collapsed_Panels: ['tasks'] });
+});
+
+test('sklopljena ploča pokazuje sažetak umjesto sadržaja, a kreiranje ostaje', () => {
+    renderScreen({ board: { Project_IDs: ['p1', 'p2'], Show_Done: false, Collapsed_Panels: ['tasks'] } });
+    const tasksPanel = screen.getByRole('region', { name: 'Zadaci' });
+    expect(within(tasksPanel).queryByText('Miran zadatak')).not.toBeInTheDocument();
+    expect(within(tasksPanel).getByText('1 kasni')).toBeInTheDocument();
+    expect(within(tasksPanel).getByRole('button', { name: 'Novi zadatak' })).toBeInTheDocument();
+});
+
+test('otvorena narudžba raširi desnu kolonu, zatvorena je vraća', () => {
+    const withOrder = [{
+        Order_ID: 'o1', Order_Number: '2026-041', Supplier_Name: 'Frischeis', Status: 'Poslano',
+        Expected_Delivery: '2026-09-20', Total_Amount: 0,
+        items: [{ ID: 'oi1', Material_Name: 'Iveral', Quantity: 3, Unit: 'm2', Status: 'Naručeno', Project_ID: 'p1', Product_ID: 'prod1' }],
+    }] as unknown as Order[];
+    const { container } = renderScreen({ orders: withOrder });
+    const board = () => container.querySelector('.kc-board')!;
+    expect(board()).toHaveAttribute('data-split', 'balanced');
+
+    const purchases = screen.getByRole('region', { name: 'Narudžbe' });
+    fireEvent.click(within(purchases).getByRole('button', { name: 'Otvori narudžbu' }));
+    expect(board()).toHaveAttribute('data-split', 'rail-wide');
+
+    fireEvent.click(within(purchases).getByRole('button', { name: 'Sklopi narudžbu' }));
+    expect(board()).toHaveAttribute('data-split', 'balanced');
+});
+
+test('napomene za kolegu uvijek stoje prve', () => {
+    const withColleague = [{
+        ...projects[0],
+        products: [{
+            ...(projects[0].products || [])[0],
+            Questions: [
+                { id: 'q1', Text: 'Koja boja?', Audience: 'client', Resolved: false, Created_At: '2026-08-01' },
+                { id: 'q2', Text: 'Sokl je sada 65mm', Audience: 'colleague', Resolved: false, Created_At: '2026-09-11' },
+            ],
+        }],
+    }, projects[1]] as unknown as Project[];
+    renderScreen({ projects: withColleague });
+    const notes = screen.getByRole('region', { name: 'Napomene' });
+    const texts = within(notes).getAllByText(/Koja boja\?|Sokl je sada 65mm/).map(e => e.textContent);
+    expect(texts).toEqual(['Sokl je sada 65mm', 'Koja boja?']);
 });
 
 test('uklanjanje projekta skida ga s table, ne briše projekat', () => {
@@ -195,16 +293,23 @@ test('napomene se mogu pretražiti, grupisati i sortirati', () => {
 });
 
 // ── Kalendar ────────────────────────────────────────────────────────
-// Agenda je zadani prikaz jer odgovara na pitanje koje se postavlja svaki
-// dan („šta me čeka, šta kasni"); Gantt odgovara na drugo pitanje.
+// Traka (Gantt) je zadani prikaz — tako ga korisnik otvara, a i znatno je
+// niža od agende, pa tabla ispod ostaje na ekranu. Agenda je jedan klik dalje.
 
 const calendar = () => screen.getByRole('region', { name: 'Kalendar projekata' });
+const openAgenda = () => fireEvent.click(within(calendar()).getByRole('button', { name: /Agenda/ }));
 
-test('kalendar se otvara na agendi, s kašnjenjem na vrhu', () => {
+test('kalendar se otvara na traci', () => {
     renderScreen();
     const cal = calendar();
-    expect(within(cal).getByRole('button', { name: /Agenda/ })).toHaveAttribute('aria-pressed', 'true');
+    expect(within(cal).getByRole('button', { name: 'Traka' })).toHaveAttribute('aria-pressed', 'true');
+    expect(within(cal).getByRole('button', { name: /Agenda/ })).toHaveAttribute('aria-pressed', 'false');
+});
 
+test('agenda stavlja kašnjenje na vrh', () => {
+    renderScreen();
+    openAgenda();
+    const cal = calendar();
     const buckets = within(cal).getAllByRole('region');
     expect(buckets[0]).toHaveAccessibleName('Kasni');
     // Nalog s rokom 1.9. i zadatak s rokom 5.9. — oba prije 12.9.
@@ -214,6 +319,7 @@ test('kalendar se otvara na agendi, s kašnjenjem na vrhu', () => {
 
 test('agenda razvrstava po hitnosti, a ne po abecedi', () => {
     renderScreen();
+    openAgenda();
     const cal = calendar();
     const labels = within(cal).getAllByRole('region').map(r => r.getAttribute('aria-label'));
     // Rok projekta je 30.9. (sljedeći mjesec), uredan nalog 1.12.
@@ -224,18 +330,20 @@ test('agenda razvrstava po hitnosti, a ne po abecedi', () => {
     expect(within(later).getByText('Rok projekta')).toBeInTheDocument();
 });
 
-test('prelazak na traku nudi razlaganje redova, agenda ga ne nudi', () => {
+test('traka nudi razlaganje redova i raspon, agenda ih ne nudi', () => {
     renderScreen();
     const cal = calendar();
-    expect(within(cal).queryByLabelText('Razlaganje redova')).not.toBeInTheDocument();
-
-    fireEvent.click(within(cal).getByRole('button', { name: 'Traka' }));
     expect(within(cal).getByLabelText('Razlaganje redova')).toHaveValue('compact');
     expect(within(cal).getByRole('group', { name: 'Raspon' })).toBeInTheDocument();
+
+    openAgenda();
+    expect(within(cal).queryByLabelText('Razlaganje redova')).not.toBeInTheDocument();
+    expect(within(cal).queryByRole('group', { name: 'Raspon' })).not.toBeInTheDocument();
 });
 
 test('klik na stavku u agendi otvara detalje s radnjom nad njom', () => {
     renderScreen();
+    openAgenda();
     const cal = calendar();
     fireEvent.click(within(cal).getByText('Kasni nalog'));
     expect(within(cal).getByRole('button', { name: 'Otvori nalog' })).toBeInTheDocument();

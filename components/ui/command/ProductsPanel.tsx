@@ -8,17 +8,23 @@
 //   2. je li već u nalogu i u kojem   → značka naloga
 //   3. gori li nešto                  → crvena ivica reda
 // Tek kad nešto od toga ne valja, red se otvara u tabelu materijala.
+//
+// Radnje stoje TAMO GDJE SE O NJIMA MISLI: „bez naloga" na redu je dugme
+// koje pravi nalog za tu poziciju, a otvoreni materijali imaju „Naruči što
+// fali". Za više pozicija odjednom je traka odabira na dnu ekrana
+// (SelectionDock) — ova ploča više nema svoju traku na dnu, do koje se
+// moralo skrolati.
 // ════════════════════════════════════════════════════════════════════
 
-import { useMemo, useState } from 'react';
-import { Check, ChevronRight, Package, Search, ShoppingCart, Wrench, X } from 'lucide-react';
+import { useMemo, useState, type ReactNode } from 'react';
+import { Check, ChevronRight, Package, Plus, Search, ShoppingCart, X } from 'lucide-react';
 import type { Product, Project } from '@/lib/types';
 import type { BoardScope } from '@/lib/command/scope';
 import type { CommandMaterialRow } from '@/lib/command/materialOrder';
 import { essentialState, lensAllowsMaterial, lensAllowsProduct, type LensSelection } from '@/lib/command/signals';
 import { matches, queryTokens } from '@/lib/command/search';
 import { productSearchText, sortProductsForBoard } from '@/lib/command/products';
-import { hue, KcPanel, plural, qty } from './parts';
+import { hue, KcPanel, plural, qty, SummaryBits } from './parts';
 
 const READY = new Set(['Primljeno', 'Na stanju']);
 
@@ -43,11 +49,17 @@ export interface ProductsPanelProps {
     onToggleProductMany: (productIds: string[], on: boolean) => void;
     onToggleMaterial: (materialId: string) => void;
     onToggleMaterialMany: (materialIds: string[], on: boolean) => void;
-    onClearSelection: () => void;
-    onCreateWorkOrder: (projectId: string) => void;
-    onOrderMaterials: () => void;
-    solo?: string | null;
-    onSolo?: (id: string | null) => void;
+    /** Nalog za jednu poziciju — dugme na redu bez naloga. */
+    onCreateWorkOrderFor: (projectId: string, productIds: string[]) => void;
+    /** Narudžba za gotov izbor materijala (npr. sve što fali na poziciji). */
+    onOrder: (materialIds: string[], label: string) => void;
+    /** Javlja kad je neki proizvod otvoren — raspored daje širinu toj koloni. */
+    onOpenChange?: (open: boolean) => void;
+    collapsed?: boolean;
+    onCollapse?: () => void;
+    pinned?: boolean;
+    onPin?: () => void;
+    create?: ReactNode;
 }
 
 export default function ProductsPanel(props: ProductsPanelProps) {
@@ -122,16 +134,31 @@ export default function ProductsPanel(props: ProductsPanelProps) {
         .filter(g => g.products.length > 0), [scope.projects, lens, tokens, byProduct, inProgressProducts]);
 
     const total = groups.reduce((sum, g) => sum + g.products.length, 0);
-    const selectedMaterialRows = materials.filter(m => selectedMaterials.has(m.ID));
-    const selectedProjects = Array.from(new Set(
-        groups.flatMap(g => g.products.filter(p => selectedProducts.has(p.Product_ID)).map(() => g.project)),
-    ));
 
-    const toggleOpen = (productId: string) => setOpen(prev => {
-        const next = new Set(prev);
+    // Sažetak za sklopljenu ploču: ono što koči rad i ono što čeka narudžbu.
+    const summary = useMemo(() => {
+        let blocked = 0;
+        let toOrder = 0;
+        for (const { products } of groups) {
+            for (const product of products) {
+                const rows = byProduct.get(product.Product_ID) || [];
+                if (activeOrderProducts.has(product.Product_ID) && rows.some(r => essentialState(r) === 'missing')) blocked++;
+                if (rows.some(r => r.orderable)) toOrder++;
+            }
+        }
+        return [
+            { label: blocked > 0 ? `${blocked} koči nalog` : '', tone: 'alert' as const },
+            { label: toOrder > 0 ? `${toOrder} čeka narudžbu` : '', tone: 'warn' as const },
+        ];
+    }, [groups, byProduct, activeOrderProducts]);
+
+    const toggleOpen = (productId: string) => {
+        const next = new Set(open);
         if (next.has(productId)) next.delete(productId); else next.add(productId);
-        return next;
-    });
+        setOpen(next);
+        if (next.has(productId)) props.onOpenChange?.(true);
+        else if (next.size === 0) props.onOpenChange?.(false);
+    };
 
     return (
         <KcPanel
@@ -139,8 +166,12 @@ export default function ProductsPanel(props: ProductsPanelProps) {
             eyebrow="ŠTA SE PRAVI"
             title="Proizvodi"
             count={total}
-            solo={props.solo}
-            onSolo={props.onSolo}
+            collapsed={props.collapsed}
+            onCollapse={props.onCollapse}
+            pinned={props.pinned}
+            onPin={props.onPin}
+            create={props.create}
+            summary={<SummaryBits bits={summary} />}
             actions={
                 <label className="kc-search">
                     <Search size={14} />
@@ -206,10 +237,13 @@ export default function ProductsPanel(props: ProductsPanelProps) {
                                     selected={selectedProducts.has(product.Product_ID)}
                                     selectedMaterials={selectedMaterials}
                                     lens={lens}
+                                    canCreate={canCreate}
                                     onToggleOpen={() => toggleOpen(product.Product_ID)}
                                     onToggleSelect={() => props.onToggleProduct(product.Product_ID)}
                                     onToggleMaterial={props.onToggleMaterial}
                                     onToggleMaterialMany={props.onToggleMaterialMany}
+                                    onCreateWorkOrder={() => props.onCreateWorkOrderFor(project.Project_ID, [product.Product_ID])}
+                                    onOrder={ids => props.onOrder(ids, `${project.Name || project.Client_Name} — ${product.Name || 'Proizvod'}`)}
                                 />
                             ))}
                             {isOpen && hidden > 0 && (
@@ -226,35 +260,13 @@ export default function ProductsPanel(props: ProductsPanelProps) {
                     );
                 })}
             </div>
-
-            {(selectedProducts.size > 0 || selectedMaterials.size > 0) && (
-                <div className="kc-selbar">
-                    <span>
-                        Označeno: <b>{selectedProducts.size}</b> {plural(selectedProducts.size, 'proizvod', 'proizvoda', 'proizvoda')}
-                        {selectedMaterials.size > 0 && <> · <b>{selectedMaterials.size}</b> {plural(selectedMaterials.size, 'materijal', 'materijala', 'materijala')}</>}
-                    </span>
-                    <div className="kc-selbar-actions">
-                        <button type="button" className="kc-btn sm" onClick={props.onClearSelection}>Očisti</button>
-                        {canCreate && selectedMaterials.size > 0 && (
-                            <button type="button" className="kc-btn sm" onClick={props.onOrderMaterials}>
-                                <ShoppingCart size={14} /> Naruči materijale ({selectedMaterialRows.length})
-                            </button>
-                        )}
-                        {canCreate && selectedProjects.map(project => (
-                            <button type="button" key={project.Project_ID} className="kc-btn sm primary" onClick={() => props.onCreateWorkOrder(project.Project_ID)}>
-                                <Wrench size={14} /> Napravi nalog{selectedProjects.length > 1 ? ` · ${project.Name || project.Client_Name}` : ''}
-                            </button>
-                        ))}
-                    </div>
-                </div>
-            )}
         </KcPanel>
     );
 }
 
 function ProductRow({
-    product, project, rows, orders, activeOrder, open, selected, selectedMaterials, lens,
-    onToggleOpen, onToggleSelect, onToggleMaterial, onToggleMaterialMany,
+    product, project, rows, orders, activeOrder, open, selected, selectedMaterials, lens, canCreate,
+    onToggleOpen, onToggleSelect, onToggleMaterial, onToggleMaterialMany, onCreateWorkOrder, onOrder,
 }: {
     product: Product;
     project: Project;
@@ -265,10 +277,13 @@ function ProductRow({
     selected: boolean;
     selectedMaterials: Set<string>;
     lens: LensSelection | null;
+    canCreate: boolean;
     onToggleOpen: () => void;
     onToggleSelect: () => void;
     onToggleMaterial: (id: string) => void;
     onToggleMaterialMany: (ids: string[], on: boolean) => void;
+    onCreateWorkOrder: () => void;
+    onOrder: (ids: string[]) => void;
 }) {
     const ready = rows.filter(r => READY.has(r.Status)).length;
     const ordered = rows.filter(r => r.Status === 'Naručeno').length;
@@ -313,9 +328,22 @@ function ProductRow({
                     ) : (
                         <div className="kc-meter"><span>Bez materijala</span></div>
                     )}
-                    {openOrder
-                        ? <span className="kc-tag" title={`Nalog #${openOrder.number} — ${openOrder.status}`}>#{openOrder.number} {openOrder.status}</span>
-                        : <span className="kc-tag ghost">bez naloga</span>}
+                    {openOrder ? (
+                        <span className="kc-tag" title={`Nalog #${openOrder.number} — ${openOrder.status}`}>
+                            #{openOrder.number}<span className="kc-tag-status"> {openOrder.status}</span>
+                        </span>
+                    ) : canCreate ? (
+                        // Pozicija bez naloga: oznaka je ujedno i najkraći put do naloga.
+                        <button
+                            type="button"
+                            className="kc-tag ghost kc-tag-action"
+                            title="Pozicija nema nalog — napravi nalog samo za nju"
+                            aria-label={`Napravi nalog: ${product.Name || 'Proizvod'}`}
+                            onClick={onCreateWorkOrder}
+                        >
+                            <Plus size={11} strokeWidth={2.6} /> Nalog
+                        </button>
+                    ) : <span className="kc-tag ghost">bez naloga</span>}
                     <button type="button" className="kc-icon-btn" style={{ border: 'none', width: 26, height: 26 }} aria-label={open ? 'Sklopi materijale' : 'Prikaži materijale'} onClick={onToggleOpen}>
                         <ChevronRight size={15} style={{ transform: open ? 'rotate(90deg)' : 'none', transition: 'transform .15s ease' }} />
                     </button>
@@ -328,17 +356,25 @@ function ProductRow({
                         <div className="kc-empty" style={{ padding: 16 }}><p>Ovaj proizvod nema unesenih materijala.</p></div>
                     ) : (
                         <>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+                            <div className="kc-expand-head">
                                 <span className="kc-eyebrow" style={{ margin: 0 }}>MATERIJALI · {project.Name || project.Client_Name}</span>
-                                {orderable.length > 0 && (
-                                    <button
-                                        type="button"
-                                        className="kc-link"
-                                        style={{ marginLeft: 'auto' }}
-                                        onClick={() => onToggleMaterialMany(orderable.map(r => r.ID), !orderable.every(r => selectedMaterials.has(r.ID)))}
-                                    >
-                                        {orderable.every(r => selectedMaterials.has(r.ID)) ? 'Poništi' : `Označi za narudžbu (${orderable.length})`}
-                                    </button>
+                                {orderable.length > 0 ? (
+                                    <div className="kc-expand-actions">
+                                        <button
+                                            type="button"
+                                            className="kc-link"
+                                            onClick={() => onToggleMaterialMany(orderable.map(r => r.ID), !orderable.every(r => selectedMaterials.has(r.ID)))}
+                                        >
+                                            {orderable.every(r => selectedMaterials.has(r.ID)) ? 'Poništi odabir' : `Označi sve (${orderable.length})`}
+                                        </button>
+                                        {canCreate && (
+                                            <button type="button" className="kc-btn sm primary" onClick={() => onOrder(orderable.map(r => r.ID))}>
+                                                <ShoppingCart size={14} /> Naruči što fali ({orderable.length})
+                                            </button>
+                                        )}
+                                    </div>
+                                ) : (
+                                    <span className="kc-expand-note">Sve je naručeno ili na stanju</span>
                                 )}
                             </div>
                             <div className="kc-table-wrap">

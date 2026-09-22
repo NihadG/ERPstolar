@@ -332,15 +332,19 @@ export async function buildMaterialOrderPlan(
     return _build(workOrderId, organizationId);
 }
 
-/** Kreiraj narudžbe SAMO za izabrane materijale (korisnikov izbor u modalu). */
+/**
+ * Kreiraj narudžbe SAMO za izabrane materijale (korisnikov izbor u modalu).
+ * `orderName` je naziv koji je korisnik upisao; bez njega narudžbe nose naziv naloga.
+ */
 export async function createSelectedMaterialOrders(
     workOrderId: string,
     plannedStartDate: string,
     selectedMaterialIds: string[],
-    organizationId: string
+    organizationId: string,
+    orderName?: string
 ): Promise<{ ordersCreated: number; orderNumbers: string[] }> {
     const { createSelectedMaterialOrders: _create } = await import('../../database');
-    return _create(workOrderId, plannedStartDate, selectedMaterialIds, organizationId);
+    return _create(workOrderId, plannedStartDate, selectedMaterialIds, organizationId, orderName);
 }
 
 // ============================================

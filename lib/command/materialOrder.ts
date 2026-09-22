@@ -106,6 +106,60 @@ export function planFromSelection(rows: CommandMaterialRow[], selectedIds: Itera
         }));
 }
 
+/**
+ * ID-evi materijala koji se SADA mogu naručiti, po izboru:
+ *   • projectId  — sve što fali na jednom projektu
+ *   • productIds — sve što fali na tim pozicijama
+ *   • ništa      — sve što fali na tabli
+ */
+export function orderableIds(
+    rows: CommandMaterialRow[],
+    filter: { projectId?: string; productIds?: Iterable<string> } = {},
+): string[] {
+    const products = filter.productIds ? new Set(filter.productIds) : null;
+    return rows
+        .filter(row => row.orderable
+            && (!filter.projectId || row.projectId === filter.projectId)
+            && (!products || products.has(row.productId)))
+        .map(row => row.ID);
+}
+
+/**
+ * Prijedlog naziva narudžbe iz onoga što se naručuje. Ranije su sve narudžbe
+ * iz Komandnog centra dobijale isti naziv „Komandni centar" — u Narudžbama
+ * se tada nije moglo razlikovati šta je za koji posao.
+ *
+ *   jedna pozicija       → „Aamanns 1921 — Klupe"
+ *   jedan projekat       → „Aamanns 1921"
+ *   dva projekta         → „Aamanns 1921 + Melihin stan"
+ *   više projekata       → „Aamanns 1921 + još 2"
+ *
+ * Projekti idu redoslijedom table (`projectOrder`), ne slučajnim redom izbora.
+ */
+export function suggestOrderName(
+    rows: CommandMaterialRow[],
+    selectedIds: Iterable<string>,
+    projectOrder?: Map<string, number>,
+): string {
+    const wanted = new Set(selectedIds);
+    const projects = new Map<string, string>();
+    const products = new Map<string, string>();
+    for (const row of rows) {
+        if (!wanted.has(row.ID)) continue;
+        projects.set(row.projectId, row.projectName);
+        products.set(row.productId, row.productName);
+    }
+    if (projects.size === 0) return '';
+    const ordered = Array.from(projects.entries())
+        .sort(([a], [b]) => (projectOrder?.get(a) ?? 0) - (projectOrder?.get(b) ?? 0))
+        .map(([, name]) => name);
+    if (ordered.length === 1) {
+        return products.size === 1 ? `${ordered[0]} — ${Array.from(products.values())[0]}` : ordered[0];
+    }
+    if (ordered.length === 2) return `${ordered[0]} + ${ordered[1]}`;
+    return `${ordered[0]} + još ${ordered.length - 1}`;
+}
+
 /** Ukupna vrijednost plana — isti izraz kao Total_Amount pri upisu narudžbe. */
 export function planTotal(groups: MaterialOrderPlanGroup[]): number {
     return groups.reduce((sum, g) => sum + g.materials.reduce((s, m) => s + m.quantity * m.unitPrice, 0), 0);

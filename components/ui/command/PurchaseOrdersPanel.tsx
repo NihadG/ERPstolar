@@ -14,16 +14,20 @@
 //
 // Leća (puls) filtrira po ID-u narudžbe, isto kao kalendar — pod lećom
 // koja ne govori o isporukama ova ploča se svjesno isprazni.
+//
+// Otvorena narudžba je tabela materijala; u uskoj desnoj koloni bila je
+// zgužvana. Zato ploča JAVLJA kad je nešto otvoreno (`onOpenChange`), a
+// raspored (lib/command/layout) tada daje ovoj koloni veći dio širine.
 // ════════════════════════════════════════════════════════════════════
 
-import { useMemo, useState } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import { ChevronRight, ShoppingCart, Truck } from 'lucide-react';
 import type { Order } from '@/lib/types';
 import { formatCurrency } from '@/lib/utils';
 import type { BoardScope } from '@/lib/command/scope';
 import { isPurchaseLate, type LensSelection } from '@/lib/command/signals';
 import { groupOrderItems, productNamesLabel, productNamesResolver, type OrderItemGroup } from '@/lib/orderItemGroups';
-import { hue, KcPanel, plural, qty, shortDate } from './parts';
+import { hue, KcPanel, plural, qty, shortDate, SummaryBits } from './parts';
 
 type Bucket = 'late' | 'draft' | 'sent' | 'received';
 
@@ -63,16 +67,25 @@ function orderProjects(order: Order, scope: BoardScope): string[] {
 }
 
 export default function PurchaseOrdersPanel({
-    scope, today, lens, showDone, solo, onSolo,
+    scope, today, lens, showDone, create, onOpenChange, collapsed, onCollapse, pinned, onPin,
 }: {
     scope: BoardScope;
     today: string;
     lens: LensSelection | null;
     showDone: boolean;
-    solo?: string | null;
-    onSolo?: (id: string | null) => void;
+    /** „+ Narudžba" — meni projekata, dolazi iz ekrana. */
+    create?: ReactNode;
+    onOpenChange?: (open: boolean) => void;
+    collapsed?: boolean;
+    onCollapse?: () => void;
+    pinned?: boolean;
+    onPin?: () => void;
 }) {
-    const [openId, setOpenId] = useState<string | null>(null);
+    const [openId, setOpenIdState] = useState<string | null>(null);
+    const setOpenId = (id: string | null) => {
+        setOpenIdState(id);
+        onOpenChange?.(id !== null);
+    };
 
     const grouped = useMemo(() => {
         const buckets = new Map<Bucket, Order[]>();
@@ -96,6 +109,7 @@ export default function PurchaseOrdersPanel({
 
     const total = Array.from(grouped.values()).reduce((sum, list) => sum + list.length, 0);
     const lateCount = grouped.get('late')?.length || 0;
+    const count = (bucket: Bucket) => grouped.get(bucket)?.length || 0;
 
     return (
         <KcPanel
@@ -104,15 +118,25 @@ export default function PurchaseOrdersPanel({
             title="Narudžbe"
             count={total}
             countTone={lateCount > 0 ? 'alert' : undefined}
-            solo={solo}
-            onSolo={onSolo}
+            collapsed={collapsed}
+            onCollapse={onCollapse}
+            pinned={pinned}
+            onPin={onPin}
+            create={create}
+            summary={(
+                <SummaryBits bits={[
+                    { label: lateCount > 0 ? `${lateCount} kasni` : '', tone: 'alert' },
+                    { label: count('draft') > 0 ? `${count('draft')} nacrt` : '', tone: 'warn' },
+                    { label: count('sent') > 0 ? `${count('sent')} u dolasku` : '' },
+                ]} />
+            )}
         >
             <div className="kc-panel-body">
                 {total === 0 && (
                     <div className="kc-empty">
                         <ShoppingCart size={22} style={{ opacity: 0.45 }} />
                         <p>{lens ? 'Nema narudžbi u ovom prikazu.' : 'Nema otvorenih narudžbi.'}</p>
-                        <span>Označi materijale u Proizvodima pa napravi narudžbu.</span>
+                        <span>Naruči dugmetom „Narudžba" — za cijeli projekat ili samo označene materijale.</span>
                     </div>
                 )}
                 {BUCKETS.map(bucket => {
@@ -237,7 +261,7 @@ function PurchaseRow({
                                 </span>
                             </div>
                             <div className="kc-table-wrap">
-                                <table className="kc-table">
+                                <table className="kc-table few">
                                     <thead>
                                         <tr>
                                             <th>Materijal</th>

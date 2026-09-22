@@ -76,15 +76,28 @@ export function collectNotes(projects: Project[], today: string): CommandNote[] 
 
 const STATUS_RANK = { open: 0, answered: 1, resolved: 2 } as const;
 
+/**
+ * Napomene za KOLEGU su interna uputstva radionici („sokl je sada 65mm") —
+ * po njima se radi, pa se čitaju prve, prije pitanja klijentu ili dobavljaču.
+ */
+export const FIRST_AUDIENCE: ProductNoteAudience = 'colleague';
+
 export type NoteGroupBy = 'audience' | 'project' | 'product';
 export type NoteSort = 'oldest' | 'newest' | 'alpha';
 
 /**
- * Otvoreno uvijek ide prije odgovorenog i riješenog — to je stalno, bez obzira
- * na izabrano sortiranje. Sortiranje bira samo poredak UNUTAR istog stanja,
- * inače bi „najnovije prvo" gurnulo riješene napomene na vrh.
+ * Poredak ima tri stalna sloja, bez obzira na izabrano sortiranje:
+ *   1. riješeno uvijek na dno (skupljeno u jedan red)
+ *   2. među neriješenim, napomene za kolegu uvijek prve
+ *   3. otvoreno prije odgovorenog
+ * Sortiranje bira samo poredak UNUTAR toga, inače bi „najnovije prvo"
+ * gurnulo riješene napomene na vrh.
  */
 export function compareNotes(a: CommandNote, b: CommandNote, sort: NoteSort = 'oldest'): number {
+    const byResolved = Number(a.status === 'resolved') - Number(b.status === 'resolved');
+    if (byResolved !== 0) return byResolved;
+    const byAudience = Number(b.note.Audience === FIRST_AUDIENCE) - Number(a.note.Audience === FIRST_AUDIENCE);
+    if (byAudience !== 0) return byAudience;
     const byStatus = STATUS_RANK[a.status] - STATUS_RANK[b.status];
     if (byStatus !== 0) return byStatus;
     if (sort === 'alpha') return a.note.Text.localeCompare(b.note.Text, 'bs');
@@ -97,7 +110,7 @@ export function noteSearchText(entry: CommandNote): string {
     return `${entry.note.Text} ${entry.note.Answer || ''} ${entry.projectName} ${entry.productName}`;
 }
 
-const AUDIENCE_ORDER: ProductNoteAudience[] = ['client', 'supplier', 'colleague', 'other'];
+const AUDIENCE_ORDER: ProductNoteAudience[] = [FIRST_AUDIENCE, 'client', 'supplier', 'other'];
 
 export function groupNotes(
     notes: CommandNote[],
@@ -132,6 +145,10 @@ export function groupNotes(
     const groups = Array.from(map.values());
     groups.forEach(group => group.notes.sort((a, b) => compareNotes(a, b, sort)));
     return groups.sort((a, b) => {
+        // Kolega je UVIJEK prvi — i kad je kod njega sve riješeno.
+        if (by === 'audience' && (a.audience === FIRST_AUDIENCE) !== (b.audience === FIRST_AUDIENCE)) {
+            return a.audience === FIRST_AUDIENCE ? -1 : 1;
+        }
         // Grupa s otvorenim pitanjima ide prije one u kojoj je sve riješeno.
         if ((a.openCount > 0) !== (b.openCount > 0)) return a.openCount > 0 ? -1 : 1;
         if (by === 'audience') return AUDIENCE_ORDER.indexOf(a.audience!) - AUDIENCE_ORDER.indexOf(b.audience!);

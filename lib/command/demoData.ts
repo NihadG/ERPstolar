@@ -53,6 +53,7 @@ export const demoProjects: Project[] = [
                 Width: 2400, Height: 450, Depth: 900, Material_Cost: 520, Notes: '',
                 Questions: [
                     { id: 'q-3', Text: 'Da li ide utor za kablove?', Audience: 'client', Resolved: false, Created_At: d(-3) },
+                    { id: 'q-6', Text: 'Rubove kantovati 2mm, ne 1mm — klijent tražio jače ivice', Audience: 'colleague', Resolved: false, Created_At: d(-1) },
                 ],
                 materials: [
                     material('m-5', 'p-lbench', 'Hrastova furnirana ploča', 'Drvoprodex', { Status: 'Naručeno', Ordered_Quantity: 4, Order_ID: 'o-1', Quantity: 2, Unit_Price: 96, Is_Essential: true }),
