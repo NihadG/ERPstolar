@@ -22,6 +22,7 @@ import type { Order } from '@/lib/types';
 import { formatCurrency } from '@/lib/utils';
 import type { BoardScope } from '@/lib/command/scope';
 import { isPurchaseLate, type LensSelection } from '@/lib/command/signals';
+import { groupOrderItems, productNamesLabel, productNamesResolver, type OrderItemGroup } from '@/lib/orderItemGroups';
 import { hue, KcPanel, plural, qty, shortDate } from './parts';
 
 type Bucket = 'late' | 'draft' | 'sent' | 'received';
@@ -163,6 +164,13 @@ function PurchaseRow({
     const named = order.Name?.trim();
     const title = named || order.Supplier_Name || `Narudžba #${order.Order_Number}`;
 
+    // Isti materijal na više pozicija je JEDAN red (zbir), abecedno — kao u
+    // pregledu narudžbe i u PDF-u koji ide dobavljaču.
+    const groups = useMemo(
+        () => (open ? groupOrderItems(items, productNamesResolver(scope.projects)) : []),
+        [open, items, scope.projects]
+    );
+
     const subtitle = [
         `#${order.Order_Number}`,
         named && order.Supplier_Name ? order.Supplier_Name : null,
@@ -240,20 +248,25 @@ function PurchaseRow({
                                         </tr>
                                     </thead>
                                     <tbody>
-                                        {items.map(item => (
+                                        {groups.map(group => (
                                             <tr
-                                                key={item.ID}
-                                                className={bucket === 'late' && item.Status !== 'Primljeno' ? 'blocked' : undefined}
+                                                key={group.key}
+                                                className={bucket === 'late' && group.status !== 'received' ? 'blocked' : undefined}
                                             >
-                                                <td><div className="kc-mat-name">{item.Material_Name}</div></td>
-                                                <td className="r fw">{qty(item.Quantity || 0, item.Unit)}</td>
-                                                <td className="r opt">{qty(item.Received_Quantity || 0, item.Unit)}</td>
-                                                <td className="opt">{item.Product_Name || '—'}</td>
                                                 <td>
-                                                    <span className={`kc-status ${item.Status === 'Primljeno' ? 's-done' : 's-running'}`}>
-                                                        {item.Status || 'Naručeno'}
-                                                    </span>
+                                                    <div className="kc-mat-name">{group.name}</div>
+                                                    {group.items.length > 1 && (
+                                                        <div className="kc-mat-sub" title={group.productNames.join(', ')}>
+                                                            {group.items.length} {plural(group.items.length, 'stavka', 'stavke', 'stavki')} spojeno
+                                                        </div>
+                                                    )}
                                                 </td>
+                                                <td className="r fw">{qty(group.quantity, group.unit)}</td>
+                                                <td className="r opt">{qty(group.receivedQuantity, group.unit)}</td>
+                                                <td className="opt" title={group.productNames.join(', ')}>
+                                                    {group.productNames.length ? productNamesLabel(group.productNames) : '—'}
+                                                </td>
+                                                <td><GroupStatus group={group} /></td>
                                             </tr>
                                         ))}
                                     </tbody>
@@ -265,4 +278,13 @@ function PurchaseRow({
             )}
         </>
     );
+}
+
+/** Status reda materijala: djelomičan prijem se vidi kao x/y, ne kao „Naručeno". */
+function GroupStatus({ group }: { group: OrderItemGroup }) {
+    if (group.status === 'received') return <span className="kc-status s-done">Primljeno</span>;
+    if (group.status === 'partial') {
+        return <span className="kc-status s-wait">Djelomično {group.receivedCount}/{group.items.length}</span>;
+    }
+    return <span className="kc-status s-running">{group.items[0]?.Status || 'Naručeno'}</span>;
 }

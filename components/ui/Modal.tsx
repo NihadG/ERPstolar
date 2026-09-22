@@ -14,9 +14,11 @@ interface ModalProps {
     footer?: ReactNode;
     size?: 'default' | 'large' | 'xl' | 'fullscreen' | 'fullscreen-wide';
     zIndex?: number; // For nested modals
+    /** Dodatna klasa na .modal — za ekrane kojima treba vlastita širina/visina. */
+    className?: string;
 }
 
-export default function Modal({ isOpen, onClose, title, children, footer, size = 'default', zIndex }: ModalProps) {
+export default function Modal({ isOpen, onClose, title, children, footer, size = 'default', zIndex, className }: ModalProps) {
     const [shouldRender, setShouldRender] = useState(isOpen);
     const [animationClass, setAnimationClass] = useState('');
     const [mounted, setMounted] = useState(false);
@@ -85,7 +87,7 @@ export default function Modal({ isOpen, onClose, title, children, footer, size =
             />
             <div
                 ref={sheetRef}
-                className={`modal ${sizeClass} ${animationClass}`}
+                className={`modal ${sizeClass} ${animationClass}${className ? ` ${className}` : ''}`}
                 style={modalStyle}
             >
                 {title && (

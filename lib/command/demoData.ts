@@ -189,6 +189,8 @@ export const demoOrders: Order[] = [
         items: [
             { ID: 'oi-1', Order_ID: 'o-1', Product_Material_ID: 'm-2', Product_ID: 'p-klupe', Product_Name: 'Storage Benches', Project_ID: 'pr-aamanns', Material_Name: 'Kant traka ABS', Quantity: 6, Unit: 'm', Expected_Price: 90, Received_Quantity: 0, Status: 'Naručeno' },
             { ID: 'oi-2', Order_ID: 'o-1', Product_Material_ID: 'm-5', Product_ID: 'p-lbench', Product_Name: 'L-Shaped Bench', Project_ID: 'pr-aamanns', Material_Name: 'Hrastova ploča', Quantity: 4, Unit: 'm²', Expected_Price: 384, Received_Quantity: 0, Status: 'Naručeno' },
+            // Isti materijal na drugoj poziciji — pregled narudžbe ga prikazuje kao JEDAN red (zbir).
+            { ID: 'oi-4', Order_ID: 'o-1', Product_Material_ID: 'm-2b', Product_ID: 'p-lbench', Product_Name: 'L-Shaped Bench', Project_ID: 'pr-aamanns', Material_Name: 'Kant traka ABS', Quantity: 3.5, Unit: 'm', Expected_Price: 52.5, Received_Quantity: 0, Status: 'Naručeno' },
         ],
     },
     {

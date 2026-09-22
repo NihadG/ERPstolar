@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useMemo, useRef } from 'react';
-import type { Worker, WorkerAttendance, WorkOrder } from '@/lib/types';
+import type { Worker, WorkerAttendance, WorkOrder, Project, Task } from '@/lib/types';
 import { ATTENDANCE_STATUSES } from '@/lib/types';
 import type { DailyBookingEntryView } from '@/lib/services';
 import {
@@ -16,6 +16,7 @@ import {
     getWorkerAttendance,
     getDailyWorkBooking,
     getBookedWorkerDaysByMonth,
+    getWorkOrder,
 } from '@/lib/services';
 import { isWorkerAssignedToAutoItem } from '@/lib/autoBook';
 import { workOrderDisplayName } from '@/lib/utils';
@@ -51,11 +52,14 @@ import '@/components/field/Controller.css';
 interface AttendanceTabProps {
     workers: Worker[];
     workOrders: WorkOrder[];
+    /** Za „Razni poslovi" otvoren iz upita knjiženja (izbor projekta, zadaci). */
+    projects?: Project[];
+    tasks?: Task[];
     onRefresh: (...collections: string[]) => void;
     showToast: (message: string, type: 'success' | 'error' | 'info') => void;
 }
 
-export default function AttendanceTab({ workers, workOrders, onRefresh, showToast }: AttendanceTabProps) {
+export default function AttendanceTab({ workers, workOrders, projects = [], tasks = [], onRefresh, showToast }: AttendanceTabProps) {
     const { organizationId } = useData();
     // State for infinity scroll
     const [loadedMonths, setLoadedMonths] = useState<{ year: number; month: number }[]>([
@@ -726,8 +730,8 @@ export default function AttendanceTab({ workers, workOrders, onRefresh, showToas
     // upita razriješi odjednom umjesto redom, par po par radnik-nalog.
     // NE knjiži — cijeli dan radnika se knjiži JEDNIM bookWorkerDayItems (jedna renormalizacija),
     // pa radnik na više naloga ne pokreće renormalizeWorkerDay/getWorkers po svakom nalogu.
-    function workerOrderTargets(workerId: string, workOrderId: string): { workOrderId: string; itemId: string; productId?: string }[] {
-        const wo = workOrders.find(w => w.Work_Order_ID === workOrderId);
+    function workerOrderTargets(workerId: string, workOrderId: string, lookup: Map<string, WorkOrder>): { workOrderId: string; itemId: string; productId?: string }[] {
+        const wo = lookup.get(workOrderId);
         if (!wo) return [];
         const all = wo.items || [];
         const live = all.filter(it => it.Status !== 'Završeno');
@@ -746,8 +750,8 @@ export default function AttendanceTab({ workers, workOrders, onRefresh, showToas
     // startWarnings: startWorkOrder vraća {success,message} (ne baca) — neuspjeh starta se
     // prikuplja i prijavljuje korisniku; dnevnica se IPAK knjiži (trošak nezavisan od statusa),
     // ali nepokrenut nalog ne bi primao auto-dnevnice narednih dana, pa korisnik mora znati.
-    async function ensureOrderBookable(workOrderId: string, orgId: string, itemIds: Set<string>, startWarnings: string[]): Promise<void> {
-        const wo = workOrders.find(w => w.Work_Order_ID === workOrderId);
+    async function ensureOrderBookable(workOrderId: string, orgId: string, itemIds: Set<string>, startWarnings: string[], lookup: Map<string, WorkOrder>): Promise<void> {
+        const wo = lookup.get(workOrderId);
         if (!wo) return;
 
         const paused = (wo.items || []).filter(it => itemIds.has(it.ID) && it.Is_Paused);
@@ -778,9 +782,20 @@ export default function AttendanceTab({ workers, workOrders, onRefresh, showToas
         // Nalozi 'Na čekanju' koje potvrda pokušava startati, a start odbije (npr. materijal
         // nije primljen) — dnevnica se knjiži svejedno, ali korisnik mora vidjeti razlog.
         const startWarnings: string[] = [];
+
+        // Nalog otvoren iz samog upita („Razni poslovi") možda još nije stigao u
+        // `workOrders` — osvježavanje ide u pozadini. Bez ovoga bi se dnevnica na
+        // njega TIHO preskočila (nema stavki = nema cilja), a korisnik bi ga vidio čekiranog.
+        const lookup = new Map(workOrders.map(w => [w.Work_Order_ID, w] as const));
+        const missing = Array.from(new Set(decisions.flatMap(d => d.orderIds))).filter(id => !lookup.has(id));
+        if (missing.length > 0 && orgId) {
+            const fetched = await Promise.all(missing.map(id => getWorkOrder(id, orgId).catch(() => null)));
+            fetched.forEach(w => { if (w) lookup.set(w.Work_Order_ID, w); });
+        }
+
         const noteAffected = (orderId: string) => {
             affectedOrders.add(orderId);
-            if (workOrders.find(w => w.Work_Order_ID === orderId)?.Status === 'Završeno') touchedCompleted.add(orderId);
+            if (lookup.get(orderId)?.Status === 'Završeno') touchedCompleted.add(orderId);
         };
 
         // 1) Prikupi ciljeve PO RADNIKU (radnik na više naloga = SVI ciljevi u jednom
@@ -792,7 +807,7 @@ export default function AttendanceTab({ workers, workOrders, onRefresh, showToas
             if (d.orderIds.length === 0) continue;
             const entry = perWorker.get(d.workerId) || { workerName: d.workerName, presence, targets: [] };
             for (const orderId of d.orderIds) {
-                const t = workerOrderTargets(d.workerId, orderId);
+                const t = workerOrderTargets(d.workerId, orderId, lookup);
                 if (t.length === 0) continue;
                 entry.targets.push(...t);
                 noteAffected(orderId);
@@ -805,7 +820,7 @@ export default function AttendanceTab({ workers, workOrders, onRefresh, showToas
 
         // 2) Pripremi NALOGE — jednom po nalogu, svi paralelno (odmrzavanje + start).
         await Promise.all(Array.from(itemsByOrder.entries()).map(([orderId, itemIds]) =>
-            ensureOrderBookable(orderId, orgId, itemIds, startWarnings)
+            ensureOrderBookable(orderId, orgId, itemIds, startWarnings, lookup)
                 .catch(e => console.error(`commitDecisions: priprema naloga ${orderId} nije uspjela`, e))
         ));
 
@@ -1203,6 +1218,8 @@ export default function AttendanceTab({ workers, workOrders, onRefresh, showToas
                         yesterdaySourceDate={confirmYesterdayDate}
                         workOrders={workOrders}
                         workers={workers}
+                        projects={projects}
+                        tasks={tasks}
                         organizationId={organizationId || ''}
                         onConfirm={commitDecisions}
                         onCreated={onRefresh}

@@ -23,7 +23,7 @@ import type {
 } from '@/lib/types';
 import { formatCurrency, compareProjectsByActivity, countActiveWorkOrdersByProject } from '@/lib/utils';
 import { daysUntil } from '@/lib/planning';
-import { sortProductsByName } from '@/lib/sortProducts';
+import { sortProjectProducts } from '@/lib/projectProductOrder';
 import { projectProfitBreakdown } from '@/lib/projectProfit';
 import { summarizeProjectNotes } from '@/lib/productNotes';
 import MobileProductDetail from './MobileProductDetail';
@@ -171,7 +171,8 @@ export default function MobileProjectsView({
 
     // ── Ekran 2: proizvodi projekta ─────────────────────────────────
     if (openProject) {
-        const products = sortProductsByName(openProject.products || [], p => p.Name);
+        // Isti poredak kao desktop: status → ima li materijal → abeceda.
+        const products = sortProjectProducts(openProject.products, workOrders);
         const notes = summarizeProjectNotes(openProject.products || []);
         return (
             <div className="mui" ref={productsSwipeRef}>

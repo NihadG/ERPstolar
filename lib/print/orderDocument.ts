@@ -9,6 +9,7 @@
 
 import type { Order, OrderItem, Project, Supplier } from '../types';
 import { formatDate } from '../utils';
+import { groupOrderItems, formatQty, type OrderItemGroup } from '../orderItemGroups';
 import type { PrintDocument } from './types';
 
 /** Podskup CompanyInfo-a koji dokument stvarno koristi. */
@@ -29,47 +30,55 @@ export interface OrderPrintInput {
     company: PrintCompany;
 }
 
-interface GlassEntry { item: OrderItem; pieces: any[] }
-interface AluDoorEntry { item: OrderItem; doors: any[] }
+/** Staklo / alu vrata: jedan materijal = jedna sekcija, komadi SVIH pozicija ispod. */
+interface GlassEntry { group: OrderItemGroup; pieces: any[] }
+interface AluDoorEntry { group: OrderItemGroup; doors: any[] }
+
+/** Specifikacija komada stavke (staklo / alu vrata) iz materijala proizvoda. */
+function itemSpec(item: OrderItem, projects: Project[]): { glass?: any[]; doors?: any[] } {
+    // Stavka koju je wizard spojio pri kreiranju nosi sve materijale u Product_Material_IDs.
+    const ids = new Set(item.Product_Material_IDs?.length ? item.Product_Material_IDs : [item.Product_Material_ID]);
+    const glass: any[] = [];
+    const doors: any[] = [];
+    for (const project of projects) {
+        for (const product of (project.products || [])) {
+            for (const pm of product.materials || []) {
+                if (!ids.has(pm.ID)) continue;
+                if (pm.glassItems?.length) glass.push(...pm.glassItems);
+                else if (pm.aluDoorItems?.length) doors.push(...pm.aluDoorItems);
+            }
+        }
+    }
+    return { glass: glass.length ? glass : undefined, doors: doors.length ? doors : undefined };
+}
 
 /**
- * Razvrstaj stavke: obična / staklo / alu vrata. Staklo i alu vrata imaju
- * specifikaciju po komadu (dimenzije, obrada, okov) koja ne stane u red
- * tabele, pa idu u zasebne sekcije.
+ * Razvrstaj stavke: obična / staklo / alu vrata — i to PO MATERIJALU, ne po
+ * stavci: isti materijal na više pozicija je jedan red (zbir količine), jer
+ * dobavljač isporučuje ukupnu količinu, a ne količinu po našoj poziciji.
+ * Staklo i alu vrata imaju specifikaciju po komadu (dimenzije, obrada, okov)
+ * koja ne stane u red tabele, pa idu u zasebne sekcije.
  */
 export function classifyOrderItems(order: Order, projects: Project[]): {
-    regular: OrderItem[];
+    regular: OrderItemGroup[];
     glass: GlassEntry[];
     aluDoors: AluDoorEntry[];
 } {
-    const regular: OrderItem[] = [];
+    const regular: OrderItemGroup[] = [];
     const glass: GlassEntry[] = [];
     const aluDoors: AluDoorEntry[] = [];
 
-    const sorted = [...(order.items || [])].sort((a, b) =>
-        (a.Material_Name || '').localeCompare(b.Material_Name || '', 'hr'));
-
-    for (const item of sorted) {
-        let placed = false;
-
-        for (const project of projects) {
-            for (const product of (project.products || [])) {
-                const pm = product.materials?.find(m => m.ID === item.Product_Material_ID);
-                if (pm?.glassItems && pm.glassItems.length > 0) {
-                    glass.push({ item, pieces: pm.glassItems });
-                    placed = true;
-                    break;
-                }
-                if (pm?.aluDoorItems && pm.aluDoorItems.length > 0) {
-                    aluDoors.push({ item, doors: pm.aluDoorItems });
-                    placed = true;
-                    break;
-                }
-            }
-            if (placed) break;
+    for (const group of groupOrderItems(order.items)) {
+        const pieces: any[] = [];
+        const doors: any[] = [];
+        for (const item of group.items) {
+            const spec = itemSpec(item, projects);
+            if (spec.glass) pieces.push(...spec.glass);
+            if (spec.doors) doors.push(...spec.doors);
         }
-
-        if (!placed) regular.push(item);
+        if (pieces.length > 0) glass.push({ group, pieces });
+        else if (doors.length > 0) aluDoors.push({ group, doors });
+        else regular.push(group);
     }
 
     return { regular, glass, aluDoors };
@@ -136,12 +145,12 @@ export function buildOrderPrintDocument({ order, supplier, projects, company }: 
                 </tr>
             </thead>
             <tbody>
-                ${regular.map((item, idx) => `
+                ${regular.map((group, idx) => `
                     <tr>
                         <td style="padding: 10px; border-bottom: 1px solid #f0f0f0;">${idx + 1}</td>
-                        <td style="padding: 10px; border-bottom: 1px solid #f0f0f0;">${item.Material_Name}</td>
-                        <td style="padding: 10px; text-align: right; border-bottom: 1px solid #f0f0f0;">${item.Quantity}</td>
-                        <td style="padding: 10px; border-bottom: 1px solid #f0f0f0;">${item.Unit}</td>
+                        <td style="padding: 10px; border-bottom: 1px solid #f0f0f0;">${group.name}</td>
+                        <td style="padding: 10px; text-align: right; border-bottom: 1px solid #f0f0f0; font-variant-numeric: tabular-nums;">${formatQty(group.quantity)}</td>
+                        <td style="padding: 10px; border-bottom: 1px solid #f0f0f0;">${group.unit}</td>
                     </tr>
                 `).join('')}
             </tbody>
@@ -164,7 +173,7 @@ export function buildOrderPrintDocument({ order, supplier, projects, company }: 
                 ${glass.map((g, idx) => `
                     <tr style="background: #fafafa;">
                         <td style="padding: 10px; font-weight: 600;">${idx + 1}</td>
-                        <td colspan="3" style="padding: 10px; font-weight: 600;">${g.item.Material_Name}</td>
+                        <td colspan="3" style="padding: 10px; font-weight: 600;">${g.group.name}</td>
                         <td style="padding: 10px; text-align: right; font-weight: 600;">${totalArea(g.pieces).toFixed(2)}</td>
                     </tr>
                     ${g.pieces.map((p: any, pIdx: number) => {
@@ -192,7 +201,7 @@ export function buildOrderPrintDocument({ order, supplier, projects, company }: 
         ${aluDoors.map((a, idx) => `
             <div style="margin-bottom: 16px;">
                 <div style="background: #f5f5f7; padding: 10px 14px; border-radius: 8px 8px 0 0; font-weight: 600;">
-                    ${idx + 1}. ${a.item.Material_Name} <span style="color: #86868b; font-weight: 400;">(${totalArea(a.doors).toFixed(2)} m²)</span>
+                    ${idx + 1}. ${a.group.name} <span style="color: #86868b; font-weight: 400;">(${totalArea(a.doors).toFixed(2)} m²)</span>
                 </div>
                 ${a.doors.map((d: any, dIdx: number) => {
                     const qty = parseInt(d.Qty) || 1;
@@ -251,7 +260,7 @@ export function buildOrderPrintDocument({ order, supplier, projects, company }: 
 
             <div class="footer">
                 <span>Očekivana dostava: ${order.Expected_Delivery ? formatDate(order.Expected_Delivery) : 'Po dogovoru'}</span>
-                <span>Ukupno stavki: ${order.items?.length || 0}</span>
+                <span>Ukupno stavki: ${regular.length + glass.length + aluDoors.length}</span>
             </div>
         </div>
     `;

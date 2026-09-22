@@ -30,7 +30,7 @@ import MaterialSelectModal, { type SelectedMaterial } from '@/components/ui/Mate
 import ProductTimelineModal from '@/components/ui/ProductTimelineModal';
 import ProductProcessPlan from '@/components/ui/ProductProcessPlan';
 import { planToStages } from '@/lib/productProcesses';
-import { naturalCompare } from '@/lib/naturalCompare';
+import { productStage, sortProjectProducts } from '@/lib/projectProductOrder';
 import { projectStatusRank, PROJECT_STATUS_DISPLAY_ORDER, countActiveWorkOrdersByProject, compareProjectsByActivity } from '@/lib/utils';
 import { projectProfitBreakdown } from '@/lib/projectProfit';
 
@@ -1032,53 +1032,10 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
         return amount.toFixed(2) + ' KM';
     }
 
+    // Četiri prikazna stanja (na čekanju / u proizvodnji / u montaži / završeno) —
+    // pravilo živi u lib/projectProductOrder da ga dijele prikaz, poredak i telefon.
     function getProductStatus(product: Product): string {
-        const status = product.Status || 'Na čekanju';
-
-        // Simplify to 4 states for display in Projects tab:
-        // 1. Na čekanju - waiting for production
-        // 2. U proizvodnji - any production step in progress
-        // 3. U montaži - any montaža step in progress
-        // 4. Završeno - fully complete (Spremno for non-montaža, Instalirano for montaža)
-
-        // VAŽNO: status proizvoda dolazi iz naloga — kad nalog krene, startWorkOrder upiše
-        // IME PRVOG PROCESA (Production_Steps[0]), a syncProductStatuses ime aktivnog/zadnjeg
-        // procesa. Ta imena su često iz prilagođenog kataloga i NE mogu se nabrojati unaprijed.
-        const waitingStatuses = ['Na čekanju', 'Materijali naručeni', 'Materijali spremni'];
-        const inMontazaStatuses = ['Transport', 'Montaža', 'Čišćenje', 'Primopredaja', 'U montaži'];
-        const completedStatuses = ['Spremno', 'Instalirano', 'Završeno'];
-
-        if (waitingStatuses.includes(status)) {
-            return 'Na čekanju';
-        }
-        if (completedStatuses.includes(status)) {
-            return 'Završeno';
-        }
-        if (inMontazaStatuses.includes(status)) {
-            return 'U montaži';
-        }
-
-        // Nepoznat string u Product.Status (npr. uvozni sentinel 'U pripremi', stari/ručni unos) —
-        // NE pretpostavljamo proizvodnju samo zato što se ne poklapa ni sa jednom listom gore.
-        // Status mora potvrditi STVARAN radni nalog: proizvod je "u proizvodnji"/"u montaži"
-        // samo ako ga referencira stavka aktivnog (neotkazanog) naloga koja je 'U toku'.
-        // Bez toga → 'Na čekanju', bez obzira šta piše u zastarjelom/nepoznatom Product.Status.
-        const hasActiveOrderItem = workOrders.some(wo =>
-            wo.Status !== 'Otkazano' &&
-            (wo.items || []).some(it => it.Product_ID === product.Product_ID && it.Status === 'U toku')
-        );
-        if (!hasActiveOrderItem) {
-            return 'Na čekanju';
-        }
-        const activeMontaza = workOrders.some(wo =>
-            wo.Work_Order_Type === 'Montaža' && wo.Status !== 'Otkazano' &&
-            (wo.items || []).some(it => it.Product_ID === product.Product_ID && it.Status === 'U toku')
-        );
-        if (activeMontaza) {
-            return 'U montaži';
-        }
-        // Potvrđeno aktivnim nalogom proizvodnje.
-        return 'U proizvodnji';
+        return productStage(product, workOrders);
     }
 
     const isMobile = useIsMobile();
@@ -1655,26 +1612,8 @@ export default function ProjectsTab({ projects, materials, workOrders = [], offe
                                 const totalMaterialCost = (project.products || []).reduce((sum, p) => {
                                     return sum + (p.materials || []).reduce((ms, m) => ms + (m.Total_Price || 0), 0);
                                 }, 0);
-                                const sortedProducts = [...(project.products || [])].sort((a, b) => {
-                                    const statusA = getProductStatus(a);
-                                    const statusB = getProductStatus(b);
-
-                                    const getStatusWeight = (status: string) => {
-                                        if (status === 'U proizvodnji') return 1;
-                                        if (status === 'Na čekanju') return 2;
-                                        return 3;
-                                    };
-
-                                    const weightA = getStatusWeight(statusA);
-                                    const weightB = getStatusWeight(statusB);
-
-                                    if (weightA !== weightB) {
-                                        return weightA - weightB;
-                                    }
-
-                                    // Prirodni poredak naziva (Poz 1 < Poz 2 < Poz 10, E1 < E2 < E10)
-                                    return naturalCompare(a.Name, b.Name);
-                                });
+                                // Status → ima li bar jedan materijal → abeceda (isto na telefonu).
+                                const sortedProducts = sortProjectProducts(project.products, workOrders);
                                 const previewProducts = sortedProducts.slice(0, 3);
                                 const moreCount = totalProducts - previewProducts.length;
 

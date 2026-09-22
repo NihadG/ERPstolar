@@ -11,7 +11,7 @@
 // ════════════════════════════════════════════════════════════════════
 
 import React, { useMemo, useState } from 'react';
-import { Plus, Play, ClipboardList, Wrench, Layers, PersonStanding } from 'lucide-react';
+import { Plus, Play, ClipboardList, Wrench, Layers, PersonStanding, ListChecks } from 'lucide-react';
 import type { WorkOrder, Worker, Task, Project } from '@/lib/types';
 import { WORK_ORDER_STATUSES } from '@/lib/types';
 import { daysUntil } from '@/lib/planning';
@@ -21,7 +21,7 @@ import NewOrderSheet from '@/components/field/orders/NewOrderSheet';
 import '@/components/field/Controller.css';
 import {
     MLarge, MSearch, MChips, MSection, MCard, MCardHead, MCardBody, MIcon,
-    MPill, MProgress, MEmpty, MButton, MSheet, MList, MOption,
+    MPill, MProgress, MEmpty, MButton, MSheet, MList, MOption, MItem, MCell, MText,
 } from './MobileUI';
 import { useMobileGrouping } from './useMobileGrouping';
 import { groupWorkOrders, WORK_ORDER_GROUPING_OPTIONS, type WorkOrderGroupBy } from '@/lib/grouping';
@@ -42,7 +42,10 @@ interface MobileWorkOrdersViewProps {
     firstWorkByOrder?: Map<string, string>;
     onRefresh: (...collections: string[]) => void;
     showToast: (message: string, type: 'success' | 'error' | 'info') => void;
+    /** Novi proizvodni nalog (čarobnjak: proizvodi iz projekta → ekipa i rok). */
     onCreate: () => void;
+    /** Novi montažni nalog (spremni proizvodi → procesi → ekipa). */
+    onCreateMontaza?: () => void;
     onOpenPage: (workOrderId: string) => void;
     onUpdate: (workOrderId: string, updates: any) => Promise<void>;
     onDelete: (workOrderId: string) => void;
@@ -58,7 +61,7 @@ const statusTone = (s?: string) =>
 
 export default function MobileWorkOrdersView({
     workOrders, workers, tasks = [], projects = [], onRefresh, showToast,
-    onCreate, onDelete, onStart, onPrint, attendanceWarnings, onAttendanceFix,
+    onCreate, onCreateMontaza, onDelete, onStart, onPrint, attendanceWarnings, onAttendanceFix,
 }: MobileWorkOrdersViewProps) {
     const [search, setSearch] = useState('');
     const [status, setStatus] = useState<string>('');
@@ -67,6 +70,9 @@ export default function MobileWorkOrdersView({
     const [groupBy, setGroupBy] = useMobileGrouping<WorkOrderGroupBy>('nalozi', 'status');
     const [groupSheet, setGroupSheet] = useState(false);
     const [customOpen, setCustomOpen] = useState(false);
+    // Izbor vrste novog naloga — ista tri puta kao desktop (Novi nalog / Montaža / Razni poslovi).
+    const [newSheet, setNewSheet] = useState(false);
+    const pickNew = (run: () => void) => { setNewSheet(false); run(); };
 
     const counts = useMemo(() => {
         const c: Record<string, number> = {};
@@ -172,15 +178,10 @@ export default function MobileWorkOrdersView({
                         <Layers size={13} style={{ verticalAlign: -2, marginRight: 5 }} />
                         {WORK_ORDER_GROUPING_OPTIONS.find(o => o.value === groupBy)?.label || 'Grupiši'}
                     </button>
-                    {/* Dva puta do naloga, jer nisu ista stvar: „Razni poslovi"
-                        se otvore u par dodira na licu mjesta, dok „Novi" vodi u
-                        puni čarobnjak (proizvodi iz projekta, vrijednosti). */}
-                    <button type="button" className="mui-chip" onClick={() => setCustomOpen(true)}>
-                        <Plus size={14} style={{ verticalAlign: -2, marginRight: 4 }} />Razni poslovi
-                    </button>
                     <div className="mui-spacer" />
-                    <button type="button" className="mui-chip on" onClick={onCreate}>
-                        <Plus size={14} style={{ verticalAlign: -2, marginRight: 4 }} />Novi
+                    {/* Jedno dugme, tri vrste naloga — kao desktop traka (Novi nalog · Montaža · Razni poslovi). */}
+                    <button type="button" className="mui-chip on" onClick={() => setNewSheet(true)}>
+                        <Plus size={14} style={{ verticalAlign: -2, marginRight: 4 }} />Novi nalog
                     </button>
                 </div>
             </div>
@@ -201,7 +202,7 @@ export default function MobileWorkOrdersView({
                 >
                     {!search && !status && (
                         <div style={{ width: '100%', paddingTop: 14 }}>
-                            <MButton variant="filled" onClick={onCreate}><Plus size={19} /> Novi nalog</MButton>
+                            <MButton variant="filled" onClick={() => setNewSheet(true)}><Plus size={19} /> Novi nalog</MButton>
                         </div>
                     )}
                 </MEmpty>
@@ -227,6 +228,32 @@ export default function MobileWorkOrdersView({
                             onClick={() => { setGroupBy(o.value); setGroupSheet(false); }}
                         />
                     ))}
+                </MList>
+            </MSheet>
+
+            {/* Vrsta novog naloga */}
+            <MSheet open={newSheet} title="Novi nalog" onClose={() => setNewSheet(false)}>
+                <MList lead>
+                    <MItem>
+                        <MCell onClick={() => pickNew(onCreate)} chevron>
+                            <MIcon tone="blue"><ClipboardList size={20} /></MIcon>
+                            <MText title="Proizvodni nalog" sub="Proizvodi iz projekta → ekipa i rok" />
+                        </MCell>
+                    </MItem>
+                    {onCreateMontaza && (
+                        <MItem>
+                            <MCell onClick={() => pickNew(onCreateMontaza)} chevron>
+                                <MIcon tone="purple"><Wrench size={20} /></MIcon>
+                                <MText title="Montažni nalog" sub="Spremni proizvodi → procesi montaže → ekipa" />
+                            </MCell>
+                        </MItem>
+                    )}
+                    <MItem>
+                        <MCell onClick={() => pickNew(() => setCustomOpen(true))} chevron>
+                            <MIcon tone="orange"><ListChecks size={20} /></MIcon>
+                            <MText title="Razni poslovi" sub="Isporuka, popravka, čišćenje — posao koji nije proizvod" />
+                        </MCell>
+                    </MItem>
                 </MList>
             </MSheet>
 

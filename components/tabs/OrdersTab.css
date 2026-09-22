@@ -578,9 +578,51 @@
 .oi-undo:hover { border-color: #f59e0b; color: #b45309; background: #fffbeb; }
 .oi-undo .material-icons-round { font-size: 14px; }
 
+/* ── Red = materijal (više pozicija spojeno u zbir) ──────────────────── */
+.oi-group { border-bottom: 1px solid #f3f4f6; }
+.oi-group:last-child { border-bottom: none; }
+.oi-group > .oi-row { border-bottom: none; }
+.oi-merged-note { font-weight: 500; color: #9ca3af; text-transform: none; letter-spacing: 0; }
+.oi-qty { color: #374151; font-weight: 600; font-variant-numeric: tabular-nums; }
+.oi-group-toggle {
+    display: inline-flex; align-items: center; gap: 1px;
+    padding: 1px 4px 1px 7px; border-radius: 6px;
+    border: 1px solid #dbeafe; background: #eff6ff; color: var(--accent);
+    font-size: 11.5px; font-weight: 600; cursor: pointer; font-family: inherit;
+}
+.oi-group-toggle:hover { background: #dbeafe; }
+.oi-group-toggle .material-icons-round { font-size: 15px; }
+.oi-partial { font-size: 11px; font-weight: 600; color: #b45309; }
+
+.oi-breakdown {
+    margin: 0 20px 12px 52px;
+    border: 1px solid #eef0f3; border-radius: 10px; overflow: hidden;
+    background: #fbfbfc;
+}
+.oi-bd-row {
+    display: grid;
+    grid-template-columns: 20px minmax(0, 1fr) 90px 100px 74px;
+    align-items: center; gap: 12px;
+    padding: 7px 12px; font-size: 12.5px; color: #374151;
+    border-bottom: 1px solid #f1f2f4; cursor: pointer;
+}
+.oi-bd-row:last-child { border-bottom: none; }
+.oi-bd-row:hover { background: #f5f7fa; }
+.oi-bd-row.selected { background: #eff6ff; }
+.oi-bd-row.received { cursor: default; background: transparent; }
+.oi-bd-mark { font-size: 17px; color: #10b981; }
+.oi-bd-check { width: 15px; height: 15px; accent-color: var(--accent); cursor: pointer; margin: 0; }
+.oi-bd-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.oi-bd-qty, .oi-bd-price { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.oi-bd-price { color: #6b7280; }
+.oi-bd-state { justify-self: end; font-size: 11px; color: #b6bcc4; }
+
 @media (max-width: 640px) {
     .oi-row { flex-wrap: wrap; gap: 10px 14px; }
     .oi-right { flex-direction: row; align-items: center; width: 100%; justify-content: space-between; }
+    .oi-breakdown { margin-left: 20px; }
+    .oi-bd-row { grid-template-columns: 20px minmax(0, 1fr) auto auto; }
+    .oi-bd-price { display: none; }
 }
 
 .product-card {

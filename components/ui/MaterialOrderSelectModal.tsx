@@ -15,7 +15,8 @@
 import { useState, useEffect, useMemo } from 'react';
 import { Check, Package, ShoppingCart, Loader2, Truck } from 'lucide-react';
 import Modal from './Modal';
-import { formatCurrency } from '@/lib/utils';
+import { formatCurrency, plural } from '@/lib/utils';
+import { formatQty, groupPlanMaterials, productNamesLabel } from '@/lib/orderItemGroups';
 import type { MaterialOrderPlanGroup } from '@/lib/services';
 import './MaterialOrderSelectModal.css';
 
@@ -82,9 +83,18 @@ export default function MaterialOrderSelectModal({
         return on === 0 ? 'none' : on === ids.length ? 'all' : 'some';
     };
 
-    const toggleMaterial = (id: string) => setSelected(prev => {
+    // Isti materijal s više pozicija = jedan red (zbir), abecedno — ono što se
+    // bira izgleda kao narudžba koja će iz toga nastati. Izbor i dalje ide po
+    // materijalu proizvoda, pa red pali/gasi sve svoje stavke odjednom.
+    const materialGroups = useMemo(
+        () => new Map(groups.map(g => [g.supplierName, groupPlanMaterials(g.materials)])),
+        [groups]
+    );
+
+    const toggleMaterials = (ids: string[]) => setSelected(prev => {
         const next = new Set(prev);
-        next.has(id) ? next.delete(id) : next.add(id);
+        const allOn = ids.every(id => next.has(id));
+        ids.forEach(id => { if (allOn) next.delete(id); else next.add(id); });
         return next;
     });
 
@@ -105,11 +115,12 @@ export default function MaterialOrderSelectModal({
             const sel = g.materials.filter(m => selected.has(m.productMaterialId));
             if (sel.length === 0) continue;
             supplierCount++;
-            materialCount += sel.length;
+            // Broji redove kako ih korisnik vidi (materijal), ne skrivene stavke.
+            materialCount += (materialGroups.get(g.supplierName) || []).filter(mg => mg.ids.some(id => selected.has(id))).length;
             sum += sel.reduce((s, m) => s + m.quantity * m.unitPrice, 0);
         }
         return { materialCount, supplierCount, sum };
-    }, [groups, selected]);
+    }, [groups, selected, materialGroups]);
 
     const groupSubtotal = (g: MaterialOrderPlanGroup) =>
         g.materials.filter(m => selected.has(m.productMaterialId)).reduce((s, m) => s + m.quantity * m.unitPrice, 0);
@@ -189,6 +200,7 @@ export default function MaterialOrderSelectModal({
                             {groups.map(g => {
                                 const state = groupState(g);
                                 const subtotal = groupSubtotal(g);
+                                const rows = materialGroups.get(g.supplierName) || [];
                                 return (
                                     <div key={g.supplierName} className={`mos-group${state === 'none' ? ' is-off' : ''}`}>
                                         <div className="mos-group-head" onClick={() => toggleGroup(g)}>
@@ -198,25 +210,33 @@ export default function MaterialOrderSelectModal({
                                             </span>
                                             <Truck size={15} className="mos-group-icon" />
                                             <span className="mos-group-name">{g.supplierName}</span>
-                                            <span className="mos-group-count">{g.materials.length} {g.materials.length === 1 ? 'stavka' : 'stavki'}</span>
+                                            <span className="mos-group-count">{rows.length} {rows.length === 1 ? 'materijal' : 'materijala'}</span>
                                             <span className="mos-group-subtotal">{formatCurrency(subtotal)}</span>
                                         </div>
 
                                         <div className="mos-materials">
-                                            {g.materials.map(m => {
-                                                const on = selected.has(m.productMaterialId);
+                                            {rows.map(row => {
+                                                const onCount = row.ids.filter(id => selected.has(id)).length;
+                                                const on = onCount === row.ids.length;
+                                                const some = onCount > 0 && !on;
+                                                const merged = row.materials.length > 1;
                                                 return (
-                                                    <button key={m.productMaterialId} type="button"
-                                                        className={`mos-mat${on ? ' on' : ''}`}
-                                                        onClick={() => toggleMaterial(m.productMaterialId)}>
-                                                        <span className={`mos-check sm${on ? ' on' : ''}`}>
+                                                    <button key={row.key} type="button"
+                                                        className={`mos-mat${on || some ? ' on' : ''}`}
+                                                        onClick={() => toggleMaterials(row.ids)}>
+                                                        <span className={`mos-check sm${on ? ' on' : ''}${some ? ' partial' : ''}`}>
                                                             {on && <Check size={10} strokeWidth={3} />}
+                                                            {some && <span className="mos-check-dash" />}
                                                         </span>
                                                         <span className="mos-mat-body">
-                                                            <span className="mos-mat-name">{m.materialName}</span>
-                                                            <span className="mos-mat-meta">{m.productName} · {m.quantity} {m.unit}</span>
+                                                            <span className="mos-mat-name">{row.name}</span>
+                                                            <span className="mos-mat-meta" title={row.productNames.join(', ')}>
+                                                                {merged && <b className="mos-mat-merged">{row.materials.length} {plural(row.materials.length, 'pozicija', 'pozicije', 'pozicija')} · </b>}
+                                                                {productNamesLabel(row.productNames)}
+                                                            </span>
                                                         </span>
-                                                        <span className="mos-mat-price">{formatCurrency(m.quantity * m.unitPrice)}</span>
+                                                        <span className="mos-mat-qty">{formatQty(row.quantity)} {row.unit}</span>
+                                                        <span className="mos-mat-price">{formatCurrency(row.total)}</span>
                                                     </button>
                                                 );
                                             })}

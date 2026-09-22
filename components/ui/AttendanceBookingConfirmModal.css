@@ -1,474 +1,854 @@
-/* ============================================
-   Šihtarica → upit knjiženja dnevnica
-   Apple-style, usklađeno s design tokenima iz globals.css
-   ============================================ */
+/* ═══════════════════════════════════════════════════════════════════
+   Šihtarica → knjiženje dnevnica (AttendanceBookingConfirmModal)
 
-.abcm { display: flex; flex-direction: column; }
+   Raspored: alatna traka → [radnici | nalozi izabranog radnika] → podnožje.
+   Skala dolazi iz --cm-* (globals.css): kontrole 34px, radijus 8/12,
+   tipografija 11/12/13/14/15. Svaka kolona ima FIKSNU širinu, pa se
+   statusi, kvačice i brojevi poravnaju kroz cijelu listu.
+   ═══════════════════════════════════════════════════════════════════ */
 
-/* ── Naslov ────────────────────────────────────────────────── */
-.abcm-title { display: inline-flex; align-items: center; gap: 9px; }
-.abcm-title-icon { color: var(--success); }
-.abcm-title-date { color: var(--text-tertiary); font-weight: 400; }
+/* ── Okvir modala: vlastita širina i FIKSNA visina (lista se ne trza) ── */
+/* Varijable žive na SAMOM modalu, ne na .abk: podnožje (.modal-footer) je
+   izvan tijela, pa bi mu var(--abk-h) bio nedefinisan — dugmad su se tada
+   spljoštila na visinu teksta. */
+.modal.abk-modal {
+    --abk-h: var(--cm-h-control);          /* 34px — sve kontrole u trakama */
+    --abk-h-cta: 40px;                     /* glavne radnje u podnožju */
+    --abk-rail: 292px;
+    max-width: 1120px;
+    width: 94%;
+    height: min(820px, 92vh);
+    max-height: 92vh;
+}
+.modal.abk-modal .modal-body {
+    padding: 0;
+    overflow: hidden;
+    display: flex;
+    justify-content: stretch;
+}
+.modal.abk-modal .modal-header { padding: 16px 22px; }
+.modal.abk-modal .modal-footer { padding: 12px 22px; }
 
-/* ── Alatna traka (lijepi se uz vrh tijela modala) ──────────── */
-/* Negativne margine ponište padding .modal-body, a vlastiti padding ga vrati —
-   tako traka ide od ivice do ivice i ništa ne proviruje iznad nje pri skrolu. */
-.abcm-bar {
-    position: sticky;
-    top: -24px;
-    z-index: 5;
-    margin: -24px -24px 14px;
-    padding: 24px 24px 12px;
+.abk {
+    flex: 1;
+    min-width: 0;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
     background: var(--background);
+}
+
+/* ── Naslov ── */
+.abk-title { display: inline-flex; align-items: center; gap: 9px; }
+.abk-title-icon { color: var(--success); flex-shrink: 0; }
+.abk-title-date { color: var(--text-tertiary); font-weight: 400; font-size: 15px; }
+
+/* ── Alatna traka ─────────────────────────────────────────────────── */
+.abk-bar {
+    display: flex;
+    align-items: center;
+    gap: var(--cm-sp-3);
+    padding: 12px 22px;
     border-bottom: 1px solid var(--border-light);
-}
-
-.abcm-bar-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-
-.abcm-hint {
-    margin: 9px 0 0;
-    font-size: 12.5px;
-    line-height: 1.45;
-    color: var(--text-secondary);
-}
-
-/* Prekidač prikaza */
-.abcm-seg {
-    display: inline-flex;
-    background: var(--surface);
-    border-radius: var(--radius-sm);
-    padding: 2px;
     flex-shrink: 0;
 }
-.abcm-seg button {
+
+.abk-seg {
+    display: inline-flex;
+    height: var(--abk-h);
+    padding: 3px;
+    border-radius: var(--cm-r-control);
+    background: var(--surface);
+    flex-shrink: 0;
+}
+.abk-seg button {
     display: inline-flex;
     align-items: center;
     gap: 6px;
-    padding: 6px 12px;
+    padding: 0 14px;
     border: none;
-    background: none;
     border-radius: 6px;
-    font-size: 13px;
+    background: none;
+    font-size: var(--cm-fs-sm);
     font-weight: 500;
     color: var(--text-secondary);
     cursor: pointer;
-    transition: var(--transition);
     white-space: nowrap;
+    transition: var(--transition);
 }
-.abcm-seg button:hover { color: var(--text-primary); }
-.abcm-seg button.is-on {
+.abk-seg button:hover { color: var(--text-primary); }
+.abk-seg button.is-on {
     background: var(--background);
     color: var(--text-primary);
     font-weight: 600;
     box-shadow: 0 1px 2px var(--shadow-md);
 }
 
-/* Pretraga */
-.abcm-search {
+/* viša specifičnost (.abk .abk-search) — globalno `.modal label` nameće uppercase */
+.abk .abk-search {
+    flex: 1 1 auto;
+    min-width: 180px;
+    height: var(--abk-h);
     display: flex;
-    align-items: center;
-    gap: 7px;
-    flex: 1 1 180px;
-    min-width: 150px;
-    padding: 0 10px;
-    height: 34px;
-    border: 1px solid var(--border-light);
-    border-radius: var(--radius-sm);
-    background: var(--surface);
-    color: var(--text-tertiary);
-    transition: var(--transition);
-}
-.abcm-search:focus-within {
-    background: var(--background);
-    border-color: var(--accent);
-    box-shadow: 0 0 0 3px var(--accent-light);
-}
-.abcm-search input {
-    flex: 1;
-    min-width: 0;
-    border: none;
-    background: none;
-    outline: none;
-    font-size: 13px;
-    color: var(--text-primary);
-}
-.abcm-search-clear {
-    display: inline-flex;
-    border: none;
-    background: none;
-    color: var(--text-tertiary);
-    cursor: pointer;
-    padding: 2px;
-    border-radius: 5px;
-}
-.abcm-search-clear:hover { color: var(--text-primary); background: var(--surface-hover); }
-
-/* „Prepiši jučer" */
-.abcm-ghost {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    height: 34px;
-    padding: 0 12px;
-    border: 1px solid var(--border-light);
-    border-radius: var(--radius-sm);
-    background: var(--background);
-    font-size: 13px;
-    font-weight: 500;
-    color: var(--text-primary);
-    cursor: pointer;
-    transition: var(--transition);
-    white-space: nowrap;
-    flex-shrink: 0;
-}
-.abcm-ghost:hover:not(:disabled) { background: var(--accent-light); border-color: var(--accent); color: var(--accent); }
-.abcm-ghost:disabled { opacity: 0.45; cursor: default; }
-
-/* ── Kartice ───────────────────────────────────────────────── */
-.abcm-list { display: flex; flex-direction: column; gap: 12px; }
-
-.abcm-card {
-    border: 1px solid var(--border-light);
-    border-radius: var(--radius-lg);
-    overflow: hidden;
-    background: var(--background);
-    transition: border-color var(--transition);
-}
-.abcm-card.is-empty { border-style: dashed; }
-
-.abcm-head {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    padding: 11px 14px;
-    background: var(--surface);
-    border-bottom: 1px solid var(--border-light);
-}
-
-.abcm-avatar {
-    width: 34px;
-    height: 34px;
-    border-radius: 50%;
-    display: grid;
-    place-items: center;
-    font-size: 12px;
-    font-weight: 700;
-    color: #fff;
-    flex-shrink: 0;
-    letter-spacing: 0.02em;
-}
-.abcm-avatar--present { background: var(--success); }
-.abcm-avatar--teren { background: var(--accent); }
-
-.abcm-who { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
-.abcm-name {
-    font-size: 14px;
-    font-weight: 600;
-    color: var(--text-primary);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-.abcm-sub {
-    font-size: 12px;
-    color: var(--text-secondary);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-.abcm-sub--warn { color: var(--warning); font-weight: 500; }
-
-.abcm-head-right { margin-left: auto; display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
-
-.abcm-badge {
-    font-size: 11px;
-    font-weight: 600;
-    padding: 3px 9px;
-    border-radius: 999px;
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    text-transform: none;
-    letter-spacing: normal;
-}
-.abcm-badge--present { background: var(--success-bg); color: #1b7a3a; }
-.abcm-badge--teren { background: var(--accent-light); color: var(--accent); }
-
-/* Broj radnika na nalogu (prikaz po nalozima) */
-.abcm-count {
-    font-size: 12px;
-    font-weight: 600;
-    color: var(--text-tertiary);
-    white-space: nowrap;
-}
-.abcm-count.is-on { color: var(--accent); }
-
-/* ½ / 1 dan */
-.abcm-presence {
-    display: inline-flex;
-    border: 1px solid var(--border-light);
-    border-radius: var(--radius-sm);
-    overflow: hidden;
-}
-.abcm-presence button {
-    padding: 3px 10px;
-    font-size: 11px;
-    font-weight: 700;
-    border: none;
-    cursor: pointer;
-    background: var(--background);
-    color: var(--text-secondary);
-    transition: var(--transition);
-}
-.abcm-presence button:hover { background: var(--surface-hover); }
-.abcm-presence button.is-on { background: var(--accent); color: #fff; }
-
-/* Malo dugme u zaglavlju kartice („Jučer", ili datum kad izvor nije jučer) */
-.abcm-icon-btn {
-    text-transform: capitalize;
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    padding: 3px 9px;
-    font-size: 11.5px;
-    font-weight: 600;
-    border: 1px solid var(--border-light);
-    border-radius: var(--radius-sm);
-    background: var(--background);
-    color: var(--text-secondary);
-    cursor: pointer;
-    transition: var(--transition);
-    white-space: nowrap;
-}
-.abcm-icon-btn:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-light); }
-
-/* ── Redovi naloga u kartici radnika ───────────────────────── */
-.abcm-items { display: flex; flex-direction: column; padding: 6px; }
-
-/* viša specifičnost (.abcm .abcm-item) da pobijedi globalni `.modal label` */
-.abcm .abcm-item {
-    display: flex;
-    align-items: center;
-    gap: 11px;
-    padding: 9px 10px;
-    border-radius: var(--radius-sm);
-    cursor: pointer;
-    transition: background var(--transition);
-    text-transform: none;
-    letter-spacing: normal;
-}
-.abcm .abcm-item:hover { background: var(--surface); }
-.abcm .abcm-item.is-on { background: var(--accent-light); }
-
-.abcm-item input[type="checkbox"] {
-    width: 17px;
-    height: 17px;
-    accent-color: var(--accent);
-    cursor: pointer;
-    flex-shrink: 0;
-    margin: 0;
-}
-.abcm-item-name {
-    font-size: 14px;
-    font-weight: 500;
-    color: var(--text-primary);
-    display: inline-flex;
     align-items: center;
     gap: 8px;
-    min-width: 0;
-}
-.abcm-tag {
-    flex-shrink: 0;
-    font-size: 11px;
-    font-weight: 600;
-    color: var(--accent);
-    background: var(--accent-light);
-    padding: 1px 7px;
-    border-radius: 6px;
+    padding: 0 10px 0 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--cm-r-control);
+    background: var(--background);
+    color: var(--text-tertiary);
     text-transform: none;
     letter-spacing: normal;
-}
-.abcm-chip {
-    margin-left: auto;
-    flex-shrink: 0;
-    max-width: 46%;
-    font-size: 12px;
-    color: var(--text-secondary);
-    background: var(--surface);
-    border: 1px solid var(--border-light);
-    padding: 2px 9px;
-    border-radius: 7px;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-}
-.abcm-head .abcm-chip { margin-left: 0; background: var(--background); }
-.abcm-chip--paused { background: var(--warning-bg); color: #8a5a00; border-color: #f3e1c0; }
-.abcm-chip--resume { background: var(--accent-light); color: var(--accent); border-color: #cfe6ff; }
-.abcm-chip--new { background: var(--success-bg); color: #1b7a3a; border-color: #cdeeda; }
-.abcm-head .abcm-chip--paused { background: var(--warning-bg); }
-.abcm-head .abcm-chip--resume { background: var(--accent-light); }
-.abcm-head .abcm-chip--new { background: var(--success-bg); }
-
-/* ── Podnožje kartice: dodaj nalog / označi sve / novi nalog ── */
-.abcm-card-foot {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 9px 12px;
-    border-top: 1px dashed var(--border-light);
-    background: var(--background);
-}
-/* Uska kontrola, ne polje forme preko cijele širine — podnožje ostaje mirno. */
-.abcm-add { flex: 0 1 250px; min-width: 0; }
-.abcm-card-foot > .abcm-link:first-of-type { margin-left: auto; }
-
-.abcm-link {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    font-size: 12.5px;
-    color: var(--accent);
-    background: none;
-    border: none;
-    cursor: pointer;
-    padding: 5px 8px;
-    border-radius: 7px;
-    font-weight: 500;
-    white-space: nowrap;
-    transition: background var(--transition);
-}
-.abcm-link:hover { background: var(--accent-light); }
-
-/* „Svi / Niko" na kraju reda radnika — visina reda ista kao kod dugmadi radnika */
-.abcm-link--chip { align-self: center; padding: 5px 10px; }
-
-/* SearchableSelect crta vlastiti okvir — stisni ga u tihu „dodaj" kontrolu,
-   da podnožje kartice ne izgleda kao još jedno polje forme. */
-.abcm-add .searchable-select-trigger {
-    padding: 6px 11px !important;
-    border: 1px solid var(--border-light) !important;
-    border-radius: var(--radius-sm) !important;
-    background: var(--surface) !important;
-    box-shadow: none !important;
-}
-.abcm-add .searchable-select-trigger:hover { border-color: var(--accent) !important; background: var(--accent-light) !important; }
-.abcm-add .searchable-select-trigger.active {
-    border-color: var(--accent) !important;
-    background: var(--background) !important;
-    box-shadow: 0 0 0 3px var(--accent-light) !important;
-}
-.abcm-add .trigger-text { font-size: 13px !important; font-weight: 500 !important; color: var(--accent) !important; }
-.abcm-add .trigger-text.placeholder { color: var(--accent) !important; font-weight: 500 !important; }
-
-/* ── Prikaz po nalozima: radnici kao dugmad ────────────────── */
-.abcm-chips {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 7px;
-    padding: 11px 12px;
-}
-
-.abcm-wchip {
-    display: inline-flex;
-    align-items: center;
-    gap: 7px;
-    padding: 5px 12px 5px 5px;
-    border: 1px solid var(--border-light);
-    border-radius: 999px;
-    background: var(--background);
-    font-size: 13px;
-    font-weight: 500;
-    color: var(--text-secondary);
-    cursor: pointer;
+    font-size: var(--cm-fs-sm);
     transition: var(--transition);
+    cursor: text;
 }
-.abcm-wchip:hover { border-color: var(--border); background: var(--surface); color: var(--text-primary); }
-.abcm-wchip.is-assigned { border-color: #cfe6ff; }
-.abcm-wchip.is-on {
-    background: var(--accent);
-    border-color: var(--accent);
-    color: #fff;
-    font-weight: 600;
+.abk .abk-search:focus-within { border-color: var(--accent); box-shadow: var(--cm-focus-ring); }
+.abk .abk-search input {
+    flex: 1;
+    min-width: 0;
+    height: 100%;
+    border: none;
+    outline: none;
+    background: none;
+    font-size: var(--cm-fs-sm);
+    color: var(--text-primary);
 }
-
-.abcm-wchip-dot {
+.abk-search-clear {
+    display: inline-grid;
+    place-items: center;
     width: 22px;
     height: 22px;
-    border-radius: 50%;
-    display: grid;
-    place-items: center;
-    font-size: 10px;
-    font-weight: 700;
-    color: #fff;
-    flex-shrink: 0;
-    letter-spacing: 0.02em;
-}
-.abcm-wchip-dot.is-present { background: var(--success); }
-.abcm-wchip-dot.is-teren { background: var(--accent); }
-.abcm-wchip.is-on .abcm-wchip-dot { background: rgba(255, 255, 255, 0.25); }
-
-.abcm-wchip-half { font-size: 11px; font-weight: 700; opacity: 0.75; }
-
-/* „Prikaži još N naloga" */
-.abcm-more {
-    align-self: center;
-    padding: 9px 16px;
-    border: 1px dashed var(--border);
-    border-radius: var(--radius-md);
+    border: none;
+    border-radius: 6px;
     background: none;
-    font-size: 13px;
-    font-weight: 500;
-    color: var(--text-secondary);
+    color: var(--text-tertiary);
     cursor: pointer;
+}
+.abk-search-clear:hover { background: var(--surface-hover); color: var(--text-primary); }
+
+/* ── Dugmad (jedan sistem za cijeli ekran) ─────────────────────────── */
+.abk-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    height: var(--abk-h);
+    padding: 0 16px;
+    border: 1px solid var(--border);
+    border-radius: var(--cm-r-control);
+    background: var(--background);
+    font-size: var(--cm-fs-sm);
+    font-weight: 600;
+    color: var(--text-primary);
+    cursor: pointer;
+    white-space: nowrap;
     transition: var(--transition);
+    flex-shrink: 0;
 }
-.abcm-more:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-light); }
-
-.abcm-empty {
-    padding: 34px 16px;
-    text-align: center;
-    font-size: 13.5px;
-    color: var(--text-secondary);
+.abk-btn:hover:not(:disabled) { background: var(--surface); }
+.abk-btn:disabled { opacity: 0.45; cursor: default; }
+.abk-btn--primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.abk-btn--primary:hover:not(:disabled) { background: var(--accent-hover); }
+.abk-btn--ghost { color: var(--accent); border-color: var(--border-light); }
+.abk-btn--ghost:hover:not(:disabled) { background: var(--accent-light); border-color: var(--accent); }
+.abk-btn--sm { height: 28px; padding: 0 10px; font-size: var(--cm-fs-xs); }
+.abk-btn-count {
+    min-width: 18px;
+    height: 18px;
+    padding: 0 5px;
+    display: inline-grid;
+    place-items: center;
+    border-radius: var(--cm-r-pill);
+    background: var(--accent-light);
+    color: var(--accent);
+    font-size: var(--cm-fs-micro);
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
 }
 
-/* ── Podnožje modala ───────────────────────────────────────── */
-.abcm-foot {
+/* ═══ PO RADNICIMA: lijevo radnici, desno nalozi ═════════════════════ */
+.abk-split {
+    flex: 1;
+    min-height: 0;
+    display: grid;
+    grid-template-columns: var(--abk-rail) minmax(0, 1fr);
+}
+
+/* ── Lijevo: radnici ── */
+.abk-rail {
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    border-right: 1px solid var(--border-light);
+    background: var(--surface);
+}
+.abk-rail-head {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    width: 100%;
-    gap: 12px;
+    gap: 8px;
+    height: 40px;
+    padding: 0 16px;
+    font-size: var(--cm-fs-micro);
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--text-tertiary);
+    flex-shrink: 0;
 }
-.abcm-foot-count { font-size: 13px; color: var(--text-secondary); }
-.abcm-foot-count strong { color: var(--text-primary); font-weight: 600; }
-.abcm-foot-warn { color: var(--warning); }
-.abcm-foot-btns { display: flex; gap: 10px; }
+.abk-rail-head b { color: var(--text-secondary); margin-left: 3px; }
+.abk-rail-warn {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    text-transform: none;
+    letter-spacing: normal;
+    font-weight: 600;
+    color: var(--cm-warn-text);
+}
+.abk-rail-list {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 0 8px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
 
-/* ── Mobilno ───────────────────────────────────────────────── */
+.abk-rail-row {
+    display: grid;
+    grid-template-columns: 32px minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    padding: 8px 10px;
+    border: 1px solid transparent;
+    border-radius: var(--cm-r-control);
+    background: none;
+    text-align: left;
+    cursor: pointer;
+    transition: background var(--transition), border-color var(--transition);
+}
+.abk-rail-row:hover { background: var(--background); }
+.abk-rail-row:focus-visible { outline: none; border-color: var(--accent); }
+.abk-rail-row.is-selected {
+    background: var(--background);
+    border-color: var(--border-light);
+    box-shadow: inset 3px 0 0 var(--accent), 0 1px 2px var(--shadow);
+}
+.abk-rail-text { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.abk-rail-name {
+    font-size: var(--cm-fs-md);
+    font-weight: 600;
+    color: var(--text-primary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.abk-rail-sub {
+    font-size: var(--cm-fs-xs);
+    color: var(--text-secondary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.abk-rail-row.is-empty .abk-rail-sub { color: var(--cm-warn-text); font-weight: 600; }
+.abk-rail-meta { display: inline-flex; align-items: center; gap: 5px; }
+.abk-rail-count {
+    min-width: 22px;
+    height: 22px;
+    padding: 0 6px;
+    display: inline-grid;
+    place-items: center;
+    border-radius: var(--cm-r-pill);
+    background: var(--accent-light);
+    color: var(--accent);
+    font-size: var(--cm-fs-micro);
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+}
+.abk-rail-count.is-zero { background: var(--warning-bg); color: var(--cm-warn-text); }
+.abk-half {
+    font-size: var(--cm-fs-micro);
+    font-weight: 700;
+    color: var(--text-secondary);
+    background: var(--surface-hover);
+    border-radius: var(--cm-r-pill);
+    padding: 1px 6px;
+}
+
+/* ── Avatari ── */
+.abk-ava {
+    display: grid;
+    place-items: center;
+    flex-shrink: 0;
+    border-radius: 50%;
+    color: #fff;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+}
+.abk-ava--md { width: 32px; height: 32px; font-size: 11.5px; }
+.abk-ava--lg { width: 40px; height: 40px; font-size: 13px; }
+.abk-ava--sm { width: 24px; height: 24px; font-size: 9.5px; }
+.abk-ava--present { background: var(--success); }
+.abk-ava--teren { background: var(--accent); }
+
+/* ── Desno: izabrani radnik ── */
+.abk-detail {
+    min-height: 0;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+}
+
+.abk-dh {
+    display: grid;
+    grid-template-columns: 40px minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 12px;
+    padding: 14px 22px 12px;
+    flex-shrink: 0;
+}
+.abk-dh-who { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.abk .abk-dh-who h3 {
+    margin: 0;
+    font-size: 17px;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.abk-kind {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    height: 22px;
+    padding: 0 9px;
+    border-radius: var(--cm-r-pill);
+    font-size: var(--cm-fs-micro);
+    font-weight: 600;
+    flex-shrink: 0;
+}
+.abk-kind--present { background: var(--success-bg); color: #1b7a3a; }
+.abk-kind--teren { background: var(--accent-light); color: var(--accent); }
+
+/* Pola / cijeli dan — segment iste visine kao sve kontrole */
+.abk-day {
+    display: inline-flex;
+    height: var(--abk-h);
+    padding: 3px;
+    border-radius: var(--cm-r-control);
+    background: var(--surface);
+}
+.abk-day button {
+    padding: 0 12px;
+    border: none;
+    border-radius: 6px;
+    background: none;
+    font-size: var(--cm-fs-xs);
+    font-weight: 600;
+    color: var(--text-secondary);
+    cursor: pointer;
+    white-space: nowrap;
+}
+.abk-day button.is-on { background: var(--background); color: var(--text-primary); box-shadow: 0 1px 2px var(--shadow-md); }
+
+/* „Knjiži se na" — uvijek vidljivo, iznad liste koja se skrola */
+.abk-picked {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 12px;
+    margin: 0 22px;
+    padding: 10px 12px;
+    border-radius: var(--cm-r-card);
+    background: var(--accent-light);
+    flex-shrink: 0;
+}
+.abk-picked.is-empty { background: var(--warning-bg); }
+.abk-picked-label {
+    font-size: var(--cm-fs-micro);
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--text-secondary);
+    white-space: nowrap;
+}
+.abk-picked-chips { display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; }
+.abk-picked-none {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: var(--cm-fs-sm);
+    font-weight: 600;
+    color: var(--cm-warn-text);
+}
+.abk-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    max-width: 100%;
+    height: 26px;
+    padding: 0 3px 0 10px;
+    border-radius: var(--cm-r-pill);
+    background: var(--background);
+    border: 1px solid #cfe3fb;
+    font-size: var(--cm-fs-xs);
+    font-weight: 600;
+    color: var(--text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.abk-chip button {
+    display: inline-grid;
+    place-items: center;
+    width: 20px;
+    height: 20px;
+    border: none;
+    border-radius: 50%;
+    background: none;
+    color: var(--text-tertiary);
+    cursor: pointer;
+    flex-shrink: 0;
+}
+.abk-chip button:hover { background: var(--error-bg); color: var(--error); }
+
+/* Lista naloga — jedina stvar na ekranu koja se skrola */
+.abk-options {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 6px 22px 18px;
+    overscroll-behavior: contain;
+}
+
+.abk-sec { margin-top: 12px; }
+.abk-sec-head {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    padding: 0 12px 6px;
+}
+.abk-sec-title {
+    font-size: var(--cm-fs-micro);
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--text-tertiary);
+}
+.abk-sec-count { font-size: var(--cm-fs-micro); font-weight: 700; color: var(--text-tertiary); font-variant-numeric: tabular-nums; }
+.abk-sec-hint { font-size: var(--cm-fs-xs); color: var(--text-tertiary); margin-left: auto; }
+.abk-sec-act {
+    height: 22px;
+    padding: 0 8px;
+    border: none;
+    border-radius: 6px;
+    background: none;
+    font-size: var(--cm-fs-xs);
+    font-weight: 600;
+    color: var(--accent);
+    cursor: pointer;
+    flex-shrink: 0;
+}
+.abk-sec-hint + .abk-sec-act { margin-left: 4px; }
+.abk-sec-count + .abk-sec-act { margin-left: auto; }
+.abk-sec-act:hover { background: var(--accent-light); }
+
+/* Red naloga: [kvačica 20] [naziv + proizvodi] [stanje 132] — kolone fiksne */
+.abk-opt {
+    display: grid;
+    grid-template-columns: 20px minmax(0, 1fr) 132px;
+    align-items: center;
+    gap: 12px;
+    width: 100%;
+    min-height: 50px;
+    padding: 8px 12px;
+    border: 1px solid transparent;
+    border-radius: var(--cm-r-control);
+    background: none;
+    text-align: left;
+    cursor: pointer;
+    transition: background var(--transition), border-color var(--transition);
+}
+.abk-opt + .abk-opt { margin-top: 2px; }
+.abk-opt:hover { background: var(--surface); }
+.abk-opt:focus-visible { outline: none; border-color: var(--accent); }
+.abk-opt.is-on { background: var(--accent-light); border-color: #cfe3fb; }
+
+.abk-box {
+    width: 20px;
+    height: 20px;
+    display: grid;
+    place-items: center;
+    border: 1.75px solid var(--border);
+    border-radius: 6px;
+    background: var(--background);
+    color: #fff;
+    transition: var(--transition);
+}
+.abk-opt.is-on .abk-box { background: var(--accent); border-color: var(--accent); }
+
+.abk-opt-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.abk-opt-name {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+    font-size: var(--cm-fs-md);
+    font-weight: 600;
+    color: var(--text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.abk-opt-sub {
+    font-size: var(--cm-fs-xs);
+    color: var(--text-secondary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+/* Naziv se skraćuje, oznaka tipa pored njega ostaje cijela */
+.abk-ellip { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.abk-type {
+    flex-shrink: 0;
+    height: 18px;
+    padding: 0 7px;
+    display: inline-flex;
+    align-items: center;
+    border-radius: var(--cm-r-pill);
+    border: 1px solid var(--border-light);
+    font-size: 10.5px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    background: var(--background);
+}
+
+/* Stanje naloga / šta potvrda radi — uvijek ista kolona, desno poravnato */
+.abk-state {
+    justify-self: end;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    height: 24px;
+    padding: 0 10px;
+    border-radius: var(--cm-r-pill);
+    font-size: var(--cm-fs-xs);
+    font-weight: 600;
+    white-space: nowrap;
+    max-width: 100%;
+}
+.abk-state--compact { height: 20px; padding: 0 8px; font-size: var(--cm-fs-micro); justify-self: start; }
+.abk-state.is-run { background: var(--surface); color: var(--text-secondary); }
+.abk-state.is-go { background: var(--accent); color: #fff; }
+.abk-state.is-new { background: var(--success-bg); color: #1b7a3a; }
+.abk-state.is-paused { background: var(--warning-bg); color: var(--cm-warn-text); }
+.abk-state.is-done { background: transparent; color: var(--text-tertiary); border: 1px dashed var(--border); }
+
+.abk-hit { background: rgba(255, 204, 0, 0.35); color: inherit; border-radius: 2px; padding: 0; }
+
+/* „Prikaži još" / „Prikaži završene" */
+.abk-more {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    width: 100%;
+    height: var(--abk-h);
+    margin-top: 10px;
+    border: 1px dashed var(--border);
+    border-radius: var(--cm-r-control);
+    background: none;
+    font-size: var(--cm-fs-sm);
+    font-weight: 500;
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: var(--transition);
+}
+.abk-more:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-light); }
+
+/* Novi nalog — „Razni poslovi" (teren) */
+.abk-new {
+    display: grid;
+    grid-template-columns: 20px minmax(0, 1fr);
+    align-items: center;
+    gap: 12px;
+    width: 100%;
+    margin-top: 14px;
+    padding: 10px 12px;
+    border: 1px dashed var(--accent);
+    border-radius: var(--cm-r-control);
+    background: var(--background);
+    text-align: left;
+    cursor: pointer;
+    transition: var(--transition);
+}
+.abk-new:hover { background: var(--accent-light); }
+.abk-new-ico {
+    width: 20px;
+    height: 20px;
+    display: grid;
+    place-items: center;
+    border-radius: 6px;
+    background: var(--accent);
+    color: #fff;
+}
+.abk-new-text { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.abk-new-text b { font-size: var(--cm-fs-md); color: var(--accent); }
+.abk-new-text span { font-size: var(--cm-fs-xs); color: var(--text-secondary); }
+
+.abk-foot-hint { margin: 12px 12px 0; font-size: var(--cm-fs-xs); color: var(--text-tertiary); }
+
+.abk-empty {
+    flex: 1;
+    display: grid;
+    place-items: center;
+    padding: 40px 16px;
+    font-size: var(--cm-fs-sm);
+    color: var(--text-secondary);
+    text-align: center;
+}
+.abk-empty--inline { flex: none; padding: 32px 16px; }
+
+/* ═══ PO NALOZIMA: tabela nalozi × radnici ══════════════════════════ */
+.abk-mx-wrap {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+    padding: 0 22px 18px;
+    overscroll-behavior: contain;
+}
+.abk-mx {
+    border-collapse: separate;
+    border-spacing: 0;
+    min-width: 100%;
+    font-size: var(--cm-fs-sm);
+}
+.abk-mx th, .abk-mx td { border-bottom: 1px solid var(--border-light); }
+
+/* Zaglavlje radnika — lijepi se uz vrh pri skrolu */
+.abk-mx thead th {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    background: var(--background);
+    padding: 12px 4px 8px;
+    vertical-align: bottom;
+    border-bottom: 1px solid var(--border);
+}
+.abk-mx-corner {
+    left: 0;
+    z-index: 3 !important;
+    min-width: 300px;
+    width: 34%;
+    text-align: left;
+    padding-left: 12px !important;
+    font-size: var(--cm-fs-micro);
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--text-tertiary);
+}
+.abk-mx-corner > span:first-child { display: block; }
+.abk-mx-legend {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    margin-top: 4px;
+    font-size: var(--cm-fs-micro);
+    font-weight: 500;
+    letter-spacing: normal;
+    text-transform: none;
+    color: var(--text-tertiary);
+}
+.abk-mx-dot { width: 8px; height: 8px; border-radius: 3px; border: 1.75px solid var(--accent); display: inline-block; }
+
+.abk-mx-worker {
+    width: 76px;
+    min-width: 76px;
+    text-align: center;
+    font-weight: 600;
+}
+.abk-mx-worker .abk-ava { margin: 0 auto 5px; }
+.abk-mx-wname {
+    display: block;
+    font-size: var(--cm-fs-xs);
+    color: var(--text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 72px;
+    margin: 0 auto;
+}
+.abk-mx-wmeta { display: block; font-size: 10.5px; font-weight: 500; color: var(--text-tertiary); }
+.abk-mx-allcol { width: 56px; min-width: 56px; }
+
+/* Prva kolona (nalog) — lijepi se uz lijevu ivicu pri vodoravnom skrolu */
+.abk-mx-order {
+    position: sticky;
+    left: 0;
+    z-index: 1;
+    background: var(--background);
+    text-align: left;
+    font-weight: 400;
+    padding: 9px 12px;
+    min-width: 300px;
+    max-width: 380px;
+}
+.abk-mx tbody tr:hover .abk-mx-order,
+.abk-mx tbody tr:hover td { background: #fafbfc; }
+.abk-mx tbody tr.is-on .abk-mx-order { box-shadow: inset 3px 0 0 var(--accent); }
+.abk-mx-oname {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: var(--cm-fs-md);
+    font-weight: 600;
+    color: var(--text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.abk-mx-osub { display: flex; align-items: center; gap: 8px; margin-top: 3px; min-width: 0; }
+.abk-mx-prev {
+    font-size: var(--cm-fs-xs);
+    color: var(--text-secondary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    min-width: 0;
+}
+
+.abk-mx-cell { text-align: center; padding: 6px 4px; }
+.abk-mx-box {
+    width: 28px;
+    height: 28px;
+    display: inline-grid;
+    place-items: center;
+    border: 1.75px solid var(--border);
+    border-radius: 7px;
+    background: var(--background);
+    color: #fff;
+    cursor: pointer;
+    transition: var(--transition);
+}
+.abk-mx-box:hover { border-color: var(--accent); }
+.abk-mx-box.is-assigned { border-color: var(--accent); }
+.abk-mx-box.is-on { background: var(--accent); border-color: var(--accent); }
+.abk-mx-na { color: var(--border); font-weight: 600; }
+
+.abk-mx-all { text-align: center; padding: 6px 4px; }
+.abk-link {
+    height: 26px;
+    padding: 0 8px;
+    border: none;
+    border-radius: 6px;
+    background: none;
+    font-size: var(--cm-fs-xs);
+    font-weight: 600;
+    color: var(--accent);
+    cursor: pointer;
+}
+.abk-link:hover { background: var(--accent-light); }
+
+/* Dno: koliko naloga ima svaki radnik (0 = neće biti knjižen) */
+.abk-mx tfoot th, .abk-mx tfoot td {
+    position: sticky;
+    bottom: 0;
+    background: var(--surface);
+    border-top: 1px solid var(--border);
+    border-bottom: none;
+}
+.abk-mx-total {
+    z-index: 2;
+    font-size: var(--cm-fs-micro) !important;
+    font-weight: 700 !important;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--text-tertiary);
+}
+.abk-mx-sum {
+    text-align: center;
+    font-weight: 700;
+    color: var(--text-secondary);
+    font-variant-numeric: tabular-nums;
+    padding: 8px 4px;
+}
+.abk-mx-sum.is-zero { color: var(--cm-warn-text); }
+
+.abk-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+/* ── Podnožje modala ──────────────────────────────────────────────── */
+.abk-foot {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    width: 100%;
+}
+.abk-foot-sum {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px 16px;
+    min-width: 0;
+    font-size: var(--cm-fs-sm);
+    color: var(--text-secondary);
+}
+.abk-foot-sum b { color: var(--text-primary); font-weight: 700; font-variant-numeric: tabular-nums; }
+.abk-foot-warn, .abk-foot-note {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: var(--cm-fs-xs);
+    font-weight: 600;
+}
+.abk-foot-warn { color: var(--cm-warn-text); }
+.abk-foot-note { color: var(--accent); }
+.abk-foot-btns { display: flex; gap: 10px; flex-shrink: 0; }
+/* Glavne radnje modala — puna visina, ne stisnute kao kontrole u traci */
+.abk-foot-btns .abk-btn {
+    height: var(--abk-h-cta);
+    min-width: 108px;
+    padding: 0 20px;
+    border-radius: 10px;
+    font-size: var(--cm-fs-md);
+}
+.abk-foot-btns .abk-btn--primary { min-width: 176px; }
+
+/* ── Uži ekran (tablet / telefon) ────────────────────────────────── */
+@media (max-width: 900px) {
+    .abk { --abk-rail: 240px; }
+    .abk-opt { grid-template-columns: 20px minmax(0, 1fr) auto; }
+}
+
 @media (max-width: 768px) {
-    .abcm-bar {
-        top: -20px;
-        margin: -20px -20px 12px;
-        padding: 20px 20px 10px;
-    }
-    .abcm-seg { flex: 1 1 100%; }
-    .abcm-seg button { flex: 1; justify-content: center; }
-    .abcm-search { flex: 1 1 auto; height: 38px; }
-    .abcm-ghost { height: 38px; }
+    .abk-bar { flex-wrap: wrap; padding: 10px 16px; }
+    .abk-seg { flex: 1 1 100%; }
+    .abk-seg button { flex: 1; justify-content: center; }
+    .abk .abk-search { flex: 1 1 auto; min-width: 0; }
 
-    .abcm-head { flex-wrap: wrap; row-gap: 8px; }
-    .abcm-head-right { margin-left: 0; width: 100%; justify-content: flex-start; }
+    /* Radnici postaju vodoravna traka iznad detalja */
+    /* minmax(0, …): bez toga se kolona rastegne na širinu svih radnika u traci */
+    .abk-split { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
+    .abk-rail { border-right: none; border-bottom: 1px solid var(--border-light); }
+    .abk-rail-head { display: none; }
+    .abk-rail-list { flex-direction: row; overflow-x: auto; overflow-y: hidden; padding: 8px 12px; gap: 6px; }
+    .abk-rail-row { width: auto; min-width: 180px; max-width: 220px; }
 
-    .abcm-foot { flex-direction: column; align-items: stretch; grid-column: 1 / -1; }
-    .abcm-foot-btns { display: grid; grid-template-columns: 1fr 1fr; }
-    .abcm-chip { max-width: 38%; }
-    .abcm .abcm-item { padding: 12px 10px; }
+    .abk-dh { padding: 12px 16px 10px; grid-template-columns: 40px minmax(0, 1fr); }
+    .abk-day { grid-column: 1 / -1; justify-self: stretch; }
+    .abk-day button { flex: 1; }
+    .abk-picked { margin: 0 16px; grid-template-columns: 1fr; }
+    .abk-options { padding: 4px 16px 16px; }
+    .abk-sec-hint { display: none; }
+    .abk-mx-wrap { padding: 0 12px 12px; }
 
-    .abcm-card-foot { flex-wrap: wrap; }
-    .abcm-add { flex: 1 1 100%; }
-    .abcm-wchip { padding: 7px 14px 7px 7px; font-size: 14px; }
+    .abk-foot { flex-direction: column; align-items: stretch; grid-column: 1 / -1; }
+    .abk-foot-btns { display: grid; grid-template-columns: 1fr 1fr; }
+    .abk-foot-btns .abk-btn { height: 44px; }
 }

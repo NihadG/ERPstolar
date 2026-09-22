@@ -68,7 +68,12 @@
 .mos-mat-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
 .mos-mat-name { font-size: 13px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mos-mat-meta { font-size: 11.5px; color: var(--text-tertiary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.mos-mat-price { font-size: 12.5px; font-weight: 600; color: var(--text-secondary); flex-shrink: 0; font-variant-numeric: tabular-nums; }
+.mos-mat-price { font-size: 12.5px; font-weight: 600; color: var(--text-secondary); flex-shrink: 0; font-variant-numeric: tabular-nums; min-width: 84px; text-align: right; }
+/* Zbirna količina reda — vlastita kolona, da se brojevi poravnaju ispod sebe. */
+.mos-mat-qty { font-size: 12.5px; font-weight: 600; color: var(--text-primary); flex-shrink: 0; font-variant-numeric: tabular-nums; min-width: 72px; text-align: right; white-space: nowrap; }
+.mos-mat:not(.on) .mos-mat-qty { color: var(--text-tertiary); }
+.mos-mat-merged { font-weight: 600; color: var(--accent); }
+.mos-check.sm .mos-check-dash { width: 7px; }
 
 /* ── Footer ── */
 .mos-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; flex-wrap: wrap; }

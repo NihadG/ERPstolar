@@ -25,7 +25,8 @@ interface CustomTasksModalProps {
     initialWorkerId?: string;      // pre-select a worker on the first task row when opened
     /** Pred-popuni prvi red iz plan-bloka na Platnu (naziv/radnici/projekt/rok). */
     initialSeed?: { text?: string; workerIds?: string[]; projectId?: string; dueDate?: string };
-    onOrderCreated?: (workOrderId: string, workOrderNumber: string) => void; // fired on success, in addition to onCreated
+    /** Poslije uspjeha (uz onCreated). `name` = naziv naloga kako ga je korisnik upisao. */
+    onOrderCreated?: (workOrderId: string, workOrderNumber: string, name: string) => void;
 }
 
 interface TaskRow {
@@ -200,7 +201,7 @@ export default function CustomTasksModal({ isOpen, onClose, workOrders, workers,
                         const { attachTasksToWorkOrder } = await import('@/lib/services');
                         const r = await attachTasksToWorkOrder(
                             taskSelection,
-                            { Work_Order_ID: res.data.Work_Order_ID, displayName: notes.trim() || res.data.Work_Order_Number },
+                            { Work_Order_ID: res.data.Work_Order_ID, displayName: orderTitle },
                             [],   // „Razni poslovi" nemaju proizvode iz baze — veza ide na nalog
                             organizationId
                         );
@@ -213,7 +214,7 @@ export default function CustomTasksModal({ isOpen, onClose, workOrders, workers,
                 }
 
                 onCreated(...(tasksAttached ? ['workOrders', 'tasks'] : ['workOrders']));
-                if (res.data) onOrderCreated?.(res.data.Work_Order_ID, res.data.Work_Order_Number);
+                if (res.data) onOrderCreated?.(res.data.Work_Order_ID, res.data.Work_Order_Number, orderTitle);
                 reset();
                 onClose();
             } else {

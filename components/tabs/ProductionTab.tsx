@@ -24,6 +24,7 @@ import AttendanceFixModal from '@/components/ui/AttendanceFixModal';
 import CustomTasksModal from '@/components/ui/CustomTasksModal';
 import { WORK_ORDER_STATUSES } from '@/lib/types';
 import MobileWorkOrdersView from './mobile/MobileWorkOrdersView';
+import MobileWorkOrderWizard from './mobile/MobileWorkOrderWizard';
 import WorkOrderWizard, { type WizardMode, type WizardInitialProducts } from '@/components/production/WorkOrderWizard';
 import WorkOrderCard from '@/components/production/WorkOrderCard';
 import WorkOrderFullScreen from '@/components/ui/WorkOrderFullScreen';
@@ -531,10 +532,12 @@ export default function ProductionTab({ workOrders, projects, workers, tasks, wo
                     workOrders={workOrders}
                     workers={workers}
                     tasks={tasks}
+                    projects={projects}
                     firstWorkByOrder={firstWorkByOrder}
                     onRefresh={onRefresh}
                     showToast={showToast}
                     onCreate={openCreateModal}
+                    onCreateMontaza={openMontazaModal}
                     onOpenPage={setPageOrderId}
                     onUpdate={handleUpdateWorkOrder}
                     onDelete={handleDeleteWorkOrder}
@@ -556,16 +559,21 @@ export default function ProductionTab({ workOrders, projects, workers, tasks, wo
                 {renderAttendanceFixModal()}
                 {renderSummaryModal()}
 
-                {/* Mobilni unos/izmjena naloga kroz wizard je zaseban, veći zadatak — za sada placeholder. */}
-                {wizardOpen && (
-                    <Modal isOpen={wizardOpen} onClose={() => setWizardOpen(false)} title="Novi Radni Nalog" size="fullscreen" footer={null}>
-                        <div style={{ padding: '20px', textAlign: 'center' }}>
-                            <h3>Mobilni unos naloga</h3>
-                            <p>Ova funkcionalnost će biti uskoro dostupna na mobilnim uređajima.</p>
-                            <button onClick={() => setWizardOpen(false)} style={{ padding: '10px 20px', marginTop: '20px' }}>Zatvori</button>
-                        </div>
-                    </Modal>
-                )}
+                {/* Novi nalog (proizvodni / montažni) — ista logika kao desktop čarobnjak
+                    (useWorkOrderWizard), raspored za telefon. */}
+                <MobileWorkOrderWizard
+                    isOpen={wizardOpen}
+                    mode={wizardMode}
+                    workOrders={workOrders}
+                    projects={projects}
+                    workers={workers}
+                    tasks={tasks}
+                    organizationId={organizationId}
+                    initialProducts={wizardInitialProducts}
+                    onClose={() => setWizardOpen(false)}
+                    onRefresh={onRefresh}
+                    showToast={showToast}
+                />
             </>
         );
     }

@@ -699,6 +699,8 @@ export default function Home() {
                         <AttendanceTab
                             workers={appState.workers}
                             workOrders={appState.workOrders}
+                            projects={appState.projects}
+                            tasks={appState.tasks}
                             onRefresh={refreshCollections}
                             showToast={showToast}
                         />

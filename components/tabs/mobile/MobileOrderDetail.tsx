@@ -21,6 +21,9 @@ import { ALLOWED_ORDER_TRANSITIONS } from '@/lib/types';
 import { formatCurrency, formatDate, plural } from '@/lib/utils';
 import { orderItemPricing } from '@/lib/orderPricing';
 import {
+    formatQty, groupOrderItems, groupPricing, productNamesLabel, productNamesResolver, type OrderItemGroup,
+} from '@/lib/orderItemGroups';
+import {
     markMaterialsReceived, markMaterialsUnreceived, markOrderSent, updateOrderStatus,
 } from '@/lib/services';
 import { useData } from '@/context/DataContext';
@@ -68,13 +71,14 @@ export default function MobileOrderDetail({
     const [statusSheet, setStatusSheet] = useState(false);
     const [confirm, setConfirm] = useState<{ title: string; message: string; label: string; run: () => void } | null>(null);
 
-    const items = useMemo(() => [...(order.items || [])].sort(
-        (a, b) => (a.Material_Name || '').localeCompare(b.Material_Name || '', 'bs')
-    ), [order.items]);
+    const items = useMemo(() => order.items || [], [order.items]);
     const pricing = useMemo(() => orderItemPricing(order), [order]);
+    // Jedan red po materijalu (zbir, abecedno) — isto kao desktop pregled i PDF.
+    const groups = useMemo(() => groupOrderItems(items, productNamesResolver(projects)), [items, projects]);
 
-    const total = items.length;
-    const received = items.filter(i => i.Status === 'Primljeno').length;
+    // Napredak prijema broji REDOVE koje korisnik vidi (materijale), ne skrivene stavke.
+    const total = groups.length;
+    const received = groups.filter(g => g.status === 'received').length;
     const pct = total > 0 ? Math.round((received / total) * 100) : 0;
     const ds = displayStatusOf(order);
     const allReceived = total > 0 && received === total;
@@ -108,12 +112,15 @@ export default function MobileOrderDetail({
 
     // ── Radnje ──────────────────────────────────────────────────────
 
-    const receiveItem = async (item: OrderItem) => {
+    /** Prijem reda materijala — sve njegove još neprimljene stavke (pozicije) odjednom. */
+    const receiveGroup = async (group: OrderItemGroup) => {
         if (busy) return;
         if (isDraft) { showToast('Pošalji narudžbu prije primanja stavki', 'error'); return; }
+        const ids = group.items.filter(i => i.Status !== 'Primljeno').map(i => i.ID);
+        if (ids.length === 0) return;
         try {
             setBusy(true);
-            const res = await markMaterialsReceived([item.ID], organizationId!);
+            const res = await markMaterialsReceived(ids, organizationId!);
             if (res.success) {
                 onRefresh('orders');
                 (res.postCascade ?? Promise.resolve()).finally(() => onRefresh('projects'));
@@ -123,16 +130,18 @@ export default function MobileOrderDetail({
     };
 
     /** Poništenje prijema — reklamacija, greška, pogrešna isporuka. */
-    const unreceiveItem = async (item: OrderItem) => {
+    const unreceiveGroup = async (group: OrderItemGroup) => {
         if (busy) return;
+        const receivedItems: OrderItem[] = group.items.filter(i => i.Status === 'Primljeno');
+        if (receivedItems.length === 0) return;
         setConfirm({
             title: 'Poništiti prijem?',
-            message: `„${item.Material_Name}" se vraća u „Naručeno".`,
+            message: `„${group.name}" se vraća u „Naručeno".`,
             label: 'Poništi prijem',
             run: async () => {
                 try {
                     setBusy(true);
-                    const res = await markMaterialsUnreceived([item.ID], organizationId!);
+                    const res = await markMaterialsUnreceived(receivedItems.map(i => i.ID), organizationId!);
                     if (res.success) {
                         showToast('Prijem poništen', 'success');
                         onRefresh('orders');
@@ -148,10 +157,10 @@ export default function MobileOrderDetail({
         const unreceived = items.filter(i => i.Status !== 'Primljeno');
         if (unreceived.length === 0) { showToast('Sve stavke su već primljene', 'info'); return; }
         if (isDraft) { showToast('Pošalji narudžbu prije primanja stavki', 'error'); return; }
-        const n = unreceived.length;
+        const n = groups.filter(g => g.status !== 'received').length;
         setConfirm({
             title: 'Primiti sve stavke?',
-            message: `${n} ${plural(n, 'stavka', 'stavke', 'stavki')} bit će označeno primljenim.`,
+            message: `${n} ${plural(n, 'materijal', 'materijala', 'materijala')} bit će označeno primljenim.`,
             label: 'Primi sve',
             run: async () => {
                 try {
@@ -269,7 +278,7 @@ export default function MobileOrderDetail({
                     )}
                 </MActions>
 
-                <MSection title={`Stavke · ${total}`} right={<span className="mui-dim">{formatCurrency(order.Total_Amount || 0)}</span>} />
+                <MSection title={`Materijali · ${total}`} right={<span className="mui-dim">{formatCurrency(order.Total_Amount || 0)}</span>} />
                 {total === 0 ? (
                     <MEmpty title="Narudžba nema stavki" sub="Dodaj materijale kroz uređivanje narudžbe.">
                         <div style={{ width: '100%', paddingTop: 14 }}>
@@ -279,23 +288,27 @@ export default function MobileOrderDetail({
                 ) : (
                     <>
                         <MList lead>
-                            {items.map(item => {
-                                const isRec = item.Status === 'Primljeno';
-                                const qty = item.Quantity || 0;
+                            {groups.map(group => {
+                                const isRec = group.status === 'received';
+                                const { total: lineTotal, unitPrice } = groupPricing(group, pricing);
+                                const where = group.items.length > 1
+                                    ? `${group.items.length} ${plural(group.items.length, 'pozicija', 'pozicije', 'pozicija')}: ${productNamesLabel(group.productNames)}`
+                                    : productNamesLabel(group.productNames);
+                                const partial = group.status === 'partial' ? ` · primljeno ${group.receivedCount}/${group.items.length}` : '';
                                 return (
-                                    <MItem key={item.ID}>
+                                    <MItem key={group.key}>
                                         <MCell done={isRec}>
                                             <MCheck
                                                 on={isRec}
                                                 disabled={busy || isDraft}
                                                 label={isRec ? 'Poništi prijem' : 'Označi primljenim'}
-                                                onClick={() => (isRec ? unreceiveItem(item) : receiveItem(item))}
+                                                onClick={() => (isRec ? unreceiveGroup(group) : receiveGroup(group))}
                                             />
                                             <MText
-                                                title={item.Material_Name}
-                                                sub={`${qty % 1 === 0 ? qty : qty.toFixed(2)} ${item.Unit} × ${formatCurrency(pricing.unitPrice(item))}${item.Product_Name ? ` · ${item.Product_Name}` : ''}`}
+                                                title={group.name}
+                                                sub={`${formatQty(group.quantity)} ${group.unit} × ${formatCurrency(unitPrice)}${where ? ` · ${where}` : ''}${partial}`}
                                             />
-                                            <MValue strong>{formatCurrency(pricing.lineTotal(item))}</MValue>
+                                            <MValue strong>{formatCurrency(lineTotal)}</MValue>
                                         </MCell>
                                     </MItem>
                                 );

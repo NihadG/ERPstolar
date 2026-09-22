@@ -14,10 +14,10 @@ import Modal from '@/components/ui/Modal';
 import { OrderWizardModal } from './OrderWizardModal';
 import { ORDER_STATUSES, MATERIAL_STATUSES, ALLOWED_ORDER_TRANSITIONS } from '@/lib/types';
 import { formatCurrency, formatDate, getStatusClass, plural } from '@/lib/utils';
-import { orderItemPricing } from '@/lib/orderPricing';
 import { daysUntil } from '@/lib/planning';
 import { useIsCompact } from '@/hooks/useIsCompact';
 import MobileOrdersView from './mobile/MobileOrdersView';
+import OrderItemGroupList from './OrderItemGroupList';
 import './OrdersTab.css';
 
 interface OrdersTabProps {
@@ -1073,12 +1073,13 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
         }
     }
 
-    // Toggle individual item selection
-    function toggleItemSelection(itemId: string, isChecked: boolean) {
-        const newSelected = new Set(selectedItemIds);
-        if (isChecked) newSelected.add(itemId);
-        else newSelected.delete(itemId);
-        setSelectedItemIds(newSelected);
+    // Red materijala nosi više stavki (isti materijal, više pozicija) — bira ih sve odjednom.
+    function selectItems(itemIds: string[], isChecked: boolean) {
+        setSelectedItemIds(prev => {
+            const next = new Set(prev);
+            itemIds.forEach(id => { if (isChecked) next.add(id); else next.delete(id); });
+            return next;
+        });
     }
 
     // Toggle all unreceived items
@@ -1315,17 +1316,22 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
         }
     }
 
-    // Poništi prijem jedne stavke (greška, reklamacija, pogrešna isporuka) — vraća je u „Naručeno".
-    async function handleUnreceiveItem(item: OrderItem, order: Order) {
-        if (!confirm(`Poništiti prijem stavke „${item.Material_Name}"?\n\nVraća se u „Naručeno" — za reklamaciju, grešku pri unosu ili pogrešnu isporuku dobavljača.`)) return;
-        // Optimistično: stavka nazad u Naručeno; ako je narudžba bila „Primljeno", pada na „Poslano".
+    // Poništi prijem stavki (greška, reklamacija, pogrešna isporuka) — vraća ih u „Naručeno".
+    // Red materijala može nositi više pozicija, pa se poništava cijeli red odjednom.
+    async function handleUnreceiveItems(items: OrderItem[], order: Order) {
+        if (items.length === 0) return;
+        const name = items[0].Material_Name;
+        const what = items.length > 1 ? `„${name}" (${items.length} ${plural(items.length, 'pozicija', 'pozicije', 'pozicija')})` : `„${name}"`;
+        if (!confirm(`Poništiti prijem ${what}?\n\nVraća se u „Naručeno" — za reklamaciju, grešku pri unosu ili pogrešnu isporuku dobavljača.`)) return;
+        const ids = new Set(items.map(i => i.ID));
+        // Optimistično: stavke nazad u Naručeno; ako je narudžba bila „Primljeno", pada na „Poslano".
         const prevStatus = order.Status;
         const prevItems = order.items;
         onPatchOrder?.(order.Order_ID, {
             Status: order.Status === 'Primljeno' ? 'Poslano' : order.Status,
-            items: (order.items || []).map(i => i.ID === item.ID ? { ...i, Status: 'Naručeno', Received_Date: undefined } : i),
+            items: (order.items || []).map(i => ids.has(i.ID) ? { ...i, Status: 'Naručeno', Received_Date: undefined } : i),
         });
-        const result = await markMaterialsUnreceived([item.ID], organizationId!);
+        const result = await markMaterialsUnreceived(Array.from(ids), organizationId!);
         if (result.success) {
             showToast('Prijem poništen', 'success');
             onRefresh('orders');
@@ -1766,75 +1772,15 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
                                                             </button>
                                                         )}
                                                     </div>
-                                                    <div className="products-header">
-                                                        <h4>Stavke narudžbe ({itemCount})</h4>
-                                                        {selectedItemIds.size > 0 && (
-                                                            <button className="btn btn-sm btn-success" onClick={handleReceiveSelectedItems}>
-                                                                <span className="material-icons-round">check</span>
-                                                                Primi odabrano ({selectedItemIds.size})
-                                                            </button>
-                                                        )}
-                                                    </div>
-
-                                                    {(() => { const pricing = orderItemPricing(order); return [...(order.items || [])].sort((a, b) => (a.Material_Name || '').localeCompare(b.Material_Name || '', 'hr')).map(item => {
-                                                        const isReceived = item.Status === 'Primljeno';
-                                                        const isSelected = selectedItemIds.has(item.ID);
-
-                                                        return (
-                                                            <div
-                                                                key={item.ID}
-                                                                className={`oi-row${isReceived ? ' received' : ''}${isSelected ? ' selected' : ''}`}
-                                                                onClick={() => { if (!isReceived) toggleItemSelection(item.ID, !isSelected); }}
-                                                            >
-                                                                {isReceived ? (
-                                                                    <span className="oi-status" title="Primljeno">
-                                                                        <span className="material-icons-round">check_circle</span>
-                                                                    </span>
-                                                                ) : (
-                                                                    <label className="oi-check" onClick={e => e.stopPropagation()}>
-                                                                        <input
-                                                                            type="checkbox"
-                                                                            checked={isSelected}
-                                                                            onChange={(e) => toggleItemSelection(item.ID, e.target.checked)}
-                                                                        />
-                                                                    </label>
-                                                                )}
-
-                                                                <div className="oi-body">
-                                                                    <div className="oi-name">{item.Material_Name}</div>
-                                                                    <div className="oi-meta">
-                                                                        <span>{item.Quantity} {item.Unit}</span>
-                                                                        {item.Quantity > 0 && <><span className="oi-sep">·</span><span>{formatCurrency(pricing.unitPrice(item))}/{item.Unit}</span></>}
-                                                                        {item.Product_Name && <><span className="oi-sep">·</span><span className="oi-prod" title={item.Product_Name}>{item.Product_Name}</span></>}
-                                                                    </div>
-                                                                </div>
-
-                                                                <div className="oi-right">
-                                                                    <span className="oi-price">{formatCurrency(pricing.lineTotal(item))}</span>
-                                                                    {isReceived ? (
-                                                                        <div className="oi-recv">
-                                                                            {item.Received_Date && (
-                                                                                <span className="oi-recv-date">
-                                                                                    <span className="material-icons-round">event_available</span>
-                                                                                    {formatDate(item.Received_Date)}
-                                                                                </span>
-                                                                            )}
-                                                                            <button
-                                                                                className="oi-undo"
-                                                                                title="Poništi prijem — reklamacija, greška pri unosu ili pogrešna isporuka"
-                                                                                onClick={(e) => { e.stopPropagation(); handleUnreceiveItem(item, order); }}
-                                                                            >
-                                                                                <span className="material-icons-round">undo</span>
-                                                                                Vrati
-                                                                            </button>
-                                                                        </div>
-                                                                    ) : (
-                                                                        <span className="oi-await">čeka prijem</span>
-                                                                    )}
-                                                                </div>
-                                                            </div>
-                                                        );
-                                                    }); })()}
+                                                    {/* Jedan red po materijalu (zbir, abecedno) — isto pravilo kao PDF i Komandni centar. */}
+                                                    <OrderItemGroupList
+                                                        order={order}
+                                                        projects={projects}
+                                                        selectedItemIds={selectedItemIds}
+                                                        onSelectItems={selectItems}
+                                                        onReceiveSelected={handleReceiveSelectedItems}
+                                                        onUnreceive={items => handleUnreceiveItems(items, order)}
+                                                    />
                                                 </div>
                                             </div>
                                         );
