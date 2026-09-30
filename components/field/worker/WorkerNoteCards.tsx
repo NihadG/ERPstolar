@@ -12,6 +12,7 @@
 import { useState, type Dispatch, type SetStateAction } from 'react';
 import { Check, ChevronDown, ClipboardList, Package, StickyNote, Trash2 } from 'lucide-react';
 import type { NoteRow } from '@/lib/field/fieldNotes';
+import { getTaskChecklistSections } from '@/lib/taskChecklist';
 import { useWorkerNoteActions } from '@/lib/field/useFieldWorker';
 import { MPill, MCheck } from '@/components/tabs/mobile/MobileUI';
 import type { ShowToast } from './WorkerApp';
@@ -116,18 +117,23 @@ export default function WorkerNoteCards({ notes, setNotes, reload, showToast, re
                                 {n.dueDate && <div className="fwk-note-due">Rok: {dueText(n.dueDate)}</div>}
                                 {n.checklist.length > 0 && (
                                     <div className="fwk-note-checklist">
-                                        {n.checklist.map(c => (
-                                            <button
-                                                key={c.id} type="button"
-                                                className={`fwk-note-citem${c.completed ? ' on' : ''}`}
-                                                disabled={readOnly}
-                                                onClick={() => toggleCheck(n, c.id, !c.completed)}
-                                            >
-                                                <span className="fwk-note-cbox">
-                                                    {c.completed && <Check size={12} strokeWidth={3.5} />}
-                                                </span>
-                                                <span className="fwk-note-ctext">{c.text}</span>
-                                            </button>
+                                        {getTaskChecklistSections({ Checklist: n.checklist, ChecklistGroups: n.checklistGroups }).map(section => (
+                                            <div key={section.id || 'ungrouped'} className="fwk-note-checklist-section">
+                                                {section.name && <div className="fwk-note-checklist-group-name">{section.name}</div>}
+                                                {section.items.map(c => (
+                                                    <button
+                                                        key={c.id} type="button"
+                                                        className={`fwk-note-citem${c.completed ? ' on' : ''}`}
+                                                        disabled={readOnly}
+                                                        onClick={() => toggleCheck(n, c.id, !c.completed)}
+                                                    >
+                                                        <span className="fwk-note-cbox">
+                                                            {c.completed && <Check size={12} strokeWidth={3.5} />}
+                                                        </span>
+                                                        <span className="fwk-note-ctext">{c.text}</span>
+                                                    </button>
+                                                ))}
+                                            </div>
                                         ))}
                                     </div>
                                 )}

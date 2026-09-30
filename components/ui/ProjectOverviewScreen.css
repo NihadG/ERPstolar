@@ -697,6 +697,8 @@ button.cc-kpi.as-btn:hover { border-color: var(--border); box-shadow: 0 6px 18px
 .zt-act:hover { background: var(--surface-hover); color: var(--text-primary); }
 .zt-act.danger:hover { background: var(--error-bg); color: var(--error); }
 .zt-checklist { display: flex; flex-direction: column; gap: 2px; padding: 8px 13px 12px 46px; border-top: 1px solid var(--border-light); }
+.zt-checklist-section { display: flex; flex-direction: column; }
+.zt-checklist-group-name { color: var(--text-secondary); font-size: 11px; font-weight: 700; padding: 8px 8px 3px; }
 .zt-cli { display: flex; align-items: center; gap: 9px; padding: 6px 8px; border: none; background: none; border-radius: 8px; cursor: pointer; text-align: left; font-size: 13px; color: var(--text-primary); transition: var(--transition); }
 .zt-cli:hover { background: var(--surface); }
 .zt-cli svg { color: var(--text-tertiary); flex: 0 0 auto; }

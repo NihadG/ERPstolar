@@ -10,11 +10,11 @@
 // ════════════════════════════════════════════════════════════════════
 
 import { useState } from 'react';
-import { v4 as uuidv4 } from 'uuid';
-import { CheckSquare, LayoutDashboard, Plus, Square, Trash2, X } from 'lucide-react';
-import type { ChecklistItem, Task, TaskPriority, Worker } from '@/lib/types';
+import { LayoutDashboard, Trash2 } from 'lucide-react';
+import type { ChecklistItem, Task, TaskChecklistGroup, TaskPriority, Worker } from '@/lib/types';
 import { TASK_PRIORITY_LABELS } from '@/lib/types';
 import Modal from './Modal';
+import TaskChecklistEditor from './TaskChecklistEditor';
 import './TaskEditorModal.css';
 
 function dateOnly(iso?: string): string { return (iso || '').slice(0, 10); }
@@ -36,16 +36,8 @@ export default function TaskEditorModal({ mode, task, projectName, workers, onCl
     const [dueDate, setDueDate] = useState<string>(dateOnly(task?.Due_Date));
     const [workerId, setWorkerId] = useState<string>(task?.Assigned_Worker_ID || '');
     const [checklist, setChecklist] = useState<ChecklistItem[]>(task?.Checklist ? task.Checklist.map(c => ({ ...c })) : []);
-    const [newItem, setNewItem] = useState('');
+    const [checklistGroups, setChecklistGroups] = useState<TaskChecklistGroup[]>(task?.ChecklistGroups ? task.ChecklistGroups.map(group => ({ ...group })) : []);
     const [saving, setSaving] = useState(false);
-
-    const addItem = () => {
-        const t = newItem.trim(); if (!t) return;
-        setChecklist(prev => [...prev, { id: uuidv4(), text: t, completed: false }]);
-        setNewItem('');
-    };
-    const removeItem = (id: string) => setChecklist(prev => prev.filter(i => i.id !== id));
-    const toggleItem = (id: string) => setChecklist(prev => prev.map(i => i.id === id ? { ...i, completed: !i.completed } : i));
 
     const submit = async () => {
         if (!title.trim() || saving) return;
@@ -61,6 +53,7 @@ export default function TaskEditorModal({ mode, task, projectName, workers, onCl
             Assigned_Worker_ID: workerId || undefined,
             Assigned_Worker_Name: worker?.Name || undefined,
             Checklist: checklist,
+            ChecklistGroups: checklistGroups,
             Links: task?.Links || [],
             ...(task?.Status ? { Status: task.Status } : { Status: 'pending' }),
         };
@@ -122,19 +115,14 @@ export default function TaskEditorModal({ mode, task, projectName, workers, onCl
 
                 <div className="te-field">
                     <span className="te-label">Checklist {checklist.length > 0 && <span className="te-cl-cnt">{clDone}/{checklist.length}</span>}</span>
-                    <div className="te-checklist">
-                        {checklist.map(it => (
-                            <div key={it.id} className="te-cli">
-                                <button className={`te-cli-check ${it.completed ? 'on' : ''}`} onClick={() => toggleItem(it.id)}>{it.completed ? <CheckSquare size={16} /> : <Square size={16} />}</button>
-                                <span className={it.completed ? 'done' : ''}>{it.text}</span>
-                                <button className="te-cli-x" onClick={() => removeItem(it.id)} aria-label="Ukloni"><X size={14} /></button>
-                            </div>
-                        ))}
-                        <div className="te-cli-add">
-                            <input value={newItem} onChange={e => setNewItem(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addItem(); } }} placeholder="Dodaj stavku…" />
-                            <button className="te-cli-addbtn" onClick={addItem} disabled={!newItem.trim()}><Plus size={16} /></button>
-                        </div>
-                    </div>
+                    <TaskChecklistEditor
+                        items={checklist}
+                        groups={checklistGroups}
+                        onChange={(nextItems, nextGroups) => {
+                            setChecklist(nextItems);
+                            setChecklistGroups(nextGroups);
+                        }}
+                    />
                 </div>
             </div>
         </Modal>

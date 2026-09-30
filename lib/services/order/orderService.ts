@@ -121,10 +121,11 @@ export async function updateOrderItem(
 export async function deleteOrder(
     orderId: string,
     organizationId: string,
-    materialAction?: 'received' | 'reset'
+    materialAction?: 'received' | 'reset',
+    preserveStock = false
 ): Promise<{ success: boolean; message: string }> {
     const { deleteOrder: _delete } = await import('../../database');
-    return _delete(orderId, organizationId, materialAction);
+    return _delete(orderId, organizationId, materialAction, preserveStock);
 }
 
 export async function deleteOrderItemsByIds(

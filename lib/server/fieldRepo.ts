@@ -235,6 +235,20 @@ export async function getWorkLogsForWorkerDate(orgId: string, workerId: string, 
     return snap.docs.map(d => d.data() as WorkLog);
 }
 
+/** Posljednji RANIJI dan ovog radnika sa stvarnim knjiženjem, bez čitanja cijele istorije. */
+export async function getLastPostedWorkLogsBefore(orgId: string, workerId: string, date: string): Promise<{ date: string; logs: WorkLog[] } | null> {
+    const last = await adminDb().collection('work_logs')
+        .where('Worker_ID', '==', workerId)
+        .where('Organization_ID', '==', orgId)
+        .where('Date', '<', date)
+        .orderBy('Date', 'asc')
+        .limitToLast(1)
+        .get();
+    if (last.empty) return null;
+    const previousDate = (last.docs[0].data() as WorkLog).Date;
+    return { date: previousDate, logs: await getWorkLogsForWorkerDate(orgId, workerId, previousDate) };
+}
+
 /** Zapisi jednog radnika za dan, s referencama — renormalizacija ih prepisuje. */
 export async function getWorkLogRefsForWorkerDate(orgId: string, workerId: string, date: string) {
     const snap = await adminDb().collection('work_logs')

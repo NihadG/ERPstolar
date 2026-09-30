@@ -91,6 +91,12 @@ export default function BookingPreviewPage() {
     const [toast, setToast] = useState('');
     const date = todayISO();
 
+    const yesterday = useMemo(() => new Map<string, string[]>([
+        ['w-1', ['wo-1']],
+        ['w-3', ['wo-2', 'wo-5']],
+        ['w-6', ['wo-6']],
+    ]), []);
+
     const rows = useMemo(() => buildBookingProposal(
         [
             { workerId: 'w-1', workerName: 'Adnan Halilović', status: 'Prisutan' },
@@ -103,13 +109,9 @@ export default function BookingPreviewPage() {
         ],
         workOrders,
         date,
-    ), [date]);
-
-    const yesterday = useMemo(() => new Map<string, string[]>([
-        ['w-1', ['wo-1']],
-        ['w-3', ['wo-2', 'wo-5']],
-        ['w-6', ['wo-6']],
-    ]), []);
+        undefined,
+        yesterday,
+    ), [date, yesterday]);
 
     if (process.env.NODE_ENV === 'production') notFound();
 
@@ -134,7 +136,7 @@ export default function BookingPreviewPage() {
                     projects={demoProjects}
                     organizationId="demo"
                     yesterdayByWorker={yesterday}
-                    yesterdaySourceDate={shiftDate(date, -1)}
+                    yesterdaySourceDates={new Map(Array.from(yesterday.keys()).map(id => [id, shiftDate(date, -1)]))}
                     onConfirm={async (d: BookingDecision[]) => {
                         setLog(d.map(x => `${x.workerName} (${x.presence}) → ${x.orderIds.join(', ') || '—'}`).join('\n'));
                     }}

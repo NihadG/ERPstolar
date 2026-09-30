@@ -24,6 +24,7 @@ import { useMemo, useState, type ReactNode } from 'react';
 import { Check, ExternalLink, Pencil, Plus, Square, SquareCheckBig } from 'lucide-react';
 import type { Task } from '@/lib/types';
 import { TASK_PRIORITY_LABELS } from '@/lib/types';
+import { getTaskChecklistSections } from '@/lib/taskChecklist';
 import type { BoardScope } from '@/lib/command/scope';
 import { isTaskOpen, taskProduct, taskProject } from '@/lib/command/scope';
 import { isTaskLate, lensAllowsTask, type LensSelection } from '@/lib/command/signals';
@@ -246,16 +247,21 @@ function StickyNote({
                     {task.Assigned_Worker_Name && <p style={{ fontSize: 11.5, opacity: 0.75 }}>Izvršilac: {task.Assigned_Worker_Name}</p>}
                     {checklist.length > 0 && (
                         <div className="kc-checklist">
-                            {checklist.map(item => (
-                                <button
-                                    type="button"
-                                    key={item.id}
-                                    className={`kc-checklist-item${item.completed ? ' done' : ''}`}
-                                    onClick={e => { e.stopPropagation(); onToggleChecklist(item.id); }}
-                                >
-                                    {item.completed ? <SquareCheckBig size={13} /> : <Square size={13} />}
-                                    {item.text}
-                                </button>
+                            {getTaskChecklistSections(task).map(section => (
+                                <div key={section.id || 'ungrouped'} className="kc-checklist-section">
+                                    {section.name && <div className="kc-checklist-group-name">{section.name}</div>}
+                                    {section.items.map(item => (
+                                        <button
+                                            type="button"
+                                            key={item.id}
+                                            className={`kc-checklist-item${item.completed ? ' done' : ''}`}
+                                            onClick={e => { e.stopPropagation(); onToggleChecklist(item.id); }}
+                                        >
+                                            {item.completed ? <SquareCheckBig size={13} /> : <Square size={13} />}
+                                            {item.text}
+                                        </button>
+                                    ))}
+                                </div>
                             ))}
                         </div>
                     )}

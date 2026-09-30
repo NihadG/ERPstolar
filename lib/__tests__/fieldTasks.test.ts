@@ -42,8 +42,9 @@ describe('buildFieldTasks — projekcija', () => {
             Notes: 'hitno naručiti',
             Checklist: [
                 { id: 'c1', text: 'Provjeri lager', completed: true },
-                { id: 'c2', text: 'Naruči', completed: false },
+                { id: 'c2', text: 'Naruči', completed: false, groupId: 'g1' },
             ],
+            ChecklistGroups: [{ id: 'g1', name: 'Nabavka' }],
             Links: [
                 { Entity_Type: 'work_order', Entity_ID: 'wo-1', Entity_Name: 'Kuhinja Hotel' },
                 { Entity_Type: 'project', Entity_ID: 'p-1', Entity_Name: 'Hotel Berlin' },
@@ -65,6 +66,8 @@ describe('buildFieldTasks — projekcija', () => {
         expect(row.notes).toBe('hitno naručiti');
         expect(row.checklistDone).toBe(1);
         expect(row.checklistTotal).toBe(2);
+        expect(row.checklist[1].groupId).toBe('g1');
+        expect(row.checklistGroups).toEqual([{ id: 'g1', name: 'Nabavka' }]);
         expect(row.links).toEqual([
             { type: 'work_order', name: 'Kuhinja Hotel' },
             { type: 'project', name: 'Hotel Berlin' },

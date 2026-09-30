@@ -21,6 +21,7 @@ import {
 import { isWorkerAssignedToAutoItem } from '@/lib/autoBook';
 import { workOrderDisplayName } from '@/lib/utils';
 import { buildBookingProposal, type ProposalRow } from '@/lib/attendanceBooking';
+import { getAttendanceOrderContext, reconcileAttendanceOrderSelection } from '@/lib/attendance';
 import AttendanceBookingConfirmModal, { type BookingDecision } from '@/components/ui/AttendanceBookingConfirmModal';
 import PayrollModal from '@/components/ui/PayrollModal';
 import {
@@ -92,7 +93,8 @@ export default function AttendanceTab({ workers, workOrders, projects = [], task
     // workerId → Work_Order_ID[] s posljednjeg dana koji je imao knjiženja + koji je to dan
     // bio (modal iz toga nudi „Prepiši jučer").
     const [confirmYesterday, setConfirmYesterday] = useState<Map<string, string[]>>(new Map());
-    const [confirmYesterdayDate, setConfirmYesterdayDate] = useState('');
+    const [confirmYesterdayDates, setConfirmYesterdayDates] = useState<Map<string, string>>(new Map());
+    const [confirmPostedToday, setConfirmPostedToday] = useState<Map<string, string[]>>(new Map());
 
     // Nalozi na kojima je radnik TAJ dan radio — čita se tek kad se ćelija otvori.
     // Šihtarica je mreža od par stotina ćelija; učitavati knjiženja za sve unaprijed
@@ -403,51 +405,24 @@ export default function AttendanceTab({ workers, workOrders, projects = [], task
         return getAttendance(workerId, shiftISO(dateStr, -1))?.Status;
     }
 
-    // Knjiženja jednog dana → workerId → Work_Order_ID[].
-    async function orderMapForDay(day: string): Promise<Map<string, string[]>> {
-        const map = new Map<string, string[]>();
-        try {
-            const entries = await getDailyWorkBooking(day, organizationId!);
-            entries.forEach(e => {
-                const orderIds: string[] = [];
-                (e.items || []).forEach(bi => { if (bi.workOrderId && !orderIds.includes(bi.workOrderId)) orderIds.push(bi.workOrderId); });
-                if (orderIds.length) map.set(e.workerId, orderIds);
-            });
-        } catch { /* greška u dohvatu nije kritična — samo nema "kao jučer" predabira */ }
-        return map;
-    }
-
-    // "Kao jučer" izvor za prijedlog i za dugme „Prepiši jučer" u modalu.
-    // Doslovno jučer je prazno ponedjeljkom i poslije praznika, pa se traži POSLJEDNJI
-    // dan koji je imao knjiženja (do 4 dana unazad). Redoslijed upita čuva brzinu:
-    // običnim danom JEDAN upit; tek ako je jučer prazno, ostala tri idu paralelno.
-    async function buildYesterdayOrderMap(dateStr: string): Promise<{ map: Map<string, string[]>; sourceDate: string }> {
-        if (!organizationId) return { map: new Map(), sourceDate: '' };
-        const yesterday = shiftISO(dateStr, -1);
-        const first = await orderMapForDay(yesterday);
-        if (first.size > 0) return { map: first, sourceDate: yesterday };
-
-        const older = [2, 3, 4].map(n => shiftISO(dateStr, -n));
-        const maps = await Promise.all(older.map(orderMapForDay));
-        for (let i = 0; i < maps.length; i++) {
-            if (maps[i].size > 0) return { map: maps[i], sourceDate: older[i] };
-        }
-        return { map: new Map(), sourceDate: '' };
-    }
-
-    // Izgradi prijedlog knjiženja s "kao jučer" fallback-om (Teren/Prisutan bez auto-prijedloga) i
+    // Izgradi prijedlog iz STVARNIH knjiženja otvorenog dana ili zadnjeg ranijeg dana svakog radnika i
     // otvori upit ako ima redova. Vrati true ako je upit otvoren.
     async function openBookingConfirm(
         savedWorkers: { workerId: string; workerName: string; status: string }[],
         dateStr: string,
     ): Promise<boolean> {
-        const { map: yMap, sourceDate: ySource } = await buildYesterdayOrderMap(dateStr);
-        const rows = buildBookingProposal(savedWorkers, workOrders, dateStr, undefined, yMap);
+        if (!organizationId) return false;
+        const context = await getAttendanceOrderContext(dateStr, organizationId, savedWorkers.map(w => w.workerId));
+        const rows = buildBookingProposal(
+            savedWorkers, workOrders, dateStr, undefined,
+            context.previousByWorker, context.postedTodayByWorker, context.postedPresenceByWorker
+        );
         if (rows.length > 0) {
             setConfirmRows(rows);
             setConfirmDate(dateStr);
-            setConfirmYesterday(yMap);
-            setConfirmYesterdayDate(ySource);
+            setConfirmYesterday(context.previousByWorker);
+            setConfirmYesterdayDates(context.previousDateByWorker);
+            setConfirmPostedToday(context.postedTodayByWorker);
             setConfirmOpen(true);
             return true;
         }
@@ -524,14 +499,8 @@ export default function AttendanceTab({ workers, workOrders, projects = [], task
                         : `Kao jučer: ${yStatus} (dnevnice već postoje)`, 'success');
                 } else {
                     // Jučer nije bilo knjiženja → standardni upit s prijedlogom.
-                    const rows = buildBookingProposal([{ workerId, workerName, status: yStatus }], workOrders, date);
-                    if (rows.length > 0) {
-                        setConfirmRows(rows);
-                        setConfirmDate(date);
-                        setConfirmYesterday(new Map());
-                        setConfirmYesterdayDate('');
-                        setConfirmOpen(true);
-                    } else {
+                    const opened = await openBookingConfirm([{ workerId, workerName, status: yStatus }], date);
+                    if (!opened) {
                         showToast(`Kao jučer: ${yStatus}`, 'success');
                     }
                 }
@@ -779,6 +748,7 @@ export default function AttendanceTab({ workers, workOrders, projects = [], task
         // Radnik čije je knjiženje palo u grešku — obrađuje se PO RADNIKU (ne jedan try za sve),
         // da greška kod jednog ne blokira knjiženje ostalih, i da se tačno zna KO nije proknjižen.
         const failedWorkers: string[] = [];
+        const failedWorkerIds = new Set<string>();
         // Nalozi 'Na čekanju' koje potvrda pokušava startati, a start odbije (npr. materijal
         // nije primljen) — dnevnica se knjiži svejedno, ali korisnik mora vidjeti razlog.
         const startWarnings: string[] = [];
@@ -807,6 +777,9 @@ export default function AttendanceTab({ workers, workOrders, projects = [], task
             if (d.orderIds.length === 0) continue;
             const entry = perWorker.get(d.workerId) || { workerName: d.workerName, presence, targets: [] };
             for (const orderId of d.orderIds) {
+                // Sam pregled/potvrda starog dana ne smije dodati proizvode koji su
+                // radniku naknadno dodijeljeni na već knjiženom nalogu.
+                if (confirmPostedToday.get(d.workerId)?.includes(orderId)) continue;
                 const t = workerOrderTargets(d.workerId, orderId, lookup);
                 if (t.length === 0) continue;
                 entry.targets.push(...t);
@@ -833,10 +806,28 @@ export default function AttendanceTab({ workers, workOrders, projects = [], task
             } catch (e) {
                 console.error(`commitDecisions: knjiženje za ${w.workerName} nije uspjelo`, e);
                 if (!failedWorkers.includes(w.workerName)) failedWorkers.push(w.workerName);
+                failedWorkerIds.add(workerId);
                 return 0;
             }
         }));
         booked = results.reduce((s, n) => s + n, 0);
+
+        // Nakon uspješnog dodavanja očisti skinute naloge. Ručno unesene dnevnice
+        // nisu vlasništvo šihtarice i ostaju; prazan izbor briše samo njene zapise.
+        const removed = await Promise.all(decisions.filter(d => !failedWorkerIds.has(d.workerId)).map(async d => {
+            try {
+                const result = await reconcileAttendanceOrderSelection(
+                    d.workerId, date, orgId, new Set(d.orderIds), d.presence === 0.5 ? 0.5 : 1
+                );
+                result.affectedWorkOrderIds.forEach(id => noteAffected(id));
+                return result.deleted;
+            } catch (e) {
+                console.error(`commitDecisions: uređivanje knjiženja za ${d.workerName} nije uspjelo`, e);
+                if (!failedWorkers.includes(d.workerName)) failedWorkers.push(d.workerName);
+                return 0;
+            }
+        }));
+        const deleted = removed.reduce((sum, count) => sum + count, 0);
 
         try {
             // Neuspjeli auto-start naloga: dnevnice su knjižene, ali nalog je ostao 'Na čekanju'
@@ -847,8 +838,8 @@ export default function AttendanceTab({ workers, workOrders, projects = [], task
 
             if (failedWorkers.length > 0) {
                 showToast(`Greška pri knjiženju za: ${failedWorkers.join(', ')}${booked > 0 ? ` — ostalo (${booked}) proknjiženo` : ''}`, 'error');
-            } else if (booked > 0) {
-                showToast(`Proknjiženo ${booked} dnevnica`, 'success');
+            } else if (booked > 0 || deleted > 0) {
+                showToast(`Proknjiženo ${booked}, uklonjeno ${deleted} dnevnica`, 'success');
             } else {
                 showToast('Dnevnice nisu knjižene', 'info');
             }
@@ -1215,7 +1206,7 @@ export default function AttendanceTab({ workers, workOrders, projects = [], task
                         date={confirmDate}
                         rows={confirmRows}
                         yesterdayByWorker={confirmYesterday}
-                        yesterdaySourceDate={confirmYesterdayDate}
+                        yesterdaySourceDates={confirmYesterdayDates}
                         workOrders={workOrders}
                         workers={workers}
                         projects={projects}

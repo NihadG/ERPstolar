@@ -457,6 +457,7 @@ export default function WorkOrderTasksPanel({
                                         {task.Description && <p className="wot-desc">{task.Description}</p>}
                                         <ChecklistEditor
                                             items={checklist}
+                                            groups={task.ChecklistGroups}
                                             disabled={busy}
                                             onToggle={id => toggleChecklist(task, id)}
                                             onAdd={text => addChecklist(task, text)}

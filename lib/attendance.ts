@@ -9,11 +9,14 @@ import {
     query,
     where,
     writeBatch,
+    orderBy,
+    limitToLast,
 } from 'firebase/firestore';
 import { generateUUID, createWorkLog, workLogExists, getWorkers, createProductionSnapshot, getProductMaterials, deleteWorkLogsForWorkerOnDate } from './database';
 import type { Worker, WorkerAttendance, WorkOrder, WorkOrderItem, WorkLog } from './types';
 import { itemMaterialTotal } from './materialCost';
 import { computeMissingAttendanceDays } from './attendanceHistory';
+import { bookedOrderId, isDeselectedAttendanceLog, postedOrdersByWorker } from './attendanceBooking';
 import { aggregateLaborFromLogs, laborCostOf, laborDaysOf, type ItemLabor } from './laborAggregate';
 import { orgConstraint } from './orgScope';
 
@@ -725,6 +728,90 @@ export interface DailyBookingEntryView {
     dailyRate: number;
     presence: number;           // Prisutnost radnika za taj dan (1 ili 0.5), rekonstruisana iz zapisa
     items: DailyBookingItemView[];
+}
+
+export interface AttendanceOrderContext {
+    postedTodayByWorker: Map<string, string[]>;
+    previousByWorker: Map<string, string[]>;
+    previousDateByWorker: Map<string, string>;
+    postedPresenceByWorker: Map<string, 0.5 | 1>;
+}
+
+/** Stvarno knjiženi nalozi za otvoreni dan i posljednji raniji knjiženi dan SVAKOG radnika. */
+export async function getAttendanceOrderContext(
+    date: string, organizationId: string, workerIds: string[]
+): Promise<AttendanceOrderContext> {
+    const empty: AttendanceOrderContext = {
+        postedTodayByWorker: new Map(), previousByWorker: new Map(),
+        previousDateByWorker: new Map(), postedPresenceByWorker: new Map(),
+    };
+    if (!date || !organizationId || workerIds.length === 0) return empty;
+    const firestore = getDb();
+    const workerSet = new Set(workerIds);
+    const daySnap = await getDocs(query(
+        collection(firestore, 'work_logs'),
+        where('Organization_ID', '==', organizationId), where('Date', '==', date)
+    ));
+    const dayLogs = daySnap.docs.map(d => d.data() as WorkLog).filter(l => workerSet.has(l.Worker_ID));
+    empty.postedTodayByWorker = postedOrdersByWorker(dayLogs);
+    for (const log of dayLogs) {
+        if (!empty.postedPresenceByWorker.has(log.Worker_ID) && (log.Presence === 0.5 || log.Presence === 1)) {
+            empty.postedPresenceByWorker.set(log.Worker_ID, log.Presence);
+        }
+    }
+
+    await Promise.all(Array.from(workerSet).map(async workerId => {
+        // Postojeći ASC indeks radi i za limitToLast; ne dovlačimo cijelu istoriju radnika.
+        const last = await getDocs(query(
+            collection(firestore, 'work_logs'),
+            where('Worker_ID', '==', workerId),
+            where('Organization_ID', '==', organizationId),
+            where('Date', '<', date), orderBy('Date', 'asc'), limitToLast(1)
+        ));
+        if (last.empty) return;
+        const previousDate = (last.docs[0].data() as WorkLog).Date;
+        const previous = await getDocs(query(
+            collection(firestore, 'work_logs'),
+            where('Worker_ID', '==', workerId),
+            where('Organization_ID', '==', organizationId),
+            where('Date', '==', previousDate)
+        ));
+        const ids = postedOrdersByWorker(previous.docs.map(d => d.data() as WorkLog)).get(workerId);
+        if (ids?.length) {
+            empty.previousByWorker.set(workerId, ids);
+            empty.previousDateByWorker.set(workerId, previousDate);
+        }
+    }));
+    return empty;
+}
+
+/** Primijeni skidanje naloga u upitu šihtarice samo na njene vlastite logove. */
+export async function reconcileAttendanceOrderSelection(
+    workerId: string, date: string, organizationId: string,
+    selectedOrderIds: ReadonlySet<string>, presence: 0.5 | 1
+): Promise<{ deleted: number; affectedWorkOrderIds: string[] }> {
+    const firestore = getDb();
+    const snap = await getDocs(query(
+        collection(firestore, 'work_logs'),
+        where('Worker_ID', '==', workerId),
+        where('Organization_ID', '==', organizationId),
+        where('Date', '==', date)
+    ));
+    const toDelete = snap.docs.filter(d => isDeselectedAttendanceLog(d.data(), selectedOrderIds));
+    const affected = new Set<string>();
+    for (let i = 0; i < toDelete.length; i += 400) {
+        const batch = writeBatch(firestore);
+        toDelete.slice(i, i + 400).forEach(d => {
+            const id = d.data().Work_Order_ID;
+            if (id) affected.add(id);
+            batch.delete(d.ref);
+        });
+        await batch.commit();
+    }
+    if (toDelete.length > 0 || snap.docs.some(d => d.data().Booking_Source === 'attendance' || d.data().Is_From_Attendance === true)) {
+        (await renormalizeWorkerDay(workerId, date, organizationId, presence)).forEach(id => affected.add(id));
+    }
+    return { deleted: toDelete.length, affectedWorkOrderIds: Array.from(affected) };
 }
 
 /**
@@ -1512,7 +1599,7 @@ export async function getDailyWorkBooking(date: string, organizationId: string):
 
         const logs = snap.docs.map(d => d.data() as WorkLog);
         const itemMap = await fetchWorkOrderItemsByIds(
-            Array.from(new Set(logs.map(l => l.Work_Order_Item_ID).filter(Boolean))),
+            Array.from(new Set(logs.map(l => l.Source_Work_Order_Item_ID || l.Work_Order_Item_ID).filter(Boolean))),
             organizationId
         );
         const workers = await getWorkers(organizationId);
@@ -1533,10 +1620,11 @@ export async function getDailyWorkBooking(date: string, organizationId: string):
                 byWorker.set(log.Worker_ID, entry);
             }
             if (log.Presence === 0.5 || log.Presence === 1) explicitPresence.set(log.Worker_ID, log.Presence);
-            const woi = itemMap.get(log.Work_Order_Item_ID);
+            const displayedItemId = log.Source_Work_Order_Item_ID || log.Work_Order_Item_ID;
+            const woi = itemMap.get(displayedItemId);
             entry.items.push({
-                workOrderItemId: log.Work_Order_Item_ID,
-                workOrderId: log.Work_Order_ID,
+                workOrderItemId: displayedItemId,
+                workOrderId: bookedOrderId(log),
                 productName: woi?.Product_Name ?? '',
                 projectName: woi?.Project_Name ?? '',
                 dayFraction: log.Day_Fraction ?? 1,

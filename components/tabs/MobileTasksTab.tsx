@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useMemo, useEffect, useCallback, useRef } from 'react';
-import type { Task, TaskProfile, Project, Worker, Product, Material, WorkOrder, Order, TaskLink, TaskPriority, TaskCategory, ChecklistItem } from '@/lib/types';
+import type { Task, TaskProfile, Project, Worker, Product, Material, WorkOrder, Order, TaskLink, TaskPriority, TaskCategory, ChecklistItem, TaskChecklistGroup } from '@/lib/types';
 import {
     TASK_PRIORITY_LABELS,
     TASK_STATUS_LABELS,
@@ -49,6 +49,8 @@ import {
 } from 'lucide-react';
 import { useData } from '@/context/DataContext';
 import VoiceInput, { ExtractedTaskData } from '@/components/VoiceInput';
+import TaskChecklistEditor from '@/components/ui/TaskChecklistEditor';
+import { getTaskChecklistSections } from '@/lib/taskChecklist';
 
 // ============================================
 // TYPES
@@ -649,18 +651,23 @@ export default function MobileTasksTab({
                                     <span>Checklist ({task.Checklist.filter(c => c.completed).length}/{task.Checklist.length})</span>
                                 </div>
                                 <div className="mobile-checklist">
-                                    {[...task.Checklist].sort((a, b) => (a.completed === b.completed ? 0 : a.completed ? 1 : -1)).map(item => (
-                                        <button
-                                            key={item.id}
-                                            className={`mobile-checklist-item ${item.completed ? 'completed' : ''}`}
-                                            onClick={() => handleToggleChecklist(task.Task_ID, item.id)}
-                                        >
-                                            {item.completed
-                                                ? <CheckCircle2 size={18} className="check-complete" />
-                                                : <Circle size={18} className="check-pending" />
-                                            }
-                                            <span>{item.text}</span>
-                                        </button>
+                                    {getTaskChecklistSections(task).map(section => (
+                                        <div key={section.id || 'ungrouped'} className="mobile-checklist-section">
+                                            {section.name && <div className="mobile-checklist-group-name">{section.name}</div>}
+                                            {section.items.map(item => (
+                                                <button
+                                                    key={item.id}
+                                                    className={`mobile-checklist-item ${item.completed ? 'completed' : ''}`}
+                                                    onClick={() => handleToggleChecklist(task.Task_ID, item.id)}
+                                                >
+                                                    {item.completed
+                                                        ? <CheckCircle2 size={18} className="check-complete" />
+                                                        : <Circle size={18} className="check-pending" />
+                                                    }
+                                                    <span>{item.text}</span>
+                                                </button>
+                                            ))}
+                                        </div>
                                     ))}
                                 </div>
                             </div>
@@ -1019,13 +1026,11 @@ function MobileTaskModal({
     const [notes, setNotes] = useState(task?.Notes || '');
     const [links, setLinks] = useState<TaskLink[]>(task?.Links || []);
     const [checklist, setChecklist] = useState<ChecklistItem[]>(task?.Checklist || []);
+    const [checklistGroups, setChecklistGroups] = useState<TaskChecklistGroup[]>(task?.ChecklistGroups || []);
 
     // Link state
     const [linkType, setLinkType] = useState<TaskLink['Entity_Type']>('project');
     const [linkSearch, setLinkSearch] = useState('');
-
-    // Checklist state
-    const [newChecklistItem, setNewChecklistItem] = useState('');
 
     // Voice input
     const [voiceTranscript, setVoiceTranscript] = useState('');
@@ -1109,20 +1114,6 @@ function MobileTaskModal({
         setLinks(links.filter((_, i) => i !== index));
     };
 
-    const addChecklistItem = () => {
-        if (!newChecklistItem.trim()) return;
-        setChecklist([...checklist, { id: generateUUID(), text: newChecklistItem.trim(), completed: false }]);
-        setNewChecklistItem('');
-    };
-
-    const removeChecklistItem = (id: string) => {
-        setChecklist(checklist.filter(c => c.id !== id));
-    };
-
-    const toggleChecklistItemInModal = (id: string) => {
-        setChecklist(checklist.map(c => c.id === id ? { ...c, completed: !c.completed } : c));
-    };
-
     const handleSubmit = () => {
         if (!title.trim()) return;
 
@@ -1136,6 +1127,7 @@ function MobileTaskModal({
             Notes: notes.trim() || undefined,
             Links: links,
             Checklist: checklist,
+            ChecklistGroups: checklistGroups,
             Status: task?.Status || 'pending'
         });
     };
@@ -1260,37 +1252,14 @@ function MobileTaskModal({
 
                         {activeTab === 'checklist' && (
                             <div className="mobile-checklist-tab">
-                                {/* Add item */}
-                                <div className="mobile-add-checklist">
-                                    <input
-                                        type="text"
-                                        placeholder="Dodaj stavku..."
-                                        value={newChecklistItem}
-                                        onChange={e => setNewChecklistItem(e.target.value)}
-                                        onKeyDown={e => e.key === 'Enter' && addChecklistItem()}
-                                    />
-                                    <button onClick={addChecklistItem} disabled={!newChecklistItem.trim()}>
-                                        <Plus size={20} />
-                                    </button>
-                                </div>
-
-                                {/* Items */}
-                                <div className="mobile-checklist-items">
-                                    {checklist.map(item => (
-                                        <div key={item.id} className={`mobile-checklist-item ${item.completed ? 'completed' : ''}`}>
-                                            <button onClick={() => toggleChecklistItemInModal(item.id)}>
-                                                {item.completed
-                                                    ? <CheckCircle2 size={20} className="check-complete" />
-                                                    : <Circle size={20} className="check-pending" />
-                                                }
-                                            </button>
-                                            <span>{item.text}</span>
-                                            <button className="delete" onClick={() => removeChecklistItem(item.id)}>
-                                                <Trash2 size={16} />
-                                            </button>
-                                        </div>
-                                    ))}
-                                </div>
+                                <TaskChecklistEditor
+                                    items={checklist}
+                                    groups={checklistGroups}
+                                    onChange={(nextItems, nextGroups) => {
+                                        setChecklist(nextItems);
+                                        setChecklistGroups(nextGroups);
+                                    }}
+                                />
                             </div>
                         )}
                     </div>

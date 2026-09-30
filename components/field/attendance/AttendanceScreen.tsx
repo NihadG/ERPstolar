@@ -388,6 +388,9 @@ export default function AttendanceScreen({ showToast, readOnly, onOpenPayroll }:
                 busy={busy}
                 onClose={() => setSheetWorker(null)}
                 onPick={handlePick}
+                onReviewOrders={sheetWorker && booked.has(bookedKey(sheetWorker.id, selected))
+                    ? () => { const id = sheetWorker.id; setSheetWorker(null); void openBookingFor([id]); }
+                    : undefined}
             />
         </>
     );

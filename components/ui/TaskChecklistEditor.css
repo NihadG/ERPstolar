@@ -1,0 +1,60 @@
+.tce { display: flex; flex-direction: column; gap: 12px; }
+.tce button, .tce input, .tce select { font: inherit; }
+.tce-add, .tce-new-group { display: flex; align-items: center; gap: 8px; }
+.tce-add input, .tce-new-group input, .tce-group-head input, .tce-item-edit {
+    min-width: 0; flex: 1; padding: 9px 11px; border: 1px solid var(--border);
+    border-radius: 8px; background: var(--background); color: var(--text-primary);
+}
+.tce-add input:focus, .tce-new-group input:focus, .tce-group-head input:focus, .tce-item-edit:focus,
+.tce-add select:focus, .tce-group-select:focus { outline: 2px solid var(--accent-light); border-color: var(--accent); }
+.tce-add select, .tce-group-select {
+    min-width: 110px; max-width: 180px; padding: 8px 9px; border: 1px solid var(--border);
+    border-radius: 8px; background: var(--background); color: var(--text-secondary); font-size: 12px;
+}
+.tce-add > button, .tce-new-group > button {
+    display: inline-flex; align-items: center; justify-content: center; min-height: 36px;
+    padding: 7px 10px; border: 1px solid var(--border); border-radius: 8px;
+    background: var(--surface); color: var(--accent); cursor: pointer;
+}
+.tce-add > button:disabled, .tce-new-group > button:disabled { opacity: .45; cursor: default; }
+.tce-empty, .tce-group-empty { margin: 0; padding: 10px 12px; color: var(--text-tertiary); font-size: 12px; }
+.tce-sections { display: flex; flex-direction: column; gap: 10px; }
+.tce-section { border: 1px solid var(--border-light); border-radius: 10px; overflow: hidden; background: var(--surface); }
+.tce-section.is-dragging { border-style: dashed; }
+.tce-group-head, .tce-ungrouped-head {
+    display: flex; align-items: center; gap: 8px; min-height: 38px; padding: 6px 10px;
+    background: var(--background); border-bottom: 1px solid var(--border-light);
+    color: var(--text-primary); font-size: 12px;
+}
+.tce-group-head strong { flex: 0 1 auto; min-width: 0; overflow-wrap: anywhere; }
+.tce-ungrouped-head { color: var(--text-secondary); font-weight: 650; }
+.tce-group-count { color: var(--text-tertiary); font-variant-numeric: tabular-nums; }
+.tce-group-actions, .tce-row-actions { display: flex; align-items: center; gap: 2px; margin-left: auto; }
+.tce-group-actions button, .tce-row-actions button {
+    display: grid; place-items: center; flex: 0 0 auto; width: 26px; height: 26px;
+    border: 0; border-radius: 6px; background: transparent; color: var(--text-tertiary); cursor: pointer;
+}
+.tce-group-actions button:hover:not(:disabled), .tce-row-actions button:hover:not(:disabled) { background: var(--surface); color: var(--accent); }
+.tce-group-actions button:disabled, .tce-row-actions button:disabled { opacity: .3; cursor: default; }
+.tce-row { display: flex; align-items: center; gap: 7px; min-height: 41px; padding: 5px 8px; border-top: 1px solid var(--border-light); }
+.tce-row:first-of-type { border-top: none; }
+.tce-row.dragging { opacity: .4; }
+.tce-row:hover { background: var(--background); }
+.tce-grip { flex: 0 0 auto; color: var(--text-tertiary); cursor: grab; }
+.tce-check { display: grid; place-items: center; flex: 0 0 auto; padding: 2px; border: 0; background: transparent; color: var(--text-tertiary); cursor: pointer; }
+.tce-row.done .tce-check { color: var(--success); }
+.tce-item-text { flex: 1; min-width: 0; overflow-wrap: anywhere; color: var(--text-primary); font-size: 13px; }
+.tce-row.done .tce-item-text { color: var(--text-tertiary); text-decoration: line-through; }
+.tce-item-edit { padding: 5px 7px; }
+.tce-add-group { display: inline-flex; align-items: center; align-self: flex-start; gap: 6px; border: 0; background: transparent; color: var(--accent); font-size: 12px; font-weight: 650; cursor: pointer; padding: 5px 0; }
+.tce-add-group:hover { text-decoration: underline; }
+.tce-hint { margin: 0; color: var(--text-tertiary); font-size: 11px; line-height: 1.4; }
+@media (max-width: 600px) {
+    .tce-add { flex-wrap: wrap; }
+    .tce-add input { flex-basis: calc(100% - 46px); }
+    .tce-add select { order: 3; max-width: none; flex: 1; }
+    .tce-row { flex-wrap: wrap; }
+    .tce-item-text { flex-basis: calc(100% - 64px); }
+    .tce-group-select { margin-left: 23px; flex: 1; max-width: none; }
+    .tce-row-actions { margin-left: auto; }
+}

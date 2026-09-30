@@ -13,12 +13,13 @@
 // dobiju vlastitu crvenu traku na vrhu — to je jedino što traži da se pogleda.
 // ════════════════════════════════════════════════════════════════════
 
-import { useMemo, useState } from 'react';
+import { Fragment, useMemo, useState } from 'react';
 import {
     AlertTriangle, Calendar, ChevronDown, FolderOpen, HardHat,
     ListChecks, Package, Plus, ShoppingCart, User,
 } from 'lucide-react';
 import type { FieldTaskLink, FieldTaskRow } from '@/lib/field/fieldTasks';
+import { getTaskChecklistSections } from '@/lib/taskChecklist';
 import { useFieldTasks, type CreateFieldTaskInput } from '@/lib/field/useFieldTasks';
 import {
     MLarge, MSearch, MChips, MEmpty, MButton, MSheet, MPill, MCheck, MSegmented,
@@ -461,19 +462,24 @@ function TaskDetailSheet({
                                 <span>{task.checklistDone}/{task.checklistTotal}</span>
                             </div>
                             <MList>
-                                {task.checklist.map(c => (
-                                    <MItem key={c.id}>
-                                        <MCell done={c.completed}>
-                                            <MCheck
-                                                on={c.completed}
-                                                small
-                                                disabled={readOnly || busy}
-                                                label={c.text}
-                                                onClick={() => onToggleChecklist(c.id)}
-                                            />
-                                            <MText title={c.text} />
-                                        </MCell>
-                                    </MItem>
+                                {getTaskChecklistSections({ Checklist: task.checklist, ChecklistGroups: task.checklistGroups }).map(section => (
+                                    <Fragment key={section.id || 'ungrouped'}>
+                                        {section.name && <div className="ftk-cl-group">{section.name}</div>}
+                                        {section.items.map(c => (
+                                            <MItem key={c.id}>
+                                                <MCell done={c.completed}>
+                                                    <MCheck
+                                                        on={c.completed}
+                                                        small
+                                                        disabled={readOnly || busy}
+                                                        label={c.text}
+                                                        onClick={() => onToggleChecklist(c.id)}
+                                                    />
+                                                    <MText title={c.text} />
+                                                </MCell>
+                                            </MItem>
+                                        ))}
+                                    </Fragment>
                                 ))}
                             </MList>
                         </>

@@ -1,7 +1,7 @@
 'use client';
 
-import { useState, useMemo, useRef, useEffect } from 'react';
-import type { Task, TaskProfile, Project, Worker, Product, Material, WorkOrder, Order, TaskLink, TaskPriority, TaskCategory, ChecklistItem } from '@/lib/types';
+import { Fragment, useState, useMemo, useRef, useEffect } from 'react';
+import type { Task, TaskProfile, Project, Worker, Product, Material, WorkOrder, Order, TaskLink, TaskPriority, TaskCategory, ChecklistItem, TaskChecklistGroup } from '@/lib/types';
 import {
     TASK_PRIORITY_LABELS,
     TASK_STATUS_LABELS,
@@ -56,6 +56,8 @@ import { useData } from '@/context/DataContext';
 import { useGoogleIntegration } from '@/lib/google/useGoogleIntegration';
 import { upsertTaskEvent, deleteTaskEvent } from '@/lib/google/calendarClient';
 import VoiceInput, { ExtractedTaskData } from '@/components/VoiceInput';
+import TaskChecklistEditor from '@/components/ui/TaskChecklistEditor';
+import { getTaskChecklistSections } from '@/lib/taskChecklist';
 
 // ============================================
 // TYPES
@@ -867,18 +869,23 @@ export default function TasksTab({ tasks, projects, workers, materials, workOrde
                                     <span>Kontrolna lista ({task.Checklist.filter(c => c.completed).length}/{task.Checklist.length})</span>
                                 </div>
                                 <div className="checklist-items">
-                                    {[...task.Checklist].sort((a, b) => (a.completed === b.completed ? 0 : a.completed ? 1 : -1)).map((item) => (
-                                        <button
-                                            key={item.id}
-                                            className={`checklist-item ${item.completed ? 'completed' : ''}`}
-                                            onClick={() => handleToggleChecklist(task.Task_ID, item.id)}
-                                        >
-                                            {item.completed
-                                                ? <CheckCircle2 size={16} className="check-complete" />
-                                                : <Circle size={16} className="check-pending" />
-                                            }
-                                            <span>{item.text}</span>
-                                        </button>
+                                    {getTaskChecklistSections(task).map(section => (
+                                        <Fragment key={section.id || 'ungrouped'}>
+                                            {section.name && <div className="task-checklist-group-title">{section.name}</div>}
+                                            {section.items.map(item => (
+                                                <button
+                                                    key={item.id}
+                                                    className={`checklist-item ${item.completed ? 'completed' : ''}`}
+                                                    onClick={() => handleToggleChecklist(task.Task_ID, item.id)}
+                                                >
+                                                    {item.completed
+                                                        ? <CheckCircle2 size={16} className="check-complete" />
+                                                        : <Circle size={16} className="check-pending" />
+                                                    }
+                                                    <span>{item.text}</span>
+                                                </button>
+                                            ))}
+                                        </Fragment>
                                     ))}
                                 </div>
                             </div>
@@ -1116,18 +1123,23 @@ export default function TasksTab({ tasks, projects, workers, materials, workOrde
                                     <span className="grid-exp-count">{completedCount}/{totalCount}</span>
                                 </div>
                                 <div className="grid-exp-checklist">
-                                    {task.Checklist.map(item => (
-                                        <button
-                                            key={item.id}
-                                            className={`grid-check-item ${item.completed ? 'done' : ''}`}
-                                            onClick={() => handleToggleChecklist(task.Task_ID, item.id)}
-                                        >
-                                            {item.completed
-                                                ? <CheckCircle2 size={16} className="check-complete" />
-                                                : <Circle size={16} className="check-pending" />
-                                            }
-                                            <span>{item.text}</span>
-                                        </button>
+                                    {getTaskChecklistSections(task).map(section => (
+                                        <Fragment key={section.id || 'ungrouped'}>
+                                            {section.name && <div className="task-checklist-group-title">{section.name}</div>}
+                                            {section.items.map(item => (
+                                                <button
+                                                    key={item.id}
+                                                    className={`grid-check-item ${item.completed ? 'done' : ''}`}
+                                                    onClick={() => handleToggleChecklist(task.Task_ID, item.id)}
+                                                >
+                                                    {item.completed
+                                                        ? <CheckCircle2 size={16} className="check-complete" />
+                                                        : <Circle size={16} className="check-pending" />
+                                                    }
+                                                    <span>{item.text}</span>
+                                                </button>
+                                            ))}
+                                        </Fragment>
                                     ))}
                                 </div>
                             </div>
@@ -1751,11 +1763,14 @@ export default function TasksTab({ tasks, projects, workers, materials, workOrde
                                         />
                                     </div>
                                     <div className="checklist-items-preview">
-                                        {previewTask.Checklist.map(item => (
-                                            <button
-                                                key={item.id}
-                                                className={`checklist-item-btn ${item.completed ? 'done' : ''}`}
-                                                onClick={async () => {
+                                        {getTaskChecklistSections(previewTask).map(section => (
+                                            <Fragment key={section.id || 'ungrouped'}>
+                                                {section.name && <div className="task-checklist-group-title">{section.name}</div>}
+                                                {section.items.map(item => (
+                                                    <button
+                                                        key={item.id}
+                                                        className={`checklist-item-btn ${item.completed ? 'done' : ''}`}
+                                                        onClick={async () => {
                                                     // Toggle checklist item
                                                     await handleToggleChecklist(previewTask.Task_ID, item.id);
                                                     // Update local preview state
@@ -1771,13 +1786,15 @@ export default function TasksTab({ tasks, projects, workers, materials, workOrde
                                                         setPreviewTask({ ...updatedTask, Status: 'completed' });
                                                         showToast('Zadatak automatski označen kao završen', 'success');
                                                     }
-                                                }}
-                                            >
-                                                <span className="check-icon">
-                                                    {item.completed ? <CheckCircle2 size={18} /> : <Circle size={18} />}
-                                                </span>
-                                                <span className="check-text">{item.text}</span>
-                                            </button>
+                                                        }}
+                                                    >
+                                                        <span className="check-icon">
+                                                            {item.completed ? <CheckCircle2 size={18} /> : <Circle size={18} />}
+                                                        </span>
+                                                        <span className="check-text">{item.text}</span>
+                                                    </button>
+                                                ))}
+                                            </Fragment>
                                         ))}
                                     </div>
                                 </div>
@@ -1919,6 +1936,7 @@ function TaskModal({ task, projects, products, workers, materials, workOrders, o
     const [assignedWorker, setAssignedWorker] = useState(task?.Assigned_Worker_ID || '');
     const [links, setLinks] = useState<TaskLink[]>(task?.Links || []);
     const [checklist, setChecklist] = useState<ChecklistItem[]>(task?.Checklist || []);
+    const [checklistGroups, setChecklistGroups] = useState<TaskChecklistGroup[]>(task?.ChecklistGroups || []);
     const [notes, setNotes] = useState(task?.Notes || '');
     const [voiceTranscript, setVoiceTranscript] = useState('');
 
@@ -1972,34 +1990,6 @@ function TaskModal({ task, projects, products, workers, materials, workOrders, o
     const [linkType, setLinkType] = useState<TaskLink['Entity_Type']>('project');
     const [linkSearch, setLinkSearch] = useState('');
 
-    // New checklist item
-    const [newChecklistItem, setNewChecklistItem] = useState('');
-
-    // Inline editing of existing checklist items
-    const [editingChecklistId, setEditingChecklistId] = useState<string | null>(null);
-    const [editingChecklistText, setEditingChecklistText] = useState('');
-
-    const startEditChecklistItem = (id: string, text: string) => {
-        setEditingChecklistId(id);
-        setEditingChecklistText(text);
-    };
-
-    const saveEditChecklistItem = () => {
-        if (!editingChecklistId) return;
-        if (editingChecklistText.trim()) {
-            setChecklist(checklist.map(c =>
-                c.id === editingChecklistId ? { ...c, text: editingChecklistText.trim() } : c
-            ));
-        }
-        setEditingChecklistId(null);
-        setEditingChecklistText('');
-    };
-
-    const cancelEditChecklistItem = () => {
-        setEditingChecklistId(null);
-        setEditingChecklistText('');
-    };
-
     // Available entities based on selected type
     const getAvailableEntities = () => {
         switch (linkType) {
@@ -2027,26 +2017,6 @@ function TaskModal({ task, projects, products, workers, materials, workOrders, o
         setLinks(links.filter((_, i) => i !== index));
     };
 
-    const addChecklistItem = () => {
-        if (!newChecklistItem.trim()) return;
-        setChecklist([...checklist, {
-            id: generateUUID(),
-            text: newChecklistItem.trim(),
-            completed: false
-        }]);
-        setNewChecklistItem('');
-    };
-
-    const removeChecklistItem = (id: string) => {
-        setChecklist(checklist.filter(c => c.id !== id));
-    };
-
-    const toggleChecklistItemInModal = (id: string) => {
-        setChecklist(checklist.map(c =>
-            c.id === id ? { ...c, completed: !c.completed } : c
-        ));
-    };
-
     const handleSubmit = () => {
         if (!title.trim()) {
             alert('Unesite naslov zadatka');
@@ -2067,6 +2037,7 @@ function TaskModal({ task, projects, products, workers, materials, workOrders, o
             Assigned_Worker_Name: worker?.Name,
             Links: links,
             Checklist: checklist.map(item => ({ ...item })), // Ensure clean copy
+            ChecklistGroups: checklistGroups.map(group => ({ ...group })),
             Notes: notes.trim() || undefined,
             Created_Date: task?.Created_Date
         });
@@ -2273,87 +2244,14 @@ function TaskModal({ task, projects, products, workers, materials, workOrders, o
                         {/* CHECKLIST TAB */}
                         {activeTab === 'checklist' && (
                             <div className="modal-checklist-tab">
-                                <div className="add-checklist-box">
-                                    <input
-                                        type="text"
-                                        value={newChecklistItem}
-                                        onChange={e => setNewChecklistItem(e.target.value)}
-                                        placeholder="Dodaj novu stavku..."
-                                        onKeyDown={e => e.key === 'Enter' && addChecklistItem()}
-                                    />
-                                    <button onClick={addChecklistItem} disabled={!newChecklistItem.trim()}>
-                                        <Plus size={18} />
-                                    </button>
-                                </div>
-
-                                <div className="checklist-full-list">
-                                    {checklist.length === 0 ? (
-                                        <div className="empty-checklist">Nema stavki u checklisti</div>
-                                    ) : (
-                                        [...checklist].sort((a, b) => (a.completed === b.completed ? 0 : a.completed ? 1 : -1)).map(item => (
-                                            <div key={item.id} className={`checklist-list-item ${item.completed ? 'completed' : ''} ${editingChecklistId === item.id ? 'editing' : ''}`}>
-                                                <button
-                                                    className="modal-item-toggle"
-                                                    onClick={() => editingChecklistId !== item.id && toggleChecklistItemInModal(item.id)}
-                                                    style={{ background: 'none', border: 'none', cursor: 'pointer', display: 'flex', color: item.completed ? '#34C759' : '#ccc', flexShrink: 0 }}
-                                                >
-                                                    {item.completed ? <CheckCircle2 size={18} /> : <Circle size={18} />}
-                                                </button>
-
-                                                {editingChecklistId === item.id ? (
-                                                    <input
-                                                        autoFocus
-                                                        className="checklist-inline-edit"
-                                                        value={editingChecklistText}
-                                                        onChange={e => setEditingChecklistText(e.target.value)}
-                                                        onKeyDown={e => {
-                                                            if (e.key === 'Enter') saveEditChecklistItem();
-                                                            if (e.key === 'Escape') cancelEditChecklistItem();
-                                                        }}
-                                                        onBlur={saveEditChecklistItem}
-                                                    />
-                                                ) : (
-                                                    <span
-                                                        className="checklist-item-text"
-                                                        style={{ textDecoration: item.completed ? 'line-through' : 'none', color: item.completed ? '#888' : 'inherit' }}
-                                                        onDoubleClick={() => !item.completed && startEditChecklistItem(item.id, item.text)}
-                                                        title={item.completed ? '' : 'Dvostruki klik za editovanje'}
-                                                    >
-                                                        {item.text}
-                                                    </span>
-                                                )}
-
-                                                <div className="checklist-item-actions">
-                                                    {editingChecklistId === item.id ? (
-                                                        <button
-                                                            className="checklist-action-btn confirm"
-                                                            onMouseDown={e => { e.preventDefault(); saveEditChecklistItem(); }}
-                                                            title="Potvrdi"
-                                                        >
-                                                            <Check size={14} />
-                                                        </button>
-                                                    ) : (
-                                                        <button
-                                                            className="checklist-action-btn edit"
-                                                            onClick={() => !item.completed && startEditChecklistItem(item.id, item.text)}
-                                                            disabled={item.completed}
-                                                            title="Edituj stavku"
-                                                        >
-                                                            <Edit3 size={14} />
-                                                        </button>
-                                                    )}
-                                                    <button
-                                                        onClick={() => removeChecklistItem(item.id)}
-                                                        className="checklist-action-btn delete-item"
-                                                        title="Obriši"
-                                                    >
-                                                        <Trash2 size={14} />
-                                                    </button>
-                                                </div>
-                                            </div>
-                                        ))
-                                    )}
-                                </div>
+                                <TaskChecklistEditor
+                                    items={checklist}
+                                    groups={checklistGroups}
+                                    onChange={(nextItems, nextGroups) => {
+                                        setChecklist(nextItems);
+                                        setChecklistGroups(nextGroups);
+                                    }}
+                                />
                             </div>
                         )}
                     </div>
@@ -2470,11 +2368,16 @@ function TaskPrintView({ task }: TaskPrintViewProps) {
                         }} />
                     </div>
                     <ul className="tpv-checklist">
-                        {task.Checklist.map((item) => (
-                            <li key={item.id} className={`tpv-check-item ${item.completed ? 'done' : ''}`}>
-                                <span className="tpv-check-box">{item.completed ? '✓' : ''}</span>
-                                <span className="tpv-check-text">{item.text}</span>
-                            </li>
+                        {getTaskChecklistSections(task).map(section => (
+                            <Fragment key={section.id || 'ungrouped'}>
+                                {section.name && <li className="tpv-check-group">{section.name}</li>}
+                                {section.items.map(item => (
+                                    <li key={item.id} className={`tpv-check-item ${item.completed ? 'done' : ''}`}>
+                                        <span className="tpv-check-box">{item.completed ? '✓' : ''}</span>
+                                        <span className="tpv-check-text">{item.text}</span>
+                                    </li>
+                                ))}
+                            </Fragment>
                         ))}
                     </ul>
                 </div>

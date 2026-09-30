@@ -27,13 +27,14 @@ import {
     attachItems, getBookableWorkOrders, getItemDocsForWorkOrder, getItemsByIds,
     getItemsForWorkOrders, getProcessGraphs, getWorkLogRefsForWorkerDate,
     getWorkLogsForWorkOrder, getWorkers, getWorkOrderRef,
+    getWorkLogsInRange, getLastPostedWorkLogsBefore, getWorkOrderById,
 } from './fieldRepo';
 import { aggregateLaborFromLogs, laborCostOf, laborDaysOf } from '@/lib/laborAggregate';
 import { effectiveDailyRate, splitDnevnicaByOrder } from '@/lib/laborSplit';
 import { resolveLaborCostTarget } from '@/lib/laborTarget';
 import { resolveAutoProcessNode } from '@/lib/productProcesses';
 import { isWorkerAssignedToAutoItem } from '@/lib/autoBook';
-import { buildBookingProposal, type ProposalRow, type SavedAttendanceWorker } from '@/lib/attendanceBooking';
+import { buildBookingProposal, isDeselectedAttendanceLog, postedOrdersByWorker, type ProposalRow, type SavedAttendanceWorker } from '@/lib/attendanceBooking';
 import type { WorkOrder, WorkOrderItem } from '@/lib/types';
 
 const ABSENT_STATUSES = new Set(['Odsutan', 'Bolovanje', 'Odmor', 'Vikend', 'Praznik']);
@@ -157,14 +158,63 @@ export async function buildProposalForDate(
 ): Promise<ProposalRow[]> {
     if (saved.length === 0) return [];
 
-    const orders = await getBookableWorkOrders(orgId);
+    const [orders, dayLogs, previous] = await Promise.all([
+        getBookableWorkOrders(orgId),
+        getWorkLogsInRange(orgId, date, date),
+        Promise.all(saved.map(w => getLastPostedWorkLogsBefore(orgId, w.workerId, date))),
+    ]);
+    const workerIds = new Set(saved.map(w => w.workerId));
+    const postedToday = postedOrdersByWorker(dayLogs.filter(l => workerIds.has(l.Worker_ID)));
+    const previousByWorker = new Map<string, string[]>();
+    previous.forEach((entry, i) => {
+        const ids = entry && postedOrdersByWorker(entry.logs).get(saved[i].workerId);
+        if (ids?.length) previousByWorker.set(saved[i].workerId, ids);
+    });
+    const postedPresence = new Map<string, 0.5 | 1>();
+    dayLogs.forEach(l => {
+        if (!postedPresence.has(l.Worker_ID) && (l.Presence === 0.5 || l.Presence === 1)) {
+            postedPresence.set(l.Worker_ID, l.Presence);
+        }
+    });
+
+    // Uključi i posljednji ranije knjiženi nalog ako ga redovna ponuda ne sadrži.
+    // Otvoreni dan ostaje vidljiv čak i kad je nalog kasnije otkazan; otkazani
+    // nalog iz ranijeg dana se ne predlaže za novo knjiženje.
+    const known = new Set(orders.map(o => o.Work_Order_ID));
+    const todayIds = new Set(Array.from(postedToday.values()).flat());
+    const historicalIds = new Set([...todayIds, ...Array.from(previousByWorker.values()).flat()]);
+    const missing = Array.from(historicalIds).filter(id => !known.has(id));
+    const archived = await Promise.all(missing.map(id => getWorkOrderById(orgId, id)));
+    archived.forEach(o => { if (o && (o.Status !== 'Otkazano' || todayIds.has(o.Work_Order_ID))) orders.push(o); });
     const items = await getItemsForWorkOrders(orgId, orders.map(o => o.Work_Order_ID));
     attachItems(orders, items);
 
     // Kao na desktopu: `hasExistingLog` se namjerno ne prosljeđuje. Idempotentnost
     // se provodi kasnije, u samom knjiženju — tako prijedlog pokaže sve naloge
     // radnika, a ne samo one na kojima još nema zapisa.
-    return buildBookingProposal(saved, orders, date);
+    return buildBookingProposal(saved, orders, date, undefined, previousByWorker, postedToday, postedPresence);
+}
+
+/** Ukloni samo dnevnice ovog upita čiji nalog više nije izabran; ručni unos ostaje. */
+export async function reconcileAttendanceOrderSelection(
+    orgId: string, workerId: string, date: string,
+    selectedOrderIds: ReadonlySet<string>, presence: 0.5 | 1
+): Promise<{ deleted: number; affectedWorkOrderIds: string[] }> {
+    const logs = await getWorkLogRefsForWorkerDate(orgId, workerId, date);
+    const toDelete = logs.filter(l => isDeselectedAttendanceLog(l.data, selectedOrderIds));
+    const affected = new Set<string>();
+    for (let i = 0; i < toDelete.length; i += 400) {
+        const batch = adminDb().batch();
+        for (const log of toDelete.slice(i, i + 400)) {
+            batch.delete(log.ref);
+            if (log.data.Work_Order_ID) affected.add(log.data.Work_Order_ID);
+        }
+        await batch.commit();
+    }
+    if (toDelete.length > 0 || logs.some(l => l.data.Booking_Source === 'attendance' || l.data.Is_From_Attendance === true)) {
+        (await renormalizeWorkerDay(orgId, workerId, date, presence)).forEach(id => affected.add(id));
+    }
+    return { deleted: toDelete.length, affectedWorkOrderIds: Array.from(affected) };
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -475,6 +525,7 @@ export interface BookingDecisionInput {
 
 export interface CommitResult {
     booked: number;
+    deleted: number;
     failedWorkers: string[];
     startWarnings: string[];
     affectedOrders: string[];
@@ -551,9 +602,13 @@ export async function commitBooking(
 ): Promise<CommitResult> {
     const startWarnings: string[] = [];
     const failedWorkers: string[] = [];
+    const failedWorkerIds = new Set<string>();
     const affectedOrders = new Set<string>();
 
-    const orders = await getBookableWorkOrders(orgId);
+    const [orders, currentLogs] = await Promise.all([
+        getBookableWorkOrders(orgId), getWorkLogsInRange(orgId, date, date),
+    ]);
+    const alreadyPosted = postedOrdersByWorker(currentLogs);
     const items = await getItemsForWorkOrders(orgId, orders.map(o => o.Work_Order_ID));
     attachItems(orders, items);
     const orderById = new Map(orders.map(o => [o.Work_Order_ID, o]));
@@ -566,6 +621,8 @@ export async function commitBooking(
 
         const entry = perWorker.get(d.workerId) || { workerName: d.workerName, presence, targets: [] };
         for (const orderId of d.orderIds) {
+            // Ponovna potvrda starog dana ne dodaje naknadno dodijeljene stavke.
+            if (alreadyPosted.get(d.workerId)?.includes(orderId)) continue;
             const order = orderById.get(orderId);
             if (!order) continue;
             try {
@@ -574,6 +631,7 @@ export async function commitBooking(
             } catch (e) {
                 console.error(`[fieldAttendance] priprema za ${d.workerName} (${orderId}) nije uspjela`, e);
                 if (!failedWorkers.includes(d.workerName)) failedWorkers.push(d.workerName);
+                failedWorkerIds.add(d.workerId);
             }
         }
         if (entry.targets.length > 0) perWorker.set(d.workerId, entry);
@@ -588,18 +646,36 @@ export async function commitBooking(
         } catch (e) {
             console.error(`[fieldAttendance] knjiženje za ${w.workerName} nije uspjelo`, e);
             if (!failedWorkers.includes(w.workerName)) failedWorkers.push(w.workerName);
+            failedWorkerIds.add(workerId);
             return 0;
         }
     }));
     const booked = results.reduce((s, n) => s + n, 0);
     const prepared = Array.from(perWorker.values()).reduce((s, w) => s + w.targets.length, 0);
 
+    // Tek nakon uspješnog dodavanja ukloni skinute naloge. Tako greška pri novom
+    // knjiženju ne briše stari dan. Prazan izbor je valjana izmjena postojećeg dana.
+    const reconciled = await Promise.all(decisions.filter(d => !failedWorkerIds.has(d.workerId)).map(async d => {
+        try {
+            const result = await reconcileAttendanceOrderSelection(
+                orgId, d.workerId, date, new Set(d.orderIds), d.presence === 0.5 ? 0.5 : 1
+            );
+            result.affectedWorkOrderIds.forEach(id => affectedOrders.add(id));
+            return result.deleted;
+        } catch (e) {
+            console.error(`[fieldAttendance] uređivanje knjiženja za ${d.workerName} nije uspjelo`, e);
+            if (!failedWorkers.includes(d.workerName)) failedWorkers.push(d.workerName);
+            return 0;
+        }
+    }));
+    const deleted = reconciled.reduce((s, n) => s + n, 0);
+
     // 3) Preračunaj pogođene naloge — nezavisni dokumenti, pa paralelno.
     await Promise.all(Array.from(affectedOrders).map(id =>
         recalcOrderLabor(orgId, id).catch(e => console.warn('[fieldAttendance] recalc failed', id, e))
     ));
 
-    return { booked, prepared, failedWorkers, startWarnings, affectedOrders: Array.from(affectedOrders) };
+    return { booked, deleted, prepared, failedWorkers, startWarnings, affectedOrders: Array.from(affectedOrders) };
 }
 
 export { ABSENT_STATUSES, PRESENT_STATUSES };

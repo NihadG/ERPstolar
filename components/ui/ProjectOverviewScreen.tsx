@@ -20,6 +20,7 @@ import {
 } from 'lucide-react';
 import type { Project, WorkOrder, WorkLog, Offer, Worker, Material, Order, Task, TaskLink, TaskPriority } from '@/lib/types';
 import { TASK_PRIORITY_LABELS } from '@/lib/types';
+import { getTaskChecklistSections } from '@/lib/taskChecklist';
 import { buildProjectOverview, type ProjectOverview } from '@/lib/projectOverview';
 import { formatDate } from '@/lib/utils';
 import { orderItemPricing } from '@/lib/orderPricing';
@@ -1363,10 +1364,15 @@ function ZadaciTab({ tasks, canCreate, onAdd, onOpen, onToggle, onDelete, onTogg
                 </div>
                 {isOpen && cp.total > 0 && (
                     <div className="zt-checklist">
-                        {(t.Checklist || []).map(it => (
-                            <button key={it.id} className={`zt-cli ${it.completed ? 'on' : ''}`} onClick={() => onToggleChecklist(t.Task_ID, it.id)}>
-                                {it.completed ? <CheckSquare size={16} /> : <Square size={16} />}<span>{it.text}</span>
-                            </button>
+                        {getTaskChecklistSections(t).map(section => (
+                            <div key={section.id || 'ungrouped'} className="zt-checklist-section">
+                                {section.name && <div className="zt-checklist-group-name">{section.name}</div>}
+                                {section.items.map(it => (
+                                    <button key={it.id} className={`zt-cli ${it.completed ? 'on' : ''}`} onClick={() => onToggleChecklist(t.Task_ID, it.id)}>
+                                        {it.completed ? <CheckSquare size={16} /> : <Square size={16} />}<span>{it.text}</span>
+                                    </button>
+                                ))}
+                            </div>
                         ))}
                     </div>
                 )}

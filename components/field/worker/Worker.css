@@ -580,6 +580,8 @@
 }
 
 .fwk-note-checklist { display: flex; flex-direction: column; gap: 2px; }
+.fwk-note-checklist-section { display: flex; flex-direction: column; }
+.fwk-note-checklist-group-name { padding: 8px 2px 3px; font-size: 12px; font-weight: 700; color: var(--text-secondary); }
 
 .fwk-note-citem {
     display: flex;

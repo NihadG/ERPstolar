@@ -2,7 +2,7 @@
 
 import { useState, useMemo, useEffect } from 'react';
 import type { Order, OrderItem, Supplier, Project, ProductMaterial, Material } from '@/lib/types';
-import { createOrder, saveOrder, deleteOrder, updateOrderStatus, markOrderSent, markMaterialsReceived, markMaterialsUnreceived, getOrder, deleteOrderItemsByIds, updateOrderItem, recalculateOrderTotal } from '@/lib/services';
+import { createOrder, saveOrder, deleteOrder, updateOrderStatus, markOrderSent, markMaterialsReceived, markMaterialsUnreceived, getOrder, deleteOrderItemsByIds, updateOrderItem, updateProductMaterial, recalculateOrderTotal } from '@/lib/services';
 import { useData } from '@/context/DataContext';
 import { buildOrderPrintDocument } from '@/lib/print/orderDocument';
 import { exportHTMLToPDFBlob, exportHTMLToPDFFile, toSafeFileName } from '@/lib/pdfExport';
@@ -18,6 +18,8 @@ import { daysUntil } from '@/lib/planning';
 import { useIsCompact } from '@/hooks/useIsCompact';
 import MobileOrdersView from './mobile/MobileOrdersView';
 import OrderItemGroupList from './OrderItemGroupList';
+import { materialGroupKey, roundQty } from '@/lib/orderItemGroups';
+import { allocationsAfterOrderQuantityChange, orderItemAllocations, planMaterialGroupOrder, splitMaterialQuantity } from '@/lib/orderMaterialAllocation';
 import './OrdersTab.css';
 
 interface OrdersTabProps {
@@ -76,6 +78,8 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
     // Custom quantity state for materials
     const [orderQuantities, setOrderQuantities] = useState<Record<string, number>>({});
     const [onStockQuantities, setOnStockQuantities] = useState<Record<string, number>>({});
+    const [orderOnlyExtras, setOrderOnlyExtras] = useState<Record<string, number>>({});
+    const [materialNeedIncreases, setMaterialNeedIncreases] = useState<Record<string, number>>({});
 
     // Expanded Order State
     const [expandedOrderId, setExpandedOrderId] = useState<string | null>(null);
@@ -515,6 +519,8 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
         setSelectedMaterialIds(new Set());
         setOrderQuantities({});
         setOnStockQuantities({});
+        setOrderOnlyExtras({});
+        setMaterialNeedIncreases({});
         setOrderName('');
         setEditingOrderId(null);
         setWizardModal(true);
@@ -533,6 +539,8 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
         setSelectedSupplierIds(new Set());
         setSelectedCategories(new Set());
         setSelectedMaterialIds(new Set());
+        setOrderOnlyExtras({});
+        setMaterialNeedIncreases({});
     }
 
     function toggleProduct(productId: string) {
@@ -547,6 +555,8 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
         setSelectedSupplierIds(new Set());
         setSelectedCategories(new Set());
         setSelectedMaterialIds(new Set());
+        setOrderOnlyExtras({});
+        setMaterialNeedIncreases({});
     }
 
     /** Prebacivanje koraka 3 dobavljač ↔ kategorija — izbor drugog načina se poništava. */
@@ -556,6 +566,8 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
         setSelectedSupplierIds(new Set());
         setSelectedCategories(new Set());
         setSelectedMaterialIds(new Set());
+        setOrderOnlyExtras({});
+        setMaterialNeedIncreases({});
     }
 
     function toggleCategory(category: string) {
@@ -567,6 +579,8 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
         }
         setSelectedCategories(newSelected);
         setSelectedMaterialIds(new Set());
+        setOrderOnlyExtras({});
+        setMaterialNeedIncreases({});
     }
 
     function toggleMaterial(materialId: string) {
@@ -583,6 +597,38 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
         setSelectedMaterialIds(new Set(filteredMaterials.map(m => m.ID)));
     }
 
+    function setGroupOrderQuantity(groupKey: string, memberIds: string[], total: number, assignedMaterialId?: string) {
+        const members = filteredMaterials.filter(m => memberIds.includes(m.ID));
+        const { allocations, orderOnlyExtra, needIncrease } = planMaterialGroupOrder(total,
+            members.map(m => ({ id: m.ID, needed: m.Quantity })), assignedMaterialId,
+            members.every(m => m.Unit === 'kom'));
+        setOrderQuantities(prev => ({ ...prev, ...allocations }));
+        setOrderOnlyExtras(prev => ({ ...prev, [groupKey]: orderOnlyExtra }));
+        setMaterialNeedIncreases(prev => {
+            const next = { ...prev };
+            memberIds.forEach(id => delete next[id]);
+            Object.assign(next, needIncrease);
+            return next;
+        });
+    }
+
+    function setGroupOnStock(groupKey: string, memberIds: string[], stockTotal: number) {
+        const members = filteredMaterials.filter(m => memberIds.includes(m.ID));
+        const stock = splitMaterialQuantity(stockTotal,
+            members.map(m => ({ id: m.ID, weight: m.Quantity })),
+            members.every(m => m.Unit === 'kom') ? 1 : 1000);
+        const orders: Record<string, number> = {};
+        members.forEach(m => { orders[m.ID] = roundQty(Math.max(0, m.Quantity - (stock[m.ID] || 0))); });
+        setOnStockQuantities(prev => ({ ...prev, ...stock }));
+        setOrderQuantities(prev => ({ ...prev, ...orders }));
+        setOrderOnlyExtras(prev => ({ ...prev, [groupKey]: 0 }));
+        setMaterialNeedIncreases(prev => {
+            const next = { ...prev };
+            memberIds.forEach(id => delete next[id]);
+            return next;
+        });
+    }
+
     function toggleSupplier(supplierId: string) {
         const newSelected = new Set(selectedSupplierIds);
         if (newSelected.has(supplierId)) {
@@ -591,6 +637,8 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
             newSelected.add(supplierId);
         }
         setSelectedSupplierIds(newSelected);
+        setOrderOnlyExtras({});
+        setMaterialNeedIncreases({});
 
         // When editing, preserve material selections that still match the new supplier set.
         // Only clear materials whose supplier is no longer selected.
@@ -699,14 +747,18 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
         setIsSubmitting(true);
 
         try {
+            const extrasApplied = new Set<string>();
             const rawItems = Array.from(selectedMaterialIds).map(materialId => {
                 const material = filteredMaterials.find(m => m.ID === materialId);
                 const product = availableProducts.find(p => p.Product_ID === material?.Product_ID);
 
                 // Use custom order quantity if set, otherwise default to needed amount
-                // Always round UP to whole numbers — no decimals in orders
                 const onStock = onStockQuantities[materialId] ?? (material?.On_Stock || 0);
-                const orderQty = Math.ceil(orderQuantities[materialId] ?? Math.max(0, (material?.Quantity || 0) - onStock));
+                const allocatedQty = roundQty(orderQuantities[materialId] ?? Math.max(0, (material?.Quantity || 0) - onStock));
+                const groupKey = materialGroupKey(material?.Material_Name, material?.Unit);
+                const orderOnlyExtra = extrasApplied.has(groupKey) ? 0 : (orderOnlyExtras[groupKey] || 0);
+                extrasApplied.add(groupKey);
+                const orderQty = roundQty(allocatedQty + orderOnlyExtra);
                 const unitPrice = material?.Unit_Price || ((material?.Total_Price || 0) / (material?.Quantity || 1));
                 const orderPrice = orderQty * unitPrice;
 
@@ -721,6 +773,7 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
                     Total_Needed: material?.Quantity || 0,
                     Unit: material?.Unit || '',
                     Expected_Price: orderPrice,
+                    Product_Material_Quantities: { [materialId]: allocatedQty },
                 };
             });
 
@@ -728,13 +781,11 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
             const onStockData: Record<string, number> = {};
             for (const materialId of Array.from(selectedMaterialIds)) {
                 const onStock = onStockQuantities[materialId];
-                if (onStock !== undefined && onStock > 0) {
+                if (onStock !== undefined) {
                     onStockData[materialId] = onStock;
                 }
             }
 
-            // Optimistic: close wizard and show success immediately
-            setWizardModal(false);
             const isEditing = editingOrderId;
             // Snimi PRIJE zatvaranja wizarda — grananje combined/separate ne smije ovisiti
             // o stanju koje se u međuvremenu resetuje.
@@ -744,25 +795,24 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
             const groupAndCreateOrder = async (
                 orderItems: typeof rawItems,
                 supplierId: string,
-                supplierName: string,
-                stockData: Record<string, number>
+                supplierName: string
             ) => {
                 const grouped = new Map<string, typeof rawItems[0] & { Product_Material_IDs: string[] }>();
                 orderItems.forEach(item => {
-                    const key = `${item.Material_Name}||${item.Unit}`;
+                    const key = materialGroupKey(item.Material_Name, item.Unit);
                     if (grouped.has(key)) {
                         const existing = grouped.get(key)!;
-                        existing.Quantity += item.Quantity;
+                        existing.Quantity = roundQty(existing.Quantity + item.Quantity);
                         existing.Expected_Price += item.Expected_Price;
                         existing.Total_Needed += item.Total_Needed;
                         existing.Product_Material_IDs.push(item.Product_Material_ID);
+                        Object.assign(existing.Product_Material_Quantities, item.Product_Material_Quantities);
                     } else {
                         grouped.set(key, { ...item, Product_Material_IDs: [item.Product_Material_ID] });
                     }
                 });
 
                 const items = Array.from(grouped.values())
-                    .map(item => ({ ...item, Quantity: Math.ceil(item.Quantity) }))
                     .filter(item => item.Quantity > 0);
 
                 if (items.length === 0) return;
@@ -775,17 +825,13 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
                     Supplier_Name: supplierName,
                     Total_Amount: totalAmount,
                     items: items as any,
-                    onStockData: stockData,
                 }, organizationId!);
             };
 
-            // Background: create orders
             const createAndRefresh = async () => {
+                const createdOrderIds: string[] = [];
+                const changedMaterials: ProductMaterial[] = [];
                 try {
-                    if (isEditing) {
-                        await deleteOrder(isEditing, organizationId!, 'reset');
-                    }
-
                     if (mode === 'combined' || distinctSuppliers === 1) {
                         // Single order — either 1 supplier or combined multi-supplier
                         const supplierNames: string[] = [];
@@ -818,16 +864,10 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
                         const result = await groupAndCreateOrder(
                             rawItems,
                             supplierId,
-                            supplierNames.join(', '),
-                            onStockData
+                            supplierNames.join(', ')
                         );
-                        if (result && !result.success) showToast(result.message, 'error');
-
-                        if (isEditing) {
-                            showToast('Narudžba ažurirana', 'success');
-                        } else {
-                            showToast('Narudžba kreirana', 'success');
-                        }
+                        if (!result?.success) throw new Error(result?.message || 'Nema stavki za narudžbu');
+                        createdOrderIds.push(result.data!.Order_ID);
                     } else {
                         // Separate orders per supplier
                         const itemsBySupplier = new Map<string, typeof rawItems>();
@@ -839,38 +879,74 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
                             itemsBySupplier.get(supplierKey)!.push(item);
                         });
 
-                        let createdCount = 0;
                         for (const [supplierName, supplierItems] of Array.from(itemsBySupplier)) {
                             const supplier = suppliers.find(s => s.Name === supplierName);
                             const supplierId = supplier?.Supplier_ID || '';
                             const displayName = supplierName === '__no_supplier__' ? 'Neodređen' : supplierName;
 
-                            // Filter onStockData for this supplier's materials
-                            const supplierMaterialIds = new Set(supplierItems.map((i: typeof rawItems[0]) => i.Product_Material_ID));
-                            const supplierStockData: Record<string, number> = {};
-                            Object.entries(onStockData).forEach(([id, qty]) => {
-                                if (supplierMaterialIds.has(id)) supplierStockData[id] = qty;
-                            });
-
                             const result = await groupAndCreateOrder(
                                 supplierItems,
                                 supplierId,
-                                displayName,
-                                supplierStockData
+                                displayName
                             );
-                            if (result && result.success) createdCount++;
-                            else if (result && !result.success) showToast(result.message, 'error');
+                            if (!result?.success) throw new Error(result?.message || 'Nema stavki za narudžbu');
+                            createdOrderIds.push(result.data!.Order_ID);
                         }
-
-                        showToast(`${createdCount} narudžbi kreirano`, 'success');
                     }
-                } catch {
-                    showToast('Greška pri spremanju narudžbe', 'error');
+
+                    // Only after every draft order exists do we change the product need and stock.
+                    // This lets a failed save remove the new drafts while the old order stays intact.
+                    const updateIds = new Set([
+                        ...Object.keys(onStockData),
+                        ...Object.keys(materialNeedIncreases).filter(id => selectedMaterialIds.has(id)),
+                    ]);
+                    for (const materialId of updateIds) {
+                        const material = allProductMaterials.find(m => m.ID === materialId);
+                        const product = availableProducts.find(p => p.Product_ID === material?.Product_ID);
+                        if (!material || !product) throw new Error('Materijal proizvoda nije pronađen');
+                        const update: Partial<ProductMaterial> = {};
+                        const extra = materialNeedIncreases[materialId] || 0;
+                        if (extra > 0) {
+                            const count = product.Quantity || 1;
+                            update.Quantity = Math.round((material.Quantity + extra / count) * 1_000_000) / 1_000_000;
+                        }
+                        if (onStockData[materialId] !== undefined) update.On_Stock = onStockData[materialId];
+                        const result = await updateProductMaterial(materialId, update, organizationId!);
+                        if (!result.success) throw new Error(result.message);
+                        changedMaterials.push(material);
+                    }
+
+                    if (isEditing) {
+                        const deleted = await deleteOrder(isEditing, organizationId!, 'reset', true);
+                        if (!deleted.success) throw new Error(deleted.message);
+                    }
+
+                    showToast(isEditing ? 'Narudžba ažurirana'
+                        : createdOrderIds.length === 1 ? 'Narudžba kreirana'
+                        : `${createdOrderIds.length} narudžbi kreirano`, 'success');
+                    onRefresh('orders', 'projects');
+                    return true;
+                } catch (error) {
+                    let restored = true;
+                    for (const material of changedMaterials.reverse()) {
+                        const result = await updateProductMaterial(material.ID,
+                            { Quantity: material.Quantity, On_Stock: material.On_Stock || 0 }, organizationId!);
+                        if (!result.success) restored = false;
+                    }
+                    for (const orderId of createdOrderIds) {
+                        const result = await deleteOrder(orderId, organizationId!);
+                        if (!result.success) restored = false;
+                    }
+                    const message = error instanceof Error ? error.message : 'Greška pri spremanju narudžbe';
+                    showToast(restored ? message : `${message}. Provjerite stanje narudžbi i materijala.`, 'error');
+                    onRefresh('orders', 'projects');
+                    return false;
                 }
-                onRefresh('orders', 'projects');
             };
-            createAndRefresh();
-            setEditingOrderId(null);
+            if (await createAndRefresh()) {
+                setWizardModal(false);
+                setEditingOrderId(null);
+            }
         } finally {
             setIsSubmitting(false);
         }
@@ -923,19 +999,29 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
         const productIds = new Set<string>();
         const materialIds = new Set<string>();
         const quantities: Record<string, number> = {};
+        const extras: Record<string, number> = {};
 
         (order.items || []).forEach(item => {
             if (item.Project_ID) projectIds.add(item.Project_ID);
             if (item.Product_ID) productIds.add(item.Product_ID);
             // Expand grouped material references
             const matIds = item.Product_Material_IDs || (item.Product_Material_ID ? [item.Product_Material_ID] : []);
+            const allocations = orderItemAllocations(item);
             matIds.forEach(id => {
                 materialIds.add(id);
-                // Distribute order quantity across member materials
-                if (matIds.length > 0) {
-                    quantities[id] = item.Quantity / matIds.length;
+                quantities[id] = allocations[id] || 0;
+                const material = allProductMaterials.find(m => m.ID === id);
+                if (material?.Product_ID) {
+                    productIds.add(material.Product_ID);
+                    const project = projects.find(p => p.products?.some(product => product.Product_ID === material.Product_ID));
+                    if (project) projectIds.add(project.Project_ID);
                 }
             });
+            const extra = roundQty(item.Quantity - Object.values(allocations).reduce((sum, qty) => sum + qty, 0));
+            if (extra > 0) {
+                const groupKey = materialGroupKey(item.Material_Name, item.Unit);
+                extras[groupKey] = roundQty((extras[groupKey] || 0) + extra);
+            }
         });
 
         // If no project IDs from items, try to find them from products
@@ -954,6 +1040,8 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
         setSelectedMaterialIds(materialIds);
         setOrderQuantities(quantities);
         setOnStockQuantities({});
+        setOrderOnlyExtras(extras);
+        setMaterialNeedIncreases({});
         setOrderName(order.Name || '');
 
         // Store the order being edited so we can delete it on re-creation
@@ -1190,26 +1278,33 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
             return;
         }
 
+        const newAllocations = new Map<string, Record<string, number>>();
         for (const { id, quantity } of itemsToUpdate) {
-            await updateOrderItem(id, { Quantity: quantity }, organizationId!);
+            const item = currentOrder?.items?.find(i => i.ID === id);
+            if (!item) continue;
+            const allocations = allocationsAfterOrderQuantityChange(item, quantity);
+            newAllocations.set(id, allocations);
+            const expectedPrice = item.Quantity > 0 ? (item.Expected_Price || 0) * quantity / item.Quantity : 0;
+            await updateOrderItem(id, { Quantity: quantity, Expected_Price: expectedPrice, Product_Material_Quantities: allocations }, organizationId!);
         }
         await recalculateOrderTotal(currentOrder!.Order_ID, organizationId!);
 
         // D1: Sync Ordered_Quantity when order is already sent
         if (currentOrder?.Status && currentOrder.Status !== 'Nacrt') {
             const materialUpdates: { materialId: string; status: string; orderId: string; orderedQty: number }[] = [];
-            for (const { id, quantity, oldQuantity } of itemsToUpdate) {
+            for (const { id } of itemsToUpdate) {
                 const item = currentOrder.items?.find(i => i.ID === id);
                 if (!item) continue;
-                // Support grouped materials: use Product_Material_IDs array if available, fallback to single ID
-                const matIds = item.Product_Material_IDs || (item.Product_Material_ID ? [item.Product_Material_ID] : []);
-                const deltaPerMat = matIds.length > 0 ? (quantity - oldQuantity) / matIds.length : 0;
-                for (const matId of matIds) {
+                const oldAllocations = orderItemAllocations(item);
+                const updated = newAllocations.get(id) || {};
+                for (const matId of Object.keys(oldAllocations)) {
+                    const delta = roundQty((updated[matId] || 0) - (oldAllocations[matId] || 0));
+                    if (delta === 0) continue;
                     materialUpdates.push({
                         materialId: matId,
                         status: 'Naručeno',
                         orderId: currentOrder.Order_ID,
-                        orderedQty: deltaPerMat,
+                        orderedQty: delta,
                     });
                 }
             }
@@ -1342,10 +1437,19 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
         }
     }
 
-    const selectedTotal = Array.from(selectedMaterialIds).reduce((sum, id) => {
-        const mat = filteredMaterials.find(m => m.ID === id);
-        return sum + (mat?.Total_Price || 0);
-    }, 0);
+    const selectedMaterials = filteredMaterials.filter(m => selectedMaterialIds.has(m.ID));
+    const selectedTotal = selectedMaterials.reduce((sum, mat) => {
+        const onStock = onStockQuantities[mat.ID] ?? (mat.On_Stock || 0);
+        const quantity = orderQuantities[mat.ID] ?? Math.max(0, mat.Quantity - onStock);
+        const unitPrice = mat.Unit_Price || (mat.Quantity > 0 ? mat.Total_Price / mat.Quantity : 0);
+        return sum + quantity * unitPrice;
+    }, 0) + Array.from(new Set(selectedMaterials.map(m => materialGroupKey(m.Material_Name, m.Unit))))
+        .reduce((sum, key) => {
+            const members = selectedMaterials.filter(m => materialGroupKey(m.Material_Name, m.Unit) === key);
+            const first = members[0];
+            const unitPrice = first?.Unit_Price || (first?.Quantity > 0 ? first.Total_Price / first.Quantity : 0);
+            return sum + (orderOnlyExtras[key] || 0) * unitPrice;
+        }, 0);
 
     // Projekti sa nenaručenim materijalima. Arhivirani (Hidden) ispadaju —
     // završeni poslovi bi inače zatrpali prvi korak wizarda.
@@ -1866,8 +1970,9 @@ export default function OrdersTab({ orders, suppliers, projects, productMaterial
                 isEditing={!!editingOrderId}
                 orderQuantities={orderQuantities}
                 onStockQuantities={onStockQuantities}
-                setOrderQuantity={(id, qty) => setOrderQuantities(prev => ({ ...prev, [id]: qty }))}
-                setOnStockQuantity={(id, qty) => setOnStockQuantities(prev => ({ ...prev, [id]: qty }))}
+                orderOnlyExtras={orderOnlyExtras}
+                setGroupOrderQuantity={setGroupOrderQuantity}
+                setGroupOnStock={setGroupOnStock}
                 orderName={orderName}
                 setOrderName={setOrderName}
             />

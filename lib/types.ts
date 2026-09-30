@@ -422,6 +422,8 @@ export interface OrderItem {
     Order_ID: string;
     Product_Material_ID: string;
     Product_Material_IDs?: string[];  // All grouped material IDs (for batch operations)
+    /** Naručena količina po materijalu proizvoda. Zbir može biti manji od Quantity kada je višak naručen samo za zalihu. */
+    Product_Material_Quantities?: Record<string, number>;
     Product_ID: string;
     Product_Name: string;
     Project_ID: string;
@@ -581,6 +583,13 @@ export interface ChecklistItem {
     id: string;
     text: string;
     completed: boolean;
+    /** Optional named section within a task's checklist. */
+    groupId?: string;
+}
+
+export interface TaskChecklistGroup {
+    id: string;
+    name: string;
 }
 
 export interface Task {
@@ -613,6 +622,7 @@ export interface Task {
 
     // Checklist items for sub-tasks
     Checklist?: ChecklistItem[];
+    ChecklistGroups?: TaskChecklistGroup[];
 
     // GOOGLE CALENDAR (Faza 1) — ID događaja kreiranog iz roka zadatka (Due_Date).
     Calendar_Event_ID?: string;

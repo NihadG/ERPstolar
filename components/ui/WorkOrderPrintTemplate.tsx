@@ -2,6 +2,7 @@
 
 import { useState, useRef, useMemo, Fragment } from 'react';
 import { tasksForWorkOrder, taskProductInOrder, isTaskOverdue } from '@/lib/workOrderTasks';
+import { getTaskChecklistSections } from '@/lib/taskChecklist';
 import { todayISO } from '@/lib/planning';
 import { TASK_PRIORITY_LABELS, TASK_CATEGORY_LABELS, TASK_STATUS_LABELS, type WorkOrder, type Task } from '@/lib/types';
 
@@ -307,6 +308,7 @@ export default function WorkOrderPrintTemplate({ workOrder, tasks = [], companyN
                         letter-spacing: 0.05em;
                         margin-bottom: 5px;
                     }
+                    .task-cl-group { font-size: 8pt; font-weight: 700; color: #424245; margin: 7px 0 2px; page-break-after: avoid; }
                     .task-cl-item { font-size: 9pt; color: #424245; padding: 2px 0; }
                     .task-cl-item .task-box { margin-right: 7px; vertical-align: middle; }
                     .task-cl-item.done { color: #86868b; text-decoration: line-through; }
@@ -632,10 +634,15 @@ export default function WorkOrderPrintTemplate({ workOrder, tasks = [], companyN
                                                                                     <div className="task-checklist-label">
                                                                                         Koraci · {checklist.filter(c => c.completed).length}/{checklist.length}
                                                                                     </div>
-                                                                                    {checklist.map(c => (
-                                                                                        <div key={c.id} className={`task-cl-item${c.completed ? ' done' : ''}`}>
-                                                                                            <span className="task-box">{c.completed ? '✓' : ''}</span>
-                                                                                            {c.text}
+                                                                                    {getTaskChecklistSections(task).map(section => (
+                                                                                        <div key={section.id || 'ungrouped'}>
+                                                                                            {section.name && <div className="task-cl-group">{section.name}</div>}
+                                                                                            {section.items.map(c => (
+                                                                                                <div key={c.id} className={`task-cl-item${c.completed ? ' done' : ''}`}>
+                                                                                                    <span className="task-box">{c.completed ? '✓' : ''}</span>
+                                                                                                    {c.text}
+                                                                                                </div>
+                                                                                            ))}
                                                                                         </div>
                                                                                     ))}
                                                                                 </div>

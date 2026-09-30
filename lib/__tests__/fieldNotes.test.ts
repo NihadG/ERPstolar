@@ -79,8 +79,9 @@ describe('buildWorkerNotes', () => {
                 Due_Date: '2026-08-10',
                 Checklist: [
                     { id: 'c1', text: 'Izmjeri širinu', completed: true },
-                    { id: 'c2', text: 'Izmjeri visinu', completed: false },
+                    { id: 'c2', text: 'Izmjeri visinu', completed: false, groupId: 'g1' },
                 ],
+                ChecklistGroups: [{ id: 'g1', name: 'Mjerenje' }],
             })],
         }));
         expect(notes[0]).toMatchObject({
@@ -89,8 +90,9 @@ describe('buildWorkerNotes', () => {
         });
         expect(notes[0].checklist).toEqual([
             { id: 'c1', text: 'Izmjeri širinu', completed: true },
-            { id: 'c2', text: 'Izmjeri visinu', completed: false },
+            { id: 'c2', text: 'Izmjeri visinu', completed: false, groupId: 'g1' },
         ]);
+        expect(notes[0].checklistGroups).toEqual([{ id: 'g1', name: 'Mjerenje' }]);
     });
 
     it('bez detalja daje prazan opis i praznu checklistu', () => {

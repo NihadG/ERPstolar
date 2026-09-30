@@ -12,12 +12,13 @@
 // ════════════════════════════════════════════════════════════════════
 
 import { isTaskLinkedToWorkOrder, isTaskOpen, taskProductIds } from '@/lib/workOrderTasks';
-import type { Task } from '@/lib/types';
+import type { Task, TaskChecklistGroup } from '@/lib/types';
 
 export interface NoteChecklistItem {
     id: string;
     text: string;
     completed: boolean;
+    groupId?: string;
 }
 
 export interface NoteRow {
@@ -38,6 +39,7 @@ export interface NoteRow {
     notes: string;
     dueDate: string | null;
     checklist: NoteChecklistItem[];
+    checklistGroups?: TaskChecklistGroup[];
 }
 
 export interface WorkerNotesInput {
@@ -102,7 +104,11 @@ export function buildWorkerNotes(input: WorkerNotesInput): NoteRow[] {
             description: t.Description || '',
             notes: t.Notes || '',
             dueDate: t.Due_Date || null,
-            checklist: (t.Checklist || []).map(c => ({ id: c.id, text: c.text, completed: !!c.completed })),
+            checklist: (t.Checklist || []).map(c => ({
+                id: c.id, text: c.text, completed: !!c.completed,
+                ...(c.groupId ? { groupId: c.groupId } : {}),
+            })),
+            checklistGroups: (t.ChecklistGroups || []).map(g => ({ id: g.id, name: g.name })),
         });
     }
 

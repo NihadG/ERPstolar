@@ -36,10 +36,11 @@ interface Props {
     busy?: boolean;
     onClose: () => void;
     onPick: (status: string, notes?: string) => void;
+    onReviewOrders?: () => void;
 }
 
 export default function StatusSheet({
-    open, workerName, dateLabel, current, yesterday, busy, onClose, onPick,
+    open, workerName, dateLabel, current, yesterday, busy, onClose, onPick, onReviewOrders,
 }: Props) {
     const [notes, setNotes] = useState('');
     const [notesOpen, setNotesOpen] = useState(false);
@@ -54,6 +55,12 @@ export default function StatusSheet({
     return (
         <MSheet open={open} title={workerName} onClose={onClose}>
             <p className="fat-sheet-sub">{dateLabel}</p>
+
+            {onReviewOrders && (
+                <button type="button" className="fat-yesterday" disabled={busy} onClick={onReviewOrders}>
+                    Pregledaj ili uredi knjižene naloge
+                </button>
+            )}
 
             <div className="fat-primary">
                 {PRIMARY.map(s => (

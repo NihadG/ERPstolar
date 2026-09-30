@@ -9774,6 +9774,8 @@ textarea::placeholder {
   flex-direction: column;
   gap: 8px;
 }
+.mobile-checklist-section { display: flex; flex-direction: column; gap: 8px; }
+.mobile-checklist-group-name { padding: 8px 4px 0; font-size: 12px; font-weight: 700; color: #636366; }
 
 .mobile-checklist-item {
   display: flex;

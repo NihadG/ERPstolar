@@ -4,11 +4,12 @@
 // Kad se u šihtarici radnik označi PRISUTAN/TEREN, UI ne knjiži odmah — gradi PRIJEDLOG i traži
 // potvrdu. Ovdje je sva odluka šta ponuditi:
 //   • Prisutan → lista AKTIVNIH, PAUZIRANIH i NEPOKRENUTIH naloga (bilo kog tipa, ne samo dodijeljenih).
-//     Dodijeljeni aktivni/nepokrenuti nalozi su predčekirani; pauzirani se mogu „pokrenuti ponovo",
+//     Već knjiženi nalozi otvorenog dana, inače posljednjeg ranijeg dana radnika, su predčekirani;
+//     pauzirani se mogu „pokrenuti ponovo",
 //     a nepokrenuti ('Na čekanju') se auto-STARTAJU na potvrdi (prepareWorkerOrderTargets) — tako
 //     novi nalog + šihtarica idu u JEDNOM prolazu, bez ponovnog snimanja prisustva.
-//   • Teren    → UVIJEK red u upitu (teren je dvosmislen). Predabir = dodijeljeni aktivni Montaža
-//     nalog; korisnik može izabrati BILO koji nalog (aktivan ili neaktivan), novi nalog ili ništa.
+//   • Teren    → UVIJEK red u upitu (teren je dvosmislen). Predabir koristi stvarna
+//     ranija knjiženja; korisnik može izabrati BILO koji nalog, novi nalog ili ništa.
 //     Uz predabir red nosi i `orders` — punu ponudu naloga (montaža prva, ali i „Razni poslovi",
 //     i završeni). Desktop je ne koristi (ima pretraživu listu svih naloga), telefon bez nje nema
 //     šta ponuditi.
@@ -16,7 +17,7 @@
 // ════════════════════════════════════════════════════════════════════
 
 import type { WorkOrder, WorkOrderItem } from './types';
-import { selectAutoBookItemIds, isWorkerAssignedToAutoItem, type AutoBookOrder, type AutoBookItem } from './autoBook';
+import { isWorkerAssignedToAutoItem, type AutoBookItem } from './autoBook';
 import { workOrderDisplayName } from './utils';
 
 /** Radnik upravo snimljen u šihtarici (za koga gradimo prijedlog). */
@@ -37,13 +38,15 @@ export interface PresentOrderOption {
     type?: string;                       // Work_Order_Type — telefon po njemu grupiše ponudu
 }
 
-/** Prisutan radnik: ponuda naloga (predčekirani = dodijeljeni aktivni). */
+/** Prisutan radnik: ponuda naloga; predčekirani su stvarno knjiženi nalozi. */
 export interface PresentProposalRow {
     kind: 'present';
     workerId: string;
     workerName: string;
     orders: PresentOrderOption[];
     suggestedOrderIds: string[];         // default čekirano
+    bookedPresence?: 0.5 | 1;
+    hasExistingBooking?: boolean;
 }
 
 /** Teren radnik: korisnik bira na šta se teren odnosi. */
@@ -51,7 +54,10 @@ export interface TerenProposalRow {
     kind: 'teren';
     workerId: string;
     workerName: string;
-    suggestedWorkOrderId?: string;       // dodijeljeni aktivni Montaža nalog (predabir), ako postoji
+    suggestedWorkOrderId?: string;       // kompatibilno polje za prvi stvarno knjiženi nalog
+    suggestedOrderIds: string[];          // sva prethodno knjižena zaduženja (i više naloga istog dana)
+    bookedPresence?: 0.5 | 1;
+    hasExistingBooking?: boolean;
     /**
      * Nalozi koje teren radnik može izabrati — montažni prvi, ali NE samo oni:
      * teren se u praksi knjiži i na „Razne poslove" (isporuka, popravka kod kupca).
@@ -66,16 +72,30 @@ export interface TerenProposalRow {
 
 export type ProposalRow = PresentProposalRow | TerenProposalRow;
 
-/** WorkOrder (s items) → oblik koji razumije čista odluka selectAutoBookItemIds. */
-function toAutoBookOrder(wo: WorkOrder): AutoBookOrder {
-    return {
-        Work_Order_ID: wo.Work_Order_ID,
-        Status: wo.Status,
-        Work_Order_Type: wo.Work_Order_Type,
-        Started_At: wo.Started_At,
-        Completed_At: wo.Completed_At,
-        items: (wo.items || []).map(toAutoBookItem),
-    };
+/** Nalog koji je korisnik zaista knjižio. Preusmjereni trošak zadržava izvorni nalog rada. */
+export function bookedOrderId(log: { Work_Order_ID?: string; Source_Work_Order_ID?: string }): string {
+    return log.Source_Work_Order_ID || log.Work_Order_ID || '';
+}
+
+export function postedOrdersByWorker(logs: { Worker_ID: string; Work_Order_ID?: string; Source_Work_Order_ID?: string }[]): Map<string, string[]> {
+    const result = new Map<string, string[]>();
+    for (const log of logs) {
+        const id = bookedOrderId(log);
+        if (!log.Worker_ID || !id) continue;
+        const ids = result.get(log.Worker_ID) || [];
+        if (!ids.includes(id)) ids.push(id);
+        result.set(log.Worker_ID, ids);
+    }
+    return result;
+}
+
+/** Ručni zapisi se nikad ne brišu iz šihtarice. */
+export function isDeselectedAttendanceLog(
+    log: { Work_Order_ID?: string; Source_Work_Order_ID?: string; Booking_Source?: string; Is_From_Attendance?: boolean },
+    selectedOrderIds: ReadonlySet<string>
+): boolean {
+    return (log.Booking_Source === 'attendance' || (log.Booking_Source !== 'manual' && log.Is_From_Attendance === true))
+        && !selectedOrderIds.has(bookedOrderId(log));
 }
 
 function toAutoBookItem(it: WorkOrderItem): AutoBookItem {
@@ -93,9 +113,10 @@ function toAutoBookItem(it: WorkOrderItem): AutoBookItem {
 /**
  * Izgradi prijedlog knjiženja za skup upravo snimljenih radnika.
  * @param hasExistingLog (radnik, stavka) → da li već postoji zapis tog dana (manualni ima prednost).
- * @param yesterdayByWorker (radnik → Work_Order_ID[] knjiženi JUČER) → "kao jučer" fallback prijedlog.
- *   Teren i danas bez auto-prijedloga (nije na Montaži) dobije jučerašnji nalog kao predabir;
- *   Prisutan bez ijednog predčekiranog naloga dobije jučerašnje naloge (koji su i danas dostupni).
+ * @param yesterdayByWorker svaki radnik → nalozi s njegovog posljednjeg RANIJEG knjiženog dana.
+ * @param postedTodayByWorker svaki radnik → nalozi već knjiženi na otvoreni dan.
+ *   Otvoreni dan uvijek ima prednost. Novi dan nudi samo stvarni zadnji rad,
+ *   a dodjela naloga ostaje ponuđena za ručni izbor bez predčekiranja.
  *   Korisnik i dalje POTVRĐUJE — ništa se ne knjiži tiho (garda: ručno knjiženje ima prednost).
  */
 export function buildBookingProposal(
@@ -103,64 +124,50 @@ export function buildBookingProposal(
     workOrders: WorkOrder[],
     date: string,
     hasExistingLog: (workerId: string, itemId: string) => boolean = () => false,
-    yesterdayByWorker?: Map<string, string[]>
+    yesterdayByWorker?: Map<string, string[]>,
+    postedTodayByWorker?: Map<string, string[]>,
+    postedPresenceByWorker?: Map<string, 0.5 | 1>
 ): ProposalRow[] {
-    const autoOrders = workOrders.map(toAutoBookOrder);
-
     const rows: ProposalRow[] = [];
     for (const w of saved) {
+        const postedToday = postedTodayByWorker?.get(w.workerId);
+        const historical = postedToday?.length
+            ? postedToday
+            : (yesterdayByWorker?.get(w.workerId) || []).filter(id =>
+                workOrders.some(o => o.Work_Order_ID === id && o.Status !== 'Otkazano')
+            );
         if (w.status === 'Prisutan') {
-            const orders = buildPresentOrderOptions(workOrders, w.workerId);
+            const orders = withAlreadyPostedOptions(
+                buildPresentOrderOptions(workOrders, w.workerId, new Set(historical)),
+                workOrders, postedToday || []
+            );
             if (orders.length === 0) continue;                  // nema aktivnih/pauziranih naloga → bez reda
-
-            // Predčekirano = dodijeljeni aktivni proizvodni nalozi (kako auto-knjiženje radi).
-            const autoItemIds = selectAutoBookItemIds({
-                workerId: w.workerId, date, status: 'Prisutan',
-                orders: autoOrders,
-                hasExistingLog: (itemId) => hasExistingLog(w.workerId, itemId),
-            });
-            const itemToOrder = new Map<string, string>();
-            workOrders.forEach(wo => (wo.items || []).forEach(it => itemToOrder.set(it.ID, wo.Work_Order_ID)));
-            const suggested = new Set<string>();
-            autoItemIds.forEach(id => { const o = itemToOrder.get(id); if (o) suggested.add(o); });
-            // Plus svaki dodijeljen, aktivan ILI nepokrenut, nepauziran nalog (uklj. Montažu) →
-            // koristan default. Nepokrenuti se predčekiraju SAMO ako je radnik dodijeljen —
-            // potvrda ih starta, pa tuđi novi nalog ne smije biti default.
-            orders.forEach(o => { if (o.assigned && !o.paused && (o.status === 'U toku' || o.notStarted)) suggested.add(o.workOrderId); });
-            // "Kao jučer": ako ništa nije predčekirano, ponudi jučerašnje naloge koji su i danas dostupni.
-            if (suggested.size === 0) {
-                const yList = yesterdayByWorker?.get(w.workerId) || [];
-                const availableIds = new Set(orders.map(o => o.workOrderId));
-                yList.forEach(id => { if (availableIds.has(id)) suggested.add(id); });
-            }
+            const availableIds = new Set(orders.map(o => o.workOrderId));
 
             rows.push({
                 kind: 'present',
                 workerId: w.workerId,
                 workerName: w.workerName,
                 orders,
-                suggestedOrderIds: Array.from(suggested),
+                suggestedOrderIds: historical.filter(id => availableIds.has(id)),
+                bookedPresence: postedPresenceByWorker?.get(w.workerId),
+                hasExistingBooking: !!postedToday?.length,
             });
         } else if (w.status === 'Teren') {
-            const terenItemIds = selectAutoBookItemIds({
-                workerId: w.workerId, date, status: 'Teren',
-                orders: autoOrders,
-                hasExistingLog: () => false,
-            });
-            const itemToOrder = new Map<string, string>();
-            workOrders.forEach(wo => (wo.items || []).forEach(it => itemToOrder.set(it.ID, wo.Work_Order_ID)));
-            let suggestedWorkOrderId = terenItemIds.length > 0 ? itemToOrder.get(terenItemIds[0]) : undefined;
-            // "Kao jučer": teren bez auto-Montaža prijedloga → predloži nalog na koji je radnik JUČER knjižen.
-            if (!suggestedWorkOrderId) {
-                const yList = yesterdayByWorker?.get(w.workerId);
-                if (yList && yList.length) suggestedWorkOrderId = yList[0];
-            }
+            const orders = withAlreadyPostedOptions(
+                buildTerenOrderOptions(workOrders, w.workerId), workOrders, postedToday || []
+            );
+            const availableIds = new Set(orders.map(o => o.workOrderId));
+            const suggestedOrderIds = historical.filter(id => availableIds.has(id));
             rows.push({
                 kind: 'teren',
                 workerId: w.workerId,
                 workerName: w.workerName,
-                suggestedWorkOrderId,
-                orders: buildTerenOrderOptions(workOrders, w.workerId),
+                suggestedWorkOrderId: suggestedOrderIds[0],
+                suggestedOrderIds,
+                orders,
+                bookedPresence: postedPresenceByWorker?.get(w.workerId),
+                hasExistingBooking: !!postedToday?.length,
             });
         }
         // ostali statusi (Odsutan/Bolovanje/Odmor/Vikend/Praznik) → ne ulaze u upit
@@ -168,8 +175,26 @@ export function buildBookingProposal(
     return rows;
 }
 
+/** Ranije knjiženi nalog mora ostati vidljiv i kad je poslije završen/otkazan/obrisan. */
+function withAlreadyPostedOptions(
+    options: PresentOrderOption[], workOrders: WorkOrder[], postedToday: string[]
+): PresentOrderOption[] {
+    const known = new Set(options.map(o => o.workOrderId));
+    const out = [...options];
+    for (const id of postedToday) {
+        if (known.has(id)) continue;
+        const order = workOrders.find(o => o.Work_Order_ID === id);
+        out.push(order ? toOption(order, false, false) : {
+            workOrderId: id, name: `Nalog ${id}`, status: 'Arhiviran',
+            paused: false, assigned: false, notStarted: false,
+        });
+        known.add(id);
+    }
+    return out;
+}
+
 /** Aktivni + pauzirani + nepokrenuti nalozi (bilo kog tipa) koje prisutan radnik može izabrati. */
-function buildPresentOrderOptions(workOrders: WorkOrder[], workerId: string): PresentOrderOption[] {
+function buildPresentOrderOptions(workOrders: WorkOrder[], workerId: string, historicalIds: ReadonlySet<string>): PresentOrderOption[] {
     const out: PresentOrderOption[] = [];
     for (const wo of workOrders) {
         // 'Na čekanju' se nudi da bi se NOVI nalog pokrenuo i proknjižio u jednom prolazu
@@ -179,7 +204,7 @@ function buildPresentOrderOptions(workOrders: WorkOrder[], workerId: string): Pr
         // stavki — 'Završeno' po definiciji ima SVE stavke završene (vidi recalculateWorkOrder
         // status derivaciju), pa bi `live` uvijek bio prazan i anyPaused uvijek false; bez ovoga
         // se svaki istorijski nalog skenira pri SVAKOM označavanju prisustva (stotine naloga).
-        if (wo.Status !== 'U toku' && wo.Status !== 'Na čekanju') continue;
+        if (wo.Status !== 'U toku' && wo.Status !== 'Na čekanju' && !historicalIds.has(wo.Work_Order_ID)) continue;
         const live = (wo.items || []).filter(it => it.Status !== 'Završeno');
         const fullyPaused = live.length > 0 && live.every(it => it.Is_Paused);
         const assigned = live.some(it => isWorkerAssignedToAutoItem(toAutoBookItem(it), workerId));

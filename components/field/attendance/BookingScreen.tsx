@@ -65,10 +65,8 @@ export default function BookingScreen({ rows, date, onClose, onConfirm, showToas
     const [state, setState] = useState<Map<string, WorkerState>>(() => {
         const init = new Map<string, WorkerState>();
         for (const r of rows) {
-            const preselected = r.kind === 'present'
-                ? r.suggestedOrderIds
-                : (r.suggestedWorkOrderId ? [r.suggestedWorkOrderId] : []);
-            init.set(r.workerId, { orderIds: new Set(preselected), presence: 1 });
+            const preselected = r.suggestedOrderIds;
+            init.set(r.workerId, { orderIds: new Set(preselected), presence: r.bookedPresence || 1 });
         }
         return init;
     });
@@ -133,6 +131,7 @@ export default function BookingScreen({ rows, date, onClose, onConfirm, showToas
         () => rows.filter(r => (state.get(r.workerId)?.orderIds.size || 0) > 0).length,
         [rows, state]
     );
+    const canRemoveExisting = rows.some(r => r.hasExistingBooking);
 
     const confirm = async () => {
         if (saving) return;
@@ -145,8 +144,7 @@ export default function BookingScreen({ rows, date, onClose, onConfirm, showToas
                     orderIds: Array.from(s?.orderIds || []),
                     presence: s?.presence || 1,
                 };
-            })
-            .filter(d => d.orderIds.length > 0);
+            });
 
         setSaving(true);
         try {
@@ -294,11 +292,11 @@ export default function BookingScreen({ rows, date, onClose, onConfirm, showToas
             </div>
 
             <div className="fbk-foot">
-                <button type="button" className="fbk-confirm" disabled={saving || willBook === 0} onClick={confirm}>
+                <button type="button" className="fbk-confirm" disabled={saving || (willBook === 0 && !canRemoveExisting)} onClick={confirm}>
                     {saving
                         ? 'Knjižim…'
                         : willBook === 0
-                            ? 'Odaberi bar jedan nalog'
+                            ? (canRemoveExisting ? 'Ukloni ranija knjiženja' : 'Odaberi bar jedan nalog')
                             : `Potvrdi i proknjiži · ${willBook} ${willBook === 1 ? 'radnik' : 'radnika'}`}
                 </button>
                 <p className="fbk-foot-note">

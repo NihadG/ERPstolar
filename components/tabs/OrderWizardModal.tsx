@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Modal from '../ui/Modal';
 import { matchesSearch, searchScore, searchTokens } from '../../lib/searchMatch';
+import { compareMaterialNames, materialGroupKey, roundQty } from '../../lib/orderItemGroups';
 
 interface Project {
     Project_ID: string;
@@ -44,7 +45,6 @@ interface GroupedMaterial {
     members: Material[];
     totalQuantity: number;
     totalPrice: number;
-    unitPrice: number;
     sources: string[]; // "Product • Project" list
 }
 
@@ -81,8 +81,9 @@ interface OrderWizardModalProps {
     isEditing?: boolean;
     orderQuantities: Record<string, number>;
     onStockQuantities: Record<string, number>;
-    setOrderQuantity: (materialId: string, quantity: number) => void;
-    setOnStockQuantity: (materialId: string, quantity: number) => void;
+    orderOnlyExtras: Record<string, number>;
+    setGroupOrderQuantity: (groupKey: string, memberIds: string[], quantity: number, assignedMaterialId?: string) => void;
+    setGroupOnStock: (groupKey: string, memberIds: string[], stockTotal: number) => void;
     orderName: string;
     setOrderName: (name: string) => void;
 }
@@ -96,8 +97,10 @@ function GroupedMaterialsStep({
     formatCurrency,
     orderQuantities,
     onStockQuantities,
-    setOrderQuantity,
-    setOnStockQuantity,
+    orderOnlyExtras,
+    setGroupOrderQuantity,
+    setGroupOnStock,
+    onDecisionPendingChange,
     orderName,
     setOrderName,
 }: {
@@ -109,8 +112,10 @@ function GroupedMaterialsStep({
     formatCurrency: (value: number) => string;
     orderQuantities: Record<string, number>;
     onStockQuantities: Record<string, number>;
-    setOrderQuantity: (materialId: string, quantity: number) => void;
-    setOnStockQuantity: (materialId: string, quantity: number) => void;
+    orderOnlyExtras: Record<string, number>;
+    setGroupOrderQuantity: (groupKey: string, memberIds: string[], quantity: number, assignedMaterialId?: string) => void;
+    setGroupOnStock: (groupKey: string, memberIds: string[], stockTotal: number) => void;
+    onDecisionPendingChange: (pending: boolean) => void;
     orderName: string;
     setOrderName: (name: string) => void;
 }) {
@@ -119,7 +124,7 @@ function GroupedMaterialsStep({
         const groups = new Map<string, GroupedMaterial>();
 
         filteredMaterials.forEach(m => {
-            const key = `${m.Material_Name}||${m.Unit}`;
+            const key = materialGroupKey(m.Material_Name, m.Unit);
             if (groups.has(key)) {
                 const g = groups.get(key)!;
                 g.memberIds.push(m.ID);
@@ -139,26 +144,22 @@ function GroupedMaterialsStep({
                     members: [m],
                     totalQuantity: m.Quantity,
                     totalPrice: m.Total_Price,
-                    unitPrice: m.Unit_Price || (m.Total_Price / m.Quantity) || 0,
                     sources: [`${m.Product_Name} • ${m.Project_Name}`],
                 });
             }
         });
 
-        // Recalculate unit price as weighted average for groups
-        groups.forEach(g => {
-            if (g.totalQuantity > 0) {
-                g.unitPrice = g.totalPrice / g.totalQuantity;
-            }
-        });
-
-        return Array.from(groups.values());
+        return Array.from(groups.values()).sort((a, b) =>
+            compareMaterialNames(a.materialName, b.materialName) || compareMaterialNames(a.unit, b.unit));
     }, [filteredMaterials]);
 
     const totalGroupCount = groupedMaterials.length;
     const selectedGroupCount = groupedMaterials.filter(g =>
         g.memberIds.every(id => selectedMaterialIds.has(id))
     ).length;
+    const [orderDrafts, setOrderDrafts] = useState<Record<string, string>>({});
+    const [stockDrafts, setStockDrafts] = useState<Record<string, string>>({});
+    const [pendingIncrease, setPendingIncrease] = useState<{ group: GroupedMaterial; quantity: number; chooseProduct: boolean } | null>(null);
 
     function toggleGroup(group: GroupedMaterial) {
         const allSelected = group.memberIds.every(id => selectedMaterialIds.has(id));
@@ -181,33 +182,55 @@ function GroupedMaterialsStep({
         let totalOrderQty = 0;
         group.members.forEach(m => {
             const onStock = onStockQuantities[m.ID] ?? (m.On_Stock || 0);
-            const orderQty = Math.ceil(orderQuantities[m.ID] ?? Math.max(0, m.Quantity - onStock));
+            const orderQty = orderQuantities[m.ID] ?? Math.max(0, m.Quantity - onStock);
             totalOnStock += onStock;
             totalOrderQty += orderQty;
         });
-        return { totalOnStock, totalOrderQty };
+        return { totalOnStock: roundQty(totalOnStock), totalOrderQty: roundQty(totalOrderQty + (orderOnlyExtras[group.key] || 0)) };
     }
 
-    // Distribute a new total on-stock value proportionally across group members
-    function setGroupOnStock(group: GroupedMaterial, newTotalOnStock: number) {
-        const totalNeeded = group.totalQuantity;
-        group.members.forEach(m => {
-            const proportion = totalNeeded > 0 ? m.Quantity / totalNeeded : 1 / group.members.length;
-            const memberStock = Math.min(m.Quantity, Math.round(newTotalOnStock * proportion * 100) / 100);
-            setOnStockQuantity(m.ID, memberStock);
-            const newOrderQty = Math.ceil(Math.max(0, m.Quantity - memberStock));
-            setOrderQuantity(m.ID, newOrderQty);
-        });
+    function commitStock(group: GroupedMaterial) {
+        const draft = stockDrafts[group.key];
+        if (draft === undefined) return;
+        const parsed = Number(draft.replace(',', '.'));
+        if (draft.trim() && Number.isFinite(parsed) && parsed >= 0) {
+            setGroupOnStock(group.key, group.memberIds, Math.min(parsed, group.totalQuantity));
+        }
+        setStockDrafts(prev => { const next = { ...prev }; delete next[group.key]; return next; });
     }
 
-    // Distribute a new total order quantity proportionally across group members
-    function setGroupOrderQty(group: GroupedMaterial, newTotalOrderQty: number) {
-        const totalNeeded = group.totalQuantity;
-        group.members.forEach(m => {
-            const proportion = totalNeeded > 0 ? m.Quantity / totalNeeded : 1 / group.members.length;
-            const memberOrderQty = Math.ceil(Math.max(0, newTotalOrderQty * proportion));
-            setOrderQuantity(m.ID, memberOrderQty);
-        });
+    function commitOrder(group: GroupedMaterial) {
+        const draft = orderDrafts[group.key];
+        if (draft === undefined) return;
+        const parsed = Number(draft.replace(',', '.'));
+        if (draft.trim() && Number.isFinite(parsed) && parsed >= 0) {
+            const quantity = roundQty(parsed);
+            if (quantity > group.totalQuantity) {
+                setPendingIncrease({ group, quantity, chooseProduct: false });
+                onDecisionPendingChange(true);
+                return;
+            }
+            setGroupOrderQuantity(group.key, group.memberIds, quantity);
+        }
+        setOrderDrafts(prev => { const next = { ...prev }; delete next[group.key]; return next; });
+    }
+
+    function resolveIncrease(materialId?: string) {
+        if (!pendingIncrease) return;
+        const { group, quantity } = pendingIncrease;
+        setGroupOrderQuantity(group.key, group.memberIds, quantity, materialId);
+        setOrderDrafts(prev => { const next = { ...prev }; delete next[group.key]; return next; });
+        setPendingIncrease(null);
+        onDecisionPendingChange(false);
+    }
+
+    function cancelIncrease() {
+        if (pendingIncrease) {
+            const key = pendingIncrease.group.key;
+            setOrderDrafts(prev => { const next = { ...prev }; delete next[key]; return next; });
+        }
+        setPendingIncrease(null);
+        onDecisionPendingChange(false);
     }
 
     return (
@@ -242,7 +265,11 @@ function GroupedMaterialsStep({
                 {groupedMaterials.map((group) => {
                     const selected = isGroupSelected(group);
                     const { totalOnStock, totalOrderQty } = getGroupAggregates(group);
-                    const orderTotal = totalOrderQty * group.unitPrice;
+                    const priceOf = (m: Material) => m.Unit_Price || (m.Quantity > 0 ? m.Total_Price / m.Quantity : 0);
+                    const orderTotal = group.members.reduce((sum, m) => {
+                        const onStock = onStockQuantities[m.ID] ?? (m.On_Stock || 0);
+                        return sum + (orderQuantities[m.ID] ?? Math.max(0, m.Quantity - onStock)) * priceOf(m);
+                    }, 0) + (orderOnlyExtras[group.key] || 0) * priceOf(group.members[0]);
 
                     return (
                         <div
@@ -310,12 +337,12 @@ function GroupedMaterialsStep({
                                             type="number"
                                             min="0"
                                             max={group.totalQuantity}
-                                            value={totalOnStock}
-                                            onChange={(e) => {
-                                                e.stopPropagation();
-                                                const newStock = Math.max(0, parseFloat(e.target.value) || 0);
-                                                setGroupOnStock(group, newStock);
-                                            }}
+                                            step="any"
+                                            aria-label={`Na stanju ${group.materialName}`}
+                                            value={stockDrafts[group.key] ?? totalOnStock}
+                                            onChange={(e) => setStockDrafts(prev => ({ ...prev, [group.key]: e.target.value }))}
+                                            onBlur={() => commitStock(group)}
+                                            onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }}
                                             onClick={(e) => e.stopPropagation()}
                                             style={{
                                                 width: '100%',
@@ -334,11 +361,12 @@ function GroupedMaterialsStep({
                                         <input
                                             type="number"
                                             min="0"
-                                            value={totalOrderQty}
-                                            onChange={(e) => {
-                                                e.stopPropagation();
-                                                setGroupOrderQty(group, Math.max(0, parseFloat(e.target.value) || 0));
-                                            }}
+                                            step="any"
+                                            aria-label={`Naruči ${group.materialName}`}
+                                            value={orderDrafts[group.key] ?? totalOrderQty}
+                                            onChange={(e) => setOrderDrafts(prev => ({ ...prev, [group.key]: e.target.value }))}
+                                            onBlur={() => commitOrder(group)}
+                                            onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }}
                                             onClick={(e) => e.stopPropagation()}
                                             style={{
                                                 width: '100%',
@@ -353,7 +381,7 @@ function GroupedMaterialsStep({
                                     </div>
                                     <div style={{ gridColumn: 'span 3', display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingTop: '8px', borderTop: '1px solid var(--border-color)' }}>
                                         <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
-                                            {group.unitPrice.toFixed(2)} KM/{group.unit} × {totalOrderQty} {group.unit}
+                                            Procjena za {totalOrderQty} {group.unit}
                                         </span>
                                         <span style={{ fontWeight: 600, fontSize: '14px' }}>
                                             = {formatCurrency(orderTotal)}
@@ -378,6 +406,44 @@ function GroupedMaterialsStep({
                     <p style={{ fontSize: '16px' }}>Nema materijala za odabranog dobavljača</p>
                 </div>
             )}
+            <Modal
+                isOpen={!!pendingIncrease}
+                onClose={cancelIncrease}
+                title={pendingIncrease?.chooseProduct ? 'Odaberite proizvod' : 'Povećanje količine'}
+                size="large"
+                zIndex={1300}
+                footer={<button type="button" className="btn btn-secondary" onClick={cancelIncrease}>Odustani</button>}
+            >
+                {pendingIncrease && (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                        <p style={{ margin: 0 }}>
+                            {pendingIncrease.quantity} {pendingIncrease.group.unit} za „{pendingIncrease.group.materialName}” je više od
+                            ukupno potrebnih {pendingIncrease.group.totalQuantity} {pendingIncrease.group.unit} za odabrane proizvode.
+                            Da li se dodatnih {roundQty(pendingIncrease.quantity - pendingIncrease.group.totalQuantity)} {pendingIncrease.group.unit} odnosi na neki proizvod?
+                        </p>
+                        {pendingIncrease.chooseProduct ? (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                                {pendingIncrease.group.members.map(member => (
+                                    <button key={member.ID} type="button" className="btn btn-secondary"
+                                        onClick={() => resolveIncrease(member.ID)}
+                                        style={{ justifyContent: 'flex-start', textAlign: 'left' }}>
+                                        {member.Product_Name} • {member.Project_Name}
+                                    </button>
+                                ))}
+                            </div>
+                        ) : (
+                            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                                <button type="button" className="btn btn-primary" onClick={() => setPendingIncrease({ ...pendingIncrease, chooseProduct: true })}>
+                                    Da, odaberi proizvod
+                                </button>
+                                <button type="button" className="btn btn-secondary" onClick={() => resolveIncrease()}>
+                                    Ne, samo povećaj narudžbu
+                                </button>
+                            </div>
+                        )}
+                    </div>
+                )}
+            </Modal>
         </div>
     );
 }
@@ -413,8 +479,9 @@ export function OrderWizardModal({
     isSubmitting,
     orderQuantities,
     onStockQuantities,
-    setOrderQuantity,
-    setOnStockQuantity,
+    orderOnlyExtras,
+    setGroupOrderQuantity,
+    setGroupOnStock,
     isEditing,
     orderName,
     setOrderName,
@@ -422,12 +489,16 @@ export function OrderWizardModal({
     // Korak 1: pretraga projekata. Lista zna narasti na stotine kartica pa je
     // skrolanje do traženog klijenta sporije od kucanja dva slova.
     const [projectQuery, setProjectQuery] = useState('');
+    const [quantityDecisionPending, setQuantityDecisionPending] = useState(false);
     const projectSearchRef = useRef<HTMLInputElement>(null);
 
     // Novo otvaranje wizarda (ili povratak na korak 1) kreće od čiste liste —
     // zaostali upit bi sakrio projekte koje korisnik očekuje da vidi.
     useEffect(() => {
         if (!isOpen || wizardStep !== 1) setProjectQuery('');
+    }, [isOpen, wizardStep]);
+    useEffect(() => {
+        if (!isOpen || wizardStep !== 4) setQuantityDecisionPending(false);
     }, [isOpen, wizardStep]);
 
     const visibleProjects = useMemo(() => {
@@ -449,14 +520,14 @@ export function OrderWizardModal({
         (wizardStep === 3 && (browseMode === 'supplier' ? selectedSupplierIds.size > 0 : selectedCategories.size > 0));
 
     return (
-        <Modal isOpen={isOpen} onClose={onClose} title="" size="fullscreen" footer={null}>
+        <Modal isOpen={isOpen} onClose={() => { if (!quantityDecisionPending) onClose(); }} title="" size="fullscreen" footer={null}>
             <div className="wizard-container">
                 {/* Step Navigation Header */}
                 <div className="wizard-header">
                     <div className="wizard-nav-left">
                         <button
                             className="glass-btn wizard-nav-btn"
-                            onClick={onClose}
+                            onClick={() => { if (!quantityDecisionPending) onClose(); }}
                             title="Izađi"
                             style={{
                                 marginRight: '8px',
@@ -494,8 +565,8 @@ export function OrderWizardModal({
                         {wizardStep === 4 ? (
                             <button
                                 className="glass-btn glass-btn-primary wizard-nav-btn"
-                                onClick={handleCreateOrder}
-                                disabled={selectedMaterialIds.size === 0 || isSubmitting}
+                                onClick={() => { if (!quantityDecisionPending) handleCreateOrder(); }}
+                                disabled={selectedMaterialIds.size === 0 || isSubmitting || quantityDecisionPending}
                             >
                                 {isSubmitting ? (
                                     <span className="material-icons-round" style={{ animation: 'spin 1s linear infinite' }}>sync</span>
@@ -813,7 +884,7 @@ export function OrderWizardModal({
                     )}
 
                     {/* STEP 4: MATERIALS (GROUPED) */}
-                    {wizardStep === 4 && (
+                    {isOpen && wizardStep === 4 && (
                         <GroupedMaterialsStep
                             filteredMaterials={filteredMaterials}
                             selectedMaterialIds={selectedMaterialIds}
@@ -823,8 +894,10 @@ export function OrderWizardModal({
                             formatCurrency={formatCurrency}
                             orderQuantities={orderQuantities}
                             onStockQuantities={onStockQuantities}
-                            setOrderQuantity={setOrderQuantity}
-                            setOnStockQuantity={setOnStockQuantity}
+                            orderOnlyExtras={orderOnlyExtras}
+                            setGroupOrderQuantity={setGroupOrderQuantity}
+                            setGroupOnStock={setGroupOnStock}
+                            onDecisionPendingChange={setQuantityDecisionPending}
                             orderName={orderName}
                             setOrderName={setOrderName}
                         />

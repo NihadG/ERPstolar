@@ -1,4 +1,4 @@
-import { buildBookingProposal, proposalNeedsConfirm } from '../attendanceBooking';
+import { buildBookingProposal, isDeselectedAttendanceLog, postedOrdersByWorker, proposalNeedsConfirm } from '../attendanceBooking';
 import type { WorkOrder, WorkOrderItem } from '../types';
 
 const W = 'W1';
@@ -30,7 +30,7 @@ const present = (workOrders: WorkOrder[]) =>
 
 // ════════════════════════════════════════════════════════════════════════════
 describe('buildBookingProposal — Prisutan (izbor naloga)', () => {
-    test('dodijeljen aktivan nalog → red; nalog ponuđen i predčekiran', () => {
+    test('dodijeljen aktivan nalog → ponuđen, ali bez ranijeg knjiženja nije predčekiran', () => {
         const rows = present([order('A', [item('a1')])]);
         expect(rows).toHaveLength(1);
         const r = rows[0];
@@ -40,7 +40,7 @@ describe('buildBookingProposal — Prisutan (izbor naloga)', () => {
             expect(r.orders[0].name).toBe('Nalog A');
             expect(r.orders[0].assigned).toBe(true);
             expect(r.orders[0].status).toBe('U toku');
-            expect(r.suggestedOrderIds).toEqual(['A']);
+            expect(r.suggestedOrderIds).toEqual([]);
         }
     });
 
@@ -54,12 +54,12 @@ describe('buildBookingProposal — Prisutan (izbor naloga)', () => {
         }
     });
 
-    test('montažni aktivan nalog (dodijeljen) → ponuđen i predčekiran', () => {
+    test('montažni aktivan nalog (dodijeljen) → ponuđen bez automatskog predabira', () => {
         const rows = present([order('MON', [item('m1')], { Work_Order_Type: 'Montaža' })]);
         expect(rows).toHaveLength(1);
         if (rows[0].kind === 'present') {
             expect(rows[0].orders.map(o => o.workOrderId)).toEqual(['MON']);
-            expect(rows[0].suggestedOrderIds).toEqual(['MON']);
+            expect(rows[0].suggestedOrderIds).toEqual([]);
         }
     });
 
@@ -74,13 +74,13 @@ describe('buildBookingProposal — Prisutan (izbor naloga)', () => {
 
     // ── NEPOKRENUTI ('Na čekanju') nalozi: nude se da bi se novi nalog startao i
     //    proknjižio u JEDNOM prolazu (potvrda ga auto-starta u prepareWorkerOrderTargets) ──
-    test('nepokrenut nalog (dodijeljen) → ponuđen s notStarted=true i PREDČEKIRAN', () => {
+    test('nepokrenut nalog (dodijeljen) → ponuđen s notStarted=true bez predabira', () => {
         const rows = present([order('NEW', [item('n1', { Status: 'Na čekanju' })], { Status: 'Na čekanju', Started_At: undefined })]);
         expect(rows).toHaveLength(1);
         if (rows[0].kind === 'present') {
             expect(rows[0].orders.map(o => o.workOrderId)).toEqual(['NEW']);
             expect(rows[0].orders[0].notStarted).toBe(true);
-            expect(rows[0].suggestedOrderIds).toEqual(['NEW']);
+            expect(rows[0].suggestedOrderIds).toEqual([]);
         }
     });
 
@@ -104,7 +104,7 @@ describe('buildBookingProposal — Prisutan (izbor naloga)', () => {
         if (rows[0].kind === 'present') {
             expect(rows[0].orders.map(o => o.workOrderId)).toEqual(['ACT', 'NEW']);
             expect(rows[0].orders[0].notStarted).toBe(false);
-            expect(rows[0].suggestedOrderIds.sort()).toEqual(['ACT', 'NEW']);
+            expect(rows[0].suggestedOrderIds).toEqual([]);
         }
     });
 
@@ -120,7 +120,7 @@ describe('buildBookingProposal — Prisutan (izbor naloga)', () => {
 
 // ════════════════════════════════════════════════════════════════════════════
 describe('buildBookingProposal — Teren', () => {
-    test('teren UVIJEK daje red; predabir = dodijeljeni aktivni Montaža nalog', () => {
+    test('teren UVIJEK daje red; dodijeljena Montaža nije predabir bez prethodnog rada', () => {
         const rows = buildBookingProposal(
             [{ workerId: W, workerName: 'Radnik', status: 'Teren' }],
             [order('PROD', [item('p1')]), order('MON', [item('m1')], { Work_Order_Type: 'Montaža' })],
@@ -129,7 +129,7 @@ describe('buildBookingProposal — Teren', () => {
         expect(rows).toHaveLength(1);
         const r = rows[0];
         expect(r.kind).toBe('teren');
-        if (r.kind === 'teren') expect(r.suggestedWorkOrderId).toBe('MON');
+        if (r.kind === 'teren') expect(r.suggestedOrderIds).toEqual([]);
     });
 
     test('teren bez dodijeljene montaže → red bez predabira (korisnik bira)', () => {
@@ -192,7 +192,7 @@ describe('buildBookingProposal — Teren', () => {
         if (rows[0].kind === 'teren') expect(rows[0].suggestedWorkOrderId).toBe('PROD');
     });
 
-    test('teren: auto-Montaža ima prednost nad jučerašnjim (predabir = Montaža)', () => {
+    test('teren: jučerašnji stvarni nalog ima prednost nad dodijeljenom Montažom', () => {
         const yMap = new Map<string, string[]>([[W, ['PROD']]]);
         const rows = buildBookingProposal(
             [{ workerId: W, workerName: 'Radnik', status: 'Teren' }],
@@ -201,7 +201,7 @@ describe('buildBookingProposal — Teren', () => {
             undefined,
             yMap,
         );
-        if (rows[0].kind === 'teren') expect(rows[0].suggestedWorkOrderId).toBe('MON');
+        if (rows[0].kind === 'teren') expect(rows[0].suggestedOrderIds).toEqual(['PROD']);
     });
 
     test('prisutan bez ijednog predčekiranog naloga → jučerašnji nalog (ako je danas dostupan) predčekiran', () => {
@@ -236,6 +236,83 @@ describe('buildBookingProposal — bulk miks', () => {
         );
         expect(rows.map(r => r.kind)).toEqual(['present', 'teren']);
         const teren = rows.find(r => r.kind === 'teren');
-        if (teren && teren.kind === 'teren') expect(teren.suggestedWorkOrderId).toBe('MON');
+        if (teren && teren.kind === 'teren') expect(teren.suggestedOrderIds).toEqual([]);
+    });
+});
+
+describe('stvarna knjiženja imaju prednost pri ponovnom otvaranju', () => {
+    const choices = [
+        order('ASSIGNED', [item('a')]),
+        order('ACTUAL', [item('b', { Assigned_Workers: [] })]),
+        order('YESTERDAY', [item('c', { Assigned_Workers: [] })]),
+    ];
+
+    test('isti dan prikazuje ranije proknjiženi nalog, ne trenutnu dodjelu ni jučerašnji', () => {
+        const rows = buildBookingProposal(
+            [{ workerId: W, workerName: 'Radnik', status: 'Prisutan' }], choices, DAY,
+            undefined, new Map([[W, ['YESTERDAY']]]), new Map([[W, ['ACTUAL']]])
+        );
+        expect(rows[0].suggestedOrderIds).toEqual(['ACTUAL']);
+    });
+
+    test('raniji dan predlaže sve stvarno knjižene naloge, iako radnik nije dodijeljen', () => {
+        const rows = buildBookingProposal(
+            [{ workerId: W, workerName: 'Radnik', status: 'Teren' }], choices, DAY,
+            undefined, new Map([[W, ['ACTUAL', 'YESTERDAY']]])
+        );
+        expect(rows[0].suggestedOrderIds).toEqual(['ACTUAL', 'YESTERDAY']);
+    });
+
+    test('završen nalog ostaje vidljiv kad je zaista knjižen na otvoreni dan', () => {
+        const rows = buildBookingProposal(
+            [{ workerId: W, workerName: 'Radnik', status: 'Prisutan' }],
+            [order('DONE', [item('d', { Status: 'Završeno' })], { Status: 'Završeno' })], DAY,
+            undefined, undefined, new Map([[W, ['DONE']]])
+        );
+        expect(rows[0].orders.map(o => o.workOrderId)).toEqual(['DONE']);
+        expect(rows[0].suggestedOrderIds).toEqual(['DONE']);
+    });
+
+    test('završen nalog s posljednjeg ranijeg knjiženog dana ostaje ponuđen', () => {
+        const rows = buildBookingProposal(
+            [{ workerId: W, workerName: 'Radnik', status: 'Prisutan' }],
+            [order('DONE', [item('d', { Status: 'Završeno' })], { Status: 'Završeno' })], DAY,
+            undefined, new Map([[W, ['DONE']]])
+        );
+        expect(rows[0].suggestedOrderIds).toEqual(['DONE']);
+    });
+
+    test('obrisan nalog je i dalje prikazan, pa potvrda pregleda ne briše skriveno knjiženje', () => {
+        const rows = buildBookingProposal(
+            [{ workerId: W, workerName: 'Radnik', status: 'Prisutan' }], choices, DAY,
+            undefined, undefined, new Map([[W, ['REMOVED']]])
+        );
+        expect(rows[0].orders.some(o => o.workOrderId === 'REMOVED')).toBe(true);
+        expect(rows[0].suggestedOrderIds).toEqual(['REMOVED']);
+    });
+
+    test('pola dana ostaje pola dana pri ponovnom otvaranju', () => {
+        const rows = buildBookingProposal(
+            [{ workerId: W, workerName: 'Radnik', status: 'Prisutan' }], choices, DAY,
+            undefined, undefined, new Map([[W, ['ACTUAL']]]), new Map([[W, 0.5]])
+        );
+        expect(rows[0].bookedPresence).toBe(0.5);
+    });
+
+    test('izvorni nalog povezanih raznih poslova je onaj na kojem je radnik radio', () => {
+        expect(postedOrdersByWorker([
+            { Worker_ID: W, Work_Order_ID: 'COST', Source_Work_Order_ID: 'CUSTOM' },
+            { Worker_ID: W, Work_Order_ID: 'COST', Source_Work_Order_ID: 'CUSTOM' },
+        ])).toEqual(new Map([[W, ['CUSTOM']]]));
+    });
+
+    test('skidanje naloga uklanja samo knjiženje iz šihtarice, nikad ručno', () => {
+        const selected = new Set(['KEEP']);
+        expect(isDeselectedAttendanceLog({ Work_Order_ID: 'DROP', Booking_Source: 'attendance' }, selected)).toBe(true);
+        expect(isDeselectedAttendanceLog({ Work_Order_ID: 'DROP', Booking_Source: 'manual' }, selected)).toBe(false);
+        expect(isDeselectedAttendanceLog({ Work_Order_ID: 'KEEP', Booking_Source: 'attendance' }, selected)).toBe(false);
+        expect(isDeselectedAttendanceLog({
+            Work_Order_ID: 'COST', Source_Work_Order_ID: 'CUSTOM', Booking_Source: 'attendance',
+        }, new Set(['CUSTOM']))).toBe(false);
     });
 });

@@ -45,8 +45,9 @@ function setup(over: Record<string, unknown> = {}) {
             handleCreateOrder={noop}
             orderQuantities={{}}
             onStockQuantities={{}}
-            setOrderQuantity={noop}
-            setOnStockQuantity={noop}
+            orderOnlyExtras={{}}
+            setGroupOrderQuantity={noop}
+            setGroupOnStock={noop}
             orderName=""
             setOrderName={noop}
             {...over}

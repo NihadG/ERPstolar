@@ -46,8 +46,6 @@ export async function POST(req: Request) {
             const orderIds: string[] = Array.isArray(d?.orderIds)
                 ? d.orderIds.map((x: unknown) => String(x)).filter(Boolean)
                 : [];
-            if (orderIds.length === 0) continue;   // „ne knjiži" je legitiman izbor
-
             decisions.push({
                 workerId,
                 workerName: worker.Name,
@@ -56,26 +54,23 @@ export async function POST(req: Request) {
             });
         }
 
-        if (decisions.length === 0) {
-            return NextResponse.json({
-                booked: 0, failedWorkers: [], startWarnings: [],
-                message: 'Nijedan nalog nije izabran — dnevnice nisu knjižene.',
-            });
-        }
+        if (decisions.length === 0) throw new HttpError(400, 'Nema važećih radnika za knjiženje.');
 
         const result = await commitBooking(caller.orgId, date, decisions);
 
         // „Nula dnevnica" ima dva sasvim različita uzroka i korisnik mora znati
         // koji je njegov: dan je već proknjižen (ništa ne treba raditi) naspram
         // izabranog naloga koji nema nijednu stavku (treba mu se dodati posao).
-        const nothingBooked = result.prepared > 0
+        const nothingBooked = result.deleted > 0
+            ? `Uklonjeno ${result.deleted} prethodnih knjiženja.`
+            : result.prepared > 0
             ? 'Taj dan je već proknjižen — nema novih dnevnica.'
             : 'Izabrani nalozi nemaju nijednu stavku na koju bi se dan knjižio.';
 
         const message = result.failedWorkers.length > 0
             ? `Greška pri knjiženju za: ${result.failedWorkers.join(', ')}${result.booked > 0 ? ` — ostalo (${result.booked}) proknjiženo` : ''}`
             : result.booked > 0
-                ? `Proknjiženo ${result.booked} ${result.booked === 1 ? 'dnevnica' : 'dnevnica'}`
+                ? `Proknjiženo ${result.booked} dnevnica${result.deleted > 0 ? `, uklonjeno ${result.deleted} prethodnih knjiženja` : ''}.`
                 : nothingBooked;
 
         return NextResponse.json({

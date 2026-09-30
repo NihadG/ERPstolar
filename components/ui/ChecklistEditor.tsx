@@ -13,16 +13,20 @@
 
 import { useState } from 'react';
 import { Check, ListChecks, Plus, X } from 'lucide-react';
+import type { TaskChecklistGroup } from '@/lib/types';
+import { getTaskChecklistSections } from '@/lib/taskChecklist';
 import './ChecklistEditor.css';
 
 export interface ChecklistEditorItem {
     id: string;
     text: string;
     completed: boolean;
+    groupId?: string;
 }
 
 interface ChecklistEditorProps {
     items: ChecklistEditorItem[];
+    groups?: TaskChecklistGroup[];
     /**
      * Smije vratiti Promise (upis u bazu) — polje se ne prazni dok upis ne
      * prođe, pa brzo kucanje „korak ↵ korak ↵" ne može izgubiti korak.
@@ -40,7 +44,7 @@ interface ChecklistEditorProps {
 }
 
 export default function ChecklistEditor({
-    items, onAdd, onRemove, onToggle, disabled, showHeader = true,
+    items, groups, onAdd, onRemove, onToggle, disabled, showHeader = true,
     addLabel = 'Dodaj korak', placeholder = 'Novi korak…',
     emptyHint = 'Bez koraka — razloži zadatak na jasne korake.',
 }: ChecklistEditorProps) {
@@ -95,31 +99,36 @@ export default function ChecklistEditor({
 
             {items.length > 0 && (
                 <div className="cle-items">
-                    {items.map(item => (
-                        <div key={item.id} className={`cle-item${item.completed ? ' done' : ''}`}>
-                            {checkable ? (
-                                <button
-                                    type="button"
-                                    className={`cle-box${item.completed ? ' on' : ''}`}
-                                    disabled={disabled}
-                                    onClick={() => onToggle!(item.id)}
-                                    aria-label={item.completed ? 'Poništi korak' : 'Označi korak'}
-                                >
-                                    {item.completed && <Check size={11} strokeWidth={3} />}
-                                </button>
-                            ) : (
-                                <span className="cle-box static" aria-hidden="true" />
-                            )}
-                            <span className="cle-text">{item.text}</span>
-                            <button
-                                type="button"
-                                className="cle-remove"
-                                disabled={disabled}
-                                onClick={() => onRemove(item.id)}
-                                aria-label="Ukloni korak"
-                            >
-                                <X size={13} />
-                            </button>
+                    {getTaskChecklistSections({ Checklist: items, ChecklistGroups: groups }).map(section => (
+                        <div key={section.id || 'ungrouped'} className="cle-section">
+                            {section.name && <div className="cle-group-name">{section.name}</div>}
+                            {section.items.map(item => (
+                                <div key={item.id} className={`cle-item${item.completed ? ' done' : ''}`}>
+                                    {checkable ? (
+                                        <button
+                                            type="button"
+                                            className={`cle-box${item.completed ? ' on' : ''}`}
+                                            disabled={disabled}
+                                            onClick={() => onToggle!(item.id)}
+                                            aria-label={item.completed ? 'Poništi korak' : 'Označi korak'}
+                                        >
+                                            {item.completed && <Check size={11} strokeWidth={3} />}
+                                        </button>
+                                    ) : (
+                                        <span className="cle-box static" aria-hidden="true" />
+                                    )}
+                                    <span className="cle-text">{item.text}</span>
+                                    <button
+                                        type="button"
+                                        className="cle-remove"
+                                        disabled={disabled}
+                                        onClick={() => onRemove(item.id)}
+                                        aria-label="Ukloni korak"
+                                    >
+                                        <X size={13} />
+                                    </button>
+                                </div>
+                            ))}
                         </div>
                     ))}
                 </div>

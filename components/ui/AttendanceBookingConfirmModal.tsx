@@ -57,8 +57,8 @@ interface Props {
     organizationId: string;
     /** workerId → Work_Order_ID[] s posljednjeg dana koji je imao knjiženja. */
     yesterdayByWorker?: Map<string, string[]>;
-    /** Datum iz kojeg je gornja mapa — ponedjeljkom/nakon praznika nije doslovno jučer. */
-    yesterdaySourceDate?: string;
+    /** Posljednji ranije knjiženi datum po radniku. */
+    yesterdaySourceDates?: Map<string, string>;
     onConfirm: (decisions: BookingDecision[]) => Promise<void>;
     onCreated: (...collections: string[]) => void;
     showToast: (message: string, type: 'success' | 'error' | 'info') => void;
@@ -77,7 +77,7 @@ type Picks = Record<string, Set<string>>;
 
 export default function AttendanceBookingConfirmModal({
     isOpen, onClose, date, rows, workOrders, workers, projects = [], tasks = [], organizationId,
-    yesterdayByWorker, yesterdaySourceDate, onConfirm, onCreated, showToast,
+    yesterdayByWorker, yesterdaySourceDates, onConfirm, onCreated, showToast,
 }: Props) {
     const [view, setView] = useState<ViewMode>('workers');
     const [query, setQuery] = useState('');
@@ -93,9 +93,7 @@ export default function AttendanceBookingConfirmModal({
         const init: Picks = {};
         rows.forEach(r => {
             init[r.workerId] = new Set(
-                r.kind === 'present'
-                    ? r.suggestedOrderIds
-                    : (r.suggestedWorkOrderId ? [r.suggestedWorkOrderId] : [])
+                r.suggestedOrderIds
             );
         });
         return init;
@@ -106,15 +104,18 @@ export default function AttendanceBookingConfirmModal({
     const [revealedOrders, setRevealedOrders] = useState<Set<string>>(() => {
         const s = new Set<string>();
         rows.forEach(r => {
-            if (r.kind === 'present') r.suggestedOrderIds.forEach(id => s.add(id));
-            else if (r.suggestedWorkOrderId) s.add(r.suggestedWorkOrderId);
+            r.suggestedOrderIds.forEach(id => s.add(id));
         });
         return s;
     });
     const [showAllOrders, setShowAllOrders] = useState(false);
 
     // ½ ili cijeli dan po radniku (default 1) — bez odlaska u Knjigu rada.
-    const [presenceByWorker, setPresenceByWorker] = useState<Record<string, 0.5 | 1>>({});
+    const [presenceByWorker, setPresenceByWorker] = useState<Record<string, 0.5 | 1>>(() => {
+        const initial: Record<string, 0.5 | 1> = {};
+        rows.forEach(r => { if (r.bookedPresence) initial[r.workerId] = r.bookedPresence; });
+        return initial;
+    });
     const presenceOf = (workerId: string): 0.5 | 1 => presenceByWorker[workerId] ?? 1;
 
     // Radnik za kojeg je otvoren „Razni poslovi" modal (kreiranje novog naloga).
@@ -153,7 +154,7 @@ export default function AttendanceBookingConfirmModal({
 
     // Izabrani radnik u prikazu „Po radnicima": prvi kome fali nalog, inače prvi.
     const [selectedId, setSelectedId] = useState<string>(() => {
-        const empty = rows.find(r => r.kind === 'present' ? r.suggestedOrderIds.length === 0 : !r.suggestedWorkOrderId);
+        const empty = rows.find(r => r.suggestedOrderIds.length === 0);
         return (empty || rows[0])?.workerId || '';
     });
     const selected = entries.find(e => e.workerId === selectedId) || entries[0];
@@ -187,8 +188,14 @@ export default function AttendanceBookingConfirmModal({
     }
 
     // Dugme ne smije lagati: ako izvor nije doslovno jučer, piše koji je dan.
-    const sourceIsYesterday = !yesterdaySourceDate || yesterdaySourceDate === shiftISO(date, -1);
-    const sourceLabel = sourceIsYesterday ? 'jučer' : dayLabel(yesterdaySourceDate);
+    const uniqueSourceDates = Array.from(new Set(yesterdaySourceDates?.values() || []));
+    const sourceLabel = uniqueSourceDates.length === 1
+        ? (uniqueSourceDates[0] === shiftISO(date, -1) ? 'jučer' : dayLabel(uniqueSourceDates[0]))
+        : 'zadnji knjiženi dan';
+    const sourceLabelFor = (workerId: string) => {
+        const source = yesterdaySourceDates?.get(workerId);
+        return source ? (source === shiftISO(date, -1) ? 'jučer' : dayLabel(source)) : sourceLabel;
+    };
 
     const yesterdayCount = useMemo(
         () => entries.reduce((n, e) => n + (yesterdayFor(e).length > 0 ? 1 : 0), 0),
@@ -385,7 +392,7 @@ export default function AttendanceBookingConfirmModal({
                                 onToggle={orderId => togglePick(selected.workerId, orderId)}
                                 onSetMany={(orderIds, on) => setMany([selected.workerId], orderIds, on)}
                                 yesterday={yesterdayFor(selected)}
-                                sourceLabel={sourceLabel}
+                                sourceLabel={sourceLabelFor(selected.workerId)}
                                 onCopyYesterday={() => copyYesterday(selected)}
                                 onCreateOrder={() => setCreatingFor({ workerId: selected.workerId, workerName: selected.workerName })}
                             />

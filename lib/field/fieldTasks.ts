@@ -8,7 +8,7 @@
 // dokument iz baze nikad ne prospe klijentu u cijelosti.
 // ════════════════════════════════════════════════════════════════════
 
-import type { Task, TaskCategory, TaskLink, TaskPriority } from '@/lib/types';
+import type { Task, TaskCategory, TaskChecklistGroup, TaskLink, TaskPriority } from '@/lib/types';
 import { isTaskOpen, isTaskOverdue } from '@/lib/workOrderTasks';
 
 export interface FieldTaskLink {
@@ -20,6 +20,7 @@ export interface FieldChecklistItem {
     id: string;
     text: string;
     completed: boolean;
+    groupId?: string;
 }
 
 export interface FieldTaskRow {
@@ -36,6 +37,7 @@ export interface FieldTaskRow {
     open: boolean;
     assignedWorkerName: string | null;
     checklist: FieldChecklistItem[];
+    checklistGroups?: TaskChecklistGroup[];
     checklistDone: number;
     checklistTotal: number;
     links: FieldTaskLink[];
@@ -57,6 +59,7 @@ function projectTask(t: Task, today: string): FieldTaskRow {
         id: c.id,
         text: c.text,
         completed: !!c.completed,
+        ...(c.groupId ? { groupId: c.groupId } : {}),
     }));
 
     const links: FieldTaskLink[] = (t.Links || []).map(l => ({
@@ -78,6 +81,7 @@ function projectTask(t: Task, today: string): FieldTaskRow {
         open: isTaskOpen(t),
         assignedWorkerName: t.Assigned_Worker_Name || null,
         checklist,
+        checklistGroups: (t.ChecklistGroups || []).map(g => ({ id: g.id, name: g.name })),
         checklistDone: checklist.filter(c => c.completed).length,
         checklistTotal: checklist.length,
         links,

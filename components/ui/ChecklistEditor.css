@@ -52,6 +52,8 @@
 }
 
 .cle-items { display: flex; flex-direction: column; }
+.cle-section { display: flex; flex-direction: column; }
+.cle-group-name { padding: 10px 6px 4px; font-size: 11px; font-weight: 700; color: var(--text-secondary); }
 
 .cle-item {
     display: flex;
