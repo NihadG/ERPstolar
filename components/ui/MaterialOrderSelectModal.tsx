@@ -13,7 +13,7 @@
 // ════════════════════════════════════════════════════════════════════
 
 import { useState, useEffect, useMemo } from 'react';
-import { Check, Package, ShoppingCart, Loader2, Truck } from 'lucide-react';
+import { Check, ChevronDown, Package, ShoppingCart, Loader2, Truck } from 'lucide-react';
 import Modal from './Modal';
 import { formatCurrency, plural } from '@/lib/utils';
 import { formatQty, groupPlanMaterials, productNamesLabel } from '@/lib/orderItemGroups';
@@ -51,11 +51,17 @@ export default function MaterialOrderSelectModal({
     const [loading, setLoading] = useState(true);
     const [groups, setGroups] = useState<MaterialOrderPlanGroup[]>([]);
     const [selected, setSelected] = useState<Set<string>>(new Set());
+    const [expandedSuppliers, setExpandedSuppliers] = useState<Set<string>>(new Set());
     const [creating, setCreating] = useState(false);
     // Naziv: `null` = korisnik ga nije dirao, pa vrijedi prijedlog iz izbora.
     const [typedName, setTypedName] = useState<string | null>(null);
 
-    useEffect(() => { if (isOpen) setTypedName(null); }, [isOpen, plan]);
+    useEffect(() => {
+        if (isOpen) {
+            setTypedName(null);
+            setExpandedSuppliers(new Set());
+        }
+    }, [isOpen, plan]);
 
     // Učitaj plan pri otvaranju — SVI materijali su čekirani na startu (isto
     // pokriće kao stari "auto" tok), korisnik onda SVJESNO isključi šta ne želi.
@@ -119,6 +125,15 @@ export default function MaterialOrderSelectModal({
         });
     };
 
+    const toggleExpanded = (supplierName: string) => setExpandedSuppliers(prev => {
+        const next = new Set(prev);
+        if (next.has(supplierName)) next.delete(supplierName);
+        else next.add(supplierName);
+        return next;
+    });
+
+    const allExpanded = groups.length > 0 && groups.every(g => expandedSuppliers.has(g.supplierName));
+
     const totals = useMemo(() => {
         let materialCount = 0, supplierCount = 0, sum = 0;
         for (const g of groups) {
@@ -169,6 +184,7 @@ export default function MaterialOrderSelectModal({
             isOpen={isOpen}
             onClose={onClose}
             size="large"
+            className="mos-modal"
             title={
                 <span className="mos-title">
                     <ShoppingCart size={18} /> Narudžbe materijala
@@ -213,7 +229,6 @@ export default function MaterialOrderSelectModal({
                                 type="text"
                                 value={orderName}
                                 // Prijedlog je označen da se preko njega odmah kuca vlastiti naziv.
-                                autoFocus={!!suggestName}
                                 onFocus={e => { if (typedName === null) e.currentTarget.select(); }}
                                 onChange={e => setTypedName(e.target.value)}
                                 onKeyDown={e => { if (e.key === 'Enter') handleConfirm(); }}
@@ -226,29 +241,55 @@ export default function MaterialOrderSelectModal({
                                 </span>
                             )}
                         </div>
-                        <p className="mos-hint">
-                            Materijali koji nedostaju, grupisani po dobavljaču. Sve je unaprijed izabrano —
-                            isključi šta ne želiš naručiti sada.
-                        </p>
+                        <div className="mos-list-head">
+                            <p className="mos-hint">
+                                Sve je unaprijed izabrano. Otvori dobavljača da pregledaš materijale i isključiš ono što ne želiš naručiti.
+                            </p>
+                            <button type="button" className="mos-expand-all" onClick={() => setExpandedSuppliers(
+                                allExpanded ? new Set() : new Set(groups.map(g => g.supplierName))
+                            )}>
+                                {allExpanded ? 'Sažmi sve' : 'Prikaži sve'}
+                            </button>
+                        </div>
                         <div className="mos-groups">
-                            {groups.map(g => {
+                            {groups.map((g, index) => {
                                 const state = groupState(g);
                                 const subtotal = groupSubtotal(g);
                                 const rows = materialGroups.get(g.supplierName) || [];
+                                const expanded = expandedSuppliers.has(g.supplierName);
+                                const materialsId = `mos-materials-${index}`;
                                 return (
                                     <div key={g.supplierName} className={`mos-group${state === 'none' ? ' is-off' : ''}`}>
-                                        <div className="mos-group-head" onClick={() => toggleGroup(g)}>
-                                            <span className={`mos-check${state === 'all' ? ' on' : ''}${state === 'some' ? ' partial' : ''}`}>
-                                                {state === 'all' && <Check size={12} strokeWidth={3} />}
-                                                {state === 'some' && <span className="mos-check-dash" />}
-                                            </span>
-                                            <Truck size={15} className="mos-group-icon" />
-                                            <span className="mos-group-name">{g.supplierName}</span>
-                                            <span className="mos-group-count">{rows.length} {rows.length === 1 ? 'materijal' : 'materijala'}</span>
-                                            <span className="mos-group-subtotal">{formatCurrency(subtotal)}</span>
+                                        <div className="mos-group-head">
+                                            <button
+                                                type="button"
+                                                className="mos-group-select"
+                                                role="checkbox"
+                                                aria-checked={state === 'some' ? 'mixed' : state === 'all'}
+                                                aria-label={`${state === 'all' ? 'Isključi' : 'Izaberi'} sve materijale kod ${g.supplierName}`}
+                                                onClick={() => toggleGroup(g)}
+                                            >
+                                                <span className={`mos-check${state === 'all' ? ' on' : ''}${state === 'some' ? ' partial' : ''}`}>
+                                                    {state === 'all' && <Check size={12} strokeWidth={3} />}
+                                                    {state === 'some' && <span className="mos-check-dash" />}
+                                                </span>
+                                            </button>
+                                            <button
+                                                type="button"
+                                                className="mos-group-toggle"
+                                                aria-expanded={expanded}
+                                                aria-controls={materialsId}
+                                                onClick={() => toggleExpanded(g.supplierName)}
+                                            >
+                                                <Truck size={17} className="mos-group-icon" />
+                                                <span className="mos-group-name">{g.supplierName}</span>
+                                                <span className="mos-group-count">{rows.length} {rows.length === 1 ? 'materijal' : 'materijala'}</span>
+                                                <span className="mos-group-subtotal">{formatCurrency(subtotal)}</span>
+                                                <ChevronDown size={17} className={`mos-group-chevron${expanded ? ' is-open' : ''}`} />
+                                            </button>
                                         </div>
 
-                                        <div className="mos-materials">
+                                        <div className="mos-materials" id={materialsId} hidden={!expanded}>
                                             {rows.map(row => {
                                                 const onCount = row.ids.filter(id => selected.has(id)).length;
                                                 const on = onCount === row.ids.length;
@@ -257,6 +298,7 @@ export default function MaterialOrderSelectModal({
                                                 return (
                                                     <button key={row.key} type="button"
                                                         className={`mos-mat${on || some ? ' on' : ''}`}
+                                                        aria-pressed={some ? 'mixed' : on}
                                                         onClick={() => toggleMaterials(row.ids)}>
                                                         <span className={`mos-check sm${on ? ' on' : ''}${some ? ' partial' : ''}`}>
                                                             {on && <Check size={10} strokeWidth={3} />}

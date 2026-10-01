@@ -2,7 +2,7 @@
 
 import { useState, type DragEvent } from 'react';
 import { v4 as uuidv4 } from 'uuid';
-import { ArrowDown, ArrowUp, CheckCircle2, Circle, Edit3, GripVertical, Plus, Trash2, X } from 'lucide-react';
+import { ArrowDown, ArrowUp, CheckCircle2, ChevronDown, Circle, Edit3, GripVertical, Plus, Trash2, X } from 'lucide-react';
 import type { ChecklistItem, TaskChecklistGroup } from '@/lib/types';
 import './TaskChecklistEditor.css';
 
@@ -138,8 +138,8 @@ export default function TaskChecklistEditor({ items, groups, onChange }: {
     };
 
     return (
-        <div className="tce">
-            <div className="tce-add">
+        <div className={`tce${groups.length > 0 ? ' has-groups' : ''}`}>
+            <div className={`tce-add${groups.length > 0 ? ' has-groups' : ''}`}>
                 <input
                     value={newItem}
                     onChange={event => setNewItem(event.target.value)}
@@ -148,12 +148,15 @@ export default function TaskChecklistEditor({ items, groups, onChange }: {
                     aria-label="Nova stavka kontrolne liste"
                 />
                 {groups.length > 0 && (
-                    <select value={newItemGroupId} onChange={event => setNewItemGroupId(event.target.value)} aria-label="Grupa nove stavke">
-                        <option value="">Bez grupe</option>
-                        {groups.map(group => <option key={group.id} value={group.id}>{group.name}</option>)}
-                    </select>
+                    <span className="tce-select-wrap tce-add-select">
+                        <select value={newItemGroupId} onChange={event => setNewItemGroupId(event.target.value)} aria-label="Grupa nove stavke">
+                            <option value="">Bez grupe</option>
+                            {groups.map(group => <option key={group.id} value={group.id}>{group.name}</option>)}
+                        </select>
+                        <ChevronDown size={15} aria-hidden="true" />
+                    </span>
                 )}
-                <button type="button" onClick={addItem} disabled={!newItem.trim()} aria-label="Dodaj stavku"><Plus size={17} /></button>
+                <button type="button" className="tce-add-item-btn" onClick={addItem} disabled={!newItem.trim()} aria-label="Dodaj stavku"><Plus size={18} /></button>
             </div>
 
             {items.length === 0 && groups.length === 0 && <p className="tce-empty">Nema stavki u kontrolnoj listi.</p>}
@@ -225,15 +228,18 @@ export default function TaskChecklistEditor({ items, groups, onChange }: {
                                         <span className="tce-item-text" onDoubleClick={() => { setEditingItemId(item.id); setItemDraft(item.text); }}>{item.text}</span>
                                     )}
                                     {groups.length > 0 && (
-                                        <select
-                                            className="tce-group-select"
-                                            value={section.id || ''}
-                                            onChange={event => moveItem(item.id, event.target.value || null)}
-                                            aria-label={`Grupa stavke ${item.text}`}
-                                        >
-                                            <option value="">Bez grupe</option>
-                                            {groups.map(group => <option key={group.id} value={group.id}>{group.name}</option>)}
-                                        </select>
+                                        <span className="tce-select-wrap tce-group-field">
+                                            <select
+                                                className="tce-group-select"
+                                                value={section.id || ''}
+                                                onChange={event => moveItem(item.id, event.target.value || null)}
+                                                aria-label={`Grupa stavke ${item.text}`}
+                                            >
+                                                <option value="">Bez grupe</option>
+                                                {groups.map(group => <option key={group.id} value={group.id}>{group.name}</option>)}
+                                            </select>
+                                            <ChevronDown size={14} aria-hidden="true" />
+                                        </span>
                                     )}
                                     <div className="tce-row-actions">
                                         <button type="button" onClick={() => nudgeItem(section, item.id, -1)} disabled={index === 0} aria-label={`Pomjeri ${item.text} gore`} title="Pomjeri gore"><ArrowUp size={14} /></button>
@@ -250,9 +256,9 @@ export default function TaskChecklistEditor({ items, groups, onChange }: {
 
             {addingGroup ? (
                 <div className="tce-new-group">
-                    <input autoFocus value={newGroup} onChange={event => setNewGroup(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') addGroup(); if (event.key === 'Escape') setAddingGroup(false); }} placeholder="Naziv grupe" aria-label="Naziv nove grupe" />
-                    <button type="button" onClick={addGroup} disabled={!newGroup.trim() || groups.some(group => group.name.localeCompare(newGroup.trim(), undefined, { sensitivity: 'base' }) === 0)}>Dodaj</button>
-                    <button type="button" onClick={() => { setAddingGroup(false); setNewGroup(''); }} aria-label="Odustani od grupe"><X size={16} /></button>
+                    <input autoFocus value={newGroup} onChange={event => setNewGroup(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') addGroup(); if (event.key === 'Escape') setAddingGroup(false); }} placeholder="Naziv nove grupe" aria-label="Naziv nove grupe" />
+                    <button type="button" className="tce-create-group" onClick={addGroup} disabled={!newGroup.trim() || groups.some(group => group.name.localeCompare(newGroup.trim(), undefined, { sensitivity: 'base' }) === 0)}>Dodaj grupu</button>
+                    <button type="button" className="tce-cancel-group" onClick={() => { setAddingGroup(false); setNewGroup(''); }} aria-label="Odustani od grupe"><X size={16} /></button>
                 </div>
             ) : (
                 <button type="button" className="tce-add-group" onClick={() => setAddingGroup(true)}><Plus size={15} /> Dodaj grupu</button>

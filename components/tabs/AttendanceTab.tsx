@@ -321,6 +321,7 @@ export default function AttendanceTab({ workers, workOrders, projects = [], task
         // Close modal
         setEditModalOpen(false);
 
+        let attendanceSaved = false;
         try {
             // skipAutoBook: prisustvo se snima, ali dnevnice se knjiže tek nakon potvrde u upitu.
             const result = await markAttendanceAndRecalculate({
@@ -331,6 +332,7 @@ export default function AttendanceTab({ workers, workOrders, projects = [], task
                 Notes: finalNotes,
                 Organization_ID: organizationId || undefined
             }, { skipAutoBook: true });
+            attendanceSaved = true;
 
             const isPresent = finalStatus === 'Prisutan' || finalStatus === 'Teren';
             if (isPresent) {
@@ -355,7 +357,8 @@ export default function AttendanceTab({ workers, workOrders, projects = [], task
             refreshBookedMonth(date.getFullYear(), date.getMonth() + 1);
             onRefresh('workers', 'workOrders');
         } catch (error) {
-            showToast('Greška pri spremanju', 'error');
+            console.error('handleSaveAttendance failed:', error);
+            showToast(attendanceSaved ? 'Prisustvo je sačuvano, ali upit za knjiženje nije otvoren' : 'Greška pri spremanju', 'error');
             loadMonth(date.getFullYear(), date.getMonth() + 1);
         }
     }
@@ -412,7 +415,24 @@ export default function AttendanceTab({ workers, workOrders, projects = [], task
         dateStr: string,
     ): Promise<boolean> {
         if (!organizationId) return false;
-        const context = await getAttendanceOrderContext(dateStr, organizationId, savedWorkers.map(w => w.workerId));
+        let context;
+        try {
+            context = await getAttendanceOrderContext(dateStr, organizationId, savedWorkers.map(w => w.workerId));
+        } catch (error) {
+            // Čitanje istorije je pomoć za prijedlog, ne dio već uspješno sačuvanog
+            // prisustva. Ako upit baze zakaže, ponudi naloge bez predizbora.
+            console.error('openBookingConfirm: učitavanje ranijih knjiženja nije uspjelo:', error);
+            showToast('Prisustvo je sačuvano. Ranija knjiženja nisu učitana — provjeri izbor prije potvrde.', 'info');
+            context = {
+                postedTodayByWorker: new Map<string, string[]>(),
+                previousByWorker: new Map<string, string[]>(),
+                previousDateByWorker: new Map<string, string>(),
+                postedPresenceByWorker: new Map<string, 0.5 | 1>(),
+            };
+        }
+        if (context.historyLookupFailed) {
+            showToast('Neka ranija knjiženja nisu učitana — provjeri izbor prije potvrde.', 'info');
+        }
         const rows = buildBookingProposal(
             savedWorkers, workOrders, dateStr, undefined,
             context.previousByWorker, context.postedTodayByWorker, context.postedPresenceByWorker
@@ -634,6 +654,7 @@ export default function AttendanceTab({ workers, workOrders, projects = [], task
         setBulkEditDate(null);
         setBulkStatuses({});
 
+        let attendanceSaved = false;
         try {
             // 2. Save all in parallel — skip per-worker recalculation (we batch it below) and
             //    skip auto-book (dnevnice se knjiže nakon potvrde u upitu).
@@ -649,6 +670,7 @@ export default function AttendanceTab({ workers, workOrders, projects = [], task
                     }, { skipRecalculation: true, skipAutoBook: true })
                 )
             );
+            attendanceSaved = true;
 
             // 3. Single batch recalculation — only if any work logs were created/deleted.
             //    Ide u POZADINU: preračunava SVAKI aktivni nalog (+ završene iz zadnjih 30 dana),
@@ -685,7 +707,8 @@ export default function AttendanceTab({ workers, workOrders, projects = [], task
             refreshBookedMonth(date.getFullYear(), date.getMonth() + 1);
             onRefresh('workers', 'workOrders');
         } catch (error) {
-            showToast('Greška pri čuvanju prisustva', 'error');
+            console.error('handleBulkSave failed:', error);
+            showToast(attendanceSaved ? 'Prisustvo je sačuvano, ali upit za knjiženje nije otvoren' : 'Greška pri čuvanju prisustva', 'error');
             loadMonth(date.getFullYear(), date.getMonth() + 1);
         }
     }

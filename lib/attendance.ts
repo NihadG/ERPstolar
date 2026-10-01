@@ -735,6 +735,7 @@ export interface AttendanceOrderContext {
     previousByWorker: Map<string, string[]>;
     previousDateByWorker: Map<string, string>;
     postedPresenceByWorker: Map<string, 0.5 | 1>;
+    historyLookupFailed?: boolean;
 }
 
 /** Stvarno knjiženi nalozi za otvoreni dan i posljednji raniji knjiženi dan SVAKOG radnika. */
@@ -760,7 +761,7 @@ export async function getAttendanceOrderContext(
         }
     }
 
-    await Promise.all(Array.from(workerSet).map(async workerId => {
+    const historyResults = await Promise.allSettled(Array.from(workerSet).map(async workerId => {
         // Postojeći ASC indeks radi i za limitToLast; ne dovlačimo cijelu istoriju radnika.
         const last = await getDocs(query(
             collection(firestore, 'work_logs'),
@@ -782,6 +783,11 @@ export async function getAttendanceOrderContext(
             empty.previousDateByWorker.set(workerId, previousDate);
         }
     }));
+    const historyFailures = historyResults.filter((result): result is PromiseRejectedResult => result.status === 'rejected');
+    if (historyFailures.length > 0) {
+        empty.historyLookupFailed = true;
+        console.error(`getAttendanceOrderContext: ranije knjiženje nije učitano za ${historyFailures.length} radnika:`, historyFailures[0].reason);
+    }
     return empty;
 }
 

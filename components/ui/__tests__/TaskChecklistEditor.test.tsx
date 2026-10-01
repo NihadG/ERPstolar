@@ -25,7 +25,7 @@ describe('TaskChecklistEditor', () => {
 
         fireEvent.click(screen.getByRole('button', { name: 'Dodaj grupu' }));
         fireEvent.change(screen.getByRole('textbox', { name: 'Naziv nove grupe' }), { target: { value: 'Priprema' } });
-        fireEvent.click(screen.getByRole('button', { name: 'Dodaj' }));
+        fireEvent.click(screen.getByRole('button', { name: 'Dodaj grupu' }));
 
         const groupSelect = screen.getByRole('combobox', { name: 'Grupa stavke Drugi korak' });
         const groupId = within(groupSelect).getByRole('option', { name: 'Priprema' }).getAttribute('value');
